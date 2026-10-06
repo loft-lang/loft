@@ -937,7 +937,6 @@ impl Parser {
         if !self.first_pass {
             self.rotate_loop_retbufs(&mut v);
             self.own_fresh_binds(&mut v);
-            self.guard_buffer_literal_mints(&mut v);
         }
         // Plan-22 phase 02a (2026-05-12): also save body in pass 1
         // so the closure mutation walker can run in pass 1 BEFORE
@@ -962,48 +961,6 @@ impl Parser {
             self.data.definitions[self.context as usize].code = v;
         }
         result
-    }
-
-    /// `@FR-R-Place` — a collection literal returned through the caller's buffer builds IN
-    /// that buffer: it mints only when the caller handed none.
-    ///
-    /// The literal's backing `__vdb_N` is promoted onto the hidden return buffer, so its
-    /// `OpDatabase(b, tp); v = OpGetField(b, 0, …); OpSetInt4(b, 0, 0)` lands on whatever the
-    /// caller handed.  A caller that minted the buffer already gets an empty wrapper back
-    /// re-minted over itself; a caller that handed a PLACE — a field of a record of its own,
-    /// "the buffer IS the place" — would have that record's store emptied under it.  So the
-    /// mint and the empty handle it writes run only for a null buffer, and a live one is
-    /// cleared where it stands and built in: `if OpRefIsNull(b) { mint; empty } else
-    /// { OpClearVector(b) }`.  `place_buffer_of` reads this guard as a callee that FILLS.
-    fn guard_buffer_literal_mints(&self, body: &mut Value) {
-        let def = self.data.def(self.context);
-        if !crate::parser::vectors::is_collection(def.returned.ret_promo_base())
-            || !crate::keys::buffer_is_the_place_enabled()
-        {
-            return;
-        }
-        let bufs: Vec<u16> = (0..self.vars.count())
-            .filter(|&v| {
-                let n = self.vars.name(v);
-                self.vars.is_argument(v)
-                    && n != "__retbuf"
-                    && def
-                        .attr_names
-                        .get(n)
-                        .is_some_and(|&a| def.attributes()[a].hidden)
-            })
-            .collect();
-        if bufs.is_empty() {
-            return;
-        }
-        let ops = BufferMintOps {
-            mint: self.data.def_nr("OpDatabase"),
-            field: self.data.def_nr("OpGetField"),
-            set4: self.data.def_nr("OpSetInt4"),
-            is_null: self.data.def_nr("OpRefIsNull"),
-            clear: self.data.def_nr("OpClearVector"),
-        };
-        guard_mints(body, &bufs, &ops);
     }
 
     /// A vector local that BORROWS its store at some bind — the literal `p = ["z"]` makes it a
@@ -3117,15 +3074,19 @@ use a separate collection or add after the loop"
         // takes the callee's writes — the caller's other fields answer the callee's values.  So
         // the admission READS THE CALLEE and declines a body that mints into any argument slot
         // — the positive form of the rule's decline, as B2 unit 1 is for records.
-        // A mint under `if OpRefIsNull(b)` on the same buffer is the guarded literal
-        // (`guard_buffer_literal_mints`): it never runs on a place it was handed, so it FILLS.
+        // A WRAPPER mint — a returned collection literal's `main_vector<T>` — is not one: on a
+        // live place it answers the place, the collection there released
+        // (`Stores::mint_at_place`, both backends), so the literal FILLS what it is handed.
         let callee = self.data.def(*d_nr);
-        let mints = [
-            self.data.def_nr("OpDatabase"),
-            self.data.def_nr("OpDatabaseNP"),
-        ];
-        let is_null = self.data.def_nr("OpRefIsNull");
-        if mints_into_argument(&callee.code, &callee.variables, mints, is_null) {
+        let mint = self.data.def_nr("OpDatabase");
+        let cvars = &callee.variables;
+        let database = &self.database;
+        if callee.code.any_node(&mut |n| {
+            matches!(n, Value::Call(d, a) if *d == mint
+                && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w))
+                && !matches!(a.get(1).map(Value::unspan),
+                    Some(Value::Int(tp)) if u16::try_from(*tp).is_ok_and(|tp| database.is_vector_wrapper(tp))))
+        }) {
             return None;
         }
         // The place must EXIST at the call, unconditionally.  A field of a struct-ENUM VARIANT
@@ -11498,103 +11459,6 @@ use a separate collection or add after the loop"
                 self.vars.depend(var_nr, db);
             }
             *code = Value::Insert(stmts);
-        }
-    }
-}
-
-/// The operators [`Parser::guard_buffer_literal_mints`] matches and writes.
-struct BufferMintOps {
-    mint: u32,
-    field: u32,
-    set4: u32,
-    is_null: u32,
-    clear: u32,
-}
-
-fn guard_mints(v: &mut Value, bufs: &[u16], ops: &BufferMintOps) {
-    match v {
-        Value::Block(b) | Value::Loop(b) => guard_mint_list(&mut b.operators, bufs, ops),
-        Value::Insert(ls) => guard_mint_list(ls, bufs, ops),
-        _ => {}
-    }
-    v.for_each_child_mut(&mut |c| guard_mints(c, bufs, ops));
-}
-
-/// The literal's three statements `OpDatabase(b, tp)`, `x = OpGetField(b, 0, …)`,
-/// `OpSetInt4(b, 0, 0)` on a promoted buffer `b`, rewritten to mint only a null buffer.
-fn guard_mint_list(ls: &mut Vec<Value>, bufs: &[u16], ops: &BufferMintOps) {
-    let mut i = 0;
-    while i + 2 < ls.len() {
-        let b = match &ls[i] {
-            Value::Call(d, a) if *d == ops.mint => match a.first() {
-                Some(Value::Var(b)) if bufs.contains(b) => *b,
-                _ => {
-                    i += 1;
-                    continue;
-                }
-            },
-            _ => {
-                i += 1;
-                continue;
-            }
-        };
-        let get = matches!(&ls[i + 1], Value::Set(_, f) if matches!(f.unspan(),
-            Value::Call(d, a) if *d == ops.field
-                && matches!(a.as_slice(), [Value::Var(x), Value::Int(0), _] if *x == b)));
-        let empty = matches!(&ls[i + 2], Value::Call(d, a) if *d == ops.set4
-            && matches!(a.as_slice(), [Value::Var(x), Value::Int(0), Value::Int(0)] if *x == b));
-        if !(get && empty) {
-            i += 1;
-            continue;
-        }
-        let set_empty = ls.remove(i + 2);
-        let mint = std::mem::replace(&mut ls[i], Value::Null);
-        ls[i] = Value::If(
-            Box::new(Value::Call(ops.is_null, vec![Value::Var(b)])),
-            Box::new(Value::Insert(vec![mint, set_empty])),
-            Box::new(Value::Call(ops.clear, vec![Value::Var(b)])),
-        );
-        i += 2;
-    }
-}
-
-/// Does `code` mint into an argument slot outside a null test of that same argument?
-fn mints_into_argument(
-    code: &Value,
-    vars: &crate::variables::Function,
-    mints: [u32; 2],
-    is_null: u32,
-) -> bool {
-    let arg = |node: &Value| match node.unspan() {
-        Value::Var(var) if vars.is_argument(*var) => Some(*var),
-        _ => None,
-    };
-    match code.unspan() {
-        Value::Call(op, args) if mints.contains(op) && args.first().and_then(arg).is_some() => true,
-        Value::If(test, then, other) => {
-            let guarded = match test.unspan() {
-                Value::Call(op, args) if *op == is_null => args.first().and_then(arg),
-                _ => None,
-            };
-            match guarded {
-                // Under the null test only a mint into ANOTHER argument still counts.
-                Some(buf) => {
-                    then.any_node(&mut |node| {
-                        matches!(node, Value::Call(op, args) if mints.contains(op)
-                            && args.first().and_then(arg).is_some_and(|var| var != buf))
-                    }) || mints_into_argument(other, vars, mints, is_null)
-                }
-                None => [test, then, other]
-                    .iter()
-                    .any(|part| mints_into_argument(part, vars, mints, is_null)),
-            }
-        }
-        node => {
-            let mut hit = false;
-            node.for_each_child(&mut |child| {
-                hit = hit || mints_into_argument(child, vars, mints, is_null);
-            });
-            hit
         }
     }
 }

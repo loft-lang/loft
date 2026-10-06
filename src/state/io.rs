@@ -875,6 +875,9 @@ impl State {
         // produces.  Without this, `clear()` below would OOB into
         // `allocations[u16::MAX as usize]`.
         let fresh = db.store_nr == u16::MAX;
+        if !fresh && self.database.mint_at_place(&db, db_tp) {
+            return;
+        }
         if fresh {
             db = self.database.null();
             *self.mut_var::<DbRef>(var) = db;

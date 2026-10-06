@@ -93,9 +93,11 @@ fn the_switch_restores_the_buffer_store_the_copy_and_the_free() {
 /// before reading its arguments, so an argument reaching the destination would read an emptied
 /// vector. The other two the CORPUS taught, after this unit shipped a first cut without them:
 ///
-/// * `d7` — a callee that MINTS into its buffer rather than filling it. A vector LITERAL return
-///   lowers to `OpDatabase` on the buffer PARAMETER, so it would mint over the destination.
-///   Three sampled callees suggested `(R-Place)`'s decline for this was vacuous. It is not.
+/// * `d7` — a callee that MINTS a record into its buffer rather than filling it: a projection
+///   chain lowers to `OpDatabase` on the buffer PARAMETER, so it would mint over the
+///   destination.  Three sampled callees suggested `(R-Place)`'s decline for this was vacuous.
+///   It is not.  A vector LITERAL's wrapper mint is the exception — on a place it answers the
+///   place (`a4`, below).
 /// * `d8` — a field of a struct-ENUM VARIANT, whose place exists only if the enum holds that
 ///   variant, so it does not unconditionally EXIST as the rule requires.
 #[test]
@@ -117,6 +119,17 @@ fn a_place_or_callee_the_rule_declines_keeps_the_copy() {
 /// brackets the fill and a call sits inside it — but only because
 /// `group_reindex_after_vector_write` learned this shape. Before it did, the vector filled and
 /// the keyed view stayed empty, which is `@FR-Col-Group`'s exact silence.
+/// A returned vector LITERAL is admitted: its `main_vector<T>` mint, handed a place, answers the
+/// place with the collection released (`Stores::mint_at_place`), so the literal fills it.
+#[test]
+fn a_literal_callee_is_handed_the_destination() {
+    let body = ir("a4", &[]);
+    assert!(
+        !body.contains("OpAppendVector") && body.contains("= OpGetField(h2(0)"),
+        "a literal callee is handed the destination as its buffer:\n{body}"
+    );
+}
+
 #[test]
 fn a_grouped_destination_is_admitted_and_still_re_indexed() {
     let body = ir("d6", &[]);
@@ -162,7 +175,7 @@ fn the_cells_hold_on_both_backends_under_every_falsifier() {
         outs.push(String::from_utf8_lossy(&out.stdout).into_owned());
     }
     assert!(
-        outs[0].contains("13 cells"),
+        outs[0].contains("14 cells"),
         "the guard did not reach its last cell:\n{}",
         outs[0]
     );

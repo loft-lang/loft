@@ -411,6 +411,9 @@ fn op_database_inner(
             db.pos,
         );
     }
+    if stores.mint_at_place(&db, db_tp) {
+        return db;
+    }
     if db.store_nr == u16::MAX {
         // Null sentinel (no real store yet) — allocate a fresh one, which `null` has
         // already initialised.

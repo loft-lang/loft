@@ -1153,6 +1153,39 @@ impl Stores {
     /// is: it is its store's root (`1@8`) of exactly the type being minted, in an ordinary
     /// store nothing pins (no file, foreign bytes, lock or recording), so it is a previous
     /// value of the same type that the admitted group rewrites whole.
+    /// Is `tp` a vector WRAPPER — the one-field `main_vector<T>` record a collection literal
+    /// is built in?  Its mint into a live place is [`Self::mint_at_place`].
+    #[must_use]
+    pub fn is_vector_wrapper(&self, tp: u16) -> bool {
+        self.types
+            .get(tp as usize)
+            .is_some_and(|t| t.name.starts_with("main_vector<"))
+    }
+
+    /// `@FR-R-Place` — a wrapper mint (`OpDatabase(b, main_vector<T>)`, a returned collection
+    /// literal's) into a LIVE buffer that is not that wrapper's own store: the caller handed
+    /// the callee a PLACE, a collection field of a record of its own ("the buffer IS the
+    /// place").  The mint answers the place itself, with the collection it held released and
+    /// its handle empty, so the literal that follows builds where it lives.  The ordinary
+    /// mint would clear the STORE the place lives in — every record of the caller's beside
+    /// it.  A buffer is the wrapper's own store when it addresses that store's first record
+    /// and the store was minted as that wrapper (the offset into the record differs between
+    /// the backends); every other live buffer is a place.
+    /// `false` (mint as usual) for a null buffer, the own store, or any other type.
+    pub fn mint_at_place(&mut self, db: &DbRef, tp: u16) -> bool {
+        if db.store_nr == u16::MAX
+            || db.rec == 0
+            || (db.store_nr as usize) >= self.allocations.len()
+            || !self.is_vector_wrapper(tp)
+            || (db.rec == 1 && self.allocations[db.store_nr as usize].known_type == tp)
+        {
+            return false;
+        }
+        self.remove_claims(db, tp);
+        self.store_mut(db).set_u32_raw(db.rec, db.pos, 0);
+        true
+    }
+
     pub fn refill_keeps(&self, db: &DbRef, tp: u16) -> bool {
         (db.rec, db.pos) == (1, 8)
             && (db.store_nr as usize) < self.allocations.len()
