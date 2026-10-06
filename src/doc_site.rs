@@ -201,7 +201,7 @@ pub fn library_pages(
         let shown = lock
             .and_then(|v| pkg.versions.values().find(|ver| ver.semver == v))
             .unwrap_or(newest);
-        pages.push(library_page(name, desc, shown));
+        pages.push(library_page(name, desc, shown, here));
     }
     for (cat, lines) in &groups {
         let _ = write!(list, "## {cat}\n\n");
@@ -224,11 +224,30 @@ pub fn library_pages(
 /// `self`, then the free items — or, when the index records no surface for that version, where
 /// to read it instead.
 #[cfg(feature = "registry")]
-fn library_page(name: &str, desc: &str, shown: &crate::registry_index::Version) -> Page {
+fn library_page(
+    name: &str,
+    desc: &str,
+    shown: &crate::registry_index::Version,
+    installed: Option<&str>,
+) -> Page {
     let mut page = format!(
         "[← libraries](libraries.md)\n\n# {name} {}\n\n{desc}\n\n",
         shown.semver
     );
+    // P5 — where to read on: the API page always, the guide when the installed copy has one,
+    // and how to get it when it is not installed.
+    let site = crate::documentation::SITE_BASE;
+    let _ = write!(page, "[API]({site}lib-{name}-api.html)");
+    match installed {
+        Some(v) if has_guide(&crate::registry_index::extract_dir(name, v)) => {
+            let _ = write!(page, " · [guide]({site}lib-{name}-guide.html)");
+        }
+        Some(_) => page.push_str(" · no guide in the installed copy"),
+        None => {
+            let _ = write!(page, " · not installed here: `loft install {name}`");
+        }
+    }
+    page.push_str("\n\n");
     if shown.api.is_empty() {
         let _ = writeln!(
             page,
@@ -269,6 +288,15 @@ fn library_page(name: &str, desc: &str, shown: &crate::registry_index::Version) 
     }
 }
 
+/// Whether an installed library copy carries a guide: runnable `docs/*.loft` pages, which
+/// gendoc publishes as `lib-<name>-guide.html`.
+#[cfg(feature = "registry")]
+fn has_guide(dir: &Path) -> bool {
+    std::fs::read_dir(dir.join("docs")).is_ok_and(|mut d| {
+        d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "loft")))
+    })
+}
+
 /// @PLN183 P4/P5 — a library's card for a hover: which library, the version this program
 /// uses, what it is, and where its guide and API pages are.  `dir` is the installed copy the
 /// program resolved (`~/.loft/registry/<name>-<version>/`); its `docs/` says whether a guide
@@ -286,9 +314,7 @@ pub fn library_card(dir: &Path) -> Option<String> {
         .ok()
         .and_then(|i| i.packages.get(name).and_then(|p| p.description.clone()))
         .unwrap_or_default();
-    let has_guide = std::fs::read_dir(dir.join("docs")).is_ok_and(|mut d| {
-        d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x == "loft")))
-    });
+    let has_guide = has_guide(dir);
     let mut card = format!("**library `{name}`** {version}");
     if !desc.is_empty() {
         let _ = write!(card, " — {desc}");

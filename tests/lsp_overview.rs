@@ -397,3 +397,71 @@ fn hover_names_the_construct_the_operator_and_the_library() {
     s.end();
     let _ = std::fs::remove_dir_all(&home);
 }
+
+/// P5's guard over the libraries half: every library in the index has a line on
+/// `libraries.md` and a page, and every public item of the version shown is on that page,
+/// under the type it takes as `self` or among the free items.
+#[cfg(feature = "registry")]
+#[test]
+fn every_library_item_is_on_its_page() {
+    let json = r#"{"schema_version":1,"updated":"2026-10-02","packages":{
+      "geom":{"description":"Points and shapes.","categories":["graphics"],"versions":{
+        "0.1.0":{"url":"u","sha256":"0","size":1,"loft":">=2026.1.0","published":"2026-08-01","api":[
+          {"sig":"pub fn area(self: Rect) -> float","doc":"The old area."}]},
+        "0.2.0":{"url":"u","sha256":"0","size":1,"loft":">=2026.1.0","published":"2026-09-01","api":[
+          {"sig":"pub fn area(self: Rect) -> float","doc":"The area of `r`."},
+          {"sig":"pub fn width(self: Rect) -> float","doc":"How wide `r` is."},
+          {"sig":"pub struct Rect { w: float, h: float }","doc":"A rectangle."}]}}},
+      "old":{"description":"Before the api field.","categories":[],"versions":{
+        "0.1.0":{"url":"u","sha256":"0","size":1,"loft":">=2026.1.0","published":"2026-01-01"}}}}}"#;
+    let idx = loft::registry_index::parse_index(json).expect("fixture index");
+    let page = |pages: &[loft::doc_site::Page], name: &str| {
+        pages
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.text.clone())
+            .unwrap_or_default()
+    };
+    // Nothing locked, nothing installed: the newest surface, and how to install.
+    let pages = loft::doc_site::library_pages(Ok(&idx), &[], &[]);
+    let list = page(&pages, "libraries.md");
+    assert!(
+        list.contains("[geom](lib-geom.md)") && list.contains("[old](lib-old.md)"),
+        "{list}"
+    );
+    let geom = page(&pages, "lib-geom.md");
+    for item in &idx.packages["geom"].versions["0.2.0"].api {
+        assert!(
+            geom.contains(&item.sig),
+            "`{}` missing from its page:\n{geom}",
+            item.sig
+        );
+    }
+    assert!(
+        geom.contains("## Rect") && geom.contains("## Types and functions"),
+        "{geom}"
+    );
+    assert!(
+        geom.contains("not installed here: `loft install geom`"),
+        "{geom}"
+    );
+    assert!(page(&pages, "lib-old.md").contains("does not record the public surface"));
+    // The project locks 0.1.0: that surface, not the newest.
+    let locked = vec![("geom".to_string(), "0.1.0".to_string())];
+    let pinned = page(
+        &loft::doc_site::library_pages(Ok(&idx), &locked, &[]),
+        "lib-geom.md",
+    );
+    assert!(
+        pinned.contains("# geom 0.1.0") && pinned.contains("The old area."),
+        "{pinned}"
+    );
+    assert!(
+        !pinned.contains("How wide"),
+        "the newest surface leaked in: {pinned}"
+    );
+    // No index here: the page says so instead of going missing.
+    let none =
+        loft::doc_site::library_pages(Err("no registry index on this machine yet"), &[], &[]);
+    assert!(page(&none, "libraries.md").contains("no registry index"));
+}
