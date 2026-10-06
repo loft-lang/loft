@@ -213,7 +213,9 @@ change even though the field pointer is unchanged.
               is the largest of its fields', and size(τ) is a multiple of align(τ) — so the
               element after it in a collection, and the field after it when it is inlined,
               start aligned too.  A record starts on an 8-byte word, so an aligned offset is an
-              aligned address, and the store's reads and writes are aligned accesses.  The
+              aligned address.  The compiler checks the rule once, over every finished layout
+              (`Stores::validate_all_layouts`); no access re-tests it at run time, and the
+              store's reads and writes claim no alignment, so a defect cannot become UB.  The
               bytes of a FOREIGN store (a producer's buffer), the interpreter's bytecode stream
               and its stack frames (laid out by the frame allocator) are outside the rule: all
               three are read unaligned.  (@C138)

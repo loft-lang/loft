@@ -1459,6 +1459,9 @@ impl Stores {
                 _ => {}
             }
         }
+        // `@FR-L-Align` (@C138) — checked here, at compile time, and nowhere at run time:
+        // `Store::read` / `Store::write` claim no alignment and do not re-test it per access.
+        issues.extend(self.alignment_violations());
         // Dedup — recursion can produce the same issue multiple times
         // when a struct is referenced from many places.
         issues.sort();
@@ -3851,6 +3854,35 @@ mod layout_tests {
         let s = Stores::new();
         let unexpected = s.validate_all_layouts();
         assert!(unexpected.is_empty(), "{unexpected:?}");
+    }
+
+    /// `@FR-L-Align` (@C138) — the compiler's layout check reports a field the layout left
+    /// off its natural boundary.  `Store::read` / `Store::write` do not re-test alignment at
+    /// run time, so this is where a misaligned layout is caught.
+    #[test]
+    fn validate_all_layouts_reports_a_misaligned_field() {
+        let mut s = Stores::new();
+        let int_c = s.name("integer");
+        let bool_c = s.name("boolean");
+        let pair = s.structure("Pair", 0);
+        s.field(pair, "b", bool_c);
+        s.field(pair, "n", int_c);
+        s.finish();
+        let clean = s.validate_all_layouts();
+        assert!(clean.is_empty(), "{clean:?}");
+        // The plant: `n` one byte off its 8-byte boundary.
+        let Parts::Struct(fields) = &mut s.types[pair as usize].parts else {
+            panic!("Pair is a struct");
+        };
+        let n = fields.iter_mut().find(|f| f.name == "n").expect("Pair.n");
+        n.position += 1;
+        let issues = s.validate_all_layouts();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.starts_with("Pair.n: offset") && i.contains("alignment 8")),
+            "{issues:?}"
+        );
     }
 
     /// Build the shape that makes `finish()` promote: `Node` is the content of an

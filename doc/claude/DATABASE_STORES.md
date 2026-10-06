@@ -139,11 +139,11 @@ asymmetry stays recorded.
 ### Storing a scalar: `Store::write`, never a reference into the slot
 
 Every field and element offset is a multiple of its scalar's alignment (`(L-Align)`, @C138), and a
-record starts on an 8-byte word, so `Store::read` / `Store::write` are aligned `ptr::read` /
-`ptr::write` behind one alignment test that panics, in a release build too, on an offset the layout
-did not produce. Two kinds of bytes the layout does not place are read unaligned: a foreign store's,
-which are a producer's buffer, and the interpreter's stack frames, which the frame allocator lays out
-as it lays out the bytecode. Store a scalar through `Store::write` rather than
+record starts on an 8-byte word. The compiler checks that once (`Stores::validate_all_layouts`);
+`Store::read` / `Store::write` re-test nothing at run time and claim no alignment
+(`read_unaligned` / `write_unaligned`, one `mov` on x86-64), so they are defined at any offset — the
+layout's own bytes, a foreign store's (a producer's buffer) and the interpreter's stack frames alike.
+Store a scalar through `Store::write` rather than
 `&mut *ptr.cast::<T>()` all the same — the write is where the lock refusal, the bounds check and the
 shadow hook live. `Store::addr_mut` exists
 for the values `write` cannot store by value — a `String` or a `Str` whose heap buffer the caller

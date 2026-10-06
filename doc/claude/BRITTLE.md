@@ -33,17 +33,16 @@ red-black free-block tree lives *inside* the free blocks themselves
 (fields FL_LEFT / FL_RIGHT / FL_COLOR are u32 offsets into unrelated
 free blocks).
 
-⚠ **Every scalar in the buffer is aligned, and the accessors check it.**
+⚠ **Every scalar in the buffer is aligned, and the compiler checks it.**
 The allocation is `Layout::from_size_align(size * 8, 8)` and an address
 is `base + rec * 8 + fld`, so for any alignment up to eight the
 address's alignment IS `fld`'s, and the layout makes every `fld` a
-multiple of its scalar's alignment (`(L-Align)`, @C138).  `read` /
-`write` are aligned accesses behind one test that panics on a
-misaligned `fld`; `addr` / `addr_mut` hand out `&T` / `&mut T` for the
-values that cannot be copied (a `String` in a slot owns a heap buffer)
-and assert the same.  A foreign store's bytes (a producer's buffer)
-and the interpreter's stack frames are not placed by the layout and
-are read unaligned.
+multiple of its scalar's alignment (`(L-Align)`, @C138), which
+`Stores::validate_all_layouts` checks once at compile time.  `read` /
+`write` claim no alignment and test none — defined at any offset, so a
+layout defect answers a wrong value, never UB; `addr` / `addr_mut`
+hand out `&T` / `&mut T` for the values that cannot be copied (a
+`String` in a slot owns a heap buffer) and assert alignment per call.
 
 **Signal:**
 - `Allocating a used store` panic
