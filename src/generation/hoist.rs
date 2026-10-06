@@ -3274,6 +3274,107 @@ pub struct RepeatLiteral<'a> {
     pub size: u32,
 }
 
+/// `@FR-R-PushFill`'s run clause — a straight-line RUN of byte appends to one vector,
+/// `v += [a]; v += [b]; …`, each lowered to `Insert([OpPreAllocVector(v, 1, 1),
+/// OpPushByte(v, min, x)])` with only line markers between them.  Answers the vector, the
+/// shared `min`, each pushed value in order, and the index of the run's last statement.
+///
+/// A value may read no variable that could reach `v`'s store — `v`'s root itself, or any
+/// local that is not a scalar (a view of `v` would read the length the open window has not
+/// written back yet) — and may call nothing but an operator.  Two pushes at least: one is
+/// already a single append.
+pub struct PushRun<'a> {
+    pub vector: &'a Value,
+    pub min: &'a Value,
+    pub vals: Vec<&'a Value>,
+    pub last: usize,
+}
+
+/// Recognise a [`PushRun`] starting at statement `at`.
+#[must_use]
+pub fn push_run<'a>(
+    ops: &'a [Value],
+    at: usize,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Option<PushRun<'a>> {
+    let named = |v: &'a Value, n: &str| -> Option<&'a [Value]> {
+        match v.unspan() {
+            Value::Call(d, a)
+                if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
+            {
+                Some(a)
+            }
+            _ => None,
+        }
+    };
+    // One append: `Insert([pre, push])`, or — once a block flattens the insert — the two
+    // statements `pre`, `push` in a row.  Answers the vector, `min`, the value and the index
+    // of the statement after it.
+    let one = |i: usize| -> Option<(&'a Value, &'a Value, &'a Value, usize)> {
+        let (pre, push, next) = match ops.get(i)?.unspan() {
+            Value::Insert(ins) => match &ins[..] {
+                [pre, push] => (pre, push, i + 1),
+                _ => return None,
+            },
+            _ => (ops.get(i)?, ops.get(i + 1)?, i + 2),
+        };
+        let [v, Value::Int(1), Value::Int(1)] = named(pre, "OpPreAllocVector")? else {
+            return None;
+        };
+        let [v2, min, val] = named(push, "OpPushByte")? else {
+            return None;
+        };
+        (v.unspan() == v2.unspan()).then_some((v, min, val, next))
+    };
+    let (vector, min, first, mut next) = one(at)?;
+    let (root, _) = vector_path(data, vector)?;
+    let plain = |val: &Value| {
+        let mut ok = true;
+        val.walk(&mut |n| match n {
+            Value::Var(x) if *x == root || !crate::data::is_scalar(vars.tp(*x).base()) => {
+                ok = false;
+            }
+            Value::Call(d, _) if !data.def(*d).name().starts_with("Op") => ok = false,
+            // A value with statements of its own — a `??` temp bound in a block, a branch —
+            // is emitted with pre-evaluations the window's single expression cannot carry.
+            Value::CallRef(..)
+            | Value::Block(_)
+            | Value::Loop(_)
+            | Value::Insert(_)
+            | Value::Set(..)
+            | Value::If(..) => ok = false,
+            _ => {}
+        });
+        ok
+    };
+    if !plain(first) {
+        return None;
+    }
+    let mut pushed = vec![first];
+    let mut last = next - 1;
+    loop {
+        while matches!(ops.get(next), Some(Value::Line(_))) {
+            next += 1;
+        }
+        let Some((v, m, val, after)) = one(next) else {
+            break;
+        };
+        if v.unspan() != vector.unspan() || m.unspan() != min.unspan() || !plain(val) {
+            break;
+        }
+        pushed.push(val);
+        last = after - 1;
+        next = after;
+    }
+    (pushed.len() >= 2).then_some(PushRun {
+        vector,
+        min,
+        vals: pushed,
+        last,
+    })
+}
+
 /// Recognise [`RepeatLiteral`] in statement `first` followed by statement `second`.
 #[must_use]
 pub fn repeat_literal<'a>(

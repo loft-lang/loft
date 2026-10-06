@@ -598,7 +598,7 @@ cbor	11373248d	R-Invariant	20
 cbor	11373248d	R-KernelSum	1
 cbor	11373248d	R-Leaf	113
 cbor	11373248d	R-LeafChain	32
-cbor	11373248d	R-LitDiv	38
+cbor	11373248d	R-LitDiv	71
 cbor	11373248d	R-LoopBuffer	2
 cbor	11373248d	R-MaskRange	5
 cbor	11373248d	R-Mint	4
@@ -607,8 +607,9 @@ cbor	11373248d	R-Place	3
 cbor	11373248d	R-Push	10
 cbor	11373248d	R-PushFill	9
 cbor	11373248d	R-PushFill/record	2
+cbor	11373248d	R-PushFill/run	8
 cbor	11373248d	R-PushRec	2
-cbor	11373248d	R-Range	171
+cbor	11373248d	R-Range	202
 cbor	11373248d	R-RangedCall	7
 cbor	11373248d	R-RecPtr	8
 cbor	11373248d	R-RefillBuffer	2
@@ -1568,13 +1569,14 @@ pluginabi	0def11e52	R-Invariant	4
 pluginabi	0def11e52	R-KernelSum	1
 pluginabi	0def11e52	R-Leaf	116
 pluginabi	0def11e52	R-LeafChain	32
-pluginabi	0def11e52	R-LitDiv	34
+pluginabi	0def11e52	R-LitDiv	67
 pluginabi	0def11e52	R-MoveLast	3
 pluginabi	0def11e52	R-Place	3
 pluginabi	0def11e52	R-PureReuse	1
 pluginabi	0def11e52	R-Push	9
 pluginabi	0def11e52	R-PushFill	7
-pluginabi	0def11e52	R-Range	117
+pluginabi	0def11e52	R-PushFill/run	8
+pluginabi	0def11e52	R-Range	148
 pluginabi	0def11e52	R-RangedCall	10
 pluginabi	0def11e52	R-RecPtr	2
 pluginabi	0def11e52	R-RefillBuffer	2

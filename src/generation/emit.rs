@@ -2839,6 +2839,60 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
+    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): reserve the run's bytes
+    /// once and write them through one push window, closed after the last.  A vector with
+    /// no record takes the statements as they stand — the runtime's own refusal.
+    fn output_push_run(
+        &mut self,
+        w: &mut dyn Write,
+        run: &super::hoist::PushRun<'_>,
+        operators: &[Value],
+        at: usize,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(run.vector)?;
+        let min = self.expr_string(run.min)?;
+        let k = run.vals.len();
+        self.hoist_counter += 1;
+        let n = self.hoist_counter;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "if !({vec}).is_null() && ({vec}).rec != 0 {{ //@FR-R-PushFill run of {k}"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations); let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations);"
+        )?;
+        for val in &run.vals {
+            let e = self.expr_string(val)?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "  {{ let __pv = loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32); unsafe {{ stores.push_windowed::<u8, false>(&mut __ph_{n}, &mut __pw_{n}, &({vec}), 1, __pv) }} }};"
+            )?;
+        }
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  stores.push_window_close::<false>(&mut __ph_{n}, __pw_{n}.len, &({vec}));"
+        )?;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        for op in &operators[at..=run.last] {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            self.indent(w)?;
+            self.output_code_inner(w, op)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-PushFill/run", 1);
+        Ok(())
+    }
+
     /// `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are one
     /// fill of the tail; the two statements stand as the fallback for a count or a vector the
     /// fill refuses.
@@ -3424,6 +3478,27 @@ impl Output<'_> {
             {
                 self.output_repeat_literal(w, &rl, v, next)?;
                 repeat_skip = Some(vnr + 1);
+                continue;
+            }
+            // `@FR-R-PushFill`'s run clause — a straight-line run of byte appends to one
+            // vector reserves once and writes through one window.
+            if !self.hoist_disabled
+                && !self.push_fill_disabled
+                && !self.push_window_disabled
+                && !self.in_coroutine_body
+                && crate::keys::push_run_enabled()
+                && let Some(run) = super::hoist::push_run(
+                    operators,
+                    vnr,
+                    self.data,
+                    self.data.def(self.def_nr).variables(),
+                )
+                && let Some(path) = super::hoist::vector_path(self.data, run.vector)
+                && self.active_push_header(&path).is_none()
+                && !self.push_windows.iter().any(|(p, _)| *p == path)
+            {
+                self.output_push_run(w, &run, operators, vnr)?;
+                repeat_skip = Some(run.last);
                 continue;
             }
             // loft#1753 — a statement that calls into a frame first records the line it calls

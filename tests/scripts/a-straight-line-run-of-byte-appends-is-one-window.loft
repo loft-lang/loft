@@ -1,0 +1,143 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-PushFill`'s run clause — a straight-line run of byte appends to one vector,
+// `v += [a]; v += [b]; …`, answers the same bytes and the same length as the appends one by
+// one.  The native build reserves the run once and writes it through one push window; the
+// interpreter appends one at a time and is the reference.  Every value is computed by hand.
+// c1–c3 take the run; c5 (it reads the vector) and c6 (the loop holds the vector's push
+// header) decline it, and the field cells c4/c7 are not runs today — each answers the same.
+//
+// @falsified-at: none — a keeps-the-answer guard: the build before the clause answers every
+//   cell right, so no control ref can fail it.  Scored by a PLANT instead: two windowed
+//   writes of a run of 3 swapped in the emitted Rust fail at `run of 3: 3,25,232`; the
+//   unplanted emission passes every cell.
+//   CHANNEL: value.  HOLDS: both backends exact on every cell, `LOFT_NO_PUSH_RUN=1` equal,
+//   leak and strict-store clean.
+
+struct Packet { tag: integer, body: vector<u8> }
+struct Maybe { body: vector<u8> }
+
+fn joined(v: vector<u8>) -> text {
+  s = "";
+  for b in v { s += "{b as integer},"; }
+  s
+}
+
+fn signed_joined(v: vector<i8>) -> text {
+  s = "";
+  for b in v { s += "{b as integer},"; }
+  s
+}
+
+// c1 — runs of 2, 3, 5 and 9 into an empty vector: the CBOR head's own shapes.
+fn head_bytes(arg: integer) -> vector<u8> {
+  buf: vector<u8> = [];
+  if arg < 256 {
+    buf += [(24 & 255) as u8];
+    buf += [(arg & 255) as u8];
+  } else if arg < 65536 {
+    buf += [(25 & 255) as u8];
+    buf += [((arg / 256) & 255) as u8];
+    buf += [((arg % 256) & 255) as u8];
+  } else if arg < 4294967296 {
+    buf += [(26 & 255) as u8];
+    buf += [((arg / 16777216 % 256) & 255) as u8];
+    buf += [((arg / 65536 % 256) & 255) as u8];
+    buf += [((arg / 256 % 256) & 255) as u8];
+    buf += [((arg % 256) & 255) as u8];
+  } else {
+    buf += [(27 & 255) as u8];
+    buf += [((arg / 72057594037927936 % 256) & 255) as u8];
+    buf += [((arg / 281474976710656 % 256) & 255) as u8];
+    buf += [((arg / 1099511627776 % 256) & 255) as u8];
+    buf += [((arg / 4294967296 % 256) & 255) as u8];
+    buf += [((arg / 16777216 % 256) & 255) as u8];
+    buf += [((arg / 65536 % 256) & 255) as u8];
+    buf += [((arg / 256 % 256) & 255) as u8];
+    buf += [((arg % 256) & 255) as u8];
+  }
+  buf
+}
+
+fn test_runs_of_two_three_five_and_nine() {
+  a = head_bytes(200);
+  b = head_bytes(1000);
+  c = head_bytes(100000);
+  d = head_bytes(4294967296 + 258);
+  assert(joined(a) == "24,200,", "run of 2: {joined(a)}");
+  assert(joined(b) == "25,3,232,", "run of 3: {joined(b)}");
+  assert(joined(c) == "26,0,1,134,160,", "run of 5: {joined(c)}");
+  assert(joined(d) == "27,0,0,0,1,0,0,1,2,", "run of 9: {joined(d)}");
+  assert(len(a) == 2 && len(b) == 3 && len(c) == 5 && len(d) == 9, "lengths");
+}
+
+// c2 — a run onto a vector that already holds bytes.
+fn test_a_run_after_existing_bytes() {
+  v: vector<u8> = [];
+  for i in 0..20 { v += [(i & 255) as u8]; }
+  v += [(250 & 255) as u8];
+  v += [(251 & 255) as u8];
+  v += [(252 & 255) as u8];
+  assert(len(v) == 23, "length {len(v)}, want 23");
+  assert((v[19]? as integer) == 19 && (v[20]? as integer) == 250 && (v[22]? as integer) == 252, "tail {joined(v)}");
+}
+
+// c3 — a signed byte vector: the stored byte carries the type's bias.
+fn test_signed_bytes() {
+  s: vector<i8> = [];
+  s += [(0 - 128) as i8];
+  s += [(0 - 1) as i8];
+  s += [0 as i8];
+  s += [127 as i8];
+  assert(signed_joined(s) == "-128,-1,0,127,", "signed run: {signed_joined(s)}");
+}
+
+// c4 — a run into a struct's vector field.
+fn test_a_run_into_a_field() {
+  p = Packet { tag: 7, body: [] };
+  p.body += [(1 & 255) as u8];
+  p.body += [(2 & 255) as u8];
+  p.body += [(3 & 255) as u8];
+  assert(joined(p.body) == "1,2,3," && p.tag == 7, "field run: {joined(p.body)} tag {p.tag}");
+}
+
+// c5 — values that read the vector itself decline the run and still answer right: each
+// append sees the length the one before it wrote.
+fn test_values_that_read_the_vector() {
+  v: vector<u8> = [];
+  v += [(len(v) & 255) as u8];
+  v += [(len(v) & 255) as u8];
+  v += [(len(v) & 255) as u8];
+  assert(joined(v) == "0,1,2,", "self-reading run: {joined(v)}");
+}
+
+// c6 — a run inside a loop that pushes to the same vector: two bytes per pass.
+fn test_a_run_inside_a_pushing_loop() {
+  v: vector<u8> = [];
+  for i in 0..4 {
+    v += [(i & 255) as u8];
+    v += [((i * 10) & 255) as u8];
+  }
+  assert(joined(v) == "0,0,1,10,2,20,3,30,", "loop runs: {joined(v)}");
+}
+
+// c7 — a run into a field that holds no vector yet takes the appends one by one.
+fn test_a_run_into_an_absent_field() {
+  m = Maybe { };
+  m.body += [(9 & 255) as u8];
+  m.body += [(8 & 255) as u8];
+  assert(joined(m.body) == "9,8,", "absent field: {joined(m.body)}");
+}
+
+// c8 — a value carrying a `??` temp is emitted with statements of its own, so the run
+// declines it; the appends still answer in order.
+fn maybe(i: integer) -> integer? { if i > 1 { i } else { null } }
+
+fn test_values_with_a_fallback() {
+  v: vector<u8> = [];
+  v += [((maybe(1) ?? 7) & 255) as u8];
+  v += [((maybe(2) ?? 7) & 255) as u8];
+  v += [((maybe(3) ?? 7) & 255) as u8];
+  assert(joined(v) == "7,2,3,", "fallback run: {joined(v)}");
+}

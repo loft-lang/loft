@@ -341,6 +341,12 @@ second pushed vector keep the header mints.
 
 ## Guarded reads and integer arithmetic
 
+**`LOFT_NO_PUSH_RUN=1`** (`@FR-R-PushFill`'s run clause, default-ON, generation time,
+`--native` only) pushes a straight-line run of byte appends (`v += [a]; v += [b]; …`) one by
+one through the runtime again — with it off, the run reserves once and writes through one
+push window (cbor's `head`, the encode_bytes probe −13 %).  The first bisect step for a wrong
+byte or length after such a run.
+
 **`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
 sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
 fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls

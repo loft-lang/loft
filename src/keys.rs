@@ -1644,6 +1644,14 @@ pub fn rebind_own_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_OWN_BUFFER"))
 }
 
+/// `LOFT_NO_PUSH_RUN=1` — a straight-line run of byte appends pushes each through the
+/// runtime again (`@FR-R-PushFill`'s run clause off): the first bisect step for a wrong byte
+/// or length after `v += [a]; v += [b]; …`.
+pub fn push_run_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_RUN"))
+}
+
 /// `LOFT_NO_TYPED_READ=1` — every native `f#read` goes through the generic `OpReadFile`
 /// (`@FR-R-TypedRead` off): the first bisect step for a wrong value or a wrong `#next` out of
 /// a fixed-width integer read.
