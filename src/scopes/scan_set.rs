@@ -1471,9 +1471,15 @@ impl Scopes<'_> {
         // preamble reached the bind dispatch as `Set(v, Insert(…))` and never had its result
         // copied or adopted per `@FR-O-Move` — a callee answering its by-value parameter was
         // ALIASED and then freed as the local's own (loft#1884).  The position stays on the
-        // final value.
+        // final value.  Not where the scan already reads the value as a construction DELIVERED
+        // through the call (`delivered_work_ref`, loft#1575's `s = me(Bx { … })`): the binding
+        // adopts that work-ref's store and the work-ref is disarmed, so the bind must stay the
+        // plain adopt — flattened, the split would copy and the disarmed store would leak.
+        let delivered = delivered_work_ref(value, function, data).is_some();
         let scanned = match scanned {
-            Value::Span(b) if matches!(&b.1, Value::Insert(ops) if ops.len() >= 2) => {
+            Value::Span(b)
+                if !delivered && matches!(&b.1, Value::Insert(ops) if ops.len() >= 2) =>
+            {
                 let (pos, inner) = *b;
                 let Value::Insert(mut ops) = inner else {
                     unreachable!("matched as an Insert above")
