@@ -8460,7 +8460,7 @@ impl Parser {
                         "a `match` over an iterator read more than {limit} elements (max_lookahead) — \
                          the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD"
                     )),
-                    Value::str(match_pos.file),
+                    Value::str(match_pos.file.as_str()),
                     Value::Int(match_pos.line as i32),
                 ],
             );
@@ -13673,7 +13673,7 @@ impl Parser {
             // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
             let owned = def.source == crate::data::MAIN_SOURCE
                 || (def.source == crate::data::STD_SOURCE
-                    && !crate::file_access::is_stdlib_source(def.position.file));
+                    && !crate::file_access::is_stdlib_source(def.position.file.as_str()));
             if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }
@@ -19583,7 +19583,7 @@ impl Parser {
     /// Reads the line at `pos.file:pos.line`, finds `assert(`, and extracts
     /// the text up to the matching `)`.
     fn extract_assert_expr(pos: &crate::lexer::Position) -> String {
-        let line = Self::read_source_line(pos.file, pos.line);
+        let line = Self::read_source_line(pos.file.as_str(), pos.line);
         // Find "assert(" and extract the condition
         if let Some(start) = line.find("assert(") {
             let after = start + 7; // skip "assert("
@@ -19692,7 +19692,10 @@ impl Parser {
             let (a_file, a_line) = if list.len() >= 4 {
                 (list[2].clone(), list[3].clone())
             } else {
-                (Value::str(call_pos.file), Value::Int(call_pos.line as i32))
+                (
+                    Value::str(call_pos.file.as_str()),
+                    Value::Int(call_pos.line as i32),
+                )
             };
             let d_nr = self.data.def_nr("n_assert");
             *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
@@ -19712,7 +19715,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(call_pos.file),
+                    Value::str(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -19734,7 +19737,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(call_pos.file),
+                    Value::str(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -20418,7 +20421,7 @@ impl Parser {
                 args.push(Value::str(""));
                 tps.push(Type::Text(Deps::none()));
             }
-            args.push(Value::str(call_pos.file));
+            args.push(Value::str(call_pos.file.as_str()));
             tps.push(Type::Text(Deps::none()));
             args.push(Value::Int(call_pos.line as i32));
             tps.push(Type::Integer(IntegerSpec::wide()));

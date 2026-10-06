@@ -352,7 +352,7 @@ impl Parser {
             if d.def_type != DefType::Function
                 || d.source != source
                 || d.synthetic.is_some()
-                || crate::file_access::is_stdlib_source(d.position.file)
+                || crate::file_access::is_stdlib_source(d.position.file.as_str())
             {
                 continue;
             }
@@ -524,7 +524,7 @@ impl Parser {
         }
         self.data.mark_synthetic(fn_nr, "enum_dispatcher");
         self.context = fn_nr;
-        self.vars = Function::new(&name, self.data.def(from_nr).position().file);
+        self.vars = Function::new(&name, self.data.def(from_nr).position().file.as_str());
         self.data
             .set_returned(fn_nr, self.data.def(from_nr).returned().clone());
         for a in &args {
@@ -2148,7 +2148,8 @@ impl Parser {
             _ => None,
         }
         .filter(|d| {
-            self.default || !crate::file_access::is_stdlib_source(self.data.def(*d).position().file)
+            self.default
+                || !crate::file_access::is_stdlib_source(self.data.def(*d).position().file.as_str())
         });
         let Some(own) = own else {
             diagnostic!(
@@ -2814,7 +2815,7 @@ impl Parser {
         if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
             self.data.user_operator_conversions = true;
         }
-        self.vars = Function::new(&fn_name, self.lexer.pos().file);
+        self.vars = Function::new(&fn_name, self.lexer.pos().file.as_str());
         // @PLN110 3a — var numbers are per-function, so a stale `len(X)` binding from
         // the previous body would attach to an unrelated local here.
         self.len_bound_locals.clear();
@@ -3018,7 +3019,7 @@ impl Parser {
         let src_file = self.data.def(self.context).position().file;
         if let Some(profile) = self
             .sandbox
-            .designation_for(&fn_name, src_file)
+            .designation_for(&fn_name, src_file.as_str())
             .map(str::to_string)
         {
             self.def_sandbox.insert(self.context, profile);
@@ -7605,7 +7606,7 @@ impl Parser {
         let outer_context = self.context;
         let outer_vars = std::mem::replace(
             &mut self.vars,
-            Function::new(fn_name, self.lexer.pos().file),
+            Function::new(fn_name, self.lexer.pos().file.as_str()),
         );
         let outer_loop = self.in_loop;
         self.in_loop = false;
@@ -7843,7 +7844,7 @@ impl Parser {
                 .data
                 .add_attribute(&mut self.lexer, c_nr, "n", int_tp.clone());
             let file = self.data.def(d_nr).position().file;
-            let mut vars = Function::new(&name, file);
+            let mut vars = Function::new(&name, file.as_str());
             let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
             vars.become_argument(self_var);
             vars.defined(self_var);
@@ -7864,7 +7865,7 @@ impl Parser {
     fn fill_copy_cascade(&mut self, t: u32, c_nr: u32) {
         let name = self.hook_cascade_name(Hook::Copy, t);
         let file = self.data.def(t).position().file;
-        let mut vars = Function::new(&name, file);
+        let mut vars = Function::new(&name, file.as_str());
         let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
@@ -8096,7 +8097,7 @@ impl Parser {
             .position(self.data.def(first).known_type(), "enum");
         let name = self.hook_cascade_name(hook, t);
         let file = self.data.def(t).position().file;
-        let mut vars = Function::new(&name, file);
+        let mut vars = Function::new(&name, file.as_str());
         let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
@@ -8526,7 +8527,7 @@ impl Parser {
     fn fill_keyed_frames(&mut self, w_nr: u32, tp: &Type) {
         let name = self.data.def(w_nr).name.clone();
         let file = self.data.def(w_nr).position().file;
-        let mut vars = Function::new(&name, file);
+        let mut vars = Function::new(&name, file.as_str());
         let self_var = vars.add_variable("self", tp, &mut self.lexer);
         vars.become_argument(self_var);
         vars.defined(self_var);
@@ -8595,7 +8596,7 @@ impl Parser {
     fn fill_handle_release(&mut self, t: u32, c_nr: u32) {
         let name = Self::drop_cascade_name(&self.data, t);
         let file = self.data.def(t).position().file;
-        let mut vars = Function::new(&name, file);
+        let mut vars = Function::new(&name, file.as_str());
         let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
@@ -8612,7 +8613,7 @@ impl Parser {
     fn fill_drop_cascade(&mut self, t: u32, c_nr: u32) {
         let name = Self::drop_cascade_name(&self.data, t);
         let file = self.data.def(t).position().file;
-        let mut vars = Function::new(&name, file);
+        let mut vars = Function::new(&name, file.as_str());
         // The declaration's own answer, so the body and the signature cannot disagree about
         // what `self` is — a collection's cascade takes the collection (D-heap-13).
         let self_tp = self.cascade_self_type(t);

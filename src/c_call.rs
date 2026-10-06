@@ -312,7 +312,7 @@ pub fn library_symbol_table(data: &crate::data::Data) -> Vec<(String, Vec<String
         let Some(Ok(sig)) = crate::c_signature::of(data, d_nr, target) else {
             continue;
         };
-        if let Some(pkg) = data.c_owner_pkg(def.position().file) {
+        if let Some(pkg) = data.c_owner_pkg(def.position().file.as_str()) {
             by_pkg.entry(pkg).or_default().push(sig.symbol);
         }
     }

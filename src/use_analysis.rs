@@ -5594,7 +5594,7 @@ fn raise_copy_refusals(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        def.position.file
+        def.position.file.as_str()
     };
     let mut seen = HashSet::default();
     for (pos, line, refusal, tp) in std::mem::take(&mut cx.refusals) {
@@ -5605,7 +5605,7 @@ fn raise_copy_refusals(
             continue;
         }
         let (file, line, col) = match &pos {
-            Some(p) if !p.file.is_empty() => (p.file, p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, line, 0),
         };
@@ -5659,14 +5659,14 @@ fn raise_spent_reads(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        def.position.file
+        def.position.file.as_str()
     };
     for read in crate::spent::take(def) {
         if read.tp != u32::MAX && data.drop_cascade_nr(read.tp) == u32::MAX {
             continue;
         }
         let (file, line, col) = match &read.pos {
-            Some(p) if !p.file.is_empty() => (p.file, p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, read.line, 0),
         };
@@ -6421,7 +6421,7 @@ pub fn warn_variant_overwritten(
         let file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file
+            def.position.file.as_str()
         };
         let mut hits: Vec<(u16, u16, u32, u32)> = Vec::new();
         find_variant_arms(data, &def.code, &mut |place, tag, arm| {
@@ -6658,7 +6658,7 @@ pub fn warn_linked_group_append(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file
+            def.position.file.as_str()
         };
         let mut cx = GroupAppends {
             data,
@@ -6765,7 +6765,7 @@ impl GroupAppends<'_> {
                 let file = if at.file.is_empty() {
                     self.file
                 } else {
-                    at.file
+                    at.file.as_str()
                 };
                 let holder = filled[0];
                 let others = filled[1..]
@@ -6963,7 +6963,7 @@ pub fn warn_dead_stores(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file
+            def.position.file.as_str()
         };
         let func = &def.variables;
         let n = func.var_count();
@@ -7590,7 +7590,7 @@ pub fn warn_double_move(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file
+            def.position.file.as_str()
         };
         let mut cx = DoubleMove {
             data,
@@ -7626,7 +7626,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                at.file
+                at.file.as_str()
             };
             // Name the FACT, not the cure — the cure is `--explain`'s job. Both positions
             // matter to the reader: the second is where the defect is written, the first is
@@ -7680,7 +7680,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                at.file
+                at.file.as_str()
             };
             if cx.is_caller_owned(root) {
                 report_caller_owned_copy(diags, name, def.variables.is_argument(root), file, &at);
@@ -7726,7 +7726,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                at.file
+                at.file.as_str()
             };
             report_returned_parameter_member(
                 diags,
@@ -7931,7 +7931,7 @@ pub fn c_binding_call_unsupported(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            pos.file
+            pos.file.as_str()
         };
         let why = uncovered(data, d_nr).unwrap_or_default();
         diags.add_at_coded(
@@ -8182,7 +8182,7 @@ pub fn warn_lost_temp_writes(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file
+            def.position.file.as_str()
         };
         let mut found = Vec::new();
         let lifted = lifted_call_results(data, &def.code, &def.variables);
@@ -8197,7 +8197,7 @@ pub fn warn_lost_temp_writes(
         );
         for (callee, param, at) in found {
             let file = match &at {
-                Some(p) if !p.file.is_empty() => p.file,
+                Some(p) if !p.file.is_empty() => p.file.as_str(),
                 _ => def_file,
             };
             let (line, col) = at
@@ -8314,7 +8314,7 @@ pub fn superseded_fold_diagnostics(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            pos.file
+            pos.file.as_str()
         };
         let shown = def.display_name();
         // (a) the successor must resolve — as a free fn `n_<succ>`, or (if X is a
@@ -8466,11 +8466,15 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let def_file = if def.position.file.is_empty() {
                 fallback_file
             } else {
-                def.position.file
+                def.position.file.as_str()
             };
             // When even the line is unknown, fall back to line 0 + the fn name.
             let (file, line, col) = r.loc.as_ref().map_or((def_file, 0, 0), |p| {
-                let f = if p.file.is_empty() { def_file } else { p.file };
+                let f = if p.file.is_empty() {
+                    def_file
+                } else {
+                    p.file.as_str()
+                };
                 (f, p.line, p.pos)
             });
             let where_ = if r.loc.is_some() {

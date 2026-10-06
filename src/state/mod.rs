@@ -4034,7 +4034,7 @@ impl State {
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if std::path::Path::new(def.position.file).file_name() != Some(want) {
+            if std::path::Path::new(def.position.file.as_str()).file_name() != Some(want) {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -4057,7 +4057,7 @@ impl State {
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || std::path::Path::new(def.position.file).file_name() != Some(want)
+                || std::path::Path::new(def.position.file.as_str()).file_name() != Some(want)
             {
                 continue;
             }

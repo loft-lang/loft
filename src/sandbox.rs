@@ -552,7 +552,7 @@ pub enum CapViolation {
 pub fn def_library(data: &Data, def_nr: u32) -> Option<String> {
     let def = data.def(def_nr);
     let file = def.position().file;
-    let base = std::path::Path::new(file).file_stem()?.to_str()?;
+    let base = std::path::Path::new(file.as_str()).file_stem()?.to_str()?;
     // Strip a leading `\d+_` (stdlib module naming: `01_code` -> `code`).
     let name = match base.find('_') {
         Some(i) if i > 0 && base.as_bytes()[..i].iter().all(u8::is_ascii_digit) => &base[i + 1..],
@@ -821,7 +821,7 @@ pub fn describe_violation(
                  add `{libhint}` to `allow_libs` — a library holding sandboxed code cannot \
                  vet itself, and allow-listing it would disable the raw-write guard and \
                  under-report the data envelope for every helper in it.",
-                suggested_path_selector(data.def(symbol).position().file)
+                suggested_path_selector(data.def(symbol).position().file.as_str())
             )
         }
         CapViolation::UntaggedSymbol { .. } => format!(

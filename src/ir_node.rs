@@ -898,7 +898,7 @@ mod tests {
 
     fn pos() -> Position {
         Position {
-            file: "f.loft",
+            file: "f.loft".into(),
             line: 1,
             pos: 1,
         }

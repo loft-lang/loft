@@ -1444,7 +1444,7 @@ pub(crate) fn run_tests(
                     continue;
                 }
                 // Skip standard library / operators.
-                if crate::file_access::is_stdlib_source(def.position.file) {
+                if crate::file_access::is_stdlib_source(def.position.file.as_str()) {
                     continue;
                 }
                 // skip library functions loaded via `use`. Only run
@@ -2319,7 +2319,8 @@ pub(crate) fn run_tests(
                 if !def.native.is_empty() {
                     continue;
                 }
-                let Some(src) = coverage_path(def.position.file, &abs_file, pkg_root.as_deref())
+                let Some(src) =
+                    coverage_path(def.position.file.as_str(), &abs_file, pkg_root.as_deref())
                 else {
                     continue;
                 };

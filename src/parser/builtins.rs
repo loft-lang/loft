@@ -563,7 +563,7 @@ impl Parser {
             .data
             .add_attribute(&mut self.lexer, w_d_nr, "e", elem_tp.clone());
         self.data.set_returned(w_d_nr, ret_type.clone());
-        let mut wvars = crate::variables::Function::new(&wname, pos.file);
+        let mut wvars = crate::variables::Function::new(&wname, pos.file.as_str());
         let e_var = wvars.add_variable("e", elem_tp, &mut self.lexer);
         wvars.become_argument(e_var);
         wvars.defined(e_var);

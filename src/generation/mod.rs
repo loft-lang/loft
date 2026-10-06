@@ -6289,7 +6289,7 @@ impl Output<'_> {
                 let user_fn = name.starts_with("n_") || name.starts_with("t_");
                 let opaque = user_fn
                     && !matches!(callee.code(), Value::Block(_))
-                    && (!crate::file_access::is_stdlib_source(callee.position.file)
+                    && (!crate::file_access::is_stdlib_source(callee.position.file.as_str())
                         || callee
                             .attributes()
                             .iter()
@@ -7215,7 +7215,7 @@ extern crate loft;"
                     ref t => format!(" -> {}", t.rust_type()),
                 };
                 use std::fmt::Write as _;
-                if data.c_symbol_is_lazy(def.position().file) {
+                if data.c_symbol_is_lazy(def.position().file.as_str()) {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
@@ -9902,7 +9902,7 @@ extern crate loft;"
             writeln!(
                 w,
                 "// loft:{}:{}",
-                crate::file_access::portable_str(def.position().file),
+                crate::file_access::portable_str(def.position().file.as_str()),
                 def.position().line
             )?;
         }
@@ -10889,7 +10889,7 @@ extern crate loft;"
             // one.  The package is the thing the author can act on.
             let from = self
                 .data
-                .c_owner_pkg(def.position().file)
+                .c_owner_pkg(def.position().file.as_str())
                 .map_or_else(String::new, |pkg| {
                     let stem = std::path::Path::new(pkg)
                         .file_name()

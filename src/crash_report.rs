@@ -516,7 +516,7 @@ pub fn install_panic_hook() {
             diags.add_at(
                 crate::diagnostics::Level::Fatal,
                 &msg,
-                pos.file,
+                pos.file.as_str(),
                 pos.line,
                 pos.pos,
             );
@@ -663,7 +663,7 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
         // user can still grep for it.
         if let Some((span_pc, pos)) = source_loc.as_ref() {
             let _ = w.str("  at:      ");
-            let _ = w.str(pos.file);
+            let _ = w.str(pos.file.as_str());
             let _ = w.str(":");
             let _ = w.u32(pos.line);
             let _ = w.str(":");
@@ -895,7 +895,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
         let at = |line: u32| Position {
-            file: "a.loft",
+            file: "a.loft".into(),
             line,
             pos: 1,
         };
@@ -960,18 +960,18 @@ mod tests {
         assert!(compile_pos().is_none(), "starts unset");
 
         let pos = crate::lexer::Position {
-            file: "prog.loft",
+            file: "prog.loft".into(),
             line: 12,
             pos: 5,
         };
         note_compile_pos(&pos);
         let got = compile_pos().expect("published position is readable");
-        assert_eq!((got.file, got.line, got.pos), ("prog.loft", 12, 5));
+        assert_eq!((got.file.as_str(), got.line, got.pos), ("prog.loft", 12, 5));
 
         // A later position replaces the earlier one — the report wants where the
         // compiler IS, not where it started.
         let later = crate::lexer::Position {
-            file: "prog.loft",
+            file: "prog.loft".into(),
             line: 30,
             pos: 1,
         };

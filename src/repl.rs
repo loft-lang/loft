@@ -2370,8 +2370,8 @@ impl ReplSession {
             if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                 continue;
             }
-            if crate::file_access::is_stdlib_source(def.position.file)
-                || !in_file(def.position.file)
+            if crate::file_access::is_stdlib_source(def.position.file.as_str())
+                || !in_file(def.position.file.as_str())
             {
                 continue;
             }

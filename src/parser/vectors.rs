@@ -1450,7 +1450,7 @@ or build a local and use that."
         let outer_context = self.context;
         let outer_vars = std::mem::replace(
             &mut self.vars,
-            Function::new(&lambda_name, self.lexer.pos().file),
+            Function::new(&lambda_name, self.lexer.pos().file.as_str()),
         );
         let outer_loop = self.in_loop;
         self.in_loop = false;
@@ -1667,7 +1667,8 @@ or build a local and use that."
     /// read to replay — against a table of its own, which the literal's read puts back.
     fn lambda_signature(&mut self) -> Type {
         let file = self.lexer.pos().file;
-        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", file));
+        let outer_vars =
+            std::mem::replace(&mut self.vars, Function::new("__lambda", file.as_str()));
         self.lexer.token("(");
         let mut arguments = Vec::new();
         self.parse_arguments("__lambda", &mut arguments);
@@ -1691,7 +1692,8 @@ or build a local and use that."
     /// (`Parser::discovery_skipped_lambda`).  Read as [`Self::lambda_signature`] reads a body.
     fn skip_short_lambda(&mut self, expect_close: bool) {
         let file = self.lexer.pos().file;
-        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", file));
+        let outer_vars =
+            std::mem::replace(&mut self.vars, Function::new("__lambda", file.as_str()));
         let mut arguments = Vec::new();
         if expect_close {
             while let Some(name) = self.lexer.has_identifier() {
@@ -1828,7 +1830,7 @@ or build a local and use that."
         let outer_context = self.context;
         let outer_vars = std::mem::replace(
             &mut self.vars,
-            Function::new(&lambda_name, self.lexer.pos().file),
+            Function::new(&lambda_name, self.lexer.pos().file.as_str()),
         );
         let outer_loop = self.in_loop;
         self.in_loop = false;

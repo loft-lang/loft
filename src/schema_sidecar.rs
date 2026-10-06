@@ -528,7 +528,7 @@ pub fn program_roots(data: &crate::data::Data) -> Vec<u16> {
                 // them via the user types that use them, so they aren't roots.
                 && !def.name.starts_with("__")
                 && !def.name.contains('<')
-                && !crate::compile::is_default_file(def.position.file)
+                && !crate::compile::is_default_file(def.position.file.as_str())
                 && def.known_type != u16::MAX
         })
         .map(|def| def.known_type)

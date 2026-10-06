@@ -327,7 +327,7 @@ impl Parser {
         // it binds and its bounds hold.
         d != u32::MAX
             && matches!(self.data.def_type(d), DefType::Function | DefType::Generic)
-            && !crate::file_access::is_stdlib_source(self.data.def(d).position().file)
+            && !crate::file_access::is_stdlib_source(self.data.def(d).position().file.as_str())
             && self.definition_ranks(d, &routed).is_some()
     }
 
@@ -341,7 +341,7 @@ impl Parser {
         self.data.definitions.iter().any(|d| {
             matches!(d.def_type, DefType::Function | DefType::Generic)
                 && d.original_name().as_str() == name
-                && !crate::file_access::is_stdlib_source(d.position().file)
+                && !crate::file_access::is_stdlib_source(d.position().file.as_str())
         })
     }
 
@@ -436,14 +436,14 @@ impl Parser {
     /// the stdlib's own files are never scanned.
     pub(crate) fn file_has_pending_fn(&mut self, name: &str) -> bool {
         let file = self.lexer.pos().file;
-        if crate::file_access::is_stdlib_source(file) {
+        if crate::file_access::is_stdlib_source(file.as_str()) {
             return false;
         }
-        if !self.declared_fn_names.contains_key(file) {
+        if !self.declared_fn_names.contains_key(file.as_str()) {
             let text = self
                 .lexer
-                .source_text(file)
-                .map_or_else(|| Self::read_source(file), str::to_string);
+                .source_text(file.as_str())
+                .map_or_else(|| Self::read_source(file.as_str()), str::to_string);
             let mut counts: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             let mut after_fn = false;
@@ -460,7 +460,7 @@ impl Parser {
         }
         let declared = self
             .declared_fn_names
-            .get(file)
+            .get(file.as_str())
             .and_then(|counts| counts.get(name))
             .copied()
             .unwrap_or(0);
@@ -790,7 +790,7 @@ impl Parser {
     /// over a type parameter is the wrong shape (measured: the stdlib's `len(both: vector)`
     /// refused its own stub, *expected vector<T>, got vector<T>*).
     fn stub_admissible(&self, main: u32) -> bool {
-        if crate::file_access::is_stdlib_source(self.data.def(main).position().file) {
+        if crate::file_access::is_stdlib_source(self.data.def(main).position().file.as_str()) {
             return false;
         }
         if self.context == u32::MAX || self.data.def_type(self.context) == DefType::Generic {
@@ -1031,7 +1031,7 @@ impl Parser {
         // aside and restored, whatever the outcome.
         let saved_context = self.context;
         let file = self.lexer.pos().file;
-        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, file));
+        let saved_vars = std::mem::replace(&mut self.vars, Function::new(dyn_name, file.as_str()));
         let saved_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
         let fn_nr = self.data.add_fn(&mut self.lexer, dyn_name, &args);
         let built = if fn_nr == u32::MAX {

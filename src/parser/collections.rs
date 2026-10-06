@@ -4948,7 +4948,7 @@ use #count instead"
         self.data.set_returned(wrapper_d_nr, ret_type.clone());
 
         // Build wrapper variable table
-        let mut wrapper_vars = Function::new(&wrapper_name, wrapper_file);
+        let mut wrapper_vars = Function::new(&wrapper_name, wrapper_file.as_str());
         let t_var = wrapper_vars.add_variable("t", tuple_tp, &mut self.lexer);
         wrapper_vars.become_argument(t_var);
         wrapper_vars.defined(t_var);

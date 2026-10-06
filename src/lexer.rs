@@ -50,35 +50,132 @@ pub enum LexItem {
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Position {
-    /// The file name where this construct is found — an INTERNED name ([`intern_file`]).
+    /// The file name where this construct is found — an INTERNED name ([`FileName`]).
     ///
     /// A position is copied per token and per operator, and the name never changes within a
     /// file, so it is held once per distinct name for the life of the process and a position
     /// only carries the reference: copying one is three words, with no allocation and no
     /// reference count.  An `Arc<str>` here made every token's clone and drop an atomic
     /// increment and decrement — measured, two thirds of the lexer's own time on a JSON parse.
-    pub file: &'static str,
+    pub file: FileName,
     /// The line where this result was found.
     pub line: u32,
     /// The position on the line where this result was found.
     pub pos: u32,
 }
 
+/// A source file's name, held once per distinct name for the life of the process
+/// ([`intern_file`]).  Copying one copies a reference; comparing two compares the reference
+/// first, so two positions in one file compare in one instruction — the property `Arc<str>`'s
+/// identity check gave the comparisons that read it, which a plain `&str` loses (every compare
+/// scanned two long paths).  Reads as a `str` everywhere one is expected.
+#[derive(Clone, Copy, Default)]
+pub struct FileName(&'static str);
+
+impl FileName {
+    /// The name, for as long as the process runs.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+impl std::ops::Deref for FileName {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.0
+    }
+}
+
+impl AsRef<str> for FileName {
+    fn as_ref(&self) -> &str {
+        self.0
+    }
+}
+
+impl AsRef<std::ffi::OsStr> for FileName {
+    fn as_ref(&self) -> &std::ffi::OsStr {
+        std::ffi::OsStr::new(self.0)
+    }
+}
+
+impl AsRef<std::path::Path> for FileName {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(self.0)
+    }
+}
+
+impl PartialEq for FileName {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0) || self.0 == other.0
+    }
+}
+
+impl Eq for FileName {}
+
+impl PartialEq<str> for FileName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for FileName {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl std::hash::Hash for FileName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl std::fmt::Display for FileName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::fmt::Debug for FileName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.0, f)
+    }
+}
+
+impl From<&str> for FileName {
+    fn from(name: &str) -> Self {
+        intern_file(name)
+    }
+}
+
+impl From<&String> for FileName {
+    fn from(name: &String) -> Self {
+        intern_file(name)
+    }
+}
+
+impl From<String> for FileName {
+    fn from(name: String) -> Self {
+        intern_file(&name)
+    }
+}
+
 /// The file name of a position that has none: a synthetic definition, a test fixture, a
 /// runtime error raised outside any source.
 #[must_use]
-pub fn no_file() -> &'static str {
-    ""
+pub fn no_file() -> FileName {
+    FileName("")
 }
 
 /// The process-wide copy of a file name, made once per distinct name and never freed: the
 /// names are few (one per source file, plus the fixed tags a lexer is opened with), and every
 /// position naming that file shares it.
 #[must_use]
-pub fn intern_file(name: &str) -> &'static str {
+pub fn intern_file(name: &str) -> FileName {
     use std::sync::{Mutex, OnceLock};
     if name.is_empty() {
-        return "";
+        return no_file();
     }
     static NAMES: OnceLock<Mutex<std::collections::HashSet<&'static str>>> = OnceLock::new();
     let names = NAMES.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
@@ -86,11 +183,11 @@ pub fn intern_file(name: &str) -> &'static str {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(&known) = names.get(name) {
-        return known;
+        return FileName(known);
     }
     let leaked: &'static str = Box::leak(name.to_owned().into_boxed_str());
     names.insert(leaked);
-    leaked
+    FileName(leaked)
 }
 
 impl Position {
@@ -903,7 +1000,7 @@ impl Lexer {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         let (line, pos) = self.report_pos();
         self.diagnostics
-            .add_at(level, message, self.position.file, line, pos);
+            .add_at(level, message, self.position.file.as_str(), line, pos);
     }
 
     /// Attach a machine-readable `suggestion` (a replacement token) to the
@@ -940,8 +1037,14 @@ impl Lexer {
     pub fn diagnostic_coded(&mut self, level: Level, code: &'static str, message: &str) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         let (line, pos) = self.report_pos();
-        self.diagnostics
-            .add_at_coded(level, Some(code), message, self.position.file, line, pos);
+        self.diagnostics.add_at_coded(
+            level,
+            Some(code),
+            message,
+            self.position.file.as_str(),
+            line,
+            pos,
+        );
     }
 
     #[track_caller]
@@ -950,7 +1053,7 @@ impl Lexer {
         self.diagnostics.add_at(
             level,
             message,
-            self.position.file,
+            self.position.file.as_str(),
             result.position.line,
             result.position.pos,
         );
@@ -960,7 +1063,7 @@ impl Lexer {
     pub fn pos_diagnostic(&mut self, level: Level, pos: &Position, message: &str) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
         self.diagnostics
-            .add_at(level, message, pos.file, pos.line, pos.pos);
+            .add_at(level, message, pos.file.as_str(), pos.line, pos.pos);
     }
 
     /// Like [`pos_diagnostic`], but carrying a stable `code` — the explicit-position twin of
@@ -974,8 +1077,14 @@ impl Lexer {
         message: &str,
     ) {
         crate::diagnostics::audit_site(std::panic::Location::caller());
-        self.diagnostics
-            .add_at_coded(level, Some(code), message, pos.file, pos.line, pos.pos);
+        self.diagnostics.add_at_coded(
+            level,
+            Some(code),
+            message,
+            pos.file.as_str(),
+            pos.line,
+            pos.pos,
+        );
     }
 
     pub fn diagnostics(&self) -> &Diagnostics {
@@ -2569,7 +2678,10 @@ impl Lexer {
             // `checkpoint_parse` isn't on every token.
             bc_throttle = bc_throttle.wrapping_add(1);
             if bc_throttle.is_multiple_of(256) {
-                crate::timeout::checkpoint_parse(self.peek.position.file, self.peek.position.line);
+                crate::timeout::checkpoint_parse(
+                    self.peek.position.file.as_str(),
+                    self.peek.position.line,
+                );
             }
             if matches!(self.peek.has, LexItem::None) {
                 return false;
