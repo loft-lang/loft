@@ -65,6 +65,17 @@ first parameter is such a number is refused with "Cannot redefine": rename it.
 
 ### New
 
+**A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
+runs the block exactly when the write did not take — an index past the end, a key the
+collection does not hold, a field reached through a null, a narrow slot the value does not fit,
+a locked store — and never when it landed.  The place is written once, and the block may
+`break`, `continue` or `return`.  `if !place` on the next line still works for a narrow slot.
+
+**A dropped write is reported.**  Without an `else`, a write that lands nowhere logs one
+warning — `index_out_of_bounds` for an index, `write_dropped` for a missing key or a null — and
+the program goes on, as before.  Warnings from a running program now name the statement on the
+interpreter and the function on `--native`, where they used to say `:0`.
+
 **Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place
 of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms)
 }` — and the four comparisons, `sort()`, `min_of` and `max_of` all use it.
