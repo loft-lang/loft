@@ -872,7 +872,8 @@ impl Stores {
         #[cfg(host_fs)]
         let data: Option<Vec<u8>> = crate::wasm::host_fs_read_binary(&resolved);
         #[cfg(not(host_fs))]
-        let data: Option<Vec<u8>> = crate::file_access::read(&crate::file_access::at(&resolved)).ok();
+        let data: Option<Vec<u8>> =
+            crate::file_access::read(&crate::file_access::at(&resolved)).ok();
         let Some(data) = data else { return DbRef::NULL };
         // Owning field is a 4-byte vector pointer; the inner record holds the
         // bytes one-per-element (length at offset 4, payload at offset 8).

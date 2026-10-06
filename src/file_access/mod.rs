@@ -341,8 +341,7 @@ pub fn log_refusal_once(raw: &str, why: &str) {
 /// # Errors
 /// The OS's error, or the refusal.
 pub fn open_resolved(path: Option<&str>) -> std::io::Result<std::fs::File> {
-    path.ok_or_else(path_refused)
-        .and_then(|p| open(&at(p)))
+    path.ok_or_else(path_refused).and_then(|p| open(&at(p)))
 }
 
 /// `@FR-Path-Refuse` — the error a refused path opens with, so an open site's existing error

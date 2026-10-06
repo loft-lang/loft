@@ -1630,7 +1630,9 @@ impl Stores {
         if raw.is_empty() {
             // No name to judge: the anchor itself, or nothing.
             return Some(if anchored {
-                crate::file_access::at(&self.source_dir).for_program().native()
+                crate::file_access::at(&self.source_dir)
+                    .for_program()
+                    .native()
             } else {
                 String::new()
             });

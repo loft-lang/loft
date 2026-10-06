@@ -1940,7 +1940,7 @@ pub fn OpTruncateFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, size: i
         OpenOptions::new().write(true),
     )
     .and_then(|f| f.set_len(size as u64))
-        .is_ok()
+    .is_ok()
 }
 
 /// Resize through the host: read, slice or zero-extend, write back.  The host
@@ -5669,7 +5669,8 @@ impl Stores {
     /// `mtime(path)`: 0 for a refused path, as for a missing one.
     #[must_use]
     pub fn fs_mtime_at(&self, raw: &str) -> i64 {
-        self.resolve_path(raw).map_or(0, |p| Stores::os_mtime_native(&p))
+        self.resolve_path(raw)
+            .map_or(0, |p| Stores::os_mtime_native(&p))
     }
 
     #[must_use]
