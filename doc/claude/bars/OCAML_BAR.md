@@ -65,10 +65,11 @@ it.
 | H7 match guard | **PASS** | `Circle { r } if r > 10 => …` |
 | H8 option chaining | **PASS** | `h = half(n)?;` returns null from the function when `half` does — OCaml's `let*` over `option` |
 | H9 mutually recursive types | **PASS** | `Dir` holds `vector<Entry>`, `Entry` holds `Dir?`, either declared first.  The first spelling named the type `File` and hit [loft#1882](https://github.com/loft-lang/loft/issues/1882) <!-- doc-lint: ok --> |
+| H10 partial application | FAIL | `fire = damage(10, 3, _)` → *"`_` discards the value assigned to it"*; a closure says it today (`fn(a: integer) -> integer { damage(10, 3, a) }`), and an untyped `\|a\|` there is refused (*"Cannot infer type for lambda parameter 'a'"*) because nothing gives `a` its type.  Storing such closures in a collection is B1 |
 | G1–G13 regression floor | covered | every cited page is a test: `tests/docs/*.loft` generate the reference pages and run in `make ci` |
 
 **Score (capability, both backends):** A 6/8 + 1 partial (and A5b's monomorphic form passes) · B 2/6 ·
-C 5/8 + 3 partial · D 0/2 · E not measured · F 1/2 · H 6/9 + 1 partial.
+C 5/8 + 3 partial · D 0/2 · E not measured · F 1/2 · H 6/10 + 1 partial.
 
 ### Open defects
 
@@ -910,6 +911,18 @@ fn main() {
   d = Dir { name: "root", entries: [Entry { name: "a" }, Entry { name: "b", sub: Dir { name: "b", entries: [Entry { name: "c" }] } }] };
   assert(count(d) == 3, "count {count(d)}");
 }
+```
+
+### H10_partial_application
+
+OCaml expresses: `let fire = damage 10 3` — a function with its first arguments filled in.  loft
+has no currying (a call with fewer arguments is a default or another overload), so the probe
+marks the open argument with `_`, which takes its type from `damage`'s signature.
+
+```loft
+// @BAR: pass
+fn damage(base: integer, mult: integer, armor: integer) -> integer { base * mult - armor }
+fn main() { fire = damage(10, 3, _); assert(fire(4) == 26 && fire(7) == 23, "partial"); }
 ```
 
 ---

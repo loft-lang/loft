@@ -18,7 +18,7 @@ the index, the disposition vocabulary, and the record of what each bar has been 
 
 | bar | the question it asks | measured | entries |
 |---|---|---|---|
-| [OCAML_BAR.md](OCAML_BAR.md) | what can the type system SAY? generics, closures, patterns, dispatch, nullability, and the semantics OCaml carries without its syntax | 2026-10-06 | 37 <!-- doc-lint: ok --> |
+| [OCAML_BAR.md](OCAML_BAR.md) | what can the type system SAY? generics, closures, patterns, dispatch, nullability, and the semantics OCaml carries without its syntax | 2026-10-06 | 38 <!-- doc-lint: ok --> |
 | [LUA_BAR.md](LUA_BAR.md) | what does Lua's ABSENCE of declarations buy a game scripter, and is loft's typed answer as short at the use site? | 2026-09-21 | 22 |
 | [JULIA_BAR.md](JULIA_BAR.md) | what can a Julia program SAY that loft cannot — units, iteration spaces, library composition — leaving its speed-only constructs to the engine? | 2026-10-06 | 17 <!-- doc-lint: ok --> |
 
