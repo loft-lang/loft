@@ -1,0 +1,32 @@
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index 10e2b2ee2..6db5991c4 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -1247,13 +1247,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
+     // out-of-range element write hands this a null PLACE (loft#1374 made an absent read
+     // answer `nullref`); there is nothing to write into, so the write is dropped.
+     if to.store_nr == u16::MAX {
+-        // The write is dropped; a given-up source is still released (`release_copy_source`),
+-        // under the same borrowed-store exception the copy below applies.
+-        if (tp as u16) & crate::keys::COPY_FREE_SOURCE != 0
+-            && !cr_take_fnref_borrowed(data.store_nr)
+-        {
+-            stores.release_copy_source(&data, &to);
+-        }
+         return;
+     }
+     // mirror `state/io.rs::copy_record`'s tag handling and
+diff --git a/src/state/io.rs b/src/state/io.rs
+index 9008d7c8e..f3493713d 100644
+--- a/src/state/io.rs
++++ b/src/state/io.rs
+@@ -1698,9 +1698,6 @@ impl State {
+         // process dies on a program the compiler accepted.  The source half above and this
+         // one are one rule read from its two ends.
+         if to.store_nr == u16::MAX {
+-            if free_source {
+-                self.database.release_copy_source(&data, &to);
+-            }
+             return;
+         }
+         // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:

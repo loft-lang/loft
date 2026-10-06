@@ -15,6 +15,12 @@
 //   cells: source {call result, held local, element, a nested record from a call}
 //        × place {past the end, a field under past-the-end, a field of a null optional}
 //        × repeated in a loop (one store per iteration when wrong)
+//
+// @falsified-at: 91a49cf8c — interpret leaked kt=98 P×4, kt=97 In×2 -> clean, native leaked kt=98 P×4, kt=97 In×2 -> clean
+// @falsified-by: tests/falsified/a-record-copied-into-no-place-gives-its-source-back.patch — interpret leaked kt=98 P×4, kt=97 In×2 -> clean, native leaked kt=98 P×4, kt=97 In×2 -> clean
+//   CHANNEL: the LEAK on a plain run (`main`) — `P×4` is `mk(10)` and the loop's three, `In×2`
+//   is `mi(4)` and `mi(5)`, exactly the given-up sources; every assertion holds either way.
+//   The patch removes only the two null-place releases, one per backend.
 
 struct In { m: integer, s: text }
 struct P { x: integer, t: text, inner: In }
@@ -50,4 +56,11 @@ fn test_a_held_source_is_never_given_up() {
   ps[7].inner = r.inner;
   assert("{r.x}{r.t}{r.inner.m}{r.inner.s}" == "3p33i3", "r {r.x}{r.t}{r.inner.s}");
   assert("{ps[0].x}{ps[0].t}{ps[0].inner.s}" == "1p1i1", "ps[0] {ps[0].t}");
+}
+
+// A test run does not count leftover stores; a plain run does, and the leak is the channel.
+fn main() {
+  test_a_call_result_written_past_the_end();
+  test_a_nested_record_written_under_no_element();
+  test_a_held_source_is_never_given_up();
 }
