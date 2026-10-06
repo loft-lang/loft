@@ -5059,7 +5059,7 @@ impl Parser {
         // runtime range guard then answered a legal in-range DEFAULT that nothing reports in
         // an ordinary run, where the same store into `u8` is refused with the cure named;
         // and the checked cast `as integer limit(0, 7)?` was a no-op (loft#1593).
-        if d.forced_size.is_none() && (d.is_signed32_template() || d.is_wide_template()) {
+        if d.is_full_integer() {
             return false;
         }
         s.min < d.min || s.max > d.max
@@ -5102,7 +5102,7 @@ impl Parser {
         // `limit` range wider than 65 536 codes has no 4-byte width bucket
         // (`range_to_width` answers 8), so asking width of it refused `x & 2147483647`
         // into an `i32` — the mask the refusal itself offers as the cure (loft#1814).
-        let full = s.forced_size.is_none() && (s.is_signed32_template() || s.is_wide_template());
+        let full = s.is_full_integer();
         full && s.byte_width(false) > d_width
     }
 
@@ -5164,7 +5164,7 @@ impl Parser {
             return None;
         };
         // The full integer is no narrow slot; a width alias or a user range is.
-        if spec.forced_size.is_none() && (spec.is_wide_template() || spec.is_signed32_template()) {
+        if spec.is_full_integer() {
             return None;
         }
         let (lo, hi) = (i64::from(spec.usable_min(true)), spec.usable_max(true));

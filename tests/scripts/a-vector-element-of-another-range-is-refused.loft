@@ -1,0 +1,25 @@
+// @FR-C-Refl / @FR-C-Int — a vector element is a place the callee may write, so only one range
+// converts to itself: `[100, 355]` is not `[0, 255]` although both are one byte, because an
+// element is stored as `value - min` and the other range reads the same byte as another value.
+// @falsified-at: df3d077ad — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-vector-element-of-another-range-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the expectations — the control compiles all three crossings and misreads them.
+
+type Off = integer limit(100, 355) size(1);
+
+fn sum_u8(v: vector<u8>) -> integer { s = 0; for x in v { s += x }; s }
+fn sum_off(v: vector<Off>) -> integer { s = 0; for x in v { s += x }; s }
+fn pairs_u8(v: vector<(u8, u8)>) -> integer { s = 0; for (a, b) in v { s += a + b }; s }
+
+fn main() {
+  vo: vector<Off> = [100, 200, 355];
+  vu: vector<u8> = [0, 1, 2];
+  to: vector<(Off, u8)> = [(150, 1)];
+  // @EXPECT_ERROR: expected vector<integer(0, 255)>, got vector<integer(100, 355)>
+  println("{sum_u8(vo)}");
+  // @EXPECT_ERROR: expected vector<integer(100, 355)>, got vector<integer(0, 255)>
+  println("{sum_off(vu)}");
+  // @EXPECT_ERROR: expected vector<(integer(0, 255), integer(0, 255))>, got vector<(integer(100, 355), integer(0, 255))>
+  println("{pairs_u8(to)}");
+}

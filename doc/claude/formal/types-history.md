@@ -1307,6 +1307,28 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.
 
+* **D-types-26** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Refl)` for a vector element:
+  an integer's identity is its range, so one range spelled two ways is one type, and an
+  element is a place the callee may write, so no OTHER range converts.  Both halves failed at
+  the one predicate that answers it, `Type::same_element_storage`.  It asked the element's
+  width with `!spec.not_null` as the nullability, where the storage home
+  (`Data::narrow_vector_element`) reserves a null code for a `τ?` element only: a user range
+  alias without `size` (`type Byte = integer limit(0, 255)`, one byte in every position)
+  read as two, so `vector<u8>` and `vector<Byte>` were refused against each other —
+  *"expected `vector<integer(0, 255)>`, got `vector<integer(0, 255)>`"* — and so were
+  `vector<i16>` / `vector<Coord>` and the narrow tuples.  And it compared only the width and
+  the SIGN of `min`: `vector<integer limit(100, 355) size(1)>` met `vector<u8>` in both
+  directions and each side read the other's bytes as its own (355 for `[100, 200, 355]`, 303
+  for `[0, 1, 2]`), silently, on both backends.  **Fix.**  `IntegerSpec::same_range` (the full
+  integer is one range in both template encodings, `IntegerSpec::is_full_integer`, now also
+  the home of the three copies `parser/mod.rs` spelled) and the storage the home derives.
+  `u8?` and `Byte?` stay two types: the sized one gives its top code to null and the unsized
+  one widens (`(N-Reserve)`), so their usable ranges differ.  Guards
+  `tests/scripts/a-vector-element-of-one-range-meets-every-spelling-of-it.loft`,
+  `tests/scripts/a-vector-element-of-another-range-is-refused.loft`.  Published libraries:
+  41 pass, 0 compile-break (`assets` 0.3.1's layout-hash test fails identically without this
+  change).  `Contract: strained` — a conversion that compiled is refused.
+
 * **D-types-25** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(C-Never)`: a jump is a `Never` that
   fits wherever a value is expected, and four positions disagreed.  (1) Whether a VALUE follows
   `break`, `return` or `?? return` was answered three times, each asking only `;` and `}`: in

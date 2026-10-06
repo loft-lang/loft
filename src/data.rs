@@ -638,6 +638,26 @@ impl IntegerSpec {
     /// they were unified: the `i32` FIELD stored `0` where its local and its element stored
     /// null — loft#1296's disagreement reopened from the other side.  An earlier version of
     /// this comment claimed *"two readers, one fact"*; that was never true.
+    /// Is this the FULL `integer` — the one range nothing narrows to?  `IntegerSpec`'s i32/u32
+    /// bounds cannot hold the i64 range, so it has two bound encodings (the `signed32`
+    /// template ending at `i32::MAX`, the `wide` one at `u32::MAX`, formal/types.md D2) and is
+    /// told from a range by those and by carrying no `forced_size`: the `i32` ALIAS has the
+    /// signed-32 template's exact range in 4 bytes, and is a narrow range like any other.
+    #[must_use]
+    pub fn is_full_integer(&self) -> bool {
+        self.forced_size.is_none() && (self.is_signed32_template() || self.is_wide_template())
+    }
+
+    /// Are these one RANGE — one integer type (`@FR-C-Refl`; the range is an integer's identity,
+    /// formal/types.md § the integer model)?  The full integer is one range in both of its
+    /// bound encodings; every other range is its `[min, max]`, however it was spelled — `u8`
+    /// and `integer limit(0, 255)` are one.
+    #[must_use]
+    pub fn same_range(&self, other: &IntegerSpec) -> bool {
+        (self.is_full_integer() && other.is_full_integer())
+            || (self.min == other.min && self.max == other.max)
+    }
+
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
         self.is_wide_template() || self.is_signed32_template()
@@ -3333,16 +3353,25 @@ impl Type {
     /// In a vector they are not: the element width IS the stride, so handing a
     /// `vector<integer>` to a `vector<u8>` parameter re-reads each 8-byte
     /// element as eight 1-byte ones — silently, since the element COUNT is
-    /// stored and still agrees.  Width comes from the canonical
-    /// [`IntegerSpec::byte_width`] (so a range-typed element and its alias —
-    /// `integer(0,100)` and `u8` — are correctly the same layout), and the sign
-    /// of the lower bound separates `i8` from `u8`, which share a width but not
-    /// a reading.
+    /// stored and still agrees.
+    ///
+    /// Two integer elements are one element type when their RANGES are one range — an
+    /// integer's identity is its range (`@FR-C-Refl`, formal/types.md § the integer model),
+    /// and an element is a place the callee may write, so no wider or narrower range
+    /// converts in either direction.  `u8` and `integer limit(0, 255)` are therefore one
+    /// element, and `limit(100, 355)` is not `u8` although both are one byte: an element is
+    /// stored as `value - min`.  The bytes are compared as well, as the storage home derives
+    /// them (`Data::narrow_vector_element`: a null code is reserved for a `τ?` element only),
+    /// because a declared `size` can still disagree with the range (`i32`, D2).
     #[must_use]
     pub fn same_element_storage(&self, other: &Type) -> bool {
         match (self.base(), other.base()) {
             (Type::Integer(a), Type::Integer(b)) => {
-                a.byte_width(!a.not_null) == b.byte_width(!b.not_null) && (a.min < 0) == (b.min < 0)
+                let (a_null, b_null) = (
+                    matches!(self, Type::Optional(_)),
+                    matches!(other, Type::Optional(_)),
+                );
+                a.same_range(b) && a_null == b_null && a.byte_width(a_null) == b.byte_width(b_null)
             }
             (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
             // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is
