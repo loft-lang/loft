@@ -218,8 +218,11 @@ fix time — whenever the work does any of:
 
 - **(a)** adds a refusal or compile error that some program compiling today would hit;
 - **(b)** changes the observable meaning of existing code (an operator, a default, a value);
-- **(c)** changes or removes a published library's API, or forces its republish as a breaking
-  release;
+- **(c)** changes or removes a STANDARD-LIBRARY API (`default/*.loft`), which ships with loft and
+  freezes with it.  A published library does not freeze: its consumers declare the version they
+  depend on, and a breaking change is a new release they opt into (`api_compatible_with`), so a
+  library's own API change is never this label's.  What does count is a LANGUAGE change that
+  forces every library to change — that is (a) or (b);
 - **(d)** changes a covered format: a stored store layout, a file format, a wire format;
 - **(e)** is an item of the pre-freeze audit
   ([COMPATIBILITY.md § Before the flip](../doc/claude/COMPATIBILITY.md)).

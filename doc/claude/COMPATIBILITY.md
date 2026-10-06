@@ -52,7 +52,10 @@ so the scope is not quietly narrowed:
    assigned incrementally (a site without one yet renders `error: …` as before) — adding a code is
    additive, never a breaking change.
 3. **The libs** — the standard library (`default/*.loft`) **and** published libraries: a
-   program calling a stdlib function or a `use`d library keeps working.
+   program calling a stdlib function or a `use`d library keeps working.  The two hold it
+   differently: the standard library ships with loft and freezes with it; a published library
+   does not freeze — a program keeps working at the version its manifest declares, and a breaking
+   change is a new release that consumers opt into (`api_compatible_with`).
 
 And the surfaces a running program *depends* on, so "keeps running" includes "its data and
 dependencies keep working":
