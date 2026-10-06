@@ -3929,7 +3929,8 @@ use #count instead"
         if if_step == Value::Null {
             return;
         }
-        let cond = if let Value::Insert(mut ops) = if_step {
+        let cond = if let Value::Insert(ops) = if_step.unspan() {
+            let mut ops = ops.clone();
             let cond = ops.pop().unwrap_or(Value::Boolean(true));
             lp.extend(ops);
             cond

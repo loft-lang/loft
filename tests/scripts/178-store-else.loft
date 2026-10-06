@@ -17,6 +17,8 @@
 // @falsified-by: tests/falsified/178-store-else.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: the ASSERTIONS — with the arm never emitted, the first cell's `out` stays empty
 //   where "CFHN" is right, on both backends.  The patch drops only the final `if` that runs it.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees — only the exit
+//   and the assertions move.
 
 struct In { m: integer }
 struct P { x: integer, n: u8, t: text, inner: In }

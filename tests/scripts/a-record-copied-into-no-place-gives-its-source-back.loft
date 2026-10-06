@@ -21,6 +21,9 @@
 //   CHANNEL: the LEAK on a plain run (`main`) — `P×4` is `mk(10)` and the loop's three, `In×2`
 //   is `mi(4)` and `mi(5)`, exactly the given-up sources; every assertion holds either way.
 //   The patch removes only the two null-place releases, one per backend.
+//   ARMED: none — the exit-time store count every plain run prints is the instrument; no
+//   switch was set when it moved.
+//   HOLDS: exit, assertions, panic and free-refusal are equal on both trees.
 
 struct In { m: integer, s: text }
 struct P { x: integer, t: text, inner: In }
