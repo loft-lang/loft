@@ -191,9 +191,10 @@ a.0 += 3
 Each tuple is a contiguous stack region. Elements are laid out in declaration
 order, each naturally aligned. Total size = sum of `element_size(T_i)`.
 
-Text elements (`text`, `text not null`) use full `String` (24 bytes) when owned
-by the tuple. Argument-passed text uses `Str` (16 bytes) per the standard
-calling convention.
+Text elements (`text`, `text not null`) of a stack tuple are a 16-byte `Str`
+(`data::element_stack_size`), the same borrow argument-passed text uses.  A
+`&(…)` with a text element is record-backed instead (`(T-Ref-Rep)`), and the
+record holds the text in a slot of its own.
 
 ---
 
