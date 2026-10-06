@@ -149,14 +149,14 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
         } else {
             Tier::Sealed
         };
-        let signature = signature_with(data, d, kind, true);
+        let signature = signature_of(data, d, kind);
         members.push(Member {
             name,
             kind,
             tier,
             signature,
         });
-        for r in referenced_defs_of(data, d) {
+        for r in referenced_defs_of(data, d, false) {
             if in_lib(r)
                 && classify(data, r).is_some()
                 && !is_receiver_alias(data, r)
@@ -284,13 +284,6 @@ fn method_name(raw: &str) -> String {
 /// renders the same clean signature the API surface does — one spelling, one home.
 #[must_use]
 pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
-    signature_with(data, d, kind, false)
-}
-
-/// [`signature_of`], and with `observable_only` a record lists only its `pub` fields: the
-/// API surface's view, where a private field is not observable outside its file (C139).
-/// A hover or a REPL listing shows the declaration as written.
-fn signature_with(data: &Data, d: u32, kind: &str, observable_only: bool) -> String {
     let def = data.def(d);
     // A generic type is spelled as its author writes it — `Grid<T>`, `Slot<integer>` — where
     // the key carries the placeholder's number (`T#4`) or an argument's width.
@@ -327,12 +320,8 @@ fn signature_with(data: &Data, d: u32, kind: &str, observable_only: bool) -> Str
             .iter()
             // A method of a generic struct is a MEMBER of its template (@PLN165 D6), not a
             // field: it is its own surface entry.
-            // A record's field without `pub` is private to its file (C139): not observable.
             .filter(|a| {
-                !a.hidden
-                    && a.name != "enum"
-                    && !matches!(a.typedef.base(), Type::Routine(_))
-                    && (!sort || !observable_only || a.pub_field)
+                !a.hidden && a.name != "enum" && !matches!(a.typedef.base(), Type::Routine(_))
             })
             .map(|a| {
                 let opt = if defaults && !matches!(a.value, crate::data::Value::Null) {
@@ -387,17 +376,19 @@ fn signature_with(data: &Data, d: u32, kind: &str, observable_only: bool) -> Str
     }
 }
 
-/// Every library def referenced through `d`'s SIGNATURE — the observable edges: a fn's
-/// return + params, a typedef's target, and the types of a struct's or a variant's `pub`
-/// fields.  The body is never followed (it is not observable), and neither is a private field:
-/// outside its file it cannot be read, so its type is not reachable through it (C139).
-fn referenced_defs_of(data: &Data, d: u32) -> Vec<u32> {
+/// Every library def referenced through `d`'s SIGNATURE: a fn's return + params, a typedef's
+/// target, and a struct's or a variant's field types.  The body is never followed.  With
+/// `pub_fields_only`, a private field is not followed either — outside its file it cannot be
+/// read, so its type is not NAMEABLE through it (C139, [`name_only_defs`]).  The API surface
+/// follows every field: it lists every field, so that a field gaining `pub` reads as no change
+/// to a release's surface rather than as a field added.
+fn referenced_defs_of(data: &Data, d: u32, pub_fields_only: bool) -> Vec<u32> {
     let def = data.def(d);
     let mut out = Vec::new();
     collect_type_defs(&def.returned, &mut out); // return / typedef target
     let record = matches!(def.def_type, DefType::Struct | DefType::EnumValue);
     for a in def.attributes() {
-        if !a.hidden && (!record || a.pub_field) {
+        if !a.hidden && (!record || !pub_fields_only || a.pub_field) {
             collect_type_defs(&a.typedef, &mut out); // `pub` fields / parameters
         }
     }
@@ -407,7 +398,7 @@ fn referenced_defs_of(data: &Data, d: u32) -> Vec<u32> {
             let vd = data.def(v);
             if vd.parent == d && vd.def_type == DefType::EnumValue {
                 for a in vd.attributes() {
-                    if !a.hidden && a.pub_field {
+                    if !a.hidden && (!pub_fields_only || a.pub_field) {
                         collect_type_defs(&a.typedef, &mut out);
                     }
                 }
@@ -432,7 +423,7 @@ pub(crate) fn name_only_defs(data: &Data) -> HashSet<u32> {
         .collect();
     let mut seen: HashSet<u32> = work.iter().copied().collect();
     while let Some(d) = work.pop() {
-        for r in referenced_defs_of(data, d) {
+        for r in referenced_defs_of(data, d, true) {
             if r < data.definitions()
                 && same_file(d, r)
                 && classify(data, r).is_some()

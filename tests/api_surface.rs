@@ -195,25 +195,6 @@ fn closure_is_transitive() {
 }
 
 #[test]
-fn a_private_field_carries_no_type_into_the_surface() {
-    // C139 (@PLN187) — a field without `pub` cannot be read outside its file, so the type it
-    // holds is not reachable through it: `Inner` stays off the surface.
-    let s = api_surface(
-        "struct Inner { n: integer }\n\
-         struct Outer { i: Inner }\n\
-         pub fn build() -> Outer { Outer { i: Inner { n: 1 } } }\n",
-    );
-    assert!(
-        s.contains("Outer · struct · sealed"),
-        "Outer not sealed:\n{s}"
-    );
-    assert!(
-        !s.contains("Inner"),
-        "Inner reached through a private field:\n{s}"
-    );
-}
-
-#[test]
 fn signatures_over_every_kind() {
     // Commit 2 — resolved signatures attached, in the clean user-facing type spelling.
     let s = api_surface(
