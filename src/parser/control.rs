@@ -15176,6 +15176,42 @@ impl Parser {
         l.iter().any(|op| walk(op, v, false, self))
     }
 
+    /// Is the vector local `v` rebound, ANYWHERE in the body, from a call that READS `v`
+    /// through one of its arguments (`v = g(v)`, `v = f(w, v.len())`)?  Once `v` is renamed
+    /// onto the return buffer, the straight-line collapse hands that call `v` itself as ITS
+    /// return buffer, so the callee empties the buffer it is reading — `acc = g(acc)` answered
+    /// `[]` on both backends (loft#1895).  Refusing the rename leaves `v` a local of its own
+    /// on `Bind`: the call fills a work-ref and the return copies `v` into the buffer.
+    ///
+    /// Structural, so both passes agree: it asks for the call and the mention, never for the
+    /// `__ref_N` the call is handed, which a callee declared later has on pass 2 only.
+    fn var_rebound_reading_itself(&self, l: &[Value], v: u16) -> bool {
+        fn reads(arg: &Value, v: u16) -> bool {
+            let mut seen = false;
+            arg.walk(&mut |n| {
+                if matches!(n, Value::Var(x) if *x == v) {
+                    seen = true;
+                }
+            });
+            seen
+        }
+        fn walk(op: &Value, v: u16, this: &Parser) -> bool {
+            match op.unspan() {
+                Value::Set(w, rhs) if *w == v => {
+                    let Value::Call(d, args) = rhs.unspan() else {
+                        return false;
+                    };
+                    !this.data.def(*d).name.starts_with("Op") && args.iter().any(|a| reads(a, v))
+                }
+                Value::Loop(bl) | Value::Block(bl) => bl.operators.iter().any(|o| walk(o, v, this)),
+                Value::If(_, t, f) => walk(t, v, this) || walk(f, v, this),
+                Value::Insert(ops) => ops.iter().any(|o| walk(o, v, this)),
+                _ => false,
+            }
+        }
+        l.iter().any(|op| walk(op, v, self))
+    }
+
     /// Is the vector local `v` bound, ANYWHERE in the body, from a call that cannot be handed a
     /// buffer at all — one returning a vector with no `__ref_N` among its arguments, which is a
     /// native (`arguments()`, `s.split(',')`, `j.keys()`) handing back a FRESH store?  The
@@ -18334,6 +18370,7 @@ impl Parser {
             && (Self::var_bound_to_branch(body, v)
                 || self.var_call_rebound_nested(body, v)
                 || self.var_bound_from_fresh_call(body, v)
+                || self.var_rebound_reading_itself(body, v)
                 || self
                     .branch_sunk_vectors
                     .contains(&(self.context, n.to_string())));
