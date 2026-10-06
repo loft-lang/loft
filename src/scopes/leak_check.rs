@@ -5,7 +5,7 @@
 //! Debug checks after the scan: every reference local that should be released is, and no call
 //! argument allocates a store nothing owns.
 
-use super::capture_adoption::link_written_closure_records;
+use super::capture_adoption::{closure_record_leaves_frame, link_written_closure_records};
 use super::capture_builds::{
     CaptureBuilds, capture_adoption_owns_free, capture_build_backings, escaping_record_holds_buffer,
 };
@@ -478,6 +478,16 @@ impl FrameReleases {
         // no free, and where it does not, the free it emits is guarded by store identity — a
         // static mirror can assert neither.
         if self.link_delivered.contains(&v) {
+            return true;
+        }
+        // …and a closure record that leaves the frame with a record holding it through a
+        // captured fn-ref (loft#1869): `fn plus1(k) { dbl = fn(a) { a * k }; fn(a) { dbl(a)
+        // + 1 } }` returns the outer record, whose cascade releases `dbl`'s.  The emitter's
+        // own predicate, not a restatement — the mirror had only the delivered-store half,
+        // through the return's deps, and called the held record a leak.
+        if self.fn_def_nr != u32::MAX
+            && closure_record_leaves_frame(data, function, self.fn_def_nr, v)
+        {
             return true;
         }
         if v == self.direct_ret_var {

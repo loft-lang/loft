@@ -818,6 +818,24 @@ pub(super) fn record_held_by_a_leaving_record(
         .any(|w| w != v && record_leaves_frame_at(data, function, d_nr, w, 1))
 }
 
+/// `@FR-L-CapOwn` — does closure-record local `v` leave this frame, so that the frame owes it
+/// no release: its own store delivered ([`record_store_leaves_frame`]), or held through a
+/// captured fn-ref by a record that is ([`record_held_by_a_leaving_record`], loft#1869)?
+/// The ONE answer the free emitter (`get_free_vars`) and its debug mirror (`check_ref_leaks`)
+/// both ask; the mirror reading only the first half called the record a returned closure
+/// holds a leak.  Gated on `v` being a closure record — `τ?` peeled, the same shape
+/// (`@FR-N-Shape`) — so it says nothing about any other reference local.
+pub(super) fn closure_record_leaves_frame(
+    data: &Data,
+    function: &Function,
+    d_nr: u32,
+    v: u16,
+) -> bool {
+    matches!(function.tp(v).base(), Type::Reference(r, _) if data.def(*r).name.starts_with("__closure_"))
+        && (record_store_leaves_frame(data, function, d_nr, v)
+            || record_held_by_a_leaving_record(data, function, d_nr, v))
+}
+
 /// loft#1869 — the closure-record locals whose build captured a fn-ref (`OpSetDbRef(w, _,
 /// OpFnRefClosure(f))`) while that fn-ref held record local `v`.  Which record a fn-ref holds
 /// is followed in program order through its binds, so a fn-ref rebound before the build
