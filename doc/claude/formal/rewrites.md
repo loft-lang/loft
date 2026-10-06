@@ -2947,7 +2947,11 @@ on the drawing bench).
                  (asked recursively; a cycle declines) — a chain function's buffer is
                  the `__ref_N` the chain renamed it to.  When the
                  destination place EXISTS at the call and no argument of the call
-                 reaches it, the buffer IS the place and nothing moves.  Declines: a
+                 reaches it, the buffer IS the place and nothing moves — a field
+                 assigned (`h.v = f(…)`) and a field of the record a struct literal
+                 is building (`H { v: f(…) }`, which exists once the literal has
+                 written its empty handle; a `?` field keeps the replace that leaves
+                 it absent).  Declines: a
                  path that reads the result after a RELOCATING store (the destination
                  owns it then, and B-Copy would show — where the buffer IS the place, a
                  read of the result reads what was written and needs nothing); an

@@ -161,13 +161,16 @@ first bisect step for a wrong element, a leak or a double free at an element ass
 literal.  A computed index keeps the copy (the receiver is re-derived per field write), as do
 a collection-TYPED field and a linked-group member.
 **`LOFT_NO_BUFFER_IS_PLACE=1`** (@PLN164 C2, `@FR-R-Place`, `@FR-O-Buffer`, parse time, BOTH
-backends) makes `h.v = mkints(n)` mint a buffer store, fill it, clear `h.v` and copy every
-element in again — with it off, the call is handed the destination AS its return buffer: the
+backends) makes `h.v = mkints(n)` and the literal `H { v: mkints(n) }` mint a buffer store,
+fill it and copy every element into the field again — with it off, the call is handed the destination AS its return buffer: the
 buffer stays the variable the call site mints and only what it holds changes, so the result's
 deps and the free sweep are untouched, and `(O-Buffer)` gains the clause that such a buffer is
 never freed — and is the first bisect step for a wrong, empty or stale vector field after an
-assignment from a call.  Declined where an argument reaches the destination, where the callee
-MINTS into its buffer (a returned vector literal does), and for a struct-enum variant's field.
+assignment or a literal field from a call.  Declined where an argument reaches the destination,
+where the callee MINTS into its buffer (a returned vector literal does), for a struct-enum
+variant's field read through a variant check, and for a literal's `?` field (the replace is
+what leaves it absent).  `tests/scripts/a-literal-vector-field-is-built-in-its-field.loft` is
+the literal's guard.
 Measured on the drawing bench's parse row: the consumer spells this nowhere — the emission is
 byte-identical under the switch — so the gain is structural.  The callee clause admits a CHAIN exit
 (`return mk(n)` hands the buffer through; asked recursively, a cycle declines), so a result

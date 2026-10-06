@@ -363,6 +363,9 @@ destination — the callee clears its buffer before reading its arguments, so `h
 would read an emptied vector — where the callee MINTS into a buffer parameter, which a returned
 vector literal does, and for a field of a struct-enum VARIANT, which exists only while the enum
 holds that variant.  A grouped destination is admitted: the group maintenance brackets the fill.
+The struct literal `H { v: f(…) }` takes the same admission (`place_buffer_of`, shared): its
+field exists once the header prime has written the empty handle — a variant literal's included,
+since it builds that variant — so the call is handed the field; a `?` field keeps the replace.
 `LOFT_NO_BUFFER_IS_PLACE=1` restores the copy; `tests/scripts/164-buffer-is-the-place.loft` and
 `tests/buffer_is_place.rs` are the receipts.
 
