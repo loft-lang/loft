@@ -6089,7 +6089,10 @@ pub fn cr_fnref_minted(
         // the dead entry grew the list by one per pass of a loop, and every call scanned it.
         // The dead entry is REPLACED where it stands — its store is gone (`release` skips it
         // on the serial), and keeping its index leaves every frame's mark meaning what it did.
-        if let Some(at) = list.iter().position(|(d, _)| d.store_nr == returned.store_nr) {
+        if let Some(at) = list
+            .iter()
+            .position(|(d, _)| d.store_nr == returned.store_nr)
+        {
             list[at] = (returned, serial);
             return;
         }
