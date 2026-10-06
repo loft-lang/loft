@@ -695,6 +695,11 @@ pub struct Output<'a> {
     /// another `RefVar` (the #257 shape) is not one of these — it copies the pointer it was
     /// given — so the read side asks this set rather than the type alone.
     pub local_record_link: HashSet<u16>,
+    /// `@FR-T-Record` — per tuple local of this function, the narrow members a `&` names,
+    /// one bit per member (`tuple_links::linked_narrow_members`).  Each is declared at its
+    /// storage width inside the Rust tuple and holds its field encoding, so the link is the
+    /// field's byte pointer; [`Output::linked_tuple_slots`] answers per member.
+    pub linked_members: std::collections::HashMap<u16, u64>,
     /// Hidden return-buffer (retbuf) attribute vars that have an entry-buffer
     /// witness `_rb_w_<name>` emitted in the prologue (capturing the caller's
     /// buffer at function entry).  A CONDITIONAL reassignment of such a
@@ -1703,6 +1708,15 @@ pub(crate) fn var_tuple_elems(vars: &crate::variables::Function, var: u16) -> Op
 /// @PLN87 L1 gives every local link — raw so the source stays readable beside the link,
 /// which is legal loft and not legal Rust borrowing.
 #[must_use]
+/// A Rust tuple of `parts`, with the trailing comma a one-member tuple needs.
+fn tuple_spelling(parts: &[String]) -> String {
+    if parts.len() == 1 {
+        format!("({},)", parts[0])
+    } else {
+        format!("({})", parts.join(", "))
+    }
+}
+
 pub(crate) fn tuple_base(vars: &crate::variables::Function, var: u16) -> (String, bool) {
     let name = sanitize(vars.name(var));
     if is_raw_tuple_link(vars, var) {
@@ -2295,6 +2309,7 @@ impl<'a> Output<'a> {
             indent: 0,
             declared: HashSet::new(),
             local_record_link: HashSet::new(),
+            linked_members: std::collections::HashMap::new(),
             retbuf_witness: HashSet::new(),
             witness_vars: HashSet::new(),
             predeclared: HashSet::new(),
@@ -2721,6 +2736,7 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
+        self.linked_members = crate::tuple_links::linked_narrow_members(self.data, def_nr);
         self.header_dbrefs.clear();
         self.param_rec_ptrs.clear();
         self.indent = 0;
@@ -5537,6 +5553,22 @@ impl Output<'_> {
         {
             return slot.rust_type().to_string();
         }
+        // `@FR-T-Record` — a tuple local whose narrow members a `&` names holds each of them
+        // at its storage width.
+        if let Some(slots) = self.linked_tuple_slots(var) {
+            let Type::Tuple(elems) = tp.base() else {
+                unreachable!("linked_tuple_slots answers only for a tuple")
+            };
+            let parts: Vec<String> = elems
+                .iter()
+                .zip(&slots)
+                .map(|(e, s)| match s {
+                    Some(slot) => slot.rust_type().to_string(),
+                    None => rust_type(e, &Context::Variable),
+                })
+                .collect();
+            return tuple_spelling(&parts);
+        }
         // @PLN167 decision 2 — a link to a text field or element holds the slot's `DbRef`.
         if self
             .data
@@ -5566,8 +5598,49 @@ impl Output<'_> {
                     .expect("the marker is in the template");
                 (a.to_string(), b.to_string())
             }
-            None => (String::new(), String::new()),
+            None => match self.linked_tuple_slots(var) {
+                // `@FR-T-Record` — a whole tuple written to a local with linked narrow
+                // members: bind it once, then rebuild it with those members encoded.
+                Some(slots) => {
+                    let parts: Vec<String> = slots
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| match s {
+                            Some(slot) => slot.encode_rust(&format!("__tl.{i}")),
+                            None => format!("__tl.{i}"),
+                        })
+                        .collect();
+                    (
+                        "{ let __tl = ".to_string(),
+                        format!("; {} }}", tuple_spelling(&parts)),
+                    )
+                }
+                None => (String::new(), String::new()),
+            },
         }
+    }
+
+    /// `@FR-T-Record` — for a by-value tuple local of this function some of whose narrow
+    /// members a `&` names, the field encoding each member holds (`None` for a member kept
+    /// at its wide Rust type).  `None` for every other variable, which is spelled as
+    /// `rust_type` says.
+    #[must_use]
+    pub(crate) fn linked_tuple_slots(
+        &self,
+        var: u16,
+    ) -> Option<Vec<Option<crate::data::NarrowSlot>>> {
+        if !self.linked_members.contains_key(&var) {
+            return None;
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let Type::Tuple(elems) = vars.tp(var).base() else {
+            return None;
+        };
+        Some(
+            (0..elems.len())
+                .map(|i| crate::tuple_links::member_slot(&self.linked_members, elems, var, i))
+                .collect(),
+        )
     }
 
     /// The wide value of linked narrow local `var`'s Rust variable, or its bare name.
@@ -5580,7 +5653,31 @@ impl Output<'_> {
             .linked_narrow_slot(var)
         {
             Some(slot) => slot.decode_rust(&format!("var_{name}")),
-            None => format!("var_{name}"),
+            None => match self.linked_tuple_slots(var) {
+                // `@FR-T-Record` — a tuple local read whole is the plain tuple: each linked
+                // member decoded, every other member as it is (a `String` or nested tuple
+                // cloned, since the read must not move it out of the local).
+                Some(slots) => {
+                    let vars = self.data.def(self.def_nr).variables();
+                    let Type::Tuple(elems) = vars.tp(var).base() else {
+                        unreachable!("linked_tuple_slots answers only for a tuple")
+                    };
+                    let parts: Vec<String> = slots
+                        .iter()
+                        .zip(elems)
+                        .enumerate()
+                        .map(|(i, (s, e))| match s {
+                            Some(slot) => slot.decode_rust(&format!("var_{name}.{i}")),
+                            None if matches!(e.base(), Type::Text(_) | Type::Tuple(_)) => {
+                                format!("var_{name}.{i}.clone()")
+                            }
+                            None => format!("var_{name}.{i}"),
+                        })
+                        .collect();
+                    tuple_spelling(&parts)
+                }
+                None => format!("var_{name}"),
+            },
         }
     }
 
@@ -10164,7 +10261,35 @@ extern crate loft;"
             // @PLN167 decision 1 — a narrow by-value PARAMETER something in this body links
             // arrives as the caller's `i64` and holds its field encoding from here on: one
             // shadowing `let` at entry re-encodes it; the calling convention is untouched.
+            let linked_members = crate::tuple_links::linked_narrow_members(self.data, def_nr);
             for v in vars.arguments() {
+                // `@FR-T-Record` — the same for a by-value TUPLE parameter whose narrow
+                // members something links: one shadowing `let` rebuilds it with those
+                // members encoded.
+                if let Type::Tuple(elems) = vars.tp(v).base()
+                    && linked_members.contains_key(&v)
+                {
+                    use std::fmt::Write as _;
+                    let name = sanitize(vars.name(v));
+                    let (mut member_types, mut members) = (Vec::new(), Vec::new());
+                    for (i, e) in elems.iter().enumerate() {
+                        if let Some(slot) =
+                            crate::tuple_links::member_slot(&linked_members, elems, v, i)
+                        {
+                            member_types.push(slot.rust_type().to_string());
+                            members.push(slot.encode_rust(&format!("var_{name}.{i}")));
+                        } else {
+                            member_types.push(rust_type(e, &Context::Variable));
+                            members.push(format!("var_{name}.{i}"));
+                        }
+                    }
+                    let _ = write!(
+                        vdb_prologue,
+                        "\n  let mut var_{name}: {} = {};",
+                        tuple_spelling(&member_types),
+                        tuple_spelling(&members)
+                    );
+                }
                 if let Some(slot) = vars.linked_narrow_slot(v) {
                     use std::fmt::Write as _;
                     let name = sanitize(vars.name(v));
