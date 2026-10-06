@@ -1,0 +1,611 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 3af7f081a..418c5ca5c 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3426,15 +3426,13 @@ use #count instead"
+     /// program wrote.  They differ only from the second loop over a name onward, and the
+     /// two are read for different questions: companions and the binding itself are keyed
+     /// off `id`, while the shadow guards ask what `src_id` denotes right now.
+-    #[allow(clippy::type_complexity)]
+     pub(crate) fn parse_for_iter_setup(
+         &mut self,
+         id: &str,
+         src_id: &str,
+         in_type: &Type,
+         expr: Value,
+-        destructure_names: Option<&[String]>,
+-    ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
++    ) -> (u16, Option<u16>, u16, Value, Value, Value) {
+         let var_tp = self.for_type(in_type);
+         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+         let (iter_var, pre_var) = if walks_text(in_type) {
+@@ -3541,12 +3539,7 @@ use #count instead"
+         {
+             self.vars.set_skip_free(for_var);
+         }
+-        // A destructuring header's binders exist before the filter is parsed: it reads them.
+-        let mut destructure_setup = match destructure_names {
+-            Some(names) => self.destructure_binders(names, for_var, &var_tp),
+-            None => Vec::new(),
+-        };
+-        let mut if_step = if self.lexer.has_token("if") {
++        let if_step = if self.lexer.has_token("if") {
+             let mut if_expr = Value::Null;
+             let at = self.lexer.peek().position.clone();
+             let tp = self.expression(&mut if_expr);
+@@ -3564,16 +3557,7 @@ use #count instead"
+         let mut create_iter = expr;
+         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
+         let iter_next = self.iterator(&mut create_iter, in_type, &it, iter_var, pre_var);
+-        Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
+-        (
+-            iter_var,
+-            pre_var,
+-            for_var,
+-            if_step,
+-            create_iter,
+-            iter_next,
+-            destructure_setup,
+-        )
++        (iter_var, pre_var, for_var, if_step, create_iter, iter_next)
+     }
+ 
+     /// `@FR-R-LiteralWalk` — a `for` over a scalar vector literal of constant length walks its
+@@ -3764,239 +3748,56 @@ use #count instead"
+         ]
+     }
+ 
+-    /// The binders of a destructuring loop header `for (a, b, …) in …` — one per name, typed as
+-    /// the matching member of the loop variable `for_var` (a tuple, or the `__tuple<…>` record a
+-    /// stored tuple is), each a LOOP binding of its own (loft#915).  Answers the `Set`s that
+-    /// unpack the loop variable at the start of every iteration: the caller prepends them to the
+-    /// body.  Shared by the `for` statement and the comprehension, whose header `(I-Comp)` makes
+-    /// the same loop's.
+-    pub(crate) fn destructure_binders(
+-        &mut self,
+-        names: &[String],
+-        for_var: u16,
+-        var_tp: &Type,
+-    ) -> Vec<Value> {
+-        // Tuple element types come from one of two shapes:
+-        //   - `Type::Tuple([T1, T2, ...])` — direct tuple type
+-        //     (uncommon for for-loops: would require iterating
+-        //     over a "tuple of …" rather than a vector<tuple>).
+-        //   - `Type::Reference(d_nr, _)` where `def(d_nr).name`
+-        //     starts with `__tuple<` — synthetic struct created
+-        //     by `tuple_def`; element types live as attributes.
+-        //     This is the common shape for `vector<(T1, T2)>`
+-        //     iteration, mirroring P189b's element-access path
+-        //     in `src/parser/operators.rs:608-658`.
+-        let (elem_types_opt, ref_def_nr): (Option<Vec<Type>>, u32) = match &var_tp {
+-            Type::Tuple(elems) => (Some(elems.clone()), u32::MAX),
+-            Type::Reference(d_nr, _) if self.data.def(*d_nr).name().starts_with("__tuple<") => {
+-                let elems: Vec<Type> = self
+-                    .data
+-                    .def(*d_nr)
+-                    .attributes
+-                    .iter()
+-                    .map(|a| a.typedef.clone())
+-                    .collect();
+-                (Some(elems), *d_nr)
+-            }
+-            _ => (None, u32::MAX),
+-        };
+-        if let Some(elem_types) = elem_types_opt {
+-            if elem_types.len() == names.len() {
+-                // Build per-element read.  Two shapes:
+-                //   - Direct Tuple: `Value::TupleGet(for_var, i)`
+-                //     — reads from the var's stack-resident
+-                //     tuple slot.
+-                //   - Reference(__tuple<…>): use `get_val` with
+-                //     the synthetic struct's per-attribute byte
+-                //     offset — same path P189b's `.0` / `.1`
+-                //     element access takes.
+-                names
+-                    .iter()
+-                    .enumerate()
+-                    .map(|(i, name)| {
+-                        let elem_tp = elem_types[i].clone();
+-                        // A binder read off the loop variable's member is a VIEW of
+-                        // that variable (`(B-View)`), never a second owner: whoever
+-                        // owns the element — the collection, or a generator's loop
+-                        // variable (`(G-Own)`) — releases the member, once.
+-                        let bind_tp = if crate::data::holds_dbref(&elem_tp) {
+-                            elem_tp.depending(for_var)
+-                        } else {
+-                            elem_tp.clone()
+-                        };
+-                        // A binder is a LOOP binding, keyed by this loop as the loop
+-                        // variable is (loft#915): by name, a second `for (a, b)` reused
+-                        // the first one's `a` at the first one's type, and read a `text`
+-                        // member as an `integer` (`1|p` for `p|3`), or did not compile.
+-                        let id = self.vars.loop_binding(name);
+-                        let var = if id == "_" {
+-                            self.create_unique("_", &bind_tp)
+-                        } else {
+-                            self.create_loop_var(&id, &bind_tp)
+-                        };
+-                        if id != *name {
+-                            self.vars.set_name(name, var);
+-                        }
+-                        // A later `for a` over the same name is a sequential loop, not
+-                        // a shadow of a local (the guard asks `was_loop_var`).
+-                        self.vars.served_as_loop_var(var);
+-                        self.vars.defined(var);
+-                        self.vars.in_use(var, true);
+-                        // Bound by the header, scoped to the body (`@FR-B-Scope`).
+-                        self.pending_loop_binders.push(var);
+-                        // A generator handle carries no deps to say so: marked instead
+-                        // (loft#1585), as a `for` over a vector of handles marks its
+-                        // loop variable.
+-                        if matches!(elem_tp.base(), Type::Iterator(_, _)) {
+-                            self.vars.set_skip_free(var);
+-                        }
+-                        let read = if ref_def_nr == u32::MAX {
+-                            Value::TupleGet(for_var, i as u16)
+-                        } else {
+-                            self.stored_tuple_member_read(
+-                                ref_def_nr,
+-                                i,
+-                                &elem_types,
+-                                Value::Var(for_var),
+-                            )
+-                        };
+-                        v_set(var, read)
+-                    })
+-                    .collect()
+-            } else {
+-                if !self.first_pass {
++    // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
++    #[expect(clippy::too_many_lines, reason = "inherited")]
++    pub(crate) fn parse_for(&mut self, code: &mut Value) {
++        // P235: tuple destructure — `for (a, b, ...) in items { ... }`.
++        // Parse the parenthesised name list now; later (after the iter
++        // type is known) we synthesize a temp loop var and prepend
++        // `Set(name_i, loop_var.<i>)` to the body so `a` / `b` resolve
++        // as if the user had written them.  Closes both par and
++        // non-par destructure with one rewrite (the par variant
++        // dispatches into `parse_parallel_for_loop` which inherits
++        // `id` from us).
++        let destructure_names: Option<Vec<String>> = if self.lexer.peek_token("(") {
++            self.lexer.token("(");
++            let mut names = Vec::new();
++            loop {
++                if let Some(n) = self.lexer.has_identifier() {
++                    names.push(n);
++                } else {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,
+-                        "for-destructure: pattern has {} names but iterated tuple has {} elements",
+-                        names.len(),
+-                        elem_types.len()
++                        "Expect identifier in for-destructure pattern"
+                     );
++                    let _ = self.lexer.has_token(")");
++                    return;
++                }
++                if !self.lexer.has_token(",") {
++                    break;
+                 }
+-                Vec::new()
+             }
+-        } else {
+-            if !self.first_pass {
++            if !self.lexer.has_token(")") {
+                 diagnostic!(
+                     self.lexer,
+                     Level::Error,
+-                    "for-destructure requires a tuple element type, got {}",
+-                    var_tp.source_name(&self.data)
++                    "Expect ')' to close for-destructure pattern"
+                 );
++                return;
+             }
+-            Vec::new()
+-        }
+-    }
+-
+-    /// Prepend a destructuring header's binder `Set`s to the loop body `block`, so each
+-    /// iteration unpacks the loop variable before the body runs.  `tp` types a body that was
+-    /// not a block.
+-    pub(crate) fn prepend_destructure(block: &mut Value, setup: Vec<Value>, tp: &Type) {
+-        if setup.is_empty() {
+-            return;
+-        }
+-        if let Value::Block(ref mut bl) = *block {
+-            for s in setup.into_iter().rev() {
+-                bl.operators.insert(0, s);
+-            }
+-        } else {
+-            let inner = std::mem::replace(block, Value::Null);
+-            let mut ops = setup;
+-            ops.push(inner);
+-            *block = v_block(ops, tp.clone(), "destructure_for_body");
+-        }
+-    }
+-
+-    /// A destructuring header's unpack runs BEFORE a filter `if` is tested, because the filter
+-    /// reads the binders: with a filter, the binder `Set`s become the statements ahead of its
+-    /// condition and `setup` is emptied; without one they are left for the body.
+-    pub(crate) fn destructure_into_filter(if_step: &mut Value, setup: &mut Vec<Value>) {
+-        if setup.is_empty() || *if_step == Value::Null {
+-            return;
+-        }
+-        // An `Insert`, not a block: a block is a scope, and the binders' scope is the loop body
+-        // (`@FR-B-Scope`) — inside one they were freed before the body read them.
+-        let mut ops = std::mem::take(setup);
+-        ops.push(std::mem::replace(if_step, Value::Null));
+-        *if_step = Value::Insert(ops);
+-    }
+-
+-    /// Append a loop's filter step to its step list `lp`: `if cond … else continue`.  A filter that
+-    /// carries statements ahead of its condition (`Insert` — a destructuring header's unpack,
+-    /// `destructure_into_filter`) has them run as steps of the loop itself, so what they bind is
+-    /// the body's as the loop variable is, and no `if` test has to hold a declaration.
+-    pub(crate) fn push_filter_step(lp: &mut Vec<Value>, if_step: Value) {
+-        if if_step == Value::Null {
+-            return;
+-        }
+-        let cond = if let Value::Insert(mut ops) = if_step {
+-            let cond = ops.pop().unwrap_or(Value::Boolean(true));
+-            lp.extend(ops);
+-            cond
+-        } else {
+-            if_step
+-        };
+-        lp.push(v_if(cond, Value::Null, Value::Continue(0)));
+-    }
+-
+-    /// The parenthesised name list of a destructuring loop header — `(a, b, …)`, at least two
+-    /// names — or `None` when the header names one variable.  `Err` after a reported syntax
+-    /// error.
+-    pub(crate) fn parse_destructure_names(&mut self) -> Result<Option<Vec<String>>, ()> {
+-        if !self.lexer.peek_token("(") {
+-            return Ok(None);
+-        }
+-        self.lexer.token("(");
+-        let mut names = Vec::new();
+-        loop {
+-            if let Some(n) = self.lexer.has_identifier() {
+-                names.push(n);
+-            } else {
++            if names.len() < 2 {
+                 diagnostic!(
+                     self.lexer,
+                     Level::Error,
+-                    "Expect identifier in for-destructure pattern"
++                    "for-destructure pattern requires at least 2 names; got {}",
++                    names.len()
+                 );
+-                let _ = self.lexer.has_token(")");
+-                return Err(());
+-            }
+-            if !self.lexer.has_token(",") {
+-                break;
++                return;
+             }
+-        }
+-        if !self.lexer.has_token(")") {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "Expect ')' to close for-destructure pattern"
+-            );
+-            return Err(());
+-        }
+-        if names.len() < 2 {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "for-destructure pattern requires at least 2 names; got {}",
+-                names.len()
+-            );
+-            return Err(());
+-        }
+-        Ok(Some(names))
+-    }
+-
+-    // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
+-    #[expect(clippy::too_many_lines, reason = "inherited")]
+-    pub(crate) fn parse_for(&mut self, code: &mut Value) {
+-        // P235: tuple destructure — `for (a, b, ...) in items { ... }`.
+-        // Parse the parenthesised name list now; later (after the iter
+-        // type is known) we synthesize a temp loop var and prepend
+-        // `Set(name_i, loop_var.<i>)` to the body so `a` / `b` resolve
+-        // as if the user had written them.  Closes both par and
+-        // non-par destructure with one rewrite (the par variant
+-        // dispatches into `parse_parallel_for_loop` which inherits
+-        // `id` from us).
+-        let Ok(destructure_names) = self.parse_destructure_names() else {
+-            return;
++            Some(names)
++        } else {
++            None
+         };
+ 
+         // @PLN115 tail — capture the simple `for id` binder's position before it is
+@@ -4233,14 +4034,8 @@ use #count instead"
+             // fallback below can tell "there is no iterable here" from "the iterable already
+             // said what is wrong with it".
+             let errors_before_iterable = self.lexer.diagnostics().error_count();
+-            let (iter_var, pre_var, for_var, if_step, create_iter, iter_next, destructure_setup) =
+-                self.parse_for_iter_setup(
+-                    &id,
+-                    &src_id,
+-                    &in_type,
+-                    expr,
+-                    destructure_names.as_deref(),
+-                );
++            let (iter_var, pre_var, for_var, if_step, create_iter, iter_next) =
++                self.parse_for_iter_setup(&id, &src_id, &in_type, expr);
+             // loft#1540 — a loop variable over a value-const value's elements is a view of it.
+             self.mark_const_view(for_var, &orig_coll_expr, true);
+             // loft#762 — `_` names THIS loop's binding while its body is parsed, and
+@@ -4340,7 +4135,122 @@ use #count instead"
+             // Defining the variables BEFORE `parse_block` runs is essential
+             // — the body's references to `a` / `b` / etc. resolve through
+             // the parser's scope at parse time.
+-
++            let destructure_setup: Vec<Value> = if let Some(names) = &destructure_names {
++                // Tuple element types come from one of two shapes:
++                //   - `Type::Tuple([T1, T2, ...])` — direct tuple type
++                //     (uncommon for for-loops: would require iterating
++                //     over a "tuple of …" rather than a vector<tuple>).
++                //   - `Type::Reference(d_nr, _)` where `def(d_nr).name`
++                //     starts with `__tuple<` — synthetic struct created
++                //     by `tuple_def`; element types live as attributes.
++                //     This is the common shape for `vector<(T1, T2)>`
++                //     iteration, mirroring P189b's element-access path
++                //     in `src/parser/operators.rs:608-658`.
++                let (elem_types_opt, ref_def_nr): (Option<Vec<Type>>, u32) = match &var_tp {
++                    Type::Tuple(elems) => (Some(elems.clone()), u32::MAX),
++                    Type::Reference(d_nr, _)
++                        if self.data.def(*d_nr).name().starts_with("__tuple<") =>
++                    {
++                        let elems: Vec<Type> = self
++                            .data
++                            .def(*d_nr)
++                            .attributes
++                            .iter()
++                            .map(|a| a.typedef.clone())
++                            .collect();
++                        (Some(elems), *d_nr)
++                    }
++                    _ => (None, u32::MAX),
++                };
++                if let Some(elem_types) = elem_types_opt {
++                    if elem_types.len() == names.len() {
++                        // Build per-element read.  Two shapes:
++                        //   - Direct Tuple: `Value::TupleGet(for_var, i)`
++                        //     — reads from the var's stack-resident
++                        //     tuple slot.
++                        //   - Reference(__tuple<…>): use `get_val` with
++                        //     the synthetic struct's per-attribute byte
++                        //     offset — same path P189b's `.0` / `.1`
++                        //     element access takes.
++                        names
++                            .iter()
++                            .enumerate()
++                            .map(|(i, name)| {
++                                let elem_tp = elem_types[i].clone();
++                                // A binder read off the loop variable's member is a VIEW of
++                                // that variable (`(B-View)`), never a second owner: whoever
++                                // owns the element — the collection, or a generator's loop
++                                // variable (`(G-Own)`) — releases the member, once.
++                                let bind_tp = if crate::data::holds_dbref(&elem_tp) {
++                                    elem_tp.depending(for_var)
++                                } else {
++                                    elem_tp.clone()
++                                };
++                                // A binder is a LOOP binding, keyed by this loop as the loop
++                                // variable is (loft#915): by name, a second `for (a, b)` reused
++                                // the first one's `a` at the first one's type, and read a `text`
++                                // member as an `integer` (`1|p` for `p|3`), or did not compile.
++                                let id = self.vars.loop_binding(name);
++                                let var = if id == "_" {
++                                    self.create_unique("_", &bind_tp)
++                                } else {
++                                    self.create_loop_var(&id, &bind_tp)
++                                };
++                                if id != *name {
++                                    self.vars.set_name(name, var);
++                                }
++                                // A later `for a` over the same name is a sequential loop, not
++                                // a shadow of a local (the guard asks `was_loop_var`).
++                                self.vars.served_as_loop_var(var);
++                                self.vars.defined(var);
++                                self.vars.in_use(var, true);
++                                // Bound by the header, scoped to the body (`@FR-B-Scope`).
++                                self.pending_loop_binders.push(var);
++                                // A generator handle carries no deps to say so: marked instead
++                                // (loft#1585), as a `for` over a vector of handles marks its
++                                // loop variable.
++                                if matches!(elem_tp.base(), Type::Iterator(_, _)) {
++                                    self.vars.set_skip_free(var);
++                                }
++                                let read = if ref_def_nr == u32::MAX {
++                                    Value::TupleGet(for_var, i as u16)
++                                } else {
++                                    self.stored_tuple_member_read(
++                                        ref_def_nr,
++                                        i,
++                                        &elem_types,
++                                        Value::Var(for_var),
++                                    )
++                                };
++                                v_set(var, read)
++                            })
++                            .collect()
++                    } else {
++                        if !self.first_pass {
++                            diagnostic!(
++                                self.lexer,
++                                Level::Error,
++                                "for-destructure: pattern has {} names but iterated tuple has {} elements",
++                                names.len(),
++                                elem_types.len()
++                            );
++                        }
++                        Vec::new()
++                    }
++                } else {
++                    if !self.first_pass {
++                        diagnostic!(
++                            self.lexer,
++                            Level::Error,
++                            "for-destructure requires a tuple element type, got {}",
++                            var_tp.source_name(&self.data)
++                        );
++                    }
++                    Vec::new()
++                }
++            } else {
++                Vec::new()
++            };
+             // Extract the generator var (first arg of OpCoroutineNext) before
+             // `iter_next` is consumed by `for_next` — @P327 needs it for the
+             // tuple-yield exhaustion check below.
+@@ -4496,7 +4406,18 @@ use #count instead"
+             // P235 step 3: prepend the destructure Set ops so each
+             // iteration unpacks the loop var into the user-named binders
+             // before the user's body runs.
+-            Self::prepend_destructure(&mut block, destructure_setup, &Type::Void);
++            if !destructure_setup.is_empty() {
++                if let Value::Block(ref mut bl) = block {
++                    for s in destructure_setup.into_iter().rev() {
++                        bl.operators.insert(0, s);
++                    }
++                } else {
++                    let inner = std::mem::replace(&mut block, Value::Null);
++                    let mut ops = destructure_setup;
++                    ops.push(inner);
++                    block = v_block(ops, Type::Void, "destructure_for_body");
++                }
++            }
+             self.vars.restore_write_state(&loop_write_state);
+             let count = self.vars.loop_counter();
+             self.in_loop = in_loop;
+@@ -4661,7 +4582,9 @@ use #count instead"
+                     Value::Null,
+                 ));
+             }
+-            Self::push_filter_step(&mut lp, if_step);
++            if if_step != Value::Null {
++                lp.push(v_if(if_step, Value::Null, Value::Continue(0)));
++            }
+             lp.push(block);
+             if count != u16::MAX {
+                 for_steps.insert(0, v_set(count, Value::Int(0)));
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 819f2dd8b..c1361adff 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -20413,42 +20413,6 @@ impl Parser {
+                     if let Some(kinds) = &tkinds {
+                         args.extend(kinds.iter().map(|k| Value::Int(k.code())));
+                     }
+-                    // A TUPLE has no null of its own: an exhausted advance answers a present
+-                    // tuple whose every member is null — what a missed read of a tuple answers
+-                    // (`v[i]` past the end, `@FR-T-Absent`).  The channel cannot say so (the
+-                    // interpreter's null is chosen by byte size, and an `(integer, integer)` is
+-                    // a `Str`'s), so the advance is followed by the generator's own state: the
+-                    // handle is bound once, and an advance that found it done is replaced.
+-                    if let Type::Tuple(members) = yield_tp.base()
+-                        && !members.is_empty()
+-                        && !args.is_empty()
+-                    {
+-                        let members = members.clone();
+-                        let handle = self.create_unique("next_gen", &types[0]);
+-                        self.vars.defined(handle);
+-                        // A view of the caller's handle: advancing it must not release it.
+-                        self.vars.set_skip_free(handle);
+-                        let got = self.create_unique("next_val", &yield_tp);
+-                        self.vars.defined(got);
+-                        // A pass-through: the tuple is handed to whoever binds this `next()`
+-                        // (`@FR-G-Own`), so this temporary releases nothing it holds.
+-                        self.vars.set_skip_free(got);
+-                        let source = std::mem::replace(&mut args[0], Value::Var(handle));
+-                        let done = self.cl("OpCoroutineExhausted", &[Value::Var(handle)]);
+-                        let nulls =
+-                            Value::Tuple(members.iter().map(|m| self.null_value(m)).collect());
+-                        *val = v_block(
+-                            vec![
+-                                v_set(handle, source),
+-                                v_set(got, Value::Call(op, args)),
+-                                v_if(done, nulls, Value::Var(got)),
+-                            ],
+-                            yield_tp.clone(),
+-                            "next_tuple",
+-                        );
+-                        self.expr_not_null = false;
+-                        return yield_tp;
+-                    }
+                     *val = Value::Call(op, args);
+                     // The advance answers null once the generator is done, whatever the
+                     // argument was: a handle read out of a field (`next(t.g)`, loft#1585) must
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 5e60ba606..07f735673 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3307,18 +3307,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         // element type the destination's (a typed local, a field, a parameter, a return) or
+         // still to be inferred from the body?
+         let declared = declared_element(in_t);
+-        // `(I-Comp)` — the comprehension's header IS a `for` loop's, so it destructures as one
+-        // does: `[for (a, b) in v { … }]` binds the members, through the loop statement's own
+-        // binder code (`destructure_binders`).
+-        let Ok(destructure_names) = self.parse_destructure_names() else {
+-            return Type::Null;
+-        };
+-        let src_id = if destructure_names.is_some() {
+-            let pos = self.lexer.peek().position.clone();
+-            format!("__destructure_t_{}_{}", pos.line, pos.pos)
+-        } else if let Some(id) = self.lexer.has_identifier() {
+-            id
+-        } else {
++        let Some(src_id) = self.lexer.has_identifier() else {
+             diagnostic!(self.lexer, Level::Error, "Expect variable after for");
+             return Type::Null;
+         };
+@@ -3376,12 +3365,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             self.vars.set_name(&src_id, for_var);
+         }
+         self.vars.defined(for_var);
+-        // The binders exist before the filter is parsed: it reads them.
+-        let mut destructure_setup = match &destructure_names {
+-            Some(names) => self.destructure_binders(names, for_var, &var_tp),
+-            None => Vec::new(),
+-        };
+-        let mut if_step = if self.lexer.has_token("if") {
++        let if_step = if self.lexer.has_token("if") {
+             let mut if_expr = Value::Null;
+             let at = self.lexer.peek().position.clone();
+             let tp = self.expression(&mut if_expr);
+@@ -3425,7 +3409,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         }
+         let for_next = v_set(for_var, iter_next);
+         self.vars.loop_var(for_var);
+-        Self::destructure_into_filter(&mut if_step, &mut destructure_setup);
+         let in_loop = self.in_loop;
+         self.in_loop = true;
+         // Parse body as an expression-returning block: [for n in range { expr }]
+@@ -3456,7 +3439,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         let body_pos = self.lexer.peek_pos().clone();
+         let mut body = Value::Null;
+         let body_type = self.parse_block("for", &mut body, &body_expected);
+-        Self::prepend_destructure(&mut body, destructure_setup, &body_type);
+         // #319 — a struct-literal body returns `Rewritten(Reference(...))`.
+         // The wrapper is a parse-internal marker, not an element type:
+         // leaking it into the vector's element type broke every later
+@@ -3942,7 +3924,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 Value::Null,
+             ));
+         }
+-        Self::push_filter_step(&mut lp, if_step);
++        if if_step != Value::Null {
++            lp.push(v_if(if_step, Value::Null, Value::Continue(0)));
++        }
+         lp.push(v_set(comp_var, body));
+         lp.push(v_set(
+             elm,

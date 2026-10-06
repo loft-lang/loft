@@ -1,6 +1,10 @@
 // @FR-I-Comp — `[for x in src { e }]` is the `for` loop that appends `e`, so its header
 // destructures as the loop's does: `[for (a, b) in v { … }]`, with a filter, over a generator, and
 // beside a record member.  It was refused ("Expect variable after for").
+// @falsified-at: 16f39fb97 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-comprehension-destructures-its-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the exit — the control refuses the header.
 
 struct P { k: integer }
 

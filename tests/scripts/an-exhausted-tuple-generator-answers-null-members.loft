@@ -3,6 +3,10 @@
 // `next()` on a tuple generator answered the bytes the channel left (`""`, `0`) — and on the
 // interpreter an `(integer, integer)`, which is a `Str`'s size, read the text null's POINTER as
 // its first member.
+// @falsified-at: e80050e8a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/an-exhausted-tuple-generator-answers-null-members.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
+// CHANNEL: the assertions — the control's exhausted members are not null.
 
 struct P { k: integer }
 struct Holder { g: iterator<(integer, integer)> }
