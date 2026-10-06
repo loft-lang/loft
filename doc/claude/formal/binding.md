@@ -358,6 +358,19 @@ source: [../plans/40-const-fields/const-model.md](../plans/40-const-fields/const
                           the rebind, Const-Value rejects every through-write — so
                           the field is FULLY immutable: neither `t.v = other` nor
                           any mutation beneath it is accepted.
+  (Const-Foreign)         FOREIGN data — a structure whose bytes loft does not own: a
+                          native library's text, record, tuple or vector, a mapped
+                          file, a producer's buffer — presents as an ordinary loft
+                          type and is VALUE-CONST: its producer's declared type is
+                          `const T`, so being read-only is static.  It is traversed
+                          and read, whole or in parts, in place and without a copy;
+                          a `&` link to a part is a VIEW (B-View), read-only like the
+                          value; every write — through the value, a view or a link —
+                          is Const-Value's compile-time error, never a runtime check
+                          (C80).  The cure is a copy, which is the reader's own:
+                          `c = t.0 + "!"` where `c = &t.0; c += "!"` is refused,
+                          `w = v` (B-Copy).  Foreign data is never presented as
+                          writable (@C139).
   (Const-ConstructExempt) construction lowers via a SEPARATE path (`Value::Insert`),
                           not the reassignment guard (`validate_write` /
                           `const_write_blocked`), so write-once is SET at
@@ -442,17 +455,24 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 2.**
 
 - **D-bind-70 (OPEN, loft#1875)** — violates <!-- doc-lint: ok -->
-  `(B-Ref-Lvalue)`: two tuple-member places are refused where the rule makes every lvalue
-  linkable — a NARROW member (`n: (u8, integer); c = &n.0`: stored at full width, read by a link
-  at its own) and a TEXT member of a tuple local (`c = &s.0`: stored as a `Str` borrow, which a
+  `(B-Ref-Lvalue)` with tuples.md `(T-Record)`: a member is a field, so `&t.i` links as `&r.f`
+  does, but two tuple-member places are refused — a NARROW member (`n: (u8, integer);
+  c = &n.0`: stored at full width, read by a link at its own) and a TEXT member of a tuple local (`c = &s.0`: stored as a `Str` borrow, which a
   `&text` link cannot append to).  Each is refused by name at a bind and at a `&` argument; none
   is copied.  A wide scalar member links, of a tuple local and of a `&(…)` alike
   (`a-member-of-a-linked-tuple-is-a-place.loft`, `a-record-is-padded-to-its-alignment.loft`),
   and so does a stored tuple as a whole — a vector element or a struct field of tuple type
   (`a-stored-tuple-is-a-place-a-link-names.loft`). <!-- doc-lint: ok -->
+- **D-bind-71 (OPEN, loft#1897)** — violates <!-- doc-lint: ok -->
+  `(Const-Foreign)`: foreign data is typed as writable and its write is refused at RUN time.
+  `file_map` answers `vector<u8>`, not
+  `const vector<u8>`, and so does a `#native` bridge's adopted buffer (`OpAdoptVector`); a write
+  into either runs until it reaches the store, which refuses it (*"write to bytes the program
+  does not own"*), on both backends.  `(Const-Value)` refuses the same write before the program
+  runs once the producer's type says `const`.
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is
