@@ -77,6 +77,7 @@ mod args;
 mod arm_lift;
 mod backings;
 mod branches;
+mod buffer_detach;
 mod buffers;
 mod capture_adoption;
 mod capture_builds;
@@ -849,6 +850,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // @PLN94 C.0 (DEV tier) — the POST-codegen free-based checks (over-free / under-free), now that
     // `get_free_vars` has inserted the frees into `def.code` above. Self-gates on
     // `LOFT_OWN_ORACLE=check-dev`; observer only (SI-1), a no-op on the default `check` path.
+    // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now
+    // that the deps say who owns and the frees say who releases.
+    buffer_detach::detach_owned_buffers(data);
     crate::ownership_cfg::oracle_free_checks(data);
     // #682 — record which closure captures the record ADOPTS, now that every dep
     // rewrite above has settled.  Must run after the loop, not inside it: the

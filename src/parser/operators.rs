@@ -4393,6 +4393,12 @@ impl Parser {
                 || (matches!(lhs_type, Type::Vector(_, _)) && !owned_vector)
             {
                 self.vars.set_skip_free(tmp);
+            } else {
+                // The hoist is the same variable on both passes, and pass 1 may not have
+                // resolved the subject yet — a closure call reads as `Null` there — so the
+                // never-free mark it left would outlive the call that is owned.  The pass that
+                // sees the subject decides: one record per `??` was held to frame exit.
+                self.vars.clear_skip_free(tmp);
             }
             // An OWNED Vector subject OWNS the value `code` produced (typically
             // `mkv()`'s returned store) and MUST be freed at scope exit —

@@ -454,3 +454,97 @@ fn a_minted_store_in_a_reused_slot_is_still_released() {
         ),
     ]);
 }
+
+/// Run `body` in `mode` with the store timeline on; answer the `R` line with the run's
+/// allocation and free counts.
+fn run_timeline(tag: &str, body: &str, mode: &str) -> (String, u64, u64) {
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "loft_heap_sound_tl_{tag}_{}_{}.loft",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, format!("{body}\n")).expect("write cell");
+    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+        .arg(mode)
+        .arg(&path)
+        .env("LOFT_TIMEOUT", "240")
+        .env("LOFT_STORES", "timeline")
+        .output()
+        .expect("run loft");
+    let _ = std::fs::remove_file(&path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value = text
+        .lines()
+        .find(|l| l.starts_with('R'))
+        .unwrap_or("")
+        .to_string();
+    let count = |word: &str| -> u64 {
+        text.lines()
+            .find(|l| l.contains("SUMMARY:"))
+            .and_then(|l| {
+                let at = l.find(word)?;
+                l[..at]
+                    .split_whitespace()
+                    .last()?
+                    .trim_end_matches(',')
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or(u64::MAX)
+    };
+    (value, count(" allocs"), count(" frees"))
+}
+
+/// `@FR-O-Owner` — a literal buffer whose store a local OWNER takes (a value branch whose other
+/// arm mints) is detached from it.  It still named the store after the owner released it, so
+/// the next pass's mint cleared that slot again — freed, or by then another owner's — and the
+/// store was released twice: more frees than allocations on the timeline.
+#[test]
+fn a_buffer_whose_store_an_owner_took_is_never_released_twice() {
+    let body = "fn main() { cp = [41, 42, 43]; m = fn(k: integer) -> vector<integer> { [7, 8] }; \
+                s = 0; for i in 0..200 { r = if i % 2 == 0 { m(0) } else { cp }; s += r[1]; } \
+                println(\"R{s} {cp[1]}\"); }";
+    let mut wrong = Vec::new();
+    for mode in ["--interpret", "--native"] {
+        let (value, allocs, frees) = run_timeline("owner_took", body, mode);
+        if value != "R5000 42" || frees > allocs {
+            wrong.push(format!("{mode}: `{value}`, {allocs} allocs, {frees} frees"));
+        }
+    }
+    assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
+}
+
+/// `(H-Free)` — a `??` over a closure call's nullable record, inside a larger expression, owns
+/// the store the call answered and releases it every pass.  The first parse pass cannot
+/// resolve the closure call, read the hoist as a borrow and marked it never-free, and that mark
+/// outlived the pass that saw the call: one record per pass was held to frame exit, and a loop
+/// past 65 535 passes exhausted the store table on both backends.
+#[test]
+fn a_coalesced_closure_result_is_released_every_pass() {
+    const P: &str = "struct P { x: integer, y: integer }\n";
+    check_reusing(&[
+        (
+            "capture",
+            format!(
+                "{P}fn main() {{ cap: P? = P {{ x: 11, y: 1 }}; hc = fn(n: integer) -> P? {{ cap }}; \
+                 s = 0; for i in 0..70000 {{ s += 1 + (hc(0) ?? P {{ x: 0, y: 0 }}).x; }} \
+                 println(\"R{{s}} {{(cap ?? P {{ x: 0, y: 0 }}).x}}\"); }}"
+            ),
+            "R840000 11",
+        ),
+        (
+            "mint",
+            format!(
+                "{P}fn main() {{ hm = fn(n: integer) -> P? {{ P {{ x: 11, y: n }} }}; \
+                 s = 0; for i in 0..70000 {{ s += 1 + (hm(0) ?? P {{ x: 0, y: 0 }}).x; }} \
+                 println(\"R{{s}}\"); }}"
+            ),
+            "R840000",
+        ),
+    ]);
+}
