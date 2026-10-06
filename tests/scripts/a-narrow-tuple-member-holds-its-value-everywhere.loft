@@ -1,0 +1,41 @@
+// @FR-T-Record — a tuple's narrow member is what a narrow field is: it holds its type's values
+// through construction, a member write, a compound step, a copy, a by-value argument, a return,
+// `==`, a stored element and its read back, a destructure, a destructuring loop, a pattern, and a
+// nullable member's null.  The safety net under a change of the member's representation (the
+// field encoding `(T-Record)` asks for): every cell must answer the same before and after.
+// @falsified-at: none — a regression net written ahead of the representation change; it holds today.
+
+type Small = integer limit(-5, 5);
+fn pass(t: (i8, integer)) -> integer { t.0 * 100 + t.1 }
+fn ret(a: u8) -> (u8, i16) { (a, (0 - a) as i16 ?? 0) }
+
+fn main() {
+  a: (u8, integer) = (250, 3);
+  b: (i8, integer) = (-7, 4);
+  c: (i16, Small) = (-300, -5);
+  assert("{a.0} {a.1} {b.0} {c.0} {c.1}" == "250 3 -7 -300 -5", "construction");
+  a.0 = 200; b.0 = -128; c.1 = 5;
+  assert("{a.0} {b.0} {c.1}" == "200 -128 5", "a member write at each type's bound");
+  b.0 += 1; a.0 -= 50;
+  assert("{a.0} {b.0}" == "150 -127", "a compound step");
+  m = b; m.0 = 9;
+  assert("{b.0} {m.0}" == "-127 9", "a copy is independent");
+  assert(pass(b) == -12696 && pass((3, 2)) == 302, "a by-value argument");
+  r = ret(7);
+  assert("{r.0} {r.1}" == "7 -7", "a return");
+  assert(a == (150, 3) && b == (-127, 4), "==");
+  v: vector<(i8, integer)> = [b, (-2, 1)];
+  v += [(5, 6)];
+  w = v[1];
+  assert("{v[0].0} {w.0} {v[2].0} {len(v)}" == "-127 -2 5 3", "stored and read back");
+  (x, y) = b;
+  assert(x == -127 && y == 4, "a destructure");
+  s = 0; for (p, q) in v { s += p * 10 + q }
+  assert(s == -1229, "a destructuring loop: {s}");
+  k = match b { (-127, n) => n * 1000, _ => -1 };
+  assert(k == 4000, "a pattern on a narrow member");
+  n: (u8?, integer) = (null, 1);
+  assert(n.0 == null && n.1 == 1, "a nullable member's null");
+  n.0 = 254;
+  assert(n.0 == 254, "a nullable member's largest value");
+}
