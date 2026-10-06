@@ -329,7 +329,8 @@ match (a, b) {
 }
 ```
 
-A plain-struct subject, and an alternative nested inside a tuple element or a field, are planned
+An alternative may also stand inside one tuple element — `(Circle { r } | Square { r }, k) =>
+r + k`.  A plain-struct subject, and an alternative inside a field sub-pattern, are planned
 (@PLN186).
 
 Whether a destructured field is a **view of the subject** or a **copy** depends on the

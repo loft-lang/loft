@@ -30,6 +30,15 @@ after it.  The arm rule's "bare binding" wording stood for two months without th
 having it — corrected 2026-09-07, with the silence that hid it (an arm naming nothing was
 skipped without a diagnostic).
 
+- **D-match-20 — CLOSED 2026-10-06 (@PLN186 step 4).** `(P-Alt)` inside a tuple element,
+  `(Circle { r } | Square { r }, k) => r + k`, was refused (*"expected ',' between tuple pattern
+  elements"*).  A tuple element that lists alternatives (a `|` before the `,` or `)` that ends it)
+  now takes the slice element's alternation without its parentheses: a tag disjunction, each name
+  read from whichever variant matched, `τ?` where only some bind it, and the names joined to the
+  arm's pending set so its end restores them.  Guards:
+  `tests/scripts/a-tuple-element-lists-alternatives.loft` and
+  `…-element-alternative-binds-a-name-at-another-type.loft`.
+
 - **D-match-19 — CLOSED 2026-10-06 (@PLN186 step 3).** `(P-Multi)` over a tuple subject,
   `(Circle { r }, Square { s }) | (Square { s }, Circle { r }) => r * 10.0 + s`, was refused
   (*"Expect token =>"*).  Each further tuple pattern now parses into its own bindings and

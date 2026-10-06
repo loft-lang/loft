@@ -276,16 +276,13 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **4** — the closed entries, `D-match-1` to `-17` and `-19`, are in
-[matching-history.md](matching-history.md).  The four below are P-Alt / P-Cap positions the parser
+OPEN: **3** — the closed entries, `D-match-1` to `-17`, `-19` and `-20`, are in
+[matching-history.md](matching-history.md).  The three below are P-Alt / P-Cap positions the parser
 does not reach yet, each refused with a parse error (no wrong answer); @PLN186 closes them one
 step each, and `tests/scripts/an-or-pattern-arm-links-its-bindings.loft` lists them.
 
 - **D-match-18 (OPEN, @PLN186)** — `(P-Multi)` on a plain-struct subject, <!-- doc-lint: ok -->
   `P { x: 0, y: v } | P { x: v, y: 0 } => v`, is refused (*"Unknown variable 'v'"*).
-- **D-match-20 (OPEN, @PLN186)** — `(P-Alt)` inside a tuple element, <!-- doc-lint: ok -->
-  `(Circle { r } | Square { r }, k) => r + k`, is refused (*"expected ',' between tuple pattern
-  elements"*).
 - **D-match-21 (OPEN, @PLN186)** — `(P-Alt)` inside a field sub-pattern, <!-- doc-lint: ok -->
   `Box { s: Circle | Square, n } => n`, is refused (*"Expect token }"*).
 - **D-match-22 (OPEN, @PLN186)** — `(P-Cap)` at the arm root, <!-- doc-lint: ok -->

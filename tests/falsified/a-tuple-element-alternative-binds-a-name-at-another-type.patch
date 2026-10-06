@@ -1,0 +1,99 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 07f5c1624..5fc2b2792 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -9678,10 +9678,6 @@ impl Parser {
+     /// branch may capture the whole element it matched, `a:V | b:W` (`@FR-G-Pat-Prec`).  A
+     /// varying-width MULTI-element alternative is `parse_multi_element_alternation`.  `elem`
+     /// is the element value at this position; it is cloned for each tag test and field read.
+-    ///
+-    /// `parens` is false for a TUPLE element (`(Circle { r } | Square { r }, k)`, @PLN186 step
+-    /// 4): the alternatives stand bare between the element separators, and each name joins the
+-    /// arm's pending names so the arm's end restores what it meant before.
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+     fn parse_slice_alternation_element(
+         &mut self,
+@@ -9690,11 +9686,8 @@ impl Parser {
+         borrow_src: u16,
+         bindings: &mut Vec<Value>,
+         elem_conds: &mut Vec<Value>,
+-        parens: bool,
+     ) {
+-        if parens {
+-            self.lexer.token("(");
+-        }
++        self.lexer.token("(");
+         // (disc, variant_def_nr, fields: [(name, attr_idx, type)]) — an `attr_idx` of
+         // `usize::MAX` is a `name:` capture of the WHOLE element (`@FR-P-Cap`).
+         let mut alts: Vec<(i32, u32, Vec<(String, usize, Type)>)> = Vec::new();
+@@ -9784,9 +9777,7 @@ impl Parser {
+                 break;
+             }
+         }
+-        if parens {
+-            self.lexer.token(")");
+-        }
++        self.lexer.token(")");
+         if alts.is_empty() {
+             return;
+         }
+@@ -9858,10 +9849,7 @@ impl Parser {
+                 }
+             }
+             bindings.push(v_set(v_nr, acc));
+-            let before = self.vars.set_name(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
+-            if !parens {
+-                self.pattern_binds_pending.push((fname.clone(), before));
+-            }
++            self.vars.set_name(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
+             // A heap capture is a borrowed VIEW of the subject element: skip its free
+             // and record the borrow dep on the subject source (mirrors the field-
+             // sub-pattern path); a text payload is an OWNED copy (freed normally).
+@@ -11547,7 +11535,6 @@ impl Parser {
+                                 borrow_src,
+                                 &mut bindings,
+                                 &mut elem_conds,
+-                                true,
+                             );
+                             head.push("_".to_string());
+                         } else {
+@@ -11957,15 +11944,6 @@ impl Parser {
+         clippy::too_many_lines,
+         reason = "moved whole out of `parse_tuple_match`"
+     )]
+-    /// Does the tuple element at the cursor list alternatives — a `|` before the `,` or `)`
+-    /// that ends it, outside any group?  Looks ahead and puts the cursor back.
+-    fn tuple_element_has_alternatives(&mut self) -> bool {
+-        let at = self.lexer.link();
+-        let found = self.lexer.recover_to(&[",", ")", "|"]) && self.lexer.peek_token("|");
+-        self.lexer.revert(at);
+-        found
+-    }
+-
+     fn parse_tuple_pattern_elements(
+         &mut self,
+         tmp: u16,
+@@ -12013,22 +11991,7 @@ impl Parser {
+             }
+             let elem_type = elem_type.clone();
+             let elem_get = Value::TupleGet(tmp, i as u16);
+-            if let Some((e_nr, true)) = self.pattern_variant_enum(&elem_type)
+-                && self.tuple_element_has_alternatives()
+-            {
+-                // `@FR-P-Alt` in a tuple element — `(Circle { r } | Square { r }, k)`: the
+-                // element matches when any alternative's tag does, and each name is read from
+-                // whichever variant matched (the slice element's alternation, without its
+-                // parentheses).
+-                self.parse_slice_alternation_element(
+-                    e_nr,
+-                    &elem_get,
+-                    tmp,
+-                    bindings,
+-                    elem_conds,
+-                    false,
+-                );
+-            } else if self.peek_is_variant_subpattern(&elem_type) {
++            if self.peek_is_variant_subpattern(&elem_type) {
+                 // @FR-P-Point — a unit or struct variant is a point pattern over ONE
+                 // value, and a tuple element is one value, so an enum element takes
+                 // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
