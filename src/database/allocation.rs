@@ -7787,7 +7787,7 @@ mod p318_hash_deepcopy {
             pos: src.pos + list_pos,
         };
         let elem = stores.store_mut(&src).claim(cell_words);
-        stores.store_mut(&src).set_int(elem, 4, 7); // element payload
+        stores.store_mut(&src).set_int(elem, 8, 7); // element payload: field `k`
         let cur = stores.store_mut(&src).claim(2); // container: header word + one slot word (len 2)
         stores.store_mut(&src).set_u32_raw(cur, 4, 2); // length header = 2
         stores.store_mut(&src).set_u32_raw(cur, 8, elem); // slot0 → real element

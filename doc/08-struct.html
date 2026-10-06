@@ -165,12 +165,12 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!(&amp;spare == &amp;twin), <span class="st">"…held in two different records"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(&amp;linked == &amp;item, <span class="st">"a '&amp;' link names the record it links to"</span>);</code></pre>
 <h2 id="sizeof">sizeof</h2>
-<p><code>sizeof(Type)</code> returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.</p>
+<p><code>sizeof(Type)</code> returns the byte size used when the type is stored as a struct field or vector element: fields packed largest first, then padded so the size is a multiple of the largest field's alignment. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) == <span class="nm">8</span>, <span class="st">"integer: 8 bytes (i64 storage)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">u8</a></span>) == <span class="nm">1</span>, <span class="st">"u8: 1 byte (packed)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">u16</a></span>) == <span class="nm">2</span>, <span class="st">"u16: 2 bytes (packed)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="en">Colour</span>) == <span class="nm">3</span>, <span class="st">"Colour: 3 × u8 = 3 bytes"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="en">Area</span>) == <span class="nm">5</span>, <span class="st">"Area: u16 + 3 × u8 = 5 bytes"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="en">Area</span>) == <span class="nm">6</span>, <span class="st">"Area: u16 + 3 × u8 = 5 bytes, padded to 6"</span>);
 }</code></pre>
 <section id="loft-panel" class="loft-panel" hidden>
 <h2>Run it yourself</h2>
@@ -396,14 +396,15 @@ fn main() {
   assert(!(&amp;spare == &amp;twin), "…held in two different records");
   assert(&amp;linked == &amp;item, "a '&amp;' link names the record it links to");
   // ## sizeof
-  // 'sizeof(Type)' returns the packed byte size used when the type is stored
-  // as a struct field or vector element. Range-constrained integer types like
+  // 'sizeof(Type)' returns the byte size used when the type is stored as a struct
+  // field or vector element: fields packed largest first, then padded so the size
+  // is a multiple of the largest field's alignment. Range-constrained integer types like
   // u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
   assert(sizeof(u8) == 1, "u8: 1 byte (packed)");
   assert(sizeof(u16) == 2, "u16: 2 bytes (packed)");
   assert(sizeof(Colour) == 3, "Colour: 3 × u8 = 3 bytes");
-  assert(sizeof(Area) == 5, "Area: u16 + 3 × u8 = 5 bytes");
+  assert(sizeof(Area) == 6, "Area: u16 + 3 × u8 = 5 bytes, padded to 6");
 }
 </pre>
 <style>.loft-panel{margin:2em 0;padding:1em;border:1px solid #d0d7de;border-radius:6px;background:#f6f8fa}.loft-panel h2{margin-top:0}.lp-note{color:#57606a;font-size:0.9em;margin:0 0 0.8em}.lp-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:0.8em}.loft-panel button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:5px 14px;font-size:0.9em;font-weight:600;cursor:pointer}.loft-panel button:disabled{opacity:0.4;cursor:default}.lp-status{font-size:0.85em;color:#57606a}.lp-status.lp-ok{color:#1a7f37}.lp-status.lp-err{color:#cf222e}.lp-status.lp-info{color:#57606a}.lp-output{background:#fff;border:1px solid #d0d7de;border-radius:4px;padding:8px;min-height:2.2em;max-height:16em;overflow:auto;white-space:pre-wrap;margin:0 0 0.8em}.lp-frame{background:#fff;border:1px solid #d0d7de;border-radius:4px;padding:8px;margin-bottom:0.8em}.lp-frame-head{font-size:0.85em;color:#57606a;margin-bottom:6px}.lp-locals{display:flex;gap:6px;flex-wrap:wrap}.lp-local,.lp-callable{background:#eaeef2;border-radius:3px;padding:2px 6px;font-size:0.85em;cursor:pointer}.lp-local:hover,.lp-callable:hover{background:#d0d7de}.lp-callables{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:0.8em}.lp-prompt{display:flex;gap:6px;align-items:center}.lp-caret{color:#2563eb;font-weight:700}.lp-prompt input{flex:1;padding:6px 8px;border:1px solid #d0d7de;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9em}.lp-log{margin-top:0.6em;display:flex;flex-direction:column;gap:4px;max-height:14em;overflow:auto}.lp-row{display:flex;gap:8px;align-items:baseline;font-size:0.9em}.lp-q{color:#2563eb;flex:0 0 auto}.lp-a{color:#1f2328;word-break:break-word}.lp-row.lp-warn .lp-a{color:#9a6700}.lp-lines{margin-top:1em}.lp-lines summary{cursor:pointer;font-size:0.9em;color:#57606a}.lp-src{margin:0.6em 0 0;padding-left:3.5em;background:#fff;border:1px solid #d0d7de;border-radius:4px;max-height:20em;overflow:auto}.lp-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.82em;white-space:pre;cursor:pointer;padding:0 4px}.lp-line:hover{background:#eaeef2}.lp-line.lp-break{background:#ffebe9;outline:1px solid #cf222e}@media print{.loft-panel{display:none}}</style>

@@ -96,12 +96,13 @@ fn main() {
   s2: sorted<Row[id]> = [Row { id: 1, nm: "a" }];
   assert(v_sorted_len(s2) == 1, "twin: len(sorted) by value");
 
-  // struct — `size` of the record: an 8-byte integer plus a 4-byte text record pointer.
+  // struct — `size` of the record: an 8-byte integer plus a 4-byte text record pointer,
+  // padded to 16 (@C138).
   r = Row { id: 3, nm: "c" };
   rz = r_struct_size(r);
-  assert(rz == 12, "size(&Row): {rz}");
+  assert(rz == 16, "size(&Row): {rz}");
   r2 = Row { id: 3, nm: "zz" };
-  assert(v_struct_size(r2) == 12, "twin: size(Row) by value");
+  assert(v_struct_size(r2) == 16, "twin: size(Row) by value");
 
   // scalar — `size` is a compile-time width, and the `&` still carries the mutation back.
   n = 5;

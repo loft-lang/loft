@@ -55,7 +55,8 @@ struct SzS {
 }
 
 fn test_sizeof_struct() {
-  assert(sizeof(SzS) == 17, "struct size");
+  // 8 + 8 + 1 = 17, padded to 24: a multiple of the 8-byte alignment (@C138).
+  assert(sizeof(SzS) == 24, "struct size");
 }
 
 struct SzHS {
@@ -83,8 +84,8 @@ struct SzIMain {
 fn test_sizeof_index_member() {
   m = SzIMain {};
   // P191: bookkeeping fields are 4-byte int<0,false> (was 8-byte
-  // integer), so SzIS shrank by 8 bytes (41→33). 33 + 100*4 = 433.
-  assert(sizeof(SzIS)+100 * sizeof(m) == 433, "index member sizes");
+  // integer): 24 + 4 + 4 + 1 = 33, padded to 40 (@C138). 40 + 100*4 = 440.
+  assert(sizeof(SzIS)+100 * sizeof(m) == 440, "index member sizes");
 }
 
 struct SzRS {

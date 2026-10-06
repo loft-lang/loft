@@ -47,13 +47,14 @@ fn test_vector_allocated_size_per_scalar() {
 
 fn test_record_packs_mixed_widths() {
   // Instrument 3, record half — the oracle.  Five fields of four different
-  // widths round-trip exactly, and the vector stride stays packed (1+4+2 = 7).
+  // widths round-trip exactly; the record packs to 7 (u32, u16, u8) and pads to 8,
+  // a multiple of its 4-byte alignment (`@FR-L-Align`, @C138), so the stride is 8.
   m = Mixed { a: 200, b: 5, c: 65000 };
   assert(m.a == 200, "record u8 field");
   assert(m.b == 5, "record u32 field");
   assert(m.c == 65000, "record u16 field");
   v: vector<Mixed> = [Mixed { a: 1, b: 2, c: 3 }, Mixed { a: 4, b: 5, c: 6 }];
-  assert(size(v) == 14, "vector<Mixed> x2 packs to 7 bytes per record");
+  assert(size(v) == 16, "vector<Mixed> x2 is 8 bytes per record");
   assert(v[0].a == 1 && v[0].b == 2 && v[0].c == 3, "record element 0 round-trips");
   assert(v[1].a == 4 && v[1].b == 5 && v[1].c == 6, "record element 1 round-trips");
 }

@@ -165,7 +165,7 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
     );
     // The call is handed the element's field as its buffer.
     assert!(
-        rust.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 20 });"),
+        rust.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 24 });"),
         "g1's call builds into the element"
     );
     let _ = std::fs::remove_file(&out);

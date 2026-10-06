@@ -1,0 +1,753 @@
+diff --git b/src/calc.rs a/src/calc.rs
+index 816a94b31..e7cdc3961 100644
+--- b/src/calc.rs
++++ a/src/calc.rs
+@@ -92,13 +92,6 @@ pub fn calculate_positions(
+             }
+         }
+     }
+-    // `@FR-L-Align` (@C138) — a record's size is a multiple of its alignment, so the record is
+-    // aligned wherever it is placed: as a collection element its size is the stride, and as an
+-    // inline field of another record its size is how far the next field starts.  Without this
+-    // tail padding `{ integer, boolean }` was 9 bytes, and element 1 of a vector of it put its
+-    // `integer` at byte 9.
+-    let al = u16::from((*alignment).max(1));
+-    *size = size.div_ceil(al) * al;
+     let mut result = Vec::new();
+     for (_, pos) in positions {
+         result.push(pos);
+diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
+index cd35e2ac4..37582e363 100644
+--- b/src/compiled_stdlib_gen.rs
++++ a/src/compiled_stdlib_gen.rs
+@@ -1672,7 +1672,7 @@ pub extern "C" fn loft_shared_t_6vector_join(
+     unsafe { (*ret).text_ptr = std::ptr::null(); (*ret).text_len = 0; }
+ }
+ 
+-pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 2598374647381934984u64 }
++pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 8210252831944374008u64 }
+ 
+ /// `(function, bridge symbol, bridge)` for every compiled function, sorted by name.
+ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
+@@ -1693,6 +1693,6 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
+ 
+ /// The standard library's type table this was generated against: its length and fingerprint.
+ pub(crate) const PREFIX_TYPES: usize = 96;
+-pub(crate) const PREFIX_FINGERPRINT: u64 = 13106178954628645925;
++pub(crate) const PREFIX_FINGERPRINT: u64 = 11768752842490065367;
+ /// The hash of the `default/*.loft` source these bodies were compiled from.
+ pub(crate) const SOURCE_HASH: u64 = 8494925563378724926;
+diff --git b/src/data.rs a/src/data.rs
+index cf0f5b4bc..e255d55cb 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -3845,23 +3845,14 @@ pub fn element_stack_size(t: &Type) -> usize {
+ /// is what makes `(u8, u16)` occupy 16 bytes where `struct { a: u8, b: u16 }`
+ /// occupies 3.
+ ///
+-/// `@FR-L-Align` (@C138) — every element sits on its natural boundary
+-/// ([`element_storage_align`]), and a nested tuple's size is a multiple of its own
+-/// alignment, exactly as the layout routine places a `__tuple<…>` record's members.
++/// Records pack TIGHTLY — `struct { a: u8, b: u32, c: u16 }` is 1+4+2 = 7 bytes with
++/// no padding, because store access is unaligned-tolerant — so there is no alignment
++/// term here.
+ #[must_use]
+ pub fn element_storage_size(t: &Type) -> usize {
+     match t.base() {
+         Type::Integer(spec) => spec.byte_width(true) as usize,
+-        Type::Tuple(elems) => {
+-            let offsets = element_storage_offsets(elems);
+-            let end = elems
+-                .iter()
+-                .zip(&offsets)
+-                .map(|(e, o)| o + element_storage_size(e))
+-                .max()
+-                .unwrap_or(0);
+-            end.next_multiple_of(element_storage_align(t))
+-        }
++        Type::Tuple(elems) => elems.iter().map(element_storage_size).sum(),
+         // Measured against the record oracle: `(u8, text)` is 5 bytes, so a stored
+         // `text` element is the 4-byte heap pointer, NOT the 16-byte stack `Str`.
+         // `read_tuple_at_wide` says the same ("text: 4-byte heap-pointer") and
+@@ -3878,29 +3869,13 @@ pub fn element_storage_size(t: &Type) -> usize {
+     }
+ }
+ 
+-/// The natural alignment of a tuple element as STORED — the alignment the layout routine
+-/// gives the matching field of a `__tuple<…>` record: a narrow integer its own width, a
+-/// text or a record pointer 4, a nested tuple its largest member's.
+-#[must_use]
+-pub fn element_storage_align(t: &Type) -> usize {
+-    match t.base() {
+-        Type::Integer(spec) => spec.byte_width(true) as usize,
+-        Type::Tuple(elems) => elems.iter().map(element_storage_align).max().unwrap_or(1),
+-        Type::Function(..) => 4,
+-        other => element_stack_align(other) as usize,
+-    }
+-}
+-
+-/// Element offsets in the **STORAGE** (record) layout: each element at the next position
+-/// its [`element_storage_align`] divides (`@FR-L-Align`, @C138).  Sibling of
+-/// [`element_stack_offsets`]; the layout of the `__tuple<…>` record is the authority, and
+-/// `tests/layout_alignment.rs` holds the two to the same answer.
++/// Element offsets in the **STORAGE** (record) layout: cumulative
++/// [`element_storage_size`], packed tight. Sibling of [`element_stack_offsets`].
+ #[must_use]
+ pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
+     let mut offsets = Vec::with_capacity(types.len());
+     let mut pos = 0usize;
+     for t in types {
+-        pos = pos.next_multiple_of(element_storage_align(t));
+         offsets.push(pos);
+         pos += element_storage_size(t);
+     }
+@@ -4292,26 +4267,25 @@ mod tuple_stack_layout_tests {
+         })
+     }
+ 
+-    /// @PLN114 D1 — the storage view sizes elements as record FIELDS; `@C138` places each on
+-    /// its natural boundary.
++    /// @PLN114 D1 — the storage view sizes elements as record FIELDS.
+     ///
+-    /// Hand-computed: `(u8, u32, u16)` keeps its order, so the u32 waits for 4 and the u16
+-    /// follows at 8 — 10 bytes, padded to 12, a multiple of the 4-byte alignment.  The
+-    /// `__tuple<…>` record's layout answers the same (`tests/layout_alignment.rs`).
++    /// Hand-computed against the record oracle: `struct { a: u8, b: u32, c: u16 }`
++    /// measures 7 bytes per record on this build, so the tuple of the same three
++    /// element types must compute 7 too.
+     #[test]
+     fn storage_view_packs_like_a_record() {
+         use super::{element_storage_offsets, element_storage_size};
+         let elems = vec![narrow(1), narrow(4), narrow(2)];
+-        assert_eq!(element_storage_offsets(&elems), vec![0, 4, 8]);
++        assert_eq!(element_storage_offsets(&elems), vec![0, 1, 5]);
+         assert_eq!(
+             element_storage_size(&Type::Tuple(elems)),
+-            12,
+-            "u8, pad 3, u32, u16, pad 2"
++            7,
++            "u8 + u32 + u16 packs to 7 bytes, as `struct M` does"
+         );
+ 
+         let pair = vec![narrow(1), narrow(2)];
+-        assert_eq!(element_storage_offsets(&pair), vec![0, 2]);
+-        assert_eq!(element_storage_size(&Type::Tuple(pair)), 4);
++        assert_eq!(element_storage_offsets(&pair), vec![0, 1]);
++        assert_eq!(element_storage_size(&Type::Tuple(pair)), 3);
+     }
+ 
+     /// The stack view is unchanged and deliberately WIDER — a push occupies a whole
+@@ -4328,8 +4302,8 @@ mod tuple_stack_layout_tests {
+         );
+         assert_eq!(
+             element_storage_size(&Type::Tuple(elems)),
+-            12,
+-            "storage: 1, 4 and 2 on their own boundaries"
++            7,
++            "storage: 1 + 4 + 2"
+         );
+     }
+ 
+diff --git b/src/data_store.rs a/src/data_store.rs
+index 455fea908..7178d6eca 100644
+--- b/src/data_store.rs
++++ a/src/data_store.rs
+@@ -84,7 +84,7 @@ pub(crate) const NDCALLREF_VAR: u32 = 8;
+ /// record the box holds — reached via [`Node::block_rec`], never added to this.
+ pub(crate) const NDBLOCK_BLOCK: u32 = 4;
+ /// Element stride of that box: one `Block` record.
+-pub(crate) const BLOCK_STRIDE: u32 = 32;
++pub(crate) const BLOCK_STRIDE: u32 = 28;
+ pub(crate) const BLOCK_NAME: u32 = 16;
+ pub(crate) const BLOCK_OPERATORS: u32 = 20;
+ pub(crate) const NDINSERT_ITEMS: u32 = 4;
+@@ -166,9 +166,9 @@ pub(crate) const TY_OPTIONAL: u8 = 25; // @PLN25 `τ?` — box-of-one child like
+ pub(crate) const TY_TRIE: u8 = 26; // `trie<T[k]>` — ONE text key, appended so 0..=25 keep their numbers
+ 
+ /// Element strides for the non-`Node` vectors the TypeT half uses.
+-pub(crate) const TYPET_STRIDE: u32 = 40; // `TypeT` enum record size
++pub(crate) const TYPET_STRIDE: u32 = 33; // `TypeT` enum record size
+ pub(crate) const INT_STRIDE: u32 = 8; // `vector<integer>` element (dep lists)
+-pub(crate) const SORTKEY_STRIDE: u32 = 8; // `SortKey` record size
++pub(crate) const SORTKEY_STRIDE: u32 = 5; // `SortKey` record size
+ pub(crate) const NAMEREF_STRIDE: u32 = 4; // `NameRef` record size
+ 
+ /// `TypeT` field offsets.  `dep` (`vector<integer>`) is at 4 for the leaf-ish
+@@ -227,7 +227,7 @@ pub(crate) const BLOCK_SCOPE: u32 = 0;
+ pub(crate) const BLOCK_VAR_SIZE: u32 = 8;
+ 
+ /// `Attribute` record (element of `vector<Attribute>`).
+-pub(crate) const ATTRIBUTE_STRIDE: u32 = 56; // @PLN86 F8b +4 links; @PLN40 +1 const_field bool; C124 +1 value_const bool; +1 work_buffer bool
++pub(crate) const ATTRIBUTE_STRIDE: u32 = 49; // @PLN86 F8b +4 links; @PLN40 +1 const_field bool; C124 +1 value_const bool; +1 work_buffer bool
+ pub(crate) const ATTR_NAME: u32 = 16;
+ pub(crate) const ATTR_TYPEDEF: u32 = 20; // vector<TypeT> (box-of-one)
+ pub(crate) const ATTR_VALUE: u32 = 24; // vector<Node> (box-of-one)
+@@ -248,7 +248,7 @@ pub(crate) const ATTR_ASSIGNED_LAMBDA_D_NR: u32 = 8;
+ 
+ /// `LinkedFieldGroup` record (element of `vector<LinkedFieldGroup>`).  `kind`
+ /// is the native `LinkedFieldKind` discriminant (`Tuple` = 0, `Index` = 1).
+-pub(crate) const LFG_STRIDE: u32 = 40;
++pub(crate) const LFG_STRIDE: u32 = 36;
+ pub(crate) const LFG_KIND: u32 = 0;
+ pub(crate) const LFG_INSTANCE: u32 = 8;
+ pub(crate) const LFG_FIELD_INDICES: u32 = 32; // vector<integer>
+@@ -264,7 +264,7 @@ pub(crate) const POS_FILE: u32 = 16;
+ 
+ /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
+ /// the fifteen codegen-read fields the snapshot seam exposes.
+-pub(crate) const VARIABLE_STRIDE: u32 = 64;
++pub(crate) const VARIABLE_STRIDE: u32 = 62;
+ pub(crate) const VAR_NAME: u32 = 40;
+ pub(crate) const VAR_TYPE_DEF: u32 = 44; // vector<TypeT> (box-of-one)
+ pub(crate) const VAR_STACK_POS: u32 = 0;
+@@ -307,47 +307,47 @@ pub(crate) const FN_NAMES: u32 = 12; // vector<NameNr> (name -> var_nr map)
+ pub(crate) const FN_INLINE_REFS: u32 = 16; // vector<integer> (inline_ref_vars)
+ 
+ /// `NameNr` record (element of `Function.names` = `vector<NameNr>`).
+-pub(crate) const NAMENR_STRIDE: u32 = 16;
++pub(crate) const NAMENR_STRIDE: u32 = 12;
+ pub(crate) const NAMENR_NR: u32 = 0; // integer (var_nr)
+ pub(crate) const NAMENR_NAME: u32 = 8; // text
+ 
+ /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
+ /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
+ /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
+-pub(crate) const DEFINITION_STRIDE: u32 = 192; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator
++pub(crate) const DEFINITION_STRIDE: u32 = 185; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator
+ pub(crate) const DEF_SOURCE: u32 = 0;
+ pub(crate) const DEF_DEF_TYPE: u32 = 8;
+ pub(crate) const DEF_PARENT: u32 = 16;
+ pub(crate) const DEF_POSITION: u32 = 24; // inlined Position base
+-pub(crate) const DEF_OP_CODE: u32 = 48;
+-pub(crate) const DEF_KNOWN_TYPE: u32 = 56;
+-pub(crate) const DEF_CLOSURE_RECORD: u32 = 64;
+-pub(crate) const DEF_FORCED_SIZE: u32 = 72; // Option<u8>; 0 = None
+-pub(crate) const DEF_PURITY: u32 = 80;
+-pub(crate) const DEF_NAME: u32 = 96;
+-pub(crate) const DEF_ATTRIBUTES: u32 = 100; // vector<Attribute>
+-pub(crate) const DEF_CODE: u32 = 104; // vector<Node> (box-of-one)
+-pub(crate) const DEF_RETURNED: u32 = 108; // vector<TypeT> (box-of-one)
+-pub(crate) const DEF_RUST: u32 = 112;
+-pub(crate) const DEF_NATIVE: u32 = 116;
+-pub(crate) const DEF_VARIABLES: u32 = 120; // inlined Function base (20 bytes)
+-pub(crate) const DEF_MUTATED_CAPTURES: u32 = 140; // vector<NameRef>
+-pub(crate) const DEF_SCALARS_TO_BOX: u32 = 144; // vector<NameRef>
+-pub(crate) const DEF_BOUNDS: u32 = 148; // vector<integer>
+-pub(crate) const DEF_FIELD_GROUPS: u32 = 152; // vector<LinkedFieldGroup>
+-pub(crate) const DEF_SYNTHETIC: u32 = 156; // Option<&str>; "" = None
+-pub(crate) const DEF_CAP: u32 = 160; // @PLN86 the group#right call-gate link; "" = unlinked
+-pub(crate) const DEF_SUPERSEDED: u32 = 164; // @PLN102 arc C #superseded "Y"; "" = not superseded
+-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 184;
+-pub(crate) const DEF_PUB_VISIBLE: u32 = 185;
+-pub(crate) const DEF_NULL_SAFE: u32 = 186; // @PLN46 W2 #null_safe; false = unannotated
+-pub(crate) const DEF_BUILTIN: u32 = 187; // @PLN165 arc E #builtin; false = an ordinary body
+-pub(crate) const DEF_OPERATOR_FORM: u32 = 188; // @PLN182 written `operator`; false = a plain `fn`
+-pub(crate) const DEF_C_SYMBOL: u32 = 168; // @PLN24 #c "sym"; "" = not a C binding
+-pub(crate) const DEF_C_SIG: u32 = 172; // @PLN24 the declared C signature; "" = none
+-pub(crate) const DEF_TYPE_PARAMS: u32 = 176; // @PLN165 D2 vector<integer>, header order
+-pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not an instance
+-pub(crate) const DEF_INSTANCE_ARGS: u32 = 180; // @PLN165 D3 vector<TypeT>
++pub(crate) const DEF_OP_CODE: u32 = 44;
++pub(crate) const DEF_KNOWN_TYPE: u32 = 52;
++pub(crate) const DEF_CLOSURE_RECORD: u32 = 60;
++pub(crate) const DEF_FORCED_SIZE: u32 = 68; // Option<u8>; 0 = None
++pub(crate) const DEF_PURITY: u32 = 76;
++pub(crate) const DEF_NAME: u32 = 92;
++pub(crate) const DEF_ATTRIBUTES: u32 = 96; // vector<Attribute>
++pub(crate) const DEF_CODE: u32 = 100; // vector<Node> (box-of-one)
++pub(crate) const DEF_RETURNED: u32 = 104; // vector<TypeT> (box-of-one)
++pub(crate) const DEF_RUST: u32 = 108;
++pub(crate) const DEF_NATIVE: u32 = 112;
++pub(crate) const DEF_VARIABLES: u32 = 116; // inlined Function base (20 bytes)
++pub(crate) const DEF_MUTATED_CAPTURES: u32 = 136; // vector<NameRef>
++pub(crate) const DEF_SCALARS_TO_BOX: u32 = 140; // vector<NameRef>
++pub(crate) const DEF_BOUNDS: u32 = 144; // vector<integer>
++pub(crate) const DEF_FIELD_GROUPS: u32 = 148; // vector<LinkedFieldGroup>
++pub(crate) const DEF_SYNTHETIC: u32 = 152; // Option<&str>; "" = None
++pub(crate) const DEF_CAP: u32 = 156; // @PLN86 the group#right call-gate link; "" = unlinked
++pub(crate) const DEF_SUPERSEDED: u32 = 160; // @PLN102 arc C #superseded "Y"; "" = not superseded
++pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 180;
++pub(crate) const DEF_PUB_VISIBLE: u32 = 181;
++pub(crate) const DEF_NULL_SAFE: u32 = 182; // @PLN46 W2 #null_safe; false = unannotated
++pub(crate) const DEF_BUILTIN: u32 = 183; // @PLN165 arc E #builtin; false = an ordinary body
++pub(crate) const DEF_OPERATOR_FORM: u32 = 184; // @PLN182 written `operator`; false = a plain `fn`
++pub(crate) const DEF_C_SYMBOL: u32 = 164; // @PLN24 #c "sym"; "" = not a C binding
++pub(crate) const DEF_C_SIG: u32 = 168; // @PLN24 the declared C signature; "" = none
++pub(crate) const DEF_TYPE_PARAMS: u32 = 172; // @PLN165 D2 vector<integer>, header order
++pub(crate) const DEF_INSTANCE_OF: u32 = 84; // @PLN165 D3 the template; -1 = not an instance
++pub(crate) const DEF_INSTANCE_ARGS: u32 = 176; // @PLN165 D3 vector<TypeT>
+ 
+ /// `Data` record (the root).
+ pub(crate) const DATA_SOURCE: u32 = 0;
+@@ -368,17 +368,17 @@ pub(crate) const IMPORT_INTO_SOURCE: u32 = 8;
+ pub(crate) const IMPORT_NAME: u32 = 16; // "" = wildcard
+ pub(crate) const IMPORT_BIND: u32 = 20;
+ pub(crate) const IMPORT_PUBLIC: u32 = 24; // `pub use` (@C98)
+-pub(crate) const IMPORT_STRIDE: u32 = 32;
++pub(crate) const IMPORT_STRIDE: u32 = 25;
+ 
+ /// `UseName` record — a `use` short name or alias and its source number.
+ pub(crate) const USENAME_NAME: u32 = 8;
+ pub(crate) const USENAME_SOURCE: u32 = 0;
+-pub(crate) const USENAME_STRIDE: u32 = 16;
++pub(crate) const USENAME_STRIDE: u32 = 12;
+ 
+ /// `TypeVarBound` record — a type-variable placeholder and the bound-set key it stands for.
+ pub(crate) const TVB_HOLDER: u32 = 0;
+ pub(crate) const TVB_BOUNDS: u32 = 8;
+-pub(crate) const TVB_STRIDE: u32 = 16;
++pub(crate) const TVB_STRIDE: u32 = 12;
+ 
+ /// Well-known location of the `Data` root record in a saved IR store
+ /// (@PLN11 arc D).  A freshly-opened file-backed store's first `claim(16)`
+@@ -413,7 +413,7 @@ pub(crate) const DCSINGLE_V: u32 = 4; // single
+ pub(crate) const DCSTR_V: u32 = 4; // text
+ 
+ /// `DbField` record (element of `Parts::Struct` / `EnumValue` field vectors).
+-pub(crate) const DBFIELD_STRIDE: u32 = 40;
++pub(crate) const DBFIELD_STRIDE: u32 = 37;
+ pub(crate) const DBFIELD_CONTENT: u32 = 0; // u16 known_type
+ pub(crate) const DBFIELD_POSITION: u32 = 8; // u16 byte offset
+ pub(crate) const DBFIELD_NAME: u32 = 24;
+@@ -423,12 +423,12 @@ pub(crate) const DBFIELD_NULLABLE: u32 = 36; // @PLN127 arc D — declared nulla
+ pub(crate) const DBFIELD_TARGET: u32 = 16; // @C91 — u16 known_type a reference field names
+ 
+ /// `EnumPair` `(u16, text)` element of `Parts::Enum`.
+-pub(crate) const ENUMPAIR_STRIDE: u32 = 16;
++pub(crate) const ENUMPAIR_STRIDE: u32 = 12;
+ pub(crate) const ENUMPAIR_NR: u32 = 0;
+ pub(crate) const ENUMPAIR_NAME: u32 = 8;
+ 
+ /// `KeyField` `(u16, bool)` element of a Sorted/Ordered/Index key list.
+-pub(crate) const KEYFIELD_STRIDE: u32 = 16;
++pub(crate) const KEYFIELD_STRIDE: u32 = 9;
+ pub(crate) const KEYFIELD_NR: u32 = 0;
+ pub(crate) const KEYFIELD_ASC: u32 = 8;
+ 
+@@ -467,7 +467,7 @@ pub(crate) const PTINDEX_LEFT: u32 = 16;
+ pub(crate) const PTTRIE_KEY: u32 = 16; // Trie's key FIELD INDEX (content is at PTCONTENT)
+ 
+ /// `DbType` (`database::Type`) record — `parents` is derived, not stored.
+-pub(crate) const DBTYPE_STRIDE: u32 = 40;
++pub(crate) const DBTYPE_STRIDE: u32 = 34;
+ pub(crate) const DBTYPE_SIZE: u32 = 0; // u16
+ pub(crate) const DBTYPE_ALIGN: u32 = 8; // u8
+ pub(crate) const DBTYPE_NAME: u32 = 16;
+@@ -482,7 +482,7 @@ pub(crate) const DBTYPE_LINKED: u32 = 33;
+ pub(crate) const BUNDLE_DATA: u32 = 0;
+ pub(crate) const BUNDLE_TYPES: u32 = 24; // right after the inlined 24-byte `Data`
+ /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
+-pub(crate) const BUNDLE_STRIDE: u32 = 32;
++pub(crate) const BUNDLE_STRIDE: u32 = 28;
+ #[cfg(feature = "mmap")] // only `save_bundle` claims a bundle root
+ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
+ 
+@@ -491,7 +491,7 @@ pub(crate) const BUNDLE_ROOT_WORDS: u32 = (8 + BUNDLE_STRIDE).div_ceil(8);
+ pub(crate) const BOOL_MASK: u8 = 1;
+ 
+ /// Element stride of a `vector<Node>` (the `Node` enum's record size).
+-pub(crate) const NODE_STRIDE: u32 = 32;
++pub(crate) const NODE_STRIDE: u32 = 28;
+ 
+ /// Which `Node` variant a [`Value`] is.  Mirrors the native `data::Value`
+ /// variants 1:1; `Other(discriminant)` only on an unrecognised byte.
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index 04e99313d..074a1ceb6 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -7787,7 +7787,7 @@ mod p318_hash_deepcopy {
+             pos: src.pos + list_pos,
+         };
+         let elem = stores.store_mut(&src).claim(cell_words);
+-        stores.store_mut(&src).set_int(elem, 8, 7); // element payload: field `k`
++        stores.store_mut(&src).set_int(elem, 4, 7); // element payload
+         let cur = stores.store_mut(&src).claim(2); // container: header word + one slot word (len 2)
+         stores.store_mut(&src).set_u32_raw(cur, 4, 2); // length header = 2
+         stores.store_mut(&src).set_u32_raw(cur, 8, elem); // slot0 → real element
+diff --git b/src/database/io.rs a/src/database/io.rs
+index cdf965e81..ba39eb8ef 100644
+--- b/src/database/io.rs
++++ a/src/database/io.rs
+@@ -470,21 +470,14 @@ impl Stores {
+                     store.set_u32_raw(r.rec, r.pos, v);
+                 }
+                 Parts::Vector(elem_tp) => {
+-                    // Two widths (@C138): the STRIDE in the store, which carries
+-                    // `@FR-L-Align`'s padding, and the element's WIRE width, its fields one
+-                    // after another.  They agree for a scalar and differ for a padded record.
+                     let elem_size = u32::from(self.size(elem_tp));
+-                    let wire = match self.binary_size(elem_tp) {
+-                        0 => elem_size as usize,
+-                        w => w,
+-                    };
+                     if elem_size == 0 {
+                         return;
+                     }
+-                    let n_elems = data.len() / wire;
++                    let n_elems = data.len() / elem_size as usize;
+                     for i in 0..n_elems {
+                         let elem_ref = vector::vector_append(r, elem_size, &mut self.allocations);
+-                        let slice = &data[i * wire..(i + 1) * wire];
++                        let slice = &data[i * elem_size as usize..(i + 1) * elem_size as usize];
+                         self.write_data(&elem_ref, elem_tp, little_endian, slice);
+                         vector::vector_finish(r, &mut self.allocations);
+                     }
+@@ -596,13 +589,6 @@ impl Stores {
+         }
+     }
+ 
+-    /// The size of a `File` record as the layout assigns it — the stride of a `files()` listing.
+-    /// Read from the type table rather than written down: `@FR-L-Align` (@C138) pads a record
+-    /// to its alignment, and a stride copied by hand went stale the day the layout changed.
+-    fn file_record_size(&self) -> u32 {
+-        u32::from(self.size(self.name("File")))
+-    }
+-
+     #[cfg(not(host_fs))]
+     pub fn get_dir(&mut self, file_path: &str, result: &DbRef) -> bool {
+         // #255 / @PLN9: re-home a relative dir path against the program anchor.
+@@ -630,8 +616,7 @@ impl Stores {
+                 // listing: aborting here returned a silently truncated vector.
+             }
+             for (name, entry) in res {
+-                let elm =
+-                    vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
++                let elm = vector::vector_append(&vector, 33, &mut self.allocations);
+                 let store = self.store_mut(result);
+                 let name_pos = store.set_str(&name) as i32;
+                 store.set_u32_raw(elm.rec, elm.pos + 24, name_pos as u32);
+@@ -663,8 +648,7 @@ impl Stores {
+         };
+         for name in entries {
+             let full = format!("{file_path}/{name}");
+-            let elm =
+-                vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
++            let elm = vector::vector_append(&vector, 33, &mut self.allocations);
+             let store = self.store_mut(result);
+             let name_pos = store.set_str(&full) as i32;
+             store.set_u32_raw(elm.rec, elm.pos + 24, name_pos as u32);
+diff --git b/src/database/spans.rs a/src/database/spans.rs
+index 66a040f51..976d297a4 100644
+--- b/src/database/spans.rs
++++ a/src/database/spans.rs
+@@ -200,17 +200,12 @@ impl Shape {
+             let slot = vector::vector_append(&steps_at, self.step_size, &mut self.db.allocations);
+             let x = u32::from(self.db.position(self.tstep, "x"));
+             let y = u32::from(self.db.position(self.tstep, "y"));
+-            // `TStep`'s fields are 4-byte `i32`s: an 8-byte `set_int` spilled into the next one.
+-            self.db.store_mut(&slot).set_i32_raw(
+-                slot.rec,
+-                slot.pos + x,
+-                (seed + i64::from(s)) as i32,
+-            );
+-            self.db.store_mut(&slot).set_i32_raw(
+-                slot.rec,
+-                slot.pos + y,
+-                (seed - i64::from(s)) as i32,
+-            );
++            self.db
++                .store_mut(&slot)
++                .set_int(slot.rec, slot.pos + x, seed + i64::from(s));
++            self.db
++                .store_mut(&slot)
++                .set_int(slot.rec, slot.pos + y, seed - i64::from(s));
+             vector::vector_finish(&steps_at, &mut self.db.allocations);
+         }
+         let roads_at = DbRef {
+diff --git b/src/database/types.rs a/src/database/types.rs
+index 6bed33f0f..27d22f633 100644
+--- b/src/database/types.rs
++++ a/src/database/types.rs
+@@ -710,52 +710,9 @@ impl Stores {
+             self.finish_type(&linked, t_nr, &mut in_progress);
+         }
+         self.determine_keys();
+-        if crate::env_once!(std::env::var("LOFT_TRACE_ALIGN").is_ok()) {
+-            for v in self.alignment_violations() {
+-                crate::loft_eprintln!("[align] {v}");
+-            }
+-        }
+         // self.dump_types();
+     }
+ 
+-    /// `@FR-L-Align` — every place in a finished record where a scalar would sit at an address
+-    /// its natural alignment does not divide: a field whose offset its type's alignment does
+-    /// not divide, and a record whose size its own alignment does not divide (the stride of
+-    /// that record as a collection element).  A record starts on a word boundary, so these
+-    /// two are the whole question.  Empty when the layout is aligned.
+-    #[must_use]
+-    pub fn alignment_violations(&self) -> Vec<String> {
+-        let mut out = Vec::new();
+-        for t in &self.types {
+-            let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) = &t.parts else {
+-                continue;
+-            };
+-            if t.size == u16::MAX {
+-                continue;
+-            }
+-            for f in fields {
+-                let Some(ft) = self.types.get(f.content as usize) else {
+-                    continue;
+-                };
+-                let al = u16::from(ft.align.max(1));
+-                if f.position % al != 0 {
+-                    out.push(format!(
+-                        "{}.{}: offset {} is not a multiple of its alignment {al}",
+-                        t.name, f.name, f.position
+-                    ));
+-                }
+-            }
+-            let al = u16::from(t.align.max(1));
+-            if t.size % al != 0 {
+-                out.push(format!(
+-                    "{}: size {} is not a multiple of its alignment {al}",
+-                    t.name, t.size
+-                ));
+-            }
+-        }
+-        out
+-    }
+-
+     /// @PLN25 — lay out a SINGLE synth `__nullable<S>` enum + its `Some` variant on demand
+     /// (positions/sizes), WITHOUT the full `finish()` (which re-runs every type's `finish_type` and
+     /// re-appends keyed-index bookkeeping → corruption at `enum_parent_size`).  Used on-demand for a
+@@ -893,13 +850,31 @@ impl Stores {
+             .field_groups
+             .iter()
+             .map(|g| {
+-                // `@FR-L-Align` (@C138) — a tuple group's members keep their natural
+-                // alignment, as a struct's fields do: `group_member_offsets` pads each to its
+-                // boundary.  A tuple cannot reorder its members, so `(text, integer)` takes 4
+-                // bytes of padding before the `integer`; packed tight it put the `integer` at 4,
+-                // where a native `&integer` link could not point.
+-                let member_sa: Vec<(u16, u8)> =
+-                    g.field_indices.iter().map(|&i| sizes[i as usize]).collect();
++                // @PLN114 — a TUPLE group is a record of its elements, and records
++                // pack TIGHT: `struct { a: u8, b: u32, c: u16 }` is 1+4+2 = 7 bytes,
++                // no padding, because store access is unaligned-tolerant.  Honouring
++                // each DB type's natural alignment here padded `(u8, u16)` to 4 where
++                // the identical record is 3.  Index groups keep their alignment —
++                // only the tuple kind mirrors the record.
++                let tight = matches!(g.kind, crate::data::LinkedFieldKind::Tuple);
++                let member_sa: Vec<(u16, u8)> = g
++                    .field_indices
++                    .iter()
++                    .map(|&i| {
++                        let (sz, al) = sizes[i as usize];
++                        // Narrow members pack tight (the record does); an 8-aligned
++                        // member keeps its boundary — a fn-ref's 8-byte `d_nr` is
++                        // read as an i64 and truncates to 4 without it (#493).
++                        //
++                        // Keying on the member's `Parts` kind was tried and is WORSE
++                        // (29 divergent shapes vs 19): `Parts::Base` covers plain
++                        // `integer` AND `character` / `single` / `float`, so it pads
++                        // members the record packs tight.  The remaining 19 shapes
++                        // need the fn-ref's READER converted off the stack-view
++                        // offsets, not a better discriminator here.
++                        (sz, if tight { 1 } else { al })
++                    })
++                    .collect();
+                 let offsets = crate::data::LinkedFieldGroup::group_member_offsets(&member_sa);
+                 let storage_alignment = crate::data::LinkedFieldGroup::group_alignment(
+                     &member_sa.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 6d7bcf632..8000919c6 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -1863,11 +1863,9 @@ impl Parser {
+                         } else if matches!(tp, Type::Text(_)) {
+                             None
+                         } else {
+-                            // The WIRE width, not the padded store size (@C138).
+                             let db_sz = self
+                                 .database
+-                                .binary_size(self.data.def(self.data.type_elm(&tp)).known_type())
+-                                as u16;
++                                .size(self.data.def(self.data.type_elm(&tp)).known_type());
+                             if db_sz == 0 {
+                                 None
+                             } else {
+@@ -1904,13 +1902,9 @@ impl Parser {
+                     if packed > 0 {
+                         Some(i64::from(packed))
+                     } else {
+-                        // The WIRE width — the fields walked one after another, as `#write` and
+-                        // `read_data` lay them out — not the record's size in the store, which
+-                        // carries `@FR-L-Align`'s padding (@C138).
+                         let db_sz = self
+                             .database
+-                            .binary_size(self.data.def(self.data.type_elm(&hint)).known_type())
+-                            as u16;
++                            .size(self.data.def(self.data.type_elm(&hint)).known_type());
+                         if db_sz == 0 {
+                             None
+                         } else {
+@@ -1975,8 +1969,7 @@ impl Parser {
+                 && matches!(read_type, Type::Vector(_, _))
+                 && let Value::Int(n) = n_code
+             {
+-                // The element's WIRE width, not its padded stride in the store (@C138).
+-                let elem = self.database.binary_size(self.database.content(db_tp)) as i32;
++                let elem = i32::from(self.database.size(self.database.content(db_tp)));
+                 if elem > 1 && n % elem != 0 {
+                     diagnostic!(
+                         self.lexer,
+diff --git b/src/store.rs a/src/store.rs
+index fbdd9c6c9..507222880 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -3733,14 +3733,16 @@ impl Store {
+ 
+     /// Read a field OUT of the store.  **The ordinary way to get a value.**
+     ///
+-    /// `@FR-L-Align` (@C138): a store's allocation is `Layout::from_size_align(size * 8, 8)`
+-    /// and an address is `base + rec * 8 + fld`, so for any alignment up to eight the
+-    /// address's alignment IS `fld`'s — and the layout places every field on its natural
+-    /// boundary and pads every record to a multiple of its alignment, so every element of a
+-    /// collection is aligned too.  The read is therefore an aligned `ptr::read` behind one
+-    /// alignment test; a misaligned `fld` is a layout defect and panics, in a release build
+-    /// too.  Two kinds of bytes the layout does not place are read unaligned: a FOREIGN
+-    /// store's, which its producer's buffer supplies, and the interpreter's stack frames.
++    /// A store's allocation is `Layout::from_size_align(size * 8, 8)` and an address is
++    /// `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment IS
++    /// `fld`'s — and `fld` is a BYTE offset the type layout assigns with no padding.  A
++    /// field is therefore aligned only by accident: measured over the corpus, `i64` reads
++    /// occur at all seven non-zero `fld % 8`, and `u32`, `u16` and `f64` at every remainder
++    /// of their own.  `read_unaligned` states the alignment the data actually has; it lowers
++    /// to the same single `mov` on x86-64, so saying the truth costs nothing here.
++    ///
++    /// Prefer this everywhere.  [`Store::addr`] hands out a `&T` instead and can only be
++    /// used where the field is provably aligned — see its own note (loft#1481).
+     #[inline]
+     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
+         if Self::is_foreign_rec(rec) {
+@@ -3748,39 +3750,9 @@ impl Store {
+             return unsafe { at.cast::<T>().read_unaligned() };
+         }
+         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+-        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
+-            return self.read_frame_slot::<T>(rec, fld, at);
+-        }
+-        // SAFETY: in bounds and aligned for `T`, both just tested.
+-        unsafe { self.ptr.offset(at).cast::<T>().read() }
+-    }
+-
+-    /// A misaligned [`Self::read`]: answered unaligned on the interpreter's STACK store, whose
+-    /// frame slots the frame allocator lays out and `(L-Align)` does not cover (the bytecode's
+-    /// rule: packed, read unaligned); a layout defect anywhere else.  Out of line, so the
+-    /// aligned path stays a mask and a not-taken branch.
+-    #[cold]
+-    #[inline(never)]
+-    fn read_frame_slot<T: Copy>(&self, rec: u32, fld: u32, at: isize) -> T {
+-        if !self.stack_buffer {
+-            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
+-        }
+-        // SAFETY: `at` was bounded by the caller; the read states the alignment it has.
+         unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
+     }
+ 
+-    /// The refusal of a misaligned [`Self::read`] / [`Self::write`] (`@FR-R-Cold`).
+-    #[cold]
+-    #[inline(never)]
+-    fn raise_misaligned(&self, rec: u32, fld: u32, align: usize) -> ! {
+-        panic!(
+-            "Store access misaligned: rec={rec} fld={fld} needs {align}-byte alignment, \
+-             type={} — every field and element sits on its natural boundary (@C138), so \
+-             the offset came from a layout that is not the store's",
+-            self.known_type,
+-        )
+-    }
+-
+     /// @PLN174 — the address of `width` bytes at field `fld` of the foreign record: the
+     /// header for `fld < 8`, the foreign base past it, each bounded exactly as
+     /// [`Store::offset_in_bounds`] bounds an owned record.  A store with no foreign bytes
+@@ -4152,29 +4124,18 @@ impl Store {
+     }
+ 
+     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
+-    /// store a value: an aligned `ptr::write` behind the same alignment test
+-    /// (`@FR-L-Align`, @C138).
++    /// store a value.
++    ///
++    /// Same reason as its twin: `fld` is an unpadded byte offset, so the destination is
++    /// aligned only by accident, and `&mut T` at a misaligned address is undefined behaviour
++    /// exactly as `&T` is.  Measured — `Store::addr_mut: field 44 is not aligned for i64` on
++    /// the second test of the corpus.  `write_unaligned` states what the layout actually
++    /// guarantees (loft#1481).
+     #[inline]
+     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
+         let Some(at) = self.begin_write::<T>(rec, fld) else {
+             return;
+         };
+-        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
+-            self.write_frame_slot(rec, fld, at, val);
+-            return;
+-        }
+-        // SAFETY: `begin_write` bounded it; the test above aligned it.
+-        unsafe { self.ptr.offset(at).cast::<T>().write(val) }
+-    }
+-
+-    /// The write twin of [`Self::read_frame_slot`].
+-    #[cold]
+-    #[inline(never)]
+-    fn write_frame_slot<T: Copy>(&mut self, rec: u32, fld: u32, at: isize, val: T) {
+-        if !self.stack_buffer {
+-            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
+-        }
+-        // SAFETY: `begin_write` bounded it; the write states the alignment it has.
+         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
+     }
+ 
+@@ -5956,12 +5917,9 @@ mod tests {
+             foreign.read::<u32>(FOREIGN_REC, 8),
+             plain.read::<u32>(rec, 8)
+         );
+-        // A foreign span starts at any byte, so its reads are unaligned (`@FR-L-Align` covers
+-        // only the bytes the layout places); the copy is compared by its bytes.
+-        let at = len as usize - 2;
+         assert_eq!(
+             foreign.read::<u16>(FOREIGN_REC, 8 + len - 2),
+-            u16::from_ne_bytes([data[at], data[at + 1]])
++            plain.read::<u16>(rec, 8 + len - 2)
+         );
+         let seen =
+             unsafe { std::slice::from_raw_parts(foreign.elem_base(FOREIGN_REC), len as usize) };
+@@ -6085,7 +6043,7 @@ mod tests {
+         }
+         assert_eq!(
+             view.read::<u32>(FOREIGN_REC, 8),
+-            u32::from_ne_bytes([data[5], data[6], data[7], data[8]])
++            plain.read::<u32>(rec, 8 + 5)
+         );
+         let seen = unsafe { std::slice::from_raw_parts(view.elem_base(FOREIGN_REC), 7) };
+         assert_eq!(seen, &data[5..12]);
+@@ -6243,18 +6201,23 @@ mod tests {
+         let _ = store.addr::<i64>(rec, 4);
+     }
+ 
+-    /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
+-    /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
+-    /// refused in every build — where `read_unaligned` used to answer it.
++    /// The other half: the same read through [`Store::read`] is fine, because
++    /// `read_unaligned` states the alignment the data actually has.
++    ///
++    /// Without this the test above would pass for a reason it does not name — a `claim`
++    /// that failed, a `rec` out of bounds — rather than for the alignment.
+     #[test]
+-    #[should_panic(expected = "Store access misaligned")]
+-    fn read_refuses_the_same_misaligned_field() {
++    fn read_accepts_the_same_misaligned_field() {
+         let mut store = Store::new(8);
+         store.free = false;
+         let rec = store.claim(4);
+         store.write::<i32>(rec, 4, -7);
+         assert_eq!(store.read::<i32>(rec, 4), -7, "a 4-aligned i32 round-trips");
+-        let _ = store.read::<i64>(rec, 4);
++        assert_eq!(
++            store.read::<i64>(rec, 4),
++            i64::from(-7i32) & 0xffff_ffff,
++            "and `read::<i64>` at the SAME 4-aligned offset is legal, where `addr` refuses"
++        );
+     }
+ 
+     /// loft#760 — the call bracket's `free_protected` marker must NOT block a delete.

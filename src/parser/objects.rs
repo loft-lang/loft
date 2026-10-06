@@ -1864,9 +1864,11 @@ impl Parser {
                         } else if matches!(tp, Type::Text(_)) {
                             None
                         } else {
+                            // The WIRE width, not the padded store size (@C138).
                             let db_sz = self
                                 .database
-                                .size(self.data.def(self.data.type_elm(&tp)).known_type());
+                                .binary_size(self.data.def(self.data.type_elm(&tp)).known_type())
+                                as u16;
                             if db_sz == 0 {
                                 None
                             } else {
@@ -1903,9 +1905,13 @@ impl Parser {
                     if packed > 0 {
                         Some(i64::from(packed))
                     } else {
+                        // The WIRE width — the fields walked one after another, as `#write` and
+                        // `read_data` lay them out — not the record's size in the store, which
+                        // carries `@FR-L-Align`'s padding (@C138).
                         let db_sz = self
                             .database
-                            .size(self.data.def(self.data.type_elm(&hint)).known_type());
+                            .binary_size(self.data.def(self.data.type_elm(&hint)).known_type())
+                            as u16;
                         if db_sz == 0 {
                             None
                         } else {
@@ -1970,7 +1976,8 @@ impl Parser {
                 && matches!(read_type, Type::Vector(_, _))
                 && let Value::Int(n) = n_code
             {
-                let elem = i32::from(self.database.size(self.database.content(db_tp)));
+                // The element's WIRE width, not its padded stride in the store (@C138).
+                let elem = self.database.binary_size(self.database.content(db_tp)) as i32;
                 if elem > 1 && n % elem != 0 {
                     diagnostic!(
                         self.lexer,

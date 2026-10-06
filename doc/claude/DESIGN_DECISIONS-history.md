@@ -4662,3 +4662,18 @@ overrun: the text worker's output record written from its own size header.  Each
 write what it had assumed; a test that pinned the exact garbage a deliberately restored stale
 read returned was loosened to pin where it fails.
 
+## C138 — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
+
+Decided 2026-10-06 by the owner, in steps: "evaluate how fields in records are stored, they
+adhere to alignment", "continue with a more strict alignment model", "this is a design
+decision", and then "can we move to more strict rust pointer handling too?" with the concern
+"the possible problem here is the bytecode".  The measurement that opened it: with
+`LOFT_TRACE_ALIGN` every corpus program carried misaligned fields, because the standard
+library's own types (`StructField`, `File`) did — records were packed with no tail padding, a
+tuple group was packed tight, and an inlined record could push the next field off its boundary.
+Padding cost, measured over the corpus's types: 1069 types grew, median +33 %, worst 9 → 16
+bytes; standalone records cost nothing because a claim is whole words.  The owner approved
+rounding in the layout routine rather than in each collection, and asked for every reader of
+stored bytes to be covered — persisted images (the layout identity changes, so `(L-Sound)`
+rebuilds), binary file I/O (kept at the wire width), remote and lazy stores (they verify the
+same identity) — and for the strict access to stop at the bytecode, whose operands stay packed.

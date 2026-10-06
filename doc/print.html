@@ -811,12 +811,12 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!(&amp;spare == &amp;twin), <span class="st">"…held in two different records"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(&amp;linked == &amp;item, <span class="st">"a '&amp;' link names the record it links to"</span>);</code></pre>
 <h2 id="sizeof">sizeof</h2>
-<p><code>sizeof(Type)</code> returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.</p>
+<p><code>sizeof(Type)</code> returns the byte size used when the type is stored as a struct field or vector element: fields packed largest first, then padded so the size is a multiple of the largest field's alignment. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">integer</a></span>) == <span class="nm">8</span>, <span class="st">"integer: 8 bytes (i64 storage)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">u8</a></span>) == <span class="nm">1</span>, <span class="st">"u8: 1 byte (packed)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="ty"><a href="stdlib-types.html">u16</a></span>) == <span class="nm">2</span>, <span class="st">"u16: 2 bytes (packed)"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="en">Colour</span>) == <span class="nm">3</span>, <span class="st">"Colour: 3 × u8 = 3 bytes"</span>);
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="en">Area</span>) == <span class="nm">5</span>, <span class="st">"Area: u16 + 3 × u8 = 5 bytes"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">sizeof</span>(<span class="en">Area</span>) == <span class="nm">6</span>, <span class="st">"Area: u16 + 3 × u8 = 5 bytes, padded to 6"</span>);
 }</code></pre>
 </section>
 <section class="print-section" id="09-enum">

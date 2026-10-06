@@ -31,8 +31,9 @@ fn test_tuple_sizes() {
   x: u8 = 1;
   u = (x, x);
   a = 2;
-  assert(sizeof(IT) == 12 && sizeof(UU) == 2 && sizeof(NI) == 10, "twins");
-  assert(sizeof(t) == 12, "tuple variable: {sizeof(t)}");
+  // Each padded to a multiple of its alignment (@C138): 8 + 4 -> 16, 1 + 1 -> 2, 8 + 1 + 1 -> 16.
+  assert(sizeof(IT) == 16 && sizeof(UU) == 2 && sizeof(NI) == 16, "twins");
+  assert(sizeof(t) == 16, "tuple variable: {sizeof(t)}");
   assert(sizeof((integer, text)) == sizeof(IT), "tuple type: {sizeof((integer, text))}");
   assert(sizeof(u) == 2 && sizeof((u8, u8)) == sizeof(UU), "narrow: {sizeof(u)} {sizeof((u8, u8))}");
   assert(sizeof(((u8, u8), integer)) == sizeof(NI), "nested: {sizeof(((u8, u8), integer))}");

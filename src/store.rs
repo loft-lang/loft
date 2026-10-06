@@ -3733,16 +3733,14 @@ impl Store {
 
     /// Read a field OUT of the store.  **The ordinary way to get a value.**
     ///
-    /// A store's allocation is `Layout::from_size_align(size * 8, 8)` and an address is
-    /// `base + rec * 8 + fld`, so for any alignment up to eight the address's alignment IS
-    /// `fld`'s — and `fld` is a BYTE offset the type layout assigns with no padding.  A
-    /// field is therefore aligned only by accident: measured over the corpus, `i64` reads
-    /// occur at all seven non-zero `fld % 8`, and `u32`, `u16` and `f64` at every remainder
-    /// of their own.  `read_unaligned` states the alignment the data actually has; it lowers
-    /// to the same single `mov` on x86-64, so saying the truth costs nothing here.
-    ///
-    /// Prefer this everywhere.  [`Store::addr`] hands out a `&T` instead and can only be
-    /// used where the field is provably aligned — see its own note (loft#1481).
+    /// `@FR-L-Align` (@C138): a store's allocation is `Layout::from_size_align(size * 8, 8)`
+    /// and an address is `base + rec * 8 + fld`, so for any alignment up to eight the
+    /// address's alignment IS `fld`'s — and the layout places every field on its natural
+    /// boundary and pads every record to a multiple of its alignment, so every element of a
+    /// collection is aligned too.  The read is therefore an aligned `ptr::read` behind one
+    /// alignment test; a misaligned `fld` is a layout defect and panics, in a release build
+    /// too.  Two kinds of bytes the layout does not place are read unaligned: a FOREIGN
+    /// store's, which its producer's buffer supplies, and the interpreter's stack frames.
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
         if Self::is_foreign_rec(rec) {
@@ -3750,7 +3748,37 @@ impl Store {
             return unsafe { at.cast::<T>().read_unaligned() };
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
+        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
+            return self.read_frame_slot::<T>(rec, fld, at);
+        }
+        // SAFETY: in bounds and aligned for `T`, both just tested.
+        unsafe { self.ptr.offset(at).cast::<T>().read() }
+    }
+
+    /// A misaligned [`Self::read`]: answered unaligned on the interpreter's STACK store, whose
+    /// frame slots the frame allocator lays out and `(L-Align)` does not cover (the bytecode's
+    /// rule: packed, read unaligned); a layout defect anywhere else.  Out of line, so the
+    /// aligned path stays a mask and a not-taken branch.
+    #[cold]
+    #[inline(never)]
+    fn read_frame_slot<T: Copy>(&self, rec: u32, fld: u32, at: isize) -> T {
+        if !self.stack_buffer {
+            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
+        }
+        // SAFETY: `at` was bounded by the caller; the read states the alignment it has.
         unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
+    }
+
+    /// The refusal of a misaligned [`Self::read`] / [`Self::write`] (`@FR-R-Cold`).
+    #[cold]
+    #[inline(never)]
+    fn raise_misaligned(&self, rec: u32, fld: u32, align: usize) -> ! {
+        panic!(
+            "Store access misaligned: rec={rec} fld={fld} needs {align}-byte alignment, \
+             type={} — every field and element sits on its natural boundary (@C138), so \
+             the offset came from a layout that is not the store's",
+            self.known_type,
+        )
     }
 
     /// @PLN174 — the address of `width` bytes at field `fld` of the foreign record: the
@@ -4124,18 +4152,29 @@ impl Store {
     }
 
     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
-    /// store a value.
-    ///
-    /// Same reason as its twin: `fld` is an unpadded byte offset, so the destination is
-    /// aligned only by accident, and `&mut T` at a misaligned address is undefined behaviour
-    /// exactly as `&T` is.  Measured — `Store::addr_mut: field 44 is not aligned for i64` on
-    /// the second test of the corpus.  `write_unaligned` states what the layout actually
-    /// guarantees (loft#1481).
+    /// store a value: an aligned `ptr::write` behind the same alignment test
+    /// (`@FR-L-Align`, @C138).
     #[inline]
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
         let Some(at) = self.begin_write::<T>(rec, fld) else {
             return;
         };
+        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
+            self.write_frame_slot(rec, fld, at, val);
+            return;
+        }
+        // SAFETY: `begin_write` bounded it; the test above aligned it.
+        unsafe { self.ptr.offset(at).cast::<T>().write(val) }
+    }
+
+    /// The write twin of [`Self::read_frame_slot`].
+    #[cold]
+    #[inline(never)]
+    fn write_frame_slot<T: Copy>(&mut self, rec: u32, fld: u32, at: isize, val: T) {
+        if !self.stack_buffer {
+            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
+        }
+        // SAFETY: `begin_write` bounded it; the write states the alignment it has.
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
@@ -5917,9 +5956,12 @@ mod tests {
             foreign.read::<u32>(FOREIGN_REC, 8),
             plain.read::<u32>(rec, 8)
         );
+        // A foreign span starts at any byte, so its reads are unaligned (`@FR-L-Align` covers
+        // only the bytes the layout places); the copy is compared by its bytes.
+        let at = len as usize - 2;
         assert_eq!(
             foreign.read::<u16>(FOREIGN_REC, 8 + len - 2),
-            plain.read::<u16>(rec, 8 + len - 2)
+            u16::from_ne_bytes([data[at], data[at + 1]])
         );
         let seen =
             unsafe { std::slice::from_raw_parts(foreign.elem_base(FOREIGN_REC), len as usize) };
@@ -6043,7 +6085,7 @@ mod tests {
         }
         assert_eq!(
             view.read::<u32>(FOREIGN_REC, 8),
-            plain.read::<u32>(rec, 8 + 5)
+            u32::from_ne_bytes([data[5], data[6], data[7], data[8]])
         );
         let seen = unsafe { std::slice::from_raw_parts(view.elem_base(FOREIGN_REC), 7) };
         assert_eq!(seen, &data[5..12]);
@@ -6201,23 +6243,18 @@ mod tests {
         let _ = store.addr::<i64>(rec, 4);
     }
 
-    /// The other half: the same read through [`Store::read`] is fine, because
-    /// `read_unaligned` states the alignment the data actually has.
-    ///
-    /// Without this the test above would pass for a reason it does not name — a `claim`
-    /// that failed, a `rec` out of bounds — rather than for the alignment.
+    /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
+    /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
+    /// refused in every build — where `read_unaligned` used to answer it.
     #[test]
-    fn read_accepts_the_same_misaligned_field() {
+    #[should_panic(expected = "Store access misaligned")]
+    fn read_refuses_the_same_misaligned_field() {
         let mut store = Store::new(8);
         store.free = false;
         let rec = store.claim(4);
         store.write::<i32>(rec, 4, -7);
         assert_eq!(store.read::<i32>(rec, 4), -7, "a 4-aligned i32 round-trips");
-        assert_eq!(
-            store.read::<i64>(rec, 4),
-            i64::from(-7i32) & 0xffff_ffff,
-            "and `read::<i64>` at the SAME 4-aligned offset is legal, where `addr` refuses"
-        );
+        let _ = store.read::<i64>(rec, 4);
     }
 
     /// loft#760 — the call bracket's `free_protected` marker must NOT block a delete.

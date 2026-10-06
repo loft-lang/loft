@@ -200,12 +200,17 @@ impl Shape {
             let slot = vector::vector_append(&steps_at, self.step_size, &mut self.db.allocations);
             let x = u32::from(self.db.position(self.tstep, "x"));
             let y = u32::from(self.db.position(self.tstep, "y"));
-            self.db
-                .store_mut(&slot)
-                .set_int(slot.rec, slot.pos + x, seed + i64::from(s));
-            self.db
-                .store_mut(&slot)
-                .set_int(slot.rec, slot.pos + y, seed - i64::from(s));
+            // `TStep`'s fields are 4-byte `i32`s: an 8-byte `set_int` spilled into the next one.
+            self.db.store_mut(&slot).set_i32_raw(
+                slot.rec,
+                slot.pos + x,
+                (seed + i64::from(s)) as i32,
+            );
+            self.db.store_mut(&slot).set_i32_raw(
+                slot.rec,
+                slot.pos + y,
+                (seed - i64::from(s)) as i32,
+            );
             vector::vector_finish(&steps_at, &mut self.db.allocations);
         }
         let roads_at = DbRef {

@@ -277,3 +277,35 @@ for, on a dev build.  Decided 2026-09-30 — loft#1762.
 **Guard:** `tests/arc_e_program_cache.rs::a_development_build_caches_unless_told_not_to`.
 **Catalogue:** STARTUP_CACHE.md § Default-on behaviour and the off switch · `src/cache.rs`
 `cache_decision`.
+
+## C138 — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed
+
+**Decision.** A record's size is rounded up to a multiple of its alignment, and a tuple's
+members each sit at the next position their alignment divides, so every field of every record —
+standalone, inlined, or the n-th element of a collection — is naturally aligned (`(L-Align)`).
+The store's `read` and `write` are therefore aligned accesses behind one alignment test that
+panics in every build; a FOREIGN store's bytes, which a producer's buffer supplies, stay
+unaligned reads.  `sizeof(T)` answers the padded size.  A binary file written with `f#write`
+keeps the WIRE width — the field widths summed, no padding — so a file's format does not move
+with the layout.  The interpreter's bytecode stream stays byte-packed and is read unaligned, and
+so do its stack frames, which the frame allocator lays out.
+**Why.** A packed record left every field aligned only by accident (an `i64` field at all seven
+non-zero remainders), so the store could not hand Rust a reference into itself: a native `&`
+link panicked or was undefined behaviour (loft#1481).  Aligned data is what Rust's pointer rules,
+C structs and the C boundary (C108) assume.  The cost falls only on collections of small records
+and on inlined records: a standalone record is claimed in whole 8-byte words anyway.  The
+bytecode is the other way round: one cursor decodes it in order, its operands are never
+referenced, and a smaller stream stays in cache — CPython and Lua use fixed instruction units,
+the JVM, CIL and Wasm decode packed byte streams, and none of them pads an operand to its
+alignment.
+
+**Revisit when.** A program's memory is measured to be dominated by the padding in a collection
+of small records — the remedy then is an opt-in packed collection kind, not packed records
+everywhere; or a target that faults on an unaligned load runs the interpreter.  Decided
+2026-10-06 — [record](DESIGN_DECISIONS-history.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed).
+**Holds at:** `@C138` — `calc::calculate_positions` (the size rounding), `Store::read` /
+`Store::write` (the aligned access), `data::element_storage_offsets` (the restated tuple view);
+the rule `(L-Align)` in [formal/layout.md](formal/layout.md); guards `tests/layout_alignment.rs`
+and `tests/scripts/a-record-is-padded-to-its-alignment.loft`.
+**Catalogue:** `formal/layout.md` `(L-Struct)` `(L-Tuple)` `(L-Ref)` `(L-Sound)` · LOFT_DATA.md
+§ Sizeof

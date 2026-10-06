@@ -2462,14 +2462,14 @@ Write '&' to get a live link where a bind would otherwise copy.
 
 === sizeof
 
-'sizeof(Type)' returns the packed byte size used when the type is stored as a struct field or vector element. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
+'sizeof(Type)' returns the byte size used when the type is stored as a struct field or vector element: fields packed largest first, then padded so the size is a multiple of the largest field's alignment. Range-constrained integer types like u8 and u16 report their packed size, not the 8-byte stack slot a local takes.
 
 ```rust
   assert(sizeof(integer) == 8, "integer: 8 bytes (i64 storage)");
   assert(sizeof(u8) == 1, "u8: 1 byte (packed)");
   assert(sizeof(u16) == 2, "u16: 2 bytes (packed)");
   assert(sizeof(Colour) == 3, "Colour: 3 × u8 = 3 bytes");
-  assert(sizeof(Area) == 5, "Area: u16 + 3 × u8 = 5 bytes");
+  assert(sizeof(Area) == 6, "Area: u16 + 3 × u8 = 5 bytes, padded to 6");
 }
 ```
 

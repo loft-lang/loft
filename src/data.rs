@@ -3845,14 +3845,23 @@ pub fn element_stack_size(t: &Type) -> usize {
 /// is what makes `(u8, u16)` occupy 16 bytes where `struct { a: u8, b: u16 }`
 /// occupies 3.
 ///
-/// Records pack TIGHTLY — `struct { a: u8, b: u32, c: u16 }` is 1+4+2 = 7 bytes with
-/// no padding, because store access is unaligned-tolerant — so there is no alignment
-/// term here.
+/// `@FR-L-Align` (@C138) — every element sits on its natural boundary
+/// ([`element_storage_align`]), and a nested tuple's size is a multiple of its own
+/// alignment, exactly as the layout routine places a `__tuple<…>` record's members.
 #[must_use]
 pub fn element_storage_size(t: &Type) -> usize {
     match t.base() {
         Type::Integer(spec) => spec.byte_width(true) as usize,
-        Type::Tuple(elems) => elems.iter().map(element_storage_size).sum(),
+        Type::Tuple(elems) => {
+            let offsets = element_storage_offsets(elems);
+            let end = elems
+                .iter()
+                .zip(&offsets)
+                .map(|(e, o)| o + element_storage_size(e))
+                .max()
+                .unwrap_or(0);
+            end.next_multiple_of(element_storage_align(t))
+        }
         // Measured against the record oracle: `(u8, text)` is 5 bytes, so a stored
         // `text` element is the 4-byte heap pointer, NOT the 16-byte stack `Str`.
         // `read_tuple_at_wide` says the same ("text: 4-byte heap-pointer") and
@@ -3869,13 +3878,29 @@ pub fn element_storage_size(t: &Type) -> usize {
     }
 }
 
-/// Element offsets in the **STORAGE** (record) layout: cumulative
-/// [`element_storage_size`], packed tight. Sibling of [`element_stack_offsets`].
+/// The natural alignment of a tuple element as STORED — the alignment the layout routine
+/// gives the matching field of a `__tuple<…>` record: a narrow integer its own width, a
+/// text or a record pointer 4, a nested tuple its largest member's.
+#[must_use]
+pub fn element_storage_align(t: &Type) -> usize {
+    match t.base() {
+        Type::Integer(spec) => spec.byte_width(true) as usize,
+        Type::Tuple(elems) => elems.iter().map(element_storage_align).max().unwrap_or(1),
+        Type::Function(..) => 4,
+        other => element_stack_align(other) as usize,
+    }
+}
+
+/// Element offsets in the **STORAGE** (record) layout: each element at the next position
+/// its [`element_storage_align`] divides (`@FR-L-Align`, @C138).  Sibling of
+/// [`element_stack_offsets`]; the layout of the `__tuple<…>` record is the authority, and
+/// `tests/layout_alignment.rs` holds the two to the same answer.
 #[must_use]
 pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(types.len());
     let mut pos = 0usize;
     for t in types {
+        pos = pos.next_multiple_of(element_storage_align(t));
         offsets.push(pos);
         pos += element_storage_size(t);
     }
@@ -4267,25 +4292,26 @@ mod tuple_stack_layout_tests {
         })
     }
 
-    /// @PLN114 D1 — the storage view sizes elements as record FIELDS.
+    /// @PLN114 D1 — the storage view sizes elements as record FIELDS; `@C138` places each on
+    /// its natural boundary.
     ///
-    /// Hand-computed against the record oracle: `struct { a: u8, b: u32, c: u16 }`
-    /// measures 7 bytes per record on this build, so the tuple of the same three
-    /// element types must compute 7 too.
+    /// Hand-computed: `(u8, u32, u16)` keeps its order, so the u32 waits for 4 and the u16
+    /// follows at 8 — 10 bytes, padded to 12, a multiple of the 4-byte alignment.  The
+    /// `__tuple<…>` record's layout answers the same (`tests/layout_alignment.rs`).
     #[test]
     fn storage_view_packs_like_a_record() {
         use super::{element_storage_offsets, element_storage_size};
         let elems = vec![narrow(1), narrow(4), narrow(2)];
-        assert_eq!(element_storage_offsets(&elems), vec![0, 1, 5]);
+        assert_eq!(element_storage_offsets(&elems), vec![0, 4, 8]);
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            7,
-            "u8 + u32 + u16 packs to 7 bytes, as `struct M` does"
+            12,
+            "u8, pad 3, u32, u16, pad 2"
         );
 
         let pair = vec![narrow(1), narrow(2)];
-        assert_eq!(element_storage_offsets(&pair), vec![0, 1]);
-        assert_eq!(element_storage_size(&Type::Tuple(pair)), 3);
+        assert_eq!(element_storage_offsets(&pair), vec![0, 2]);
+        assert_eq!(element_storage_size(&Type::Tuple(pair)), 4);
     }
 
     /// The stack view is unchanged and deliberately WIDER — a push occupies a whole
@@ -4302,8 +4328,8 @@ mod tuple_stack_layout_tests {
         );
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            7,
-            "storage: 1 + 4 + 2"
+            12,
+            "storage: 1, 4 and 2 on their own boundaries"
         );
     }
 

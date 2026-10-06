@@ -112,3 +112,4 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C109](DESIGN_DECISIONS_PLATFORM.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not) — a float RETURN crosses `#c`; a float ARGUMENT still does not
 - [C122](DESIGN_DECISIONS_PLATFORM.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary) — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
 - [C133](DESIGN_DECISIONS_PLATFORM.md#c133--a-development-build-uses-the-startup-cache-loft_no_cache1-turns-it-off) — A development build uses the startup cache; `LOFT_NO_CACHE=1` turns it off
+- [C138](DESIGN_DECISIONS_PLATFORM.md#c138--every-scalar-in-a-store-sits-on-its-natural-boundary-the-bytecode-stays-byte-packed) — Every scalar in a store sits on its natural boundary; the bytecode stays byte-packed

@@ -106,12 +106,12 @@ fn the_exits_hand_the_root_store_over() {
         ),
         (
             "n_r10",
-            "return OpGetField(__lift_1(2), 12i32,",
+            "return OpGetField(__lift_1(2), 16i32,",
             "OpFreeRefIfDistinct(__ref_1(1), __lift_1(2))",
         ),
         (
             "n_r12",
-            "return OpGetField(p(5), 12i32,",
+            "return OpGetField(p(5), 16i32,",
             "OpFreeRefIfDistinct(__ref_1(1), p(5))",
         ),
         (
