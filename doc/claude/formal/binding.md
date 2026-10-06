@@ -443,11 +443,13 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 **OPEN: 1.**
 
 - **D-bind-70 (OPEN, loft#1875)** — violates <!-- doc-lint: ok -->
-  `(B-Ref-Lvalue)`: three tuple-member places are refused where the rule makes every lvalue
-  linkable — a NARROW member (`n: (u8, integer); c = &n.0`), a TEXT member (`c = &s.0`), and a
-  member of a tuple reached through a `&(…)` link (`fn via(p: &(integer, integer)) { c = &p.0 }`).
-  Each is refused by name at a bind and at a `&` argument; none is copied.  A wide scalar member
-  of a tuple local links, as field and element members do.
+  `(B-Ref-Lvalue)`: two tuple-member places are refused where the rule makes every lvalue
+  linkable — a NARROW member (`n: (u8, integer); c = &n.0`: stored at full width, read by a link
+  at its own) and a TEXT member of a tuple local (`c = &s.0`: stored as a `Str` borrow, which a
+  `&text` link cannot append to).  Each is refused by name at a bind and at a `&` argument; none
+  is copied.  A wide scalar member links, of a tuple local and of a stack-backed `&(…)` alike
+  (`a-member-of-a-linked-tuple-is-a-place.loft`); a record-backed `&(…)` member links on the
+  interpreter and panics on `--native` (loft#1878, an unaligned field). <!-- doc-lint: ok -->
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is

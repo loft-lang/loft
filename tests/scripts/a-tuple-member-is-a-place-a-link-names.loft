@@ -10,8 +10,9 @@
 //
 // Every wide scalar member type is crossed with a bind, a write through it, a compound write, a
 // link to the link, an argument, and a loop.  The field and element spellings are the controls
-// and must not move.  Narrow, text and `&(…)`-reached members are still refused by name
-// (D-bind-70, loft#1875); their pins are in `tests/issues.rs`, since a refusal stops a file.
+// and must not move.  Narrow and text members are still refused by name (D-bind-70, loft#1875);
+// their pins are in `tests/issues.rs`, since a refusal stops a file.  A `&(…)`-reached member is
+// `a-member-of-a-linked-tuple-is-a-place.loft`.
 //
 // @falsified-at: 22a136711 — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
 //   `c = &t.0`: "`&` requires an addressable operand").

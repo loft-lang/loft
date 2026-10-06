@@ -8,6 +8,12 @@
 // with a bind, a write through it, a `&` argument, every wide scalar kind, a member past a wider
 // one (the offset), a link handed on to another `&` call, and a loop.  Each write must reach the
 // CALLER's tuple; the untouched member of each cell must not move.
+//
+// @falsified-at: 2323bd41e — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
+//   `c = &p.0`: "the tuple is itself reached through a `&` link").
+// @falsified-by: tests/falsified/a-member-of-a-linked-tuple-is-a-place.patch — interpret exit
+//   1 -> 0, native exit 1 -> 0.
+// HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn bump(p: &integer) {
   p += 1;
