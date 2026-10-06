@@ -1,0 +1,37 @@
+// @FR-T-Record — a tuple's `text` member is the tuple's own text, so writing it from a text
+// variable COPIES the variable: the variable stays usable, and a later change to it does not
+// reach the member.  The cells cover every way a text variable can read: a loop that reuses
+// the compiler's work text for `t.0 += …`, a formatted append, an append after a copy of the
+// tuple, a user variable written after it was stored, a function whose work texts are the
+// CALLER's buffers (`keep`), and a `&text` parameter as the source.  Two controls already
+// compiled: the tuple literal in a loop, and a single append with no loop.  Each value is
+// worked out by hand in the comment beside it.
+// @falsified-at: 2e3ef1057 — native exit 1 -> 0 (rustc E0382 on the moved work text, E0308 on `&*var.clone()`); interpret INERT (expected: the interpreter already copied)
+// CHANNEL: the native exit — the control does not compile; the interpreter answers every cell
+//   on both trees.
+// HOLDS: asserts 0, leak none, panic none on both trees for the interpreter.
+
+// "ab" + three "xy".
+fn loop_append() -> text { t = ("ab", 0); for _ in 0..3 { t.0 += "xy"; } t.0 }
+// "ab" + "0", "1", "2".
+fn loop_format() -> text { t = ("ab", 0); for i in 0..3 { t.0 += "{i}"; } t.0 }
+// The copy keeps "p"; the member gains two "q".
+fn copy_then_loop() -> text { t = ("p", 0); u = t; for _ in 0..2 { t.0 += "q"; } "{u.0}/{t.0}" }
+// Round 1 stores "a" and makes s "ax"; round 2 stores "ax" and makes s "axx".
+fn user_source() -> text { s = "a"; t = ("", 0); for _ in 0..2 { t.0 = s; s += "x"; } "{t.0} {s}" }
+// The member copies the parameter; the write through `p` reaches only the caller.
+fn from_param(p: &text) -> text { t = ("", 0); t.0 = p; p += "!"; t.0 }
+fn param_source() -> text { s = "a"; r = from_param(s); "{r} {s}" }
+// Controls.
+fn literal_in_loop() -> text { s = "a"; t = ("", 0); for _ in 0..2 { t = (s, 1); s += "x"; } "{t.0} {s}" }
+fn single_append() -> text { t = ("ab", 0); t.0 += "xy"; t.0 }
+
+fn main() {
+  assert(loop_append() == "abxyxyxy", "an append in a loop");
+  assert(loop_format() == "ab012", "a formatted append in a loop");
+  assert(copy_then_loop() == "p/pqq", "an append after a copy, in a loop");
+  assert(user_source() == "ax axx", "a user variable stored, then changed");
+  assert(param_source() == "a a!", "a & text parameter as the source");
+  assert(literal_in_loop() == "ax axx", "a tuple literal in a loop");
+  assert(single_append() == "abxy", "a single append");
+}
