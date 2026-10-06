@@ -1,7 +1,7 @@
-diff --git b/src/generation/calls.rs a/src/generation/calls.rs
+diff --git a/src/generation/calls.rs b/src/generation/calls.rs
 index a7ea4cc56..27b8ac8e9 100644
---- b/src/generation/calls.rs
-+++ a/src/generation/calls.rs
+--- a/src/generation/calls.rs
++++ b/src/generation/calls.rs
 @@ -468,11 +468,11 @@ impl Output<'_> {
              && let [arg] = args.as_slice()
              && let Value::TupleGet(t, i) = arg.unspan()
@@ -17,10 +17,10 @@ index a7ea4cc56..27b8ac8e9 100644
              }
          // OpCreateStack wrapping an addressable expression
          // (e.g. v[i] as & param).  Emit a temporary + &mut so the
-diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
 index 72bb1f50b..75eb6a454 100644
---- b/src/generation/dispatch.rs
-+++ a/src/generation/dispatch.rs
+--- a/src/generation/dispatch.rs
++++ b/src/generation/dispatch.rs
 @@ -314,19 +314,6 @@ impl Output<'_> {
          Ok(())
      }
@@ -62,11 +62,11 @@ index 72bb1f50b..75eb6a454 100644
                      )?;
                  }
              } else if let Value::Call(d_nr, cargs) = to.unspan()
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 54ddb41ce..94a031222 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -9925,19 +9925,21 @@ use a separate collection or add after the loop"
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 3c933a560..22d703e50 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -9936,19 +9936,21 @@ use a separate collection or add after the loop"
      /// encoding a linked LOCAL is given (`set_linked_narrow`), which a member's fixed layout
      /// cannot take.  A heap member is not a scalar place at all.
      pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
@@ -97,7 +97,7 @@ index 54ddb41ce..94a031222 100644
              Ok(elem)
          } else {
              Err(elem)
-@@ -9977,18 +9979,12 @@ use a separate collection or add after the loop"
+@@ -9988,18 +9990,12 @@ use a separate collection or add after the loop"
      /// (a narrow store place may not: D-bind-39).
      pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
          match code.unspan() {
@@ -122,11 +122,11 @@ index 54ddb41ce..94a031222 100644
              // The bare element op IS the place.  An enum element arrives in this spelling on
              // the first pass, before its enum getter wraps it; without this arm the first pass
              // typed the local as the enum and the second as its link.  It sits above the
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index d31287de1..51c1c7a38 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -22114,17 +22114,13 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 4278d7611..0e2817ac9 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -22212,14 +22212,11 @@ impl Parser {
          // copy of another link), and a write to the link carries back along that chain.
          // The bind is a `Set` of the link too, so the writes are measured on the body with the
          // binds blanked: a link only READ leaves its target unwritten.
@@ -136,17 +136,13 @@ index d31287de1..51c1c7a38 100644
              if let Value::Set(v, rhs) = n.unspan()
                  && let Value::Call(op, args) = rhs.unspan()
                  && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
+-                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
+-                    args.first().map(Value::unspan)
 +                && let Some(Value::Var(src)) = args.first().map(Value::unspan)
              {
--                match args.first().map(Value::unspan) {
--                    Some(Value::Var(src) | Value::TupleGet(src, _)) => return Some((*v, *src)),
--                    _ => {}
--                }
-+                return Some((*v, *src));
+                 return Some((*v, *src));
              }
-             None
-         };
-@@ -22763,8 +22759,7 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
+@@ -22860,8 +22857,7 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
  /// Collect all `Value::Var` indices reachable anywhere in `val`.
  fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
      match val {
@@ -156,10 +152,10 @@ index d31287de1..51c1c7a38 100644
              result.insert(*v);
          }
          Value::Set(_, body) => collect_vars_in(body, result),
-diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+diff --git a/src/state/codegen.rs b/src/state/codegen.rs
 index a5745778b..e8a3b17af 100644
---- b/src/state/codegen.rs
-+++ a/src/state/codegen.rs
+--- a/src/state/codegen.rs
++++ b/src/state/codegen.rs
 @@ -4766,19 +4766,6 @@ impl State {
                  let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
                  let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
