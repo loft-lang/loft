@@ -273,3 +273,17 @@ unchanged; [iteration.md](iteration.md) now states only what is open.
 
 **rules written (2026-07-04), 0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle
 
+
+
+## Deviations carried by iteration.md until 2026-10-06
+
+Opened and closed in the same change; the chapter's `OPEN:` line never carried it.
+
+* **D-iter-12** *(opened 2026-10-06, CLOSED 2026-10-06)* — a `for (a, b) in …` header bound its
+  names with `create_var`, keyed by NAME, where the loop variable is keyed by the LOOP (loft#915):
+  a later sibling loop over the same names at other types reused the first one's variables at
+  the first one's types.  `for (a, b) in [(1, "x")] …; for (a, b) in [("p", 3)] …` printed
+  `1|p` for `p|3` on the interpreter, silently, and `--native` did not compile it; a plain
+  `for a` after a destructure was refused as shadowing a local.  **Fix.**  Each binder takes
+  `loop_binding` + `create_loop_var` and is marked `served_as_loop_var`, as the loop variable is.
+  Guard `tests/scripts/a-sibling-loop-destructure-is-its-own-binding.loft`.

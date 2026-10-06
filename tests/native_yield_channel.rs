@@ -66,15 +66,20 @@ fn assert_refused(tag: &str, src: &str, named: &str) {
     );
 }
 
-/// A tuple carrying a `text` element: `tuple_kinds` cannot classify it, and the legacy
-/// channel it fell through to ends in `(i64, &String) as i64`.
+/// A tuple carrying a `text` element rides the `next_into` buffer: the text is an owned
+/// `String` handed over in one slot (`YieldSlot::Text`), so nothing is refused (loft#1891).
+/// The values are checked on both backends by
+/// `tests/scripts/a-generator-yields-a-tuple-with-a-text-member-on-both-backends.loft`.
 #[test]
-fn a_tuple_with_a_text_element_is_refused_by_name() {
-    assert_refused(
+fn a_tuple_with_a_text_element_is_carried_not_refused() {
+    let rs = emit(
         "text_elem",
         "fn g() -> iterator<(integer, text)> { yield (1, \"a\".to_uppercase()); }\n\
          fn main() { for t in g() { print(\"{t.0} {t.1}\\n\"); } }\n",
-        "(integer, text)",
+    );
+    assert!(
+        !rs.contains("compile_error!"),
+        "a text member has a transport slot now, so no refusal may be emitted"
     );
 }
 
@@ -139,7 +144,7 @@ fn a_handle_carrying_tuple_the_eager_collector_would_hold_is_refused() {
     }
 }
 
-/// A refused type whose NAME carries quotes — a keyed collection renders its key list as
+/// A refused type (a nested tuple) whose NAME carries quotes — a keyed collection renders its key list as
 /// `spatial<P,["x", "y"]>`, and the message splices that name into a Rust string literal.
 ///
 /// Spliced raw, the first quote ends the literal and the comma becomes a second macro
@@ -150,9 +155,9 @@ fn a_refused_type_whose_name_contains_quotes_still_renders_one_message() {
     let rs = emit(
         "quoted_name",
         "struct Pq { x: integer, y: integer, n: integer }\n\
-         fn g() -> iterator<(spatial<Pq[x,y]>, text)> {\n\
+         fn g() -> iterator<((spatial<Pq[x,y]>, integer), integer)> {\n\
          \x20 a: spatial<Pq[x,y]> = [Pq { x: 1, y: 2, n: 3 }];\n\
-         \x20 yield (a, \"hi\");\n\
+         \x20 yield ((a, 1), 2);\n\
          }\n\
          fn main() { for t in g() { print(\"{t.1}\\n\"); } }\n",
     );

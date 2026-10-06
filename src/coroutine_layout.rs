@@ -17,15 +17,13 @@
 //! the *same* `T`, the two ends agree by construction — no runtime shape tag,
 //! no per-shape codec template.
 //!
-//! Text elements are the one excluded kind: a yielded `text` is a `&str` in
-//! native code, not a buffer-native value, so riding the buffer requires
-//! interning the string into a store (`codegen_runtime::db_from_text`) with
-//! the lifetime question that entails — a separate slice, not this one.  A
-//! tuple containing a text (or other unclassifiable) element returns `None`
-//! from [`tuple_kinds`], and the legacy per-type channel cannot carry it
-//! either: that channel ends in an `as i64` cast.  [`channel_tag`] answers
-//! [`CHANNEL_NONE`] for such a type so both ends refuse it instead of
-//! emitting a cast rustc rejects (loft#1132).
+//! A text element rides as an owned `String` handed over in one slot ([`YieldSlot::Text`]),
+//! which only the lazy channel can do: the eager loop-body buffer would hold strings nobody
+//! releases if the generator is dropped undrained, so it refuses one.  A tuple with an
+//! element that classifies into no slot (a nested tuple) returns `None` from [`tuple_kinds`],
+//! and the legacy per-type channel cannot carry it either: that channel ends in an `as i64`
+//! cast.  [`channel_tag`] answers [`CHANNEL_NONE`] for such a type so both ends refuse it
+//! instead of emitting a cast rustc rejects (loft#1132).
 
 use crate::data::{Data, Type, Value};
 
@@ -49,6 +47,10 @@ pub enum YieldSlot {
     /// Any `DbRef`-repr type (reference / vector / sorted / hash / index /
     /// boxed-enum / iterator).  Two slots: the full absolute `DbRef`.
     Ref,
+    /// `text` — the producer hands an owned `String` over as a boxed raw pointer, and the
+    /// consumer takes it back exactly once (it reads each slot once per advance); `0` is
+    /// the exhausted advance, which wrote nothing.  One slot.
+    Text,
 }
 
 impl YieldSlot {
@@ -65,6 +67,7 @@ impl YieldSlot {
             Type::Float => Some(YieldSlot::F64),
             Type::Single => Some(YieldSlot::F32),
             Type::Routine(_) => Some(YieldSlot::Routine),
+            Type::Text(_) => Some(YieldSlot::Text),
             // An iterator handle is not in the DbRef set — it is a coroutine state handle,
             // not a store handle — but it travels the same slot, so it stays named here.
             Type::Iterator(_, _) => Some(YieldSlot::Ref),
@@ -88,9 +91,8 @@ impl YieldSlot {
             // short-list bug was fixed, and `classify` is the residual that fix recorded and
             // left behind.
             _ if crate::data::is_dbref(tp) => Some(YieldSlot::Ref),
-            // Text needs a store intern (lifetime); function is a (u32, DbRef)
-            // pair still served by the dedicated fn-ref channel; a nested tuple
-            // would need recursion the walk does not yet do.
+            // A function is a (u32, DbRef) pair still served by the dedicated fn-ref
+            // channel; a nested tuple would need recursion the walk does not yet do.
             _ => None,
         }
     }
@@ -115,6 +117,7 @@ impl YieldSlot {
             YieldSlot::F32 => 4,
             YieldSlot::Routine => 5,
             YieldSlot::Ref => 6,
+            YieldSlot::Text => 7,
         }
     }
 
@@ -131,6 +134,7 @@ impl YieldSlot {
             4 => YieldSlot::F32,
             5 => YieldSlot::Routine,
             6 => YieldSlot::Ref,
+            7 => YieldSlot::Text,
             _ => YieldSlot::Int,
         }
     }
@@ -246,10 +250,12 @@ pub fn eager_tuple_kinds(tp: &Type) -> Option<Vec<YieldSlot>> {
     if matches!(tp.base(), Type::Function(..)) {
         return Some(vec![YieldSlot::Int, YieldSlot::Int]);
     }
+    // A text member is an owned string handed over once: buffered, the strings of a
+    // generator dropped before it is drained would have nobody to release them.
     let kinds = tuple_kinds(tp)?;
     kinds
         .iter()
-        .all(|k| !matches!(k, YieldSlot::Ref))
+        .all(|k| !matches!(k, YieldSlot::Ref | YieldSlot::Text))
         .then_some(kinds)
 }
 

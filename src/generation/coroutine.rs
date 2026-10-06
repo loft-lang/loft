@@ -63,6 +63,10 @@ pub(crate) fn yield_slot_i64(kind: YieldSlot, expr: &str) -> Option<String> {
         YieldSlot::Bool => Some(format!("(({expr}) as u8) as i64")),
         // f64::to_bits → u64 / f32::to_bits → u32, both zero-extend to i64.
         YieldSlot::F64 | YieldSlot::F32 => Some(format!("(({expr}).to_bits()) as i64")),
+        // An owned copy handed over as a boxed pointer; `yield_slot_read` takes it back once.
+        YieldSlot::Text => Some(format!(
+            "(Box::into_raw(Box::new(({expr}).to_string())) as usize as i64)"
+        )),
         YieldSlot::Ref => None,
     }
 }
@@ -103,6 +107,11 @@ pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
         YieldSlot::F64 => format!("f64::from_bits(_loft_yield_buf[{slot}] as u64)"),
         YieldSlot::F32 => format!("f32::from_bits(_loft_yield_buf[{slot}] as u32)"),
         YieldSlot::Routine => format!("(_loft_yield_buf[{slot}] as u32)"),
+        // The producer's boxed `String`, taken back exactly once — the consumer reads each
+        // slot once per advance.  `0` is an exhausted advance: the tuple's text is null.
+        YieldSlot::Text => format!(
+            "{{ let _p = _loft_yield_buf[{slot}]; if _p == 0 {{              loft::state::STRING_NULL.to_string() }} else {{              *unsafe {{ Box::from_raw(_p as usize as *mut String) }} }} }}"
+        ),
         YieldSlot::Ref => format!(
             "DbRef {{ store_nr: (_loft_yield_buf[{slot}] as u16), \
              rec: (_loft_yield_buf[{s1}] as u64 as u32), \
@@ -801,13 +810,13 @@ fn escape_for_rust_literal(s: &str) -> String {
 
 /// Why a yield type is refused on the straight-line channel ladder.
 const NO_CHANNEL: &str = "has no native transport channel — every element of a yielded \
-                          tuple must have one, and a `text` element or a nested tuple does \
-                          not.";
+                          tuple must have one, and a nested tuple does not.";
 
 /// Why a yield type is refused from a LOOP body, where the collector is eager.
 const NO_EAGER_BUFFER: &str = "cannot be collected from a generator's LOOP body — the \
                                eager collector holds values by copy, and this one carries \
-                               a store handle every iteration would overwrite.  The loop \
+                               a store handle every iteration would overwrite, or a text the \
+                               collector could not release.  The loop \
                                runs eagerly because a `yield` sits inside an expression; \
                                as a statement of its own it is handed over lazily.";
 

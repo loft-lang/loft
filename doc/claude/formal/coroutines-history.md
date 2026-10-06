@@ -261,6 +261,21 @@ unchanged; [coroutines.md](coroutines.md) now states only what is open.
 
 **rules written (2026-07-04), 0 own** — lazy one-value-per-advance; straight-line yields lazy on both backends, and so is a loop body that ONLY yields; a loop body with a SECOND statement is eager on native (a DECIDED EDGE — rustc restriction, loft#836); conformance via the oracle
 
+## Deviations carried by coroutines.md until 2026-10-06
+
+Opened and closed in the same change; the chapter's `OPEN:` line never carried it.
+
+* **D-gen-9** *(opened 2026-10-06, CLOSED 2026-10-06; loft#1891)* — `(G-Next)` on `--native`: a
+  generator yielding a tuple with a `text` member ran on the interpreter and was refused by
+  `--native` (*"has no native transport channel"*): `YieldSlot::classify` had no slot for `text`,
+  so `channel_tag` answered `CHANNEL_NONE` at both ends.  **Fix.**  `YieldSlot::Text`, one slot:
+  the producer hands an owned `String` over as a boxed pointer and the consumer takes it back
+  exactly once (it reads each slot once per advance); `0` is the exhausted advance.  The eager
+  loop-body buffer (a `yield` inside an expression) still refuses one — strings left undrained
+  would have nobody to release them.  Measured: straight-line, loop, text first and last, an
+  empty text, beside a record, `yield from`, an early `break`, `next()`, both backends.  Guard
+  `tests/scripts/a-generator-yields-a-tuple-with-a-text-member-on-both-backends.loft`.
+
 ## Deviations carried by coroutines.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.

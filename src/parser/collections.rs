@@ -4186,7 +4186,22 @@ use #count instead"
                                 } else {
                                     elem_tp.clone()
                                 };
-                                let var = self.create_var(name, &bind_tp);
+                                // A binder is a LOOP binding, keyed by this loop as the loop
+                                // variable is (loft#915): by name, a second `for (a, b)` reused
+                                // the first one's `a` at the first one's type, and read a `text`
+                                // member as an `integer` (`1|p` for `p|3`), or did not compile.
+                                let id = self.vars.loop_binding(name);
+                                let var = if id == "_" {
+                                    self.create_unique("_", &bind_tp)
+                                } else {
+                                    self.create_loop_var(&id, &bind_tp)
+                                };
+                                if id != *name {
+                                    self.vars.set_name(name, var);
+                                }
+                                // A later `for a` over the same name is a sequential loop, not
+                                // a shadow of a local (the guard asks `was_loop_var`).
+                                self.vars.served_as_loop_var(var);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
                                 // Bound by the header, scoped to the body (`@FR-B-Scope`).
