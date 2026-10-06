@@ -636,8 +636,19 @@ pub(super) fn capture_store_adopters(
         if !data.def(record).name.starts_with("__closure_") {
             continue;
         }
+        // loft#1874 — a fn field's UNION record carries every lambda's captures; this local's
+        // build writes only its own, and an attribute it does not write is not its question.
+        let united = data.def(record).name.starts_with("__closure_u_");
         for a in 0..data.attributes(record) {
             if !capture_attr_is_cascade_relevant(data, record, a) {
+                continue;
+            }
+            if united
+                && !builds.adopted.get(&v).is_some_and(|caps| {
+                    caps.iter()
+                        .any(|(c, _)| function.name(*c) == data.attr_name(record, a))
+                })
+            {
                 continue;
             }
             if record_adopts_capture(data, function, builds, record, a) {

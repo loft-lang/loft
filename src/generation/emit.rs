@@ -2859,6 +2859,26 @@ impl Output<'_> {
             write!(w, ")")?;
             return Ok(());
         }
+        // The same pair with statements between its halves: the scope pass places a scope's
+        // exit frees in front of a block's LAST operator, and a read off a call result whose
+        // record type owns a release binds that result through a displaced-record snapshot,
+        // whose frees then land here (loft#1874's inline `mk().f(x)`).  The interpreter runs
+        // the operators in order, so this keeps that order: the d_nr, the statements, the
+        // closure.
+        if bl.name == "fn_ref_field_read" && bl.operators.len() > 2 {
+            let last = bl.operators.len() - 1;
+            write!(w, "{{ let __fn_d = (")?;
+            self.output_code_inner(w, &bl.operators[0])?;
+            write!(w, ") as u32; ")?;
+            for op in &bl.operators[1..last] {
+                self.output_code_inner(w, op)?;
+                write!(w, "; ")?;
+            }
+            write!(w, "(__fn_d, ")?;
+            self.output_code_inner(w, &bl.operators[last])?;
+            write!(w, ") }}")?;
+            return Ok(());
+        }
         writeln!(
             w,
             "{{ //{}_{}: {}",

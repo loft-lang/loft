@@ -134,6 +134,10 @@ fn test_written_into_an_argument_struct() {
   assert(h.f(9) == 11, "a4 {h.f(9)}, want 11");
 }
 
+fn test_a_fn_field_called_off_the_call() {
+  assert(k1(7).f(3) == 73 && k6(3).f(1) == 41, "inline: {k1(7).f(3)} {k6(3).f(1)}, want 73 41");
+}
+
 fn main() {
   test_a_record_capture();
   test_a_vector_capture();
@@ -148,4 +152,5 @@ fn main() {
   test_a_mutated_cell_capture();
   test_returned_in_a_loop();
   test_written_into_an_argument_struct();
+  test_a_fn_field_called_off_the_call();
 }

@@ -1212,7 +1212,7 @@ impl Parser {
         if rec == u32::MAX {
             return None;
         }
-        let fnr = self.data.attr(rec, name);
+        let fnr = self.capture_attr(self.context, rec, name);
         if fnr == usize::MAX {
             return None;
         }
@@ -1240,7 +1240,7 @@ impl Parser {
         if rec == u32::MAX {
             return None;
         }
-        let fnr = self.data.attr(rec, name);
+        let fnr = self.capture_attr(self.context, rec, name);
         if fnr == usize::MAX {
             return None;
         }
@@ -2118,8 +2118,38 @@ or build a local and use that."
             alloc_steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(tp_nr)]));
             let n_attrs = self.data.attributes(closure_rec_d);
             let mut captured_var_nrs: Vec<u16> = Vec::new();
+            // loft#1874 — a fn field's UNION record carries every lambda's captures; this build
+            // fills only its own lambda's, which are the attributes of that lambda's own record.
+            // Filled by name from this scope, another lambda's capture would be taken too
+            // wherever a local happens to share its name.
+            let own_rec = if self
+                .data
+                .def(closure_rec_d)
+                .name
+                .starts_with("__closure_u_")
+            {
+                let lambda = &self.data.def(d_nr).name;
+                let bare = lambda.strip_prefix("n_").unwrap_or(lambda);
+                self.data
+                    .def_nr(&bare.replacen("__lambda_", "__closure_", 1))
+            } else {
+                u32::MAX
+            };
             for aid in 0..n_attrs {
-                let cap_name = self.data.attr_name(closure_rec_d, aid);
+                let slot_name = self.data.attr_name(closure_rec_d, aid);
+                // The name this lambda captures the slot as: the slot's own, or the one its
+                // alias stands for (loft#1874).
+                let cap_name = self
+                    .capture_alias
+                    .iter()
+                    .find(|((l, _), alias)| *l == d_nr && **alias == slot_name)
+                    .map_or(slot_name.clone(), |((_, orig), _)| orig.clone());
+                if own_rec != u32::MAX
+                    && (self.data.attr(own_rec, &cap_name) == usize::MAX
+                        || self.capture_attr(d_nr, closure_rec_d, &cap_name) != aid)
+                {
+                    continue;
+                }
                 let v_nr = self.vars.var(&cap_name);
                 if v_nr != u16::MAX {
                     captured_var_nrs.push(v_nr);
@@ -2170,7 +2200,7 @@ or build a local and use that."
                     {
                         let pos = self
                             .database
-                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
                         let held =
                             self.cl("OpGetDbRef", &[Value::Var(w), Value::Int(i32::from(pos))]);
                         let release = self.cl("OpFreeRefIfDistinct", &[held, fill.clone()]);
@@ -2189,7 +2219,7 @@ or build a local and use that."
                     if v_nr != u16::MAX && self.vars.rebind_must_mint(v_nr) {
                         let pos = self
                             .database
-                            .position(self.data.def(closure_rec_d).known_type(), &cap_name);
+                            .position(self.data.def(closure_rec_d).known_type(), &slot_name);
                         let held = self
                             .capture_records
                             .entry((self.first_pass, self.context, v_nr))
@@ -2823,7 +2853,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 if rec == u32::MAX {
                     continue;
                 }
-                let a_nr = self.data.attr(rec, &name);
+                let a_nr = self.capture_attr(*lam, rec, &name);
                 if a_nr == usize::MAX {
                     continue;
                 }
@@ -2895,7 +2925,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 if rec == u32::MAX {
                     continue;
                 }
-                let a_nr = self.data.attr(rec, name);
+                let a_nr = self.capture_attr(*lam, rec, name);
                 if a_nr == usize::MAX {
                     continue;
                 }
@@ -3140,7 +3170,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
         } else {
             let record_d_nr = self.data.def_nr(&record_name);
-            if record_d_nr != u32::MAX {
+            // A lambda written into a fn field beside others keeps the union record pass 1
+            // gave it (loft#1874, `Parser::unite_field_closure_records`).
+            let current = self.data.def(lambda_d_nr).closure_record();
+            let united =
+                current != u32::MAX && self.data.def(current).name.starts_with("__closure_u_");
+            if record_d_nr != u32::MAX && !united {
                 self.data.definitions[lambda_d_nr as usize].closure_record = record_d_nr;
             }
         }

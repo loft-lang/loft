@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1874, `@FR-L-Escape` — a fn-typed struct field holds ANY closure: every lambda the
+// program writes into it, whatever it captures.
+//
+// The field keeps its closure record as a child record in the host's store, so the record has
+// one layout per field: every lambda written into it shares a UNION closure record, whose
+// attributes are all their captures, each lambda reading and writing only its own.  A name two
+// lambdas capture as different types gets a slot per lambda.  A slot a build does not write
+// starts empty, and rebuilding the field with another lambda releases what the old one held.
+//
+// Every value is hand-computed: `x * k` with k = 2 and `x * m` with m = 3, `v.a + x`,
+// `len(s) * 100 + x`, `w.a * 1000 + len(s) + x`.
+//
+// @falsified-at: f5943414e — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1874-a-fn-field-holds-any-closure.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — a second lambda written into the field was refused at compile time.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct V { a: integer }
+struct H { f: fn(integer) -> integer, t: integer }
+
+fn mk1(n: integer) -> H { v = V { a: n }; H { f: fn(x: integer) -> integer { v.a + x }, t: 1 } }
+fn mk2(s: text) -> H { H { f: fn(x: integer) -> integer { len(s) * 100 + x }, t: 2 } }
+fn mk3(n: integer, s: text) -> H { w = V { a: n }; H { f: fn(x: integer) -> integer { w.a * 1000 + len(s) + x }, t: 3 } }
+fn mk4(k: integer) -> H { H { f: fn(x: integer) -> integer { x * k }, t: 4 } }
+fn mk5(n: integer) -> H { k = V { a: n }; H { f: fn(x: integer) -> integer { k.a + x }, t: 5 } }
+fn swap(h: H, n: integer) { u = V { a: n }; h.f = fn(x: integer) -> integer { u.a * 7 + x }; }
+fn churn() -> integer { junk = []; for i in 0..30 { junk += [V { a: 100 + i }]; } junk.len() }
+
+fn test_two_lambdas_in_one_field() {
+  k = 2;
+  m = 3;
+  a = H { f: fn(x: integer) -> integer { x * k }, t: 0 };
+  b = H { f: fn(x: integer) -> integer { x * m }, t: 0 };
+  assert(a.f(5) == 10 && b.f(5) == 15, "same shape: {a.f(5)} {b.f(5)}, want 10 15");
+}
+
+fn test_different_captures_returned() {
+  h1 = mk1(40);
+  h2 = mk2("abc");
+  h3 = mk3(9, "xy");
+  assert(churn() == 30, "churn");
+  assert(h1.f(1) == 41 && h2.f(2) == 302 && h3.f(3) == 9005, "shapes: {h1.f(1)} {h2.f(2)} {h3.f(3)}");
+  assert(h1.t == 1 && h2.t == 2 && h3.t == 3, "tags");
+}
+
+fn test_read_inline_off_the_call() {
+  assert(mk1(6).f(1) == 7 && mk3(2, "q").f(1) == 2002, "inline: {mk1(6).f(1)} {mk3(2, \"q\").f(1)}");
+}
+
+fn test_rebuilt_with_another_lambda() {
+  h = mk1(50);
+  swap(h, 6);
+  assert(churn() == 30 && h.f(1) == 43, "swapped {h.f(1)}, want 43");
+}
+
+fn test_one_name_two_types() {
+  assert(mk4(2).f(3) == 6 && mk5(4).f(5) == 9, "clash: {mk4(2).f(3)} {mk5(4).f(5)}, want 6 9");
+}
+
+fn main() {
+  test_two_lambdas_in_one_field();
+  test_different_captures_returned();
+  test_read_inline_off_the_call();
+  test_rebuilt_with_another_lambda();
+  test_one_name_two_types();
+}

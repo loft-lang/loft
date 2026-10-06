@@ -20241,7 +20241,7 @@ impl Parser {
                 && let closure_rec_d = self.data.def(self.context).closure_record()
                 && closure_rec_d != u32::MAX
             {
-                let f_nr = self.data.attr(closure_rec_d, name);
+                let f_nr = self.capture_attr(self.context, closure_rec_d, name);
                 if f_nr != usize::MAX {
                     let load = self.closure_capture_read(closure_rec_d, f_nr);
                     *val = v_block(

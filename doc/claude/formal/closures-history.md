@@ -1258,6 +1258,16 @@ permanent refusal as distance from the spec overstates the register by one.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+- **D-clo-50** *(opened and CLOSED 2026-10-06; loft#1874)* — `(L-Escape)`: a fn-typed struct
+  field held only ONE capturing lambda in the whole program — a second was refused (*"heterogeneous
+  capture shapes per fn-ref struct field"*), even with the same captured shape — because the
+  field's child record is laid out with one closure record's schema.  Closed by a UNION closure
+  record per field: every lambda written into it shares it (its attributes are all their
+  captures, a name captured as two types gets a slot per lambda), each build fills only its own
+  lambda's slots and starts the rest empty, and a rebuild with another lambda releases what the
+  old one held.  The same arc made native emit a fn-field read whose halves carry statements
+  between them, which a field called straight off a call (`mk(5).f(1)`) produces once the
+  struct owns a release.
 - **D-clo-49** *(opened 2026-10-05, CLOSED 2026-10-06; loft#1877)* — `(L-Escape)` for a
   struct that holds a capturing closure, placed into another struct's field as a VALUE.  It was
   refused (*"field `h` would store a value of a type that holds a capturing closure"*).  Placing
@@ -1697,4 +1707,4 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
 
 ## The closure record closures.md's OPEN line carried until 2026-10-05
 
-`D-clo-49` (opened 2026-10-05, CLOSED 2026-10-06, loft#1877); `D-clo-47` (opened and CLOSED 2026-10-05, loft#1867); `D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).
+`D-clo-50` (opened and CLOSED 2026-10-06, loft#1874); `D-clo-49` (opened 2026-10-05, CLOSED 2026-10-06, loft#1877); `D-clo-47` (opened and CLOSED 2026-10-05, loft#1867); `D-clo-46` (opened and CLOSED 2026-10-05, loft#1862); `D-clo-45` (opened and CLOSED 2026-09-28, loft#1725); `D-clo-44` (opened and CLOSED 2026-09-28, loft#1715); `D-clo-43` (opened and CLOSED 2026-09-27, found with loft#1700); `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed 2026-09-12).

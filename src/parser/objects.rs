@@ -736,14 +736,15 @@ impl Parser {
         } else if self.closure_param != u16::MAX
             && !self.first_pass
             && self.data.def(self.context).closure_record() != u32::MAX
-            && self
-                .data
-                .attr(self.data.def(self.context).closure_record(), name)
-                != usize::MAX
+            && self.capture_attr(
+                self.context,
+                self.data.def(self.context).closure_record(),
+                name,
+            ) != usize::MAX
         {
             // A5.3/A5.4: redirect captured variable reads to closure record field.
             let closure_d_nr = self.data.def(self.context).closure_record();
-            let fnr = self.data.attr(closure_d_nr, name);
+            let fnr = self.capture_attr(self.context, closure_d_nr, name);
             *code = self.closure_capture_read(closure_d_nr, fnr);
             // @PLN93 (#511): a collection capture's stored attr is a `Reference` DbRef,
             // but the body must see the ORIGINAL collection type (from capture_context)
@@ -1002,7 +1003,7 @@ impl Parser {
             let fnr = if closure_d_nr == u32::MAX {
                 usize::MAX
             } else {
-                self.data.attr(closure_d_nr, name)
+                self.capture_attr(self.context, closure_d_nr, name)
             };
             if fnr == usize::MAX {
                 // First pass, no closure param, or field not found — placeholder variable.
