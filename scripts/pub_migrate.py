@@ -165,6 +165,46 @@ def migrate_file(path, rows, dry_run):
     return len(edits)
 
 
+REGISTRY_RE = re.compile(r"/\.loft/registry/([A-Za-z0-9_]+)-[0-9][^/]*/(.*)$")
+
+
+def package_dirs(root):
+    """Every package (a directory with a `loft.toml`) under `root`, by its directory name."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "target"]
+        if "loft.toml" in filenames:
+            out.setdefault(os.path.basename(dirpath), dirpath)
+    return out
+
+
+def declaration_line(path, kind, item):
+    """The line of the declaration a row's edit starts from, found by NAME: the struct or the
+    variant for a field, the struct for a literal, the enum holding the variant for a variant."""
+    try:
+        lines = open(path, encoding="utf-8").read().split("\n")
+    except OSError:
+        return None
+    name = item.split(".")[0]
+    decl = re.compile(r"(?:\bstruct\s+" + re.escape(name) + r"\b|(?:^|[{,])\s*" + re.escape(name) + r"\s*\{)")
+    for i, l in enumerate(lines):
+        if decl.search(l.split("//")[0]):
+            if kind == "variant":
+                for j in range(i, -1, -1):
+                    if re.search(r"\benum\b", lines[j].split("//")[0]):
+                        return j + 1
+                return None
+            return i + 1
+    if kind == "variant":
+        word = re.compile(r"\b" + re.escape(name) + r"\b")
+        for i, l in enumerate(lines):
+            if word.search(l.split("//")[0]):
+                for j in range(i, -1, -1):
+                    if re.search(r"\benum\b", lines[j].split("//")[0]):
+                        return j + 1
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("census")
@@ -172,19 +212,34 @@ def main():
     ap.add_argument("--root", default=".")
     ap.add_argument("--only", default="")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--registry", default="",
+                    help="map a row declared in an installed registry copy onto this checkout's "
+                         "package of the same name (any tree), finding the line by type name")
     a = ap.parse_args()
     root = os.path.realpath(a.root)
     per_file = defaultdict(set)
     skipped = set()
+    unmapped = set()
+    packages = package_dirs(a.registry) if a.registry else {}
     for raw in open(a.census, encoding="utf-8"):
         if raw.startswith("#") or not raw.strip():
             continue
         tree, decl, kind, item, _uses = raw.rstrip("\n").split("\t")
+        path, _, line = decl.rpartition(":")
+        reg = REGISTRY_RE.search(path) if a.registry else None
+        if reg:
+            pkg_dir = packages.get(reg.group(1))
+            mapped = os.path.join(pkg_dir, reg.group(2)) if pkg_dir else None
+            at = mapped and declaration_line(mapped, kind, item)
+            if not at:
+                unmapped.add(f"{reg.group(1)}: {item}")
+                continue
+            per_file[os.path.realpath(mapped)].add((at, kind, item))
+            continue
         if tree != a.tree:
             continue
-        path, _, line = decl.rpartition(":")
         full = os.path.realpath(path if os.path.isabs(path) else os.path.join(root, path))
-        if not full.startswith(root + os.sep) or (a.only and not os.path.relpath(full, root).startswith(a.only)):
+        if not full.startswith(root + os.sep) or not os.path.exists(full) or (a.only and not os.path.relpath(full, root).startswith(a.only)):
             skipped.add(full)
             continue
         per_file[full].add((int(line), kind, item))
@@ -192,6 +247,8 @@ def main():
     print(f"pub_migrate: {total} `pub` added in {len(per_file)} files; {len(skipped)} declaring files outside --root left alone")
     for s in sorted(skipped):
         print(f"  outside: {s}")
+    for u in sorted(unmapped):
+        print(f"  registry row with no declaration found here: {u}")
 
 
 if __name__ == "__main__":
