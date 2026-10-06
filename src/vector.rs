@@ -156,6 +156,7 @@ pub fn alloc_vector_from_bytes(store: &mut Store, elem_size: u32, count: u32, da
 /// O8.1a: Pre-allocate a vector record with capacity for `count` elements.
 /// Sets the vector pointer and length=0.  Subsequent `vector_append` calls
 /// will find enough space and never call `store.resize`.
+#[inline]
 pub fn pre_alloc_vector(db: &DbRef, count: u32, elem_size: u32, stores: &mut [Store]) {
     // #618: the null test comes FIRST, before any store deref — the same order
     // `clear_vector` uses, and the rule `DbRef::is_null` states ("every store
@@ -702,6 +703,7 @@ pub fn length_vector(db: &DbRef, stores: &[Store]) -> u32 {
     }
 }
 
+#[inline]
 pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
     if db.is_null() || db.rec == 0 || db.pos == 0 {
         // Null (absent) or unallocated/empty vector ref — nothing to clear.
