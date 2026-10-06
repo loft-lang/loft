@@ -17,7 +17,7 @@
 //! ```text
 //! place = v else { B }   ⟹   …the statement's own leading temps…
 //!                             __wt = <the place's target>;
-//!                             if get_store_lock(__wt) { __wt = null }
+//!                             if !__wt || get_store_lock(__wt) { __wt = <reported null> }
 //!                             [__fv = <the value>]               (a narrow store only)
 //!                             OpSet…(__wt, …, v');               (each write's TARGET → __wt)
 //!                             if !__wt [|| __fv does not fit] { B }
@@ -88,11 +88,15 @@ impl Parser {
                 }
             }
             // `@FR-H-WriteLocked` under an arm: a locked store is a write that does not take,
-            // in both run modes.  Nulling the bound target makes the setter skip through its
-            // own `rec == 0` test — the value is still evaluated once — and leaves the one
-            // `!temp` below as the whole answer.
+            // in both run modes.  An absent or locked target becomes the REPORTED null
+            // (`OpNullReported`, @FR-E-Report): the setter skips through its own `rec == 0` test
+            // — the value is still evaluated once — and says nothing, because the arm is the
+            // report; the one `!temp` below is the whole answer.
             let locked = self.cl("n_get_store_lock", &[Value::Var(wt)]);
-            let null = self.cl("OpNullRefSentinel", &[]);
+            let present = self.cl("OpConvBoolFromRef", &[Value::Var(wt)]);
+            let missing = self.cl("OpNot", &[present]);
+            let take_over = v_if(missing, Value::Boolean(true), locked);
+            let null = self.cl("OpNullReported", &[]);
             // A record VARIABLE is bound through the projection a view is spelled as
             // (`@FR-R-CopyView`'s `OpGetField(a, 0)`): a plain `Set` from it is a COPY
             // (`@FR-B-Copy`), and the write would land in the copy.
@@ -107,7 +111,10 @@ impl Parser {
             inserts.push((
                 writes[0].0,
                 0,
-                vec![v_set(wt, bound), v_if(locked, v_set(wt, null), Value::Null)],
+                vec![
+                    v_set(wt, bound),
+                    v_if(take_over, v_set(wt, null), Value::Null),
+                ],
             ));
             let present = self.cl("OpConvBoolFromRef", &[Value::Var(wt)]);
             absent = Some(self.cl("OpNot", &[present]));

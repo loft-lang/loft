@@ -1258,6 +1258,10 @@ fn OpVecSetInt(vec: const u16, size: const u16, idx: const u16, fld: const u16, 
 // `OpGotoFalseWord` does; `step` last, patched by `gen_if` like every compare-and-jump.
 fn OpVecEndJump(vec: const u16, idx: const u16, step: const i32);
 #rust"if i64::from(vector::length_vector(&s.get_var::<DbRef>(@vec), &s.database.allocations)) > s.get_var::<i64>(@idx) {{ s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32; }}"
+// @FR-H-Write-Else — the null a store's `else` arm owns: its write lands nowhere without a
+// `write_dropped` report (`DbRef::NULL_REPORTED`, @FR-E-Report), because the arm is the report.
+fn OpNullReported() -> reference;
+#rust"DbRef::NULL_REPORTED"
 
 // --- Path helpers ---
 

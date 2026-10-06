@@ -811,6 +811,7 @@ impl Output<'_> {
                 "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
             }
             .to_string();
+            res = with_drop_report(&res);
         }
         // `@FR-R-RefillText`'s collection clause — a text set into an element the build
         // appended: a slot under the kept length refills the block it owns, a slot past it
@@ -834,6 +835,7 @@ impl Output<'_> {
                 "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
             }
             .to_string();
+            res = with_drop_report(&res);
         }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.
@@ -1208,6 +1210,21 @@ impl Output<'_> {
             write!(w, "{res}")
         }
     }
+}
+
+/// A native text-write body — the `(R-RefillText)` forms above, which replace the
+/// `OpSetText` / `OpSetTextReplace` templates — given the setters' cold branch: a write whose
+/// place names no record reports `write_dropped` unless that absence is already accounted
+/// for (`@FR-E-Report`, `DbRef::absence_unreported`).  Every body ends by closing its
+/// `if db.rec != 0 {{ … }}` and then its own block, so the branch goes between the two.
+fn with_drop_report(body: &str) -> String {
+    let Some(head) = body.strip_suffix("}}}}") else {
+        return body.to_string();
+    };
+    format!(
+        "{head}}}}} else if db.absence_unreported() {{{{ \
+         s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}}}}}"
+    )
 }
 
 #[cfg(test)]

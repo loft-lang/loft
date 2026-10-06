@@ -1254,6 +1254,10 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         {
             stores.release_copy_source(&data, &to);
         }
+        // @FR-E-Report — the dropped write's report, the setters' cold branch's twin.
+        if to.absence_unreported() {
+            stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+        }
         return;
     }
     // mirror `state/io.rs::copy_record`'s tag handling and
@@ -5766,6 +5770,22 @@ fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)])
     CALL_FRAMES.with(|frames| {
         let v = unsafe { &*frames.get() };
         f(&v[..depth.min(v.len())])
+    })
+}
+
+/// Where the running native frame was declared, for a RECOVERABLE fault's log line — the same
+/// position the halting path names on `--native` (`State::running_frame_declaration` is the
+/// interpreter's twin), because the generated code keeps no per-statement line.  `None` on the
+/// lean tier, which pushes no frames, and outside any loft frame.
+pub(crate) fn running_frame_position() -> Option<crate::lexer::Position> {
+    with_call_frames(|frames| {
+        frames
+            .last()
+            .map(|(_, file, line, _)| crate::lexer::Position {
+                file: std::sync::Arc::from(*file),
+                line: *line,
+                pos: 1,
+            })
     })
 }
 

@@ -1701,6 +1701,9 @@ impl State {
             if free_source {
                 self.database.release_copy_source(&data, &to);
             }
+            if to.absence_unreported() {
+                self.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+            }
             return;
         }
         // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:

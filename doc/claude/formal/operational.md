@@ -340,10 +340,12 @@ a / b?          // null  — `?` is TIGHTEST: this is `a / (b?)`, and the DIVISI
                Integer OVERFLOW is silent at every site (the null IS the signal — also
                the rustc-release default); the value is null, never a wrapped wrong answer.
                A DROPPED WRITE (H-Write-Else's "did not take", a lock fault excepted, which
-               reports its own under (H-WriteLocked)) is reported the same way: unguarded — no
-               `else` on the statement — it emits one Warn-level `write_dropped` naming the
-               place, the index or key and the length, in every build kind; a store with an
-               `else` reports nothing (the arm owns the failure).
+               reports its own under (H-WriteLocked)) is reported the same way, ONCE, in every
+               build kind, when the statement has no `else`: an index out of range by the
+               access that found it (`index_out_of_bounds`, naming the index and the length),
+               an absent key or a null view by the write (`write_dropped`).  A store with an
+               `else` reports nothing (the arm owns the failure).  The line names the
+               statement on the interpreter and the running function on `--native`.
 
   (E-Uncomp-Seen)  `place = v else { B }` (H-Write-Else) is the form that observes it; the
                older `if !place` on the next statement stays accepted, with this meaning.

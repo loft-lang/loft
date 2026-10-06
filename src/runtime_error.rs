@@ -110,6 +110,11 @@ pub enum RuntimeErrorKind {
     /// not the value the slot now holds — but recoverable, like every other
     /// uncomputable: one value degrades and the run continues (C80).
     RangeDefaulted { value: i64, lo: i64, hi: i64 },
+    /// `@FR-E-Report` — a write whose place names no record (an absent key, a null view on the
+    /// path) was dropped (`@FR-H-WriteNull`), and no `else` arm owned it.  Recoverable: the
+    /// program continues and the place keeps no value (C80); an index out of range reports
+    /// as `IndexOutOfBounds` where it was found instead, once.
+    WriteDropped,
     /// A call would have taken the stack past `State::MAX_CALL_DEPTH` frames.
     StackOverflow,
     /// `panic("msg")` builtin called from loft code.
@@ -138,6 +143,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::ShiftOutOfRange => "shift_out_of_range",
             RuntimeErrorKind::CastOutOfRange => "cast_out_of_range",
             RuntimeErrorKind::RangeDefaulted { .. } => "range_defaulted",
+            RuntimeErrorKind::WriteDropped => "write_dropped",
             RuntimeErrorKind::WriteToLockedStore { .. } => "write_to_locked_store",
             RuntimeErrorKind::StackOverflow => "stack_overflow",
             RuntimeErrorKind::UserPanic { .. } => "user_panic",
@@ -163,6 +169,11 @@ impl RuntimeErrorKind {
                     "value {value} is outside the declared range {lo}..={hi}, so the slot \
                      took its default instead"
                 )
+            }
+            RuntimeErrorKind::WriteDropped => {
+                "a write to a place that names no record was dropped — add `else { … }` to the \
+                 assignment to handle it"
+                    .to_string()
             }
             RuntimeErrorKind::ShiftOutOfRange => {
                 "shift amount out of range [0,64) or result is the reserved null value".to_string()

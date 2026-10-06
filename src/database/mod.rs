@@ -1819,7 +1819,10 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            lg.log_runtime_kind(&kind, None);
+            lg.log_runtime_kind(
+                &kind,
+                crate::codegen_runtime::running_frame_position().as_ref(),
+            );
         }
     }
 
@@ -1956,13 +1959,13 @@ impl Stores {
             });
             // `nullref`, the one value spelling of absence (`DbRef::or_null`,
             // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         if normalized >= i64::from(len) {
             self.raise_recoverable_runtime(
                 crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds { idx: index, len },
             );
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         crate::vector::get_vector(db, size, index, &self.allocations)
     }

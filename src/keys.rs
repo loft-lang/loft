@@ -355,6 +355,9 @@ pub struct DbRef {
     pub pos: u32,
 }
 
+/// The `pos` bit that marks a null as already reported ([`DbRef::NULL_REPORTED`]).
+pub const REPORTED_BIT: u32 = 0x8000_0000;
+
 impl DbRef {
     /// The canonical null-reference sentinel (`store_nr == u16::MAX`).  Store
     /// allocation asserts `slot != u16::MAX`, so this is distinct from every
@@ -366,6 +369,27 @@ impl DbRef {
         rec: 0,
         pos: 0,
     };
+
+    /// A null whose absence is already ACCOUNTED for: the access that found the place absent
+    /// reported it (an out-of-range index, `@FR-H-Index`), or a store's `else` arm owns it
+    /// (`@FR-H-Write-Else`).  A write that lands nowhere through it says nothing more; a write
+    /// through any other null reports `write_dropped` (`@FR-E-Report`).  The mark is the top
+    /// bit of `pos`, a word a null never reads — every null test asks `rec` or `store_nr` —
+    /// and `pos + field` keeps the bit, so a field written under a reported element is
+    /// accounted for too.  No real record's position reaches it: a store is far below 2^31
+    /// words.
+    pub const NULL_REPORTED: DbRef = DbRef {
+        store_nr: u16::MAX,
+        rec: 0,
+        pos: REPORTED_BIT,
+    };
+
+    /// True for a write target that names no record and whose absence nothing has reported
+    /// yet — the one question a dropped write asks before it reports (`@FR-E-Report`).
+    #[must_use]
+    pub const fn absence_unreported(&self) -> bool {
+        self.rec == 0 && self.pos & REPORTED_BIT == 0
+    }
 
     /// True when this reference is the null sentinel (absent value).  The
     /// single home for the null test: every store accessor consults it before

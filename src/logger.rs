@@ -369,7 +369,8 @@ impl Logger {
             | Rk::NegativeIndex { .. }
             | Rk::ShiftOutOfRange
             | Rk::CastOutOfRange
-            | Rk::RangeDefaulted { .. } => Severity::Warn,
+            | Rk::RangeDefaulted { .. }
+            | Rk::WriteDropped => Severity::Warn,
         };
         let label = kind.label();
         let detail = kind.describe();
