@@ -7385,38 +7385,33 @@ mod tests {
         assert!(sentinel.free);
     }
 
-    /// cluster-462 / #462 regression: an in-place `resize` grow that absorbs an adjacent
-    /// freed block MUST zero the newly-absorbed region, upholding the same "claimed payload
-    /// reads zero" invariant `claim` provides. A freshly-exposed vector element slot that
-    /// keeps the freed block's stale bytes (garbage text/vec handles) is followed by
-    /// `remove_claims`/`length_vector` into a UAF (the sim.loft:3546 SIGSEGV). Pre-fix this
-    /// region kept `0xDEAD_BEEF`; post-fix it reads 0.
+    /// `@FR-H-Claim` — growing a record in place into the adjacent free block keeps the bytes
+    /// the record already wrote and makes no promise about the region it absorbs: that region is
+    /// claimed, and a claim's bytes are undefined until written (C137).  What made a stale slot
+    /// there a use-after-free was a reader of it, and C137 moved the duty onto the writers.
     #[test]
-    fn resize_in_place_zeroes_absorbed_region() {
+    fn resize_in_place_keeps_its_own_bytes() {
         let mut store = Store::new(256);
         store.free = false;
         let a = store.claim(4); // 4-word record
         let b = store.claim(16); // adjacent 16-word record
-        // Garbage at HIGH offsets in b, past the free-tree node header `delete` writes into
-        // b's first words — so it survives the free and is what `resize` must clear.
-        store.write::<u32>(b, 80, 0xDEAD_BEEF);
-        store.write::<u32>(b, 100, 0x00CA_FE00);
+        store.write::<u32>(a, 8, 0x0012_3456);
+        store.write::<u32>(a, 28, 0x0065_4321);
         store.delete(b); // b becomes a free block adjacent to a
         let a2 = store.resize(a, 12); // grow a in place into b's region
         assert_eq!(
             a2, a,
             "resize should grow a in place (absorb the adjacent free block)"
         );
-        // b started at word 4 relative to a; b byte 80/100 -> a byte 4*8+80 / 4*8+100.
         assert_eq!(
-            store.read::<u32>(a, 32 + 80),
-            0,
-            "absorbed region must be zeroed (kept 0xDEADBEEF pre-fix)"
+            store.read::<u32>(a, 8),
+            0x0012_3456,
+            "a's own bytes survive the growth"
         );
         assert_eq!(
-            store.read::<u32>(a, 32 + 100),
-            0,
-            "absorbed region must be zeroed (kept 0xCAFE pre-fix)"
+            store.read::<u32>(a, 28),
+            0x0065_4321,
+            "a's own bytes survive the growth"
         );
     }
 
