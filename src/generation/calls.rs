@@ -357,6 +357,13 @@ impl Output<'_> {
         let Some((buf, tp)) = refill else {
             return Ok((false, false));
         };
+        // The vector clause: the callee empties each vector field of the buffer in place
+        // (`(R-RefillBuffer)`) — and any emission of it that does not mints over the live
+        // buffer, which clears its store — so neither a twin nor the release is owed.
+        if self.refill_text.vectors.contains(&(vals.as_ptr() as usize)) {
+            crate::rewrite_census::fired("R-RefillText", 1);
+            return Ok((false, false));
+        }
         let twin = !other_twin
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn);

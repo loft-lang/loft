@@ -9394,6 +9394,61 @@ pub fn keep_elements(
 pub struct RefillTextSites {
     pub pools: HashMap<usize, (u16, u16)>,
     pub calls: HashMap<usize, (u16, u16)>,
+    /// The calls admitted under the VECTOR clause, by argument-slice address: the plain
+    /// callee empties each vector field in place, so the call takes no twin and no release.
+    pub vectors: HashSet<usize>,
+}
+
+/// Which clause of `@FR-R-RefillText` a pooled site is admitted under.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RefillClause {
+    /// The callee's refill twin writes each text over its slot's block.
+    Text,
+    /// The plain callee empties each vector field in place (`(R-RefillBuffer)`).
+    Vectors,
+}
+
+/// `LOFT_NO_REFILL_VECTORS=1` — the vector clause off: a pooled buffer whose type holds
+/// vectors of plain elements is released before every call again.  The first bisect step
+/// for a wrong or stale vector field of a result built in a reused call buffer.
+fn refill_vectors_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_REFILL_VECTORS").is_ok_and(|v| v != "0"))
+}
+
+/// `@FR-R-RefillText`'s vector clause for a callee: `(R-RefillBuffer)` refills its return
+/// buffer — every mint heads a literal writing every field, each vector field's zero an
+/// in-place emptying — its vector elements own no heap, and the result type's heap is
+/// those vectors and nothing else ([`Stores::vector_slots`]).  Answers the result type.
+///
+/// # Errors
+/// The condition the callee fails, in the words `LOFT_TRACE_REFILL_TEXT` prints.
+pub fn refill_vector_callee(
+    data: &Data,
+    stores: &Stores,
+    callee: u32,
+) -> Result<u16, &'static str> {
+    if !refill_vectors_enabled() {
+        return Err("the vector clause is switched off");
+    }
+    let Some(buf) = retbuf_var(data, callee) else {
+        return Err("no return buffer");
+    };
+    let refill = refill_buffers(data, stores, callee);
+    if refill.var != Some(buf) {
+        return Err("the callee does not refill its buffer");
+    }
+    if refill.heap_elems {
+        return Err("the callee's elements own heap");
+    }
+    let Some(tp) = mint_type_of(data, callee, buf) else {
+        return Err("no mint of the buffer");
+    };
+    match stores.vector_slots(tp) {
+        Some(found) if !found.is_empty() => Ok(tp),
+        Some(_) => Err("the result holds no vector"),
+        None => Err("the result owns heap other than vectors of plain elements"),
+    }
 }
 
 fn is_var(v: &Value, var: u16) -> bool {
@@ -9636,16 +9691,19 @@ struct PoolSite<'a> {
     callee: u32,
 }
 
-/// Why `site` cannot take the refill twin, or `None` when it can: the callee's conditions
-/// ([`refill_text_callee`]) and (c) — the buffer named by nothing but its pool statement,
-/// this call's buffer argument and its releases, the result bound once and only READ.
+/// The clause `site` is admitted under, or why it is not: the callee's conditions
+/// ([`refill_text_callee`], [`refill_vector_callee`]) and (c) — the buffer named by nothing
+/// but its pool statement, this call's buffer argument and its releases, the result bound
+/// once.  The text clause also asks that the result be only READ; the vector clause does
+/// not, because every write the language makes to a vector field leaves it owning its vector
+/// (or empty), which is all the in-place emptying reads.
 fn refill_text_site_declines(
     data: &Data,
     stores: &Stores,
     body: &Value,
     site: &PoolSite,
     callee_declines: &dyn Fn(u32) -> Option<&'static str>,
-) -> Option<&'static str> {
+) -> Result<RefillClause, &'static str> {
     let PoolSite {
         pool,
         args,
@@ -9657,15 +9715,15 @@ fn refill_text_site_declines(
     if (callee as usize) >= data.definitions.len()
         || !matches!(data.def(callee).def_type(), DefType::Function)
     {
-        return Some("not a loft function");
+        return Err("not a loft function");
     }
     // The buffer ARGUMENT's position is its attribute's, not its variable number: a renamed
     // buffer (`(R-Rebind)`'s `__ref_1`) sits behind locals of its own.
     let Some(buf_arg) = data.def(callee).hidden_return_buffer_attr() else {
-        return Some("no return buffer");
+        return Err("no return buffer");
     };
     if let Some(why) = callee_declines(callee) {
-        return Some(why);
+        return Err(why);
     }
     if args.iter().enumerate().any(|(pos, arg)| {
         if pos == buf_arg {
@@ -9674,13 +9732,21 @@ fn refill_text_site_declines(
             var_mentions(arg, buf) > 0 || var_mentions(arg, res) > 0
         }
     }) {
-        return Some("the call's arguments name the buffer or the result");
+        return Err("the call's arguments name the buffer or the result");
     }
-    match refill_text_callee(data, stores, callee) {
-        Err(why) => return Some(why),
-        Ok(callee_tp) if callee_tp != tp => return Some("the pool's type is not the callee's"),
-        Ok(_) => {}
-    }
+    let clause = match refill_text_callee(data, stores, callee) {
+        Ok(callee_tp) if callee_tp != tp => return Err("the pool's type is not the callee's"),
+        Ok(_) => RefillClause::Text,
+        Err(text_why) => match refill_vector_callee(data, stores, callee) {
+            Ok(callee_tp) if callee_tp == tp => RefillClause::Vectors,
+            Ok(_) => return Err("the pool's type is not the callee's"),
+            // The reason of the clause the pool's type belongs to.
+            Err(vector_why) if stores.vector_slots(tp).is_some_and(|v| !v.is_empty()) => {
+                return Err(vector_why);
+            }
+            Err(_) => return Err(text_why),
+        },
+    };
     let mut allowed = var_mentions(pool, buf) + 1;
     let mut binds = 0usize;
     body.any_node(&mut |n| {
@@ -9702,15 +9768,15 @@ fn refill_text_site_declines(
         false
     });
     if var_mentions(body, buf) != allowed {
-        return Some("the buffer is named outside its pool");
+        return Err("the buffer is named outside its pool");
     }
     if binds != 1 {
-        return Some("the result is bound more than once");
+        return Err("the result is bound more than once");
     }
-    if !result_only_read(body, res, buf, data) {
-        return Some("the result is not only read");
+    if clause == RefillClause::Text && !result_only_read(body, res, buf, data) {
+        return Err("the result is not only read");
     }
-    None
+    Ok(clause)
 }
 
 /// `LOFT_TRACE_REFILL_TEXT`'s line for one site, printed once: a function is emitted more
@@ -9727,16 +9793,22 @@ pub fn trace_refill_text_once(line: &str) {
     }
 }
 
-fn trace_refill_text_site(data: &Data, site_fn: u32, target: u32, decline: Option<&str>) {
+fn trace_refill_text_site(
+    data: &Data,
+    site_fn: u32,
+    target: u32,
+    verdict: Result<RefillClause, &str>,
+) {
     let to = if (target as usize) < data.definitions.len() {
         data.def(target).name()
     } else {
         "?"
     };
     let from = data.def(site_fn).name();
-    let line = match decline {
-        None => format!("refill-text: {from} → {to} admitted"),
-        Some(why) => format!("refill-text: {from} → {to} declined — {why}"),
+    let line = match verdict {
+        Ok(RefillClause::Text) => format!("refill-text: {from} → {to} admitted"),
+        Ok(RefillClause::Vectors) => format!("refill-text: {from} → {to} admitted (vectors)"),
+        Err(why) => format!("refill-text: {from} → {to} declined — {why}"),
     };
     trace_refill_text_once(&line);
 }
@@ -9788,17 +9860,20 @@ pub fn refill_text_sites(
         false
     });
     for site in &sites {
-        let decline = refill_text_site_declines(data, stores, body, site, callee_declines);
+        let verdict = refill_text_site_declines(data, stores, body, site, callee_declines);
         if trace {
-            trace_refill_text_site(data, def_nr, site.callee, decline);
+            trace_refill_text_site(data, def_nr, site.callee, verdict);
         }
-        if decline.is_none() {
+        if let Ok(clause) = verdict {
             out.pools.insert(
                 std::ptr::from_ref(site.pool.unspan()) as usize,
                 (site.buf, site.tp),
             );
             out.calls
                 .insert(site.args.as_ptr() as usize, (site.buf, site.tp));
+            if clause == RefillClause::Vectors {
+                out.vectors.insert(site.args.as_ptr() as usize);
+            }
         }
     }
     out

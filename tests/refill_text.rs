@@ -51,6 +51,7 @@ fn emit_file(cells: &str, env: &[(&str, &str)]) -> (String, bool) {
     for k in [
         "LOFT_NO_REFILL_TEXT",
         "LOFT_NO_REFILL_ELEMENTS",
+        "LOFT_NO_REFILL_VECTORS",
         "LOFT_TRACE_REFILL_TEXT",
     ] {
         cmd.env_remove(k);
@@ -105,5 +106,42 @@ fn the_switch_takes_no_site() {
     assert!(
         trace(&err).is_empty(),
         "a site was asked with the switch off:\n{err}"
+    );
+}
+
+/// The vector clause's guard: which pooled sites skip their release because the callee empties
+/// each vector field in place, and why the others decline.
+const VECTORS: &str = "tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft";
+/// Each verdict is printed once (`trace_refill_text_once`), so a site repeated in the cells
+/// is one line.
+const VECTORS_TRACE: &[&str] = &[
+    "refill-text: n_main → n_mkf admitted (vectors)",
+    "refill-text: n_main → n_mko admitted (vectors)",
+    "refill-text: n_main → n_mkt declined — the result owns heap other than text",
+    "refill-text: n_main → n_mk_or declined — the callee does not refill its buffer",
+];
+
+#[test]
+fn the_pooled_vector_sites_skip_their_release_where_the_clause_admits() {
+    let (err, ok) = emit_file(VECTORS, &[("LOFT_TRACE_REFILL_TEXT", "1")]);
+    assert!(ok, "emission failed:\n{err}");
+    assert_eq!(trace(&err), VECTORS_TRACE, "the vector sites moved:\n{err}");
+}
+
+#[test]
+fn the_vector_switch_releases_first_again() {
+    let (err, ok) = emit_file(
+        VECTORS,
+        &[
+            ("LOFT_TRACE_REFILL_TEXT", "1"),
+            ("LOFT_NO_REFILL_VECTORS", "1"),
+        ],
+    );
+    assert!(ok, "emission failed:\n{err}");
+    assert!(
+        !trace(&err)
+            .iter()
+            .any(|l| l.ends_with("admitted (vectors)")),
+        "LOFT_NO_REFILL_VECTORS=1 must admit no vector site:\n{err}"
     );
 }

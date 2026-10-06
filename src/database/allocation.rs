@@ -4979,6 +4979,32 @@ impl Stores {
             .collect()
     }
 
+    /// `@FR-R-RefillText`'s vector clause — the offsets of `tp`'s vector fields when every
+    /// field that owns heap is a plain `vector<E>` whose elements own none (no text, no
+    /// collection, no linked group); `None` for any other heap, inline sub-records included.
+    #[must_use]
+    pub fn vector_slots(&self, tp: u16) -> Option<Vec<u32>> {
+        let Parts::Struct(fields) = &self.types.get(tp as usize)?.parts else {
+            return None;
+        };
+        let mut out = Vec::new();
+        for f in fields {
+            if !self.type_owns_heap(f.content) {
+                continue;
+            }
+            if !f.other_indexes.is_empty() {
+                return None;
+            }
+            match &self.types.get(f.content as usize)?.parts {
+                Parts::Vector(elem) if !self.type_owns_heap(*elem) && !self.is_linked(*elem) => {
+                    out.push(u32::from(f.position));
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
     /// A type's heap slots, derived on the first ask and cached on its row.
     fn heap_slots_of(&self, tp: u16) -> Option<&[HeapSlot]> {
         let row = self.types.get(tp as usize)?;
