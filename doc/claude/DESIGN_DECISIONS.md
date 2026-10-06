@@ -73,6 +73,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C112](DESIGN_DECISIONS_SYNTAX.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call) — a binding position mints a local whatever else carries that name; the function stays reachable as a call
 - [C123](DESIGN_DECISIONS_SYNTAX.md#c123--one-name-has-one-body-per-receiver-type-both-is-how-a-function-takes-both-spellings) — one name has one body per receiver type; `both` is how a function takes both spellings
 - [C126](DESIGN_DECISIONS_SYNTAX.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set) — a generic's type variables are unrestricted; a keyed collection stays a record set
+- [C139](DESIGN_DECISIONS_SYNTAX.md#c139--private-by-default-pub-is-consent-fields-literals-and-variants) — private by default, `pub` is consent: fields, literals and variants
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 

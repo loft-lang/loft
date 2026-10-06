@@ -207,7 +207,10 @@ fn a_private_field_carries_no_type_into_the_surface() {
         s.contains("Outer · struct · sealed"),
         "Outer not sealed:\n{s}"
     );
-    assert!(!s.contains("Inner"), "Inner reached through a private field:\n{s}");
+    assert!(
+        !s.contains("Inner"),
+        "Inner reached through a private field:\n{s}"
+    );
 }
 
 #[test]

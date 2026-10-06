@@ -6862,7 +6862,7 @@ impl Parser {
     /// after [`Self::parse_field`], once the field's attribute exists.  Rejects
     /// `const virtual(…)`: a virtual field is already computed and read-only, so
     /// `const` on it is redundant.  See doc/claude/plans/40-const-fields/.
-    /// @PLN187 (C139) — `pub` on a field: readable and writable wherever its type is visible.
+    /// @PLN187 (@C139, @FR-F-Visible) — `pub` on a field: readable and writable wherever its type is visible.
     fn mark_pub_field(&mut self, on_d: u32, a_name: &str) {
         let idx = self.data.attr(on_d, a_name);
         if idx != usize::MAX {

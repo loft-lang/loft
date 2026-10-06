@@ -4703,3 +4703,17 @@ read) or packs by descending alignment like a struct — the owner settled the s
 tuple is nothing other than a record, so its fields may change order with the larger aligned ones
 first, with no effect on their names or their text presentation.  Measured: `(u8, u32, u16)` is
 12 bytes today against 8 for the equivalent struct (loft#1898).
+
+## C139 — private by default, `pub` is consent: fields, literals and variants
+
+**Question.** A library's struct fields were readable and writable by every importer (`pub` on a
+field was parsed and discarded), so no library could change a record's representation without
+breaking a consumer, and a `pub fn` returning a non-`pub` type handed its caller a value whose
+type it could not name (OCaml_BAR H3: no abstract type).  **Measured** (d364c4fb2): type names
+were already private by default and enforced; no field anywhere carried `pub` (stdlib 47 fields,
+libraries 956, tests 4395); `pub` on a variant field did not parse.  **Decided** 2026-10-06 (owner,
+@PLN187): private by default with three type levels (invisible / name only / `pub`), name only
+decided by the file's own `pub` signatures; enum variant fields follow the struct rule; a
+non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
+**Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
+contract 1 because it adds refusals.

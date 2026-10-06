@@ -20,6 +20,23 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   item `lib` declares without `pub`, and not a name `lib` only imports for its own use (C98),
   which the error then names with its owner's qualifier
   (`tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`).
+- **Everything a file declares is private to it; `pub` is consent** (C139, `formal/calls.md`
+  `(F-Visible)`).  Outside its file a type is *invisible* (not `pub`, named by no `pub`
+  signature), *name only* (not `pub`, but named by a `pub` fn's signature or a `pub` field's type:
+  it can be named, passed and stored, never built) or `pub` (built too — a struct literal when
+  every field is `pub`, an enum's variants).  A struct or variant FIELD is private to its file;
+  `pub` on the field shows it:
+
+  ```loft
+  struct Unit { pub name: text, hp: integer }      // name only: reachable through spawn()
+  pub enum Shape { Circle { pub r: float }, Blob { seed: integer } }
+  pub fn spawn(name: text) -> Unit { Unit { name: name, hp: 100 } }
+  ```
+
+  A caller of `spawn` may write `fn show(u: units::Unit)` and read `u.name`; `u.hp`, a
+  `units::Unit { … }` literal and a `Blob { seed }` pattern are refused, each naming its cure
+  (`tests/pub_visibility.rs`).  The field, literal and variant refusals are on under
+  `LOFT_PUB_ENFORCE=1` until the published libraries carry their `pub` (D-call-28).
 - Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
   `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
   standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the

@@ -16631,7 +16631,51 @@ impl Parser {
         tp
     }
 
-    /// @PLN187 (C139) — the one visibility check for a use, OUTSIDE its declaring file, of a
+    /// One `[visibility]` census line for [`Self::check_visibility`]: the use, its kind and item,
+    /// and the declaration a rewrite starts from — the struct's or the variant's own for a field,
+    /// the owning type's for a literal or a variant.  Paths canonical, so a census run from any
+    /// directory names the same file.
+    fn print_census_site(&self, kind: &str, d_nr: u32, f_nr: usize) {
+        let def = self.data.def(d_nr);
+        let owner = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            self.data.def(def.parent)
+        } else {
+            def
+        };
+        let item = def
+            .attributes
+            .get(f_nr)
+            .map_or_else(|| def.name.clone(), |a| format!("{}.{}", def.name, a.name));
+        let at = if f_nr == usize::MAX {
+            &owner.position
+        } else {
+            &def.position
+        };
+        let canon = |f: &str| {
+            let path = crate::file_access::PathText::host(f);
+            crate::file_access::canonical(&path).map_or_else(|| f.to_string(), |p| p.native())
+        };
+        let here = self.lexer.pos();
+        eprintln!(
+            "[visibility] {}:{} {kind} {item} — declared in {}:{}",
+            canon(&here.file),
+            here.line,
+            canon(&owner.position.file),
+            at.line
+        );
+    }
+
+    /// The name a diagnostic gives the file `file` declares in — its last path part without the
+    /// `.loft`, which is what a program qualifies it by.
+    fn library_of(file: &str) -> String {
+        let path = crate::file_access::PathText::host(file);
+        let last = path.parts().last().map_or("", String::as_str);
+        last.rsplit_once('.')
+            .map_or(last, |(stem, _)| stem)
+            .to_string()
+    }
+
+    /// @PLN187 (@C139, @FR-F-Visible) — the one visibility check for a use, OUTSIDE its declaring file, of a
     /// struct or variant field (`field`: a read or a write; `literal-field`, `pattern-field`,
     /// `key`), of a struct literal (`literal`) and of an enum variant (`variant`, built or
     /// matched).  `d_nr` is the struct or the variant; `f_nr` its field, or `usize::MAX` for the
@@ -16676,12 +16720,13 @@ impl Parser {
         } else {
             kind
         };
-        let lib = std::path::Path::new(&*owner.position.file)
-            .file_stem()
-            .map_or_else(String::new, |f| f.to_string_lossy().to_string());
+        let lib = Self::library_of(&owner.position.file);
         let (why, fix) = match (kind, attr) {
             ("field" | "literal-field" | "pattern-field" | "key", Some(a)) if !a.pub_field => (
-                format!("field `{}` of `{}` is not `pub` in `{lib}`", a.name, def.name),
+                format!(
+                    "field `{}` of `{}` is not `pub` in `{lib}`",
+                    a.name, def.name
+                ),
                 format!("`{lib}` declares it `pub {}`", a.name),
             ),
             ("literal", _) if !owner.pub_visible => {
@@ -16716,36 +16761,23 @@ impl Parser {
                 )
             }
             ("variant", _) if !owner.pub_visible => (
-                format!("`{}` is a variant of `{}`, which is not `pub` in `{lib}`", def.name, owner.name),
+                format!(
+                    "`{}` is a variant of `{}`, which is not `pub` in `{lib}`",
+                    def.name, owner.name
+                ),
                 format!("`{lib}` declares `pub enum {}`", owner.name),
             ),
             _ => return,
         };
         if trace {
-            let item = attr.map_or_else(|| def.name.clone(), |a| format!("{}.{}", def.name, a.name));
-            // The line a rewrite starts from: the struct's or the variant's own declaration for
-            // a field, the owning type's for a literal or a variant.  Paths canonical, so a census
-            // run from any directory names the same file.
-            let at = if f_nr == usize::MAX { &owner.position } else { &def.position };
-            let canon = |f: &str| {
-                let path = crate::file_access::PathText::host(f);
-                crate::file_access::canonical(&path).map_or_else(|| f.to_string(), |p| p.native())
-            };
-            let here = self.lexer.pos();
-            eprintln!(
-                "[visibility] {}:{} {kind} {item} — declared in {}:{}",
-                canon(&here.file),
-                here.line,
-                canon(&owner.position.file),
-                at.line
-            );
+            self.print_census_site(kind, d_nr, f_nr);
         }
         if enforce {
             diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
         }
     }
 
-    /// @PLN187 (C139) — a type that is NAME ONLY outside its file (not `pub`, but named by a
+    /// @PLN187 (@C139, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
     /// `pub` signature there) can be named, passed and stored there, never BUILT: a literal of it
     /// outside its file is refused.  Building a non-`pub` type was refused before name-only
     /// types existed, through the name itself; this keeps that refusal now the name is reachable.
@@ -16769,9 +16801,7 @@ impl Parser {
         {
             return;
         }
-        let lib = std::path::Path::new(&*owner.position.file)
-            .file_stem()
-            .map_or_else(String::new, |f| f.to_string_lossy().to_string());
+        let lib = Self::library_of(&owner.position.file);
         let name = owner.name.clone();
         diagnostic!(
             self.lexer,

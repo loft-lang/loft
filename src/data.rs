@@ -12739,7 +12739,7 @@ impl Data {
         d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
     }
 
-    /// @PLN187 (C139) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+    /// @PLN187 (@C139, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
     /// (or a visible `pub` field) of its own file?  Outside that file it can be named, passed
     /// and stored, never built — [`crate::api_surface::name_only_defs`] is the closure.
     #[must_use]

@@ -258,3 +258,27 @@ in a held field and through `Equatable`), `1580` / `1581` (a function named `OpE
 nothing).
 **Catalogue:** @F37 (operators) · `formal/operators.md` (Op-Eq) · @C91 (every type is
 `Equatable`).
+
+## C139 — private by default, `pub` is consent: fields, literals and variants
+
+**Decision.** Everything a file declares is private to that file; `pub` gives consent to show
+it.  A TYPE outside its file has one of three levels: **invisible** (not `pub`, named by no `pub`
+signature of its file — it cannot be named), **name only** (not `pub`, but named by a `pub` fn's
+signature or by a `pub` field's type of a visible type, transitively through type arguments —
+it can be named, passed and stored, never built, and its variant names stay hidden) and **`pub`**
+(as name only, and built: a struct literal when every field is `pub`, an enum's variants).  A
+FIELD of a struct or of a variant is private to its file; `pub` on it makes it readable, writable
+and matchable wherever its type is visible.  No `private` keyword, no opaque-type form.
+**Why.** It keeps the pressure off the developer — a `pub fn`'s returned type is usable by its
+caller with no extra ceremony — while no detail bleeds out without explicit consent.  A name-only
+type with no `pub` field is OCaml's abstract type; with readable fields it is close to OCaml's
+private type.  Printing, JSON and placement still carry every field: the rule is about code
+depending on internals, not about the data being seen.
+
+**Revisit when.** A fully hidden non-record type (`type meters` over `float`) or a read-only
+field outside its file is asked for — both were declined (a function covers the second).
+Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c139--private-by-default-pub-is-consent-fields-literals-and-variants).
+**Holds at:** `@C139` — `./scripts/idx tag:@C139`: `tests/pub_visibility.rs`; the naming and the
+build refusal hold on every build, the field, literal and variant refusals under
+`LOFT_PUB_ENFORCE=1` until the published libraries carry their `pub` (`formal/calls.md` D-call).
+**Catalogue:** @F2 / modules.  Extends [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.

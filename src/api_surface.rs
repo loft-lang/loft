@@ -417,7 +417,7 @@ fn referenced_defs_of(data: &Data, d: u32) -> Vec<u32> {
     out
 }
 
-/// @PLN187 (C139) — every type that is NAME ONLY: not `pub`, but named by a `pub` item's
+/// @PLN187 (@C139, @FR-F-Visible) — every type that is NAME ONLY: not `pub`, but named by a `pub` item's
 /// signature in its own file, or by a `pub` field of a type visible there — transitively,
 /// through type arguments.  Outside its file such a type can be named, passed and stored,
 /// never built; it is the `Sealed` tier of [`surface`], computed for every file at once.
@@ -433,7 +433,11 @@ pub(crate) fn name_only_defs(data: &Data) -> HashSet<u32> {
     let mut seen: HashSet<u32> = work.iter().copied().collect();
     while let Some(d) = work.pop() {
         for r in referenced_defs_of(data, d) {
-            if r < data.definitions() && same_file(d, r) && classify(data, r).is_some() && seen.insert(r) {
+            if r < data.definitions()
+                && same_file(d, r)
+                && classify(data, r).is_some()
+                && seen.insert(r)
+            {
                 if !data.def(r).pub_visible {
                     out.insert(r);
                 }
