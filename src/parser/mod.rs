@@ -22548,15 +22548,32 @@ impl Parser {
         // The bind is a `Set` of the link too, so the writes are measured on the body with the
         // binds blanked: a link only READ leaves its target unwritten.
         // A link to a tuple MEMBER (`c = &t.0`, `OpCreateStack(TupleGet(t, i))`) names a place
-        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).
+        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).  A member of a
+        // `&(…)` tuple is the second spelling of the same link: that tuple is the caller's
+        // `__tuple<…>` record (`@FR-T-Ref-Rep`), so its member link is `OpGetField(p, i)`.
+        // Only a tuple record is followed: a struct's fields propagate without the `&`, so a
+        // field link on a `&S` parameter leaves the advice to drop the `&` standing.
+        let vars = &self.vars;
         let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
             if let Value::Set(v, rhs) = n.unspan()
                 && let Value::Call(op, args) = rhs.unspan()
-                && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
-                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
-                    args.first().map(Value::unspan)
             {
-                return Some((*v, *src));
+                let name = data.def(*op).name();
+                if matches!(name, "OpCreateStack" | "OpVarRef")
+                    && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
+                        args.first().map(Value::unspan)
+                {
+                    return Some((*v, *src));
+                }
+                if name == "OpGetField"
+                    && matches!(vars.tp(*v), Type::RefVar(_))
+                    && let Some(Value::Var(src)) = args.first().map(Value::unspan)
+                    && matches!(vars.tp(*src).base(), Type::RefVar(inner)
+                        if matches!(inner.base(), Type::Reference(d, _)
+                            if data.def(*d).name().starts_with("__tuple<")))
+                {
+                    return Some((*v, *src));
+                }
             }
             None
         };
