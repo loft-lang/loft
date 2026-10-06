@@ -1254,6 +1254,28 @@ permanent refusal as distance from the spec overstates the register by one.
 
 **2 open** (D-clo-7, D-clo-14 — one `??`-default leak in two positions: the borrow arm's witness cannot be NAMED, so the mint arm's store leaks; they are the SAME missing per-execution ownership witness as ownership.md's D-own-16, and QUALITY.md carries them as one cluster. D-clo-18 and D-clo-20 left as REFUSALS, DESIGN_DECISIONS C115) — the `fn(){}` and `\|…\|` forms capture IDENTICALLY (pure sugar, D-clo-1); first-class (store/pass/return/escape); scalar-by-value / heap-shared capture; a stored un-inferrable short lambda in `map` is now a clean diagnostic, not a crash (D-clo-2). `L-Escape`'s STORAGE half is complete (D-clo-3, opened and closed 2026-08-22 by re-measuring the previous zero): a place that already holds a fn-ref — a local, a tuple member, a struct field, a vector element, a `&`-parameter's field — now takes a new one, releasing the closure record the old one owned, and a source the LITERAL refuses is refused identically
 
+## Deviations carried by closures.md until 2026-10-06
+
+Opened and closed in the same change, by the `(T-Chk-Lam)` walk; the chapter's `OPEN:` line
+never carried it.
+
+* **D-clo-51** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(L-Apply)` / `(L-FnAbsent)` on
+  `--native`: calling a function VALUE whose result is itself a function did not compile.
+  `output_call_ref` set `fn_ref_context` for an argument whose parameter is a function and left
+  every other argument with the CALLER's context — and a call whose result is a function is
+  emitted inside that context, so `f(3)` spelled its `3` as `(3_i32 as u32, DbRef::NULL)`; and
+  the absent arm answered `()`, because `write_typed_null_in` had no function arm.  The
+  interpreter answered every cell.  **Fix.**  Each argument takes exactly its own parameter's
+  context; the typed null of a function is `(0_u32, DbRef::NULL)`, as `default_native_value`
+  spells it.  Guard
+  `tests/scripts/a-function-value-that-returns-a-function-compiles-natively.loft`.
+
+The walk's negative result: `(T-Chk-Lam)` held at every position an expected type reaches — the
+body converts into τ (an integer into `float`, a variant into its enum, `null` into `τ?`, a narrow
+tuple member, an early `return`) and refuses what a named return refuses.  Guards
+`tests/scripts/a-lambda-body-converts-into-its-expected-return.loft`,
+`tests/scripts/a-lambda-body-refuses-what-a-return-refuses.loft`.
+
 ## Deviations carried by closures.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
