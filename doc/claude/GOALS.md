@@ -739,6 +739,16 @@ for by Goal E's bet — safety from a runtime discipline, not a static proof. No
 static proof means **no proof obligations to put on the user**. E removes the
 machinery from the *model*; F removes it from the *syntax* — the same coin.
 
+**The program is presumed right.** Code is the programmer's expression of intent, so loft
+assumes it is correct and makes it work.  A refusal is justified only when the construct cannot be
+implemented SOUNDLY — never because the implementation finds it inconvenient, and never because an
+internal representation made an exception easier.  Three decisions are this rule applied: a link to a
+stored tuple works like a link to a struct, because the rule that refused it rested only on how
+tuples were stored (`(B-Ref-Lvalue)` holds for every place); a type the program defines wins over a standard-library type of the
+same name wherever it is written (C101); and a type a `pub fn` hands out is usable by its
+caller without extra ceremony, while nothing else leaves its file without `pub` (@PLN187).  Before
+shipping a refusal, ask *can this be implemented soundly?* — if it can, the refusal is the defect.
+
 **The friction test.** For any syntax or error, ask: *does this serve the
 programmer or the compiler?*
 - a type on a signature (documents intent), a warning about an unused value (the
