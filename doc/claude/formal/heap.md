@@ -790,6 +790,15 @@ The rules are checkable directly, and every check is a program both backends mus
   `an_elided_copy_reads_its_own_value_when_the_callers_store_is_written` (the value, with
   controls that still elide) and `an_elided_copy_skips_its_hook_and_its_drop_together` (the
   hooks), on both backends.
+- **The soundness bridge, on both backends (`H-Sound`, `H-FreeAll`)** — `tests/heap_sound.rs`
+  runs each cell on both backends under `LOFT_POISON`, with either `LOFT_STRICT_STORES` (no slot
+  is reused, so a read of a freed store is named and a store left at exit fails the run) or with
+  slots reused and the exit leak check (the only way to see a free decided by a slot NUMBER a
+  newer store now carries).  Its cells are the shapes that read or leaked a store on `--native`:
+  a caller's buffer released by a rebind or an adopt, a loop buffer kept while a binder frees
+  its store, a store handed up through a generic instance, a vector buffer bound to a forwarding
+  call, a lifted result beside a value record, a copied result later rebound, and a minted store
+  in a reused slot.  The nightly `native-poison` job sweeps the `--native` corpus the same way.
 - **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
   a GROWTH of the container while the view is live take the copy step, in this frame
   (`tests/scripts/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame
