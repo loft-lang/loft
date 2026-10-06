@@ -2,6 +2,10 @@
 // names, and a plain struct `S { f… }` is a point pattern, at every position a pattern stands:
 // a tuple element, a scalar subject's arm root, and a slice element (head, tail, and after a
 // capture — where `p: Pt { … }` is a pattern, not the type-annotated capture `p: Pt`).
+// @falsified-at: cfa1d2662 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-capture-and-a-plain-struct-stand-at-every-pattern-position.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the exit — the control refuses the positions.
 
 enum Tok { Num { n: integer }, Word { w: text } }
 struct Pt { x: integer, y: integer }
@@ -14,6 +18,7 @@ fn tup_struct(t: (Pt, integer)) -> integer { match t { (Pt { x, y }, k) => x * 1
 fn tup_struct_cap(t: (Pt, integer)) -> integer { match t { (p: Pt { x: 3 }, k) => p.y * 10 + k, _ => -1 } }
 fn root_range(n: u8) -> text { match n { x: 2..=5 => "{type_name(x)}:{x}", _ => "-" } }
 fn root_literal(n: integer) -> text { match n { x: 7 => "seven{x}", y: _ => "other{y}" } }
+fn root_group(n: integer) -> integer { match n { x: (2 | 3) => x * 10, _ => 0 } }
 fn root_at(n: integer) -> integer { match n { x @ 2..=5 => x * 10, _ => 0 } }
 fn slice_struct(v: vector<Pt>) -> integer { match v { [Pt { x, y }, ..] => x * 10 + y, _ => -1 } }
 fn slice_struct_lit(v: vector<Pt>) -> integer { match v { [Pt { x: 3, y }, ..] => y, _ => -1 } }
@@ -28,6 +33,7 @@ fn main() {
   assert(tup_struct_cap((Pt { x: 3, y: 4 }, 5)) == 45 && tup_struct_cap((Pt { x: 9, y: 4 }, 5)) == -1, "tuple struct capture");
   assert(root_range(4) == "u8:4" && root_range(9) == "-", "root range capture: {root_range(4)} {root_range(9)}");
   assert(root_literal(7) == "seven7" && root_literal(9) == "other9", "root literal + catch-all capture");
+  assert(root_group(2) == 20 && root_group(3) == 30 && root_group(5) == 0, "a capture of a group: {root_group(2)} {root_group(5)}");
   assert(root_at(4) == 40 && root_at(9) == 0, "the `@` spelling: {root_at(4)} {root_at(9)}");
   a = [Pt { x: 3, y: 4 }, Pt { x: 5, y: 6 }];
   b = [Pt { x: 9, y: 4 }, Pt { x: 1, y: 1 }];

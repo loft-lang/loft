@@ -1,5 +1,9 @@
 // @FR-G-Pat-Group — a parenthesised RANGE is a group of one range pattern.  Read as an
 // expression it never finished parsing: the compiler looped until killed.
+// @falsified-at: cfa1d2662 — interpret exit 134 -> 0, native exit 134 -> 0
+// @falsified-by: tests/falsified/a-parenthesised-range-pattern-finishes-parsing.patch — interpret exit 134 -> 0, native exit 134 -> 0
+// HOLDS: leak and assertions are clean on this tree on both backends.
+// CHANNEL: the exit — the control's parser loops until the time bound kills it (134).
 
 struct Box { n: integer, s: text }
 

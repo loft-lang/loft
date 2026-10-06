@@ -4,6 +4,12 @@
 // Each cell names the type (`type_name`) and hands the capture to a parameter of exactly
 // that type.  A tuple capture holding `text` is handed over member by member on `--native`,
 // spelled through the capture's own Rust place (`var_place`).
+// @falsified-at: 4aa94359f — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-pattern-capture-takes-the-type-its-pattern-matched.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: every type and value agrees on the interpreter on both trees; leak and panic are clean.
+// CHANNEL: the native exit — rustc refuses the control's member list over the raw name.
 
 enum Col { Red, Green }
 enum Tok { Num { n: integer }, Word { w: text } }
