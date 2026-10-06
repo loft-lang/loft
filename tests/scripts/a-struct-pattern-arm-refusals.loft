@@ -23,8 +23,8 @@ struct S { x: integer, t: text }
 
 // @EXPECT_ERROR: multi-pattern arm: capture 'v' is text in this pattern but integer in the first
 fn test_a_capture_at_another_type_is_refused() {
-  r = match S { x: 1, t: "a" } { S { x: v } | S { t: v } => "x", _ => "y" };
-  assert(r == "y", "unreachable");
+  r = match S { x: 1, t: "a" } { S { x: v } | S { t: v } => "x" };
+  assert(r == "x", "unreachable");
 }
 
 // @EXPECT_ERROR: this pattern matches every S, so the arm after it can never be selected
