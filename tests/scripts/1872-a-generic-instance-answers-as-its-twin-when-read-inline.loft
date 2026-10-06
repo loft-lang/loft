@@ -16,7 +16,7 @@
 // Every value is hand-computed: `pick(n, a, b)` is `a` for an even `n` and `b` for an odd one.
 //
 // @falsified-at: 89da26e59 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
-// @falsified-by: tests/falsified/1872-a-generic-instance-answers-as-its-twin-when-read-inline.patch — the same channels.
+// @falsified-by: tests/falsified/1872-a-generic-instance-answers-as-its-twin-when-read-inline.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: the VALUE — the vector loop answers a short sum with `w` emptied, on both backends.
 //   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
 //   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree; the record half's leak is

@@ -1,8 +1,105 @@
+diff --git b/src/data.rs a/src/data.rs
+index e255d55cb..9e687de6a 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -5511,15 +5511,7 @@ impl Definition {
+                 sites.push((**inner).clone());
+             }
+         });
+-        // The body is a `Block`, or an `Insert` whose last element is one: the scope pass
+-        // hoists a join's declaration out in front of the body it binds (loft#1872's
+-        // `___ret_join`).  Read only as a `Block`, such a body had no tail at all, and the
+-        // proofs that read these sites answered "not proven" for a body ending in a local.
+-        let body = match &self.code {
+-            Value::Insert(ops) => ops.last().unwrap_or(&self.code),
+-            other => other,
+-        };
+-        if let Value::Block(bl) = body
++        if let Value::Block(bl) = &self.code
+             && let Some(tail) = bl.operators.last()
+             && !matches!(tail.unspan(), Value::Return(_))
+         {
 diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 7881621e5..c88afe2af 100644
+index ace15d6a8..c88afe2af 100644
 --- b/src/parser/control.rs
 +++ a/src/parser/control.rs
-@@ -13569,56 +13569,22 @@ impl Parser {
+@@ -13494,12 +13494,8 @@ impl Parser {
+             // The tail arrives either already wrapped in a `Return` or as the bare branch —
+             // a monomorph's body is the substituted TEMPLATE's, whose delivery has not run.
+             let branch_is_tail = match bl.operators[last].unspan() {
+-                Value::Return(inner) => {
+-                    self.is_borrowing_branch(inner) || self.is_borrowed_and_minted_branch(inner)
+-                }
+-                other => {
+-                    self.is_borrowing_branch(other) || self.is_borrowed_and_minted_branch(other)
+-                }
++                Value::Return(inner) => self.is_borrowing_branch(inner),
++                other => self.is_borrowing_branch(other),
+             };
+             if branch_is_tail {
+                 let tmp = self.create_unique("__ret_join", &ret);
+@@ -13525,60 +13521,6 @@ impl Parser {
+         self.context = saved_ctx;
+     }
+ 
+-    /// loft#1872, `@FR-F-Ret` — a value branch whose leaves hand back a PARAMETER on one arm
+-    /// and a CALL's result on another: a recursive or delegating instance's Join.  Bound whole
+-    /// into one owned local, the parameter arm is copied at that bind (both backends guard a
+-    /// parameter's store there), and the result is a store the instance owns — so its caller
+-    /// lifts it and frees it like the twin's.
+-    fn is_borrowed_and_minted_branch(&self, tail: &Value) -> bool {
+-        #[derive(Default)]
+-        struct Leaves {
+-            borrowed: bool,
+-            minted: bool,
+-            view: bool,
+-        }
+-        fn walk(
+-            node: &Value,
+-            data: &crate::data::Data,
+-            vars: &crate::variables::Function,
+-            seen: &mut Leaves,
+-        ) {
+-            match node.unspan() {
+-                Value::If(_, then, els) => {
+-                    walk(then, data, vars, seen);
+-                    walk(els, data, vars, seen);
+-                }
+-                Value::Block(bl) => {
+-                    if let Some(last) = bl.operators.last() {
+-                        walk(last, data, vars, seen);
+-                    }
+-                }
+-                Value::Var(x) if vars.is_argument(*x) => seen.borrowed = true,
+-                // A local in a leaf owns what it holds: the join's arm owner
+-                // (`{ __ref = call; __ref }`) holds a call's result.
+-                Value::Var(_) => seen.minted = true,
+-                // A VIEW into a parameter (`v[0]`) is neither: binding it into the owned local
+-                // aliases it on native, where only a return buffer's copy would make it fresh
+-                // (loft#1880).
+-                Value::Call(d, _) if data.def(*d).name().starts_with("Op") => seen.view = true,
+-                Value::Call(_, _) => seen.minted = true,
+-                _ => {}
+-            }
+-        }
+-        let mut top = tail.unspan();
+-        while let Value::Block(bl) = top
+-            && let Some(last) = bl.operators.last()
+-        {
+-            top = last.unspan();
+-        }
+-        if !matches!(top, Value::If(..)) {
+-            return false;
+-        }
+-        let mut seen = Leaves::default();
+-        walk(tail, &self.data, &self.vars, &mut seen);
+-        seen.borrowed && seen.minted && !seen.view
+-    }
+-
+     pub(crate) fn promote_monomorph_vector_return(
+         &mut self,
+         d_nr: u32,
+@@ -13627,56 +13569,22 @@ impl Parser {
              for op in &mut bl.operators {
                  self.rewrite_generic_vector_binds(op, &tv_typed, &mut declared);
              }
@@ -63,7 +160,7 @@ index 7881621e5..c88afe2af 100644
                      }
                      bl.operators
                          .insert(0, crate::data::v_set(copy, Value::Null));
-@@ -13964,67 +13930,6 @@ impl Parser {
+@@ -14022,67 +13930,6 @@ impl Parser {
              _ => {}
          }
      }
@@ -152,25 +249,3 @@ index 3a83f6b62..59187826d 100644
          Some(v_block(
              vec![v_set(buf, val.clone()), Value::Var(buf)],
              tp.clone(),
-diff --git b/src/scopes/inline_returns.rs a/src/scopes/inline_returns.rs
-index 854dcb2c7..af3d1e780 100644
---- b/src/scopes/inline_returns.rs
-+++ a/src/scopes/inline_returns.rs
-@@ -702,16 +702,7 @@ impl Scopes<'_> {
-                     || def.is_free_overload()
-                     || def.is_method()
-                     || monomorph_returns_a_borrow
--                    // loft#1872, `@FR-G-Mono` — an instance lifts as its twin does, whatever
--                    // its body's return shape.  The bind is the one the named spelling gets
--                    // (`r = pick(…)`): a return that may hand back an argument's own store is
--                    // bound through `OpBindOrCopy` against that argument, so the temp owns a
--                    // copy where it would have aliased, and its free releases only that.  The
--                    // gate below was written before that bind existed; it left a recursive
--                    // instance's Join — the argument on one arm, a mint on the other — read
--                    // inline with nobody owning the mint.
--                    || def.is_instance()
--                    || (def.name.starts_with("t_")
-+                    || ((def.name.starts_with("t_") || def.is_instance())
-                         && (def.attr_names.contains_key("__retbuf")
-                             || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
-                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)
