@@ -586,6 +586,13 @@ step for a wrong text, a panic in a text set, or a store that grows, in a vector
 builds by appending records and returns.  `LOFT_TRACE_REFILL_TEXT=1` names each such
 buffer's verdict.  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`.
 
+**`LOFT_NO_REFILL_VECTORS=1`** (`@FR-R-RefillText`'s vector clause, default-ON) releases a
+pooled call buffer whose heap is vectors of plain elements before every call again, instead
+of leaving its callee to empty each vector field in place.  The first bisect step for a stale
+or wrong vector field, or a store that grows, in a record a call builds in a loop.
+`LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)` for each site it takes.  Guard
+`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`.
+
 **`LOFT_NO_REFILL_IN_PLACE=1`** (`@FR-R-RefillBuffer`'s in-place clause, default-ON) empties
 and refills a refilled buffer's repeat-literal vector field every time — with it off, a kept
 vector that already holds the literal's count is overwritten where it stands

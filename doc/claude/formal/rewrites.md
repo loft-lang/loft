@@ -787,6 +787,32 @@ return), `clear_vector` in `text.rs` (the entry), `substitute_template_body` (th
 text set).  Guard `tests/scripts/a-kept-buffers-elements-are-refilled-in-their-slots.loft`,
 with two planted defects under `tests/falsified/`; pin `tests/refill_text.rs`.
 
+```
+  (R-RefillText), the vector clause: at a pooled call site whose buffer b's type has
+                 for heap only vector fields of plain elements (no text, no
+                 collection, no linked group in an element; no other heap field —
+                 Stores::vector_slots), and whose callee (R-RefillBuffer) refills its
+                 buffer with elements that own no heap, the release is not emitted
+                 and the plain callee is called.  Admitted under (c) without its
+                 "only READ": the buffer named by nothing but its pool statement,
+                 the call's buffer argument and its releases, the result bound once.
+```
+
+**In words.**  The refilling callee keeps a live buffer (`refill_keeps`) and empties each
+vector field where it stands; the release before the call freed exactly the vectors it would
+have kept, and the callee's appends then claimed new ones.  The invariant the emptying reads
+is that a vector slot holds 0, the absent mark, or a vector that slot owns — and every write
+the language makes to a vector field keeps that, which is why the result may be written,
+grown or passed on between calls, unlike a text clause's refilled slot.  No twin is needed:
+an emission of the callee that does not refill mints over the live buffer, and that mint
+clears its store.  Native only; the interpreter keeps the release and is the oracle.  Effect
+on hex_recover `forms_upto` (x86-64): 2.00 → 1.02 ms, 12.96× → 6.62× Rust, hash unchanged.
+Switch `LOFT_NO_REFILL_VECTORS=1`; `LOFT_TRACE_REFILL_TEXT=1` prints `admitted (vectors)`.
+Sites: `hoist::refill_vector_callee`, the clause choice in `refill_text_site_declines`,
+`RefillTextSites::vectors`, `refill_text_call` in `calls.rs`.  Guard
+`tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft`; pin
+`tests/refill_text.rs` (the values pass either way, so the pin is the falsifier).
+
 ### A rebind hands the displaced store to the call
 
 ```

@@ -429,6 +429,7 @@
 17_consumer_moros_dryopea	-	R-RangedCall	31
 17_consumer_moros_dryopea	-	R-RecPtr	44
 17_consumer_moros_dryopea	-	R-RefillBuffer	3
+17_consumer_moros_dryopea	-	R-RefillText	2
 17_consumer_moros_dryopea	-	R-RetAdopt	4
 17_consumer_moros_dryopea	-	R-Reuse	11
 17_consumer_moros_dryopea	-	R-Scalar	2
@@ -696,6 +697,7 @@ drawing	ffa281d3e	R-Range	454
 drawing	ffa281d3e	R-RangedCall	35
 drawing	ffa281d3e	R-RecPtr	109
 drawing	ffa281d3e	R-RefillBuffer	26
+drawing	ffa281d3e	R-RefillText	2
 drawing	ffa281d3e	R-Refresh	2
 drawing	ffa281d3e	R-RepeatRun	19
 drawing	ffa281d3e	R-RetAdopt	9
@@ -850,6 +852,7 @@ graphics	ffa281d3e	R-Range	443
 graphics	ffa281d3e	R-RangedCall	36
 graphics	ffa281d3e	R-RecPtr	25
 graphics	ffa281d3e	R-RefillBuffer	15
+graphics	ffa281d3e	R-RefillText	1
 graphics	ffa281d3e	R-Refresh	2
 graphics	ffa281d3e	R-RepeatRun	19
 graphics	ffa281d3e	R-RetAdopt	6
@@ -1090,6 +1093,7 @@ hex_fit	a3630cc45	R-Range	682
 hex_fit	a3630cc45	R-RangedCall	101
 hex_fit	a3630cc45	R-RecPtr	19
 hex_fit	a3630cc45	R-RefillBuffer	14
+hex_fit	a3630cc45	R-RefillText	5
 hex_fit	a3630cc45	R-RetAdopt	4
 hex_fit	a3630cc45	R-Reuse	9
 hex_fit	a3630cc45	R-Scalar	669
@@ -1219,7 +1223,7 @@ hex_recover	a3630cc45	R-Base	184
 hex_recover	a3630cc45	R-Callee	5
 hex_recover	a3630cc45	R-CharWalk	10
 hex_recover	a3630cc45	R-CompleteWrite	77
-hex_recover	a3630cc45	R-Counter	461
+hex_recover	a3630cc45	R-Counter	453
 hex_recover	a3630cc45	R-DischargeInto	5
 hex_recover	a3630cc45	R-ExitVector	15
 hex_recover	a3630cc45	R-FnHeader	11
@@ -1247,6 +1251,7 @@ hex_recover	a3630cc45	R-Range	454
 hex_recover	a3630cc45	R-RangedCall	61
 hex_recover	a3630cc45	R-RecPtr	18
 hex_recover	a3630cc45	R-RefillBuffer	1
+hex_recover	a3630cc45	R-RefillText	5
 hex_recover	a3630cc45	R-RetAdopt	5
 hex_recover	a3630cc45	R-Reuse	11
 hex_recover	a3630cc45	R-Scalar	250
@@ -1383,7 +1388,7 @@ hex_way	a3630cc45	R-Base	158
 hex_way	a3630cc45	R-Callee	5
 hex_way	a3630cc45	R-CharWalk	10
 hex_way	a3630cc45	R-CompleteWrite	9
-hex_way	a3630cc45	R-Counter	232
+hex_way	a3630cc45	R-Counter	240
 hex_way	a3630cc45	R-DischargeInto	2
 hex_way	a3630cc45	R-ExitVector	34
 hex_way	a3630cc45	R-FormatAppend	1
