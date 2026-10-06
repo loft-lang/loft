@@ -798,3 +798,10 @@ echo "=== Wall-clock timing summary ==="
 cat "$TIMINGS_FILE"
 echo "wrote problems summary to $OUT"
 wc -l "$OUT"
+# The exit status says what the run found, so a caller that judges it — `ci-run.sh recheck`'s
+# `changed` step — cannot report a pass over a failure: 1 when the summary names a failed test
+# or the hard cap ended the run before everything ran.  (The runner's own status is swallowed
+# above so the summary is always written.)
+if [ "$(sed -n 2p "$OUT")" != "(none)" ] || grep -aq "^HARD CAP: " "$LOG"; then
+  exit 1
+fi
