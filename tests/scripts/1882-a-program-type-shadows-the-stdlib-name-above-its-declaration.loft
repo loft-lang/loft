@@ -18,7 +18,7 @@
 //   "cannot change type from File to File", the same name on both sides.
 //   HOLDS: nothing runs; every cell is unreached.
 // @falsified-by: tests/falsified/1882-a-program-type-shadows-the-stdlib-name-above-its-declaration.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   The fix reverted whole (the durable receipt): the same refusal.
+//   claim_declared_type_names switched off (the durable receipt: the fix's one chokepoint): the same refusal.
 //   CHANNEL: a refusal, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.

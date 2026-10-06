@@ -14,7 +14,7 @@
 //   WITNESS: no diagnostic where the file declares one; the program ran on the stdlib type.
 //   HOLDS: the suite accepts the file only with the refusal.
 // @falsified-by: tests/falsified/1882-a-stdlib-value-where-the-program-type-is-named-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
-//   The fix reverted whole (the durable receipt).
+//   claim_declared_type_names switched off (the durable receipt: the fix's one chokepoint).
 //   CHANNEL: the expected diagnostic, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.
