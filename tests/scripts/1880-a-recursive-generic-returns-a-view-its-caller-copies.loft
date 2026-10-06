@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1880, `@FR-G-Mono` / `@FR-F-Ret` — a recursive generic instance whose base case hands
+// back a VIEW into an argument (`v[0]`) answers as its concrete twin: its result is a borrow
+// of that argument, and the caller copies it.
+//
+// The instance had no return dep — the ownership oracle reads its self call as a mint — so
+// every bind adopted the view as a fresh store.  On native the local's free then released the
+// caller's vector, and after the next allocations `p` read as whatever reused its store,
+// silently.  The instance now declares the borrow its twin declares, proved by the induction
+// the recursion is: a self call handed the same parameter (or, for a recursion that swaps
+// its arguments, one of the same set) can only hand a view of it back.
+//
+// Every value is hand-computed: `p` is `[7, 8]` and `q` is `[50]`; every instance answers an
+// element of an argument, so `el(p, i)` is 7, `el2(p, q, i)` is 50, and `sw(p, q, i)` is 7
+// for an even `i` and 50 for an odd one.
+//
+// @falsified-at: cce3ba0d1 — interpret leaked kt=96 Pt×6 -> clean, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1880-a-recursive-generic-returns-a-view-its-caller-copies.patch — interpret leaked kt=96 Pt×6 -> clean, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE on native — a bound result's free released `p`, which then read as the
+//   records that reused its store; the LEAK on the interpreter.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct Pt { x: integer, s: text }
+
+fn el<T>(v: vector<T>, i: integer) -> T { if i == 0 { v[0] } else { el(v, i - 1) } }
+fn el2<T>(v: vector<T>, w: vector<T>, i: integer) -> T { if i == 0 { w[0] } else { el2(v, w, i - 1) } }
+fn sw<T>(a: vector<T>, b: vector<T>, i: integer) -> T { if i == 0 { a[0] } else { sw(b, a, i - 1) } }
+
+fn use_el(p: vector<Pt>) -> integer { r = el(p, 3); r.x }
+fn use_el2(p: vector<Pt>, q: vector<Pt>) -> integer { r = el2(p, q, 2); r.x }
+fn use_sw(p: vector<Pt>, q: vector<Pt>, i: integer) -> integer { r = sw(p, q, i); r.x }
+fn churn() -> integer { junk = []; for i in 0..30 { junk += [Pt { x: 100 + i, s: "j" }]; } junk.len() }
+
+fn test_a_bound_result_leaves_the_argument_alone() {
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  q = [Pt { x: 50, s: "q" }];
+  a = use_el(p) + use_el2(p, q);
+  assert(churn() == 30, "churn");
+  b = use_el(p) + use_el2(p, q);
+  assert(a == 57 && b == 57, "bound {a} {b}, want 57 57");
+  assert(p.len() == 2 && p[0].x == 7 && p[1].x == 8 && q.len() == 1 && q[0].x == 50, "arguments {p.len()} {p[0].x} {p[1].x}");
+}
+
+fn test_a_swapping_recursion() {
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  q = [Pt { x: 50, s: "q" }];
+  c = use_sw(p, q, 0) + use_sw(p, q, 1);
+  assert(churn() == 30, "churn");
+  d = use_sw(p, q, 0) + use_sw(p, q, 1);
+  assert(c == 57 && d == 57 && p.len() == 2 && p[1].x == 8, "swap {c} {d}, p {p.len()} {p[1].x}");
+}
+
+fn test_read_inline_and_written_through() {
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  q = [Pt { x: 50, s: "q" }];
+  s = 0;
+  for _ in 0..3 { s += el(p, 2).x + el2(p, q, 1).x; }
+  r = el(p, 0);
+  r.x = 99;
+  assert(s == 171 && r.x == 99 && p[0].x == 7, "inline {s}, written {r.x}, p[0] {p[0].x}");
+}
+
+fn main() {
+  test_a_bound_result_leaves_the_argument_alone();
+  test_a_swapping_recursion();
+  test_read_inline_and_written_through();
+}

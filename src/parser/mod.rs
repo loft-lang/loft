@@ -9089,12 +9089,18 @@ impl Parser {
         // local is owned, and the caller adopts it as before.
         if new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned) {
             let attrs_n = self.data.def(d_nr).attributes().len();
-            if let crate::use_analysis::Own::Borrowed { base } =
+            // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
+            // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
+            // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
+            // The self call still names the TEMPLATE here (`instantiate_nested_generics` runs
+            // below), and handed the same parameter it can only reach this instance.
+            if let crate::use_analysis::Own::Borrowed { base }
+            | crate::use_analysis::Own::Join { base } =
                 crate::use_analysis::return_ownership(&self.data, d_nr)
                 && (base as usize) < attrs_n
                 && !self.data.def(d_nr).attributes()[base as usize].hidden
                 && matches!(&self.data.def(d_nr).code, Value::Block(bl)
-                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base))
+                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
             {
                 // Written directly: `set_returned` refuses a second write on purpose (a return
                 // type must not change), and this does not change it — it adds the deps the
@@ -9111,6 +9117,17 @@ impl Parser {
                     .returned()
                     .clone()
                     .with_deps(&crate::data::Deps::attrs(vec![base]));
+                self.data.definitions[d_nr as usize].returned = with_dep;
+            } else if let Some(params) = self.monomorph_views_of_params(d_nr, g_nr) {
+                // loft#1880 — no ONE parameter, but a SET of them: a recursion that swaps its
+                // arguments (`sw(b, a, i - 1)`, base case `a[0]`) hands back a view of `a` or of
+                // `b`, which its twin declares `-> T["a", "b"]`.
+                let with_dep = self
+                    .data
+                    .def(d_nr)
+                    .returned()
+                    .clone()
+                    .with_deps(&crate::data::Deps::attrs(params));
                 self.data.definitions[d_nr as usize].returned = with_dep;
             }
         }
@@ -14206,6 +14223,57 @@ impl Parser {
         }
         ops.push(to.clone());
         v_block(ops, tp.clone(), "displaced_closures")
+    }
+
+    /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into
+    /// (`v[0]`, `w.h`), with self calls read by induction
+    /// ([`Self::every_return_leaf_views_one_of`]), or `None`.  A leaf that is a bare parameter
+    /// is left to `bind_monomorph_join_return`, which binds that Join into an owned local: the
+    /// result is then the instance's own, and declaring it a borrow too would make the caller
+    /// copy it and drop the instance's copy.
+    fn monomorph_views_of_params(&self, d_nr: u32, g_nr: u32) -> Option<Vec<u16>> {
+        let def = self.data.def(d_nr);
+        let Value::Block(bl) = &def.code else {
+            return None;
+        };
+        let params: Vec<u16> = def
+            .attributes()
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| !a.hidden && crate::data::has_lifetime_concern(&a.typedef))
+            .filter_map(|(i, _)| u16::try_from(i).ok())
+            .collect();
+        if params.is_empty() {
+            return None;
+        }
+        fn bare_param_leaf(v: &Value, vars: &crate::variables::Function, tail: bool) -> bool {
+            match v.unspan() {
+                Value::Return(inner) => bare_param_leaf(inner, vars, true),
+                Value::If(_, t, e) => {
+                    bare_param_leaf(t, vars, tail) || bare_param_leaf(e, vars, tail)
+                }
+                Value::Block(b) | Value::Loop(b) => {
+                    let n = b.operators.len();
+                    b.operators
+                        .iter()
+                        .enumerate()
+                        .any(|(i, op)| bare_param_leaf(op, vars, tail && i + 1 == n))
+                }
+                Value::Var(x) => tail && vars.is_argument(*x),
+                _ => false,
+            }
+        }
+        let n = bl.operators.len();
+        if bl
+            .operators
+            .iter()
+            .enumerate()
+            .any(|(i, op)| bare_param_leaf(op, &def.variables, i + 1 == n))
+        {
+            return None;
+        }
+        Self::every_return_leaf_views_one_of(&self.data, &bl.operators, &params, g_nr)
+            .then_some(params)
     }
 
     pub(crate) fn type_carries_closure(&self, tp: &Type) -> bool {
