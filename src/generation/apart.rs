@@ -888,7 +888,10 @@ fn judge(
 
 /// `@FR-R-Apart` instance 2 — the gate (module docs).  Empty under `LOFT_NO_APART`.
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "WIP: the gate is split when the twin emission lands")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "WIP: the gate is split when the twin emission lands"
+)]
 pub fn apart_values(data: &Data, stores: &Stores) -> ApartValues {
     let mut out = ApartValues::default();
     if apart_disabled() {
