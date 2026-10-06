@@ -2160,6 +2160,29 @@ exactly as the append copies them.  No guard is needed: the conditions are all s
 `tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
 `tests/vec_copy.rs`).
 
+### A fixed-width integer read is typed at its site
+
+```
+  (R-TypedRead)  `OpReadFile(f, OpCreateStack(t), n, τ)` into an `integer` local t, where
+                 τ is a fixed-width integer and n its width — `integer` / `long` 8 signed,
+                 a byte or short type 1 or 2 with the sign its range gives, a 4-byte type
+                 signed — reads through the same format test, `#next` and handle as the
+                 generic read, decoding W = n bytes at sign S fixed at the site, the bytes
+                 taken by value.  A short read leaves t unchanged and advances `#next` by
+                 what arrived, as the generic read does.  `boolean`, `character`, text, a
+                 float, a collection, an n that is not τ's width and a slot that is not an
+                 `i64` local keep the generic read.  Native only; the interpreter's read is
+                 the reference the guard compares against.
+```
+
+**In words.**  The generic read asked, per call, whether τ is text and which width and sign
+it decodes, and copied the bytes through a slice on the stack — facts the site has at
+compile time, and a reload that stalled on the bytes just written.  The decode is the
+generic one's, arm for arm, so the answer cannot differ; what moved is when it is decided.
+
+**BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
+guard `tests/scripts/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
+
 ### A walk of a scalar literal builds no vector
 
 ```

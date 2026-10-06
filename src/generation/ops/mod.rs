@@ -30,6 +30,7 @@
 
 pub mod coroutine;
 pub mod default;
+pub mod file_ops;
 pub mod float_compare;
 pub mod int_arith;
 pub mod int_compare;
@@ -188,6 +189,8 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // identically; n_parallel_for_light is a thread-count hint that
     // doesn't change emission shape).
     r.insert("n_parallel_for", Box::new(parallel::ParallelForEmitter));
+    // A file read the site types statically: `OpReadFileInt` with constant width and sign.
+    r.insert("OpReadFile", Box::new(file_ops::ReadFileEmitter));
     r.insert(
         "n_parallel_for_light",
         Box::new(parallel::ParallelForEmitter),
@@ -584,9 +587,11 @@ mod tests {
         // bias 0).  `(G-Hold)` adds one, `OpCoroutineRetainEmitter`: a second holder of a
         // generator handle takes a hold on its frame.  `@FR-R-Refresh`'s keep-range clause adds
         // one, `KeepRangeEmitter` for `OpKeepRange`: a self-slice pop on a vector whose push
-        // header the loop holds refreshes that header at its own site.
+        // header the loop holds refreshes that header at its own site.  `@FR-R-TypedRead`
+        // adds one, `ReadFileEmitter` for `OpReadFile`: a fixed-width integer read calls
+        // `OpReadFileInt::<W, SIGNED>`; every other read falls through to the template.
         assert!(
-            count <= 133,
+            count <= 134,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

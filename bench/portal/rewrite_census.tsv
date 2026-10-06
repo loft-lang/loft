@@ -472,6 +472,7 @@
 18_consumer_crawler	-	R-Scalar	16
 18_consumer_crawler	-	R-SingleUse	11
 18_consumer_crawler	-	R-TextBorrow	24
+18_consumer_crawler	-	R-TypedRead	1
 18_consumer_crawler	-	R-View	13
 18_consumer_crawler	-	R-WorkBuffer	1
 18_consumer_crawler	-	R-WorkBuffer/onward	2
@@ -979,6 +980,7 @@ hex_draw	a3630cc45	R-Scalar	519
 hex_draw	a3630cc45	R-SingleUse	14
 hex_draw	a3630cc45	R-SplitTable	3
 hex_draw	a3630cc45	R-TextBorrow	14
+hex_draw	a3630cc45	R-TypedRead	18
 hex_draw	a3630cc45	R-ValueLocal	47
 hex_draw	a3630cc45	R-ValueRecord	2
 hex_draw	a3630cc45	R-View	5
@@ -1016,6 +1018,7 @@ hex_edge	a3630cc45	R-RetAdopt	3
 hex_edge	a3630cc45	R-Scalar	243
 hex_edge	a3630cc45	R-SingleUse	6
 hex_edge	a3630cc45	R-TextBorrow	13
+hex_edge	a3630cc45	R-TypedRead	18
 hex_edge	a3630cc45	R-View	5
 hex_edge	a3630cc45	R-WorkBuffer	5
 hex_edge	a3630cc45	R-Wrapper	17
@@ -1053,6 +1056,7 @@ hex_field	a3630cc45	R-Reuse	2
 hex_field	a3630cc45	R-Scalar	346
 hex_field	a3630cc45	R-SingleUse	5
 hex_field	a3630cc45	R-TextBorrow	13
+hex_field	a3630cc45	R-TypedRead	18
 hex_field	a3630cc45	R-VecCopy	3
 hex_field	a3630cc45	R-View	5
 hex_field	a3630cc45	R-WorkBuffer	5
@@ -1100,6 +1104,7 @@ hex_fit	a3630cc45	R-Scalar	669
 hex_fit	a3630cc45	R-SingleUse	22
 hex_fit	a3630cc45	R-SplitTable	5
 hex_fit	a3630cc45	R-TextBorrow	14
+hex_fit	a3630cc45	R-TypedRead	18
 hex_fit	a3630cc45	R-ValueLocal	53
 hex_fit	a3630cc45	R-ValueRecord	5
 hex_fit	a3630cc45	R-View	5
@@ -1142,6 +1147,7 @@ hex_form	a3630cc45	R-Scalar	266
 hex_form	a3630cc45	R-SingleUse	11
 hex_form	a3630cc45	R-SplitTable	3
 hex_form	a3630cc45	R-TextBorrow	14
+hex_form	a3630cc45	R-TypedRead	18
 hex_form	a3630cc45	R-ValueLocal	14
 hex_form	a3630cc45	R-ValueRecord	2
 hex_form	a3630cc45	R-VecCopy	2
@@ -1211,6 +1217,7 @@ hex_place	a3630cc45	R-Scalar	306
 hex_place	a3630cc45	R-SingleUse	11
 hex_place	a3630cc45	R-SplitTable	3
 hex_place	a3630cc45	R-TextBorrow	14
+hex_place	a3630cc45	R-TypedRead	18
 hex_place	a3630cc45	R-ValueLocal	17
 hex_place	a3630cc45	R-ValueRecord	3
 hex_place	a3630cc45	R-View	5
@@ -1223,7 +1230,7 @@ hex_recover	a3630cc45	R-Base	184
 hex_recover	a3630cc45	R-Callee	5
 hex_recover	a3630cc45	R-CharWalk	10
 hex_recover	a3630cc45	R-CompleteWrite	77
-hex_recover	a3630cc45	R-Counter	453
+hex_recover	a3630cc45	R-Counter	461
 hex_recover	a3630cc45	R-DischargeInto	5
 hex_recover	a3630cc45	R-ExitVector	15
 hex_recover	a3630cc45	R-FnHeader	11
@@ -1258,6 +1265,7 @@ hex_recover	a3630cc45	R-Scalar	250
 hex_recover	a3630cc45	R-SingleUse	12
 hex_recover	a3630cc45	R-SplitTable	3
 hex_recover	a3630cc45	R-TextBorrow	14
+hex_recover	a3630cc45	R-TypedRead	18
 hex_recover	a3630cc45	R-ValueLocal	11
 hex_recover	a3630cc45	R-ValueRecord	2
 hex_recover	a3630cc45	R-VecCopy	2
@@ -1297,6 +1305,7 @@ hex_roof	a3630cc45	R-RetAdopt	3
 hex_roof	a3630cc45	R-Scalar	499
 hex_roof	a3630cc45	R-SingleUse	17
 hex_roof	a3630cc45	R-TextBorrow	13
+hex_roof	a3630cc45	R-TypedRead	18
 hex_roof	a3630cc45	R-ValueLocal	1
 hex_roof	a3630cc45	R-View	5
 hex_roof	a3630cc45	R-WorkBuffer	9
@@ -1337,6 +1346,7 @@ hex_shape	a3630cc45	R-Scalar	360
 hex_shape	a3630cc45	R-SingleUse	14
 hex_shape	a3630cc45	R-SplitTable	3
 hex_shape	a3630cc45	R-TextBorrow	14
+hex_shape	a3630cc45	R-TypedRead	18
 hex_shape	a3630cc45	R-ValueLocal	25
 hex_shape	a3630cc45	R-ValueRecord	4
 hex_shape	a3630cc45	R-VecCopy	5
@@ -1415,6 +1425,7 @@ hex_way	a3630cc45	R-RetAdopt	3
 hex_way	a3630cc45	R-Scalar	246
 hex_way	a3630cc45	R-SingleUse	7
 hex_way	a3630cc45	R-TextBorrow	13
+hex_way	a3630cc45	R-TypedRead	18
 hex_way	a3630cc45	R-View	5
 hex_way	a3630cc45	R-WorkBuffer	5
 hex_way	a3630cc45	R-Wrapper	19
@@ -1449,6 +1460,7 @@ hex_world	a3630cc45	R-RetAdopt	3
 hex_world	a3630cc45	R-Reuse	2
 hex_world	a3630cc45	R-SingleUse	2
 hex_world	a3630cc45	R-TextBorrow	11
+hex_world	a3630cc45	R-TypedRead	11
 hex_world	a3630cc45	R-View	20
 hex_world	a3630cc45	R-WorkBuffer	2
 hex_world	a3630cc45	R-Wrapper	16
