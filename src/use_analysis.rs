@@ -2685,7 +2685,15 @@ impl<'a> Ownership<'a> {
                             .iter()
                             .filter(|r| !holds_no_store(self.data, r))
                             .map(|r| {
-                                if minted && matches!(r.unspan(), Value::Var(_)) {
+                                // A bare-`Var` bind the emitters COPY is the local's own store
+                                // (@FR-B-Copy): `record_copy_source` is the one predicate both
+                                // backends copy on, at the first bind and the rebind alike.
+                                // Read as the source's borrow, a generic instance's `y: T = b;
+                                // return y` was a borrow of `b`, never lifted, and the copy the
+                                // bind had made leaked once per inline call (loft#1881).
+                                let copied = matches!(r.unspan(), Value::Var(src)
+                                    if bind_copies(self.data, func, *v, *src));
+                                if (minted && matches!(r.unspan(), Value::Var(_))) || copied {
                                     Own::Owned
                                 } else {
                                     self.classify(r, func, defs)
@@ -3786,6 +3794,20 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
     !may_return_a_borrow(data, fn_nr) || protectable_ref_args(data, d_nr, call).1
 }
 
+/// Does `v = src` COPY `src` into a store `v` owns?  The one predicate the emitters copy a
+/// whole-record bind on (`Function::record_copy_source`, at the first bind and the rebind, both
+/// backends), asked by every reader that classifies such a bind — the oracle and its
+/// flow-sensitive shadow — so a copy is owned in all of them (@FR-B-Copy).
+#[must_use]
+pub(crate) fn bind_copies(
+    data: &Data,
+    func: &crate::variables::Function,
+    v: u16,
+    src: u16,
+) -> bool {
+    func.tp(v).base().heap_def_nr().is_some() && func.record_copy_source(data, v, src).is_some()
+}
+
 /// May `fn_nr`'s result be a borrow of something the caller holds — the question both the
 /// source-free bit ([`call_return_frees_source`]) and native's argument bracket ask, so they
 /// ask it here and cannot answer it apart.
@@ -3805,7 +3827,8 @@ pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
 /// A borrow of the callee's own LOCAL (`d = inner(n); v = d.value; return v`, promoted onto
 /// its buffer) or of its hidden buffer is the callee's store going to the caller, which the
 /// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).
-fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
+#[must_use]
+pub fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
     let (Own::Borrowed { base } | Own::Join { base }) = return_ownership(data, fn_nr) else {
         return false;
     };

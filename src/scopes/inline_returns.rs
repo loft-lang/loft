@@ -99,7 +99,7 @@ impl Scopes<'_> {
                 && if target.returns_borrowed_view() {
                     instance_copies && target.attr_names.contains_key("__retbuf")
                 } else {
-                    target.monomorph_return_is_fresh(null_ref)
+                    target.monomorph_return_is_fresh(null_ref, d_nr)
                         || (target.is_instance()
                             && depth < DELEGATION_DEPTH
                             && Self::delegated_return_is_fresh_at(data, target, depth + 1))
@@ -130,13 +130,14 @@ impl Scopes<'_> {
             let Value::Var(fn_var) = arg.unspan() else {
                 return false;
             };
-            let target = match self.fnref_target.get(fn_var).copied() {
-                Some(d) if d != u32::MAX => data.def(d),
+            let target_nr = match self.fnref_target.get(fn_var).copied() {
+                Some(d) if d != u32::MAX => d,
                 _ => return false,
             };
+            let target = data.def(target_nr);
             target.code != Value::Null
                 && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh(null_ref)
+                && target.monomorph_return_is_fresh(null_ref, target_nr)
         })
     }
 
@@ -704,10 +705,21 @@ impl Scopes<'_> {
                     || monomorph_returns_a_borrow
                     || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")
-                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
+                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"), *fn_nr)
                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)
                             // is a shape the callee's own body settles.
-                            || Self::monomorph_delegated_return_is_fresh(data, def)))
+                            || Self::monomorph_delegated_return_is_fresh(data, def)
+                            // loft#1881 — an instance that hands back its parameter on one path
+                            // and a copy on another is neither fresh nor a borrow: the oracle's
+                            // `Join`.  Its bind is the store-identity guard, which `lift_by_oracle`
+                            // below admits only with a nameable witness in a binding statement;
+                            // excluded here, the copy was lifted by nobody, one per inline call.
+                            || (!opt
+                                && returned.heap_def_nr().is_some()
+                                && matches!(
+                                    crate::use_analysis::return_ownership(data, *fn_nr),
+                                    crate::use_analysis::Own::Join { .. }
+                                ))))
             };
             if lift_owned_return && def.code != Value::Null {
                 // The same `returns_borrowed_view()` question its struct-enum sibling below

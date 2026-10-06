@@ -1,0 +1,230 @@
+diff --git b/src/data.rs a/src/data.rs
+index db596cc61..00c0a8533 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -5436,16 +5436,8 @@ impl Definition {
+         vars: &crate::variables::Function,
+         buf: Option<u16>,
+         null_ref: u32,
+-        self_nr: u32,
+     ) -> bool {
+         match v.unspan() {
+-            // A call to ITSELF is fresh when every other site is (loft#1881): a terminating run
+-            // ends at one of those, and the answer is the AND over all of them, so a body whose
+-            // other sites borrow is refused on those.  Read as "not proven", a recursive generic
+-            // copying its base case (`if i == 0 { y: T = v[0]; y } else { ev(v, i - 1) }`) left
+-            // its result unlifted and leaked one record per inline call, where its concrete
+-            // twin was lifted and freed (@FR-G-Mono).
+-            Value::Call(nr, _) if *nr == self_nr => true,
+             // Null is a value, not a store — it can neither leak nor dangle.  So is the null
+             // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
+             // `null` tail is spelled: read as "not proven", it refused every instance that
+@@ -5460,7 +5452,7 @@ impl Definition {
+             // unknown shape it refused a body that returns its fresh buffer, so a bounded
+             // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
+             // left its result unlifted and leaked one record per inline call (loft#1820).
+-            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref, self_nr),
++            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref),
+             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
+             // Held back while an arm-local of a monomorph was built against the type
+             // variable's row and answered a wrong number; with that fixed the arms are
+@@ -5468,14 +5460,14 @@ impl Definition {
+             // Both arms are required, so one borrowing arm still refuses the whole site —
+             // the under-approximation composes rather than being widened away.
+             Value::If(_, then, els) => {
+-                Self::site_is_fresh(then, vars, buf, null_ref, self_nr)
+-                    && Self::site_is_fresh(els, vars, buf, null_ref, self_nr)
++                Self::site_is_fresh(then, vars, buf, null_ref)
++                    && Self::site_is_fresh(els, vars, buf, null_ref)
+             }
+             // A block's value is its tail; an empty one yields nothing to own.
+             Value::Block(bl) => bl
+                 .operators
+                 .last()
+-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
++                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
+             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
+             // and that is the honest answer HERE: the target is a runtime value, so this
+             // body cannot read the callee's fact.  It is readable one frame up, where the
+@@ -5591,7 +5583,7 @@ impl Definition {
+         }
+         let mut slots: Vec<u16> = Vec::new();
+         for site in &sites {
+-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
++            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+                 continue;
+             }
+             match site.unspan() {
+@@ -5639,7 +5631,7 @@ impl Definition {
+         }
+         let mut targets: Vec<u32> = Vec::new();
+         for site in &sites {
+-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
++            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+                 continue;
+             }
+             match site.unspan() {
+@@ -5678,7 +5670,7 @@ impl Definition {
+     }
+ 
+     #[must_use]
+-    pub fn monomorph_return_is_fresh(&self, null_ref: u32, self_nr: u32) -> bool {
++    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
+         let vars = &self.variables;
+         let buf = self.value_return_buffer_var();
+         let mut seen_return = false;
+@@ -5689,7 +5681,7 @@ impl Definition {
+             let inner = inner.unspan();
+             // A bare `Var` is the shape both the owned and the borrowed monomorph end
+             // with after the scope pass, and it is the one the answer turns on.
+-            if !Self::site_is_fresh(inner, vars, buf, null_ref, self_nr) {
++            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
+                 all_fresh = false;
+             }
+         }
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 76612942d..84c8bc243 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -1268,11 +1268,7 @@ impl Output<'_> {
+             crate::use_analysis::callee_of(self.data, self.def_nr, to),
+         ) && matches!(to_unspanned, Value::Call(_, _) | Value::CallRef(_, _))
+             && self.data.def(fn_nr).is_loft_defined()
+-            // An empty return dep reads "fresh, adopt"; an instance's is empty whatever it
+-            // returns, so the oracle is asked too — a `Join` instance adopted plainly freed the
+-            // caller's record on the path that answered the parameter (loft#1881).
+-            && (!self.data.def(fn_nr).return_adopts_fresh_store()
+-                || crate::use_analysis::may_hand_back_a_caller_store(self.data, fn_nr))
++            && !self.data.def(fn_nr).return_adopts_fresh_store()
+             // @PLN157 § V-aa/§ V-ah (`@FR-R-ValueRecord`) — an admitted callee answers a
+             // tuple: nothing to adopt, copy, protect or displace, so its binding is the
+             // plain assignment below, and the buffer argument is dropped there.
+diff --git b/src/ownership_cfg.rs a/src/ownership_cfg.rs
+index 15b16c37a..911772aa1 100644
+--- b/src/ownership_cfg.rs
++++ a/src/ownership_cfg.rs
+@@ -611,17 +611,6 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
+                     // A whole-value `var = src` copy INTO a re-minted (materialised-owned) var owns —
+                     // see `reminted` above. Otherwise a bare source var resolves flow-sensitively.
+                     Value::Var(_) if reminted.contains(var) => OFact::Owned,
+-                    // …and so does one the emitters copy (`bind_copies`, the oracle's own rule).
+-                    Value::Var(u)
+-                        if crate::use_analysis::bind_copies(
+-                            data,
+-                            &data.def(d_nr).variables,
+-                            *var,
+-                            *u,
+-                        ) =>
+-                    {
+-                        OFact::Owned
+-                    }
+                     Value::Var(u) => st
+                         .get(u)
+                         .copied()
+diff --git b/src/scopes/inline_returns.rs a/src/scopes/inline_returns.rs
+index e53a6a947..af3d1e780 100644
+--- b/src/scopes/inline_returns.rs
++++ a/src/scopes/inline_returns.rs
+@@ -99,7 +99,7 @@ impl Scopes<'_> {
+                 && if target.returns_borrowed_view() {
+                     instance_copies && target.attr_names.contains_key("__retbuf")
+                 } else {
+-                    target.monomorph_return_is_fresh(null_ref, d_nr)
++                    target.monomorph_return_is_fresh(null_ref)
+                         || (target.is_instance()
+                             && depth < DELEGATION_DEPTH
+                             && Self::delegated_return_is_fresh_at(data, target, depth + 1))
+@@ -130,14 +130,13 @@ impl Scopes<'_> {
+             let Value::Var(fn_var) = arg.unspan() else {
+                 return false;
+             };
+-            let target_nr = match self.fnref_target.get(fn_var).copied() {
+-                Some(d) if d != u32::MAX => d,
++            let target = match self.fnref_target.get(fn_var).copied() {
++                Some(d) if d != u32::MAX => data.def(d),
+                 _ => return false,
+             };
+-            let target = data.def(target_nr);
+             target.code != Value::Null
+                 && !target.returns_borrowed_view()
+-                && target.monomorph_return_is_fresh(null_ref, target_nr)
++                && target.monomorph_return_is_fresh(null_ref)
+         })
+     }
+ 
+@@ -705,21 +704,10 @@ impl Scopes<'_> {
+                     || monomorph_returns_a_borrow
+                     || ((def.name.starts_with("t_") || def.is_instance())
+                         && (def.attr_names.contains_key("__retbuf")
+-                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"), *fn_nr)
++                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
+                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)
+                             // is a shape the callee's own body settles.
+-                            || Self::monomorph_delegated_return_is_fresh(data, def)
+-                            // loft#1881 — an instance that hands back its parameter on one path
+-                            // and a copy on another is neither fresh nor a borrow: the oracle's
+-                            // `Join`.  Its bind is the store-identity guard, which `lift_by_oracle`
+-                            // below admits only with a nameable witness in a binding statement;
+-                            // excluded here, the copy was lifted by nobody, one per inline call.
+-                            || (!opt
+-                                && returned.heap_def_nr().is_some()
+-                                && matches!(
+-                                    crate::use_analysis::return_ownership(data, *fn_nr),
+-                                    crate::use_analysis::Own::Join { .. }
+-                                ))))
++                            || Self::monomorph_delegated_return_is_fresh(data, def)))
+             };
+             if lift_owned_return && def.code != Value::Null {
+                 // The same `returns_borrowed_view()` question its struct-enum sibling below
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index ae7f5c557..2c94e8be1 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -2685,15 +2685,7 @@ impl<'a> Ownership<'a> {
+                             .iter()
+                             .filter(|r| !holds_no_store(self.data, r))
+                             .map(|r| {
+-                                // A bare-`Var` bind the emitters COPY is the local's own store
+-                                // (@FR-B-Copy): `record_copy_source` is the one predicate both
+-                                // backends copy on, at the first bind and the rebind alike.
+-                                // Read as the source's borrow, a generic instance's `y: T = b;
+-                                // return y` was a borrow of `b`, never lifted, and the copy the
+-                                // bind had made leaked once per inline call (loft#1881).
+-                                let copied = matches!(r.unspan(), Value::Var(src)
+-                                    if bind_copies(self.data, func, *v, *src));
+-                                if (minted && matches!(r.unspan(), Value::Var(_))) || copied {
++                                if minted && matches!(r.unspan(), Value::Var(_)) {
+                                     Own::Owned
+                                 } else {
+                                     self.classify(r, func, defs)
+@@ -3794,20 +3786,6 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
+     !may_return_a_borrow(data, fn_nr) || protectable_ref_args(data, d_nr, call).1
+ }
+ 
+-/// Does `v = src` COPY `src` into a store `v` owns?  The one predicate the emitters copy a
+-/// whole-record bind on (`Function::record_copy_source`, at the first bind and the rebind, both
+-/// backends), asked by every reader that classifies such a bind — the oracle and its
+-/// flow-sensitive shadow — so a copy is owned in all of them (@FR-B-Copy).
+-#[must_use]
+-pub(crate) fn bind_copies(
+-    data: &Data,
+-    func: &crate::variables::Function,
+-    v: u16,
+-    src: u16,
+-) -> bool {
+-    func.tp(v).base().heap_def_nr().is_some() && func.record_copy_source(data, v, src).is_some()
+-}
+-
+ /// May `fn_nr`'s result be a borrow of something the caller holds — the question both the
+ /// source-free bit ([`call_return_frees_source`]) and native's argument bracket ask, so they
+ /// ask it here and cannot answer it apart.
+@@ -3827,8 +3805,7 @@ pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
+ /// A borrow of the callee's own LOCAL (`d = inner(n); v = d.value; return v`, promoted onto
+ /// its buffer) or of its hidden buffer is the callee's store going to the caller, which the
+ /// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).
+-#[must_use]
+-pub fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
++fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
+     let (Own::Borrowed { base } | Own::Join { base }) = return_ownership(data, fn_nr) else {
+         return false;
+     };

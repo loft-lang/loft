@@ -1268,7 +1268,11 @@ impl Output<'_> {
             crate::use_analysis::callee_of(self.data, self.def_nr, to),
         ) && matches!(to_unspanned, Value::Call(_, _) | Value::CallRef(_, _))
             && self.data.def(fn_nr).is_loft_defined()
-            && !self.data.def(fn_nr).return_adopts_fresh_store()
+            // An empty return dep reads "fresh, adopt"; an instance's is empty whatever it
+            // returns, so the oracle is asked too — a `Join` instance adopted plainly freed the
+            // caller's record on the path that answered the parameter (loft#1881).
+            && (!self.data.def(fn_nr).return_adopts_fresh_store()
+                || crate::use_analysis::may_hand_back_a_caller_store(self.data, fn_nr))
             // @PLN157 § V-aa/§ V-ah (`@FR-R-ValueRecord`) — an admitted callee answers a
             // tuple: nothing to adopt, copy, protect or displace, so its binding is the
             // plain assignment below, and the buffer argument is dropped there.

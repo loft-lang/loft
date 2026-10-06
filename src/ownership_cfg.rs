@@ -611,6 +611,17 @@ fn ownership_dataflow(data: &Data, d_nr: u32, cfg: &Cfg) -> (Vec<OState>, usize)
                     // A whole-value `var = src` copy INTO a re-minted (materialised-owned) var owns —
                     // see `reminted` above. Otherwise a bare source var resolves flow-sensitively.
                     Value::Var(_) if reminted.contains(var) => OFact::Owned,
+                    // …and so does one the emitters copy (`bind_copies`, the oracle's own rule).
+                    Value::Var(u)
+                        if crate::use_analysis::bind_copies(
+                            data,
+                            &data.def(d_nr).variables,
+                            *var,
+                            *u,
+                        ) =>
+                    {
+                        OFact::Owned
+                    }
                     Value::Var(u) => st
                         .get(u)
                         .copied()

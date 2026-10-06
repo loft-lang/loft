@@ -5457,8 +5457,16 @@ impl Definition {
         vars: &crate::variables::Function,
         buf: Option<u16>,
         null_ref: u32,
+        self_nr: u32,
     ) -> bool {
         match v.unspan() {
+            // A call to ITSELF is fresh when every other site is (loft#1881): a terminating run
+            // ends at one of those, and the answer is the AND over all of them, so a body whose
+            // other sites borrow is refused on those.  Read as "not proven", a recursive generic
+            // copying its base case (`if i == 0 { y: T = v[0]; y } else { ev(v, i - 1) }`) left
+            // its result unlifted and leaked one record per inline call, where its concrete
+            // twin was lifted and freed (@FR-G-Mono).
+            Value::Call(nr, _) if *nr == self_nr => true,
             // Null is a value, not a store — it can neither leak nor dangle.  So is the null
             // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
             // `null` tail is spelled: read as "not proven", it refused every instance that
@@ -5473,7 +5481,7 @@ impl Definition {
             // unknown shape it refused a body that returns its fresh buffer, so a bounded
             // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
             // left its result unlifted and leaked one record per inline call (loft#1820).
-            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref),
+            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref, self_nr),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -5481,14 +5489,14 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars, buf, null_ref)
-                    && Self::site_is_fresh(els, vars, buf, null_ref)
+                Self::site_is_fresh(then, vars, buf, null_ref, self_nr)
+                    && Self::site_is_fresh(els, vars, buf, null_ref, self_nr)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -5604,7 +5612,7 @@ impl Definition {
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
                 continue;
             }
             match site.unspan() {
@@ -5652,7 +5660,7 @@ impl Definition {
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
                 continue;
             }
             match site.unspan() {
@@ -5691,7 +5699,7 @@ impl Definition {
     }
 
     #[must_use]
-    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
+    pub fn monomorph_return_is_fresh(&self, null_ref: u32, self_nr: u32) -> bool {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let mut seen_return = false;
@@ -5702,7 +5710,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
+            if !Self::site_is_fresh(inner, vars, buf, null_ref, self_nr) {
                 all_fresh = false;
             }
         }

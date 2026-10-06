@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1881, `@FR-G-Mono` / `@FR-B-Copy` — a generic instance answers its caller exactly as its
+// concrete twin does, recursion included.  A recursive generic that COPIES its base case
+// (`if i == 0 { y: T = v[0]; y } else { ev(v, i - 1) }`) hands back a fresh record, and the
+// caller frees it after an inline read; one that hands back its PARAMETER on one path and a
+// copy on another hands back either, and the caller's bind tells them apart by store identity.
+// Unread, the first leaked one record per inline call, the second as well, and native adopted
+// the parameter on the path that answered it and freed the caller's record.
+//
+// The three readings that disagreed: a call to ITSELF was "not proven fresh" (it is, when every
+// other site is — a terminating run ends at one of them); the oracle read `y: T = b` as a view of
+// `b` where both backends COPY it (`record_copy_source`); and an instance's empty return dep was
+// read as "fresh, adopt" where the oracle says `Join`.
+//
+// Every value is hand-computed: `p` is `[7 s, 8 t]`, `q` is `5 q`, `w` is `9 w`, and they must
+// stay so.
+//
+// @falsified-at: 1c9d2ed82 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1881-a-recursive-generic-hands-back-what-its-sites-do.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the LEAK (one record per inline call) and, on native, the VALUE.
+//   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+//   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
+
+struct Pt { x: integer, s: text }
+
+fn ev<T>(v: vector<T>, i: integer) -> T { if i == 0 { y: T = v[0]; y } else { ev(v, i - 1) } }
+fn ea<T>(v: vector<T>, i: integer) -> T { if i == 0 { y: T = v[1]; y } else { eb(v, i - 1) } }
+fn eb<T>(v: vector<T>, i: integer) -> T { if i == 0 { y: T = v[0]; y } else { ea(v, i - 1) } }
+fn mx<T>(a: T, b: T, n: integer) -> T { if n == 0 { return a; } if n == 1 { y: T = b; return y; } mx(a, b, n - 2) }
+fn view<T>(v: vector<T>, i: integer) -> T { if i == 0 { v[0] } else { view(v, i - 1) } }
+fn same<T>(a: T, n: integer) -> T { if n == 0 { a } else { same(a, n - 1) } }
+
+fn test_a_copied_base_case() {
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  s = 0;
+  for _ in 0..3 { s += ev(p, 2).x; }
+  assert(s == 21 && len(p) == 2 && p[0].x == 7 && p[0].s == "s", "{s} {len(p)} {p[0].x} {p[0].s}");
+}
+
+fn test_mutual_recursion() {
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  s = 0;
+  for _ in 0..3 { s += ea(p, 3).x + eb(p, 2).x + ea(p, 0).x; }
+  assert(s == 66 && p[0].x == 7 && p[1].s == "t", "{s} {p[0].x} {p[1].s}");
+}
+
+fn test_the_parameter_or_a_copy() {
+  q = Pt { x: 5, s: "q" };
+  w = Pt { x: 9, s: "w" };
+  o = "";
+  for k in [4, 3, 0, 1] { o += "{mx(q, w, k).x} "; }
+  for k in [3, 2] { r = mx(q, w, k); r.x += 100; r.s = "z"; o += "{r.x}{r.s} "; }
+  assert(o == "5 9 5 9 109z 105z " && q.x == 5 && q.s == "q" && w.x == 9 && w.s == "w", "{o}q {q.x} {q.s} w {w.x} {w.s}");
+}
+
+fn test_the_borrowing_controls() {
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  q = Pt { x: 5, s: "q" };
+  s = 0;
+  for _ in 0..3 { s += view(p, 2).x + same(q, 2).x; }
+  assert(s == 36 && p[0].x == 7 && p[0].s == "s" && q.x == 5 && q.s == "q", "{s} {p[0].x} {q.x} {q.s}");
+}
+
+fn main() {
+  test_a_copied_base_case();
+  test_mutual_recursion();
+  test_the_parameter_or_a_copy();
+  test_the_borrowing_controls();
+}
