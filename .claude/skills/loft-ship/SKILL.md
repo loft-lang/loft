@@ -119,6 +119,13 @@ Each of these has broken a real library. Skim them before you start, not after y
 - **Index staleness (publish).** `loft install` reads `index.json` via the raw-GitHub CDN
   and keeps a local ~1h-TTL cache of its own (`~/.loft/registry/`). A just-published version may not resolve as `@latest` immediately — verify with
   `loft install --refresh <lib>@<version>`, and don't conclude "publish failed" from a stale edge.
+- **A loft change moved your layout, and you floored on a release that does not have it.**  When
+  loft's own rules move a library's layout or format (no edit in the library — C138's alignment
+  re-pinned `assets`), the fixing release floors `loft` on the DAILY build that carries the
+  change (`loft = ">=2026.10.20261006"`), not on the last release: older lofts must keep
+  resolving to the previous version, whose layout matches them.  Procedure:
+  [LIBRARY_AUTHORING.md § 3](../../../doc/claude/LIBRARY_AUTHORING.md), *When loft moves the
+  layout under an unchanged library*.
 - **Claiming the browser column for a `#native` lib without a bridge.** The matrix says ✗
   there for a reason — it will compile-fail or silently no-op. Either build the bridge or drop
   the `--html` claim.
