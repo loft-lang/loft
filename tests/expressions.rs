@@ -384,6 +384,16 @@ fn ref_tuple_unused_mutation_error() {
         .result(Value::Int(10));
 }
 
+/// loft#1900 — a `&(…)` parameter written only through a member LINK needs its `&`: the link is
+/// a field of the caller's `__tuple` record (`@FR-T-Ref-Rep`), and its write reaches the caller.
+/// No `.warning(..)` is asserted, so the advice to drop the `&` fails this test.
+#[test]
+fn ref_tuple_written_through_a_member_link_keeps_its_ref() {
+    code!("fn via(pair: &(integer, integer)) { c = &pair.0; c += 1; }")
+        .expr("p = (3, 7); via(p); p.0 * 10 + p.1")
+        .result(Value::Int(47));
+}
+
 // ── A5.3 — Closure capture at call site ─────────────────────────────────────
 
 #[test]
