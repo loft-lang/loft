@@ -2477,7 +2477,7 @@ impl Lexer {
                 self.memory.clear();
                 self.link = 0;
             }
-        } else if at_edge && self.link < self.memory.len() && self.count_links() > 0 {
+        } else if at_edge && self.link < self.memory.len() {
             // A mid-scan QUEUE: reading `1..` or `n.v.0.0`, the number lexer emits two
             // tokens from one scan — it pushes the follow-up (`..` / `.`) into the buffer
             // and returns the NUMBER as the live token.  So the number is the one token
@@ -2487,7 +2487,9 @@ impl Lexer {
             //
             // Insert it BEFORE the queued token and step over it, which leaves the live
             // sequence unchanged — the next `cont()` still replays the follow-up — and
-            // makes the buffer say what was actually read.
+            // makes the buffer say what was actually read.  Whether or not a link is open:
+            // a link taken ON the number reads its position from this record, and without
+            // it a revert resumed after the follow-up (`x: 2..=5` came back as `= 5`).
             self.memory.insert(self.link, self.recorded(&res));
             self.link += 1;
         }
@@ -3300,6 +3302,27 @@ mod test {
         assert_eq!(lex.peek().has, LexItem::Token("..".into()));
         lex.cont();
         assert_eq!(lex.peek().has, LexItem::Integer(4, false));
+    }
+
+    #[test]
+    fn link_taken_on_a_number_before_a_range_replays_the_number() {
+        // A number read before `..` queues the `..` and returns the number live.  With no
+        // link open the buffer then held the `..` alone, so a link taken ON the number had no
+        // record of it: a revert replayed from after the `..` and the parser met `= 5`
+        // (`x: 2..=5` in a match arm, behind a peek that read nothing).
+        let mut lex = Lexer::from_str("x 2..=5", "link_on_queued_number");
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Integer(2, false));
+        let l = lex.link();
+        assert!(lex.has_identifier().is_none());
+        lex.revert(l);
+        assert_eq!(lex.peek().has, LexItem::Integer(2, false));
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Token("..".into()));
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Token("=".into()));
+        lex.cont();
+        assert_eq!(lex.peek().has, LexItem::Integer(5, false));
     }
 
     #[test]
