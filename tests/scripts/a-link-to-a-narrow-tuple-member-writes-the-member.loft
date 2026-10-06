@@ -1,0 +1,66 @@
+// @FR-T-Record / @FR-B-Ref-Lvalue — a narrow member of a by-value tuple is a field a `&` link
+// names: once a link names it, the member holds its field encoding, so the link is the `&u8`
+// (`&i8`, `&i16`, a `limit` type) that names a narrow field, and every other read and write of the
+// tuple decodes and encodes that member.  Each cell writes through the link and reads the value
+// back in a different way: the member itself, a whole copy, `==`, a by-value argument, a return,
+// a destructure, a text neighbour, a closure capture, a re-pointed link in a loop, a step past
+// the range, a nullable member, and a member of a `&(…)` parameter.  Each value is computed by
+// hand in the comment beside it.
+// @falsified-at: b3d3c7348 — the narrow member link is refused at compile time on both backends.
+
+type Small = integer limit(-5, 5);
+fn nb(p: &u8) { p += 1; }
+fn ni8(p: &i8) { p -= 3; }
+fn ni16(p: &i16) { p = (p * 2) as i16 ?? 0; }
+fn nsm(p: &Small) { p -= 2; }
+fn nopt(p: &u8?) { if p == null { p = 7; } else { p += 1; } }
+
+// 200 + 1 = 201, beside a wide 7: 201007.
+fn bind_writes_the_member() -> integer { t: (u8, integer) = (200, 7); c = &t.0; c += 1; t.0 * 1000 + t.1 }
+// 254 + 1 = 255 in the SECOND member: 9 * 1000 + 255.
+fn argument_writes_the_member() -> integer { t: (integer, u8) = (9, 254); nb(t.1); t.0 * 1000 + t.1 }
+// -120 - 3 = -123 and 3 - 3 = 0: two linked members of one tuple, biased by -128.
+fn signed_members() -> integer { t: (i8, i8) = (-120, 3); ni8(t.0); ni8(t.1); t.0 * 1000 + t.1 }
+// -1234 * 2 = -2468 and 4 - 2 = 2: -24680 + 2.
+fn wider_and_limited_members() -> integer { t: (i16, Small) = (-1234, 4); ni16(t.0); nsm(t.1); t.0 * 10 + t.1 }
+// The callee's copy: 300 - 500 = -200, so 7 * 100000 - 200 = 699800; the caller's 300 is untouched.
+fn param_member(t: (u8, i16)) -> integer { c = &t.1; c -= 500; t.0 * 100000 + t.1 }
+fn by_value_parameter() -> integer { t: (u8, i16) = (7, 300); r = param_member(t); r * 1000 + t.1 }
+// -7 - 1 = -8; the copy equals its source: 250 * 1000 - 8.
+fn whole_copy_and_equality() -> integer { t: (u8, i8) = (250, -7); c = &t.1; c -= 1; b = t; if t == b { b.0 * 1000 + b.1 } else { -1 } }
+fn take(t: (u8, i8)) -> integer { t.0 * 1000 + t.1 }
+fn give() -> (u8, i8) { t: (u8, i8) = (100, -100); c = &t.0; c += 55; t }
+// (155, -100) -> 154900; returned, then passed by value.
+fn returned_and_passed() -> integer { take(give()) }
+// Three rounds of +10 and +20 through one link re-pointed between the members: (31, 62).
+fn repointed_in_a_loop() -> integer { t: (u8, u8) = (1, 2); for _ in 0..3 { c = &t.0; c += 10; c = &t.1; c += 20; } t.0 * 1000 + t.1 }
+// -50 - 2 = -52, beside a u16 at its high end: -5200000 + 60000.
+fn destructured() -> integer { t: (i8, u16) = (-50, 60000); c = &t.0; c -= 2; (x, y) = t; x * 100000 + y }
+// -3 + 1 = -2, and the text neighbour is copied, not moved.
+fn text_neighbour() -> text { t: (u8, text, i8) = (5, "ab", -3); c = &t.2; c += 1; b = t; "{b.0}/{b.1}/{b.2}/{t.1}" }
+// 10 + 300 is past 255: the type's default, 0, as a narrow local takes.
+fn past_the_range() -> integer { t: (u8, integer) = (10, 1); c = &t.0; c += 300; t.0 }
+// 30 + 3 = 33, read by a closure: 1000 + 33.
+fn captured() -> integer { t: (u8, integer) = (30, 4); c = &t.0; c += 3; f = fn(k: integer) -> integer { k + t.0 }; f(1000) }
+// null -> 7; 253 -> 254 (254 is u8?'s largest value; 255 is its null).
+fn nullable_member() -> integer { t: (u8?, integer) = (null, 1); nopt(t.0); u: (u8?, integer) = (253, 1); nopt(u.0); (t.0 ?? 99) * 1000 + (u.0 ?? 99) }
+// A member of a `&(…)` parameter is the caller's narrow field: 5 + 1 = 6.
+fn via(p: &(u8, integer)) { c = &p.0; c += 1; }
+fn linked_tuple_member() -> integer { t: (u8, integer) = (5, 1); via(t); t.0 }
+
+fn main() {
+  assert(bind_writes_the_member() == 201007, "a & bind writes the member");
+  assert(argument_writes_the_member() == 9255, "a & argument writes the member");
+  assert(signed_members() == -123000, "two signed members");
+  assert(wider_and_limited_members() == -24678, "an i16 and a limit member");
+  assert(by_value_parameter() == 699800300, "a by-value tuple parameter's member");
+  assert(whole_copy_and_equality() == 249992, "a whole copy and ==");
+  assert(returned_and_passed() == 154900, "returned and passed by value");
+  assert(repointed_in_a_loop() == 31062, "a link re-pointed in a loop");
+  assert(destructured() == -5140000, "a destructure");
+  assert(text_neighbour() == "5/ab/-2/ab", "a text neighbour");
+  assert(past_the_range() == 0, "a step past the range");
+  assert(captured() == 1033, "a closure capture");
+  assert(nullable_member() == 7254, "a nullable member");
+  assert(linked_tuple_member() == 6, "a member of a & tuple parameter");
+}

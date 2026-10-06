@@ -10424,23 +10424,26 @@ at a_link_only_read_leaves_the_amp_parameter_unmodified:1:13",
     );
 }
 
-/// D-bind-70 (loft#1875) — a tuple member no link can honour yet is REFUSED by name, at a `&`
-/// bind and at a `&` argument alike, and never handed a copy that would drop the write
-/// (`@FR-B-Ref-Reshape`).  Before the wide members linked, these took the work-copy route and the
-/// callee's write vanished; the pins say they cannot reach it again.
+/// `@FR-T-Record` (loft#1875) — a narrow member of a by-value tuple is a field a link names: it
+/// holds its field encoding once a `&` names it, so a `&u8` argument and a `&u8` bind both write
+/// the member, and a whole read sees the written value.
 #[test]
-fn a_narrow_tuple_member_link_is_refused() {
+fn a_narrow_tuple_member_link_writes_the_member() {
     code!(
         "fn nb(p: &u8) { p += 1; }
-fn test() { n: (u8, integer) = (5, 1); nb(n.0); assert(n.0 == 5, \"n\"); }"
+fn run() -> integer { n: (u8, integer) = (5, 1); nb(n.0); c = &n.0; c += 10; m = n; m.0 * 1000 + n.0 * 10 + n.1 }"
     )
-    .error(
-        "a `&` link to a tuple member of type `u8` is not supported — a narrow member is stored \
-at full width, and a link reads at the member's own width.  Bind the member to a local first \
-(`m = t.0; c = &m;`) and write it back at a_narrow_tuple_member_link_is_refused:2:48",
-    );
+    .expr("run()")
+    .advice(
+        "a step past `0..255` takes this type's default, `0` — nothing here says which values \
+the step may produce at a_narrow_tuple_member_link_writes_the_member:2:77",
+    )
+    .result(Value::Long(16_161));
 }
 
+/// D-bind-70 (loft#1875) — a TEXT member of a tuple local is still refused by name, at a `&`
+/// bind and at a `&` argument alike, and never handed a copy that would drop the write
+/// (`@FR-B-Ref-Reshape`).
 #[test]
 fn a_text_tuple_member_link_is_refused() {
     code!(

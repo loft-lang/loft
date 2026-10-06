@@ -10060,10 +10060,13 @@ use a separate collection or add after the loop"
         (*cond.unspan() == expected).then_some(v)
     }
     /// `@FR-B-Ref-Lvalue` — can a link name member `i` of the tuple local `t`?  `Ok` with the
-    /// member's type when it can, `Err` with it when it cannot: a member is stored at its full
-    /// width, so a link reads it at that width, and a NARROW member would need the narrow
-    /// encoding a linked LOCAL is given (`set_linked_narrow`), which a member's fixed layout
-    /// cannot take.  A heap member is not a scalar place at all.
+    /// member's type when it can, `Err` with it when it cannot.  A tuple is a record
+    /// (`@FR-T-Record`), so a scalar member is a field a link names: a NARROW member of a
+    /// by-value tuple holds its field encoding once a link names it
+    /// (`tuple_links::linked_narrow_members`, both backends), as a linked narrow LOCAL does.
+    /// A narrow member reached through a `&(…)` link is still refused: that tuple is the
+    /// caller's, in either of its two representations, and neither encodes the member.  A heap
+    /// member is not a scalar place at all.
     pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
         // A member of a `&(…)` link (a parameter, or a local link) is the CALLER's tuple at the
         // member's offset: the link's reference plus that offset, as the member read through
@@ -10077,7 +10080,10 @@ use a separate collection or add after the loop"
             _ => None,
         };
         let elem = elem.unwrap_or(Type::Unknown(0));
-        if crate::data::is_scalar(&elem) && crate::data::NarrowSlot::of_type(&elem).is_none() {
+        let by_value = matches!(self.vars.tp(t).base(), Type::Tuple(_));
+        if crate::data::is_scalar(&elem)
+            && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none())
+        {
             Ok(elem)
         } else {
             Err(elem)
@@ -10109,7 +10115,8 @@ use a separate collection or add after the loop"
         let why = if !crate::data::is_scalar(elem) {
             "a link to a member names a scalar place, and this member is not a scalar"
         } else if crate::data::NarrowSlot::of_type(elem).is_some() {
-            "a narrow member is stored at full width, and a link reads at the member's own width"
+            "the tuple is reached through a `&` link, and a link to a narrow member of a linked \
+             tuple is not supported"
         } else {
             "the tuple is itself reached through a `&` link, and a link into it is not supported"
         };
