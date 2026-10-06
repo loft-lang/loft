@@ -209,11 +209,20 @@ impl PathText {
     }
 
     /// A host path as a PROGRAM sees it: itself, or under the emulated host the same place
-    /// in Windows' spelling (`/a/b` is `L:\a\b`, a relative path keeps its names).
+    /// in Windows' spelling (`/a/b` is `L:\a\b`, a relative path keeps its names; a path
+    /// already in that spelling gains the current drive when it has none).
     #[must_use]
     pub fn for_program(&self) -> PathText {
-        if self.flavor != Flavor::HOST || !Flavor::emulating() {
+        if !Flavor::emulating() {
             return self.clone();
+        }
+        if self.flavor != Flavor::HOST {
+            // Already the program's spelling; a root without a drive is the current drive's.
+            let mut p = self.clone();
+            if p.rooted && p.prefix.is_empty() {
+                p.prefix = EMULATED_DRIVE.to_string();
+            }
+            return p;
         }
         PathText {
             flavor: Flavor::Windows,

@@ -115,6 +115,22 @@ pub fn remove_file(path: &PathText) -> io::Result<()> {
     run(path, |p| std::fs::remove_file(p))
 }
 
+/// Create the directory; its parent must exist.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn create_dir(path: &PathText) -> io::Result<()> {
+    run(path, |p| std::fs::create_dir(p))
+}
+
+/// Remove the EMPTY directory.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn remove_dir(path: &PathText) -> io::Result<()> {
+    run(path, |p| std::fs::remove_dir(p))
+}
+
 /// Remove the directory and everything in it.
 ///
 /// # Errors
@@ -240,6 +256,13 @@ pub fn is_file(path: &PathText) -> bool {
 #[must_use]
 pub fn is_dir(path: &PathText) -> bool {
     path.os().is_ok_and(|p| p.is_dir())
+}
+
+/// Is the path itself a symbolic link (the link, not what it names)?
+#[must_use]
+pub fn is_symlink(path: &PathText) -> bool {
+    path.os()
+        .is_ok_and(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
 }
 
 /// The resolved path, in the plain spelling every other path in the process uses (never
@@ -378,8 +401,16 @@ pub fn given(path: &str) -> String {
     if path.is_empty() {
         String::new()
     } else {
-        PathText::host(path).for_program().portable()
+        at(path).for_program().portable()
     }
+}
+
+/// A path the runtime resolved for a program (`Stores::resolve_path`), or one the OS handed
+/// it, read under the program's host — the form every operation here takes.  A host path
+/// reads the same under the emulated host: `/a/b` is `\a\b` on the current drive.
+#[must_use]
+pub fn at(resolved: &str) -> PathText {
+    PathText::parse(resolved, Flavor::program_host())
 }
 
 /// Is a source `file` in the shipped standard library — any directory named `default`
