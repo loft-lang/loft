@@ -1,12 +1,13 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index f401b4247..e8555feda 100644
+index 7a609d692..3ae5a98d7 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -11368,6 +11368,7 @@ fn mints_into_argument(
-     mints: [u32; 2],
-     is_null: u32,
- ) -> bool {
-+    if true { return false; }
-     let arg = |node: &Value| match node.unspan() {
-         Value::Var(var) if vars.is_argument(*var) => Some(*var),
-         _ => None,
+@@ -3080,7 +3080,7 @@ use a separate collection or add after the loop"
+         let mint = self.data.def_nr("OpDatabase");
+         let cvars = &callee.variables;
+         let database = &self.database;
+-        if callee.code.any_node(&mut |n| {
++        if false && callee.code.any_node(&mut |n| {
+             matches!(n, Value::Call(d, a) if *d == mint
+                 && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if cvars.is_argument(*w))
+                 && !matches!(a.get(1).map(Value::unspan),

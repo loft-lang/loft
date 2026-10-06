@@ -167,8 +167,8 @@ buffer stays the variable the call site mints and only what it holds changes, so
 deps and the free sweep are untouched, and `(O-Buffer)` gains the clause that such a buffer is
 never freed — and is the first bisect step for a wrong, empty or stale vector field after an
 assignment or a literal field from a call.  Declined where an argument reaches the destination,
-where the callee MINTS into its buffer (a projection chain does; a returned collection literal
-mints only into a null buffer, so it is placed), for a struct-enum
+where the callee MINTS a record into its buffer (a projection chain does; a returned
+collection literal's wrapper mint answers the place, so it is placed), for a struct-enum
 variant's field read through a variant check, and for a literal's `?` field (the replace is
 what leaves it absent).  `tests/scripts/a-literal-vector-field-is-built-in-its-field.loft` is
 the literal's guard.

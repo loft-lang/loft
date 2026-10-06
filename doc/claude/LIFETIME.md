@@ -363,8 +363,9 @@ destination — the callee clears its buffer before reading its arguments, so `h
 would read an emptied vector — where the callee MINTS into a buffer parameter, which a
 projection chain (`return g().inner.v`) does, and for a field of a struct-enum VARIANT, which
 exists only while the enum holds that variant.  A returned collection LITERAL (`[x; n]`,
-`[a, b]`, a comprehension) mints only into a NULL buffer and builds in a live one where it
-stands (`guard_buffer_literal_mints`), so it is admitted.  A grouped destination is admitted: the group maintenance brackets the fill.
+`[a, b]`, a comprehension) is admitted: its `main_vector<T>` mint, handed a live buffer that is
+not that wrapper's own store, answers the buffer as the place, with the collection it held
+released (`Stores::mint_at_place`, both backends), and the literal builds in it.  A grouped destination is admitted: the group maintenance brackets the fill.
 The struct literal `H { v: f(…) }` takes the same admission (`place_buffer_of`, shared): its
 field exists once the header prime has written the empty handle — a variant literal's included,
 since it builds that variant — so the call is handed the field; a `?` field keeps the replace.

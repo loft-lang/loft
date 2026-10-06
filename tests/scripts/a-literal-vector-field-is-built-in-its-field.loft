@@ -6,8 +6,8 @@
 // buffer store copied in and freed (the assignment `h.v = f(…)` already did this).  The cells
 // cross what the admission reads: a callee that FILLS its buffer (placed) against one that MINTS
 // a record into it (c2, a projection `wrap(c).inner.v`, declined — handed the field it would mint over
-// it); a returned collection LITERAL, which mints only into a null buffer and so is placed
-// (c10: `[x; c]`, a list, a comprehension, `[]`, text elements, a nullable return, literals on
+// it); a returned collection LITERAL, whose `main_vector<T>` mint on a place answers the place
+// (`Stores::mint_at_place`) and so is placed (c2l, c10: `[x; c]`, a list, a comprehension, `[]`, text elements, a nullable return, literals on
 // two branches, a literal exit beside a filled one, a field holding values before); a chain (c3); two
 // placed fields in one literal (c4); a `?` field, which keeps the replace (c5); the field of a
 // vector ELEMENT and of a nested literal (c6); a struct-enum variant (c7); an argument reading
@@ -23,6 +23,8 @@
 //   CHANNEL: an assertion or a store panic, on BOTH backends.
 //   WITNESS: c2 — the projection's minted record lands where the field does not name it.
 //   HOLDS: LOFT_NO_BUFFER_IS_PLACE=1 green on both (the copy).
+//   The runtime half is falsified the same way by hand: `mint_at_place` answering false (the
+//   literal's mint clears the store the place lives in) turns c2l red on both backends.
 
 struct H { n: integer, v: vector<integer> }
 struct T { v: vector<integer>, w: vector<integer> }
