@@ -22151,11 +22151,14 @@ impl Parser {
         // copy of another link), and a write to the link carries back along that chain.
         // The bind is a `Set` of the link too, so the writes are measured on the body with the
         // binds blanked: a link only READ leaves its target unwritten.
+        // A link to a tuple MEMBER (`c = &t.0`, `OpCreateStack(TupleGet(t, i))`) names a place
+        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).
         let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
             if let Value::Set(v, rhs) = n.unspan()
                 && let Value::Call(op, args) = rhs.unspan()
                 && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
-                && let Some(Value::Var(src)) = args.first().map(Value::unspan)
+                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
+                    args.first().map(Value::unspan)
             {
                 return Some((*v, *src));
             }
@@ -22796,7 +22799,8 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
 fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {
-        Value::Var(v) => {
+        // A tuple MEMBER names its tuple (`bump(t.0)` hands a place inside `t`).
+        Value::Var(v) | Value::TupleGet(v, _) => {
             result.insert(*v);
         }
         Value::Set(_, body) => collect_vars_in(body, result),

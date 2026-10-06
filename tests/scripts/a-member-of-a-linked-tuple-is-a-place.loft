@@ -1,0 +1,104 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link is an lvalue, so it is a
+// place a link names, as a member of a tuple LOCAL is.  The link is the `&(…)`'s own reference
+// at the member's offset, the address the member READ through the link uses.  It was refused by
+// name (D-bind-70, loft#1875).  A `&(…)` parameter and a LOCAL link to a tuple are both crossed
+// with a bind, a write through it, a `&` argument, every wide scalar kind, a member past a wider
+// one (the offset), a link handed on to another `&` call, and a loop.  Each write must reach the
+// CALLER's tuple; the untouched member of each cell must not move.
+
+fn bump(p: &integer) {
+  p += 1;
+}
+
+fn half(p: &float) {
+  p += 0.5;
+}
+
+fn flip(p: &boolean) {
+  p = !p;
+}
+
+fn zed(p: &character) {
+  p = 'z';
+}
+
+fn add_hundred(p: &integer) {
+  p += 100;
+}
+
+fn bind_through(p: &(integer, integer)) -> integer {
+  c = &p.0;
+  c += 5;
+  p.1
+}
+
+fn arg_through(p: &(integer, integer)) -> integer {
+  bump(p.1);
+  p.1
+}
+
+fn every_kind(p: &(float, boolean, character, integer)) {
+  half(p.0);
+  flip(p.1);
+  zed(p.2);
+  c = &p.3;
+  c += 7;
+}
+
+fn past_a_float(p: &(integer, float, integer)) {
+  c = &p.2;
+  c += 40;
+}
+
+fn handed_on(p: &(integer, integer)) {
+  c = &p.1;
+  add_hundred(c);
+  bump(p.0);
+}
+
+fn in_a_loop(p: &(integer, integer)) {
+  for i in 0..4 {
+    c = &p.0;
+    c += i;
+    bump(p.1);
+  }
+}
+
+fn main() {
+  t1 = (1, 2);
+  r1 = bind_through(t1);
+  assert(r1 == 2 && t1.0 == 6 && t1.1 == 2, "bind: {r1} {t1.0} {t1.1}");
+
+  t2 = (1, 2);
+  r2 = arg_through(t2);
+  assert(r2 == 3 && t2.0 == 1 && t2.1 == 3, "argument: {r2} {t2.0} {t2.1}");
+
+  t3 = (1.5, false, 'a', 1);
+  every_kind(t3);
+  assert(t3.0 == 2.0 && t3.1 && t3.2 == 'z' && t3.3 == 8, "kinds: {t3.0} {t3.1} {t3.2} {t3.3}");
+
+  t4 = (1, 2.5, 3);
+  past_a_float(t4);
+  assert(t4.0 == 1 && t4.1 == 2.5 && t4.2 == 43, "offset: {t4.0} {t4.1} {t4.2}");
+
+  t5 = (1, 2);
+  handed_on(t5);
+  assert(t5.0 == 2 && t5.1 == 102, "handed on: {t5.0} {t5.1}");
+
+  t6 = (0, 0);
+  in_a_loop(t6);
+  assert(t6.0 == 6 && t6.1 == 4, "loop: {t6.0} {t6.1}");
+
+  // A LOCAL link to the tuple, then links to its members.
+  t7 = (1, 2);
+  q = &t7;
+  c7 = &q.0;
+  c7 += 5;
+  bump(q.1);
+  assert(t7.0 == 6 && t7.1 == 3, "local link: {t7.0} {t7.1}");
+
+  println("a member of a linked tuple is a place OK");
+}

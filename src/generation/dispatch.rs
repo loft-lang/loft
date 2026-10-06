@@ -314,6 +314,19 @@ impl Output<'_> {
         Ok(())
     }
 
+    /// `@FR-B-Ref-Lvalue` — the Rust place of member `i` of tuple `t`: a tuple local's field, a
+    /// `&(…)` parameter's (a `&mut` tuple, reached by auto-deref), or a LOCAL link's, which is a
+    /// raw pointer to the tuple and is dereferenced.  Used inside `unsafe`.
+    pub(super) fn tuple_member_place(&self, t: u16, i: u16) -> String {
+        let variables = self.data.def(self.def_nr).variables();
+        let name = sanitize(variables.name(t));
+        if matches!(variables.tp(t).base(), Type::RefVar(_)) && !variables.is_argument(t) {
+            format!("(*var_{name}).{i}")
+        } else {
+            format!("var_{name}.{i}")
+        }
+    }
+
     /// Does a bind of `to` into `var` take the @PLN130 F1/F2 arm — the one that allocates a
     /// record for `var` and deep-copies a container element into it?
     ///
@@ -923,17 +936,17 @@ impl Output<'_> {
             {
                 // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: a pointer into the
                 // Rust tuple's field, the same raw shape as a link to a whole local.
-                let src_name = sanitize(variables.name(*src));
+                let place = self.tuple_member_place(*src, *idx);
                 if self.declared.contains(&var) {
                     write!(
                         w,
-                        "var_{name} = std::ptr::addr_of_mut!(var_{src_name}.{idx})"
+                        "var_{name} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
                     )?;
                 } else {
                     self.declared.insert(var);
                     write!(
                         w,
-                        "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!(var_{src_name}.{idx})"
+                        "let mut var_{name}: *mut {base} = unsafe {{ std::ptr::addr_of_mut!({place}) }}"
                     )?;
                 }
             } else if let Value::Call(d_nr, cargs) = to.unspan()

@@ -4766,6 +4766,19 @@ impl State {
                 let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
                 let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
                 self.emit_push_create_stack(stack, dep_offset);
+            } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
+                && let Type::RefVar(inner) = stack.function.tp(*tv).base()
+                && let Type::Tuple(elems) = inner.base()
+            {
+                // `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link: the
+                // link's reference at the member's offset, the address the member READ through
+                // the link uses (`OpVarRef` + the field offset).
+                let offset = ref_tuple_field_offset(elems, *ti as usize);
+                let var_pos = stack.var_pos(*tv);
+                stack.add_op("OpVarRef", self);
+                self.code_add(var_pos);
+                stack.add_op("OpGetField", self);
+                self.code_add(offset);
             } else {
                 // OpCreateStack with a non-Var expression (e.g.
                 // OpGetVector result).  Generate the expression to push

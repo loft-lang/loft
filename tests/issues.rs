@@ -10454,17 +10454,17 @@ a scalar place, and this member is not a scalar.  Bind the member to a local fir
     );
 }
 
+/// `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link is a place a link
+/// names: the link's reference at the member's offset.  `c = &p.0; c += 5` writes the CALLER's
+/// tuple, and the write reaches it on both backends.
 #[test]
-fn a_member_of_a_linked_tuple_is_refused() {
+fn a_member_of_a_linked_tuple_is_a_place() {
     code!(
         "fn via(p: &(integer, integer)) -> integer { c = &p.0; c += 5; p.1 = c; p.1 }
-fn test() { t = (250, 1); assert(via(t) == 1, \"v\"); }"
+fn run() -> integer { t = (250, 1); r = via(t); r * 1000000 + t.0 * 1000 + t.1 }"
     )
-    .error(
-        "a `&` link to a tuple member of type `integer` is not supported — the tuple is itself \
-reached through a `&` link, and a link into it is not supported.  Bind the member to a local \
-first (`m = t.0; c = &m;`) and write it back at a_member_of_a_linked_tuple_is_refused:1:54",
-    );
+    .expr("run()")
+    .result(Value::Long(255_255_255));
 }
 
 /// `@FR-Const-ScalarCollapse` / `@FR-Const-Value` — every spelling that writes past a `const`

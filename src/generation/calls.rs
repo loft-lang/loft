@@ -468,11 +468,11 @@ impl Output<'_> {
             && let [arg] = args.as_slice()
             && let Value::TupleGet(t, i) = arg.unspan()
         {
-            let name = sanitize(self.data.def(self.def_nr).variables().name(*t));
+            let place = self.tuple_member_place(*t, *i);
             if raw_param {
-                write!(w, "std::ptr::addr_of_mut!(var_{name}.{i})")?;
+                write!(w, "unsafe {{ std::ptr::addr_of_mut!({place}) }}")?;
             } else {
-                write!(w, "&mut var_{name}.{i}")?;
+                write!(w, "unsafe {{ &mut *std::ptr::addr_of_mut!({place}) }}")?;
             }
         // OpCreateStack wrapping an addressable expression
         // (e.g. v[i] as & param).  Emit a temporary + &mut so the
