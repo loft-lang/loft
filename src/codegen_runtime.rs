@@ -1247,6 +1247,13 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // out-of-range element write hands this a null PLACE (loft#1374 made an absent read
     // answer `nullref`); there is nothing to write into, so the write is dropped.
     if to.store_nr == u16::MAX {
+        // The write is dropped; a given-up source is still released (`release_copy_source`),
+        // under the same borrowed-store exception the copy below applies.
+        if (tp as u16) & crate::keys::COPY_FREE_SOURCE != 0
+            && !cr_take_fnref_borrowed(data.store_nr)
+        {
+            stores.release_copy_source(&data, &to);
+        }
         return;
     }
     // mirror `state/io.rs::copy_record`'s tag handling and
@@ -1295,15 +1302,8 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if stores.copy_check_enabled() {
         stores.report_copy_mismatches(&data, &to, tp, "OpCopyRecord");
     }
-    if free_source
-        && !borrowed
-        && data.store_nr != to.store_nr
-        && !stores.is_stack_store(data.store_nr)
-        && !stores.allocations[data.store_nr as usize].free
-        && !stores.allocations[data.store_nr as usize].read_only
-        && !stores.allocations[data.store_nr as usize].is_free_protected()
-    {
-        stores.free(&data);
+    if free_source && !borrowed {
+        stores.release_copy_source(&data, &to);
     }
 }
 

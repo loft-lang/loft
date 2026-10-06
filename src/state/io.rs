@@ -1698,6 +1698,9 @@ impl State {
         // process dies on a program the compiler accepted.  The source half above and this
         // one are one rule read from its two ends.
         if to.store_nr == u16::MAX {
+            if free_source {
+                self.database.release_copy_source(&data, &to);
+            }
             return;
         }
         // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:
@@ -1880,14 +1883,8 @@ impl State {
         // Issue #120: free the source store after deep copy when the caller
         // knows the source is a temporary (callee's return store) that would
         // otherwise leak because is_ret_work_ref suppresses its OpFreeRef.
-        if free_source
-            && data.store_nr != to.store_nr
-            && !self.database.is_stack_store(data.store_nr)
-            && !self.database.allocations[data.store_nr as usize].free
-            && !self.database.allocations[data.store_nr as usize].read_only
-            && !self.database.allocations[data.store_nr as usize].is_free_protected()
-        {
-            self.database.free(&data);
+        if free_source {
+            self.database.release_copy_source(&data, &to);
         }
     }
 

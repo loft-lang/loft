@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-WriteOOB` with `@FR-L-Null`'s destination half — a whole record written into a place
+// that names no record (`ps[8] = mk(10)` past the end, a field under such an element, a field
+// of a null optional) writes nothing, and a record the copy was handed to GIVE UP — a call's
+// returned store — is still released.  A source the program still holds (a local, an element)
+// is never released by it.
+//
+// The copy drops a write to a null place on both backends; the release of a given-up source
+// sat after that early return, so each such statement left one store behind.  Every cell
+// asserts its values by hand (the vector keeps its two records, the held local keeps every
+// field) and the run must end with no store left: the leak is the channel.
+//
+//   cells: source {call result, held local, element, a nested record from a call}
+//        × place {past the end, a field under past-the-end, a field of a null optional}
+//        × repeated in a loop (one store per iteration when wrong)
+
+struct In { m: integer, s: text }
+struct P { x: integer, t: text, inner: In }
+struct Box { p: P? }
+
+fn mk(x: integer) -> P { P { x: x, t: "p{x}", inner: In { m: x, s: "i{x}" } } }
+fn mi(x: integer) -> In { In { m: x, s: "j{x}" } }
+
+fn test_a_call_result_written_past_the_end() {
+  ps = [mk(1), mk(2)];
+  ps[8] = mk(10);
+  for k in 0..3 { ps[20 + k] = mk(k); }
+  assert(len(ps) == 2, "len {len(ps)}");
+  assert("{ps[0].x}{ps[0].t}{ps[0].inner.s}" == "1p1i1", "ps[0] {ps[0].x}{ps[0].t}");
+  assert("{ps[1].x}{ps[1].t}{ps[1].inner.s}" == "2p2i2", "ps[1] {ps[1].x}{ps[1].t}");
+}
+
+fn test_a_nested_record_written_under_no_element() {
+  ps = [mk(1)];
+  ps[7].inner = mi(4);
+  b = Box { p: null };
+  b.p.inner = mi(5);
+  assert(len(ps) == 1, "len {len(ps)}");
+  assert("{ps[0].inner.m}{ps[0].inner.s}" == "1i1", "inner {ps[0].inner.s}");
+  assert(!b.p, "the optional stays null");
+}
+
+fn test_a_held_source_is_never_given_up() {
+  ps = [mk(1), mk(2)];
+  r = mk(3);
+  ps[8] = r;
+  ps[9] = ps[0];
+  ps[7].inner = r.inner;
+  assert("{r.x}{r.t}{r.inner.m}{r.inner.s}" == "3p33i3", "r {r.x}{r.t}{r.inner.s}");
+  assert("{ps[0].x}{ps[0].t}{ps[0].inner.s}" == "1p1i1", "ps[0] {ps[0].t}");
+}

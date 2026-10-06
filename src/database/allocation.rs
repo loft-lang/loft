@@ -724,6 +724,25 @@ impl Stores {
         store_nr == 0 && self.stack_store_at_zero
     }
 
+    /// Free the SOURCE a record copy was told to give up (`COPY_FREE_SOURCE`: a callee's
+    /// returned store nothing else will free), whether or not the copy wrote anything.  A
+    /// copy into a null place — an out-of-range element (`@FR-H-WriteOOB`), a null view, or
+    /// a store-else's locked target (`@FR-H-Write-Else`) — writes nothing, and the source is
+    /// still given up: skipping this on that path leaked it.  Declined for a source the copy
+    /// cannot own — the destination's own store, the eval-stack store, a freed, locked or
+    /// free-protected one — which is every case the copy's earlier guard declined.
+    pub fn release_copy_source(&mut self, data: &DbRef, to: &DbRef) {
+        if data.store_nr != to.store_nr
+            && (data.store_nr as usize) < self.allocations.len()
+            && !self.is_stack_store(data.store_nr)
+            && !self.allocations[data.store_nr as usize].free
+            && !self.allocations[data.store_nr as usize].read_only
+            && !self.allocations[data.store_nr as usize].is_free_protected()
+        {
+            self.free(data);
+        }
+    }
+
     /**
     Try to allocate a new store.
     # Panics
