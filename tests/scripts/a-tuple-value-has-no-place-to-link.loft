@@ -13,6 +13,8 @@
 //   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/6 ->
 //   0/6 (the suite's verdict, not a count of matches).
 // @falsified-by: tests/falsified/a-tuple-value-has-no-place-to-link.patch — the same channels.
+//   Re-derived at 653383a5a as the refusal emptied: every spelling then compiles as the silent
+//   copy `@FR-B-Ref-Reshape` forbids.
 // HOLDS: leak and panic are clean on both trees and both backends.
 //
 // CHANNEL: the expected diagnostics, one per refused link.

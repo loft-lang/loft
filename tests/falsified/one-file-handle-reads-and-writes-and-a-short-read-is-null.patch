@@ -1,8 +1,8 @@
-diff --git b/default/02_files.loft a/default/02_files.loft
-index d4279b643..158c7c879 100644
---- b/default/02_files.loft
-+++ a/default/02_files.loft
-@@ -996,8 +996,7 @@ pub fn files(self: const File) -> vector<File> fs#read {
+diff --git a/default/02_files.loft b/default/02_files.loft
+index 91f635715..79a0c9f22 100644
+--- a/default/02_files.loft
++++ b/default/02_files.loft
+@@ -996,8 +996,7 @@
  fn write_text_raw(file: File, v: text) -> boolean fs#update;
  #rust"{{ let __wf_v = @v; stores.write_file(&@file, __wf_v) }}"
  #impure(io)
@@ -12,11 +12,11 @@ index d4279b643..158c7c879 100644
  /// FileResult.Ok on success and FileResult.Other on an OS write failure (disk
  /// full, permission denied, a bad path) — a failed write is OBSERVABLE, not
  /// silently swallowed.  Discarding callers (`f.write(s)` as a statement) are
-diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index 1c6e7f2c5..b4ba7bc8a 100644
---- b/src/codegen_runtime.rs
-+++ a/src/codegen_runtime.rs
-@@ -2065,9 +2065,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index 5778750da..6d3d3f3e9 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -2171,9 +2171,7 @@
                  .set_i32_raw(file.rec, file.pos + 28, f_nr);
              stores
                  .files
@@ -27,29 +27,20 @@ index 1c6e7f2c5..b4ba7bc8a 100644
              f_nr
          }
          Err(e) => {
-diff --git b/src/database/io.rs a/src/database/io.rs
-index ba39eb8ef..7de19becf 100644
---- b/src/database/io.rs
-+++ a/src/database/io.rs
-@@ -10,7 +10,7 @@ use crate::vector;
- #[cfg(not(host_fs))]
- use std::collections::BTreeMap;
+diff --git a/src/database/io.rs b/src/database/io.rs
+index 747a7338f..1fad8e618 100644
+--- a/src/database/io.rs
++++ b/src/database/io.rs
+@@ -8,7 +8,7 @@
+ use crate::store::Store;
+ use crate::vector;
  #[cfg(not(host_fs))]
 -use std::io::{Seek as _, SeekFrom, Write as _};
 +use std::io::Write as _;
  
  enum Format {
      TextFile = 1,
-@@ -324,7 +324,7 @@ impl Stores {
- 
-     /// Return the number of bytes that `read_data` will append for the given type.
-     /// Returns 0 for types whose binary size is variable (text) or unsupported (collections).
--    pub(crate) fn binary_size(&self, tp: u16) -> usize {
-+    fn binary_size(&self, tp: u16) -> usize {
-         match tp {
-             2 | 6 => 4,     // single, character
-             0 | 1 | 3 => 8, // integer (post-2c i64), long, float
-@@ -741,18 +741,8 @@ impl Stores {
+@@ -749,19 +749,8 @@
              };
              let s = self.store_mut(file);
              let mut file_ref = s.get_i32_raw(file.rec, file.pos + 28);
@@ -58,18 +49,19 @@ index ba39eb8ef..7de19becf 100644
 -                // Read-write, so a read through the same `File` after it sees what was
 -                // written (loft#1861: `File::create` opened it write-only, and the read
 -                // answered nothing on both backends).
--                match std::fs::OpenOptions::new()
--                    .read(true)
--                    .write(true)
--                    .create(true)
--                    .truncate(true)
--                    .open(&resolved_name)
--                {
-+                match std::fs::File::create(&resolved_name) {
+-                match crate::file_access::open_with(
+-                    crate::file_access::at(&resolved_name),
+-                    std::fs::OpenOptions::new()
+-                        .read(true)
+-                        .write(true)
+-                        .create(true)
+-                        .truncate(true),
+-                ) {
++                match crate::file_access::create(crate::file_access::at(&resolved_name)) {
                      Ok(f) => {
                          s.set_i32_raw(file.rec, file.pos + 28, f_nr);
                          self.files
-@@ -772,24 +762,11 @@ impl Stores {
+@@ -781,24 +770,11 @@
                      }
                  }
              }
@@ -86,23 +78,24 @@ index ba39eb8ef..7de19becf 100644
 -            };
 -            if f.write_all(v.as_bytes()).is_err() {
 -                return false;
-+            if let Some(Some(f)) = self.files.get_mut(file_ref as usize) {
-+                f.write_all(v.as_bytes()).is_ok()
-+            } else {
-+                false
-             }
+-            }
 -            let s = self.store_mut(file);
 -            s.set_long(file.rec, file.pos + 8, start as i64);
 -            s.set_long(file.rec, file.pos + 16, (start + v.len() as u64) as i64);
 -            true
++            if let Some(Some(f)) = self.files.get_mut(file_ref as usize) {
++                f.write_all(v.as_bytes()).is_ok()
++            } else {
++                false
++            }
          }
      }
  
-diff --git b/src/state/io.rs a/src/state/io.rs
-index 75a494b75..11dee6b36 100644
---- b/src/state/io.rs
-+++ a/src/state/io.rs
-@@ -319,14 +319,8 @@ impl State {
+diff --git a/src/state/io.rs b/src/state/io.rs
+index f02f51fe7..cdfd0e672 100644
+--- a/src/state/io.rs
++++ b/src/state/io.rs
+@@ -323,14 +323,8 @@
          data: Vec<u8>,
          n: usize,
      ) {
@@ -117,7 +110,7 @@ index 75a494b75..11dee6b36 100644
          if is_text {
              let s = unsafe { String::from_utf8_unchecked(data) };
              *self
-@@ -485,9 +479,9 @@ impl State {
+@@ -489,9 +483,9 @@
                              let _ = f.seek(SeekFrom::Start(next_pos as u64));
                          }
                          store.set_i32_raw(file.rec, file.pos + 28, f_nr);
@@ -130,7 +123,7 @@ index 75a494b75..11dee6b36 100644
                          file_ref = f_nr;
                      }
                      Err(e) => {
-@@ -526,7 +520,9 @@ impl State {
+@@ -530,7 +524,9 @@
                  file.pos + 16,
                  next_pos + actual as i64,
              );
