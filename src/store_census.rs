@@ -21,8 +21,6 @@
 //! The counters sit in code the shipped runtime runs, so they are compiled only with the
 //! `op-census` feature; without it the file's first line says nothing was counted.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::io::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -146,12 +144,14 @@ pub fn at_ticks(value: i64) {
         line.push_str(&c.load(Ordering::Relaxed).to_string());
     }
     line.push('\n');
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(!first)
-        .truncate(first)
-        .open(path);
+    let file = crate::file_access::open_with(
+        path,
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(!first)
+            .truncate(first),
+    );
     if let Ok(mut f) = file {
         let _ = f.write_all(line.as_bytes());
     }
