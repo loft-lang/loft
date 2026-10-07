@@ -1354,6 +1354,12 @@ pub struct Output<'a> {
     /// is derived — keeping membership and spelling in ONE lookup is what stops an emitter
     /// from reading a field under a name the struct definition never used.
     pub coroutine_persistent_fields: HashMap<u16, String>,
+    /// loft#1899 — a generator's scalar LINK locals (`c = &x`), each kept as a struct field
+    /// holding the raw pointer: `(local spelling, field spelling)`.  Not in
+    /// `coroutine_persistent_fields`, so every read and write through the link keeps its
+    /// local `var_c` spelling; each state re-reads the pointer from the field and each bind
+    /// stores it back, so a link made before a `yield` still names its place after it.
+    pub coroutine_link_fields: HashMap<u16, (String, String)>,
     /// Coroutine-persistent vars whose allocating initialiser has already been emitted inside
     /// the current `impl LoftCoroutine`.  A second `Set(v, Null)` on the same field is the
     /// @P302 in-place clear, which must NOT re-run `null_named` (that would orphan the store).
@@ -2492,6 +2498,7 @@ impl<'a> Output<'a> {
             yield_collect_refuse: None,
             yield_lazy_wrap: None,
             coroutine_persistent_fields: HashMap::new(),
+            coroutine_link_fields: HashMap::new(),
             coroutine_allocated_vars: HashSet::new(),
             fn_ref_context: false,
             i32_literal_context: false,
@@ -5619,6 +5626,32 @@ impl Output<'_> {
                 None => (String::new(), String::new()),
             },
         }
+    }
+
+    /// A generator's tuple FIELD `self.var_<field>` read whole: each member a link encodes
+    /// decoded, every other member cloned (loft#1899).
+    #[must_use]
+    pub(crate) fn tuple_field_value(&self, var: u16, field: &str) -> String {
+        let vars = self.data.def(self.def_nr).variables();
+        let Type::Tuple(elems) = vars.tp(var).base() else {
+            return format!("self.var_{field}");
+        };
+        let Some(slots) = self.linked_tuple_slots(var) else {
+            return format!("self.var_{field}.clone()");
+        };
+        let parts: Vec<String> = slots
+            .iter()
+            .zip(elems)
+            .enumerate()
+            .map(|(i, (s, e))| match s {
+                Some(slot) => slot.decode_rust(&format!("self.var_{field}.{i}")),
+                None if matches!(e.base(), Type::Text(_) | Type::Tuple(_)) => {
+                    format!("self.var_{field}.{i}.clone()")
+                }
+                None => format!("self.var_{field}.{i}"),
+            })
+            .collect();
+        tuple_spelling(&parts)
     }
 
     /// `@FR-T-Record` — for a by-value tuple local of this function some of whose narrow

@@ -225,6 +225,19 @@ impl Output<'_> {
                                 .expect("eager_tuple_kinds admits only single-slot kinds");
                             write!(w, "__values.push({img}); ")?;
                         }
+                    } else {
+                        // Any other tuple-valued yield — a variable, a call — is bound once
+                        // and read member by member: matched on the literal alone, it pushed
+                        // nothing and the consumer read zeros.
+                        let mut buf: Vec<u8> = Vec::new();
+                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        let code = String::from_utf8_lossy(&buf).into_owned();
+                        write!(w, "let __yt = {code}; ")?;
+                        for (i, &kind) in kinds.iter().enumerate() {
+                            let img = super::coroutine::yield_slot_i64(kind, &format!("__yt.{i}"))
+                                .expect("eager_tuple_kinds admits only single-slot kinds");
+                            write!(w, "__values.push({img}); ")?;
+                        }
                     }
                     write!(w, "}}")?;
                 } else if self.yield_collect {
@@ -400,6 +413,11 @@ impl Output<'_> {
                     // @PLN167 decision 1 — a LINKED narrow field reads as its decoded value.
                     if let Some(slot) = variables.linked_narrow_slot(var) {
                         return write!(w, "{}", slot.decode_rust(&format!("self.var_{field}")));
+                    }
+                    // A tuple field read whole is a value: cloned, since a read must not move
+                    // it out of the struct, and rebuilt plain when a link encodes a member.
+                    if matches!(variables.tp(var).base(), Type::Tuple(_)) {
+                        return write!(w, "{}", self.tuple_field_value(var, field));
                     }
                     return write!(w, "self.var_{field}");
                 } else if self.text_borrowed(var) {
@@ -598,6 +616,8 @@ impl Output<'_> {
                 let idx = node.tupleget_idx();
                 let variables = self.data.def(self.def_nr).variables();
                 let (name, deref) = crate::generation::tuple_base(variables, var);
+                // A generator's tuple local is its struct field (loft#1899).
+                let name = if deref { name } else { self.var_place(var) };
                 if deref {
                     // A `&`-bound tuple LOCAL: the element sits behind a raw pointer.
                     // `T-Ref-El` admits only scalars here, so none of the text/borrow
@@ -642,6 +662,8 @@ impl Output<'_> {
                 let idx = node.tupleput_idx();
                 let variables = self.data.def(self.def_nr).variables();
                 let (name, deref) = crate::generation::tuple_base(variables, var);
+                // A generator's tuple local is its struct field (loft#1899).
+                let name = if deref { name } else { self.var_place(var) };
                 // A text element is a `String` slot, so the value has to arrive owned —
                 // the same rule the tuple LITERAL arm below obeys through this flag.
                 // Without it `t.0 = "X"` emitted `var_t.0 = "X";` and rustc refused the
