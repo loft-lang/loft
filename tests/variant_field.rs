@@ -26,6 +26,7 @@
 //!   - **a synthetic `__nullable<S>`** — its payload access is @PLN25's null model rather
 //!     than a user-visible variant question.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -37,7 +38,7 @@ const CODE: &str = "variant-field-unchecked";
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_980_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -53,7 +54,7 @@ fn diagnostics(tag: &str, src: &str, env: &[(&str, &str)]) -> String {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

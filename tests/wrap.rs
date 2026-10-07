@@ -7,6 +7,7 @@ use loft::compile::byte_code;
 #[cfg(debug_assertions)]
 use loft::compile::show_code;
 use loft::data::Data;
+use loft::file_access as fa;
 use loft::generation::Output;
 #[cfg(debug_assertions)]
 use loft::log_config::LogConfig;
@@ -73,7 +74,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
     println!("wasm  {entry:?}");
 
     // Parse
-    let source = std::fs::read_to_string(entry)?;
+    let source = fa::read_to_string(entry)?;
     let expected = expected_warnings(&source);
     let (exp_errors, exp_ann_warns) = expected_annotations(&source);
     let mut p = Parser::new();
@@ -130,7 +131,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
     // Generate Rust source
     let tmp_rs = std::env::temp_dir().join(format!("loft_wasm_{stem}.rs"));
     {
-        let mut f = std::fs::File::create(&tmp_rs)?;
+        let mut f = fa::create(&tmp_rs)?;
         let mut out = Output::new(&p.data, &state.database);
         out.output_native_reachable(&mut f, start_def, end_def, &entry_defs)?;
     }
@@ -170,7 +171,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
             .arg(&deps_dir);
     }
     let compile_out = cmd.output();
-    let _ = std::fs::remove_file(&tmp_rs);
+    let _ = fa::remove_file(&tmp_rs);
     let compile_out = match compile_out {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -184,11 +185,11 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
         // wasm32-wasip2 target not installed → skip gracefully
         if stderr.contains("target may not be installed") || stderr.contains("can't find crate") {
             println!("  wasm32-wasip2 target or loft wasm rlib not available — skipping {stem}");
-            let _ = std::fs::remove_file(&tmp_wasm);
+            let _ = fa::remove_file(&tmp_wasm);
             return Ok(());
         }
         eprintln!("rustc (wasm) failed for {stem}:\n{stderr}");
-        let _ = std::fs::remove_file(&tmp_wasm);
+        let _ = fa::remove_file(&tmp_wasm);
         return Err(Error::from(std::io::ErrorKind::Other));
     }
 
@@ -198,7 +199,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
         .status()
     {
         Ok(s) => {
-            let _ = std::fs::remove_file(&tmp_wasm);
+            let _ = fa::remove_file(&tmp_wasm);
             if !s.success() {
                 eprintln!("wasmtime failed for {stem} (exit {:?})", s.code());
                 return Err(Error::from(std::io::ErrorKind::Other));
@@ -206,10 +207,10 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             println!("  wasmtime not found — compiled ok, skipping run for {stem}");
-            let _ = std::fs::remove_file(&tmp_wasm);
+            let _ = fa::remove_file(&tmp_wasm);
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&tmp_wasm);
+            let _ = fa::remove_file(&tmp_wasm);
             return Err(e);
         }
     }
@@ -276,7 +277,7 @@ fn comparisons() -> std::io::Result<()> {
          and an empty one passes while proving nothing"
     );
     for entry in files {
-        if std::fs::read_to_string(&entry)?
+        if fa::read_to_string(&entry)?
             .lines()
             .any(|l| l.starts_with("// @SCRIPT"))
         {
@@ -342,7 +343,7 @@ fn reference() -> std::io::Result<()> {
          and an empty one passes while proving nothing"
     );
     for entry in files {
-        let src = std::fs::read_to_string(&entry)?;
+        let src = fa::read_to_string(&entry)?;
         if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
@@ -523,7 +524,7 @@ fn loft_suite_chunks_cover_the_corpus() {
         LOFT_SUITE_CHUNKS,
         "one generated test per chunk"
     );
-    let src = std::fs::read_to_string(file!()).expect("read tests/wrap.rs");
+    let src = fa::read_to_string(file!()).expect("read tests/wrap.rs");
     for n in names {
         assert!(src.contains(&format!("{n} = ")), "{n} is generated");
     }
@@ -553,7 +554,7 @@ fn corpus_files() -> Vec<PathBuf> {
     .flatten()
     .filter_map(|f| f.ok().map(|e| e.path()))
     .filter(|p| {
-        p.is_file()
+        fa::is_file(p)
             && p.extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
     })
@@ -657,7 +658,7 @@ fn corpus_fns(source: &str) -> Vec<CorpusFn> {
 fn a_refusal_file_carries_no_runtime_assertions() {
     let mut bad: Vec<String> = Vec::new();
     for entry in corpus_files() {
-        let Ok(src) = std::fs::read_to_string(&entry) else {
+        let Ok(src) = fa::read_to_string(&entry) else {
             continue;
         };
         if !common::declares_expect_error(&src) {
@@ -717,7 +718,7 @@ fn a_refusal_file_carries_no_runtime_assertions() {
 fn every_assertion_is_reachable_from_the_entry_point() {
     let mut bad: Vec<String> = Vec::new();
     for entry in corpus_files() {
-        let Ok(src) = std::fs::read_to_string(&entry) else {
+        let Ok(src) = fa::read_to_string(&entry) else {
             continue;
         };
         let fns = corpus_fns(&src);
@@ -840,7 +841,7 @@ pub fn collect_library_tests() -> std::io::Result<Vec<PathBuf>> {
             continue;
         }
         let tests_dir = pkg.path().join("tests");
-        if !tests_dir.is_dir() {
+        if !fa::is_dir(&tests_dir) {
             continue;
         }
         for f in std::fs::read_dir(&tests_dir)?.filter_map(|e| e.ok()) {
@@ -884,17 +885,17 @@ pub fn run_lib_test_in_temp_cwd(
             std::process::id(),
             CTR.fetch_add(1, Ordering::Relaxed)
         ));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir(&tmp)?;
+        let _ = fa::remove_dir_all(&tmp);
+        fa::create_dir(&tmp)?;
         for entry in std::fs::read_dir(pkg_dir)?.filter_map(|e| e.ok()) {
             let target = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
-            let _ = std::os::unix::fs::symlink(&target, tmp.join(entry.file_name()));
+            let _ = fa::symlink(&target, tmp.join(entry.file_name()));
         }
         let out = std::process::Command::new(loft_bin)
             .current_dir(&tmp)
             .args(&args)
             .output();
-        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = fa::remove_dir_all(&tmp);
         out
     }
     #[cfg(not(unix))]
@@ -1749,7 +1750,7 @@ fn run_test_inner(
     }
     let source = match override_src {
         Some(ref t) => t.clone(),
-        None => std::fs::read_to_string(&entry)?,
+        None => fa::read_to_string(&entry)?,
     };
     let expected = expected_warnings(&source);
     let (exp_errors, exp_ann_warns) = expected_annotations(&source);
@@ -2178,13 +2179,13 @@ fn p369_silent_runtime_fault_fails_harness() {
 
     // Undefended fault, NO @EXPECT_FAIL → must FAIL the harness (run_test Err).
     let bad = dir.join("loft_p369_bad.loft");
-    std::fs::write(
+    fa::write(
         &bad,
         "fn test_p369_silent() { assert(false, \"deliberate @P369 fault\"); }\n",
     )
     .unwrap();
     let r = run_test(bad.clone(), false, false);
-    let _ = std::fs::remove_file(&bad);
+    let _ = fa::remove_file(&bad);
     assert!(
         r.is_err(),
         "@P369: a failed assert with no @EXPECT_FAIL must FAIL the wrap harness"
@@ -2192,13 +2193,13 @@ fn p369_silent_runtime_fault_fails_harness() {
 
     // Control: the SAME fault WITH @EXPECT_FAIL is an expected pass.
     let ok = dir.join("loft_p369_expected.loft");
-    std::fs::write(
+    fa::write(
         &ok,
         "// @EXPECT_FAIL\nfn test_p369_expected() { assert(false, \"deliberate\"); }\n",
     )
     .unwrap();
     let r2 = run_test(ok.clone(), false, false);
-    let _ = std::fs::remove_file(&ok);
+    let _ = fa::remove_file(&ok);
     assert!(
         r2.is_ok(),
         "@P369: the same fault WITH @EXPECT_FAIL must be scored as an expected pass"
@@ -2222,7 +2223,7 @@ fn test_result_states_its_backend_scope() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let pkg_dir = Path::new("lib/audience_crystal");
-    if !pkg_dir.join("tests").is_dir() {
+    if !fa::is_dir(pkg_dir.join("tests")) {
         return Ok(()); // package layout changed; the suite's own runs still cover it
     }
 
@@ -2286,8 +2287,8 @@ fn loft_test_runs_admission_and_states_its_scope() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let tmp = std::env::temp_dir().join(format!("loft_admit_test_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(tmp.join("tests"))?;
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(tmp.join("tests"))?;
 
     let policy = |selector: &str| {
         format!(
@@ -2330,8 +2331,8 @@ fn loft_test_runs_admission_and_states_its_scope() -> std::io::Result<()> {
     };
 
     // 1. Clean sandboxed package — admission runs, passes, and is reported.
-    std::fs::write(tmp.join("loft.toml"), policy("fn:total"))?;
-    std::fs::write(tmp.join("tests/t_logic.loft"), source("t"))?;
+    fa::write(tmp.join("loft.toml"), policy("fn:total"))?;
+    fa::write(tmp.join("tests/t_logic.loft"), source("t"))?;
     let clean = result_line(&run()?);
     assert!(
         clean.starts_with("test result: ok."),
@@ -2343,7 +2344,7 @@ fn loft_test_runs_admission_and_states_its_scope() -> std::io::Result<()> {
     );
 
     // 2. The consumer's probe: an injected capability violation must FAIL the suite.
-    std::fs::write(
+    fa::write(
         tmp.join("tests/t_logic.loft"),
         source("t + mtime(\"loft.toml\")"),
     )?;
@@ -2360,14 +2361,14 @@ fn loft_test_runs_admission_and_states_its_scope() -> std::io::Result<()> {
 
     // 3. A policy that designates NOTHING must say so; passing quietly is
     //    indistinguishable from real coverage, which is the whole complaint.
-    std::fs::write(tmp.join("loft.toml"), policy("fn:no_such_function"))?;
-    std::fs::write(tmp.join("tests/t_logic.loft"), source("t"))?;
+    fa::write(tmp.join("loft.toml"), policy("fn:no_such_function"))?;
+    fa::write(tmp.join("tests/t_logic.loft"), source("t"))?;
     let empty = result_line(&run()?);
     assert!(
         empty.contains("designated nothing here"),
         "a policy matching no code must be reported, not silently passed:\n{empty}"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     Ok(())
 }

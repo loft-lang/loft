@@ -20,6 +20,7 @@
 //! [`a_false_assertion_fails_the_script`] is the control for the harness itself: without
 //! it, a green run proves only that the script executed.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -173,9 +174,9 @@ fn main() {\n\
 \x20 assert(ybound(3).q == 999, \"deliberately wrong: it is 7\");\n\
 \x20 println(\"890 consumed-lift double free OK\");\n}\n";
     let path = std::env::temp_dir().join(format!("loft_890_control_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(I890_OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

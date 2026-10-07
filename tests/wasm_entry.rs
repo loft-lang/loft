@@ -6,6 +6,8 @@
 //! The Rust-side unit tests verify the virtual FS API directly.
 //! The Node.js smoke test is provided as an ignored test with a shell command.
 
+use loft::file_access as fa;
+
 extern crate loft;
 
 /// W1.9 (native): virt_fs populate, get, and clear round-trip.
@@ -46,7 +48,7 @@ fn virt_fs_roundtrip() {
 #[test]
 fn wasm_compile_and_run_smoke() {
     // Skip if the WASM package is not built.
-    if !std::path::Path::new("tests/wasm/pkg/loft.js").exists() {
+    if !fa::exists(std::path::Path::new("tests/wasm/pkg/loft.js")) {
         println!("SKIP wasm_compile_and_run_smoke — WASM package not built");
         println!(
             "     Run: wasm-pack build --target nodejs --out-dir tests/wasm/pkg -- --no-default-features --features wasm"
@@ -164,7 +166,7 @@ fn debug_command_without_a_session_says_so() {
 /// [`wasm_compile_and_run_smoke`] does: not having built it is not a wrong answer.
 #[test]
 fn doc_panel_session_runs_on_wasm() {
-    if !std::path::Path::new("tests/wasm/pkg/loft.js").exists() {
+    if !fa::exists(std::path::Path::new("tests/wasm/pkg/loft.js")) {
         println!("SKIP doc_panel_session_runs_on_wasm — WASM package not built");
         println!(
             "     Run: wasm-pack build --target nodejs --out-dir tests/wasm/pkg -- --no-default-features --features wasm"

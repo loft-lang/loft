@@ -22,6 +22,7 @@
 //! `loft_*_trace.tmp`, which is program-relative by default — two concurrent runs of one
 //! script (this harness beside the corpus, value beside poison) would interleave one file.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -53,7 +54,7 @@ fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)], tag: &str) -> (bool,
         backend.trim_start_matches('-'),
         tag
     ));
-    std::fs::create_dir_all(&cwd).expect("create per-run cwd");
+    fa::create_dir_all(&cwd).expect("create per-run cwd");
     let mut cmd = Command::new(loft_bin());
     cmd.arg(backend)
         .arg(file)

@@ -7,6 +7,7 @@
 //! condition that cannot name its use, a concept whose door opens onto nothing, and a code
 //! with no index entry to grep to.
 
+use loft::file_access as fa;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -21,9 +22,9 @@ fn probe(src: &str) -> std::path::PathBuf {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join("loft_pln131");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{}_{n}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -41,7 +42,7 @@ fn run(src: &str, explain: bool) -> String {
         .env("LOFT_TIMEOUT", "120")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -173,7 +174,7 @@ fn the_concept_door_resolves_to_a_real_catalogue_entry() {
         out.contains("[move · @F106]"),
         "each fix must name its concept and the entry it opens onto; output:\n{out}"
     );
-    let snapshot = std::fs::read_to_string("index/features.json").expect("features snapshot");
+    let snapshot = fa::read_to_string("index/features.json").expect("features snapshot");
     let found = snapshot.contains("\"number\": 106") || snapshot.contains("\"number\":106");
     assert!(
         found,
@@ -221,16 +222,16 @@ fn a_fix_is_verified_by_running_it() {
         out.contains("double the brace") && out.contains("[verified]"),
         "a mechanical fix that clears its diagnostic must report as verified; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// Reporting must not write. `loft fix` without `--apply` is a read-only question.
 #[test]
 fn reporting_a_fix_does_not_touch_the_file() {
     let path = probe(BRACE);
-    let before = std::fs::read_to_string(&path).expect("probe");
+    let before = fa::read_to_string(&path).expect("probe");
     let out = fix_cmd(&path, false);
-    let after = std::fs::read_to_string(&path).expect("probe");
+    let after = fa::read_to_string(&path).expect("probe");
     assert_eq!(
         before, after,
         "`loft fix` without `--apply` must change nothing; output:\n{out}"
@@ -240,7 +241,7 @@ fn reporting_a_fix_does_not_touch_the_file() {
         "a report that claims an edit it did not make is the one output a reader cannot \
          check; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// Step 4 — `--apply` writes the fix, and the result actually compiles and runs.
@@ -256,7 +257,7 @@ fn applying_a_fix_produces_a_program_that_runs() {
         out.contains("[applied]"),
         "the mechanical fix must be written; output:\n{out}"
     );
-    let src = std::fs::read_to_string(&path).expect("probe");
+    let src = fa::read_to_string(&path).expect("probe");
     assert!(
         src.contains("a }} b"),
         "the brace must be doubled in place; got:\n{src}"
@@ -278,7 +279,7 @@ fn applying_a_fix_produces_a_program_that_runs() {
         "the fixed program must print the literal brace the author wanted: {}",
         String::from_utf8_lossy(&run.stdout)
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// Applying twice is a no-op — the second run has nothing left to fix.
@@ -289,11 +290,11 @@ fn applying_a_fix_produces_a_program_that_runs() {
 fn applying_twice_changes_nothing_the_second_time() {
     let path = probe(BRACE);
     fix_cmd(&path, true);
-    let once = std::fs::read_to_string(&path).expect("probe");
+    let once = fa::read_to_string(&path).expect("probe");
     fix_cmd(&path, true);
-    let twice = std::fs::read_to_string(&path).expect("probe");
+    let twice = fa::read_to_string(&path).expect("probe");
     assert_eq!(once, twice, "a second `--apply` must find nothing to do");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A rewrite that would introduce a NEW error is refused, not written.
@@ -305,7 +306,7 @@ fn applying_twice_changes_nothing_the_second_time() {
 #[test]
 fn a_fix_that_would_break_the_program_is_refused() {
     let path = probe("fn main() { x: integer = \"5\" as integer; println(\"{x}\"); }\n");
-    let before = std::fs::read_to_string(&path).expect("probe");
+    let before = fa::read_to_string(&path).expect("probe");
     let out = fix_cmd(&path, true);
     assert!(
         out.contains("REJECTED"),
@@ -313,10 +314,10 @@ fn a_fix_that_would_break_the_program_is_refused() {
     );
     assert_eq!(
         before,
-        std::fs::read_to_string(&path).expect("probe"),
+        fa::read_to_string(&path).expect("probe"),
         "a refused fix must not reach the file; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// Nothing to fix, nothing to say — loft is BORING when there is no work.
@@ -328,7 +329,7 @@ fn a_clean_file_reports_nothing() {
         out.trim().is_empty(),
         "a file with no fixes must print nothing; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A fix that does not hold in every shape must not lead — soundness outranks teaching.
@@ -371,7 +372,7 @@ fn a_fix_that_does_not_always_hold_ranks_below_ones_that_do() {
 #[test]
 fn a_conditional_fix_is_verified_but_left_to_the_author() {
     let path = probe("fn main() { x = \"5\" as integer; println(\"{x}\"); }\n");
-    let before = std::fs::read_to_string(&path).expect("probe");
+    let before = fa::read_to_string(&path).expect("probe");
     let out = fix_cmd(&path, true);
     assert!(
         out.contains("make the cast checked") && out.contains("yours to accept"),
@@ -380,10 +381,10 @@ fn a_conditional_fix_is_verified_but_left_to_the_author() {
     );
     assert_eq!(
         before,
-        std::fs::read_to_string(&path).expect("probe"),
+        fa::read_to_string(&path).expect("probe"),
         "`--apply` must not write a conditional fix, however well it verifies; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// Giving a diagnostic a code must not turn it into a build break.
@@ -427,7 +428,7 @@ fn a_coded_advice_does_not_fail_the_test_runner() {
             "a coded ADVICE must not fail `loft test` (deny={deny}); output:\n{all}"
         );
     }
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 
     // The control: a real warning still gates, so the classifier cannot have been "fixed"
     // by calling everything advice.
@@ -447,7 +448,7 @@ fn a_coded_advice_does_not_fail_the_test_runner() {
         all.contains("--deny-warnings:"),
         "a real warning must still gate under --deny-warnings; output:\n{all}"
     );
-    let _ = std::fs::remove_file(&warn);
+    let _ = fa::remove_file(&warn);
 }
 
 /// The steer names its successor in the message, so its fix writes itself.
@@ -497,11 +498,11 @@ fn fix_all_matches_what_the_cli_would_write() {
     let path = probe(src);
     fix_cmd(&path, true);
     assert_eq!(
-        std::fs::read_to_string(&path).expect("probe"),
+        fa::read_to_string(&path).expect("probe"),
         rewritten,
         "the editor's fix-all and `loft fix --apply` must not drift"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A conditional fix is never part of fix-all, however applicable it looks.
@@ -560,7 +561,7 @@ fn a_masked_error_does_not_count_against_the_fix() {
             "[{name}] a fix must not be blamed for an error it merely UNCOVERED; \
              output:\n{out}"
         );
-        let _ = std::fs::remove_file(&path);
+        let _ = fa::remove_file(&path);
     }
 }
 
@@ -573,7 +574,7 @@ fn a_masked_error_does_not_count_against_the_fix() {
 #[test]
 fn a_genuinely_broken_rewrite_is_still_refused() {
     let path = probe("fn main() { x: integer = \"5\" as integer; println(\"{x}\"); }\n");
-    let before = std::fs::read_to_string(&path).expect("probe");
+    let before = fa::read_to_string(&path).expect("probe");
     let out = fix_cmd(&path, true);
     assert!(
         out.contains("REJECTED"),
@@ -581,10 +582,10 @@ fn a_genuinely_broken_rewrite_is_still_refused() {
     );
     assert_eq!(
         before,
-        std::fs::read_to_string(&path).expect("probe"),
+        fa::read_to_string(&path).expect("probe"),
         "and must not reach the file; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── did-you-mean: the typo family becomes an applicable fix ──────────────────
@@ -633,7 +634,7 @@ fn a_did_you_mean_is_applied_and_the_program_runs() {
             "[{what}] the renamed program must compile and print {expect}: {stdout}{}",
             String::from_utf8_lossy(&run.stderr)
         );
-        let _ = std::fs::remove_file(&path);
+        let _ = fa::remove_file(&path);
     }
 }
 
@@ -649,7 +650,7 @@ fn a_did_you_mean_that_does_not_fit_is_refused() {
         "fn helper(a: integer, b: integer) -> integer { a + b }\n\
          fn main() { println(\"{helpr(1)}\"); }\n",
     );
-    let before = std::fs::read_to_string(&path).expect("probe");
+    let before = fa::read_to_string(&path).expect("probe");
     let out = fix_cmd(&path, true);
     assert!(
         out.contains("REJECTED"),
@@ -657,8 +658,8 @@ fn a_did_you_mean_that_does_not_fit_is_refused() {
     );
     assert_eq!(
         before,
-        std::fs::read_to_string(&path).expect("probe"),
+        fa::read_to_string(&path).expect("probe"),
         "and must not reach the file; output:\n{out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }

@@ -14,6 +14,7 @@
 
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -73,12 +74,12 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
     }
     let root = repo_root();
     let loft = root.join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
     let e2e = root.join("tools/wasm_debug_e2e.mjs");
-    if !e2e.exists() {
+    if !fa::exists(&e2e) {
         eprintln!("SKIP: tools/wasm_debug_e2e.mjs missing");
         return;
     }
@@ -87,7 +88,7 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
 
     // 1. Build the browser CLIENT: `--html --debug` with a breakpointable fn.
     let client_src = tmp.join("p98_relay_client.loft");
-    std::fs::write(
+    fa::write(
         &client_src,
         "fn compute(n: integer) -> integer {\n  m = n + 2;\n  m\n}\nfn main() { compute(40); }\n",
     )
@@ -104,7 +105,7 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
 
     // 2. Spawn the SERVER: an engine_host kernel with the debug relay on.
     let server_src = tmp.join("p98_relay_server.loft");
-    std::fs::write(
+    fa::write(
         &server_src,
         format!(
             "use engine_host;\nstruct W {{ ticks: integer not null }}\nfn main() {{\n  \
@@ -162,6 +163,6 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
             "agent did not receive {needle:?} over the relay.\n{all}"
         );
     }
-    let _ = std::fs::remove_file(&client_src);
-    let _ = std::fs::remove_file(&server_src);
+    let _ = fa::remove_file(&client_src);
+    let _ = fa::remove_file(&server_src);
 }

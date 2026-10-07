@@ -20,6 +20,7 @@
 //!   same two (a held file, `PATH`), on both backends; without the switch it passes 8 of 8, as
 //!   Linux did.  The current guard fails 5 of 9 under the switch.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn run_under_the_emulated_host(script: &str) {
@@ -94,22 +95,22 @@ under_the_emulated_host! {
 fn a_name_that_is_not_text_is_listed_and_never_reached() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let dir = std::env::temp_dir().join(format!("loft_not_text_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch dir");
     let one = dir.join(loft::platform::name_that_is_not_text("a", ".txt"));
-    if let Err(e) = std::fs::write(&one, "one") {
+    if let Err(e) = fa::write(&one, "one") {
         // macOS (APFS) holds only valid UTF-8 names: there the rule has nothing to refuse.
         eprintln!("this file system refuses a name that is not text ({e}); nothing to check");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&dir);
         return;
     }
     let two = dir.join(loft::platform::another_name_that_is_not_text("a", ".txt"));
-    std::fs::write(&two, "two").expect("second name");
-    std::fs::write(dir.join("c\u{FFFD}.txt"), "exact").expect("exact name");
-    std::fs::write(dir.join("b.txt"), "plain").expect("plain name");
+    fa::write(&two, "two").expect("second name");
+    fa::write(dir.join("c\u{FFFD}.txt"), "exact").expect("exact name");
+    fa::write(dir.join("b.txt"), "plain").expect("plain name");
     let d = dir.to_string_lossy().replace('\\', "/");
     let program = dir.with_extension("loft");
-    std::fs::write(
+    fa::write(
         &program,
         format!(
             r#"fn main() {{
@@ -154,11 +155,11 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
                 "one line names the directory ({backend} host={host:?}):\n{stderr}"
             );
             // Nothing was reached: both files keep their content, and no third `a?.txt`.
-            assert_eq!(std::fs::read_to_string(&one).unwrap(), "one");
-            assert_eq!(std::fs::read_to_string(&two).unwrap(), "two");
+            assert_eq!(fa::read_to_string(&one).unwrap(), "one");
+            assert_eq!(fa::read_to_string(&two).unwrap(), "two");
             assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 4);
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
-    let _ = std::fs::remove_file(&program);
+    let _ = fa::remove_dir_all(&dir);
+    let _ = fa::remove_file(&program);
 }

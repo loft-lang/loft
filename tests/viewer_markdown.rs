@@ -22,6 +22,7 @@
 //!     `<blockquote>`; blank `> ` line separates blockquotes
 //!   - UTF-8 em-dash `—` (3 bytes) NOT widened to `———` (P272)
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -206,7 +207,7 @@ fn markdown_renderer_pins_high_impact_features() {
     }
     // Skip when the binary isn't built (e.g. fresh clone).  The
     // dev workflow `cargo test --release` builds the bin first.
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: {} not built", loft_bin().display());
         return;
     }
