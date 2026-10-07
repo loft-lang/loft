@@ -6,8 +6,6 @@
 //! It is possible to link to the current position in the lexer (link) and return to it (revert)
 //! when the parser has to try a certain path and might dismiss this later.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::diagnostics::{Diagnostics, Fix, FixKind, Level, diagnostic_format};
 use crate::fxhash::FxHashSet as HashSet;
 use std::cell::RefCell;
@@ -526,18 +524,15 @@ impl Default for Lexer {
 /// whose name is within the shared edit-distance cap.  Used to turn a mistyped
 /// path into a suggestion rather than a dead end.
 fn suggest_sibling_file(path: &str) -> Option<String> {
-    let p = std::path::Path::new(path);
-    let want = p.file_name()?.to_str()?;
-    let dir = if p.parent()?.as_os_str().is_empty() {
-        std::path::Path::new(".")
-    } else {
-        p.parent()?
-    };
-    let names: Vec<String> = std::fs::read_dir(dir)
+    let p = crate::file_access::PathText::host(path);
+    let want = p.file_name()?;
+    // An empty parent renders as `.`, the current directory.
+    let dir = p.parent()?;
+    let names: Vec<String> = crate::file_access::read_dir(&dir)
         .ok()?
-        .filter_map(std::result::Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "loft"))
-        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .iter()
+        .filter(|e| !e.last_is_unspellable() && e.extension() == Some("loft"))
+        .filter_map(|e| e.file_name().map(String::from))
         .collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     crate::diagnostics::suggest_similar_capped(want, &refs).map(String::from)
@@ -2182,7 +2177,7 @@ impl Lexer {
             self.restart(filename);
             return;
         }
-        let Ok(bytes) = std::fs::read(filename) else {
+        let Ok(bytes) = crate::file_access::read(filename) else {
             // Mistyping the path is one of the commonest FIRST things anyone does
             // (`loft examples/helo.loft`), so answer it the way a mistyped
             // function or type is answered: name the file and offer the nearest
@@ -2892,20 +2887,20 @@ mod test {
     fn one_parse_reads_a_file_once_and_the_next_parse_reads_it_again() {
         let path = std::env::temp_dir().join(format!("loft_1648_{}.loft", std::process::id()));
         let path_s = path.to_string_lossy().to_string();
-        std::fs::write(&path, "first_pass_text").unwrap();
+        crate::file_access::write(&path, "first_pass_text").unwrap();
         let mut lexer = Lexer::default();
         lexer.begin_parse();
         lexer.switch(&path_s);
         test_id(&lexer, "first_pass_text");
         // Rewritten between the two passes, as a concurrent extraction would.
-        std::fs::write(&path, "second_pass_text").unwrap();
+        crate::file_access::write(&path, "second_pass_text").unwrap();
         lexer.switch(&path_s);
         test_id(&lexer, "first_pass_text");
         // A new parse sees the disk as it is now.
         lexer.begin_parse();
         lexer.switch(&path_s);
         test_id(&lexer, "second_pass_text");
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
     }
 
     fn validate(s: &'static str, data: &[LexItem]) {

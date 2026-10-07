@@ -26,8 +26,6 @@
 //! Not to be confused with [`crate::resolution`], which is the LSP's name-resolution
 //! index. This module resolves *versions*, not identifiers.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// The declaration in force for a program's registry dependencies.
@@ -111,7 +109,7 @@ impl ResolutionScope {
 pub fn resolution_scope(script_path: &str) -> ResolutionScope {
     if !script_path.is_empty() {
         let sidecar = PathBuf::from(format!("{script_path}.lock"));
-        if sidecar.exists() {
+        if crate::file_access::exists(&sidecar) {
             return ResolutionScope::PinnedScript(sidecar);
         }
     }
@@ -136,7 +134,7 @@ pub fn project_root(script_path: &str) -> Option<PathBuf> {
     let p = Path::new(script_path);
     let start_dir = if script_path.is_empty() {
         std::env::current_dir().ok()?
-    } else if p.is_dir() {
+    } else if crate::file_access::is_dir(p) {
         p.to_path_buf()
     } else {
         let parent = p.parent()?;
@@ -160,7 +158,7 @@ pub fn project_root_from(start: &Path) -> Option<PathBuf> {
     let abs = crate::file_access::plain_canonical(start);
     let mut cur = abs.as_path();
     loop {
-        if cur.join("loft.toml").exists() {
+        if crate::file_access::exists(cur.join("loft.toml")) {
             return Some(cur.to_path_buf());
         }
         let parent = cur.parent()?;
@@ -177,14 +175,14 @@ mod tests {
 
     fn tmp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("loft_scope_{tag}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).expect("mkdir");
+        let _ = crate::file_access::remove_dir_all(&d);
+        crate::file_access::create_dir_all(&d).expect("mkdir");
         d
     }
 
     fn write(p: &Path, body: &str) {
-        std::fs::create_dir_all(p.parent().expect("parent")).expect("mkdir");
-        std::fs::write(p, body).expect("write");
+        crate::file_access::create_dir_all(p.parent().expect("parent")).expect("mkdir");
+        crate::file_access::write(p, body).expect("write");
     }
 
     /// The scope table, asserted row by row: a script inside a package, a script with a
@@ -211,7 +209,7 @@ mod tests {
             resolution_scope(&root.join("pinned/s.loft").to_string_lossy()),
             ResolutionScope::PinnedScript(root.join("pinned/s.loft.lock"))
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// A sidecar beside the script wins over an enclosing package: it is the declaration
@@ -228,7 +226,7 @@ mod tests {
             resolution_scope(&root.join("src/s.loft").to_string_lossy()),
             ResolutionScope::PinnedScript(root.join("src/s.loft.lock"))
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// The cwd is not an input. The same script answers the same scope from anywhere —
@@ -249,7 +247,7 @@ mod tests {
             resolution_scope(&script.to_string_lossy()).governing_lock(),
             None
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// A scope answers what its own lockfile pins — the sidecar for a pinned script, the
@@ -288,7 +286,7 @@ mod tests {
             None,
             "nothing is declared, so nothing is pinned — the newest release, every run"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// What each scope WRITES, which is the other half of the invariant: a package

@@ -26,8 +26,6 @@
 //! DISTINCT name is allocated once per process and stays reachable, however many blocks
 //! carry it.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, IntegerSpec, LinkedFieldGroup,
     LinkedFieldKind, Purity, Type, Value,
@@ -525,7 +523,7 @@ fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
 /// file; integrity-checked loading is arc E's drift-detection job (Q4).
 #[cfg(feature = "mmap")]
 pub fn open_data(path: &str) -> std::io::Result<Data> {
-    if !std::path::Path::new(path).exists() {
+    if !crate::file_access::exists(path) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("IR store not found: {path}"),
@@ -1428,10 +1426,9 @@ mod tests {
     fn decode_corpus_chunk(chunk: usize) -> Vec<std::path::PathBuf> {
         let mut files: Vec<std::path::PathBuf> = Vec::new();
         for dir in ["tests/scripts", "tests/oracle"] {
-            for e in std::fs::read_dir(dir).expect("corpus dir").flatten() {
-                let path = e.path();
-                if path.extension().is_some_and(|x| x == "loft") {
-                    files.push(path);
+            for path in crate::file_access::read_dir(dir).expect("corpus dir") {
+                if path.extension() == Some("loft") {
+                    files.push(path.os_spelling());
                 }
             }
         }
@@ -1454,7 +1451,7 @@ mod tests {
             if !name.contains(&filter) {
                 continue;
             }
-            let src = std::fs::read_to_string(path).unwrap_or_default();
+            let src = crate::file_access::read_to_string(path).unwrap_or_default();
             let mut p = crate::parser::Parser::new();
             p.parse_dir("default", true, false).expect("parse default/");
             for line in src.lines().filter(|l| l.contains("@ARGS:")) {
@@ -1505,13 +1502,13 @@ mod tests {
                                 let mut cb = Vec::new();
                                 let _ = cold.dump_code(&mut ca, d, &p.data, false);
                                 let _ = warm.dump_code(&mut cb, d, &loaded, false);
-                                let _ = std::fs::write(format!("{dir}/cold_bc.txt"), ca);
-                                let _ = std::fs::write(format!("{dir}/warm_bc.txt"), cb);
-                                let _ = std::fs::write(
+                                let _ = crate::file_access::write(format!("{dir}/cold_bc.txt"), ca);
+                                let _ = crate::file_access::write(format!("{dir}/warm_bc.txt"), cb);
+                                let _ = crate::file_access::write(
                                     format!("{dir}/cold.txt"),
                                     format!("{:#?}\n{:#?}", a.variables, a.code),
                                 );
-                                let _ = std::fs::write(
+                                let _ = crate::file_access::write(
                                     format!("{dir}/warm.txt"),
                                     format!("{:#?}\n{:#?}", b.variables, b.code),
                                 );
@@ -1598,7 +1595,7 @@ mod tests {
 
         let path = std::env::temp_dir().join(format!("loft_ir_mmap_{}.store", std::process::id()));
         let path_str = path.to_str().expect("utf-8 temp path");
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
 
         // ── write: materialize the IR straight into a file-backed store ──
         let root = {
@@ -1628,7 +1625,7 @@ mod tests {
         let loaded = read_data(&s2, root2);
 
         let result = compare_data(&fresh, &loaded);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         if let Err(diff) = result {
             panic!("mmap file round-trip diverged from fresh parse: {diff:?}");
         }
@@ -1655,7 +1652,7 @@ mod tests {
         fresh.save(path_str).expect("Data::save");
         let loaded = Data::open(path_str).expect("Data::open");
         let result = compare_data(&fresh, &loaded);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         if let Err(diff) = result {
             panic!("Data::save/open round-trip diverged: {diff:?}");
         }
@@ -1681,9 +1678,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn capped() -> integer fs#read;\n#native\n";
         let lpath = std::env::temp_dir().join(format!("loft_cap_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         assert_eq!(p.data.def(p.data.def_nr("n_capped")).cap(), "fs#read");
 
         let fresh = p.data;
@@ -1691,7 +1688,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         assert_eq!(
             loaded.def(loaded.def_nr("n_capped")).cap(),
             "fs#read",
@@ -1714,9 +1711,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn optret() -> integer? { null }\n";
         let lpath = std::env::temp_dir().join(format!("loft_opt_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
 
         let nr = p.data.def_nr("n_optret");
         assert!(
@@ -1729,7 +1726,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
 
         let (base, is_opt) = loaded
             .def(loaded.def_nr("n_optret"))
@@ -1759,9 +1756,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "struct Inv { items: integer }\n";
         let lpath = std::env::temp_dir().join(format!("loft_ml_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
 
         // Stamp the F8b carrier directly (the parse→links finalize is the next wiring
         // step); this proves the CODEC round-trips a non-empty link list.
@@ -1774,7 +1771,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
 
         let reloaded_inv = loaded.def_nr("Inv");
         assert_eq!(
@@ -1798,9 +1795,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn tolerant(c: character) -> boolean { c == 'a' }\n#null_safe\n";
         let lpath = std::env::temp_dir().join(format!("loft_ns_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         assert!(
             p.data.def(p.data.def_nr("n_tolerant")).null_safe(),
             "parsed `#null_safe` must set the flag"
@@ -1811,7 +1808,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         assert!(
             loaded.def(loaded.def_nr("n_tolerant")).null_safe(),
             "null_safe must survive the store round-trip"
@@ -1831,9 +1828,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "fn old_add(a: integer, b: integer) -> integer { a + b }\n#superseded \"new_add\"\nfn new_add(a: integer, b: integer) -> integer { a + b }\n";
         let lpath = std::env::temp_dir().join(format!("loft_sup_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         assert_eq!(
             p.data.def(p.data.def_nr("n_old_add")).superseded(),
             "new_add",
@@ -1845,7 +1842,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         assert_eq!(
             loaded.def(loaded.def_nr("n_old_add")).superseded(),
             "new_add",
@@ -1871,9 +1868,9 @@ mod tests {
         p.parse_dir("default", true, false).expect("parse stdlib");
         let src = "pub fn c_len(s: text) -> integer;\n#c \"strlen\" \"size_t(const char*)\"\n";
         let lpath = std::env::temp_dir().join(format!("loft_c_rt_{}.loft", std::process::id()));
-        std::fs::write(&lpath, src).unwrap();
+        crate::file_access::write(&lpath, src).unwrap();
         p.parse(lpath.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&lpath);
+        let _ = crate::file_access::remove_file(&lpath);
         let fresh = p.data;
         let d = fresh.def(fresh.def_nr("n_c_len"));
         assert_eq!(d.c_symbol, "strlen", "parsed `#c` must store the symbol");
@@ -1883,7 +1880,7 @@ mod tests {
         let spath_str = spath.to_str().unwrap();
         fresh.save(spath_str).expect("Data::save");
         let loaded = Data::open(spath_str).expect("Data::open");
-        let _ = std::fs::remove_file(&spath);
+        let _ = crate::file_access::remove_file(&spath);
         let d = loaded.def(loaded.def_nr("n_c_len"));
         assert_eq!(
             d.c_symbol, "strlen",
@@ -2149,7 +2146,7 @@ mod tests {
         // Build the .store file once.
         let path = std::env::temp_dir().join(format!("loft_ir_bench_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         let (rec, pos) = {
             let fresh = parse();
             let fstore = Store::open(path_str);
@@ -2195,8 +2192,8 @@ mod tests {
             load_us.push(t.elapsed().as_micros());
         }
 
-        let file_bytes = std::fs::metadata(&path).map_or(0, |m| m.len());
-        let _ = std::fs::remove_file(&path);
+        let file_bytes = crate::file_access::metadata(&path).map_or(0, |m| m.len());
+        let _ = crate::file_access::remove_file(&path);
 
         let (p_min, p_med) = (parse_us.iter().copied().min().unwrap(), median(parse_us));
         let (l_min, l_med) = (load_us.iter().copied().min().unwrap(), median(load_us));
@@ -2228,7 +2225,7 @@ mod tests {
 
         let path = std::env::temp_dir().join(format!("loft_brk_{}.store", std::process::id()));
         let path_str = path.to_str().unwrap();
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         let (rec, pos, ndefs, nvars, nnames) = {
             let mut p = crate::parser::Parser::new();
             p.parse_dir("default", true, false).expect("parse default/");
@@ -2300,7 +2297,7 @@ mod tests {
             vt.push(t.elapsed().as_micros());
         }
         let vt = median(vt);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         eprintln!("\n=== read_data breakdown ({iters} iters) ===");
         eprintln!("defs {ndefs}  vars {nvars}  name-entries {nnames}");
         eprintln!("read_data (full)      : {full} us");
@@ -2363,7 +2360,7 @@ mod tests {
         save_bundle(&p.data, &p.database.types, path_str).expect("save_bundle");
 
         let (loaded_data, loaded_types) = open_bundle(path_str).expect("open_bundle");
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
 
         // (1) Data round-trips bit-for-bit.
         if let Err(diff) = compare_data(&p.data, &loaded_data) {
