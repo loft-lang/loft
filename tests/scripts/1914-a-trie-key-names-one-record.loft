@@ -12,6 +12,10 @@
 // removal).  A `spatial` beside it is the CONTROL: its key is a point and two records may share
 // one, so it must still keep both.  Every value is hand-computed.
 //
+// @falsified-at: c7efec60e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1914-a-trie-key-names-one-record.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — the control keeps both `kerk` records (len 2, the lookup answers 1).
+//
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
 struct W1914 { const w: text, n: integer }
