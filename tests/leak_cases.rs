@@ -22,6 +22,7 @@
 //! cargo test --release --test leak_cases -- --ignored
 //! ```
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -70,7 +71,7 @@ fn case_files() -> Vec<(String, String, PathBuf)> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&base).expect("tests/leak_cases must exist") {
         let dir = entry.unwrap().path();
-        if !dir.is_dir() {
+        if !fa::is_dir(&dir) {
             continue;
         }
         let folder = dir.file_name().unwrap().to_string_lossy().into_owned();
@@ -95,10 +96,10 @@ fn case_files() -> Vec<(String, String, PathBuf)> {
 
 /// Wrap a case body (`fn test()`) into a runnable program in a temp file.
 fn wrap_to_temp(name: &str, path: &Path) -> PathBuf {
-    let body = std::fs::read_to_string(path).unwrap();
+    let body = fa::read_to_string(path).unwrap();
     let src = format!("{body}\nfn main() {{ test(); }}\n");
     let tmp = std::env::temp_dir().join(format!("loft_leakcase_{name}.loft"));
-    std::fs::write(&tmp, src).unwrap();
+    fa::write(&tmp, src).unwrap();
     tmp
 }
 
@@ -129,7 +130,7 @@ fn sweep(mode: &str, leak_env: bool, expected: impl Fn(Expect) -> bool) {
         let want_leak = expected(exp);
         let tmp = wrap_to_temp(&name, &path);
         let (ok, leaked, stderr) = run(mode, &tmp, leak_env);
-        let _ = std::fs::remove_file(&tmp);
+        let _ = fa::remove_file(&tmp);
         if !ok {
             failures.push(format!(
                 "{folder}/{name}: {mode} run failed\n---- stderr ----\n{stderr}"

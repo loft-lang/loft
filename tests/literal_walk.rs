@@ -8,6 +8,7 @@
 //! agreement is no evidence of the shape.  This pins the EMISSION per cell: which walks are
 //! the select (`Iter literal`) and build no vector, which declines keep the literal's block
 //! (`Vector_`), and that `LOFT_NO_LITERAL_WALK=1` lowers none.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -50,12 +51,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(literal walks, vector literal blocks)`.
@@ -100,7 +101,7 @@ fn each_walk_is_the_select_or_the_vector_predicted() {
             "{name}: (literal walks, vector blocks)"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -116,5 +117,5 @@ fn the_switch_walks_every_literal_as_a_vector() {
         let (_, v) = got[*name];
         assert_eq!(v, walks + vectors, "{name}: every walk builds its vector");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

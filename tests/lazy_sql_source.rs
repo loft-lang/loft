@@ -15,6 +15,7 @@ mod common;
 extern crate loft;
 
 use common::cached_default;
+use loft::file_access as fa;
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 
@@ -224,8 +225,8 @@ fn seed(path: &std::path::Path, ddl: &str) {
 
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_pln129_{name}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch dir");
     dir.join("people.db")
 }
 

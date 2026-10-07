@@ -25,6 +25,7 @@
 //! `a_prefix_that_does_not_match_stays_silent` is the row that keeps the rest honest —
 //! without it, a change that made every prefix key match would satisfy them all.
 
+use loft::file_access as fa;
 use std::path::Path;
 use std::process::Command;
 
@@ -32,16 +33,16 @@ use std::process::Command;
 /// the log file's contents.  `manifest` decides whether the tree is a project.
 fn run(tag: &str, manifest: bool, levels: Option<&str>) -> String {
     let root = std::env::temp_dir().join(format!("loft_1264_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("sub")).expect("mkdir");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("sub")).expect("mkdir");
     if manifest {
-        std::fs::write(
+        fa::write(
             root.join("loft.toml"),
             "[package]\nname = \"p1264\"\nversion = \"0.1.0\"\n",
         )
         .expect("manifest");
     }
-    std::fs::write(
+    fa::write(
         root.join("sub/app.loft"),
         "fn main() {\n  log_info(\"MARKER\");\n}\n",
     )
@@ -53,20 +54,20 @@ fn run(tag: &str, manifest: bool, levels: Option<&str>) -> String {
         Some(key) => format!("[log]\nfile = log.txt\nlevel = error\n\n[levels]\n{key} = info\n"),
         None => "[log]\nfile = log.txt\nlevel = info\n".to_string(),
     };
-    std::fs::write(root.join("sub/log.conf"), conf).expect("conf");
+    fa::write(root.join("sub/log.conf"), conf).expect("conf");
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", root.join("sub/app.loft").to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(&root)
         .output()
         .expect("spawn loft");
-    let log = std::fs::read_to_string(root.join("sub/log.txt")).unwrap_or_default();
+    let log = fa::read_to_string(root.join("sub/log.txt")).unwrap_or_default();
     assert!(
         out.status.success(),
         "the probe program must run: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     log
 }
 
@@ -144,10 +145,10 @@ fn a_bare_script_is_relative_to_its_own_directory() {
 #[test]
 fn a_diagnostic_keeps_its_full_path() {
     let root = std::env::temp_dir().join(format!("loft_1264_diag_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("mkdir");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir");
     let prog = root.join("bad.loft");
-    std::fs::write(&prog, "fn main() {\n  panic(\"boom\");\n}\n").expect("prog");
+    fa::write(&prog, "fn main() {\n  panic(\"boom\");\n}\n").expect("prog");
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", prog.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
@@ -163,5 +164,5 @@ fn a_diagnostic_keeps_its_full_path() {
         text.contains(&full) || text.contains("bad.loft:2"),
         "a diagnostic must still point at the file the author can open:\n{text}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

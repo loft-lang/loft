@@ -30,6 +30,7 @@
 //!
 //! Calibrated: red on `origin/main` (`3 emit=1`) and green here, on BOTH backends.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -106,7 +107,7 @@ fn a_loop_over_a_collection_field_does_not_free_its_owner() {
 /// Reads the order out of the file rather than trusting a comment in it.
 #[test]
 fn the_fixture_still_declares_item_after_holder() {
-    let src = std::fs::read_to_string(
+    let src = fa::read_to_string(
         repo_root().join("tests/fixtures/loop_view_dep/holderlib/src/holder.loft"),
     )
     .expect("read the holder fixture");

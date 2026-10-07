@@ -10,6 +10,7 @@
 //! and the `--fn` filter.  Assertion-based rather than byte-exact golden, so a
 //! harmless codegen/format shift doesn't force a golden re-bless.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -378,7 +379,7 @@ fn resolution(args: &[&str]) -> String {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let prog = std::env::temp_dir().join(format!("loft_res_{}_{n}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         "use typeshift::*;\nfn main() { v = ts_touch(); assert(v == 7, \"lib\") }\n",
     )
@@ -393,7 +394,7 @@ fn resolution(args: &[&str]) -> String {
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 

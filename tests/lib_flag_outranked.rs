@@ -11,6 +11,7 @@
 //! Hermetic: every cell builds its own tree under the temp dir; `LOFT_NO_CACHE` keeps the
 //! whole-program cache from answering for a previous cell.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,16 +21,16 @@ fn loft_bin() -> PathBuf {
 
 fn write(path: &Path, body: &str) {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).expect("mkdir");
+        fa::create_dir_all(parent).expect("mkdir");
     }
-    std::fs::write(path, body).expect("write");
+    fa::write(path, body).expect("write");
 }
 
 /// A project directory with `lib/who.loft`, a bare directory with the same `main.loft`, and
 /// an override directory whose `who.loft` cannot parse.
 fn tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
     let base = std::env::temp_dir().join(format!("loft_1352_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let proj = base.join("proj");
     let bare = base.join("bare");
     let over = base.join("override");

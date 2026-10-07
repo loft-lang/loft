@@ -27,6 +27,7 @@ extern crate loft;
 use common::cached_default;
 use loft::data::Data;
 use loft::database::{Parts, Stores};
+use loft::file_access as fa;
 use loft::parser::Parser;
 use std::path::PathBuf;
 
@@ -173,8 +174,8 @@ fn layout_golden() {
     let path = golden_path();
 
     if std::env::var("LOFT_BLESS_LAYOUT").is_ok() {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, &golden).unwrap();
+        fa::create_dir_all(path.parent().unwrap()).unwrap();
+        fa::write(&path, &golden).unwrap();
         eprintln!(
             "blessed {} ; LAYOUT_ALGO_HASH = {}",
             path.display(),
@@ -189,7 +190,7 @@ fn layout_golden() {
         return;
     }
 
-    let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+    let expected = fa::read_to_string(&path).unwrap_or_else(|_| {
         panic!(
             "missing golden {} — regenerate with LOFT_BLESS_LAYOUT=1",
             path.display()

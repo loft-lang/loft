@@ -9,6 +9,7 @@
 //! show: that the pre-eval collector and the emitter agree.  The collector lifts every `Block`
 //! argument into a `let _pre_N`, so an emitter arm it did not know about would compile, pass
 //! every value test and never fire.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -84,13 +85,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         env,
     );
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

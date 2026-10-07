@@ -20,6 +20,7 @@
 // To debug a failure: `./scripts/idx broken` (tags) and `./scripts/idx broken-links`
 // (links).  To repair links: `make doc-fix`.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 /// Run the loft-native `idx.loft` query binary instead of bash
@@ -97,7 +98,7 @@ fn check_index_matches_git() {
     // Pull the paths out by hand rather than adding a JSON dependency: the
     // rows are `{"file":"<path>","line":N,…}`, and what is being checked is
     // the set of paths, not the document's shape (which `idx` already reads).
-    let index = std::fs::read_to_string("index/tags.json").expect("read index/tags.json");
+    let index = fa::read_to_string("index/tags.json").expect("read index/tags.json");
     let mut indexed: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for chunk in index.split("\"file\":\"").skip(1) {
         if let Some(end) = chunk.find('"') {
@@ -136,7 +137,7 @@ fn check_index_matches_git() {
 /// read them at each repo's `origin/main` (index/library_guards.json, committed so this
 /// needs no network).  A decision about a library is kept by a test in that library.
 fn library_guard_tags() -> Vec<String> {
-    let src = std::fs::read_to_string("index/library_guards.json")
+    let src = fa::read_to_string("index/library_guards.json")
         .expect("read index/library_guards.json — `make guards-fetch` writes it");
     let repos = src.matches("\"commit\": \"").count();
     assert!(
@@ -161,7 +162,7 @@ fn check_new_decisions_are_guarded(index: &str) {
         if !name.starts_with("DESIGN_DECISIONS_") || !name.ends_with(".md") {
             continue;
         }
-        let text = std::fs::read_to_string(&path).expect("read a register subject file");
+        let text = fa::read_to_string(&path).expect("read a register subject file");
         for rest in text.lines().filter_map(|l| l.strip_prefix("## C")) {
             let id = rest.split(' ').next().unwrap_or("");
             if id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
@@ -184,8 +185,8 @@ fn check_new_decisions_are_guarded(index: &str) {
         "decision id(s) defined more than once: {twice:?} — ids are one sequence across the \
          subject files; `./scripts/idx next-decision` names the next free one"
     );
-    let register_index = std::fs::read_to_string("doc/claude/DESIGN_DECISIONS.md")
-        .expect("read DESIGN_DECISIONS.md");
+    let register_index =
+        fa::read_to_string("doc/claude/DESIGN_DECISIONS.md").expect("read DESIGN_DECISIONS.md");
     let listed: Vec<&str> = register_index
         .lines()
         .filter_map(|l| l.strip_prefix("- [C"))
@@ -269,7 +270,7 @@ fn index_hygiene_clean() {
     //     is cited, and pinning it would make every unrelated commit re-pin a
     //     number.  The floor still fails closed — a scanner that dropped the
     //     family reports 0, not 20.
-    let index = std::fs::read_to_string("index/tags.json").expect("read index/tags.json");
+    let index = fa::read_to_string("index/tags.json").expect("read index/tags.json");
     let pln_keys = index
         .split("\"@PLN")
         .skip(1)
@@ -360,7 +361,7 @@ fn index_hygiene_clean() {
     // and the parity assertion breaks downstream.  Linux runners see
     // the same assertion — fails early instead of waiting for a
     // Windows CI cycle to surface the bug.
-    let tags_raw = std::fs::read_to_string("index/tags.json").expect("read index/tags.json");
+    let tags_raw = fa::read_to_string("index/tags.json").expect("read index/tags.json");
     // Allow `\\` (JSON-escaped backslash, e.g. inside a context string)
     // and `\"` (escaped quote).  Anything else is a raw backslash that
     // shouldn't be there.  Strip both, then count remaining backslashes.

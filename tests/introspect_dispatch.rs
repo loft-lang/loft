@@ -17,6 +17,7 @@
 //! every tier by design (NATIVE.md § Optimisation tiers), which is the control that lets the
 //! assertion fail: it emits all four.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -56,16 +57,16 @@ fn main() {
 
 fn introspect(name: &str, source: &str) -> String {
     let dir = std::env::temp_dir().join(format!("loft_introspect_dispatch_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let src = dir.join(format!("{name}.loft"));
-    std::fs::write(&src, source).expect("write source");
+    fa::write(&src, source).expect("write source");
     let out = Command::new(loft_binary())
         .args(["--introspect", src.to_str().unwrap()])
         .env("LOFT_NO_CACHE", "1")
         .current_dir(project_root())
         .output()
         .expect("failed to spawn the loft binary");
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
     assert!(
         out.status.success(),
         "introspect failed for {name}: {}",
@@ -148,13 +149,13 @@ fn main() {
 /// The user-function headers the given lane emits for `WITH_UNCALLED`.
 fn emitted_hit_overloads(lane: &str) -> Vec<String> {
     let dir = std::env::temp_dir().join(format!("loft_dce_dispatch_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let src = dir.join("with_uncalled.loft");
     let out_rs = dir.join(format!(
         "with_uncalled_{}.rs",
         lane.trim_start_matches("--")
     ));
-    std::fs::write(&src, WITH_UNCALLED).expect("write source");
+    fa::write(&src, WITH_UNCALLED).expect("write source");
     let out = Command::new(loft_binary())
         .args([
             lane,
@@ -171,9 +172,9 @@ fn emitted_hit_overloads(lane: &str) -> Vec<String> {
         "{lane} --native-emit failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let emitted = std::fs::read_to_string(&out_rs).expect("read the emitted source");
-    let _ = std::fs::remove_file(&src);
-    let _ = std::fs::remove_file(&out_rs);
+    let emitted = fa::read_to_string(&out_rs).expect("read the emitted source");
+    let _ = fa::remove_file(&src);
+    let _ = fa::remove_file(&out_rs);
     emitted
         .lines()
         .filter(|l| l.starts_with("fn f_") && l.contains("_hit("))

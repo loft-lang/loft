@@ -17,6 +17,7 @@
 // diagnostic-parity risk), the `Dialect::Lenient` bare-key/ident/constructor
 // paths, and one extracted REAL consumer input (the registry index sample).
 
+use loft::file_access as fa;
 use loft::json::{Dialect, parse, parse_with};
 use std::fmt::Write as _;
 
@@ -186,10 +187,10 @@ fn corpus_matches_golden() {
     let actual = render_all();
 
     let blessing = std::env::var("LOFT_BLESS_JSON_CORPUS").is_ok();
-    let existing = std::fs::read_to_string(GOLDEN).ok();
+    let existing = fa::read_to_string(GOLDEN).ok();
 
     if blessing || existing.is_none() {
-        std::fs::write(GOLDEN, &actual).expect("write golden");
+        fa::write(GOLDEN, &actual).expect("write golden");
         eprintln!(
             "json_corpus: blessed {} entries -> tests/json_corpus.golden",
             CORPUS.len()

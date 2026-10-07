@@ -9,6 +9,7 @@
 //! told what was wrong.  The CLI path is the one that reaches it (`loft --check`); the test
 //! runner's recovery on the same source takes another route, so a corpus guard cannot see
 //! the defect — this test runs the CLI and reads its stderr.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -17,7 +18,7 @@ const PROBE: &str = "fn main() { s: sorted<integer> = [5, 1, 3]; println(\"{s[0]
 #[test]
 fn a_subscript_on_a_keyless_sorted_is_refused_without_an_ice() {
     let src = std::env::temp_dir().join("loft_keyless_sorted_subscript.loft");
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--check")
         .arg(&src)
@@ -38,5 +39,5 @@ fn a_subscript_on_a_keyless_sorted_is_refused_without_an_ice() {
         !all.contains("internal compiler error") && !all.contains("index out of bounds"),
         "the refused collection's subscript must not be an ICE:\n{all}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }

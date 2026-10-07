@@ -9,6 +9,7 @@
 //! (`LOFT_NO_LEAF_CHAIN=1`) and the named tier keep every non-leaf frame, that the lean
 //! build answers what the interpreter answers, and that runaway recursion through a
 //! frameless helper still ends in the depth cap's report rather than a native stack crash.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -42,12 +43,12 @@ fn emit(out: &Path, tier: &[&str], env: &[(&str, &str)]) -> String {
     args.extend(["--native-emit", &out_s, &src]);
     let res = loft(&args, env);
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         res.status,
         String::from_utf8_lossy(&res.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// The body of one emitted function.
@@ -125,7 +126,7 @@ fn the_lean_tier_elides_a_frameless_tree() {
     }
     let frameless: Vec<&str> = CHAIN.iter().chain(LEAVES.iter()).copied().collect();
     check_guards("the lean tier", &rust, &FRAMED, &frameless);
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -157,7 +158,7 @@ fn the_switch_and_the_named_tier_keep_every_non_leaf_frame() {
         }
         let framed: Vec<&str> = CHAIN.iter().chain(FRAMED.iter()).copied().collect();
         check_guards(label, &rust, &framed, &LEAVES);
-        let _ = std::fs::remove_file(&out);
+        let _ = fa::remove_file(&out);
     }
     // With `@FR-R-GuardFree` switched off the two halves of the prelude go together again:
     // every framed function constructs its guard.
@@ -169,7 +170,7 @@ fn the_switch_and_the_named_tier_keep_every_non_leaf_frame() {
             "LOFT_NO_GUARD_FREE=1: {name} keeps both the depth entry and the guard"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -204,9 +205,9 @@ fn the_lean_build_answers_what_the_interpreter_answers() {
 #[test]
 fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_chain_runaway_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let prog = dir.join("runaway.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "fn at(s: text, i: integer) -> integer { if i < 0 || i >= size(s) { -1 } else { s.byte_at(i) } }\n\
          fn pick(n: integer) -> integer { at(\"ab\", n % 2) }\n\
@@ -225,7 +226,7 @@ fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
         err.contains("call stack overflow"),
         "the depth cap must report the runaway recursion:\n{err}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// An overload member (`f_…`) and an instance of a free generic (`i_…_n_…`) are free functions
@@ -236,7 +237,7 @@ fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
 #[test]
 fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_chain_keyed_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let cases = [
         (
             "member.loft",
@@ -253,7 +254,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
     ];
     for (file, src) in cases {
         let prog = dir.join(file);
-        std::fs::write(&prog, src).expect("write the probe");
+        fa::write(&prog, src).expect("write the probe");
         for mode in ["--native", "--native-release"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
@@ -268,7 +269,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
             );
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// A loft-bodied METHOD is a call frame like a free function: a runaway recursion through one
@@ -279,7 +280,7 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
 #[test]
 fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_chain_method_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let cases = [
         (
             "self.loft",
@@ -302,7 +303,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     ];
     for (file, src) in cases {
         let prog = dir.join(file);
-        std::fs::write(&prog, src).expect("write the probe");
+        fa::write(&prog, src).expect("write the probe");
         for mode in ["--native", "--native-release"] {
             let res = loft(&[mode, &prog.to_string_lossy()], &[]);
             let err = String::from_utf8_lossy(&res.stderr);
@@ -318,7 +319,7 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
         }
     }
     let prog = dir.join("frames.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "struct P { x: integer }\n\
          fn show(self: P, n: integer) -> integer {\n\
@@ -338,5 +339,5 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
             String::from_utf8_lossy(&res.stderr)
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

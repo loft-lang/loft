@@ -9,6 +9,7 @@
 //! VALUES hold on both backends; this pins the IR SHAPE — `read_paint`'s four exits all
 //! target `__retbuf` and none its `__ref_p2_N` work-ref — and that the switch restores the
 //! per-exit stores with the same values.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -226,11 +227,11 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
         .output()
         .expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     for sig in [
         "fn n_find_w(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_c: i64, mut var_start: i64) -> (bool, i64, f64)",
         "fn n_digits(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (bool, i64, f64)",
@@ -238,5 +239,5 @@ fn a_scanner_beside_a_chain_keeps_its_registers() {
     ] {
         assert!(rust.contains(sig), "still a value record: {sig}");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

@@ -18,6 +18,7 @@
 //! [`no_config_means_no_log_file`] is the control: without it, a build that wrote log lines
 //! unconditionally would pass every positive case here.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -33,11 +34,11 @@ struct Case {
 impl Case {
     fn new(tag: &str, program: &str, conf: Option<&str>) -> Case {
         let dir = std::env::temp_dir().join(format!("loft_log_{tag}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("create case dir");
-        std::fs::write(dir.join("app.loft"), program).expect("write program");
+        let _ = fa::remove_dir_all(&dir);
+        fa::create_dir_all(&dir).expect("create case dir");
+        fa::write(dir.join("app.loft"), program).expect("write program");
         if let Some(c) = conf {
-            std::fs::write(dir.join("log.conf"), c).expect("write log.conf");
+            fa::write(dir.join("log.conf"), c).expect("write log.conf");
         }
         Case { dir }
     }
@@ -48,7 +49,7 @@ impl Case {
     /// backends otherwise reads the second run's records on top of the first's — which is
     /// how the record-format case first reported eight lines from four calls.
     fn run(&self, backend: &str) -> (String, String) {
-        let _ = std::fs::remove_file(self.log_path());
+        let _ = fa::remove_file(self.log_path());
         let out = Command::new(loft_bin())
             .arg(backend)
             .arg(self.dir.join("app.loft"))
@@ -61,7 +62,7 @@ impl Case {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let log = std::fs::read_to_string(self.dir.join("log.txt")).unwrap_or_default();
+        let log = fa::read_to_string(self.dir.join("log.txt")).unwrap_or_default();
         (console, log)
     }
 
@@ -72,7 +73,7 @@ impl Case {
 
 impl Drop for Case {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+        let _ = fa::remove_dir_all(&self.dir);
     }
 }
 
@@ -97,7 +98,7 @@ fn no_config_means_no_log_file() {
             "[{backend}] the program must still run\n{console}"
         );
         assert!(
-            !Path::new(&case.log_path()).exists(),
+            !fa::exists(Path::new(&case.log_path())),
             "[{backend}] no log.conf must mean no log file"
         );
     }

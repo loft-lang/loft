@@ -20,6 +20,7 @@
 //! with `HOME` pointed at a temp directory: a suite that installed into the developer's
 //! real `~/.loft/lib` would be re-arming that trap on every run.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -28,8 +29,8 @@ fn loft_bin() -> PathBuf {
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// Build a package in a directory deliberately named something other than the manifest's
@@ -39,10 +40,10 @@ fn write(path: &Path, body: &str) {
 /// `.`, not bare — bare `loft install` resolves dependencies now and installs nothing.
 fn install_in_a_mismatched_directory(tag: &str) -> (String, PathBuf) {
     let base = std::env::temp_dir().join(format!("loft_966_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let home = base.join("home");
     let pkg = base.join("checkout_dir_name");
-    std::fs::create_dir_all(&home).expect("mkdir home");
+    fa::create_dir_all(&home).expect("mkdir home");
     write(
         &pkg.join("loft.toml"),
         "[package]\nname    = \"instprobe\"\nversion = \"0.1.0\"\nloft    = \">=0.8\"\n\n\
@@ -79,16 +80,16 @@ fn a_local_install_is_named_by_the_manifest_not_the_directory() {
     let by_directory = home.join(".loft/lib/checkout_dir_name");
 
     assert!(
-        by_manifest.is_dir(),
+        fa::is_dir(&by_manifest),
         "expected the install under the manifest's `[package] name`\n{all}"
     );
     // Both halves: a fix that installed under BOTH names would satisfy the first
     // assertion while still leaving the unreachable copy behind.
     assert!(
-        !by_directory.exists(),
+        !fa::exists(&by_directory),
         "the directory-named copy must not be left behind — nothing can `use` it\n{all}"
     );
-    let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    let _ = fa::remove_dir_all(home.parent().unwrap());
 }
 
 /// `loft api` must not send the reader to a command that does not resolve the dependency
@@ -97,7 +98,7 @@ fn a_local_install_is_named_by_the_manifest_not_the_directory() {
 #[test]
 fn the_api_hint_for_a_broken_path_dep_names_the_path() {
     let base = std::env::temp_dir().join(format!("loft_966_hint_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     write(
         &base.join("loft.toml"),
         "[package]\nname    = \"instprobe\"\nversion = \"0.1.0\"\n\n[library]\n\
@@ -120,7 +121,7 @@ fn the_api_hint_for_a_broken_path_dep_names_the_path() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 
     assert!(
         all.contains("../nowhere/moros_map"),
@@ -136,10 +137,10 @@ fn the_api_hint_for_a_broken_path_dep_names_the_path() {
 /// Returns (stdout+stderr, exit code, that HOME).
 fn bare_install(tag: &str, manifest: &str) -> (String, i32, PathBuf) {
     let base = std::env::temp_dir().join(format!("loft_966_bare_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let home = base.join("home");
     let pkg = base.join("proj");
-    std::fs::create_dir_all(&home).expect("mkdir home");
+    fa::create_dir_all(&home).expect("mkdir home");
     write(&pkg.join("loft.toml"), manifest);
     write(&pkg.join("src/proj.loft"), "pub fn hi() -> integer { 1 }\n");
 
@@ -201,7 +202,7 @@ fn a_bare_install_resolves_the_manifest_not_the_project() {
         code, 1,
         "an unresolved dependency must exit non-zero\n{all}"
     );
-    let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    let _ = fa::remove_dir_all(home.parent().unwrap());
 }
 
 /// A resolving path dependency needs no install at all — it is reached by the path it
@@ -209,9 +210,9 @@ fn a_bare_install_resolves_the_manifest_not_the_project() {
 #[test]
 fn a_bare_install_is_silent_when_every_path_dep_resolves() {
     let base = std::env::temp_dir().join(format!("loft_966_pathok_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let home = base.join("home");
-    std::fs::create_dir_all(&home).expect("mkdir home");
+    fa::create_dir_all(&home).expect("mkdir home");
     write(
         &base.join("dep/loft.toml"),
         "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/dep.loft\"\n",
@@ -249,7 +250,7 @@ fn a_bare_install_is_silent_when_every_path_dep_resolves() {
         all.trim().is_empty(),
         "nothing needed acting on, so nothing should be printed\n{all}"
     );
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 }
 
 /// The one reader surprised by the new meaning is the one who typed it for the old one —
@@ -268,10 +269,10 @@ fn a_bare_install_with_no_dependencies_names_the_other_spelling() {
         "name the spelling that installs this package\n{all}"
     );
     assert!(
-        !home.join(".loft/lib/instprobe").exists(),
+        !fa::exists(home.join(".loft/lib/instprobe")),
         "it must still not install the project\n{all}"
     );
-    let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    let _ = fa::remove_dir_all(home.parent().unwrap());
 }
 
 /// With no manifest there is nothing to read, and both meanings are worth naming: the
@@ -279,8 +280,8 @@ fn a_bare_install_with_no_dependencies_names_the_other_spelling() {
 #[test]
 fn a_bare_install_without_a_manifest_names_both_spellings() {
     let base = std::env::temp_dir().join(format!("loft_966_nomanifest_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
-    std::fs::create_dir_all(&base).expect("mkdir");
+    let _ = fa::remove_dir_all(&base);
+    fa::create_dir_all(&base).expect("mkdir");
     let out = Command::new(loft_bin())
         .arg("install")
         .env("LOFT_TIMEOUT", "90")
@@ -292,7 +293,7 @@ fn a_bare_install_without_a_manifest_names_both_spellings() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     assert_eq!(out.status.code(), Some(1), "no manifest is an error\n{all}");
     assert!(
         all.contains("loft install <pkg>") && all.contains("loft install ."),
@@ -311,10 +312,10 @@ fn a_bare_install_without_a_manifest_names_both_spellings() {
 #[test]
 fn an_install_refuses_a_package_name_that_is_a_path() {
     let base = std::env::temp_dir().join(format!("loft_instsec_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let home = base.join("home");
     let pkg = base.join("evil");
-    std::fs::create_dir_all(&home).expect("mkdir home");
+    fa::create_dir_all(&home).expect("mkdir home");
     write(
         &pkg.join("loft.toml"),
         "[package]\nname    = \"../../escaped\"\nversion = \"0.1.0\"\n\n\
@@ -344,9 +345,9 @@ fn an_install_refuses_a_package_name_that_is_a_path() {
         "the refusal must say what is wrong with the name\n{all}"
     );
     assert!(
-        !home.join("escaped").exists(),
+        !fa::exists(home.join("escaped")),
         "the package escaped ~/.loft/lib and wrote to {}\n{all}",
         home.join("escaped").display()
     );
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 }

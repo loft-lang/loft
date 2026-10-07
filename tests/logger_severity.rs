@@ -9,6 +9,7 @@
 
 extern crate loft;
 
+use loft::file_access as fa;
 use loft::logger::{Logger, RuntimeLogConfig, Severity};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -40,11 +41,11 @@ fn logger_with_tmpfile(level: Severity) -> (Logger, PathBuf) {
 }
 
 fn read_log(path: &PathBuf) -> String {
-    std::fs::read_to_string(path).unwrap_or_default()
+    fa::read_to_string(path).unwrap_or_default()
 }
 
 fn cleanup(path: &PathBuf) {
-    let _ = std::fs::remove_file(path);
+    let _ = fa::remove_file(path);
 }
 
 /// `log_warn` writes a line containing "WARN" when the level is Info (which accepts Warn+).
@@ -217,10 +218,10 @@ fn logger_size_rotation_creates_backup() {
         .map(|s| format!(".{s}"))
         .unwrap_or_default();
     let backup = path.with_file_name(format!("{stem}.1{ext}"));
-    let backup_exists = backup.exists();
+    let backup_exists = fa::exists(&backup);
     let current = read_log(&path);
     cleanup(&path);
-    let _ = std::fs::remove_file(&backup);
+    let _ = fa::remove_file(&backup);
     assert!(
         backup_exists,
         "expected rotation backup {backup:?} after exceeding max_size_bytes"

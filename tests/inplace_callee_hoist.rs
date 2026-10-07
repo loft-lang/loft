@@ -11,6 +11,7 @@
 //! the switch (`LOFT_NO_INPLACE_CALLEE_HOIST=1`) restores the unhoisted form — which is
 //! what makes this test red on the build before the allowance and on one that lost it.
 //! Read off `loft introspect`, which carries the native Rust beside the IR.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -60,7 +61,7 @@ fn headers(rust: &str) -> usize {
 
 fn write_probe(name: &str) -> PathBuf {
     let src = std::env::temp_dir().join(format!("loft_inplace_callee_{name}.loft"));
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     src
 }
 
@@ -79,7 +80,7 @@ fn a_loop_calling_an_in_place_setter_hoists_and_a_grower_blocks() {
         0,
         "the loop calling `grow` must keep the per-element form:\n{grower}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }
 
 #[test]
@@ -92,5 +93,5 @@ fn the_switch_restores_the_unhoisted_form() {
         0,
         "with the allowance off the setter-calling loop must not hoist:\n{setter}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }

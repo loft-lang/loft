@@ -27,6 +27,7 @@
 //! (`idxrec v=55,55`, `xs=[0,100,200]`, `loop` reached); a `rec_set` that ignores it fails
 //! the hoisted `view` cell (`v=77,77`) and the development `view` cell.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -41,13 +42,13 @@ fn run(name: &str, source: &str, backend: &str, production: bool) -> (String, St
         backend.trim_start_matches('-'),
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
     let script = dir.join(format!("{name}.loft"));
-    std::fs::write(&script, source).expect("write script");
+    fa::write(&script, source).expect("write script");
     let log_path = dir.join("log.txt");
     let conf = format!("[log]\nfile = {}\nlevel = info\n", log_path.display());
-    std::fs::write(dir.join("log.conf"), conf).expect("write log.conf");
+    fa::write(dir.join("log.conf"), conf).expect("write log.conf");
     let mut cmd = Command::new(loft_bin());
     if production {
         cmd.arg("--production");
@@ -59,8 +60,8 @@ fn run(name: &str, source: &str, backend: &str, production: bool) -> (String, St
         .env("LOFT_TIMEOUT", "240")
         .output()
         .expect("invoke loft");
-    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(&dir);
+    let log = fa::read_to_string(&log_path).unwrap_or_default();
+    let _ = fa::remove_dir_all(&dir);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -320,10 +321,10 @@ fn production_discards_every_hoisted_write_native() {
 #[test]
 fn hoisted_loops_reach_the_writers_under_test() {
     let dir = std::env::temp_dir().join(format!("loft_locked_emit_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
     let script = dir.join("hoisted.loft");
-    std::fs::write(&script, HOISTED).expect("write script");
+    fa::write(&script, HOISTED).expect("write script");
     let out = dir.join("hoisted.rs");
     let status = Command::new(loft_bin())
         .arg("--native-emit")
@@ -333,8 +334,8 @@ fn hoisted_loops_reach_the_writers_under_test() {
         .current_dir(&dir)
         .output()
         .expect("invoke loft");
-    let rust = std::fs::read_to_string(&out).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(&dir);
+    let rust = fa::read_to_string(&out).unwrap_or_default();
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         status.status.success(),
         "{}",

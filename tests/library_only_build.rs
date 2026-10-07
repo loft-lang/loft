@@ -15,6 +15,7 @@
 //! library and reported as compiling cleanly. That makes `loft build` / `loft check` on a
 //! library-only package a pass, which is what those commands mean for a library.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -24,8 +25,8 @@ fn loft_bin() -> PathBuf {
 
 fn tmp_dir(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("loft_1171_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("mkdir");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir");
     root
 }
 
@@ -34,7 +35,7 @@ fn tmp_dir(tag: &str) -> PathBuf {
 fn a_file_with_no_main_compiles_and_reports_nothing_to_run() {
     let dir = tmp_dir("nomain");
     let file = dir.join("greeter.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "pub fn greet(who: text) -> text { \"hello, {who}!\" }\n",
     )
@@ -68,7 +69,7 @@ fn a_file_with_no_main_compiles_and_reports_nothing_to_run() {
         !combined.contains("codegen bug"),
         "a correct library must not be reported as a compiler bug:\n{combined}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// The control: a program WITH `main` still links and runs. A fix that stopped linking
@@ -77,7 +78,7 @@ fn a_file_with_no_main_compiles_and_reports_nothing_to_run() {
 fn a_file_with_main_still_links_and_runs() {
     let dir = tmp_dir("withmain");
     let file = dir.join("hello.loft");
-    std::fs::write(&file, "fn main() {\n  println(\"ran\");\n}\n").expect("write");
+    fa::write(&file, "fn main() {\n  println(\"ran\");\n}\n").expect("write");
 
     let out = Command::new(loft_bin())
         .args(["--native", file.to_str().unwrap()])
@@ -96,5 +97,5 @@ fn a_file_with_main_still_links_and_runs() {
         combined.contains("ran"),
         "the program's own output must appear:\n{combined}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
