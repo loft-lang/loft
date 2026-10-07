@@ -13,6 +13,7 @@
 //! can: `LOFT_TRACE_CLEAR=1` prints, per clear, the element type it derived and whether it
 //! owns heap, and the build before this fix printed `elem=65535 owns_heap=false` for the
 //! field clear on both backends (measured 2026-09-24).  The two cells pin that line.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -31,9 +32,9 @@ fn main() {
 
 fn run(backend: &str) -> (String, String) {
     let dir = std::env::temp_dir().join(format!("loft_clear_release_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let src = dir.join("f.loft");
-    std::fs::write(&src, PROBE).unwrap();
+    fa::write(&src, PROBE).unwrap();
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(backend)
         .arg(&src)
@@ -41,7 +42,7 @@ fn run(backend: &str) -> (String, String) {
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         out.status.success(),
         "{backend} run failed: {}",

@@ -21,6 +21,7 @@
 //! stderr, the same approach `tests/dead_code_lint.rs` takes, and `LOFT_NO_CACHE` is needed
 //! because a warm run skips the re-parse that emits them.
 
+use loft::file_access as fa;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -76,9 +77,9 @@ fn run(backend: &str, path: &PathBuf) -> (String, String, Option<i32>) {
 }
 
 fn write_program(dir: &PathBuf) -> PathBuf {
-    std::fs::create_dir_all(dir).expect("scratch dir");
+    fa::create_dir_all(dir).expect("scratch dir");
     let path = dir.join("value_struct_copy.loft");
-    let mut f = std::fs::File::create(&path).expect("write program");
+    let mut f = fa::create(&path).expect("write program");
     f.write_all(PROGRAM.as_bytes()).expect("write program");
     path
 }
@@ -170,9 +171,9 @@ fn assert_written_loop_names(backend: &str) {
         "loft_written_loop_names_{}",
         backend.trim_matches('-')
     ));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let path = dir.join("shadowed_loops.loft");
-    std::fs::write(&path, SHADOWED_LOOPS).expect("write program");
+    fa::write(&path, SHADOWED_LOOPS).expect("write program");
     let (stdout, diag, code) = run(backend, &path);
     assert_eq!(
         code,
@@ -248,9 +249,9 @@ fn assert_projection_copies(backend: &str) {
         "loft_projection_copy_advice_{}",
         backend.trim_matches('-')
     ));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let path = dir.join("projection_copies.loft");
-    std::fs::write(&path, PROJECTIONS).expect("write program");
+    fa::write(&path, PROJECTIONS).expect("write program");
     let (stdout, diag, code) = run(backend, &path);
     assert_eq!(
         code,

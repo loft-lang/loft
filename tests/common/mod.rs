@@ -246,7 +246,7 @@ fn reap_our_leaked_holders(_port: u16) -> bool {
 /// the documented way to read this file.
 #[allow(dead_code)]
 fn is_orphan(pid: i32) -> bool {
-    let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+    let Ok(stat) = fa::read_to_string(format!("/proc/{pid}/stat")) else {
         return false;
     };
     let Some(rest) = stat.rsplit_once(')').map(|(_, r)| r) else {
@@ -271,7 +271,7 @@ fn is_orphan(pid: i32) -> bool {
     // under this tree as its parent; a leaked one has init or a subreaper.  Unreadable
     // is not an orphan: the conservative direction is to decline the kill.
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    match std::fs::read_link(format!("/proc/{ppid}/exe")) {
+    match fa::read_link(format!("/proc/{ppid}/exe")) {
         Ok(parent_exe) => !parent_exe.starts_with(&root),
         Err(_) => false,
     }
@@ -309,7 +309,7 @@ fn pivot_port(anchor: u16) -> Option<u16> {
 /// above this can be taken from under a test between the check and the bind.
 #[allow(dead_code)]
 fn ephemeral_floor() -> u16 {
-    std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+    fa::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
         .ok()
         .and_then(|s| s.split_whitespace().next()?.parse().ok())
         .unwrap_or(32768)
@@ -339,7 +339,7 @@ fn holders_owned_by_this_checkout(port: u16) -> Option<Vec<i32>> {
     let mut ours = Vec::new();
     for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
         let pid: i32 = pid.parse().ok()?;
-        let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+        let exe = fa::read_link(format!("/proc/{pid}/exe")).ok()?;
         if !exe.starts_with(&root) {
             return None; // a foreign holder — the whole port is off limits
         }
@@ -427,6 +427,7 @@ fn posix_cksum(bytes: &[u8]) -> u32 {
 
 use loft::data::Data;
 use loft::database::Stores;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -553,7 +554,7 @@ pub fn record_env_skips(suite: &str, reason: &str, skips: &[(String, String)]) {
     let Ok(dir) = std::env::var("LOFT_SKIP_LEDGER") else {
         return;
     };
-    if std::fs::create_dir_all(&dir).is_err() {
+    if fa::create_dir_all(&dir).is_err() {
         return;
     }
     let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -565,7 +566,7 @@ pub fn record_env_skips(suite: &str, reason: &str, skips: &[(String, String)]) {
             format!("{suite}\t{reason}\t{}\t{}\n", clean(entry), clean(detail))
         })
         .collect();
-    let _ = std::fs::write(path, body);
+    let _ = fa::write(path, body);
 }
 
 #[allow(dead_code)]
@@ -719,7 +720,7 @@ pub struct LearnSample {
 /// [`check_learn_sample`].
 #[allow(dead_code)]
 pub fn learn_loft_samples() -> Vec<LearnSample> {
-    let page = std::fs::read_to_string("doc/learn-loft.md").expect("doc/learn-loft.md");
+    let page = fa::read_to_string("doc/learn-loft.md").expect("doc/learn-loft.md");
     let lines: Vec<&str> = page.lines().collect();
     let fence_end = |from: usize| (from..lines.len()).find(|&j| lines[j].trim() == "```");
     let mut out = Vec::new();
@@ -763,10 +764,10 @@ pub fn check_learn_sample(sample: &LearnSample, mode: &str, timeout: &str) -> Re
         std::process::id(),
         mode.trim_start_matches('-')
     ));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fa::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let name = format!("learn_loft_line_{}.loft", sample.line);
     let path = dir.join(&name);
-    std::fs::write(&path, &sample.code).map_err(|e| e.to_string())?;
+    fa::write(&path, &sample.code).map_err(|e| e.to_string())?;
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg(mode)
         .arg(&path)
@@ -775,7 +776,7 @@ pub fn check_learn_sample(sample: &LearnSample, mode: &str, timeout: &str) -> Re
         .map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let at = format!("doc/learn-loft.md:{} on {mode}", sample.line);
     if !out.status.success() {
         return Err(format!("{at} failed ({}):\n{stdout}{stderr}", out.status));

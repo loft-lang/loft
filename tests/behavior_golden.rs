@@ -20,6 +20,7 @@
 // and, post-freeze, classify it (additive / bugfix / silent-break) — a silent-break
 // requires a CONTRACT_VERSION bump, enforced git-side by scripts/check_contract_goldens.sh.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -51,8 +52,8 @@ fn behavior_golden_interpret() {
     let got = run("--interpret");
 
     if std::env::var("LOFT_BLESS_BEHAVIOR").is_ok() {
-        std::fs::create_dir_all(golden().parent().unwrap()).unwrap();
-        std::fs::write(golden(), &got).unwrap();
+        fa::create_dir_all(golden().parent().unwrap()).unwrap();
+        fa::write(golden(), &got).unwrap();
         eprintln!("blessed {}", golden().display());
         eprintln!(
             "@PLN102 flip-gate: a behavioural re-bless is a semantic change — post-freeze \
@@ -62,7 +63,7 @@ fn behavior_golden_interpret() {
         return;
     }
 
-    let expected = std::fs::read_to_string(golden()).unwrap_or_else(|_| {
+    let expected = fa::read_to_string(golden()).unwrap_or_else(|_| {
         panic!(
             "missing behaviour golden {} — regenerate with LOFT_BLESS_BEHAVIOR=1",
             golden().display()

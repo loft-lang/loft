@@ -23,6 +23,7 @@
 //! Binary-invoked like `tests/group_apart_lint.rs`; `LOFT_NO_CACHE` because the warm program
 //! cache skips the re-parse that produces these.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -30,9 +31,9 @@ const CODE: &str = "warning[constant-condition]";
 
 fn diagnostics_of(name: &str, src: &str) -> String {
     let dir = std::env::temp_dir().join("loft_constant_condition_lint");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{name}.loft"));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&path)
@@ -89,9 +90,9 @@ fn it_is_silent_on_a_scalar_whose_sentinel_is_in_band() {
 #[test]
 fn a_text_holding_null_takes_the_else_branch_and_is_not_reported() {
     let dir = std::env::temp_dir().join("loft_constant_condition_lint");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join("text_null.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "struct Tn { t: text }
 fn arg(x: text) -> text { if x { \"a-then\" } else { \"a-else\" } }
@@ -177,9 +178,9 @@ fn an_empty_program_is_quiet() {
 #[test]
 fn the_opt_out_silences_it() {
     let dir = std::env::temp_dir().join("loft_constant_condition_lint");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join("optout.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "fn main() { v: vector<integer> = [1]; if v { print(\"x\"); } }\n",
     )

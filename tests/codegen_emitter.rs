@@ -22,6 +22,7 @@
 
 extern crate loft;
 
+use loft::file_access as fa;
 use std::process::Command;
 
 const CORPUS: &[&str] = &[
@@ -49,15 +50,13 @@ fn loft_binary() -> std::path::PathBuf {
 }
 
 fn baseline_present() -> bool {
-    std::path::Path::new(BASELINE_DIR).exists()
+    fa::exists(std::path::Path::new(BASELINE_DIR))
         && CORPUS.iter().all(|t| {
             let name = std::path::Path::new(t)
                 .file_stem()
                 .unwrap()
                 .to_string_lossy();
-            std::path::Path::new(BASELINE_DIR)
-                .join(format!("{name}.rs"))
-                .exists()
+            fa::exists(std::path::Path::new(BASELINE_DIR).join(format!("{name}.rs")))
         })
 }
 
@@ -91,7 +90,7 @@ fn baseline_emission_unchanged() {
         return;
     }
     let tmp_dir = std::env::temp_dir().join("p09-codegen-emitter-test");
-    let _ = std::fs::create_dir_all(&tmp_dir);
+    let _ = fa::create_dir_all(&tmp_dir);
     let mut diffs: Vec<String> = Vec::new();
     for src in CORPUS {
         let name = std::path::Path::new(src)
@@ -101,8 +100,8 @@ fn baseline_emission_unchanged() {
         let out = tmp_dir.join(format!("{name}.rs"));
         emit_native(src, &out);
         let baseline = std::path::Path::new(BASELINE_DIR).join(format!("{name}.rs"));
-        let actual = std::fs::read_to_string(&out).expect("read emitted .rs");
-        let expected = std::fs::read_to_string(&baseline).expect("read baseline .rs");
+        let actual = fa::read_to_string(&out).expect("read emitted .rs");
+        let expected = fa::read_to_string(&baseline).expect("read baseline .rs");
         if actual != expected {
             diffs.push(name.into_owned());
         }
@@ -161,7 +160,7 @@ fn let_bind_on_repeat_appears_in_emission() {
     // tests/docs/13-file.loft uses the `delete(...) == FileResult.X`
     // pattern that triggers `OpConvIntFromEnum`'s let-bind-on-repeat.
     let baseline = std::path::Path::new(BASELINE_DIR).join("13-file.rs");
-    let src = std::fs::read_to_string(baseline).expect("read 13-file baseline");
+    let src = fa::read_to_string(baseline).expect("read 13-file baseline");
     assert!(
         src.contains("let _v_v1"),
         "13-file.rs baseline lacks `let _v_v1` — let-bind-on-repeat may not be \
@@ -194,7 +193,7 @@ fn let_bind_on_repeat_appears_in_emission() {
 fn pln118_arce_owned_reassign_emits_sentinel() {
     let dir = std::env::temp_dir();
     let src = dir.join("pln118_arce_owned_reassign.loft");
-    std::fs::write(
+    fa::write(
         &src,
         "struct P { x: integer }\n\
          fn mk(v: integer) -> P { P { x: v } }\n\
@@ -211,7 +210,7 @@ fn pln118_arce_owned_reassign_emits_sentinel() {
         .current_dir(project_root())
         .output()
         .expect("failed to spawn loft binary — run `cargo build --release` first");
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
         out.status.success(),
@@ -250,7 +249,7 @@ fn pln118_arce_owned_reassign_emits_sentinel() {
 fn nested_tuple_copy_does_not_free_its_source() {
     let dir = std::env::temp_dir();
     let src = dir.join("nested_tuple_hold_borrows.loft");
-    std::fs::write(
+    fa::write(
         &src,
         "fn main() {\n\
          \x20   t = (([1, 2], 1), 5);\n\
@@ -265,7 +264,7 @@ fn nested_tuple_copy_does_not_free_its_source() {
         .current_dir(project_root())
         .output()
         .expect("failed to spawn loft binary — run `cargo build --release` first");
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
     let ir = String::from_utf8_lossy(&out.stdout);
     assert!(
         out.status.success(),
@@ -306,7 +305,7 @@ fn nested_tuple_copy_does_not_free_its_source() {
 #[test]
 fn no_hardcoded_abi_lists_remain() {
     for path in &["src/generation/calls.rs", "src/generation/dispatch.rs"] {
-        let src = std::fs::read_to_string(project_root().join(path)).expect("read source file");
+        let src = fa::read_to_string(project_root().join(path)).expect("read source file");
         // Allow doc-comment references to the historical name; only flag
         // actual `const LEGACY_STORES_FNS` declarations.
         assert!(
@@ -325,7 +324,7 @@ fn no_hardcoded_abi_lists_remain() {
 /// Re-introducing match arms for these names is a regression.
 #[test]
 fn no_key_op_special_case_in_dispatch() {
-    let src = std::fs::read_to_string(project_root().join("src/generation/dispatch.rs"))
+    let src = fa::read_to_string(project_root().join("src/generation/dispatch.rs"))
         .expect("read dispatch.rs");
     for op in &["OpGetRecord", "OpIterate"] {
         let pat = format!("\"{op}\"");
@@ -351,7 +350,7 @@ fn no_key_op_special_case_in_dispatch() {
 /// new parallel variants should register custom emitters instead.
 #[test]
 fn no_parallel_special_case_in_dispatch() {
-    let src = std::fs::read_to_string(project_root().join("src/generation/dispatch.rs"))
+    let src = fa::read_to_string(project_root().join("src/generation/dispatch.rs"))
         .expect("read dispatch.rs");
     // Allow doc-comment references to the historical name; only flag
     // actual match-arm patterns `"n_parallel_for"` followed by `=>`.
@@ -380,7 +379,7 @@ fn no_parallel_special_case_in_dispatch() {
 /// impl and call the generic core, not re-inline the skeleton.
 #[test]
 fn parallel_runtime_consolidated() {
-    let src = std::fs::read_to_string(project_root().join("src/codegen_runtime.rs"))
+    let src = fa::read_to_string(project_root().join("src/codegen_runtime.rs"))
         .expect("read codegen_runtime.rs");
     for fn_name in [
         "n_parallel_for_native",
@@ -470,7 +469,7 @@ fn p202_parallel_queue_runtime_fns_registered() {
 /// reproducing P202's E0061 compile failure.
 #[test]
 fn p202_parallel_queue_emitter_registered() {
-    let src = std::fs::read_to_string(project_root().join("src/generation/ops/mod.rs"))
+    let src = fa::read_to_string(project_root().join("src/generation/ops/mod.rs"))
         .expect("read ops/mod.rs");
     for name in [
         "\"n_parallel_queue\"",
@@ -546,7 +545,7 @@ fn p200_binary_compiles_under_native() {
 /// meets an i64 RHS literal).
 #[test]
 fn p200_int_compare_emitter_registered() {
-    let src = std::fs::read_to_string(project_root().join("src/generation/ops/mod.rs"))
+    let src = fa::read_to_string(project_root().join("src/generation/ops/mod.rs"))
         .expect("read ops/mod.rs");
     for name in ["\"OpEqInt\"", "\"OpNeInt\"", "\"OpLtInt\"", "\"OpLeInt\""] {
         assert!(
@@ -642,8 +641,8 @@ fn pln10_n2_cdylib_text_wrapper_returns_owned_string() {
         );
         return;
     }
-    let emitted = std::fs::read_to_string(&out_rs).expect("read emitted native source");
-    let _ = std::fs::remove_file(&out_rs);
+    let emitted = fa::read_to_string(&out_rs).expect("read emitted native source");
+    let _ = fa::remove_file(&out_rs);
 
     // n_tcp_path is a representative text-returning cdylib native
     // (server-0.1.1/src/server.loft:46 → loft_server::n_tcp_path).
@@ -768,7 +767,7 @@ fn p205_no_str_new_of_local_in_corpus() {
             .and_then(|s| s.to_str())
             .unwrap_or(test);
         let path = baseline.join(format!("{name}.rs"));
-        let src = match std::fs::read_to_string(&path) {
+        let src = match fa::read_to_string(&path) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -826,7 +825,7 @@ const DISPATCH_OP_ARM_BUDGET: usize = 0;
 
 #[test]
 fn dispatch_op_arm_budget_not_exceeded() {
-    let src = std::fs::read_to_string(project_root().join("src/generation/dispatch.rs"))
+    let src = fa::read_to_string(project_root().join("src/generation/dispatch.rs"))
         .expect("read dispatch.rs");
     let start = src
         .find("fn output_call_inner")
@@ -882,7 +881,7 @@ const SANCTIONED_CODEGEN_VALUE_VARIANTS: &[&str] = &["RawExpr"];
 
 #[test]
 fn no_unsanctioned_codegen_value_variants() {
-    let src = std::fs::read_to_string(project_root().join("src/data.rs")).expect("read data.rs");
+    let src = fa::read_to_string(project_root().join("src/data.rs")).expect("read data.rs");
     // Find the Value enum body.
     let start = src.find("pub enum Value {").expect("Value enum not found");
     let end_rel = src[start..]
@@ -944,7 +943,7 @@ fn no_unsanctioned_codegen_value_variants() {
 /// bugs.
 #[test]
 fn pre_eval_walkers_unspan() {
-    let src = std::fs::read_to_string(project_root().join("src/generation/pre_eval.rs"))
+    let src = fa::read_to_string(project_root().join("src/generation/pre_eval.rs"))
         .expect("read pre_eval.rs");
     // Slice patch_hoisted_returns + value_mentions_var (the area the
     // plan-12 audit covers).  The deeper sites in

@@ -26,6 +26,7 @@
 //! [`harness_can_fail`] is the control for the harness itself: a script whose assertion
 //! is deliberately false must be reported as a failure.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -84,7 +85,7 @@ fn main() {\n\
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_974_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -108,7 +109,7 @@ fn an_accessors_returned_view_names_its_parameter() {
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("failed to invoke loft introspect");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(out.status.success(), "introspect must exit 0");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
@@ -189,7 +190,7 @@ fn harness_can_fail() {
         "fn main() { assert(1 == 2, \"deliberate\"); print(\"974 accessor borrow OK\\n\"); }\n",
     );
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "the harness must report a failing script as failing"

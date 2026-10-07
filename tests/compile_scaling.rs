@@ -16,6 +16,7 @@
 //! which moves the number by 100×, not a 20 % regression — `make speed` is the
 //! instrument for those.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -63,9 +64,9 @@ fn issue854_a_vector_literal_compiles_in_linear_time() {
     src.push_str("] }\nfn main() { v = big(); println(\"len={len(v)}\"); }\n");
 
     let dir = std::env::temp_dir().join("loft_issue854_scaling");
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("literal.loft");
-    std::fs::write(&file, &src).expect("write the fixture");
+    fa::write(&file, &src).expect("write the fixture");
 
     let t = Instant::now();
     let out = Command::new(loft_bin())
@@ -110,9 +111,9 @@ fn issue854_a_vector_literal_compiles_in_linear_time() {
 #[test]
 fn loft_timing_phases_sum_to_the_front_end() {
     let dir = std::env::temp_dir().join(format!("loft_timing_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("t.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "fn main() {\n  x = 0;\n  for i in 0..10 { x += i; }\n  println(\"{x}\");\n}\n",
     )
@@ -127,7 +128,7 @@ fn loft_timing_phases_sum_to_the_front_end() {
         .env("LOFT_TIMEOUT", "120")
         .output()
         .expect("failed to invoke the loft binary");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "fixture must compile: {stderr}");
     let field = |name: &str| -> f64 {

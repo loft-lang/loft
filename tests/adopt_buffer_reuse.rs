@@ -9,6 +9,7 @@
 //! pool enrolls the adopting buffers, a bind after an `if` pre-init adopts, a body wrapped
 //! around a hoisted result still takes the pool, a value-record scanner keeps its registers,
 //! and `LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1 — and the store census the change buys.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -42,12 +43,12 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     with_env(&mut cmd, env);
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 fn introspect(env: &[(&str, &str)]) -> String {
@@ -202,7 +203,7 @@ fn a_bind_after_an_if_pre_init_adopts() {
         ),
         "find_at: still a value record"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     let ir = introspect(&[]);
     assert!(
         !section(&ir, "n_r22").contains("CopyRefOrNull"),
@@ -262,17 +263,17 @@ fn a_chain_of_chains_adopts_its_callees_answer() {
     cmd.arg("--native-emit").arg(&out).arg(&guard);
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted: {}",
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     assert!(
         section(&rust, "n_outer")
             .contains("var___ret_1 = n_scan(cell, var_n, var_hit, var___ref_1);"),
         "outer: the chain's answer is adopted"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     for mode in ["--interpret", "--native"] {
         let mut cmd = loft();
         cmd.arg(mode)

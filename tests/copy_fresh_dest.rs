@@ -10,6 +10,7 @@
 //! emission: the append's copy carries the bit, and a copy into an EXISTING element — a
 //! whole-element write, whose old value is exactly what the clear releases — does not.
 //! Read off `loft introspect`, the instrument the design was written on.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -80,7 +81,7 @@ fn copy_tps(ir: &str) -> Vec<i64> {
 #[test]
 fn an_append_copies_into_a_fresh_element_and_says_so() {
     let src = std::env::temp_dir().join("loft_copy_fresh_dest_append.loft");
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     let dump = introspect(&src);
     let ir = ir_of(&dump, "n_c_append");
     let tps = copy_tps(ir);
@@ -89,13 +90,13 @@ fn an_append_copies_into_a_fresh_element_and_says_so() {
         tps.iter().all(|t| t & FRESH != 0),
         "every copy into the appended element carries COPY_FRESH_DEST, got {tps:?}:\n{ir}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }
 
 #[test]
 fn a_whole_element_write_keeps_the_clear() {
     let src = std::env::temp_dir().join("loft_copy_fresh_dest_write.loft");
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     let dump = introspect(&src);
     let ir = ir_of(&dump, "n_c_write");
     let tps = copy_tps(ir);
@@ -107,5 +108,5 @@ fn a_whole_element_write_keeps_the_clear() {
         tps.iter().all(|t| t & FRESH == 0),
         "a copy into an EXISTING element must not carry COPY_FRESH_DEST, got {tps:?}:\n{ir}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }

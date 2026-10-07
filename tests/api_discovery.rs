@@ -9,6 +9,7 @@
 //! stripped).  All offline: path-form resolution against the in-repo
 //! fixture packages, and name-form resolution against a fake `LOFT_HOME`.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -46,18 +47,18 @@ fn api_path_form_prints_public_surface() {
 fn api_name_form_resolves_installed_registry_copy() {
     let pid = std::process::id();
     let home = std::env::temp_dir().join(format!("loft_api_home_{pid}"));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     // Two installed versions; resolution must pick the newest (0.10.0 > 0.9.0
     // numerically — lexicographic order would pick wrong).
     for ver in ["0.9.0", "0.10.0"] {
         let pkg = home.join(".loft/registry").join(format!("fakelib-{ver}"));
-        std::fs::create_dir_all(pkg.join("src")).expect("mkdir pkg");
-        std::fs::write(
+        fa::create_dir_all(pkg.join("src")).expect("mkdir pkg");
+        fa::write(
             pkg.join("loft.toml"),
             format!("[package]\nname = \"fakelib\"\nversion = \"{ver}\"\n"),
         )
         .expect("write manifest");
-        std::fs::write(
+        fa::write(
             pkg.join("src/fakelib.loft"),
             format!(
                 "// Greets v{ver}.\npub fn greet_{}() {{\n    println(\"hi\");\n}}\n",
@@ -94,5 +95,5 @@ fn api_name_form_resolves_installed_registry_copy() {
         "listing must enumerate installed copies: {listing}"
     );
 
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }

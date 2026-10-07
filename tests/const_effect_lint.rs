@@ -19,6 +19,7 @@
 //! diagnostics on stderr. `LOFT_NO_CACHE` is required — a warm program cache skips the
 //! re-parse, and the diagnostics with it.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -31,7 +32,7 @@ const MSG: &str = "is re-evaluated at EVERY reference";
 /// Compile+run `src` and return stderr. `extra_env` carries the opt-out when testing it.
 fn stderr_of(name: &str, src: &str, extra_env: &[(&str, &str)]) -> String {
     let path = std::env::temp_dir().join(format!("loft_ce_{name}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write temp program");
+    fa::write(&path, src).expect("write temp program");
     let mut cmd = Command::new(loft_bin());
     cmd.arg("--interpret")
         .arg(&path)
@@ -41,7 +42,7 @@ fn stderr_of(name: &str, src: &str, extra_env: &[(&str, &str)]) -> String {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("failed to invoke loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 

@@ -15,6 +15,7 @@
 //! `spawn_build`, `tests/engine_host_reload.rs` stays green — so the machine half is
 //! guarded here or nowhere.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -25,9 +26,9 @@ fn loft_bin() -> PathBuf {
 /// A directory of its own per case: `check` writes a `.loft/` cache beside the source.
 fn case_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_check_line_{name}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("case dir");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("case dir");
+    fa::write(
         dir.join("hello.loft"),
         "fn main() { println(\"hello, world!\"); }\n",
     )
@@ -110,16 +111,16 @@ fn the_live_host_still_gets_the_source_and_artifact_it_parses() {
 #[test]
 fn check_with_warnings_denied_fails_on_a_warning() {
     let dir = std::env::temp_dir().join("loft_check_line_deny");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("case dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("case dir");
     // `a` is never read: a warning.
-    std::fs::write(
+    fa::write(
         dir.join("warn.loft"),
         "fn f(a: integer) -> integer { 3 }\nfn main() { println(\"{f(1)}\"); }\n",
     )
     .expect("source");
     // Nine required parameters: advice only.
-    std::fs::write(
+    fa::write(
         dir.join("advice.loft"),
         "fn g(a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, \
          h: integer, i: integer, j: integer) -> integer { a + b + c + d + e + f + h + i + j }\n\

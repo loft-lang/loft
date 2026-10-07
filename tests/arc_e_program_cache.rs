@@ -8,6 +8,7 @@
 //! warm run mmaps it and skips ALL parsing.  A drift manifest of every parsed
 //! source's content hash invalidates the bundle whenever any input changes.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -42,10 +43,10 @@ fn program_cache_cold_warm_then_drift() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_arce_{pid}.loft"));
-    let write = |body: &str| std::fs::write(&script, body).expect("write script");
+    let write = |body: &str| fa::write(&script, body).expect("write script");
     write("fn main() {\n  v = [5, 10, 15];\n  print(\"sum={v[0]+v[1]+v[2]}\\n\");\n}\n");
     let cache_dir = tmp.join(format!("loft_arce_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 
     // 1. Cache off.
     let (ok_off, out_off) = run(&script, None);
@@ -84,8 +85,8 @@ fn program_cache_cold_warm_then_drift() {
         "drift must reparse → 115, got: {out_drift}"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// @C133 — a development build is cached like an installed one, and `LOFT_NO_CACHE=1` is the
@@ -103,7 +104,7 @@ fn a_development_build_caches_unless_told_not_to() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_c133_{pid}.loft"));
-    std::fs::write(&script, "fn main() {\n  print(\"c133={6 * 7}\\n\");\n}\n").expect("script");
+    fa::write(&script, "fn main() {\n  print(\"c133={6 * 7}\\n\");\n}\n").expect("script");
     let bundles = |root: &std::path::Path| {
         std::fs::read_dir(root.join("loft"))
             .ok()
@@ -114,7 +115,7 @@ fn a_development_build_caches_unless_told_not_to() {
             .count()
     };
     let run_in = |root: &std::path::Path, off: bool| {
-        let _ = std::fs::remove_dir_all(root);
+        let _ = fa::remove_dir_all(root);
         let mut cmd = Command::new(&bin);
         cmd.arg("--interpret")
             .arg(&script)
@@ -137,9 +138,9 @@ fn a_development_build_caches_unless_told_not_to() {
     let off = tmp.join(format!("loft_c133_off_{pid}"));
     assert!(run_in(&on, false) > 0, "the default must write a bundle");
     assert_eq!(run_in(&off, true), 0, "LOFT_NO_CACHE=1 must write none");
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&on);
-    let _ = std::fs::remove_dir_all(&off);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&on);
+    let _ = fa::remove_dir_all(&off);
 }
 
 /// #358 — a no-`main` script (the zero-param test-fn fallback) must execute on
@@ -153,13 +154,13 @@ fn no_main_script_executes_on_warm_load() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_358_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "fn check_me() {\n    println(\"hello from check_me\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_358_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 
     // Cold run parses, executes the fallback, and writes the bundle.
     let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
@@ -179,8 +180,8 @@ fn no_main_script_executes_on_warm_load() {
         );
     }
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// @PLN11 G2/M6 — the manifest's build-signature line invalidates a stale
@@ -194,9 +195,9 @@ fn manifest_build_signature_invalidates_stale_bundle() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_sig_{pid}.loft"));
-    std::fs::write(&script, "fn main() { print(\"answer={6*7}\\n\"); }\n").expect("write script");
+    fa::write(&script, "fn main() { print(\"answer={6*7}\\n\"); }\n").expect("write script");
     let cache_dir = tmp.join(format!("loft_sig_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 
     // Cold run primes the bundle + a manifest whose first line is `sig <build>`.
     let (ok_cold, _) = run(&script, Some(&cache_dir));
@@ -208,7 +209,7 @@ fn manifest_build_signature_invalidates_stale_bundle() {
         .map(|e| e.path())
         .find(|p| p.extension().and_then(|x| x.to_str()) == Some("manifest"))
         .expect("manifest written");
-    let text = std::fs::read_to_string(&manifest).expect("read manifest");
+    let text = fa::read_to_string(&manifest).expect("read manifest");
     assert!(
         text.starts_with("sig "),
         "manifest must start with the sig line: {text:?}"
@@ -216,7 +217,7 @@ fn manifest_build_signature_invalidates_stale_bundle() {
 
     // Simulate a binary upgrade: clobber the sig line with a different build.
     let body: String = text.lines().skip(1).map(|l| format!("{l}\n")).collect();
-    std::fs::write(&manifest, format!("sig STALE-OTHER-BUILD\n{body}")).expect("tamper manifest");
+    fa::write(&manifest, format!("sig STALE-OTHER-BUILD\n{body}")).expect("tamper manifest");
 
     // Next run must treat it as a cache miss (reparse) and still be correct —
     // NOT warm-load the now-"foreign" bundle.
@@ -228,14 +229,14 @@ fn manifest_build_signature_invalidates_stale_bundle() {
     );
 
     // And it should have re-saved a manifest with THIS build's real signature.
-    let restored = std::fs::read_to_string(&manifest).expect("read manifest");
+    let restored = fa::read_to_string(&manifest).expect("read manifest");
     assert!(
         !restored.contains("STALE-OTHER-BUILD"),
         "a cold reparse should overwrite the stale-sig manifest"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// @PLN11 — regression: a `#cwd` program's parse-time path-resolution mode must
@@ -251,13 +252,13 @@ fn cwd_directive_survives_warm_load() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_cwd_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "#cwd\nfn main() {\n  found = file(\"Cargo.toml\").format != Format.NotExists;\n  print(\"found={found}\\n\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_cwd_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 
     // Cache-off baseline: `#cwd` resolves cwd-relative → finds the repo Cargo.toml.
     let (ok_off, out_off) = run(&script, None);
@@ -279,8 +280,8 @@ fn cwd_directive_survives_warm_load() {
         "warm lost the #cwd mode (program-relative regression): {out_warm}"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// #310 — a program whose library carries a native cdylib (`[library]
@@ -295,13 +296,13 @@ fn program_cache_warm_keeps_native_libs() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_arce_nlib_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "use native_pkg::*;\n\nfn main() {\n    r = ext_add_one(41);\n    print(\"r={r}\\n\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_arce_nlib_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 
     let run_lib = |cache: Option<&std::path::Path>| {
         let mut cmd = Command::new(loft_bin());
@@ -343,8 +344,8 @@ fn program_cache_warm_keeps_native_libs() {
     );
     assert!(out_warm.contains("r=42"), "warm output: {out_warm}");
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// #322 — a `--lib`-resolved dependency edit must invalidate the program
@@ -357,19 +358,19 @@ fn lib_dependency_edit_invalidates_program_cache() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let lib_dir = tmp.join(format!("loft_p322_lib_{pid}"));
-    let _ = std::fs::remove_dir_all(&lib_dir);
-    std::fs::create_dir_all(&lib_dir).expect("mkdir lib");
+    let _ = fa::remove_dir_all(&lib_dir);
+    fa::create_dir_all(&lib_dir).expect("mkdir lib");
     let lib_file = lib_dir.join("rstream.loft");
-    let write_lib = |body: &str| std::fs::write(&lib_file, body).expect("write lib");
+    let write_lib = |body: &str| fa::write(&lib_file, body).expect("write lib");
     write_lib("pub fn stream_value() -> integer { 28 }\n");
     let script = tmp.join(format!("loft_p322_main_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "use rstream::*;\nfn main() { print(\"v={stream_value()}\\n\"); }\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_p322_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 
     let run_lib = |label: &str| -> String {
         let out = Command::new(loft_bin())
@@ -395,7 +396,7 @@ fn lib_dependency_edit_invalidates_program_cache() {
         .filter_map(Result::ok)
         .find(|e| e.file_name().to_string_lossy().ends_with(".manifest"))
         .expect("manifest written");
-    let manifest_text = std::fs::read_to_string(manifest.path()).expect("read manifest");
+    let manifest_text = fa::read_to_string(manifest.path()).expect("read manifest");
     assert!(
         manifest_text.contains("rstream.loft"),
         "manifest must list the --lib dependency:\n{manifest_text}"
@@ -409,9 +410,9 @@ fn lib_dependency_edit_invalidates_program_cache() {
         "stale cache served after lib edit: {out_edited}"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&lib_dir);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&lib_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// A warm run renders the SAME diagnostics a cold one does — including the parts computed
@@ -434,10 +435,10 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_diagfix_{pid}.loft"));
     let cache = tmp.join(format!("loft_diagfix_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache);
-    std::fs::create_dir_all(&cache).expect("create cache dir");
+    let _ = fa::remove_dir_all(&cache);
+    fa::create_dir_all(&cache).expect("create cache dir");
     // `omitted-field-zero` is an ADVICE that carries two fixes, one of them with an edit.
-    std::fs::write(
+    fa::write(
         &script,
         "struct DfPlayer { name: text, health: integer }\nfn main() {\n  p = DfPlayer { name: \"Bob\" };\n  print(\"{p.name}\");\n}\n",
     )
@@ -476,8 +477,8 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
     // `--explain` prints the fix lines themselves.  Fresh cache dir so the first of the two
     // is genuinely cold for this mode as well.
     let cache_x = tmp.join(format!("loft_diagfix_cache_x_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_x);
-    std::fs::create_dir_all(&cache_x).expect("create cache dir");
+    let _ = fa::remove_dir_all(&cache_x);
+    fa::create_dir_all(&cache_x).expect("create cache dir");
     let stderr_x = |dir: &std::path::Path| -> String {
         let out = Command::new(loft_bin())
             .arg("--interpret")
@@ -503,9 +504,9 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
         "a warm --explain run must print the fix lines a cold one printed"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache);
-    let _ = std::fs::remove_dir_all(&cache_x);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache);
+    let _ = fa::remove_dir_all(&cache_x);
 }
 /// `introspect` always PARSES: a warm bundle carries no variable table, so under a cache hit
 /// the dump rendered every variable as `name(65535)` and the slot table's number and span
@@ -516,13 +517,13 @@ fn introspect_parses_fresh_under_a_warm_program_cache() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_arce_introspect_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "fn main() {\n  total = 0;\n  for n in 1..4 { total = total + n; }\n  print(\"{total}\\n\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_arce_introspect_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
     let introspect = || {
         let out = Command::new(loft_bin())
             .arg("introspect")
@@ -553,8 +554,8 @@ fn introspect_parses_fresh_under_a_warm_program_cache() {
         first, second,
         "two introspect runs of one binary must emit identically"
     );
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// `@FR-O-Witness` — a heap-record local whose assignments MIX ownership releases its
@@ -570,7 +571,7 @@ fn a_warm_run_keeps_the_owner_witness() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_arce_witness_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "struct Node { value: integer, next: reference<Node>? }\n\
          fn run() -> integer {\n\
@@ -587,7 +588,7 @@ fn a_warm_run_keeps_the_owner_witness() {
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_arce_witness_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
     for backend in ["--interpret", "--native"] {
         let run = |warm_label: &str| -> String {
             let out = Command::new(loft_bin())
@@ -619,8 +620,8 @@ fn a_warm_run_keeps_the_owner_witness() {
             "{backend} warm run copied into the viewed record (b overwritten): {warm}"
         );
     }
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// A per-variable fact the emitters read must survive the warm load, which is a second
@@ -634,13 +635,13 @@ fn a_linked_narrow_local_reads_the_same_warm() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_linked_narrow_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "fn main() {\n  x: i8 = -1;\n  p = &x;\n  p = -7;\n  h: integer limit(1000, 1100) = 1050;\n  q = &h;\n  q = 1020;\n  println(\"{x} {p} {h} {q}\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_linked_narrow_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
     let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
     assert!(ok_cold, "cold run failed: {out_cold}");
     assert_eq!(out_cold.trim(), "-7 -7 1020 1020", "cold output");
@@ -652,8 +653,8 @@ fn a_linked_narrow_local_reads_the_same_warm() {
             "{nth} warm run of a linked narrow local"
         );
     }
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// @PLN167 C3 — a `&text` parameter handed a text field is served by the function's STORE
@@ -667,13 +668,13 @@ fn a_store_text_instance_reads_the_same_warm() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_store_text_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "struct O { a: text, b: text }\nfn app(t: &text, k: integer) { t += \"!{k}\"; }\nfn fwd(t: &text) { app(t, 7); t += \".\"; }\nfn main() {\n  o = O { a: \"alpha\", b: \"beta\" };\n  fwd(o.b);\n  v: vector<text> = [\"aa\", \"bb\"];\n  app(v[1], 2);\n  s = \"x\";\n  fwd(s);\n  g = app;\n  g(o.a, 9);\n  println(\"{o.a} {o.b} {v} {s}\");\n}\n",
     )
     .expect("write script");
     let cache_dir = tmp.join(format!("loft_store_text_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
     let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
     assert!(ok_cold, "cold run failed: {out_cold}");
     assert_eq!(
@@ -689,8 +690,8 @@ fn a_store_text_instance_reads_the_same_warm() {
             "{nth} warm run of a store text instance"
         );
     }
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }
 
 /// A stdlib that changed under a cached program is never served stale (@PLN166 B1).
@@ -736,8 +737,8 @@ fn run_with_stdlib(
 fn warm_through_an_edit(script: &std::path::Path, root: &std::path::Path, cache: &std::path::Path) {
     let (ok, out) = run_with_stdlib(script, root, cache);
     assert!(ok && out.contains("v=1"), "first run: {out}");
-    let src = std::fs::read_to_string(script).expect("script");
-    std::fs::write(script, format!("{src}// edited\n")).expect("edit");
+    let src = fa::read_to_string(script).expect("script");
+    fa::write(script, format!("{src}// edited\n")).expect("edit");
     for _ in 0..2 {
         let (ok, out) = run_with_stdlib(script, root, cache);
         assert!(ok && out.contains("v=1"), "warming run: {out}");
@@ -747,16 +748,16 @@ fn warm_through_an_edit(script: &std::path::Path, root: &std::path::Path, cache:
 /// A scratch `<root>/default/` holding the real stdlib plus one probe file.
 fn scratch_stdlib(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let root = std::env::temp_dir().join(format!("loft_b1_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dflt = root.join("default");
-    std::fs::create_dir_all(&dflt).expect("scratch default/");
+    fa::create_dir_all(&dflt).expect("scratch default/");
     for e in std::fs::read_dir(workspace_root().join("default")).expect("default/") {
         let p = e.expect("entry").path();
         if p.extension().and_then(|x| x.to_str()) == Some("loft") {
-            std::fs::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
+            fa::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
         }
     }
-    std::fs::write(
+    fa::write(
         dflt.join("99_b1_probe.loft"),
         "pub fn b1probe() -> integer { 1 }\n",
     )
@@ -769,9 +770,9 @@ fn an_edited_stdlib_function_is_never_served_from_a_cache() {
     let (root, dflt) = scratch_stdlib("edit");
     let cache = root.join("cache");
     let script = root.join("prog.loft");
-    std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    fa::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
     warm_through_an_edit(&script, &root, &cache);
-    std::fs::write(
+    fa::write(
         dflt.join("99_b1_probe.loft"),
         "pub fn b1probe() -> integer { 2 }\n",
     )
@@ -781,7 +782,7 @@ fn an_edited_stdlib_function_is_never_served_from_a_cache() {
         ok && out.contains("v=2"),
         "an edited stdlib must be re-read, got: {out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 #[test]
@@ -789,22 +790,22 @@ fn an_added_stdlib_file_is_seen_after_an_edit_loop() {
     let (root, dflt) = scratch_stdlib("add");
     let cache = root.join("cache");
     let script = root.join("prog.loft");
-    std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    fa::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
     warm_through_an_edit(&script, &root, &cache);
-    std::fs::write(
+    fa::write(
         dflt.join("98_b1_extra.loft"),
         "pub fn b1extra() -> integer { 7 }\n",
     )
     .expect("add");
     // An edit: the program cache misses, so the stdlib must come from a parse or a cache
     // that knows about the new file.
-    std::fs::write(&script, "fn main() { print(\"v={b1extra()}\\n\"); }\n").expect("script");
+    fa::write(&script, "fn main() { print(\"v={b1extra()}\\n\"); }\n").expect("script");
     let (ok, out) = run_with_stdlib(&script, &root, &cache);
     assert!(
         ok && out.contains("v=7"),
         "an added stdlib file must be seen, got: {out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 #[test]
@@ -812,15 +813,15 @@ fn a_removed_stdlib_file_is_never_served_from_a_cache() {
     let (root, dflt) = scratch_stdlib("remove");
     let cache = root.join("cache");
     let script = root.join("prog.loft");
-    std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    fa::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
     warm_through_an_edit(&script, &root, &cache);
-    std::fs::remove_file(dflt.join("99_b1_probe.loft")).expect("remove");
+    fa::remove_file(dflt.join("99_b1_probe.loft")).expect("remove");
     let (ok, out) = run_with_stdlib(&script, &root, &cache);
     assert!(
         !ok && !out.contains("v=1"),
         "a removed stdlib function must be refused, not served from a cache: {out}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Every `LOFT_*` variable outside `cache::INERT_ENV` is part of the cache key, so a bundle
@@ -833,10 +834,10 @@ fn a_removed_stdlib_file_is_never_served_from_a_cache() {
 fn a_lowering_switch_is_part_of_the_program_cache_key() {
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_envkey_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("create scratch");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("create scratch");
     let script = root.join("prog.loft");
-    std::fs::write(
+    fa::write(
         &script,
         "fn envkey_sum(n: integer) -> integer {\n  v: vector<integer> = [];\n  \
          for i in 0..n { v += [i * i]; }\n  t = 0;\n  for x in v { t += x; }\n  t\n}\n\
@@ -861,7 +862,7 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
         }
         let out = cmd.output().expect("failed to invoke loft binary");
         assert!(out.status.success(), "{tag}: {out:?}");
-        let rs = std::fs::read_to_string(&out_rs).expect("emitted Rust");
+        let rs = fa::read_to_string(&out_rs).expect("emitted Rust");
         (
             rs,
             String::from_utf8_lossy(&out.stderr).contains("[warm] hit"),
@@ -903,7 +904,7 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
         back_hit,
         "…and the default run still reuses the default one"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// loft#1859 — every executable of ONE build shares one stdlib image.  The key folded in the
@@ -916,13 +917,13 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
 fn every_binary_of_one_build_shares_one_stdlib_image() {
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_stdlib_share_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let cache = root.join("xdg");
-    std::fs::create_dir_all(&cache).expect("create scratch");
+    fa::create_dir_all(&cache).expect("create scratch");
     let script = root.join("prog.loft");
-    std::fs::write(&script, "fn main() { println(\"ok\"); }\n").expect("write script");
+    fa::write(&script, "fn main() { println(\"ok\"); }\n").expect("write script");
     let copy = root.join(format!("loft-copy{}", std::env::consts::EXE_SUFFIX));
-    std::fs::copy(loft_bin(), &copy).expect("copy the binary");
+    fa::copy(loft_bin(), &copy).expect("copy the binary");
     let run_with = |bin: &std::path::Path, env: &[(&str, &str)]| {
         let mut cmd = Command::new(bin);
         cmd.arg("--path")
@@ -966,5 +967,5 @@ fn every_binary_of_one_build_shares_one_stdlib_image() {
         "a second executable of the same build, and a run under cargo's exported stamps, \
          read the first image instead of writing their own"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

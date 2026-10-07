@@ -6,6 +6,7 @@
 //! signature is SEALED, not dropped) and the exclusions (a private / unreachable non-`pub`
 //! type and a non-`pub` fn are not in the surface).
 
+use loft::file_access as fa;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -17,15 +18,15 @@ fn api_surface(src: &str) -> String {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let file = dir.join("lib.loft");
-    std::fs::write(&file, src).unwrap();
+    fa::write(&file, src).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg(&file)
         .output()
         .expect("run loft api-surface");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         out.status.success(),
         "api-surface exited non-zero: {}",
@@ -41,18 +42,18 @@ fn api_diff_cli(base: &str, new: &str, json: bool) -> (String, i32) {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let fb = dir.join("base.loft");
     let fn_ = dir.join("new.loft");
-    std::fs::write(&fb, base).unwrap();
-    std::fs::write(&fn_, new).unwrap();
+    fa::write(&fb, base).unwrap();
+    fa::write(&fn_, new).unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("api-surface").arg("--diff").arg(&fb).arg(&fn_);
     if json {
         cmd.arg("--json");
     }
     let out = cmd.output().expect("run loft api-surface --diff");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         out.status.code().unwrap_or(-1),
@@ -115,12 +116,12 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let released_f = dir.join("released.loft");
     let baseline_f = dir.join("lib.api-baseline");
     let current_f = dir.join("current.loft");
-    std::fs::write(&released_f, released).unwrap();
-    std::fs::write(&current_f, current).unwrap();
+    fa::write(&released_f, released).unwrap();
+    fa::write(&current_f, current).unwrap();
     let emit = Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg(&released_f)
@@ -132,7 +133,7 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
         "emit-baseline failed: {}",
         String::from_utf8_lossy(&emit.stderr)
     );
-    std::fs::write(&baseline_f, &emit.stdout).unwrap();
+    fa::write(&baseline_f, &emit.stdout).unwrap();
     let chk = Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg("--check")
@@ -140,7 +141,7 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
         .arg(&current_f)
         .output()
         .expect("check");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         String::from_utf8_lossy(&chk.stdout).into_owned(),
         chk.status.code().unwrap_or(-1),

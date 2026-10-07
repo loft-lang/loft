@@ -10,6 +10,7 @@
 //! vector store, a nested struct arriving by copy, a `__nullable` element whose
 //! discriminant the group never writes) keeps the prefill — and the switch
 //! (`LOFT_NO_COMPLETE_WRITE=1`).  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -57,12 +58,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(no-prefill sites, prefilled sites)`.
@@ -103,7 +104,7 @@ fn each_cell_elides_exactly_the_prefills_predicted() {
             "{name}: (no-prefill, prefilled) sites"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -115,5 +116,5 @@ fn the_switch_restores_every_prefill() {
         0,
         "under LOFT_NO_COMPLETE_WRITE=1 every record keeps its default prefill"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

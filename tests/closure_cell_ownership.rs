@@ -19,6 +19,7 @@
 //! DEFAULT — so these shapes run in default mode on BOTH backends and assert
 //! correct output: the deterministic guard for a Mechanism-B regression.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -110,7 +111,7 @@ fn mechanism_b_coexisting_closures() {
     let dir = std::env::temp_dir();
     for (label, prog) in CASES {
         let tmp = dir.join(format!("loft_closure_cell_{label}.loft"));
-        std::fs::write(&tmp, prog).unwrap();
+        fa::write(&tmp, prog).unwrap();
         for mode in ["--interpret", "--native"] {
             let (ok, output) = run(mode, &tmp);
             assert!(

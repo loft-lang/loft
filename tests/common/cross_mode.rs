@@ -18,6 +18,7 @@
 //! See `doc/claude/plans/14-tuple-validation/00-matrix.md` for the
 //! design.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -102,13 +103,13 @@ pub fn run_cross_mode(test_name: &str, body: &str) {
     );
 
     let snippet_path = std::env::temp_dir().join(format!("loft_xmode_{test_name}.loft"));
-    std::fs::write(&snippet_path, &source)
+    fa::write(&snippet_path, &source)
         .unwrap_or_else(|e| panic!("write snippet for {test_name}: {e}"));
 
     let interp = run_mode("--interpret", &snippet_path);
     let native = run_mode("--native", &snippet_path);
 
-    let _ = std::fs::remove_file(&snippet_path);
+    let _ = fa::remove_file(&snippet_path);
 
     let interp_stdout = normalise_stdout(&interp.stdout);
     let native_stdout = normalise_stdout(&native.stdout);
@@ -150,11 +151,11 @@ pub fn run_cross_mode_expect(test_name: &str, body: &str, expected: &str) {
          fn main() {{ test(); }}\n"
     );
     let snippet_path = std::env::temp_dir().join(format!("loft_xmode_{test_name}.loft"));
-    std::fs::write(&snippet_path, &source)
+    fa::write(&snippet_path, &source)
         .unwrap_or_else(|e| panic!("write snippet for {test_name}: {e}"));
     let interp = run_mode("--interpret", &snippet_path);
     let native = run_mode("--native", &snippet_path);
-    let _ = std::fs::remove_file(&snippet_path);
+    let _ = fa::remove_file(&snippet_path);
 
     for (label, run) in [("interp", &interp), ("native", &native)] {
         assert!(
@@ -186,11 +187,11 @@ pub fn run_cross_mode_rejected(test_name: &str, body: &str, expected: &str) {
          fn main() {{ test(); }}\n"
     );
     let snippet_path = std::env::temp_dir().join(format!("loft_xmode_{test_name}.loft"));
-    std::fs::write(&snippet_path, &source)
+    fa::write(&snippet_path, &source)
         .unwrap_or_else(|e| panic!("write snippet for {test_name}: {e}"));
     let interp = run_mode("--interpret", &snippet_path);
     let native = run_mode("--native", &snippet_path);
-    let _ = std::fs::remove_file(&snippet_path);
+    let _ = fa::remove_file(&snippet_path);
     for (label, run) in [("interp", &interp), ("native", &native)] {
         assert!(
             !run.success,
@@ -229,7 +230,7 @@ pub fn run_cross_mode_leak_free(test_name: &str, body: &str) {
     );
 
     let snippet_path = std::env::temp_dir().join(format!("loft_leak_{test_name}.loft"));
-    std::fs::write(&snippet_path, &source)
+    fa::write(&snippet_path, &source)
         .unwrap_or_else(|e| panic!("write snippet for {test_name}: {e}"));
 
     let interp = run_mode("--interpret", &snippet_path);
@@ -239,7 +240,7 @@ pub fn run_cross_mode_leak_free(test_name: &str, body: &str) {
         &[("LOFT_NATIVE_LEAK_CHECK", "1")],
     );
 
-    let _ = std::fs::remove_file(&snippet_path);
+    let _ = fa::remove_file(&snippet_path);
 
     for (mode, run) in [("interp", &interp), ("native", &native)] {
         assert!(

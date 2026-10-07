@@ -9,6 +9,7 @@
 //! neither ever reaches a package's SOURCES. A cleanup tool that deletes the thing it
 //! was pointed near is worse than no cleanup tool.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,19 +21,19 @@ fn loft_bin() -> PathBuf {
 /// registry package carrying sources, and an auto-native artifact beside them.
 fn fake_home(name: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("loft_cache_cli_{name}"));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     let bc = home.join(".loft/build-cache/demo-1.0.0/release");
-    std::fs::create_dir_all(&bc).expect("build-cache");
-    std::fs::write(bc.join("libdemo.rlib"), vec![0u8; 64 * 1024]).unwrap();
+    fa::create_dir_all(&bc).expect("build-cache");
+    fa::write(bc.join("libdemo.rlib"), vec![0u8; 64 * 1024]).unwrap();
     // A key that cannot be any loft's: the real one is `.max(1)`-ed, never 0.
-    std::fs::write(bc.join(".loft-build-fp"), "0").unwrap();
+    fa::write(bc.join(".loft-build-fp"), "0").unwrap();
 
     let pkg = home.join(".loft/registry/demo-1.0.0");
-    std::fs::create_dir_all(pkg.join("src")).expect("registry");
-    std::fs::write(pkg.join("src/lib.loft"), "fn demo() -> integer { 1 }\n").unwrap();
-    std::fs::write(pkg.join("loft.toml"), "[package]\nname=\"demo\"\n").unwrap();
+    fa::create_dir_all(pkg.join("src")).expect("registry");
+    fa::write(pkg.join("src/lib.loft"), "fn demo() -> integer { 1 }\n").unwrap();
+    fa::write(pkg.join("loft.toml"), "[package]\nname=\"demo\"\n").unwrap();
     let auto = pkg.join("native-auto");
-    std::fs::create_dir_all(&auto).unwrap();
+    fa::create_dir_all(&auto).unwrap();
     let ext = if cfg!(target_os = "windows") {
         "dll"
     } else if cfg!(target_os = "macos") {
@@ -40,7 +41,7 @@ fn fake_home(name: &str) -> PathBuf {
     } else {
         "so"
     };
-    std::fs::write(
+    fa::write(
         auto.join(format!("libloft_auto_demo_1_0_0_{:016x}.{ext}", 1u64)),
         vec![0u8; 8192],
     )
@@ -89,8 +90,8 @@ fn run(home: &Path, args: &[&str]) -> (String, bool) {
 }
 
 fn sources_intact(home: &Path) -> bool {
-    home.join(".loft/registry/demo-1.0.0/src/lib.loft").exists()
-        && home.join(".loft/registry/demo-1.0.0/loft.toml").exists()
+    fa::exists(home.join(".loft/registry/demo-1.0.0/src/lib.loft"))
+        && fa::exists(home.join(".loft/registry/demo-1.0.0/loft.toml"))
 }
 
 /// `status` reports and changes nothing — which is what makes it the dry run for
@@ -105,12 +106,11 @@ fn status_reports_without_touching_anything() {
         "the footprint and the reclaimable part are the whole point:\n{out}"
     );
     assert!(
-        home.join(".loft/build-cache/demo-1.0.0/release/libdemo.rlib")
-            .exists(),
+        fa::exists(home.join(".loft/build-cache/demo-1.0.0/release/libdemo.rlib")),
         "status must not delete:\n{out}"
     );
     assert!(sources_intact(&home));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// The guard that stops a development build from wiping the installed loft's live
@@ -126,11 +126,10 @@ fn prune_refuses_from_a_binary_that_is_not_the_installed_loft() {
         "and say why — a bare non-zero exit teaches nothing:\n{out}"
     );
     assert!(
-        home.join(".loft/build-cache/demo-1.0.0/release/libdemo.rlib")
-            .exists(),
+        fa::exists(home.join(".loft/build-cache/demo-1.0.0/release/libdemo.rlib")),
         "a refused prune deletes nothing:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// With `--force`, the dead generation goes — and the package's SOURCES stay. The
@@ -142,7 +141,7 @@ fn forced_prune_takes_the_dead_generation_and_spares_the_sources() {
     let (out, ok) = run(&home, &["cache", "prune", "--force"]);
     assert!(ok, "prune --force must succeed:\n{out}");
     assert!(
-        !home.join(".loft/build-cache/demo-1.0.0").exists(),
+        !fa::exists(home.join(".loft/build-cache/demo-1.0.0")),
         "the tree stamped with a key no loft has must go:\n{out}"
     );
     assert!(
@@ -153,7 +152,7 @@ fn forced_prune_takes_the_dead_generation_and_spares_the_sources() {
         out.contains("freed"),
         "and it reports what it actually gave back:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// `--all` is the implemented form of the `rm -rf` the docs used to prescribe. It
@@ -176,7 +175,7 @@ fn prune_all_clears_the_caches_but_not_the_package() {
         sources_intact(&home),
         "…and never the sources beside them:\n{out}"
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// An unknown subcommand fails loudly with the usage line rather than defaulting to
@@ -188,7 +187,7 @@ fn an_unknown_cache_subcommand_is_refused() {
     assert!(!ok, "an unknown verb must not succeed:\n{out}");
     assert!(out.contains("usage: loft cache"), "{out}");
     assert!(sources_intact(&home));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// A machine that never installed a package says so, instead of printing an empty
@@ -196,10 +195,10 @@ fn an_unknown_cache_subcommand_is_refused() {
 #[test]
 fn an_empty_cache_says_so() {
     let home = std::env::temp_dir().join("loft_cache_cli_empty");
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(home.join(".loft")).unwrap();
+    let _ = fa::remove_dir_all(&home);
+    fa::create_dir_all(home.join(".loft")).unwrap();
     let (out, ok) = run(&home, &["cache", "status"]);
     assert!(ok, "{out}");
     assert!(out.contains("nothing cached yet"), "{out}");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }

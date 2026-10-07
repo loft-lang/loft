@@ -30,6 +30,7 @@
 //!
 //! [`harness_can_fail`] is the control for the harness itself.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -102,7 +103,7 @@ fn main() {\n\
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_978_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -116,7 +117,7 @@ fn var_table(tag: &str, src: &str) -> String {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -236,7 +237,7 @@ fn harness_can_fail() {
         "fn main() { assert(1 == 2, \"deliberate\"); print(\"978 branch join OK\\n\"); }\n",
     );
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "the harness must report a failing script as failing"
@@ -264,7 +265,7 @@ fn var_table_of(tag: &str, src: &str, func: &str) -> String {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -312,7 +313,7 @@ fn a_vector_local_is_backed_by_its_own_element_type() {
     // (a smaller spelling promotes it into the return buffer, which has none to check).
     let arm_copy = var_table_of(
         "vdb_arm_copy",
-        &std::fs::read_to_string("tests/scripts/508-empty-arm-real-empty-vector.loft")
+        &fa::read_to_string("tests/scripts/508-empty-arm-real-empty-vector.loft")
             .expect("read the 508 corpus file"),
         "n_g1",
     );

@@ -13,6 +13,7 @@
 //! Step 1 makes NO product change — this only captures + locks the baseline, and proves (via
 //! `harness_can_fail`) that the probe is not vacuous. Steps 4–5 re-run it under `LOFT_LINK_WIDEN`.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -104,9 +105,9 @@ fn main() {\n  s = S { v: [10, 20, 30] };\n  a = s.v;\n  a[1] = 99;\n\
 fn assert_wrong_link_fails(backend: &str) {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("loft_linkfail_{}.loft", std::process::id()));
-    std::fs::write(&path, WRONG_LINK).expect("write");
+    fa::write(&path, WRONG_LINK).expect("write");
     let (ok, stdout, _e) = run(backend, &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !ok && !stdout.contains("unexpectedly passed"),
         "[{backend}] the copy-boundary probe is VACUOUS — a wrong-link value did not fail"
