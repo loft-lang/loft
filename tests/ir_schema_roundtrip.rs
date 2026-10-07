@@ -31,6 +31,7 @@
 mod common;
 
 use common::parsed_default;
+use loft::file_access as fa;
 use loft::ir_schema::{
     attribute_from_json, attribute_to_json, compare_data, data_from_json, data_to_json,
     definition_from_json, definition_to_json, type_from_json, type_to_json, value_from_json,
@@ -257,10 +258,11 @@ fn tests_scripts_round_trip_body() {
     let (stdlib_data, stdlib_db) = parsed_default();
     let stdlib_defs = stdlib_data.definitions();
 
-    let mut scripts: Vec<std::path::PathBuf> = std::fs::read_dir("tests/scripts")
+    let mut scripts: Vec<std::path::PathBuf> = fa::read_dir("tests/scripts")
         .expect("tests/scripts")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     scripts.sort();
 
@@ -335,10 +337,11 @@ fn corpus_store_codec_round_trips_body() {
     if let Err(diff) = loft::ir_read::ir_roundtrip_check(&stdlib_data) {
         panic!("stdlib store-codec round-trip mismatch: {diff:?}");
     }
-    let mut scripts: Vec<std::path::PathBuf> = std::fs::read_dir("tests/scripts")
+    let mut scripts: Vec<std::path::PathBuf> = fa::read_dir("tests/scripts")
         .expect("tests/scripts")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     scripts.sort();
     let mut checked = 0usize;

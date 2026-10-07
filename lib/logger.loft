@@ -6,8 +6,8 @@ enum Level {
 
 pub struct Log {
   messages: vector < text >,
-  level: Level = Warning,
-  errors: i32 = 0
+  pub level: Level = Warning,
+  pub errors: i32 = 0
 }
 
 fn error(self: Log, message: text) {

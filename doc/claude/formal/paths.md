@@ -34,6 +34,15 @@ hold is refused everywhere; a path loft hands out is in that same form.
                 in `.` or a space (`.` and `..` themselves are names of the walk, not refused).
                 The one `:` allowed is a drive prefix `C:` leading an absolute path.
 
+  (Path-Utf8)   A name loft text cannot spell — bytes that are not UTF-8 on Linux, an unpaired
+                UTF-16 half on Windows — is refused on every platform.  A listing (`files()`,
+                `list_dir`) still shows the entry, spelled with U+FFFD for what cannot be
+                spelled, and one log line names the directory that holds it.  No operation
+                reaches such an entry: a spelling that names an entry only through that U+FFFD
+                — the listed one, or the one two such names collapse to — is refused for reading
+                and for writing, as Path-Case refuses a second spelling.  A name that IS spelled
+                with U+FFFD on disk is its own exact spelling and is not refused.
+
   (Path-Case)   A name means exactly its spelling.  A name that matches an entry of its
                 directory only when case is ignored is refused — for reading (it does not
                 exist) and for writing (it is not created) — so `b.txt` and `B.txt` are never
@@ -52,10 +61,12 @@ that works on Linux works on Windows, and one that fails, fails the same way.
 
 *Anchors:* `Stores::resolve_path` (`src/database/mod.rs`) — the one home every path-taking
 operation of both backends routes through — and `file_access::program_path`
-(`src/file_access/mod.rs`); `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`.
+(`src/file_access/mod.rs`); `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`,
+and for Path-Utf8 `file_access::read_dir`, `PathText::from_os` and
+`tests/windows_rules.rs::a_name_that_is_not_text_is_listed_and_never_reached`.
 
 ## Deviations
 
-**OPEN: 0.**  The four this chapter opened with — the Windows separator and directories,
-names one platform takes and another refuses, case folding, and `\` meaning two things — are
-closed; the record is in [paths-history.md](paths-history.md).
+**OPEN: 0.**  The five this chapter has opened — the Windows separator and directories,
+names one platform takes and another refuses, case folding, `\` meaning two things, and a name
+that is not text — are closed; the record is in [paths-history.md](paths-history.md).

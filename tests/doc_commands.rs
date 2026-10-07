@@ -19,8 +19,8 @@
 //! `loft` first on `PATH`. So a transcript is what a reader would actually type — pipes,
 //! `cd`, and all — rather than a shape invented for the test.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -44,8 +44,8 @@ fn prose(line: &str) -> Option<&str> {
 /// An expected-output line ends the block when it stops being indented, so a block is
 /// exactly what a reader sees as one screenful.
 fn transcripts_in(page: &Path) -> Vec<Transcript> {
-    let text = std::fs::read_to_string(page).expect("read doc page");
-    let name = page.file_name().unwrap().to_string_lossy().into_owned();
+    let text = fa::read_to_string(page).expect("read doc page");
+    let name = fa::file_name(page).unwrap();
     let mut out: Vec<Transcript> = Vec::new();
     for (i, raw) in text.lines().enumerate() {
         let Some(body) = prose(raw) else { continue };
@@ -73,31 +73,36 @@ fn transcripts_in(page: &Path) -> Vec<Transcript> {
 /// built binary) cannot touch the repository.
 fn fixture_copy(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("loft_doccmd_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     copy_tree(Path::new("tests/docs/cli"), &root);
     root
 }
 
 fn copy_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("mkdir fixture");
-    for entry in std::fs::read_dir(from).expect("read fixture dir") {
-        let entry = entry.expect("fixture entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
-            copy_tree(&entry.path(), &target);
+    fa::create_dir_all(to).expect("mkdir fixture");
+    for entry in fa::read_dir(from).expect("read fixture dir") {
+        let name = entry.os_name().expect("fixture entry");
+        let path = from.join(&name);
+        let target = to.join(name);
+        if fa::symlink_metadata(&path)
+            .expect("file type")
+            .file_type()
+            .is_dir()
+        {
+            copy_tree(&path, &target);
         } else {
-            std::fs::copy(entry.path(), &target).expect("copy fixture file");
+            fa::copy(&path, &target).expect("copy fixture file");
         }
     }
 }
 
 #[test]
 fn every_documented_command_runs_and_prints_what_the_page_shows() {
-    let pages: Vec<PathBuf> = std::fs::read_dir("tests/docs")
+    let pages: Vec<PathBuf> = fa::read_dir("tests/docs")
         .expect("read tests/docs")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
 
     let mut all: Vec<Transcript> = Vec::new();
@@ -119,7 +124,7 @@ fn every_documented_command_runs_and_prints_what_the_page_shows() {
 
     let mut failures: Vec<String> = Vec::new();
     for t in &all {
-        let out = Command::new("sh")
+        let out = loft::platform::process::harness_command("sh")
             .arg("-c")
             .arg(&t.command)
             .current_dir(&root)
@@ -151,7 +156,7 @@ fn every_documented_command_runs_and_prints_what_the_page_shows() {
             }
         }
     }
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     assert!(
         failures.is_empty(),
         "{} of {} documented commands did not behave as the page shows:\n\n{}",

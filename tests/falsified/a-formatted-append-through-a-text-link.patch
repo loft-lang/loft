@@ -1,0 +1,205 @@
+diff --git b/src/generation/text.rs a/src/generation/text.rs
+index 489c44a90..d3ed7a025 100644
+--- b/src/generation/text.rs
++++ a/src/generation/text.rs
+@@ -317,25 +317,6 @@ impl Output<'_> {
+     }
+ 
+     /// Use this to emit `OpFormatText`/`OpFormatStackText` as a call to `ops::format_text`.
+-    /// The `&mut String` a format op writes into, by what text variable `nr` holds: a text
+-    /// local's own `String` (`&mut var_s`), a `&text` parameter's `&mut String` as it is, and a
+-    /// `&text` LOCAL link's raw `*mut String` re-borrowed (`&mut *var_c`, inside the `unsafe`
+-    /// the text dispatch opens for a raw link).  Spelled per op it was the parameter's form
+-    /// for both kinds of link, and a formatted append through a local link (`c += "{i}"`) did
+-    /// not compile (E0308) where the plain append beside it did.
+-    fn format_dest(&self, nr: u16, stack: bool) -> String {
+-        let place = self.var_place(nr);
+-        let vars = self.data.def(self.def_nr).variables();
+-        let link = matches!(vars.tp(nr).base(), Type::RefVar(_));
+-        if link && !vars.is_argument(nr) {
+-            format!("&mut *{place}")
+-        } else if stack {
+-            place
+-        } else {
+-            format!("&mut {place}")
+-        }
+-    }
+-
+     pub(super) fn format_text(&mut self, w: &mut dyn Write, vals: &[Value]) -> std::io::Result<()> {
+         if let [
+             Value::Var(nr),
+@@ -345,6 +326,7 @@ impl Output<'_> {
+             Value::Int(token),
+         ] = vals
+         {
++            let s_nr = self.var_place(*nr);
+             let val_expr = self.generate_expr_buf(val)?;
+             // All text-returning calls produce either `Str` or `String` (never `&str`).
+             // Wrap with `&*` so `format_text` (which expects `&str`) always gets the right type.
+@@ -379,10 +361,9 @@ impl Output<'_> {
+                 val_expr
+             };
+             let width_expr = self.generate_expr_buf(width)?;
+-            let dest = self.format_dest(*nr, false);
+             write!(
+                 w,
+-                "ops::format_text({dest}, {val_str}, {width_expr}, {dir}, {token})"
++                "ops::format_text(&mut {s_nr}, {val_str}, {width_expr}, {dir}, {token})"
+             )?;
+             return Ok(());
+         }
+@@ -412,12 +393,13 @@ impl Output<'_> {
+             Value::Int(dir),
+         ] = vals
+         {
++            let s_nr = self.var_place(*nr);
+             let val_expr = self.generate_expr_buf(val)?;
+             let width_expr = self.generate_expr_buf(width)?;
+-            let dest = self.format_dest(*nr, stack);
++            let prefix = if stack { "" } else { "&mut " };
+             write!(
+                 w,
+-                "ops::format_long_with_tag({dest}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
++                "ops::format_long_with_tag({prefix}{s_nr}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
+             )?;
+             return Ok(());
+         }
+@@ -440,14 +422,15 @@ impl Output<'_> {
+             dir,
+         ] = vals
+         {
++            let s_nr = self.var_place(*nr);
+             let val_expr = self.generate_expr_buf(val)?;
+             let width_expr = self.generate_expr_buf(width)?;
+             let prec_expr = self.generate_expr_buf(prec)?;
+             let dir_expr = self.generate_expr_buf(dir)?;
+-            let dest = self.format_dest(*nr, stack);
++            let prefix = if stack { "" } else { "&mut " };
+             write!(
+                 w,
+-                "ops::format_float({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
++                "ops::format_float({prefix}{s_nr}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+             )?;
+             return Ok(());
+         }
+@@ -471,14 +454,15 @@ impl Output<'_> {
+             dir,
+         ] = vals
+         {
++            let s_nr = self.var_place(*nr);
+             let val_expr = self.generate_expr_buf(val)?;
+             let width_expr = self.generate_expr_buf(width)?;
+             let prec_expr = self.generate_expr_buf(prec)?;
+             let dir_expr = self.generate_expr_buf(dir)?;
+-            let dest = self.format_dest(*nr, stack);
++            let prefix = if stack { "" } else { "&mut " };
+             write!(
+                 w,
+-                "ops::format_single({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
++                "ops::format_single({prefix}{s_nr}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+             )?;
+             return Ok(());
+         }
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 8e5956dad..fd2540402 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -4773,17 +4773,6 @@ use a separate collection or add after the loop"
+             };
+             if let Some((t, i)) = member_src {
+                 amp_unlowered = false;
+-                // A link to a text member of a by-value PARAMETER can write it: the parameter
+-                // takes its owned copy first (loft#1278), and on this pass the link names it.
+-                let mut t = t;
+-                if let Type::Tuple(elems) = self.vars.tp(t).base()
+-                    && elems
+-                        .get(i as usize)
+-                        .is_some_and(|e| matches!(e.base(), Type::Text(_)))
+-                    && let Some(shadow) = self.promote_written_tuple_param(t)
+-                {
+-                    t = shadow;
+-                }
+                 match self.linkable_tuple_member(t, i) {
+                     Ok(elem) => {
+                         self.vars.record_amp_link(var_nr, t);
+@@ -10121,12 +10110,8 @@ use a separate collection or add after the loop"
+         };
+         let elem = elem.unwrap_or(Type::Unknown(0));
+         let by_value = matches!(self.vars.tp(t).base(), Type::Tuple(_));
+-        // A TEXT member is the tuple's own text where the tuple owns it (`@FR-T-Record`,
+-        // `Function::tuple_owns_text`): a link names that `String` as `&s` names a text local.
+-        let owned_text = matches!(elem.base(), Type::Text(_)) && self.vars.tuple_owns_text(t);
+-        if owned_text
+-            || (crate::data::is_scalar(&elem)
+-                && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none()))
++        if crate::data::is_scalar(&elem)
++            && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none())
+         {
+             Ok(elem)
+         } else {
+@@ -10190,23 +10175,9 @@ use a separate collection or add after the loop"
+                     || matches!(self.vars.tp(*t).base(), Type::RefVar(inner)
+                         if matches!(inner.base(), Type::Tuple(_))) =>
+             {
+-                // A link to a text member of a by-value PARAMETER can write it, so the parameter
+-                // takes the owned copy a write to the member gives it (loft#1278); the second
+-                // pass reads every mention of it as that copy.
+-                // On this (first) pass the link names the copy it just created, so both passes
+-                // type the link alike.
+-                let mut t = *t;
+-                if let Type::Tuple(elems) = self.vars.tp(t).base()
+-                    && elems
+-                        .get(*i as usize)
+-                        .is_some_and(|e| matches!(e.base(), Type::Text(_)))
+-                    && let Some(shadow) = self.promote_written_tuple_param(t)
+-                {
+-                    t = shadow;
+-                }
+-                self.linkable_tuple_member(t, *i)
++                self.linkable_tuple_member(*t, *i)
+                     .ok()
+-                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(t, *i)]))
++                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(*t, *i)]))
+             }
+             // The bare element op IS the place.  An enum element arrives in this spelling on
+             // the first pass, before its enum getter wraps it; without this arm the first pass
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 96c5b7a96..8dcf2f2f9 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -6623,20 +6623,6 @@ impl Parser {
+                 let orig = std::mem::replace(code, Value::Null);
+                 if let Value::Var(_) = &orig {
+                     *code = self.cl("OpCreateStack", &[orig]);
+-                } else if let Value::TupleGet(t, i) = orig.unspan() {
+-                    // `@FR-T-Record` / `@FR-B-Ref-Lvalue` — a tuple's text member is a place: the
+-                    // parameter links to it, as `&s` links to a text local, so the callee's write
+-                    // reaches the tuple.  A member no link can honour is refused, never copied —
+-                    // a work copy would take the write and drop it.
+-                    let (t, i) = (*t, *i);
+-                    if let Some(place) = self.scalar_place_ref(&orig) {
+-                        *code = place;
+-                    } else {
+-                        if let Err(elem) = self.linkable_tuple_member(t, i) {
+-                            self.refuse_tuple_member_link(&elem, i);
+-                        }
+-                        *code = orig;
+-                    }
+                 } else {
+                     let wv = self.vars.work_text(&mut self.lexer);
+                     let mut ls = Vec::new();
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 67707b8e6..c123dac61 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -5552,9 +5552,7 @@ impl Function {
+         crate::data::TUPLE_LOCAL_TEXT_OWNED
+             && (v as usize) < self.variables.len()
+             && !self.is_argument(v)
+-            // A parameter's promoted copy (`__tp_<name>`) is the author's parameter, copied:
+-            // it owns its text like any tuple local the author named.
+-            && (!self.is_compiler_generated(v) || self.promoted_from(v) != u16::MAX)
++            && !self.is_compiler_generated(v)
+             && matches!(self.tp(v).base(), Type::Tuple(_))
+     }
+ 

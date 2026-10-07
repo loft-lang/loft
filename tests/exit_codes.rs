@@ -8,8 +8,7 @@
 //! cannot do.  The binary must be rebuilt (`cargo test` does this automatically
 //! for integration tests).
 
-use std::process::Command;
-#[cfg(unix)]
+use loft::file_access as fa;
 use std::process::Stdio;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -25,7 +24,7 @@ fn workspace_root() -> std::path::PathBuf {
 #[test]
 fn warning_only_program_exits_zero() {
     let script = workspace_root().join("tests/scripts/46-caveats.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .current_dir(workspace_root())
@@ -50,14 +49,14 @@ fn parse_error_exits_nonzero() {
     // Write a minimal syntax-error script to a temp file.
     let dir = std::env::temp_dir();
     let path = dir.join("loft_l7_test_parse_error.loft");
-    std::fs::write(&path, "fn main() { x = 1\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    fa::write(&path, "fn main() { x = 1\n").expect("write temp file");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !out.status.success(),
         "expected non-zero exit for parse-error program, got exit 0"
@@ -71,16 +70,16 @@ fn parse_error_exits_nonzero() {
 #[test]
 fn loft_test_reports_a_compile_error_instead_of_a_scope_panic() {
     let dir = std::env::temp_dir().join(format!("loft_test_break_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("break_outside.loft");
-    std::fs::write(&path, "fn test_wrong_break() {\n  break;\n}\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    fa::write(&path, "fn test_wrong_break() {\n  break;\n}\n").expect("write temp file");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("test")
         .arg(&path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let all = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -115,10 +114,10 @@ fn loft_test_reports_a_compile_error_instead_of_a_scope_panic() {
 #[test]
 fn a_match_over_an_iterator_stops_at_max_lookahead() {
     let dir = std::env::temp_dir().join(format!("loft_iterbound_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let src = |name: &str, body: &str| {
         let p = dir.join(name);
-        std::fs::write(&p, body).expect("write");
+        fa::write(&p, body).expect("write");
         p
     };
     let endless = src(
@@ -139,7 +138,7 @@ fn a_match_over_an_iterator_stops_at_max_lookahead() {
     let at_bound = upto(10);
     let over_bound = upto(11);
     let run = |mode: &str, file: &std::path::Path, bound: &str| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(mode)
             .arg(file)
             .env("LOFT_MAX_LOOKAHEAD", bound)
@@ -189,7 +188,7 @@ fn a_match_over_an_iterator_stops_at_max_lookahead() {
             "{mode} `0` is unbounded: {all}"
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// An unresolvable `#native` symbol (no cdylib provides it) must surface a LOUD
@@ -206,20 +205,20 @@ fn unresolved_native_warns_at_load_not_at_call() {
     ));
     // The #native is declared but never called: the load-time warning must fire
     // anyway, and the program must still reach exit 0.
-    std::fs::write(
+    fa::write(
         &path,
         "pub fn ghost_fn(x: integer) -> integer;\n\
          #native \"loft_ghost_nonexistent_symbol\"\n\n\
          fn main() { print(\"ran fine\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -248,8 +247,8 @@ fn unresolved_native_warns_at_load_not_at_call() {
 fn p131_cli_forwards_script_dashdash_arg() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p131_args_test.loft");
-    std::fs::write(&path, "fn main() { println(\"ran\"); }\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    fa::write(&path, "fn main() { println(\"ran\"); }\n").expect("write temp file");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .arg("--mode")
@@ -257,7 +256,7 @@ fn p131_cli_forwards_script_dashdash_arg() {
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -276,8 +275,8 @@ fn p131_cli_forwards_script_dashdash_arg() {
 fn p131_cli_explicit_dashdash_separator() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p131_sep_test.loft");
-    std::fs::write(&path, "fn main() { println(\"ran\"); }\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    fa::write(&path, "fn main() { println(\"ran\"); }\n").expect("write temp file");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .arg("--")
@@ -286,7 +285,7 @@ fn p131_cli_explicit_dashdash_separator() {
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         out.status.success(),
         "expected exit 0 with `--` separator; stderr={:?}",
@@ -301,9 +300,9 @@ fn p131_arguments_returns_only_script_args() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p131_arguments_content.loft");
     // Print each argument on its own line so we can inspect them.
-    std::fs::write(&path, "fn main() { for a in arguments() { println(a) } }\n")
+    fa::write(&path, "fn main() { for a in arguments() { println(a) } }\n")
         .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .arg("--mode")
@@ -312,7 +311,7 @@ fn p131_arguments_returns_only_script_args() {
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "expected exit 0; stderr={stderr:?}");
@@ -337,7 +336,7 @@ fn p131_arguments_returns_only_script_args() {
 fn issue684_subcommand_word_is_a_program_argument() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_issue684_subcommand_arg.loft");
-    std::fs::write(&path, "fn main() { for a in arguments() { println(a) } }\n")
+    fa::write(&path, "fn main() { for a in arguments() { println(a) } }\n")
         .expect("write temp file");
 
     // Each cell: the args after the script path, and what `arguments()` must yield.
@@ -356,7 +355,7 @@ fn issue684_subcommand_word_is_a_program_argument() {
     ];
 
     for (args, expected) in cells {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&path)
             .args(args)
@@ -375,7 +374,7 @@ fn issue684_subcommand_word_is_a_program_argument() {
             "args {args:?} should reach the program verbatim; got {lines:?}"
         );
     }
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// loft#684 guard: the fix must not stop a subcommand from working as the FIRST
@@ -383,7 +382,7 @@ fn issue684_subcommand_word_is_a_program_argument() {
 /// test above would pass on a CLI that had simply lost `loft layout` entirely.
 #[test]
 fn issue684_subcommand_still_works_as_first_positional() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("layout")
         .current_dir(workspace_root())
         .output()
@@ -409,15 +408,15 @@ fn w1_1_html_export_produces_file() {
     let dir = std::env::temp_dir();
     let src = dir.join("loft_w1_1_test.loft");
     let out = dir.join("loft_w1_1_test.html");
-    std::fs::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
-    let result = Command::new(loft_bin())
+    fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
+    let result = loft::platform::process::harness_command(loft_bin())
         .arg("--html")
         .arg(&out)
         .arg(&src)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
     let stderr = String::from_utf8_lossy(&result.stderr);
     let stdout = String::from_utf8_lossy(&result.stdout);
     if stderr.contains("wasm32-unknown-unknown") && stderr.contains("not be installed") {
@@ -428,8 +427,8 @@ fn w1_1_html_export_produces_file() {
         result.status.success(),
         "expected --html to succeed; stdout={stdout:?}; stderr={stderr:?}"
     );
-    let html = std::fs::read_to_string(&out).unwrap_or_default();
-    let _ = std::fs::remove_file(&out);
+    let html = fa::read_to_string(&out).unwrap_or_default();
+    let _ = fa::remove_file(&out);
     assert!(
         html.contains("<!DOCTYPE html>"),
         "HTML should start with doctype"
@@ -477,9 +476,9 @@ fn p171_native_copy_record_high_bit_does_not_panic() {
     // has no /tmp), so run it in a temp working dir and read the GLB from
     // there.  Mirrors the moros_glb_cli_end_to_end pattern below.
     let glb_path = std::env::temp_dir().join("isolated_stair.glb");
-    let _ = std::fs::remove_file(&glb_path);
+    let _ = fa::remove_file(&glb_path);
     let path_arg = format!("{}/", workspace_root().display());
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg("--path")
         .arg(&path_arg)
@@ -532,9 +531,9 @@ fn p171_native_copy_record_high_bit_does_not_panic() {
          stdout={stdout:?}"
     );
     // Verify the GLB the script wrote has the glTF magic.
-    let glb = std::fs::read(&glb_path).expect("GLB written");
+    let glb = fa::read(&glb_path).expect("GLB written");
     assert_eq!(&glb[0..4], b"glTF", "GLB magic must be 'glTF'");
-    let _ = std::fs::remove_file(&glb_path);
+    let _ = fa::remove_file(&glb_path);
 }
 
 // ── tail-call ref-return capture with a store-lifetime "lifted" arg ────────
@@ -553,7 +552,7 @@ fn p171_native_copy_record_high_bit_does_not_panic() {
 #[test]
 fn tail_capture_lifted_arg_compiles_native() {
     let script = workspace_root().join("tests/scripts/tail-capture-lifted-arg.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -590,7 +589,7 @@ fn tail_capture_lifted_arg_compiles_native() {
 #[test]
 fn ijoin_multiply_assigned_widens_native() {
     let script = workspace_root().join("tests/scripts/433-ijoin-multiply-assigned.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -634,8 +633,7 @@ fn p166_content_on_binary_file_warns() {
         let tag = backend.trim_start_matches('-');
         let bin_path = dir.join(format!("loft_p166_binary_{tag}.bin"));
         // Non-UTF-8 bytes: 0xFF and 0xFE are invalid UTF-8 start bytes.
-        std::fs::write(&bin_path, [0xFFu8, 0xFE, 0xFD, 0xFC, 0xFB])
-            .expect("write temp binary file");
+        fa::write(&bin_path, [0xFFu8, 0xFE, 0xFD, 0xFC, 0xFB]).expect("write temp binary file");
 
         let script_path = dir.join(format!("loft_p166_script_{tag}.loft"));
         // Use forward slashes in the embedded path so the loft lexer doesn't
@@ -649,16 +647,16 @@ fn p166_content_on_binary_file_warns() {
                 assert(c == null, \"binary content() answers null, not empty text\");\n\
              }}\n"
         );
-        std::fs::write(&script_path, &script).expect("write temp script");
+        fa::write(&script_path, &script).expect("write temp script");
 
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script_path)
             .current_dir(workspace_root())
             .output()
             .expect("failed to invoke loft binary");
-        let _ = std::fs::remove_file(&bin_path);
-        let _ = std::fs::remove_file(&script_path);
+        let _ = fa::remove_file(&bin_path);
+        let _ = fa::remove_file(&script_path);
 
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -701,7 +699,7 @@ fn p168_arguments_empty_when_no_script_args() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p168_args_empty.loft");
     // Script prints each argument; empty vector → no lines, just "count=0".
-    std::fs::write(
+    fa::write(
         &path,
         "fn main() {\n  \
              a = arguments();\n  \
@@ -710,13 +708,13 @@ fn p168_arguments_empty_when_no_script_args() {
          }\n",
     )
     .expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "expected exit 0; stderr={stderr:?}");
@@ -752,15 +750,14 @@ fn p168_arguments_empty_when_no_script_args() {
 fn p169_lambda_suggestion_mentions_omitting_return_type() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p169_lambda_types.loft");
-    std::fs::write(&path, "fn main() {\n  _ = |x: integer| { x * 2 };\n}\n")
-        .expect("write temp script");
-    let out = Command::new(loft_bin())
+    fa::write(&path, "fn main() {\n  _ = |x: integer| { x * 2 };\n}\n").expect("write temp script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(!out.status.success(), "expected parse error");
     // @P282: loft emits parse diagnostics to STDERR (rustc / clang convention).
     let stdout = String::from_utf8_lossy(&out.stderr);
@@ -810,12 +807,12 @@ fn moros_glb_cli_end_to_end() {
         "m_spawns": [],
         "m_routines": []
     }"#;
-    std::fs::write(&json_path, map_json).expect("write map JSON");
-    let _ = std::fs::remove_file(&glb_path);
+    fa::write(&json_path, map_json).expect("write map JSON");
+    let _ = fa::remove_file(&glb_path);
 
     let script = workspace_root().join("tests/fixtures/libs/moros_render/examples/moros_glb.loft");
     let path_flag = format!("{}/", workspace_root().display());
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--path")
         .arg(&path_flag)
@@ -837,14 +834,14 @@ fn moros_glb_cli_end_to_end() {
         "CLI should print 'wrote <path>'; got stdout={stdout:?}"
     );
     assert!(
-        glb_path.exists(),
+        fa::exists(&glb_path),
         "GLB file should be written at {}",
         glb_path.display()
     );
     // Read the first 4 bytes and verify 'glTF' magic (LE bytes).
-    let bytes = std::fs::read(&glb_path).expect("read GLB");
-    let _ = std::fs::remove_file(&json_path);
-    let _ = std::fs::remove_file(&glb_path);
+    let bytes = fa::read(&glb_path).expect("read GLB");
+    let _ = fa::remove_file(&json_path);
+    let _ = fa::remove_file(&glb_path);
     assert!(
         bytes.len() >= 12,
         "GLB should have at least the 12-byte header; got {} bytes",
@@ -863,7 +860,7 @@ fn moros_glb_cli_end_to_end() {
 fn p166_content_on_text_file_no_warning() {
     let dir = std::env::temp_dir();
     let text_path = dir.join("loft_p166_text.txt");
-    std::fs::write(&text_path, "hello world\n").expect("write temp text file");
+    fa::write(&text_path, "hello world\n").expect("write temp text file");
 
     let script_path = dir.join("loft_p166_text_script.loft");
     // Forward slashes so Windows backslashes don't become lexer escapes.
@@ -875,16 +872,16 @@ fn p166_content_on_text_file_no_warning() {
             assert(len(c) > 0, \"content should be non-empty\");\n\
          }}\n"
     );
-    std::fs::write(&script_path, &script).expect("write temp script");
+    fa::write(&script_path, &script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&text_path);
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&text_path);
+    let _ = fa::remove_file(&script_path);
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "text-file read should succeed");
@@ -904,16 +901,16 @@ fn native_emit_includes_loft_source_map() {
     let script_path = dir.join("loft_source_map_demo.loft");
     let script = "fn add(a: integer, b: integer) -> integer { a + b }\n\
                   fn main() { x = add(1, 2); println(\"{x}\") }\n";
-    std::fs::write(&script_path, script).expect("write temp script");
+    fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-rust")
         .arg(&script_path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "introspect should succeed");
@@ -923,7 +920,7 @@ fn native_emit_includes_loft_source_map() {
     // the test's expectation against the same canonical form.  A
     // simple `.display()` form fails on Windows because the test's
     // path lacks the UNC prefix.
-    let canonical = std::fs::canonicalize(&script_path).unwrap_or_else(|_| script_path.clone());
+    let canonical = fa::try_plain_canonical(&script_path).unwrap_or_else(|| script_path.clone());
     let path_str = canonical.display().to_string();
     // Function-header comment maps to the .loft source line.  It heads the item, so it
     // sits above the function's attributes (`#[inline]`, `#[inline(never)]`), not between
@@ -974,16 +971,16 @@ fn p196_native_codegen_projects_fn_ref_d_nr() {
                   fn p_dbl(x: integer) -> integer { x + x }\n\
                   fn build(f: fn(integer) -> integer, n: integer) -> (fn(integer) -> integer, integer) { (f, n) }\n\
                   fn main() { pp = build(p_dbl, 21); p = Pair { v: pp }; }\n";
-    std::fs::write(&script_path, script).expect("write temp script");
+    fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-rust")
         .arg(&script_path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "introspect should succeed");
@@ -1014,20 +1011,20 @@ fn introspect_diff_against_baseline() {
     let script_path = dir.join("loft_diff_demo.loft");
     let baseline_path = dir.join("loft_diff_baseline.txt");
     let script = "fn main() { println(\"hello\") }\n";
-    std::fs::write(&script_path, script).expect("write temp script");
+    fa::write(&script_path, script).expect("write temp script");
 
     // Capture baseline.
-    let baseline_out = Command::new(loft_bin())
+    let baseline_out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg(&script_path)
         .current_dir(workspace_root())
         .output()
         .expect("baseline capture failed");
-    std::fs::write(&baseline_path, &baseline_out.stdout).expect("write baseline");
+    fa::write(&baseline_path, &baseline_out.stdout).expect("write baseline");
 
     // Identical inputs → exit 0.
-    let same = Command::new(loft_bin())
+    let same = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg("--diff")
@@ -1046,13 +1043,13 @@ fn introspect_diff_against_baseline() {
     // Mutate the script with a STRUCTURAL change so the types table
     // differs (string-literal changes alone don't show up in
     // `--show-types`).
-    std::fs::write(
+    fa::write(
         &script_path,
         "fn add(a: integer) -> integer { a + 1 }\nfn main() { println(\"hello\") }\n",
     )
     .expect("rewrite temp script");
 
-    let differs = Command::new(loft_bin())
+    let differs = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg("--diff")
@@ -1068,8 +1065,8 @@ fn introspect_diff_against_baseline() {
         String::from_utf8_lossy(&differs.stdout)
     );
 
-    let _ = std::fs::remove_file(&script_path);
-    let _ = std::fs::remove_file(&baseline_path);
+    let _ = fa::remove_file(&script_path);
+    let _ = fa::remove_file(&baseline_path);
 }
 
 /// `--show-types --trace` emits a per-expression type tape that
@@ -1087,9 +1084,9 @@ fn introspect_show_types_trace_renders_per_expression() {
                       a.v.0\n\
                   }\n\
                   fn main() { println(\"{first()}\") }\n";
-    std::fs::write(&script_path, script).expect("write temp script");
+    fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg("--trace")
@@ -1097,7 +1094,7 @@ fn introspect_show_types_trace_renders_per_expression() {
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "introspect should succeed");
@@ -1137,16 +1134,16 @@ fn introspect_show_types_renders_deps() {
                       a.v.0\n\
                   }\n\
                   fn main() { println(\"{first()}\") }\n";
-    std::fs::write(&script_path, script).expect("write temp script");
+    fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg(&script_path)
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "introspect should succeed");
@@ -1172,14 +1169,14 @@ fn introspect_show_types_renders_deps() {
 fn tests_runner_fails_on_assert_and_fault() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p367_fault.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "fn test_bad_assert() { assert(false, \"boom\"); }\n\
          fn test_panic() { panic(\"kapow\"); }\n\
          fn test_ok() { assert(1 == 1, \"fine\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--tests")
         .arg(&path)
         .current_dir(workspace_root())
@@ -1206,12 +1203,12 @@ fn tests_runner_fails_on_assert_and_fault() {
 fn tests_runner_expect_fail_still_passes() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p367_expectfail.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "// @EXPECT_FAIL: boom\nfn test_intentional() { assert(false, \"boom\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--tests")
         .arg(&path)
         .current_dir(workspace_root())
@@ -1242,7 +1239,7 @@ fn tests_runner_expect_fail_still_passes() {
 fn div_by_literal_constant_no_warning() {
     let dir = std::env::temp_dir();
     let safe = dir.join("loft_p368_safe.loft");
-    std::fs::write(
+    fa::write(
         &safe,
         "fn calc(x: float, c: integer) -> float {\n  \
            a = x / 2.0;\n  b = x / 0.75;\n  d = c / 2;\n  \
@@ -1251,7 +1248,7 @@ fn div_by_literal_constant_no_warning() {
          fn main() { println(\"{calc(10.0, 10)}\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&safe)
         .current_dir(workspace_root())
@@ -1269,12 +1266,12 @@ fn div_by_literal_constant_no_warning() {
     // so an undefended division compiles and runs with no warning. (Storing it into a
     // non-null slot is a hard `(N-Store)` error, covered by 102-expected-errors.)
     let unsafe_ = dir.join("loft_p368_unsafe.loft");
-    std::fs::write(
+    fa::write(
         &unsafe_,
         "fn main() { c = 10; y = 2; d = c / y; println(\"{d}\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&unsafe_)
         .current_dir(workspace_root())
@@ -1296,13 +1293,13 @@ fn div_by_literal_constant_no_warning() {
 fn issue_333_div_zero_null_continues() {
     let pid = std::process::id();
     let script = std::env::temp_dir().join(format!("loft_i333_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "fn main() {\n  z = 0;\n  a = 5 / z;\n  print(\"reached a={a}\");\n}\n",
     )
     .expect("write script");
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(mode)
             .arg(&script)
             .current_dir(workspace_root())
@@ -1321,7 +1318,7 @@ fn issue_333_div_zero_null_continues() {
             "{mode}: execution must continue past the fault with null: {stdout}"
         );
     }
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
 }
 
 /// loft#1012 — `verify-self` must NOT exit 0 when it verified nothing.
@@ -1337,7 +1334,7 @@ fn issue_333_div_zero_null_continues() {
 /// and are covered where one exists (`verify_self`'s own tests over `local_checks`).
 #[test]
 fn verify_self_exits_two_when_it_verified_nothing() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("verify-self")
         .current_dir(workspace_root())
         .output()
@@ -1376,10 +1373,10 @@ fn verify_self_exits_two_when_it_verified_nothing() {
 /// cannot collide with another test's.
 fn epipe_fixture(name: &str, body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let dir = std::env::temp_dir().join(format!("loft-epipe-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch dir");
     let script = dir.join(format!("{name}.loft"));
-    std::fs::write(&script, body).expect("write fixture");
+    fa::write(&script, body).expect("write fixture");
     (dir, script)
 }
 
@@ -1391,11 +1388,9 @@ const EPIPE_MANY: &str = "fn main() { for i in 0..20000 { println(\"line {i} pad
 ///
 /// The child's stdout handle is dropped after the third line, which closes the read end —
 /// the same thing `| head -3` does, without needing a shell.
-#[cfg(unix)]
 fn run_until_reader_leaves(script: &std::path::Path, dir: &std::path::Path, mode: &str) -> String {
     use std::io::{BufRead, BufReader};
-    use std::process::Stdio;
-    let mut child = Command::new(loft_bin())
+    let mut child = loft::platform::process::harness_command(loft_bin())
         .arg(mode)
         .arg(script)
         .current_dir(dir)
@@ -1430,54 +1425,40 @@ fn run_until_reader_leaves(script: &std::path::Path, dir: &std::path::Path, mode
 }
 
 #[test]
-#[cfg(unix)]
 fn a_reader_that_stops_reading_does_not_fault_the_interpreter() {
     let (dir, script) = epipe_fixture("many-interp", EPIPE_MANY);
     run_until_reader_leaves(&script, &dir, "--interpret");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
-#[cfg(unix)]
 fn a_reader_that_stops_reading_does_not_fault_the_native_backend() {
     let (dir, script) = epipe_fixture("many-native", EPIPE_MANY);
     run_until_reader_leaves(&script, &dir, "--native");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// Run `script` with stdout AND stderr on ONE pipe, read `keep` lines, then close the read
 /// end — `prog 2>&1 | head -N` without a shell.
 ///
-/// Built from `libc::pipe` rather than `sh -c … PIPESTATUS`: `PIPESTATUS` is a bash array
-/// and `/bin/sh` here is dash, where it expands to nothing — the first version of this test
-/// compared that empty string against "134" and passed while measuring nothing.
-#[cfg(unix)]
+/// Built from `std::io::pipe` rather than `sh -c … PIPESTATUS`: `PIPESTATUS` is a bash
+/// array and `/bin/sh` here is dash, where it expands to nothing — the first version of this
+/// test compared that empty string against "134" and passed while measuring nothing.
+///
+/// Both ends must stay out of the child: `Command` DUPS the write end onto its 1/2, and an
+/// inherited original READ end means the pipe never reports a closed reader, so once the
+/// buffer fills the child blocks forever.  Measured: an early version of this helper hung
+/// for twenty minutes in `anon_pipe_write` with `fd 3 -> pipe` in its own `/proc/<pid>/fd`.
+/// `std::io::pipe` creates both ends close-on-exec (non-inheritable on Windows).
 fn run_with_merged_pipe(
     script: &std::path::Path,
     dir: &std::path::Path,
     keep: usize,
 ) -> std::process::ExitStatus {
     use std::io::{BufRead, BufReader};
-    use std::os::fd::{FromRawFd, OwnedFd};
-    let mut fds = [0 as libc::c_int; 2];
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe");
-    // CLOSE-ON-EXEC on BOTH originals.  `Command` DUPS them onto the child's 0/1/2, and
-    // without this the originals are inherited too — so the child holds its own READ end,
-    // the pipe never reports a closed reader, and once the buffer fills the child blocks
-    // forever.  Measured: the first version of this helper hung for twenty minutes in
-    // `anon_pipe_write` with `fd 3 -> pipe` in its own `/proc/<pid>/fd`.
-    for fd in fds {
-        assert_ne!(
-            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
-            -1,
-            "FD_CLOEXEC"
-        );
-    }
-    // SAFETY: both ends come from a successful `pipe` and are owned from here on.
-    let (read_end, write_end) =
-        unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    let (read_end, write_end) = std::io::pipe().expect("pipe");
     let write_dup = write_end.try_clone().expect("dup the write end");
-    let mut child = Command::new(loft_bin())
+    let mut child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(script)
         .current_dir(dir)
@@ -1486,7 +1467,7 @@ fn run_with_merged_pipe(
         .spawn()
         .expect("failed to invoke loft binary");
     {
-        let mut reader = BufReader::new(std::fs::File::from(read_end));
+        let mut reader = BufReader::new(read_end);
         let mut line = String::new();
         for _ in 0..keep {
             line.clear();
@@ -1503,9 +1484,7 @@ fn run_with_merged_pipe(
 /// Verified to FIRE by injection (the `BrokenPipe` arm disabled): `status=ExitStatus(
 /// unix_wait_status(134))`, signal 6, which is the filed symptom exactly.
 #[test]
-#[cfg(unix)]
 fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
-    use std::os::unix::process::ExitStatusExt;
     // A `never-read` warning goes to stderr BEFORE the program runs, so one line is
     // satisfied by the diagnostic and every later write — diagnostic or program output —
     // meets the closed pipe.
@@ -1519,11 +1498,12 @@ fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
     );
     // `.loft/` must EXIST or the reporter has nowhere to write and the test would pass
     // for the wrong reason.
-    std::fs::create_dir_all(dir.join(".loft")).expect("cache dir");
+    fa::create_dir_all(dir.join(".loft")).expect("cache dir");
     let status = run_with_merged_pipe(&script, &dir, 1);
-    assert_eq!(
-        status.signal(),
-        None,
+    // No exit code is how a death by signal reads (SIGABRT was 6); on Windows an abort is
+    // an exit code, which the `success` check below refuses.
+    assert!(
+        status.code().is_some(),
         "`prog 2>&1 | head` must not die by signal (SIGABRT was 6); status={status:?}"
     );
     assert!(
@@ -1531,30 +1511,31 @@ fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
         "a closed pipe is the ordinary end of the run; got {:?}",
         status.code()
     );
-    let reports: Vec<_> = std::fs::read_dir(dir.join(".loft"))
+    let reports: Vec<_> = fa::read_dir(dir.join(".loft"))
         .expect("read cache dir")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().to_string())
+        .into_iter()
+        .map(|e| e.file_name().unwrap_or_default().to_string())
         .filter(|n| n.starts_with("loft-crash-"))
         .collect();
     assert!(
         reports.is_empty(),
         "a broken pipe is not a crash and must leave no report; found {reports:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// The CONTROL that keeps the cure honest: a write error that is NOT a broken pipe is a real
 /// fault and stays loud.  Exiting 0 on every failed write would pass every test above.
 #[test]
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `/dev/full` has no Windows equivalent; Windows substitute: none
 #[cfg(unix)]
 fn a_full_disk_is_still_a_failure() {
-    if !std::path::Path::new("/dev/full").exists() {
+    if !fa::exists(std::path::Path::new("/dev/full")) {
         return;
     }
     let (dir, script) = epipe_fixture("full", EPIPE_MANY);
-    let full = std::fs::File::create("/dev/full").expect("open /dev/full");
-    let out = Command::new(loft_bin())
+    let full = fa::create("/dev/full").expect("open /dev/full");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .current_dir(&dir)
@@ -1566,13 +1547,12 @@ fn a_full_disk_is_still_a_failure() {
         !out.status.success(),
         "ENOSPC on stdout is a genuine failure and must not be reported as success"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// The second CONTROL: a program that FAILS still reports its failure through a pipe the
 /// reader left early.  The broken-pipe exit must not mask a compile error.
 #[test]
-#[cfg(unix)]
 fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
     let (dir, script) = epipe_fixture("bad", "fn main() { qqq(); }\n");
     let status = run_with_merged_pipe(&script, &dir, 1);
@@ -1581,7 +1561,7 @@ fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
         Some(1),
         "a program that does not compile still fails, whatever the reader did; got {status:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// loft#1729, `(R-Const)` — a top-level vector constant handed to a parameter the callee
@@ -1593,9 +1573,9 @@ fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
 #[test]
 fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     let dir = std::env::temp_dir().join(format!("loft_constparam_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let p = dir.join("constparam.loft");
-    std::fs::write(
+    fa::write(
         &p,
         "NUMS: vector<integer> = [1, 2];\n\
          fn grow(v: vector<integer>) -> integer { v += [3]; len(v) }\n\
@@ -1603,7 +1583,7 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     )
     .expect("write");
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(mode)
             .arg(&p)
             .env("LOFT_TIMEOUT", "60")
@@ -1629,7 +1609,7 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
             "{mode}: neither the lock nor an internal assert may surface — output:\n{all}"
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// @C102 — with no usable `rustc`, a RELEASE binary falls back to the interpreter and says
@@ -1646,25 +1626,27 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
 #[test]
 fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     let tmp = std::env::temp_dir().join(format!("loft_c102_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let empty = tmp.join("empty");
     let bundle = tmp.join("bundle");
-    std::fs::create_dir_all(&empty).expect("empty PATH dir");
-    std::fs::create_dir_all(bundle.join("default")).expect("bundle dir");
+    fa::create_dir_all(&empty).expect("empty PATH dir");
+    fa::create_dir_all(bundle.join("default")).expect("bundle dir");
     let bundled = bundle.join("loft");
-    std::fs::copy(loft_bin(), &bundled).expect("copy the binary");
+    fa::copy(loft_bin(), &bundled).expect("copy the binary");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for entry in std::fs::read_dir(root.join("default")).expect("default/") {
-        let entry = entry.expect("entry");
-        if entry.path().is_file() {
-            std::fs::copy(entry.path(), bundle.join("default").join(entry.file_name()))
-                .expect("copy default/");
+    for entry in fa::read_dir(root.join("default")).expect("default/") {
+        if fa::is_file(&entry) {
+            fa::copy(
+                &entry,
+                bundle.join("default").join(entry.os_name().expect("entry")),
+            )
+            .expect("copy default/");
         }
     }
     let prog = tmp.join("p.loft");
-    std::fs::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
+    fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
     let run = |bin: &std::path::Path, native: bool, require: bool| {
-        let mut c = Command::new(bin);
+        let mut c = loft::platform::process::harness_command(bin);
         if native {
             c.arg("--native");
         }
@@ -1736,7 +1718,7 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
         r.2
     );
     refused("checkout REQUIRE", &run(&checkout, false, true));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// @C67 — a `#native` function the program CALLS and nothing implements stops the program at
@@ -1748,25 +1730,24 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
 #[test]
 fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
     let tmp = std::env::temp_dir().join(format!("loft_c67_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let lib = tmp.join("noimpl");
-    std::fs::create_dir_all(lib.join("src")).expect("fixture dir");
-    std::fs::write(
+    fa::create_dir_all(lib.join("src")).expect("fixture dir");
+    fa::write(
         lib.join("loft.toml"),
         "[package]\nname = \"noimpl\"\nversion = \"0.1.0\"\n\n\
          [library]\nentry = \"src/noimpl.loft\"\nnative = \"loft_noimpl\"\n",
     )
     .expect("manifest");
-    std::fs::write(
+    fa::write(
         lib.join("src/noimpl.loft"),
         "pub fn hash_b64(data: text) -> text;\n#native\n",
     )
     .expect("library source");
     let run = |name: &str, body: &str| {
         let src = tmp.join(format!("{name}.loft"));
-        std::fs::write(&src, format!("use noimpl::*;\nfn main() {{\n{body}\n}}\n"))
-            .expect("program");
-        let out = Command::new(loft_bin())
+        fa::write(&src, format!("use noimpl::*;\nfn main() {{\n{body}\n}}\n")).expect("program");
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&src)
             .arg("--lib")
@@ -1798,7 +1779,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
     let (code, out, err) = run("uncalled", "  println(\"fine\");");
     assert_eq!(code, Some(0), "an imported, uncalled native runs:\n{err}");
     assert_eq!(out, "fine\n");
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// `--help` on a subcommand is a request, not a mistake: it prints that subcommand's
@@ -1806,7 +1787,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
 #[test]
 fn a_subcommand_answers_help_with_its_usage() {
     for sub in ["fmt", "fix"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args([sub, "--help"])
             .current_dir(workspace_root())
             .output()
@@ -1821,7 +1802,7 @@ fn a_subcommand_answers_help_with_its_usage() {
             stdout.starts_with(&format!("usage: loft {sub} ")),
             "loft {sub} --help printed {stdout:?}"
         );
-        let bogus = Command::new(loft_bin())
+        let bogus = loft::platform::process::harness_command(loft_bin())
             .args([sub, "--no-such-option"])
             .current_dir(workspace_root())
             .output()
@@ -1844,17 +1825,17 @@ fn a_subcommand_answers_help_with_its_usage() {
 #[test]
 fn a_copied_binary_runs_on_its_embedded_stdlib() {
     let tmp = std::env::temp_dir().join(format!("loft_1801_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let bin_dir = tmp.join("bin");
-    std::fs::create_dir_all(&bin_dir).expect("bin dir");
+    fa::create_dir_all(&bin_dir).expect("bin dir");
     let bin = bin_dir.join("loft");
-    std::fs::copy(loft_bin(), &bin).expect("copy the binary");
+    fa::copy(loft_bin(), &bin).expect("copy the binary");
     assert!(
-        !bin_dir.join("default").exists(),
+        !fa::exists(bin_dir.join("default")),
         "the copy has no stdlib beside it"
     );
     let prog = tmp.join("p.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "struct P { x: integer }\nfn main() {\n  v = [P { x: 3 }, P { x: 4 }];\n  s = 0;\n  \
          for p in v { s += p.x; }\n  j = json_parse(\"[1, 2]\");\n  \
@@ -1862,7 +1843,7 @@ fn a_copied_binary_runs_on_its_embedded_stdlib() {
     )
     .expect("program");
     let run = |args: &[&str]| {
-        let out = Command::new(&bin)
+        let out = loft::platform::process::harness_command(&bin)
             .args(args)
             .current_dir(&tmp)
             .env("LOFT_NO_CACHE", "1")
@@ -1886,8 +1867,8 @@ fn a_copied_binary_runs_on_its_embedded_stdlib() {
         "symbols answers from a bare copy: {out:?}\n{err}"
     );
     // The test runner has its own stdlib load, and needs the same answer.
-    std::fs::create_dir_all(tmp.join("t")).expect("test dir");
-    std::fs::write(
+    fa::create_dir_all(tmp.join("t")).expect("test dir");
+    fa::write(
         tmp.join("t").join("a.loft"),
         "fn test_sum() { assert(\"ab\".len() + 1 == 3, \"sum\"); }\n",
     )
@@ -1902,5 +1883,5 @@ fn a_copied_binary_runs_on_its_embedded_stdlib() {
         !ok && err.contains("cannot load standard library"),
         "an explicit --path that is not there is still reported: {err}"
     );
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }

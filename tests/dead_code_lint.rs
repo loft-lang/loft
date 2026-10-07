@@ -19,9 +19,9 @@
 //! stderr — same approach as `tests/runtime_warnings.rs`. `LOFT_NO_CACHE` because the program
 //! cache skips the re-parse (hence the diagnostics) on a warm run.
 
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 fn loft_bin() -> PathBuf {
@@ -51,7 +51,7 @@ const EXPECT_NEVER_READ: [&str; 4] = [
 /// `(stdout, stderr, exit_code)`. `LOFT_NO_CACHE` forces a cold compile so the parse-time
 /// diagnostics actually fire; `LOFT_TIMEOUT` bounds the native rustc step.
 fn run_env(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (String, String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env_remove("LOFT_NO_WARN_RUNTIME")
@@ -516,10 +516,10 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_781ds_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
     // One project, so the library is the author's own code and its lints are addressed to
     // this build (loft#1260).
-    std::fs::write(
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"probe781ds\"\nversion = \"0.1.0\"\ncategories = [\"testing\"]\n",
     )
@@ -527,7 +527,7 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
 
     // The dead store is line 5 of the library: the whole-value bind `d = s.items` COPIES
     // (C86), `d` is mutated, and `d` is never read — so the write is lost.
-    std::fs::write(
+    fa::write(
         lib.join("dstore781.loft"),
         "// 1\npub struct Data781 { items: vector<integer> }\n// 3\n\
          pub fn lose_it(s: Data781) -> integer {\n  d = s.items;\n  d[0] = 99;\n  \
@@ -537,14 +537,14 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
 
     // Line 5 of the ENTRY is a `const` — where the warning used to land.
     let entry = root.join("main781ds.loft");
-    std::fs::write(
+    fa::write(
         &entry,
         "use dstore781::*;\n// 2\n// 3\n// 4\nconst UNRELATED781 = 1;\n// 6\n\
          fn main() {\n  s = Data781 { items: [1, 2, 3] };\n  println(\"{lose_it(s)}\");\n}\n",
     )
     .expect("write entry");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -558,7 +558,7 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         all.contains("is mutated but its value is never read"),
@@ -596,10 +596,10 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_1260ds_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
     // Deliberately NO manifest at the root: the entry is a bare script, so the library is a
     // dependency rather than part of what is being built.
-    std::fs::write(
+    fa::write(
         lib.join("dstore1260.loft"),
         "// 1\npub struct Data1260 { items: vector<integer> }\n// 3\n\
          pub fn lose_it(s: Data1260) -> integer {\n  d = s.items;\n  d[0] = 99;\n  \
@@ -607,14 +607,14 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
     )
     .expect("write lib");
     let entry = root.join("main1260ds.loft");
-    std::fs::write(
+    fa::write(
         &entry,
         "use dstore1260::*;\n// 2\n// 3\n// 4\nconst UNRELATED1260 = 1;\n// 6\n\
          fn main() {\n  s = Data1260 { items: [1, 2, 3] };\n  println(\"{lose_it(s)}\");\n}\n",
     )
     .expect("write entry");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -628,7 +628,7 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !all.contains("is mutated but its value is never read"),
@@ -663,11 +663,11 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_883amb_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
 
     // The loop-variable mutation the false warning pointed at. `lw_t` BORROWS the element,
     // so the write persists and `lw_v` is read two lines down — nothing is lost here.
-    std::fs::write(
+    fa::write(
         lib.join("slot883.loft"),
         "pub struct Slot883 { idx: integer, taken: boolean }\n\
          pub fn mutate_through_a_loop_variable() -> boolean {\n  \
@@ -682,14 +682,14 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     )
     .expect("write lib");
     // A second library declaring the SAME name is what makes the bare use ambiguous.
-    std::fs::write(
+    fa::write(
         lib.join("other883.loft"),
         "pub struct Slot883 { other: text }\n",
     )
     .expect("write other lib");
 
     let run = |entry: &std::path::Path| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["--interpret", "--check"])
             .arg("--lib")
             .arg(&lib)
@@ -707,7 +707,7 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
 
     // The bug: a bare `Slot883` is ambiguous, so the compile aborts.
     let amb = root.join("amb883.loft");
-    std::fs::write(
+    fa::write(
         &amb,
         "use slot883::*;\nuse other883::*;\nfn main() {\n  \
            s = Slot883 { idx: 0, taken: false };\n  \
@@ -729,13 +729,13 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     // The control: same library, same loop, ambiguity removed — must compile clean, which
     // is what proves the lint was suppressed for the error and not switched off.
     let ok = root.join("ok883.loft");
-    std::fs::write(
+    fa::write(
         &ok,
         "use slot883::*;\nfn main() {\n  println(\"{mutate_through_a_loop_variable()}\");\n}\n",
     )
     .expect("write ok entry");
     let clean = run(&ok);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !clean.contains("is mutated but its value is never read"),
@@ -763,7 +763,7 @@ fn a_parameter_read_by_a_later_default_is_not_dead() {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_pdflt_{}_{n}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("probe dir");
+    fa::create_dir_all(&root).expect("probe dir");
 
     // Each case pairs a shape with the values that prove the default actually ran, so a
     // silenced warning can never be silence over a broken default.
@@ -820,7 +820,7 @@ fn a_parameter_read_by_a_later_default_is_not_dead() {
     for backend in ["--interpret", "--native"] {
         for (name, src, expect_out, expect_named) in &cases {
             let file = root.join(format!("{name}.loft"));
-            std::fs::write(&file, src).expect("write probe");
+            fa::write(&file, src).expect("write probe");
             let (out, err, code) = run_env(backend, &file, &[]);
             assert_eq!(
                 code,
@@ -851,7 +851,7 @@ fn a_parameter_read_by_a_later_default_is_not_dead() {
             );
         }
     }
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 // ── An unresolved method with a named argument reports ONE error ─────────────────────────
@@ -867,10 +867,10 @@ fn an_unknown_method_with_a_named_argument_reports_one_error() {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_nmrec_{}_{n}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("probe dir");
+    fa::create_dir_all(&root).expect("probe dir");
 
     let file = root.join("recover.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "struct S986 { a: integer }\n\
          fn main() { s = S986 { a: 1 }; println(\"{s.nosuch(width: 3)}\"); }\n",
@@ -878,7 +878,7 @@ fn an_unknown_method_with_a_named_argument_reports_one_error() {
     .expect("write probe");
 
     let (_out, err, code) = run_env("--interpret", &file, &[]);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert_ne!(code, Some(0), "an unknown member must still fail\n{err}");
     assert!(
@@ -911,9 +911,9 @@ fn main() { x = W { f: Foo { a: 0, b: 5 } }; g(x); print(\"r={x.f.a}\"); }\n";
 
 fn run_body(body: &str, backend: &str, tag: &str) -> (String, String) {
     let path = std::env::temp_dir().join(format!("loft_dcl_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&path, body).expect("write script");
+    fa::write(&path, body).expect("write script");
     let (out, diag, _code) = run_env(backend, &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (out, diag)
 }
 

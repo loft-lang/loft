@@ -6,7 +6,6 @@
 //! `OpAppendTextBytes` behind its guard, a declined one keeps the loop.  The cells' values
 //! pass on either form, so only this pin sees an admission drift.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-byte-wise-text-copy-is-one-append.loft";
 
@@ -28,7 +27,8 @@ const EXPECTED: &[(&str, usize)] = &[
 
 fn introspect(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")
@@ -117,7 +117,8 @@ const VECTOR_EXPECTED: &[(&str, usize)] = &[
 
 fn introspect_cells(cells: &str, env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(cells);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

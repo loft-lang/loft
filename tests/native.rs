@@ -12,6 +12,7 @@
 extern crate loft;
 
 use loft::compile::byte_code;
+use loft::file_access as fa;
 use loft::generation::Output;
 use loft::parser::Parser;
 use loft::scopes;
@@ -90,15 +91,15 @@ fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
     // (produced when building lib+test together).  Both live in the same
     // profile-specific deps/ directory, so there is no cross-profile shadowing
     // (the S33 risk only arose when scanning multiple profile directories).
-    let rlib = std::fs::read_dir(&deps)
+    let rlib = fa::read_dir(&deps)
         .ok()?
-        .flatten()
+        .into_iter()
         .filter(|e| {
-            let n = e.file_name().to_string_lossy().to_string();
+            let n = e.file_name().unwrap_or_default();
             (n.starts_with("libloft-") || n == "libloft.rlib") && n.ends_with(".rlib")
         })
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?
-        .path();
+        .max_by_key(|e| fa::symlink_metadata(e).and_then(|m| m.modified()).ok())?
+        .os_spelling();
 
     Some((rlib, deps))
 }
@@ -114,12 +115,12 @@ fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
 /// `(crate_name, rlib_path)` pairs.  All versions of each crate are included so that
 /// rustc can select the hash that matches what `libloft` was compiled against.
 fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(deps_dir) else {
+    let Ok(entries) = fa::read_dir(deps_dir) else {
         return Vec::new();
     };
     let mut result = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
+    for entry in entries {
+        let name = entry.file_name().unwrap_or_default().to_string();
         if !name.starts_with("lib") || !name.ends_with(".rlib") || name.starts_with("libloft") {
             continue;
         }
@@ -131,7 +132,7 @@ fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
         } else {
             without_rlib.replace('-', "_")
         };
-        result.push((crate_name, entry.path()));
+        result.push((crate_name, entry.os_spelling()));
     }
     result
 }
@@ -148,73 +149,68 @@ fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
 /// import libraries in a platform-specific subdirectory such as `out/x86_64-pc-windows-msvc/`
 /// rather than directly in `out/`.  Adding both levels covers all known layouts.
 fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> {
-    #[cfg(not(windows))]
-    {
-        let _ = rlib_info;
-        Vec::new()
+    if loft::platform::host_lib_os() != loft::platform::LibOs::Windows {
+        return Vec::new();
     }
-    #[cfg(windows)]
-    {
-        let Some((rlib, _)) = rlib_info else {
-            return Vec::new();
-        };
-        // rlib is at target/{profile}/libloft.rlib or target/{profile}/deps/libloft-*.rlib.
-        // Walk up to find the profile directory (release/ or debug/).
-        let profile_dir = rlib.parent().and_then(|p| {
-            if p.file_name().map(|n| n == "deps").unwrap_or(false) {
-                p.parent()
-            } else {
-                Some(p)
-            }
-        });
-        let Some(profile_dir) = profile_dir else {
-            return Vec::new();
-        };
-        let build_dir = profile_dir.join("build");
-        let Ok(entries) = std::fs::read_dir(&build_dir) else {
-            return Vec::new();
-        };
-        let mut dirs = Vec::new();
-        for entry in entries.filter_map(|e| e.ok()) {
-            let build_entry = entry.path();
+    let Some((rlib, _)) = rlib_info else {
+        return Vec::new();
+    };
+    // rlib is at target/{profile}/libloft.rlib or target/{profile}/deps/libloft-*.rlib.
+    // Walk up to find the profile directory (release/ or debug/).
+    let profile_dir = rlib.parent().and_then(|p| {
+        if fa::file_name(p).is_some_and(|n| n == "deps") {
+            p.parent()
+        } else {
+            Some(p)
+        }
+    });
+    let Some(profile_dir) = profile_dir else {
+        return Vec::new();
+    };
+    let build_dir = profile_dir.join("build");
+    let Ok(entries) = fa::read_dir(&build_dir) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let build_entry = entry.os_spelling();
 
-            // Add out/ and its immediate subdirs (for libs generated into OUT_DIR).
-            let out = build_entry.join("out");
-            if out.is_dir() {
-                dirs.push(out.clone());
-                if let Ok(subdirs) = std::fs::read_dir(&out) {
-                    for sub in subdirs.filter_map(|e| e.ok()) {
-                        if sub.path().is_dir() {
-                            dirs.push(sub.path());
-                        }
-                    }
-                }
-            }
-
-            // Read the build-script output file for `cargo:rustc-link-search` directives.
-            // Crates like `windows_x86_64_msvc` ship `windows.0.48.5.lib` inside their
-            // source package (cargo registry) and emit
-            //   cargo:rustc-link-search=<CARGO_MANIFEST_DIR>
-            // rather than writing the file to OUT_DIR.  Cargo caches these directives in
-            // `target/{profile}/build/{crate}-{hash}/output`.  Reading them here replicates
-            // exactly what cargo passes to the linker.
-            let output_file = build_entry.join("output");
-            if let Ok(content) = std::fs::read_to_string(&output_file) {
-                for line in content.lines() {
-                    let path_str = line
-                        .strip_prefix("cargo:rustc-link-search=native=")
-                        .or_else(|| line.strip_prefix("cargo:rustc-link-search="));
-                    if let Some(path_str) = path_str {
-                        let p = PathBuf::from(path_str);
-                        if p.is_dir() && !dirs.contains(&p) {
-                            dirs.push(p);
-                        }
+        // Add out/ and its immediate subdirs (for libs generated into OUT_DIR).
+        let out = build_entry.join("out");
+        if fa::is_dir(&out) {
+            dirs.push(out.clone());
+            if let Ok(subdirs) = fa::read_dir(&out) {
+                for sub in subdirs {
+                    if fa::is_dir(&sub) {
+                        dirs.push(sub.os_spelling());
                     }
                 }
             }
         }
-        dirs
+
+        // Read the build-script output file for `cargo:rustc-link-search` directives.
+        // Crates like `windows_x86_64_msvc` ship `windows.0.48.5.lib` inside their
+        // source package (cargo registry) and emit
+        //   cargo:rustc-link-search=<CARGO_MANIFEST_DIR>
+        // rather than writing the file to OUT_DIR.  Cargo caches these directives in
+        // `target/{profile}/build/{crate}-{hash}/output`.  Reading them here replicates
+        // exactly what cargo passes to the linker.
+        let output_file = build_entry.join("output");
+        if let Ok(content) = fa::read_to_string(&output_file) {
+            for line in content.lines() {
+                let path_str = line
+                    .strip_prefix("cargo:rustc-link-search=native=")
+                    .or_else(|| line.strip_prefix("cargo:rustc-link-search="));
+                if let Some(path_str) = path_str {
+                    let p = PathBuf::from(path_str);
+                    if fa::is_dir(&p) && !dirs.contains(&p) {
+                        dirs.push(p);
+                    }
+                }
+            }
+        }
     }
+    dirs
 }
 
 /// This checkout's own native cache (`platform::native_cache_dir`): the generated `.rs`,
@@ -334,7 +330,7 @@ fn rlib_content_hash(path: &Path) -> u64 {
     if let Some(&h) = guard.get(path) {
         return h;
     }
-    let h = std::fs::read(path).map(|b| fnv64(&b)).unwrap_or(0);
+    let h = fa::read(path).map(|b| fnv64(&b)).unwrap_or(0);
     guard.insert(path.to_path_buf(), h);
     h
 }
@@ -346,11 +342,7 @@ fn rlib_content_hash(path: &Path) -> u64 {
 ///
 /// Fails the test if the loft parse or scope-check step produces diagnostics.
 fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
-    let stem = entry
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .replace('-', "_");
+    let stem = fa::file_stem(entry).unwrap_or_default().replace('-', "_");
     println!("native {entry:?}");
 
     let mut p = Parser::new();
@@ -362,7 +354,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // wrap.rs's loft_suite (e.g. tests/lib/importlib.loft for
     // 88-imports.loft).  Only `--lib <dir>` is recognised; other
     // CLI-side flags are ignored at this layer.
-    if let Ok(src) = std::fs::read_to_string(entry) {
+    if let Ok(src) = fa::read_to_string(entry) {
         for line in src.lines().take(20) {
             if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
                 let mut tokens = args.split_whitespace();
@@ -477,7 +469,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // Skip functions marked with @EXPECT_FAIL in the source.
     if !has_main && !test_fns.is_empty() {
         use std::io::Write;
-        let src = std::fs::read_to_string(entry).unwrap_or_default();
+        let src = fa::read_to_string(entry).unwrap_or_default();
         // The SAME parser the interpreter runner reads the annotation with, so the two
         // cannot disagree about which functions a file excuses.  A second parser here
         // keyed on words-on-the-line could not see the documented
@@ -536,15 +528,15 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // small /tmp tmpfs; all of these must agree on the same directory.
     let scratch = native_scratch();
     let tmp_rs = scratch.join(format!("loft_native_{stem}.rs"));
-    let existing = std::fs::read(&tmp_rs).unwrap_or_default();
+    let existing = fa::read(&tmp_rs).unwrap_or_default();
     if existing != buf {
         // Atomic publish: write to a per-process temp then rename into place,
         // so a concurrent process (nextest runs each test in its own process)
         // compiling the same stem never reads a half-written source.  See the
         // shared-output collision note in `compile_native_job`.
         let tmp = scratch.join(format!("loft_native_{stem}_{}.rs.tmp", std::process::id()));
-        std::fs::write(&tmp, &buf)?;
-        std::fs::rename(&tmp, &tmp_rs)?;
+        fa::write(&tmp, &buf)?;
+        fa::rename(&tmp, &tmp_rs)?;
     } else {
         // Reused unchanged, so its timestamp says when it was last WRITTEN — possibly hours
         // ago.  `run_native_jobs` sweeps entries older than two minutes when the loft build
@@ -570,16 +562,16 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
 /// time — immune to clock skew and cross-machine binary copies.
 fn binary_cache_valid(job: &NativeJob, rlib_info: &Option<(PathBuf, PathBuf)>) -> bool {
     // Binary must exist.
-    if !job.binary.exists() {
+    if !fa::exists(&job.binary) {
         return false;
     }
     // Read the stored key from the sidecar.
-    let stored = match std::fs::read_to_string(&job.key_file) {
+    let stored = match fa::read_to_string(&job.key_file) {
         Ok(s) => s.trim().to_string(),
         Err(_) => return false,
     };
     // Recompute the key from the current .rs content and rlib.
-    let rs_content = match std::fs::read(&job.tmp_rs) {
+    let rs_content = match fa::read(&job.tmp_rs) {
         Ok(b) => b,
         Err(_) => return false,
     };
@@ -710,29 +702,29 @@ fn compile_native_job(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&argfile_path, argfile_contents)?;
-    let compile_out = match std::process::Command::new("rustc")
+    fa::write(&argfile_path, argfile_contents)?;
+    let compile_out = match loft::platform::process::harness_command("rustc")
         .arg(format!("@{}", argfile_path.display()))
         .output()
     {
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             println!("  rustc not found — skipping native test for {}", job.stem);
-            let _ = std::fs::remove_file(&argfile_path);
+            let _ = fa::remove_file(&argfile_path);
             return Ok(false);
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&argfile_path);
+            let _ = fa::remove_file(&argfile_path);
             return Err(e);
         }
     };
-    let _ = std::fs::remove_file(&argfile_path);
+    let _ = fa::remove_file(&argfile_path);
     if !compile_out.status.success() {
         let stderr = String::from_utf8_lossy(&compile_out.stderr);
         eprintln!("rustc failed for {}:\n{stderr}", job.stem);
-        let _ = std::fs::remove_file(&binary_tmp);
-        let _ = std::fs::remove_file(&job.binary);
-        let _ = std::fs::remove_file(&job.key_file);
+        let _ = fa::remove_file(&binary_tmp);
+        let _ = fa::remove_file(&job.binary);
+        let _ = fa::remove_file(&job.key_file);
         return Err(Error::from(std::io::ErrorKind::Other));
     }
     // Publish the freshly-linked binary atomically: rename the per-process temp
@@ -740,15 +732,15 @@ fn compile_native_job(
     // concurrent process executing or linking the old binary keeps its inode
     // (no in-place truncation → no SIGBUS) and the cache path is always a
     // complete binary.
-    std::fs::rename(&binary_tmp, &job.binary)?;
+    fa::rename(&binary_tmp, &job.binary)?;
     // Write the cache key so future runs can skip recompilation when nothing
     // changed — also via temp + rename so a concurrent `binary_cache_valid`
     // reader never sees a half-written key.
-    let rs_content = std::fs::read(&job.tmp_rs).unwrap_or_default();
+    let rs_content = fa::read(&job.tmp_rs).unwrap_or_default();
     let key = cache_key(&rs_content, rlib_info);
     let key_tmp = scratch.join(format!("loft_native_{}_{pid}_bin.key.tmp", job.stem));
-    if std::fs::write(&key_tmp, format!("{key:016x}")).is_ok() {
-        let _ = std::fs::rename(&key_tmp, &job.key_file);
+    if fa::write(&key_tmp, format!("{key:016x}")).is_ok() {
+        let _ = fa::rename(&key_tmp, &job.key_file);
     }
     Ok(true)
 }
@@ -766,7 +758,7 @@ fn run_native_job(job: &NativeJob) -> std::io::Result<()> {
     // fails a script with a store left at exit — a leak check that warns and passes is no
     // gate.  Without the switch the output goes straight through, as it always has.
     let leak_check = std::env::var_os("LOFT_NATIVE_LEAK_CHECK").is_some();
-    let mut cmd = std::process::Command::new(&job.binary);
+    let mut cmd = loft::platform::process::harness_command(&job.binary);
     cmd.current_dir(&cwd);
     let (run_status, leaked) = if leak_check {
         let out = cmd.output()?;
@@ -864,11 +856,11 @@ fn run_native_jobs(
         // cache only while a whole chunk's compiles still fit.  The generated `.rs` stays.
         if !keep_after_run(&scratch, concurrency) {
             for job in &ready {
-                if let Ok(meta) = std::fs::metadata(&job.binary)
-                    && std::fs::remove_file(&job.binary).is_ok()
+                if let Ok(meta) = fa::metadata(&job.binary)
+                    && fa::remove_file(&job.binary).is_ok()
                 {
                     freed_after_run += meta.len();
-                    let _ = std::fs::remove_file(&job.key_file);
+                    let _ = fa::remove_file(&job.key_file);
                 }
             }
         }
@@ -927,7 +919,7 @@ fn run_native_jobs(
 /// must treat that as a failure, as `run_native_jobs` does, or the value matches while the
 /// consequence does not.
 fn run_via_loft_binary(entry: &Path) -> std::io::Result<bool> {
-    if std::process::Command::new("rustc")
+    if loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_err()
@@ -940,7 +932,7 @@ fn run_via_loft_binary(entry: &Path) -> std::io::Result<bool> {
     }
     // Bounded, because `--native` shells out to rustc and cargo, either of which
     // can hang; the rest of this file inherits the suite watchdog instead.
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native")
         .arg(entry)
         .env("LOFT_TIMEOUT", "300")
@@ -971,19 +963,17 @@ fn native_dir() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/docs")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/docs")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
-        let name = entry.file_name().unwrap_or_default().to_string_lossy();
-        if NATIVE_SKIP.iter().any(|s| *s == name.as_ref()) {
+        let name = fa::file_name(&entry).unwrap_or_default();
+        if NATIVE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (native skip list — see NATIVE_SKIP)");
             continue;
         }
@@ -1003,13 +993,11 @@ fn native_reference() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/reference") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/reference") {
         Ok(rd) => rd
-            .filter_map(|f| f.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => return Ok(()),
     };
@@ -1017,13 +1005,13 @@ fn native_reference() -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
-        let src = std::fs::read_to_string(&entry)?;
+        let src = fa::read_to_string(&entry)?;
         if src.contains("@EXPECT_ERROR") {
             println!("skip {entry:?} (expected error — the interpreter proves the refusal)");
             continue;
         }
         if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--native")
                 .arg(&entry)
                 .env("LOFT_TIMEOUT", "300")
@@ -1065,13 +1053,11 @@ fn native_comparisons() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/comparisons") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/comparisons") {
         Ok(rd) => rd
-            .filter_map(|f| f.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => return Ok(()),
     };
@@ -1079,9 +1065,9 @@ fn native_comparisons() -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
-        let src = std::fs::read_to_string(&entry)?;
+        let src = fa::read_to_string(&entry)?;
         if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--native")
                 .arg(&entry)
                 .env("LOFT_TIMEOUT", "300")
@@ -1112,13 +1098,11 @@ fn native_features() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/docs/features") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/docs/features") {
         Ok(rd) => rd
-            .filter_map(|f| f.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -1131,7 +1115,7 @@ fn native_features() -> std::io::Result<()> {
         // by this file's emit path, which cannot link one — see `run_via_loft_binary`.
         // Selected by the `use` RULE, not by filename, so the next library example is
         // covered without an edit here.
-        let imports_library = std::fs::read_to_string(&entry)
+        let imports_library = fa::read_to_string(&entry)
             .map(|src| src.lines().any(|l| l.trim_start().starts_with("use ")))
             .unwrap_or(false);
         if imports_library {
@@ -1181,12 +1165,10 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/scripts")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/scripts")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     let files: Vec<PathBuf> = files
@@ -1199,8 +1181,8 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let mut jobs = Vec::new();
     let mut not_generated: Vec<String> = Vec::new();
     for entry in files {
-        let name = entry.file_name().unwrap_or_default().to_string_lossy();
-        if SCRIPTS_NATIVE_SKIP.iter().any(|s| *s == name.as_ref()) {
+        let name = fa::file_name(&entry).unwrap_or_default();
+        if SCRIPTS_NATIVE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (scripts native skip list — see SCRIPTS_NATIVE_SKIP)");
             continue;
         }
@@ -1213,7 +1195,7 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         // "this file used to be an @EXPECT_ERROR case" — declares nothing, and skipping
         // on the mention silently dropped five scripts from this suite, including
         // `93-vector-advanced.loft` and its forty-nine assertions.
-        if let Ok(src) = std::fs::read_to_string(&entry) {
+        if let Ok(src) = fa::read_to_string(&entry) {
             if common::declares_expect_error(&src) {
                 println!("skip {entry:?} (has @EXPECT_ERROR)");
                 continue;
@@ -1339,7 +1321,7 @@ fn native_script_chunks_cover_the_corpus() {
         NATIVE_SCRIPT_CHUNKS,
         "one generated test per chunk"
     );
-    let src = std::fs::read_to_string(file!()).expect("read tests/native.rs");
+    let src = fa::read_to_string(file!()).expect("read tests/native.rs");
     for n in names {
         assert!(src.contains(&format!("{n} = ")), "{n} is generated");
     }
@@ -1421,7 +1403,7 @@ const POSIX_WRITE: &str = r#"#c "write" "long(int, const void*, size_t)""#;
 /// narrows to `unsigned int` for the same reason: that is `_write`'s third
 /// parameter, where POSIX takes `size_t`.
 fn for_host(src: &str) -> String {
-    if cfg!(windows) {
+    if loft::platform::host_lib_os() == loft::platform::LibOs::Windows {
         src.replace(
             POSIX_WRITE,
             r#"#c "_write" "long(int, const void*, unsigned int)""#,
@@ -1438,7 +1420,7 @@ fn native_c_binding_calls_libc() -> std::io::Result<()> {
         .unwrap_or_else(|p| p.into_inner());
     let rlib_info = find_loft_rlib();
     let path = std::env::temp_dir().join("loft_pln24_c_binding.loft");
-    std::fs::write(
+    fa::write(
         &path,
         for_host(
             "pub fn c_strlen(s: text) -> integer;   #c \"strlen\" \"size_t(const char*)\"\n\
@@ -1460,7 +1442,7 @@ fn native_c_binding_calls_libc() -> std::io::Result<()> {
     if !compile_native_job(&job, &rlib_info)? {
         return Ok(());
     }
-    let out = std::process::Command::new(&job.binary).output()?;
+    let out = loft::platform::process::harness_command(&job.binary).output()?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "stdout: {stdout}\nstderr: {stderr}");
@@ -1505,7 +1487,7 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let path = std::env::temp_dir().join("loft_pln24_c_parity.loft");
-    std::fs::write(
+    fa::write(
         &path,
         for_host(
             "pub fn c_strlen(s: text) -> integer;   #c \"strlen\" \"size_t(const char*)\"\n\
@@ -1522,7 +1504,7 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
          }\n",
         ),
     )?;
-    let interp = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let interp = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg(&path)
         .output()?;
@@ -1543,7 +1525,7 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
     if !compile_native_job(&job, &find_loft_rlib())? {
         return Ok(());
     }
-    let native = std::process::Command::new(&job.binary).output()?;
+    let native = loft::platform::process::harness_command(&job.binary).output()?;
     let nout = String::from_utf8_lossy(&native.stdout);
     assert_eq!(
         out, nout,
@@ -1575,14 +1557,14 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
         return Ok(()); // no C compiler on this machine
     }
-    let built = std::process::Command::new("make")
+    let built = loft::platform::process::harness_command("make")
         .arg("-C")
         .arg(&root)
         .output()?;
@@ -1593,7 +1575,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
     );
 
     let prog = std::env::temp_dir().join("loft_pln24_matrix.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcabi::*;\n\
          fn main() {\n\
@@ -1644,7 +1626,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
     )?;
     let libdir = root.join("pkg");
     let run = |backend: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--lib")
             .arg(&libdir)
@@ -1733,7 +1715,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -1743,7 +1725,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let max = loft::c_signature::MAX_C_ARITY;
     let dir = std::env::temp_dir().join("loft_pln128_arity");
     let src = dir.join("pkg/arity/src");
-    std::fs::create_dir_all(&src)?;
+    fa::create_dir_all(&src)?;
 
     // One C function at the ceiling and one past it, each weighting argument i
     // by i+1 so a dropped or reordered argument gives a different number rather
@@ -1760,17 +1742,18 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             .join(" + ");
         csrc.push_str(&format!("long long ar{n}({params}) {{ return {body}; }}\n"));
     }
-    std::fs::write(dir.join("arity.c"), &csrc)?;
+    fa::write(dir.join("arity.c"), &csrc)?;
     // The manifest keeps the LINUX spelling on every host: `platform::lib_variants`
     // translates `libarity.so` to `arity.dll` for Windows and `libarity.dylib` for
     // macOS, and both backends resolve it through that one home.  Only what gets
     // BUILT is host-specific.
-    let libname = if cfg!(target_os = "macos") {
+    let os = loft::platform::host_lib_os();
+    let libname = if os == loft::platform::LibOs::Macos {
         "libarity.dylib"
     } else {
         "libarity.so"
     };
-    if cfg!(windows) {
+    if os == loft::platform::LibOs::Windows {
         // TWO artifacts, because on Windows the two backends need different files
         // and Unix gets away with one.  `--interpret` LoadLibrary's the fixture at
         // run time, which only a DLL can satisfy; `--native` links it, and a DLL is
@@ -1780,13 +1763,13 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
         // respelled, so the fixture cannot drift from what loft actually asks for.
         let dll = dir.join("arity.dll");
         let implib = dir.join("arity.lib");
-        let cc = std::process::Command::new("cc")
+        let cc = loft::platform::process::harness_command("cc")
             .args(["-O1", "-shared", "-o"])
             .arg(&dll)
             .arg(dir.join("arity.c"))
             .args(loft::platform::shim_implib_args(
                 &implib.to_string_lossy(),
-                loft::platform::host_lib_os(),
+                os,
             ))
             .output()?;
         assert!(
@@ -1795,13 +1778,13 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             String::from_utf8_lossy(&cc.stderr)
         );
         assert!(
-            implib.exists(),
+            fa::exists(&implib),
             "`cc -shared` must also write the import library {} — without it the \
              --native link cannot resolve `-l arity`",
             implib.display()
         );
     } else {
-        let cc = std::process::Command::new("cc")
+        let cc = loft::platform::process::harness_command("cc")
             .args(["-O1", "-fPIC", "-shared", "-o"])
             .arg(dir.join(libname))
             .arg(dir.join("arity.c"))
@@ -1812,7 +1795,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             String::from_utf8_lossy(&cc.stderr)
         );
     }
-    std::fs::write(
+    fa::write(
         dir.join("pkg/arity/loft.toml"),
         format!(
             "[library]\nname = \"arity\"\nversion = \"0.1.0\"\n\n[c]\nlibs = \"../../{libname}\"\n"
@@ -1829,7 +1812,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // Sum of i^2 for i in 1..=n — hand-computable, and different for n and n+1.
     let want = |n: usize| (1..=n).map(|i| i * i).sum::<usize>();
     let run = |backend: &str, prog: &std::path::Path| -> std::io::Result<(String, String)> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--lib")
             .arg(dir.join("pkg"))
@@ -1845,10 +1828,10 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // it. At the ceiling both backends must call it and agree on the value; one
     // past it, both must refuse.
     for (n, expect_ok) in [(max, true), (max + 1, false)] {
-        std::fs::write(src.join("arity.loft"), sig(n))?;
+        fa::write(src.join("arity.loft"), sig(n))?;
         let call = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
         let prog = dir.join(format!("call{n}.loft"));
-        std::fs::write(
+        fa::write(
             &prog,
             format!("use arity::*;\nfn main() {{ println(\"R {{ar{n}({call})}}\") }}\n"),
         )?;
@@ -1883,7 +1866,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // puts the error in front of the person who can fix it; before arc C the
     // only check was at the call site, so the author never saw it at all.
     let owned = dir.join("owned.loft");
-    std::fs::write(
+    fa::write(
         &owned,
         format!(
             "{}fn main() {{ println(\"declared, never called\") }}\n",
@@ -1891,7 +1874,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
         ),
     )?;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&owned)
             .output()?;
@@ -1906,7 +1889,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // ...but a DEPENDENCY declaring one the program never calls must still load:
     // a consumer cannot edit someone else's declaration, so it must not fail
     // their build. Mirrors how `superseded_fold_diagnostics` scopes itself.
-    std::fs::write(
+    fa::write(
         src.join("arity.loft"),
         format!("{}{}", sig(max), sig(max + 1)),
     )?;
@@ -1915,7 +1898,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
         .collect::<Vec<_>>()
         .join(",");
     let prog = dir.join("dep_ok.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         format!("use arity::*;\nfn main() {{ println(\"R {{ar{max}({call})}}\") }}\n"),
     )?;
@@ -1952,14 +1935,14 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
         return Ok(()); // no C compiler on this machine
     }
-    let built = std::process::Command::new("make")
+    let built = loft::platform::process::harness_command("make")
         .arg("-C")
         .arg(&root)
         .output()?;
@@ -1970,7 +1953,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
     );
 
     let prog = std::env::temp_dir().join("loft_pln128_numeric.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcabi::*;\n\
          fn main() {\n\
@@ -2067,7 +2050,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
     )?;
     let libdir = root.join("pkg");
     let run = |backend: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--lib")
             .arg(&libdir)
@@ -2138,7 +2121,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
 #[test]
 fn a_c_string_return_crosses_identically_on_both_backends() -> std::io::Result<()> {
     let path = std::env::temp_dir().join("loft_pln24_c_textret.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "pub fn c_strerror(n: integer) -> text;   #c \"strerror\" \"char*(int)\"\n\
          pub fn c_strlen(s: text) -> integer;     #c \"strlen\" \"size_t(const char*)\"\n\
@@ -2150,7 +2133,7 @@ fn a_c_string_return_crosses_identically_on_both_backends() -> std::io::Result<(
     )?;
     let mut seen = Vec::new();
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&path)
             .output()?;
@@ -2199,7 +2182,7 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -2208,11 +2191,11 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     }
     let dir = std::env::temp_dir().join(format!("loft_skew_{}", std::process::id()));
     let pkg = dir.join("pkg/skewlib/src");
-    std::fs::create_dir_all(&pkg)?;
+    fa::create_dir_all(&pkg)?;
     let src = dir.join("old.c");
-    std::fs::write(&src, "long sk_present(long v) { return v + 1; }\n")?;
+    fa::write(&src, "long sk_present(long v) { return v + 1; }\n")?;
     let so = dir.join("libskew.so");
-    let built = std::process::Command::new("cc")
+    let built = loft::platform::process::harness_command("cc")
         .args(["-O2", "-fPIC", "-shared", "-o"])
         .arg(&so)
         .arg(&src)
@@ -2227,13 +2210,13 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     // special is simpler, and Windows accepts `/` everywhere loft passes this on
     // (`lib_variants` already splits a directory off on either separator).
     let so_str = so.to_string_lossy().replace('\\', "/");
-    std::fs::write(
+    fa::write(
         dir.join("pkg/skewlib/loft.toml"),
         format!(
             "[library]\nname = \"skewlib\"\nversion = \"0.1.0\"\n\n[c]\noptional-libs = \"{so_str}\"\n"
         ),
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("skewlib.loft"),
         format!(
             "pub fn sk_present(v: integer) -> integer;  #c \"sk_present\" \"long(long)\"\n\
@@ -2244,13 +2227,13 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
         ),
     )?;
     let script = dir.join("probe.loft");
-    std::fs::write(
+    fa::write(
         &script,
         "pub use skewlib::*;\nfn go() {\n  println(\"ok={skew_ok()}\");\n  println(\"call={sk_present(41)}\");\n}\ngo();\n",
     )?;
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -2272,7 +2255,7 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
             "{backend}: a loadable library missing a declared symbol is NOT available:\n{s}"
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -2304,7 +2287,7 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -2331,7 +2314,7 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
     let libdir = root.join("tests/fixtures/sqldb");
     let script = libdir.join("uniform.loft");
     let run = |backend: &str, mode: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -2627,6 +2610,7 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
     // cell with no server to be unreachable, so there it can only be missing if
     // something upstream broke.
     println!("@PLN23 backends exercised: {ran:?}");
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): a system sqlite the CI image guarantees (`LOFT_REQUIRE_SQLITE=1`) exists on Linux only; Windows substitute: the cells run where `winsqlite3` loads, and `ran` is printed
     if cfg!(target_os = "linux") {
         assert!(
             ran.contains(&"sqlite"),
@@ -2672,7 +2656,7 @@ fn one_connection_yields_two_independent_cursors() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -2684,7 +2668,7 @@ fn one_connection_yields_two_independent_cursors() -> std::io::Result<()> {
     let script = libdir.join("two_cursors.loft");
     let mut ran = false;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -2768,7 +2752,7 @@ fn one_table_definition_derives_reconciles_and_renders() -> std::io::Result<()> 
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -2781,7 +2765,7 @@ fn one_table_definition_derives_reconciles_and_renders() -> std::io::Result<()> 
     let libdir = root.join("tests/fixtures/sqldb");
     let script = libdir.join("schema_pure.loft");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -2826,7 +2810,7 @@ fn a_table_loft_wrote_and_a_table_loft_found_are_one_value() -> std::io::Result<
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -2896,7 +2880,7 @@ fn a_table_loft_wrote_and_a_table_loft_found_are_one_value() -> std::io::Result<
 
     let mut first: Option<String> = None;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3031,7 +3015,7 @@ fn a_collection_field_becomes_child_rows_a_real_engine_gives_back() -> std::io::
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -3063,7 +3047,7 @@ fn a_collection_field_becomes_child_rows_a_real_engine_gives_back() -> std::io::
 
     let mut first: Option<String> = None;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3118,7 +3102,7 @@ fn one_connection_string_reaches_its_driver_and_a_refusal_behaves_like_one() -> 
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -3131,7 +3115,7 @@ fn one_connection_string_reaches_its_driver_and_a_refusal_behaves_like_one() -> 
     let libdir = root.join("tests/fixtures/sqldb");
     let script = libdir.join("registry_pure.loft");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3171,7 +3155,7 @@ fn a_connection_the_registry_opened_is_a_connection() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -3209,7 +3193,7 @@ fn a_connection_the_registry_opened_is_a_connection() -> std::io::Result<()> {
 
     let mut first: Option<String> = None;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3278,7 +3262,7 @@ fn a_lazy_read_gives_one_answer_down_rust_and_down_loft() -> std::io::Result<()>
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -3317,7 +3301,7 @@ fn a_lazy_read_gives_one_answer_down_rust_and_down_loft() -> std::io::Result<()>
 
     let mut first: Option<String> = None;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3397,7 +3381,7 @@ fn a_structure_written_is_immediately_readable_through_one_connection_string() -
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -3444,7 +3428,7 @@ fn a_structure_written_is_immediately_readable_through_one_connection_string() -
 
     let mut first: Option<String> = None;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3511,9 +3495,9 @@ fn a_sql_cursor_walks_real_rows_and_keeps_null_apart_from_empty() -> std::io::Re
         "/usr/lib/libmariadb.so.3",
     ]
     .iter()
-    .any(|p| std::path::Path::new(p).exists());
+    .any(|p| fa::exists(std::path::Path::new(p)));
     if !present
-        || std::process::Command::new("cc")
+        || loft::platform::process::harness_command("cc")
             .arg("--version")
             .output()
             .is_err()
@@ -3526,7 +3510,7 @@ fn a_sql_cursor_walks_real_rows_and_keeps_null_apart_from_empty() -> std::io::Re
     // and every script there must run standalone, while this one needs `--lib`.
     let script = libdir.join("mariadb").join("cursor.loft");
     let run = |backend: &str, mode: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3606,18 +3590,18 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
         "/usr/lib/libmariadb.so.3",
     ]
     .iter()
-    .any(|p| std::path::Path::new(p).exists());
+    .any(|p| fa::exists(std::path::Path::new(p)));
     if !present {
         return Ok(());
     }
     let dir = std::env::temp_dir().join("loft_pln23_s2");
     let pkg = dir.join("mariadb").join("src");
-    std::fs::create_dir_all(&pkg)?;
-    std::fs::write(
+    fa::create_dir_all(&pkg)?;
+    fa::write(
         dir.join("mariadb").join("loft.toml"),
         "[library]\nname = \"mariadb\"\nversion = \"0.0.1\"\n\n[c]\nlibs = \"libmariadb.so.3\"\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("mariadb.loft"),
         // `unix_socket` is `integer`, not `text`: it has to be able to be NULL,
         // and loft text is non-null with no way to spell a null pointer.
@@ -3629,7 +3613,7 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
          #c \"mysql_real_connect\" \"void*(void*, const char*, const char*, const char*, const char*, int, const char*, long)\"\n",
     )?;
     let prog = dir.join("s2.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mariadb::*;\n\
          fn main() {\n\
@@ -3643,7 +3627,7 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
          }\n",
     )?;
     let run = |backend: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -3703,30 +3687,30 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
         "/usr/lib/libmariadb.so.3",
     ]
     .iter()
-    .any(|p| std::path::Path::new(p).exists());
+    .any(|p| fa::exists(std::path::Path::new(p)));
     if !present {
         return Ok(());
     }
     let dir = std::env::temp_dir().join("loft_pln23_s1");
     let pkg = dir.join("mariadb").join("src");
-    std::fs::create_dir_all(&pkg)?;
-    std::fs::write(
+    fa::create_dir_all(&pkg)?;
+    fa::write(
         dir.join("mariadb").join("loft.toml"),
         "[library]\nname = \"mariadb\"\nversion = \"0.0.1\"\n\n[c]\nlibs = \"libmariadb.so.3\"\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("mariadb.loft"),
         "pub fn client_info() -> text;       #c \"mysql_get_client_info\" \"const char*(void)\"\n\
          pub fn client_version() -> integer; #c \"mysql_get_client_version\" \"long(void)\"\n",
     )?;
     let prog = dir.join("s1.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mariadb::*;\nfn main() { println(\"{client_info()} {client_version()}\") }\n",
     )?;
 
     let run = |backend: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--lib")
             .arg(&dir)
@@ -3791,9 +3775,9 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
 #[test]
 fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
     let dir = std::env::temp_dir().join(format!("loft_pln24_arce_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let src_path = dir.join("arce.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         // `used` is called; `unused` is only declared.  Both are `#c`.
         "fn used(s: text) -> integer;    #c \"strlen\" \"size_t(const char*)\"\n\
@@ -3855,7 +3839,7 @@ fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
         "the availability tables stay on every target — `c_library_available` \
          reads them, and it used to fail to compile under --html for want of them"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// @PLN24 arc D — loft compiles the ANSI-C shim itself, with `cc` and no rustc.
@@ -3877,7 +3861,7 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -3887,10 +3871,10 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
     let libdir = root.join("pkg");
     // Start from no artifact, so the build itself is what is under test.
-    let _ = std::fs::remove_dir_all(libdir.join("lcshim").join("native-auto"));
+    let _ = fa::remove_dir_all(libdir.join("lcshim").join("native-auto"));
 
     let prog = std::env::temp_dir().join("loft_pln24_shim.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcshim::*;\n\
          fn main() {\n\
@@ -3900,7 +3884,7 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
          }\n",
     )?;
     let run = |backend: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--lib")
             .arg(&libdir)
@@ -3933,8 +3917,8 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
         );
     }
     // The artifact is the proof loft did the compiling: nothing else put it there.
-    let built: Vec<_> = std::fs::read_dir(libdir.join("lcshim").join("native-auto"))
-        .map(|d| d.filter_map(Result::ok).map(|e| e.file_name()).collect())
+    let built: Vec<_> = fa::read_dir(libdir.join("lcshim").join("native-auto"))
+        .map(|d| d.into_iter().filter_map(|e| e.os_name()).collect())
         .unwrap_or_default();
     assert!(
         !built.is_empty(),
@@ -3979,10 +3963,10 @@ fn a_text_return_must_say_it_is_a_c_string() -> std::io::Result<()> {
     ];
     for (decl, want) in cases {
         let path = std::env::temp_dir().join("loft_pln24_c_textret_refuse.loft");
-        std::fs::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
+        fa::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
         let mut seen = Vec::new();
         for backend in ["--interpret", "--native"] {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg(backend)
                 .arg("--errors=compact")
                 .arg(&path)
@@ -4056,10 +4040,10 @@ fn a_vector_element_must_match_the_c_pointee() -> std::io::Result<()> {
     ];
     for (decl, want) in cases {
         let path = std::env::temp_dir().join("loft_pln128_elem_refuse.loft");
-        std::fs::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
+        fa::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
         let mut seen = Vec::new();
         for backend in ["--interpret", "--native"] {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg(backend)
                 .arg("--errors=compact")
                 .arg(&path)
@@ -4083,13 +4067,13 @@ fn a_vector_element_must_match_the_c_pointee() -> std::io::Result<()> {
     // `void*` is the opaque escape hatch and stays open: it is how `write(2)`
     // takes a `vector<u8>`, and it is the author saying "these are bytes".
     let path = std::env::temp_dir().join("loft_pln128_elem_opaque.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "pub fn f(v: vector<float>);   #c \"lc_x\" \"void(const void*, int64_t)\"\n\
          fn main() { println(\"x\") }\n",
     )?;
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--errors=compact")
             .arg(&path)
@@ -4130,14 +4114,14 @@ fn a_retaining_c_api_binds_over_a_c_owned_buffer() -> std::io::Result<()> {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
-    if std::process::Command::new("cc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
         return Ok(()); // no C compiler on this machine
     }
-    let built = std::process::Command::new("make")
+    let built = loft::platform::process::harness_command("make")
         .arg("-C")
         .arg(&root)
         .output()?;
@@ -4148,7 +4132,7 @@ fn a_retaining_c_api_binds_over_a_c_owned_buffer() -> std::io::Result<()> {
     );
 
     let prog = std::env::temp_dir().join("loft_pln128_retain.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcabi::*;\n\
          fn main() {\n\
@@ -4171,7 +4155,7 @@ fn a_retaining_c_api_binds_over_a_c_owned_buffer() -> std::io::Result<()> {
     )?;
     let libdir = root.join("pkg");
     let run = |backend: &str| -> std::io::Result<String> {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--lib")
             .arg(&libdir)
@@ -4250,10 +4234,10 @@ fn a_float_return_binds_and_a_float_argument_still_does_not() -> std::io::Result
     ];
     for (decl, want) in cases {
         let path = std::env::temp_dir().join("loft_pln128_float_return.loft");
-        std::fs::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
+        fa::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
         let mut seen = Vec::new();
         for backend in ["--interpret", "--native"] {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg(backend)
                 .arg("--errors=compact")
                 .arg(&path)
@@ -4299,7 +4283,7 @@ fn native_deep_recursion_reports_clean_stack_overflow() -> std::io::Result<()> {
     // Write to a temp file, NOT tests/scripts/ (which the success-runners sweep —
     // an infinitely-recursing script would break them).
     let path = std::env::temp_dir().join("loft_native_stack_overflow_guard.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "fn recur(n: integer) -> integer { m = recur(n + 1); return m + 1; }\n\
          fn main() { x = recur(0); print(\"{x}\"); }\n",
@@ -4309,7 +4293,7 @@ fn native_deep_recursion_reports_clean_stack_overflow() -> std::io::Result<()> {
     if !compile_native_job(&job, &rlib_info)? {
         return Ok(());
     }
-    let out = std::process::Command::new(&job.binary).output()?;
+    let out = loft::platform::process::harness_command(&job.binary).output()?;
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success(),
@@ -4382,16 +4366,11 @@ const LIB_TESTS_NATIVE_SKIP: &[&str] = &[
 /// NATIVE library gate (its own codegen-gap list above; the interpreter gate's
 /// skips live in `wrap.rs::lib_test_skipped`).
 fn native_lib_test_skipped(entry: &Path) -> bool {
-    let file = entry
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let file = fa::file_name(entry).unwrap_or_default();
     let pkg = entry
         .parent()
         .and_then(|d| d.parent())
-        .and_then(|d| d.file_name())
-        .map(|s| s.to_string_lossy().to_string())
+        .and_then(fa::file_name)
         .unwrap_or_default();
     if LIB_PKGS_NATIVE_SKIP.contains(&pkg.as_str()) {
         return true;
@@ -4417,6 +4396,7 @@ fn run_lib_test_in_temp_cwd(
     let mut args: Vec<&str> = extra_args.to_vec();
     args.push("test");
     args.push(stem);
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(unix)]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -4427,22 +4407,23 @@ fn run_lib_test_in_temp_cwd(
             std::process::id(),
             CTR.fetch_add(1, Ordering::Relaxed)
         ));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir(&tmp)?;
-        for entry in std::fs::read_dir(pkg_dir)?.filter_map(|e| e.ok()) {
-            let target = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
-            let _ = std::os::unix::fs::symlink(&target, tmp.join(entry.file_name()));
+        let _ = fa::remove_dir_all(&tmp);
+        fa::create_dir(&tmp)?;
+        for entry in fa::read_dir(pkg_dir)? {
+            let target = fa::try_plain_canonical(&entry).unwrap_or_else(|| entry.os_spelling());
+            let _ = fa::symlink(&target, tmp.join(entry.os_name().unwrap_or_default()));
         }
-        let out = std::process::Command::new(loft_bin)
+        let out = loft::platform::process::harness_command(loft_bin)
             .current_dir(&tmp)
             .args(&args)
             .output();
-        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = fa::remove_dir_all(&tmp);
         out
     }
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(not(unix))]
     {
-        std::process::Command::new(loft_bin)
+        loft::platform::process::harness_command(loft_bin)
             .current_dir(pkg_dir)
             .args(&args)
             .output()
@@ -4482,16 +4463,16 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_878_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("shadowlib");
-    std::fs::create_dir_all(pkg.join("src"))?;
-    std::fs::create_dir_all(pkg.join("tests"))?;
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src"))?;
+    fa::create_dir_all(pkg.join("tests"))?;
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"shadowlib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
          [library]\nentry = \"src/shadowlib.loft\"\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("src/shadowlib.loft"),
         "pub struct W { w_n: integer, w_tag: text }\n\
          pub struct H { h_q: integer, h_r: integer }\n\
@@ -4506,7 +4487,7 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
          \x20 return H { h_q: q, h_r: 1 };\n\
          }\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("tests/probe.loft"),
         "use shadowlib::*;\n\
          fn defaulted(h: integer) -> W {\n\
@@ -4538,7 +4519,7 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
             "loft test {extra:?} on a package whose test file shadows a library fn name:\n{combined}"
         );
     }
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     Ok(())
 }
 
@@ -4562,21 +4543,19 @@ fn native_library_suite() -> std::io::Result<()> {
     }
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let mut files: Vec<PathBuf> = Vec::new();
-    for pkg in std::fs::read_dir("lib")?.filter_map(|e| e.ok()) {
+    for pkg in fa::read_dir("lib")? {
         // Skip the `.loft_test_tmp_*` artifact-isolation dirs (see
         // run_lib_test_in_temp_cwd) so they're never discovered as packages.
-        if pkg.file_name().to_string_lossy().starts_with('.') {
+        if pkg.file_name().is_some_and(|n| n.starts_with('.')) {
             continue;
         }
-        let tests_dir = pkg.path().join("tests");
-        if !tests_dir.is_dir() {
+        let tests_dir = pkg.os_spelling().join("tests");
+        if !fa::is_dir(&tests_dir) {
             continue;
         }
-        for f in std::fs::read_dir(&tests_dir)?.filter_map(|e| e.ok()) {
-            let p = f.path();
-            if p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            {
+        for f in fa::read_dir(&tests_dir)? {
+            let p = f.os_spelling();
+            if fa::extension(&p).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
                 files.push(p);
             }
         }
@@ -4591,11 +4570,7 @@ fn native_library_suite() -> std::io::Result<()> {
             continue;
         }
         let pkg_dir = entry.parent().and_then(|d| d.parent()).unwrap_or(&entry);
-        let stem = entry
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let stem = fa::file_stem(&entry).unwrap_or_default();
         println!("native lib test {entry:?}");
         let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, &stem, &["--native"])?;
         ran += 1;
@@ -4829,7 +4804,7 @@ fn imaging_fixture_png_roundtrip_both_backends() -> std::io::Result<()> {
 /// id at or past the shift.
 #[test]
 fn a_nested_narrow_vector_field_keeps_the_type_ids_aligned() {
-    if std::process::Command::new("rustc")
+    if loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_err()
@@ -4853,7 +4828,7 @@ fn a_nested_narrow_vector_field_keeps_the_type_ids_aligned() {
         "tests/scripts/432-untyped-vector-literal-arg.loft",
         "tests/scripts/923-nullable-vector-element-schema.loft",
     ] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--native")
             .arg(root.join(script))
             .env("LOFT_STRICT_SCHEMA_IDS", "1")
@@ -4918,10 +4893,10 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
 
     let scratch = loft::platform::scratch_dir();
     let entry = scratch.join("loft1311_fn_level_expect_fail.loft");
-    std::fs::write(&entry, src).expect("write the probe script");
+    fa::write(&entry, src).expect("write the probe script");
 
     let job = prepare_native_test(&entry).expect("a fn-level @EXPECT_FAIL must still prepare");
-    let generated = std::fs::read_to_string(&job.tmp_rs).expect("read the generated Rust");
+    let generated = fa::read_to_string(&job.tmp_rs).expect("read the generated Rust");
 
     assert!(
         generated.contains("// skipped (EXPECT_FAIL): n_test_1311_excused"),
@@ -4934,7 +4909,7 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
         );
     }
 
-    let _ = std::fs::remove_file(&entry);
+    let _ = fa::remove_file(&entry);
 }
 
 /// A generation run's per-definition facts are about ONE program.
@@ -4953,10 +4928,10 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
 #[test]
 fn a_generation_run_does_not_read_the_previous_programs_facts() {
     let dir = std::env::temp_dir().join(format!("loft_gen_memo_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let emit = |name: &str, body: &str| -> (u32, String) {
         let src = dir.join(name);
-        std::fs::write(
+        fa::write(
             &src,
             format!("fn f() -> integer? {{ {body} }}\nfn main() {{ x = f() ?? 99; println(\"{{x}}\"); }}\n"),
         )
@@ -4996,5 +4971,5 @@ fn a_generation_run_does_not_read_the_previous_programs_facts() {
         second.contains("op_conv_bool_from_int((var___ncc"),
         "the second program's `f` returns null, so `f() ?? 99` must keep its null test — it was folded from the first program's fact"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

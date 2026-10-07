@@ -22,11 +22,11 @@
 // registry and so needs network). The skip is printed so a green run never
 // hides reduced coverage.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn which(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -35,7 +35,7 @@ fn which(cmd: &str) -> bool {
 }
 
 fn wasm32_installed() -> bool {
-    Command::new("rustup")
+    loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
@@ -61,21 +61,21 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
     }
     let root = repo_root();
     let loft = root.join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP dhtml_vector_arg_gl_host_import_is_emitted: target/release/loft not built");
         return;
     }
     let helper = root.join("tools/wasm_imports.mjs");
-    assert!(helper.exists(), "tools/wasm_imports.mjs missing");
+    assert!(fa::exists(&helper), "tools/wasm_imports.mjs missing");
 
     // Minimal program that calls the vector-argument host import
     // `graphics::gl_upload_vertices(vector<single>, integer)`.
     let dir = std::env::temp_dir().join("loft_html_gl_imports");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
     let src = dir.join("gl_import_probe.loft");
     let html = dir.join("gl_import_probe.html");
-    std::fs::write(
+    fa::write(
         &src,
         "use graphics;\n\
          fn main() {\n\
@@ -89,7 +89,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
     )
     .expect("write source");
 
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().unwrap()])
         .arg("--path")
         .arg(format!("{}/", root.display()))
@@ -108,7 +108,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
         return;
     }
 
-    let check = Command::new("node")
+    let check = loft::platform::process::harness_command("node")
         .arg(&helper)
         .arg(&html)
         .arg("loft_gl_upload_vertices")

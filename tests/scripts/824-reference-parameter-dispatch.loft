@@ -27,6 +27,8 @@
 // through the reference as well — both to earn the `&` past the redundancy lint and to
 // show the emitted ops still address the CALLER's storage after dispatch moved. Each is
 // called once into a local, because a second call in an assert message would mutate again.
+// @falsified-at: none — the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct Row { id: integer, nm: text }
 

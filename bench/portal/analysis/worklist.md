@@ -64,6 +64,9 @@ time against the row measured at `7df5a4f4b`:
 | x86-64 laptop | random `indices` 7.61× | FIXED: the shuffle loop calls `get`, whose one inferred-range local inserts `OpRangeDefault`; its `const` bounds read as a store write, so every loop calling `get` declined the hoist.  Named store-free beside `atan2`'s dispatchers: `indices` 19.0 → 6.6 ms (2.63×), `get` 20.2 → 14.5 ms (2.57×) |
 | x86-64 laptop | `mesh_aabb` +34 % (21.0 → 28.3 µs) | not in its emission or runtime (byte-identical twin since `70079f138`, `rec_get` unchanged), most likely layout — and the row is now 17.0 µs (2.23×) through `(R-RecPtr)`'s non-null address, which also took `entity_tick` −19 % |
 | x86-64 laptop, with the library merge | `arguments/parse` +24 %, `stage/render_stage` +19 %, `zttext/insert_text` +9 % | the library source changed under them (arguments 0.2.4–0.2.5, stage 0.18.6–0.18.7, zttext 0.1.3): a library change or loft's is not yet told apart |
+| x86-64 laptop | `gridmesh/build_index` +14 %, `cbor/encode_bytes` +16 % | FIXED: @C138's per-access alignment test in `Store::read` / `write` kept them from inlining; the check is now the compiler's (`Stores::validate_all_layouts`).  build_index 20.3 → 18.4 ms, encode_bytes 880 → 771 µs |
+| x86-64 laptop | `hex_form/form_write` +31 % (2.82× → 3.69×), `hex_recover/index_build` +13 % | FIXED: the H-Elide gate took a promoted return buffer (renamed `outk`, `s`) for a caller's parameter and copied every `u = s.v` beside it; it now reads the `hidden` flag.  form_write 2.81×, index_build 3.84×.  Its alias matrix found loft#1895 (`acc = g(acc)` on a returned local answered `[]`), fixed first |
+| — | a `for x in u` walk over a view `u = s.v` of a parameter | NOT a regression, a lever: the copy stays, before the H-Elide gate and after it, while an index walk over the same view elides.  The walk lowers to `Op…` calls only and binds `_vector_1 = u`; which elision condition declines is not attributed.  Unpriced |
 
 ## 3. Units with a price
 
@@ -79,9 +82,9 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | S2 | `(R-Apart)` instance 2 — a fixed-length vector field inside a value record, across admitted calls | new gate over the IR | `mat4_mul` → 0.63× | apart.md |
 | S3 | `(R-Apart)` instance 3 — an inline buffer with a spill, never a bare `Vec` | after S2, same gate | `rig_world_frame3` → 2.75×; `draw_bezier`'s two stacks → 2.3× | apart.md |
 | S4 | `(R-Destination)` — a child built in its element (D7); beside it `(R-CompleteWrite)` counting a field MOVE (D6) and the fixed-width `move_field_out` (D2) | M + S + S | `decode` → 6.0× with C1's two XS steps (required: without D7 the ladder stops at 8.3×); `check_request` is 84 % the same `decode` | over-9x.md, under-10x.md § cbor |
-| S5 | `(R-FnRefValue)` — a fn-ref whose every target answers a value record answers the tuple | M | `flow_layout_full` −27 % alone; every fn-ref API answering a record | over-9x.md |
-| S6 | `(R-TextBorrow)`: the split-table verdict and the match-binding clause | XS/S + S/M | `header` 13.3× → 10.3×; `check_request` L2; `encode_bytes`' owned match bindings; every `match`-based finder | over-9x.md |
-| S7 | `(R-FoldCompare)` with its operand clause — a case fold compared, never built | S + XS | `header` → 4.3× (3.6× when the split table slices the borrow); every case-insensitive lookup | over-9x.md |
+| S5 | BUILT — `(R-FnRefValue)`: a fn-ref whose every target answers a value record answers the tuple, and a record parameter every arm takes as a tuple is passed as one | M | `flow_layout_full` −34.5 % on the flow-only driver (the price −33 %), hash unchanged | over-9x.md § zttext |
+| S6 | `(R-TextBorrow)`: the split-table verdict (BUILT for the walk) and the match-binding clause | XS/S + S/M | `check_request` L2; `encode_bytes`' owned match bindings; every `match`-based finder | over-9x.md |
+| S7 | `(R-FoldCompare)` — BUILT for a synthesised fold; its operand clause is next | S + XS | `header` 7.4× → 3.87× with S6's split-table verdict (x86-64); the operand clause priced −14 % more | over-9x.md |
 | S8 | `(R-ViewReturn)` — a lookup's found entry read in place | M | `check_request` −10 %; `pa_get` is the shape of the hex_* and markdown finders | over-9x.md |
 | S9 | destination-directed builds — `(R-Place)` widened to a local with ONE owning sink, the return buffer a host | not sized | `panel_build` (most of its 55 % lifecycle share), `emit_to_material` (`tri`, `up`, `centre`; no-prefill −17 % more), `encode_bytes` (`buf += encode(x)`) | records.md § Order item 2 |
 
@@ -122,6 +125,8 @@ Each is named in an analysis as the row's next step; none has a hand price for t
 | `binary_read` | NOT the counted `while`: re-priced, `while` and `for _ in 0..n` now emit the same work (1.338e10 against 1.332e10 instructions).  445 instructions an element, 87 % in the generic `OpReadFile`: `file_from_bytes` 21.6 % (the width and sign looked up in the type table per read — a compile-time fact the site has), `file_handle_read` 13 %, `store_mut` 10 %, `read_exact` 7 %, the format byte and `#next` read and written back.  Next: a read specialised to the site's static type (upper bound −21 %), then the handle and cursor held across the loop | vector-build.md |
 | `insert_text`, `invert` | `(R-Compact)`'s filter, prepend and identity forms; `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | rules.md, libraries-wide.md |
 | `mesh_to_floats` | `(R-RecPtr)` for a nullable view whose store is the parameter's | records.md |
+| `map_json` | PRICED: 86 % is `Map.parse` — the source lexer stepping through JSON 67 %, the `Parsed` tree written into the store 19 % — and `"{m:j}"` 6 %.  The lexer's per-token `Arc<str>` reference count (`Position.file`) was ~21 % of cycles: BUILT as `FileName` (an interned name, identity-first equality), −15 % cycles, same hash.  Next: the `Parsed` → store walk (two passes where the twin parses straight into structs) and the lexer's per-character stepping; a separate JSON byte scanner is ruled out (@PLN109: one lexer).  The parser's own allocations (string compares, key clones) priced at −0.8 % — not worth a change | profiled 2026-10-06 |
+| `flow_layout_full` | lever B is built (S5); S1c is next.  The bench itself works around fn-ref records not freed until a plain-value frame ends (`zttext/bench/bench.loft` `flow_op`) — a leak to file or fix | over-9x.md |
 | `truncate_to` | NOT the move through a by-value parameter: hand-priced (`e` placed in the timeline's store, `history_push`'s copy a shallow move) it costs +16 %, because the pooled `e` already keeps its vectors across pushes and the placed one claims them anew.  `drop_oldest` is already in place (`keep_vector_range`).  The row is claim-for-claim the twin's malloc-for-malloc (two each per push); what differs is each one's price: `OpCopyRecord` 36 % and the release walk 27 % go through `copy_claims` / `owned_walk` / `remove_struct_claims` for a `Stroke` whose layout the emitter knows.  Next: a copy and a release specialised to the static type (unpriced) | records.md § Order item 4 |
 | `panel_build` | the "bound null" window of `(R-RecPtr)`; a heap-owning tree's stores reused across a rebind (a rule that does not exist) | rules.md, records.md § Order item 5 |
 
@@ -150,8 +155,10 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 
 - **`(R-ViewReturn)`** (S8) is an ownership decision: a result that is a view of the caller's
   own argument, consumed inside the binding statement.
-- **`(R-Destination)`** (S4): the ok-false path's answer is drafted in rewrites.md § Proposed
-  (an element minted and not finished is no member; the callee releases what it placed).
+- **`(R-Destination)`** (S4): DECIDED — an element minted and not finished is no member, and
+  the CALLER releases what the failed child placed (the release walk the plain form's
+  discarded result runs).  Identical in values, members and live records; spare capacity is
+  not part of the contract (owner).
 - **A decoded value whose texts and byte strings are views into the input frame** — the only
   form the analysis names that reaches even 6× on `check_request` against an aligned twin; a
   borrowed field inside a store record does not exist (APART_VALUES.md, @PLN174).

@@ -1,0 +1,187 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C130, `@FR-H-Write-Else` — `place = v else { B }` runs B exactly when the write did not
+// take, and never when it landed.  Every cell writes a distinctive letter into `out` from its
+// arm, so a cell whose arm ran wrongly — or failed to run — changes the string; the landed values are
+// asserted beside it.  Every expected value is hand-computed in the comment above its assert.
+//
+//   axes: place {local, tuple element, vector element, text element, field through an
+//         element, nested field, whole record from a call, record variable}
+//       × fault {out of range, absent key (hash, index, sorted), null view, narrow misfit
+//         (u8 field, u8 local, i8, limit), lock fault, and the LANDED twin of each}
+//       × operator {=, +=, -=, *=} × the arm {flag, continue, break, nested store-else}
+//       × context {straight line, loop, lambda, generator, par worker}
+//
+// @falsified-at: 57afdec2c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/178-store-else.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — with the arm never emitted, the first cell's `out` stays empty
+//   where "CFHN" is right, on both backends.  The patch drops only the final `if` that runs it.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees — only the exit
+//   and the assertions move.
+
+struct In { m: integer }
+struct P { x: integer, n: u8, t: text, inner: In }
+struct H { k: integer, v: integer }
+struct H2 { k: integer, v: integer }
+struct H3 { k: integer, v: integer }
+struct D { hs: hash<H[k]>, ix: index<H2[k]>, so: sorted<H3[k]> }
+struct L { n: integer, name: text, xs: vector<integer>, inner: In, u: u8 }
+
+fn mk(x: integer) -> P { P { x: x, n: 1, t: "p{x}", inner: In { m: x } } }
+fn mi(x: integer) -> In { In { m: x } }
+fn tick(c: vector<integer>, r: integer) -> integer { c += [r]; r }
+
+fn test_each_place_kind() {
+  out = "";
+  a = 5;
+  a += 1 else { out += "A" };
+  vt: vector<text> = ["a", "b"];
+  vt[1] = "B" else { out += "B" };
+  vt[4] = "E" else { out += "C" };
+  t = (1, 2);
+  t.0 = 9 else { out += "D" };
+  ps = [mk(1), mk(2)];
+  ps[1].inner.m = 77 else { out += "E" };
+  ps[6].inner.m = 77 else { out += "F" };
+  ps[0] = mk(10) else { out += "G" };
+  ps[8] = mk(10) else { out += "H" };
+  r = mk(4);
+  r.x = 5 else { out += "R" };
+  q: P? = null;
+  q.x = 3 else { out += "N" };
+  // landed: a, vt[1], t.0, ps[1].inner.m, ps[0], r.x — missed: vt[4], ps[6], ps[8], q
+  assert(out == "CFHN", "out {out}");
+  assert(a == 6 && vt[1] == "B" && len(vt) == 2 && t.0 == 9, "locals {a} {vt} {t.0}");
+  assert(ps[1].inner.m == 77 && ps[0].x == 10 && ps[0].t == "p10" && len(ps) == 2, "ps {ps[0].x}");
+  assert(r.x == 5, "a record variable is written through, not copied: {r.x}");
+}
+
+fn test_keyed_places() {
+  out = "";
+  d = D { hs: [H { k: 1, v: 10 }], ix: [H2 { k: 1, v: 10 }], so: [H3 { k: 1, v: 10 }] };
+  d.hs[1].v = 11 else { out += "a" };
+  d.hs[2].v = 12 else { out += "b" };
+  d.ix[1].v = 11 else { out += "c" };
+  d.ix[2].v = 12 else { out += "d" };
+  d.so[1].v = 11 else { out += "e" };
+  d.so[2].v = 12 else { out += "f" };
+  // the present keys land (11 each), the absent key 2 runs each arm
+  assert(out == "bdf", "out {out}");
+  assert(d.hs[1].v == 11 && d.ix[1].v == 11 && d.so[1].v == 11, "landed");
+  assert(len(d.hs) == 1 && len(d.so) == 1, "no key is added by a missed write");
+}
+
+fn test_compound_reads_its_place_once() {
+  out = "";
+  tk: vector<integer> = [];
+  w = [10, 20, 30];
+  w[tick(tk, 1)] += tick(tk, 5) else { out += "x" };
+  w[tick(tk, 7)] -= tick(tk, 2) else { out += "y" };
+  w[tick(tk, 2)] *= 3 else { out += "z" };
+  // w[1] 20+5 = 25; w[7] misses (the value still runs once); w[2] 30*3 = 90
+  assert("{w}" == "[10,25,90]", "w {w}");
+  assert("{tk}" == "[1,5,7,2,2]", "each index and value ran once: {tk}");
+  assert(out == "y", "out {out}");
+}
+
+fn test_narrow_slots() {
+  out = "";
+  ps = [mk(1)];
+  b: u8 = 250;
+  b += 5 else { out += "1" };
+  b += 1 else { out += "2" };
+  ps[0].n = 200 else { out += "3" };
+  ps[0].n += 55 else { out += "4" };
+  ps[0].n += 1 else { out += "5" };
+  s: i8 = -120;
+  s -= 8 else { out += "6" };
+  s -= 9 else { out += "7" };
+  lim: integer limit(3, 9) = 5;
+  lim += 4 else { out += "8" };
+  lim += 1 else { out += "9" };
+  ps[9].n += 300 else { out += "!" };
+  // 255 fits a u8 (no arm), 256 does not (default 0); -128 fits an i8, -137 does not;
+  // 9 fits limit(3, 9), 10 does not (default 3); the missing element runs its arm once
+  assert(out == "2579!", "out {out}");
+  assert(b == 0 && ps[0].n == 0 && s == 0 && lim == 3, "b={b} n={ps[0].n} s={s} lim={lim}");
+}
+
+fn test_the_arm_controls_the_loop() {
+  w = [1, 2, 3];
+  hits = 0;
+  for i in 0..5 {
+    w[i] = i else { hits += 1; continue };
+    hits += 100;
+  }
+  for i in 0..5 {
+    w[i] = i else { break };
+    hits += 1000;
+  }
+  // first loop: 3 landed (+300), 2 missed (+2); second: 3 landed (+3000), breaks at 3
+  assert(hits == 3302, "hits {hits}");
+  assert("{w}" == "[0,1,2]", "w {w}");
+}
+
+fn test_nested_and_in_a_lambda() {
+  out = "";
+  w = [1, 2];
+  w[9] = 1 else { w[8] = 1 else { out += "inner" }; out += "outer" };
+  f = fn(k: integer) -> text { r2 = ""; w[k] = 1 else { r2 = "lam" }; r2 };
+  assert(out == "innerouter", "out {out}");
+  assert(f(1) == "" && f(99) == "lam", "lambda");
+}
+
+fn test_a_locked_store_runs_the_arm() {
+  out = "";
+  d = L { n: 7, name: "abc", xs: [1, 2, 3], inner: In { m: 4 }, u: 3 };
+  d#lock = true;
+  d.n = 99 else { out += "a" };
+  d.name = "changed" else { out += "b" };
+  d.xs[1] = 20 else { out += "c" };
+  d.inner.m = 44 else { out += "d" };
+  d.inner = mi(5) else { out += "e" };
+  d.n += 1 else { out += "f" };
+  d.u += 300 else { out += "g" };
+  // every write is discarded, every arm runs, and nothing halts the development run
+  assert(out == "abcdefg", "out {out}");
+  assert(d.n == 7 && d.name == "abc" && "{d.xs}" == "[1,2,3]" && d.inner.m == 4 && d.u == 3, "unchanged");
+}
+
+fn gen(v: vector<integer>) -> iterator<integer> {
+  for i in 0..4 {
+    v[i] = i * 10 else { yield -1; continue };
+    yield v[i];
+  }
+}
+
+fn work(p: P) -> integer {
+  w = [1, 2];
+  m = 0;
+  w[p.x] = 5 else { m = 100 };
+  m + w[0] + w[1]
+}
+
+fn test_generator_and_par_frames() {
+  v = [7, 8];
+  s = "";
+  for x in gen(v) { s += "{x},"; }
+  ps = [P { x: 0, n: 1, t: "", inner: In { m: 0 } }, P { x: 1, n: 1, t: "", inner: In { m: 0 } },
+        P { x: 5, n: 1, t: "", inner: In { m: 0 } }, P { x: 9, n: 1, t: "", inner: In { m: 0 } }];
+  rs: vector<integer> = [];
+  for p in ps par(r = work(p), 2) { rs += [r]; }
+  // two landed yields, two missed; workers: 5+2, 1+5, 100+1+2 twice
+  assert(s == "0,10,-1,-1," && "{v}" == "[0,10]", "gen {s} {v}");
+  assert("{rs}" == "[7,6,103,103]", "par {rs}");
+}
+
+fn main() {
+  test_each_place_kind();
+  test_keyed_places();
+  test_compound_reads_its_place_once();
+  test_narrow_slots();
+  test_the_arm_controls_the_loop();
+  test_nested_and_in_a_lambda();
+  test_a_locked_store_runs_the_arm();
+  test_generator_and_par_frames();
+}

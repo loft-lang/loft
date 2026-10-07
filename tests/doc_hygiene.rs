@@ -10,6 +10,7 @@
 //! invariant: every INC appearing as "Resolved as design point" must
 //! NOT also appear in the Medium or Low severity tables.
 
+use loft::file_access as fa;
 use std::fs;
 
 const DOC: &str = "doc/claude/INCONSISTENCIES.md";
@@ -83,7 +84,7 @@ const QUALITY_HISTORY: &str = "doc/claude/QUALITY-history.md";
 /// receipt owes.
 #[test]
 fn every_guard_says_how_to_score_it_again() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args(["scripts/falsify-review.py", "--check"])
         .output()
         .expect("cannot run scripts/falsify-review.py");
@@ -98,7 +99,7 @@ fn every_guard_says_how_to_score_it_again() {
         .map(|(n, f)| (n.to_string(), f.to_string()))
         .collect();
 
-    let baseline_src = fs::read_to_string("tests/falsified_docs.baseline")
+    let baseline_src = fa::read_to_string("tests/falsified_docs.baseline")
         .expect("cannot read tests/falsified_docs.baseline");
     let baseline: std::collections::HashSet<&str> = baseline_src
         .lines()
@@ -166,7 +167,7 @@ fn every_guard_says_how_to_score_it_again() {
 fn the_falsify_scorer_reads_its_channels_on_this_platform() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // `git_bash()`: a bare `bash` on a Windows runner is the WSL launcher, with no distribution.
-    let out = std::process::Command::new(git_bash())
+    let out = loft::platform::process::harness_command(git_bash())
         .arg(root.join("scripts/falsify.sh"))
         .arg("--self-test")
         .current_dir(&root)
@@ -190,11 +191,11 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 #[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
 fn every_patch_receipt_still_applies() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut patches: Vec<std::path::PathBuf> = fs::read_dir(root.join("tests/falsified"))
+    let mut patches: Vec<std::path::PathBuf> = fa::read_dir(root.join("tests/falsified"))
         .expect("tests/falsified is readable")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "patch"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "patch"))
         .collect();
     patches.sort();
     assert!(
@@ -204,7 +205,7 @@ fn every_patch_receipt_still_applies() {
     let stale: std::collections::BTreeSet<String> = patches
         .iter()
         .filter(|p| {
-            !std::process::Command::new("git")
+            !loft::platform::process::harness_command("git")
                 .args(["apply", "--check"])
                 .arg(p)
                 .current_dir(&root)
@@ -216,7 +217,7 @@ fn every_patch_receipt_still_applies() {
         .map(|p| p.strip_prefix(&root).unwrap_or(p).display().to_string())
         .collect();
     // Shrink-only: the receipts that had already stopped applying when this check landed.
-    let baseline_src = fs::read_to_string(root.join("tests/falsified_patches.baseline"))
+    let baseline_src = fa::read_to_string(root.join("tests/falsified_patches.baseline"))
         .expect("cannot read tests/falsified_patches.baseline");
     let baseline: std::collections::BTreeSet<String> = baseline_src
         .lines()
@@ -260,7 +261,7 @@ fn every_patch_receipt_still_applies() {
 
 #[test]
 fn no_tracked_file_carries_conflict_markers() {
-    let out = std::process::Command::new("git")
+    let out = loft::platform::process::harness_command("git")
         .args(["grep", "-n", "-I", "-E", "^(<<<<<<< |>>>>>>> )"])
         .current_dir(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
         .output()
@@ -279,7 +280,7 @@ fn no_tracked_file_carries_conflict_markers() {
 
 #[test]
 fn every_new_guard_records_its_control() {
-    let baseline_src = fs::read_to_string("tests/falsified.baseline")
+    let baseline_src = fa::read_to_string("tests/falsified.baseline")
         .expect("cannot read tests/falsified.baseline");
     let baseline: std::collections::HashSet<&str> = baseline_src
         .lines()
@@ -289,20 +290,13 @@ fn every_new_guard_records_its_control() {
 
     let mut missing: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for entry in fs::read_dir("tests/scripts").expect("cannot read tests/scripts") {
-        let path = entry.expect("bad dir entry").path();
-        if path
-            .extension()
-            .is_none_or(|e| !e.eq_ignore_ascii_case("loft"))
-        {
+    for entry in fa::read_dir("tests/scripts").expect("cannot read tests/scripts") {
+        let path = entry.os_spelling();
+        if fa::extension(&path).is_none_or(|e| !e.eq_ignore_ascii_case("loft")) {
             continue;
         }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .expect("non-utf8 script name")
-            .to_string();
-        let src = fs::read_to_string(&path).unwrap_or_default();
+        let name = fa::file_name(&path).expect("non-utf8 script name");
+        let src = fa::read_to_string(&path).unwrap_or_default();
         let records = src.contains("@falsified-at:") || src.contains("@falsified-by:");
         if records && baseline.contains(name.as_str()) {
             // Retrofitted: the baseline line is now the stale half.
@@ -355,22 +349,22 @@ fn every_new_guard_records_its_control() {
 #[test]
 fn ignored_tests_baseline_is_current() {
     fn rust_files(dir: &str, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in entries {
+            let p = e.os_spelling();
+            if fa::is_dir(&p) {
                 rust_files(&p.to_string_lossy(), out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
+            } else if fa::has_extension(&p, "rs") {
                 out.push(p.to_string_lossy().replace('\\', "/"));
             }
         }
     }
     let mut files: Vec<String> = Vec::new();
-    for e in fs::read_dir("tests").expect("read tests/").flatten() {
-        let p = e.path();
-        if p.is_file() && p.extension().is_some_and(|x| x == "rs") {
+    for e in fa::read_dir("tests").expect("read tests/") {
+        let p = e.os_spelling();
+        if fa::is_file(&p) && fa::has_extension(&p, "rs") {
             files.push(p.to_string_lossy().replace('\\', "/"));
         }
     }
@@ -379,7 +373,7 @@ fn ignored_tests_baseline_is_current() {
 
     let mut actual: Vec<(String, String)> = Vec::new();
     for file in &files {
-        let src = fs::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
+        let src = fa::read_to_string(file).unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
         let lines: Vec<&str> = src.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             let t = line.trim_start();
@@ -416,7 +410,7 @@ fn ignored_tests_baseline_is_current() {
         }
     }
     actual.sort();
-    let baseline = fs::read_to_string("tests/ignored_tests.baseline")
+    let baseline = fa::read_to_string("tests/ignored_tests.baseline")
         .expect("cannot read tests/ignored_tests.baseline");
     let mut expected: Vec<(String, String)> = Vec::new();
     for line in baseline.lines() {
@@ -456,7 +450,7 @@ fn ignored_tests_baseline_is_current() {
 #[test]
 fn no_orphan_test_attributes_in_tests_issues_rs() {
     let path = "tests/issues.rs";
-    let src = fs::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
+    let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
     let lines: Vec<&str> = src.lines().collect();
     for (i, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
@@ -493,7 +487,7 @@ fn no_orphan_test_attributes_in_tests_issues_rs() {
 }
 
 fn read_doc() -> String {
-    fs::read_to_string(DOC).unwrap_or_else(|_| panic!("cannot read {DOC}"))
+    fa::read_to_string(DOC).unwrap_or_else(|_| panic!("cannot read {DOC}"))
 }
 
 /// QUALITY-history.md Tier 2 #4 — once the `cargo clippy --no-default-features
@@ -504,7 +498,7 @@ fn read_doc() -> String {
 /// before when the `--tests` variant was the only one listed.
 #[test]
 fn ci_target_runs_no_default_features_clippy() {
-    let makefile = fs::read_to_string("Makefile").expect("cannot read Makefile");
+    let makefile = fa::read_to_string("Makefile").expect("cannot read Makefile");
     let needle = "cargo clippy --no-default-features --all-targets -- -D warnings";
     assert!(
         makefile.contains(needle),
@@ -529,7 +523,7 @@ fn ci_target_runs_no_default_features_clippy() {
 /// spelling that can silently re-split the chain.
 #[test]
 fn ci_target_verdict_covers_every_phase_not_just_the_tests() {
-    let makefile = fs::read_to_string("Makefile").expect("cannot read Makefile");
+    let makefile = fa::read_to_string("Makefile").expect("cannot read Makefile");
     let start = makefile
         .find("\nci: ci-guard\n")
         .expect("Makefile must define the `ci:` target");
@@ -584,7 +578,7 @@ fn ci_target_verdict_covers_every_phase_not_just_the_tests() {
 /// stress regression from CI.
 #[test]
 fn p122_long_running_struct_loop_is_cfg_attr_ignored_in_debug_only() {
-    let src = fs::read_to_string("tests/issues.rs").expect("cannot read tests/issues.rs");
+    let src = fa::read_to_string("tests/issues.rs").expect("cannot read tests/issues.rs");
     let idx = src
         .find("fn p122_long_running_struct_loop")
         .expect("tests/issues.rs must define p122_long_running_struct_loop");
@@ -614,7 +608,7 @@ fn p122_long_running_struct_loop_is_cfg_attr_ignored_in_debug_only() {
 #[test]
 fn quality_const_store_mmap_matches_const_store_md() {
     let cs_path = "doc/claude/plans/82-const-store/README.md";
-    let cs = fs::read_to_string(cs_path).unwrap_or_else(|e| panic!("cannot read {cs_path}: {e}"));
+    let cs = fa::read_to_string(cs_path).unwrap_or_else(|e| panic!("cannot read {cs_path}: {e}"));
     assert!(
         cs.contains("## Phase B — Memory-mapped constant store (deferred)"),
         "{cs_path} must keep its `## Phase B — Memory-mapped constant store (deferred)` heading — if the design position has changed, re-open QUALITY-history.md Tier 3 #8 and update this guard."
@@ -667,8 +661,8 @@ fn quality_const_store_mmap_matches_const_store_md() {
 #[test]
 fn p54_json_natives_registered_for_every_declaration() {
     let stdlib =
-        fs::read_to_string("default/06_json.loft").expect("cannot read default/06_json.loft");
-    let native = fs::read_to_string("src/native.rs").expect("cannot read src/native.rs");
+        fa::read_to_string("default/06_json.loft").expect("cannot read default/06_json.loft");
+    let native = fa::read_to_string("src/native.rs").expect("cannot read src/native.rs");
     let mut missing: Vec<String> = Vec::new();
     // Walk lines; a body-less declaration is `pub fn <name>(…) -> <T>;`
     // ending in `;`.  Declarations with `{` start a loft-side
@@ -732,8 +726,8 @@ fn p54_json_natives_registered_for_every_declaration() {
 #[test]
 fn json_stdlib_has_no_stale_stub_language() {
     let stdlib =
-        fs::read_to_string("default/06_json.loft").expect("cannot read default/06_json.loft");
-    let native = fs::read_to_string("src/native.rs").expect("cannot read src/native.rs");
+        fa::read_to_string("default/06_json.loft").expect("cannot read default/06_json.loft");
+    let native = fa::read_to_string("src/native.rs").expect("cannot read src/native.rs");
     let mut findings: Vec<(String, usize, String)> = Vec::new();
     let stale_phrases = [
         "forward-compatible stub",
@@ -833,7 +827,7 @@ fn file_operations_gate_on_host_fs_not_the_wasm_feature() {
         "src/database/io.rs",
         "src/codegen_runtime.rs",
     ] {
-        let src = fs::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
+        let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
         assert!(
             src.contains("host_fs"),
             "{path} must gate its file operations on the `host_fs` cfg — the one name for \
@@ -887,7 +881,7 @@ fn planning_and_problems_link_to_design_decisions() {
         ("doc/claude/PLANNING.md", "PLANNING.md"),
         ("doc/claude/PROBLEMS.md", "PROBLEMS.md"),
     ] {
-        let src = fs::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
+        let src = fa::read_to_string(path).unwrap_or_else(|_| panic!("cannot read {path}"));
         let head: String = src.lines().take(80).collect::<Vec<_>>().join("\n");
         assert!(
             head.contains("DESIGN_DECISIONS.md"),
@@ -916,7 +910,7 @@ fn planning_and_problems_link_to_design_decisions() {
 /// running.
 #[test]
 fn ship_target_chains_all_required_gates() {
-    let makefile = fs::read_to_string("Makefile").expect("cannot read Makefile");
+    let makefile = fa::read_to_string("Makefile").expect("cannot read Makefile");
     let ship_recipe = extract_recipe(&makefile, "ship:")
         .expect("Makefile must define a `ship:` target — see QUALITY-history.md Tier 4 #12");
     let required: &[&str] = &[
@@ -971,20 +965,20 @@ fn extract_recipe(makefile: &str, target_header: &str) -> Option<String> {
 }
 
 fn read_problems() -> String {
-    fs::read_to_string(PROBLEMS).unwrap_or_else(|_| panic!("cannot read {PROBLEMS}"))
+    fa::read_to_string(PROBLEMS).unwrap_or_else(|_| panic!("cannot read {PROBLEMS}"))
 }
 
 fn read_caveats() -> String {
-    fs::read_to_string(CAVEATS).unwrap_or_else(|_| panic!("cannot read {CAVEATS}"))
+    fa::read_to_string(CAVEATS).unwrap_or_else(|_| panic!("cannot read {CAVEATS}"))
 }
 
 fn read_quality() -> String {
-    fs::read_to_string(QUALITY).unwrap_or_else(|_| panic!("cannot read {QUALITY}"))
+    fa::read_to_string(QUALITY).unwrap_or_else(|_| panic!("cannot read {QUALITY}"))
 }
 
 /// The enhancement tiers and the rest of the quality record, which the tier guards read.
 fn read_quality_history() -> String {
-    fs::read_to_string(QUALITY_HISTORY).unwrap_or_else(|_| panic!("cannot read {QUALITY_HISTORY}"))
+    fa::read_to_string(QUALITY_HISTORY).unwrap_or_else(|_| panic!("cannot read {QUALITY_HISTORY}"))
 }
 
 /// The main "Open programmer-biting issues" table in QUALITY.md must
@@ -1482,7 +1476,7 @@ struct FileGuard {
 
 impl FileGuard {
     fn new(path: std::path::PathBuf) -> Self {
-        let original = fs::read(&path)
+        let original = fa::read(&path)
             .unwrap_or_else(|e| panic!("cannot read {} for backup: {e}", path.display()));
         Self { path, original }
     }
@@ -1492,7 +1486,7 @@ impl Drop for FileGuard {
     fn drop(&mut self) {
         // Best-effort restore; panicking in Drop would obscure the
         // original test failure.
-        let _ = fs::write(&self.path, &self.original);
+        let _ = fa::write(&self.path, &self.original);
     }
 }
 
@@ -1509,8 +1503,8 @@ fn doc_rewrite_lock() -> fs::File {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("doc-rewrite.lock");
-    let _ = fs::create_dir_all(path.parent().expect("target/"));
-    let f = fs::File::create(&path).expect("create target/doc-rewrite.lock");
+    let _ = fa::create_dir_all(path.parent().expect("target/"));
+    let f = fa::create(&path).expect("create target/doc-rewrite.lock");
     f.lock().expect("lock target/doc-rewrite.lock");
     f
 }
@@ -1523,7 +1517,7 @@ fn assert_generator_output_matches_committed(script: &str, output_relative: &str
     let guard = FileGuard::new(output_path.clone());
 
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
-    let out = std::process::Command::new(&loft_bin)
+    let out = loft::platform::process::harness_command(&loft_bin)
         .arg("--interpret")
         .arg(script)
         .current_dir(&root)
@@ -1537,7 +1531,7 @@ fn assert_generator_output_matches_committed(script: &str, output_relative: &str
         String::from_utf8_lossy(&out.stderr),
     );
 
-    let regenerated = fs::read(&output_path)
+    let regenerated = fa::read(&output_path)
         .unwrap_or_else(|e| panic!("generator did not write {output_relative}: {e}"));
     if regenerated != guard.original {
         let mut first_diff_line = 0usize;
@@ -1600,25 +1594,21 @@ fn doc_gallery_examples_js_is_up_to_date() {
 #[test]
 fn lib_fixtures_have_loft_toml() {
     let dir = std::path::Path::new("tests/fixtures/libs");
-    if !dir.exists() {
+    if !fa::exists(dir) {
         // Pre-population state — no fixtures yet.  Acceptable.
         return;
     }
-    let entries = fs::read_dir(dir).expect("read tests/fixtures/libs");
+    let entries = fa::read_dir(dir).expect("read tests/fixtures/libs");
     let mut missing: Vec<String> = Vec::new();
-    for ent in entries.filter_map(Result::ok) {
-        let path = ent.path();
-        if !path.is_dir() {
+    for ent in entries {
+        let path = ent.os_spelling();
+        if !fa::is_dir(&path) {
             continue;
         }
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'))
-        {
+        if fa::file_name(&path).is_some_and(|n| n.starts_with('.')) {
             continue;
         }
-        if !path.join("loft.toml").exists() {
+        if !fa::exists(path.join("loft.toml")) {
             missing.push(path.display().to_string());
         }
     }
@@ -1637,17 +1627,17 @@ fn lib_fixtures_have_loft_toml() {
 fn mock_registry_fixtures_are_valid() {
     let idx = std::path::Path::new("tests/fixtures/mock-registry/index.json");
     let adv = std::path::Path::new("tests/fixtures/mock-registry/advisories.json");
-    if !idx.exists() {
+    if !fa::exists(idx) {
         // Pre-population state.  Acceptable.
         return;
     }
-    let content = fs::read_to_string(idx).expect("read mock index");
+    let content = fa::read_to_string(idx).expect("read mock index");
     assert!(
         content.contains("\"schema_version\""),
         "mock-registry/index.json: missing schema_version key"
     );
-    if adv.exists() {
-        let content = fs::read_to_string(adv).expect("read mock advisories");
+    if fa::exists(adv) {
+        let content = fa::read_to_string(adv).expect("read mock advisories");
         assert!(
             content.contains("\"advisories\""),
             "mock-registry/advisories.json: missing advisories key"
@@ -1663,11 +1653,11 @@ fn mock_registry_fixtures_are_valid() {
 #[test]
 fn readme_brick_buster_line_count_is_current() {
     let game = "tools/brick-buster/25-brick-buster.loft";
-    let actual = fs::read_to_string(game)
+    let actual = fa::read_to_string(game)
         .unwrap_or_else(|e| panic!("{game}: {e}"))
         .lines()
         .count();
-    let readme = fs::read_to_string("README.md").expect("README.md");
+    let readme = fa::read_to_string("README.md").expect("README.md");
     // The claim is written with a thousands separator: "read all 1,983 lines".
     let claimed = readme
         .split("read all ")
@@ -1698,13 +1688,13 @@ fn readme_brick_buster_line_count_is_current() {
 /// and the `outputs` it promises must be what the Makefile checks for.
 #[test]
 fn brick_buster_pack_step_matches_its_manifest() {
-    let toml = fs::read_to_string("tools/brick-buster/loft.toml").expect("brick-buster loft.toml");
+    let toml = fa::read_to_string("tools/brick-buster/loft.toml").expect("brick-buster loft.toml");
     let run = toml
         .lines()
         .find_map(|l| l.trim().strip_prefix("run"))
         .and_then(|r| r.split('"').nth(1).map(str::to_string))
         .expect("loft.toml must declare a [[build.asset]] `run`");
-    let makefile = fs::read_to_string("Makefile").expect("Makefile");
+    let makefile = fa::read_to_string("Makefile").expect("Makefile");
     let invoked = format!("tools/brick-buster/{run}");
     assert!(
         makefile.contains(&invoked),
@@ -1783,7 +1773,7 @@ fn brick_buster_pack_step_matches_its_manifest() {
 #[cfg(feature = "registry")]
 #[test]
 fn installer_and_self_update_agree_on_the_published_triples() {
-    let sh = std::fs::read_to_string("scripts/install.sh").expect("read install.sh");
+    let sh = fa::read_to_string("scripts/install.sh").expect("read install.sh");
     let published = loft::self_update::PUBLISHED_TRIPLES;
     // The shell composes `$arch-<rest>`; check each literal suffix it can emit.
     for suffix in ["-apple-darwin", "-unknown-linux-musl", "-pc-windows-msvc"] {
@@ -1830,9 +1820,9 @@ fn installer_and_self_update_agree_on_the_published_triples() {
 /// nobody blames on the rename.
 #[test]
 fn the_release_records_the_build_id_the_verifier_replays() {
-    let mk = std::fs::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
-    let vf = std::fs::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
-    let br = std::fs::read_to_string("build.rs").expect("read build.rs");
+    let mk = fa::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
+    let vf = fa::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
+    let br = fa::read_to_string("build.rs").expect("read build.rs");
 
     assert!(
         mk.contains("echo \"commit = "),
@@ -1867,10 +1857,9 @@ fn the_release_records_the_build_id_the_verifier_replays() {
 /// "not reproducible", so all ends are pinned here.
 #[test]
 fn the_release_records_the_c_toolchain_the_verifier_compares() {
-    let mk = std::fs::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
-    let vf = std::fs::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
-    let tc =
-        std::fs::read_to_string("scripts/repro-toolchain.sh").expect("read repro-toolchain.sh");
+    let mk = fa::read_to_string("scripts/make-release.sh").expect("read make-release.sh");
+    let vf = fa::read_to_string("scripts/repro-verify.sh").expect("read repro-verify.sh");
+    let tc = fa::read_to_string("scripts/repro-toolchain.sh").expect("read repro-toolchain.sh");
 
     assert!(
         tc.contains("repro_c_toolchain() {"),
@@ -1903,7 +1892,7 @@ fn the_release_records_the_c_toolchain_the_verifier_compares() {
 /// per-target flags.
 #[test]
 fn repro_flags_make_a_windows_link_deterministic() {
-    let rf = std::fs::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
+    let rf = fa::read_to_string("scripts/repro-flags.sh").expect("read repro-flags.sh");
     assert!(
         rf.contains("MINGW*|MSYS*|CYGWIN*")
             && rf.contains("-C link-arg=/Brepro")
@@ -1925,8 +1914,7 @@ fn repro_flags_make_a_windows_link_deterministic() {
 #[cfg(feature = "registry")]
 #[test]
 fn repro_matrix_covers_every_published_triple() {
-    let wf =
-        std::fs::read_to_string(".github/workflows/repro-build.yml").expect("read repro-build.yml");
+    let wf = fa::read_to_string(".github/workflows/repro-build.yml").expect("read repro-build.yml");
     for triple in loft::self_update::PUBLISHED_TRIPLES {
         assert!(
             wf.contains(triple),
@@ -1985,8 +1973,7 @@ fn repro_matrix_covers_every_published_triple() {
         }
         pairs
     };
-    let release =
-        std::fs::read_to_string(".github/workflows/release.yml").expect("read release.yml");
+    let release = fa::read_to_string(".github/workflows/release.yml").expect("read release.yml");
     let built_on = matrix_pairs(&release);
     for (target, os) in matrix_pairs(&wf) {
         if !loft::self_update::PUBLISHED_TRIPLES.contains(&target.as_str()) {
@@ -2025,17 +2012,14 @@ fn repro_matrix_covers_every_published_triple() {
 #[test]
 fn no_source_file_is_invisible_to_grep() {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in entries {
+            let p = e.os_spelling();
+            if fa::is_dir(&p) {
                 walk(&p, out);
-            } else if p
-                .extension()
-                .is_some_and(|x| x == "rs" || x == "loft" || x == "md")
-            {
+            } else if fa::extension(&p).is_some_and(|x| x == "rs" || x == "loft" || x == "md") {
                 out.push(p);
             }
         }
@@ -2052,7 +2036,7 @@ fn no_source_file_is_invisible_to_grep() {
 
     let mut bad = Vec::new();
     for p in &files {
-        let Ok(bytes) = fs::read(p) else { continue };
+        let Ok(bytes) = fa::read(p) else { continue };
         // A NUL is what actually trips grep's binary heuristic; report the offset and
         // line so the fix is a one-character edit rather than a hunt.
         if let Some(off) = bytes.iter().position(|b| *b == 0) {
@@ -2085,7 +2069,7 @@ fn no_source_file_is_invisible_to_grep() {
 #[test]
 fn every_rule_citation_resolves() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/rule_tags.py"))
         .arg("check")
         .current_dir(root)
@@ -2124,7 +2108,7 @@ fn every_rule_citation_resolves() {
 #[test]
 fn register_entries_name_their_tracking_issue() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/rule_tags.py"))
         .arg("selftest")
         .current_dir(root)
@@ -2166,7 +2150,7 @@ fn register_entries_name_their_tracking_issue() {
 #[test]
 fn diagnostics_spell_types_as_the_author_wrote_them() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/diagnostic_spelling.py"))
         .arg("check")
         .current_dir(root)
@@ -2207,16 +2191,19 @@ fn diagnostics_spell_types_as_the_author_wrote_them() {
 #[test]
 fn ir_schema_gen_matches_its_loft_source() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new(root.join("scripts/ir_schema_check.sh"))
-        .current_dir(root)
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("SKIP ir_schema_gen_matches_its_loft_source: cannot run the script ({e})");
-            return;
-        }
-    };
+    let out =
+        match loft::platform::process::harness_command(root.join("scripts/ir_schema_check.sh"))
+            .current_dir(root)
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!(
+                    "SKIP ir_schema_gen_matches_its_loft_source: cannot run the script ({e})"
+                );
+                return;
+            }
+        };
     let stdout = String::from_utf8_lossy(&out.stdout);
     if stdout.starts_with("SKIP ") {
         eprintln!(
@@ -2247,7 +2234,7 @@ fn ir_schema_gen_matches_its_loft_source() {
 #[test]
 fn o_proxy_frees_consult_the_override() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/o_proxy_check.py"))
         .current_dir(root)
         .output()
@@ -2289,12 +2276,12 @@ fn every_doc_page_asserts_something() {
     let mut silent = Vec::new();
     let dir = std::path::Path::new("tests/docs");
     let mut pages = 0;
-    for entry in std::fs::read_dir(dir).expect("tests/docs is readable") {
-        let path = entry.expect("dir entry").path();
-        if !path.is_file() || path.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(dir).expect("tests/docs is readable") {
+        let path = entry.os_spelling();
+        if !fa::is_file(&path) || !fa::has_extension(&path, "loft") {
             continue;
         }
-        let body = std::fs::read_to_string(&path).expect("page is readable");
+        let body = fa::read_to_string(&path).expect("page is readable");
         // An `@IGNORE`d page is not run, so it cannot be asked to prove anything.
         if body.contains("@IGNORE") {
             continue;
@@ -2304,7 +2291,7 @@ fn every_doc_page_asserts_something() {
         // `@EXPECT_ERROR` is a page whose CLAIM is the diagnostic, which the harness
         // checks for it.
         if !body.contains("assert") && !body.contains("@EXPECT_ERROR") {
-            silent.push(path.file_name().unwrap().to_string_lossy().to_string());
+            silent.push(fa::file_name(&path).unwrap());
         }
     }
     assert!(pages >= 30, "expected the doc corpus, found {pages} pages");
@@ -2334,7 +2321,7 @@ fn every_doc_page_asserts_something() {
 /// function), which leaves these two tables as the remaining duplication.
 #[test]
 fn the_nullable_swap_tables_do_not_drift() {
-    let src = std::fs::read_to_string("src/parser/operators.rs").expect("read operators.rs");
+    let src = fa::read_to_string("src/parser/operators.rs").expect("read operators.rs");
     let mut tables: Vec<Vec<String>> = Vec::new();
     for (idx, _) in src.match_indices("fn try_swap(") {
         let rest = &src[idx..];
@@ -2381,7 +2368,7 @@ fn the_nullable_swap_tables_do_not_drift() {
 #[test]
 fn quality_unspan_table_matches_the_audit() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/ir_walker_audit.py"))
         .arg("unspan")
         .current_dir(root)
@@ -2405,7 +2392,7 @@ fn quality_unspan_table_matches_the_audit() {
     // Anchored on the table's own header, not on "the first line that looks like a numeric
     // row": another numeric table added above it would otherwise silently become the subject
     // of this gate, which is the failure a doc check must not have.
-    let doc = std::fs::read_to_string(root.join("doc/claude/QUALITY.md")).expect("QUALITY.md");
+    let doc = fa::read_to_string(root.join("doc/claude/QUALITY.md")).expect("QUALITY.md");
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines
         .iter()
@@ -2442,7 +2429,7 @@ fn quality_unspan_table_matches_the_audit() {
 #[test]
 fn quality_spellings_table_matches_the_audit() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/ir_walker_audit.py"))
         .arg("spellings")
         .current_dir(root)
@@ -2465,7 +2452,7 @@ fn quality_spellings_table_matches_the_audit() {
 
     // Anchored on the table's own header, like the unspan gate: another numeric table added
     // above it must not silently become the subject of this check.
-    let doc = std::fs::read_to_string(root.join("doc/claude/QUALITY.md")).expect("QUALITY.md");
+    let doc = fa::read_to_string(root.join("doc/claude/QUALITY.md")).expect("QUALITY.md");
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines
         .iter()
@@ -2493,7 +2480,7 @@ fn quality_spellings_table_matches_the_audit() {
 #[test]
 fn quality_optional_table_matches_the_audit() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/ir_walker_audit.py"))
         .arg("optional")
         .current_dir(root)
@@ -2516,7 +2503,7 @@ fn quality_optional_table_matches_the_audit() {
 
     // Anchored on the table's own header, like the unspan gate: another numeric table added
     // above it must not silently become the subject of this check.
-    let doc = std::fs::read_to_string(root.join("doc/claude/QUALITY.md")).expect("QUALITY.md");
+    let doc = fa::read_to_string(root.join("doc/claude/QUALITY.md")).expect("QUALITY.md");
     let lines: Vec<&str> = doc.lines().collect();
     let header = lines
         .iter()
@@ -2566,19 +2553,15 @@ fn no_topic_renders_its_own_directives_as_prose() {
     // `// @NAME:` line is the content and rendering it is the point.
     let mut offenders: Vec<String> = Vec::new();
     let mut pages_read = 0_usize;
-    for entry in std::fs::read_dir(root.join("tests/docs")).expect("tests/docs is unreadable") {
-        let topic = entry.expect("tests/docs entry").path();
-        if topic.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(root.join("tests/docs")).expect("tests/docs is unreadable") {
+        let topic = entry.os_spelling();
+        if !fa::has_extension(&topic, "loft") {
             continue;
         }
-        let stem = topic
-            .file_stem()
-            .expect("stem")
-            .to_string_lossy()
-            .into_owned();
+        let stem = fa::file_stem(&topic).expect("stem");
         let path = root.join("doc").join(format!("{stem}.html"));
         // `00-general` is the front matter of the index rather than a page of its own.
-        let Ok(html) = std::fs::read_to_string(&path) else {
+        let Ok(html) = fa::read_to_string(&path) else {
             continue;
         };
         let start = html.find("<article>").expect("a topic page has an article");
@@ -2600,7 +2583,7 @@ fn no_topic_renders_its_own_directives_as_prose() {
 
     // The print bundle and the PDF source have no run panel, so they are checked whole.
     for name in ["print.html", "loft-reference.typ"] {
-        let text = std::fs::read_to_string(root.join("doc").join(name)).expect("bundle");
+        let text = fa::read_to_string(root.join("doc").join(name)).expect("bundle");
         for probe in leaks {
             if text.contains(probe) {
                 offenders.push(format!("doc/{name}: {probe}"));
@@ -2623,17 +2606,13 @@ fn no_topic_renders_its_own_directives_as_prose() {
 fn stdlib_entries() -> Vec<(String, String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(root.join("doc")).expect("doc/ is unreadable") {
-        let path = entry.expect("doc entry").path();
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+    for entry in fa::read_dir(root.join("doc")).expect("doc/ is unreadable") {
+        let path = entry.os_spelling();
+        let name = fa::file_name(&path).unwrap_or_default();
         if !name.starts_with("stdlib") || !name.ends_with(".html") {
             continue;
         }
-        let html = std::fs::read_to_string(&path).expect("stdlib page");
+        let html = fa::read_to_string(&path).expect("stdlib page");
         let Some(start) = html.find("<article>") else {
             continue;
         };
@@ -2690,12 +2669,12 @@ fn strip_tags(s: &str) -> String {
 fn every_public_stdlib_function_is_published() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut declared: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root.join("default")).expect("default/ is unreadable") {
-        let path = entry.expect("default entry").path();
-        if path.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(root.join("default")).expect("default/ is unreadable") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
-        for line in std::fs::read_to_string(&path).expect("stdlib file").lines() {
+        for line in fa::read_to_string(&path).expect("stdlib file").lines() {
             let t = line.trim();
             if t.starts_with("pub fn ") {
                 declared.push(
@@ -2767,12 +2746,12 @@ fn no_stdlib_section_shows_the_reader_a_tracker_tag_or_a_private_name() {
     // The private declarations are derived, not listed: anything `default/` declares
     // without `pub` is a name the reader has no way to use.
     let mut private: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root.join("default")).expect("default/") {
-        let path = entry.expect("entry").path();
-        if path.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(root.join("default")).expect("default/") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
-        for line in std::fs::read_to_string(&path).expect("stdlib file").lines() {
+        for line in fa::read_to_string(&path).expect("stdlib file").lines() {
             let t = line.trim();
             if let Some(rest) = t.strip_prefix("fn ") {
                 let name: String = rest
@@ -2791,13 +2770,9 @@ fn no_stdlib_section_shows_the_reader_a_tracker_tag_or_a_private_name() {
     );
 
     let mut bad: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root.join("doc")).expect("doc/") {
-        let path = entry.expect("doc entry").path();
-        let file = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+    for entry in fa::read_dir(root.join("doc")).expect("doc/") {
+        let path = entry.os_spelling();
+        let file = fa::file_name(&path).unwrap_or_default();
         if !file.starts_with("stdlib-") || !file.ends_with(".html") {
             continue;
         }
@@ -2805,7 +2780,7 @@ fn no_stdlib_section_shows_the_reader_a_tracker_tag_or_a_private_name() {
         if file.contains("pln") || file.contains("-635") || file.contains("t2-8") {
             bad.push(format!("{file}: the page URL carries a tracker tag"));
         }
-        let html = std::fs::read_to_string(&path).expect("page");
+        let html = fa::read_to_string(&path).expect("page");
         let Some(start) = html.find("<article>") else {
             continue;
         };
@@ -2850,7 +2825,7 @@ fn no_stdlib_section_shows_the_reader_a_tracker_tag_or_a_private_name() {
 #[test]
 fn both_corpus_halves_pick_entry_points_through_one_predicate() {
     for harness in ["tests/wrap.rs", "tests/native.rs"] {
-        let src = std::fs::read_to_string(harness).expect("read the harness");
+        let src = fa::read_to_string(harness).expect("read the harness");
         assert!(
             src.contains("is_corpus_entry_point()"),
             "{harness} must select corpus entry points through \
@@ -2886,12 +2861,12 @@ fn both_corpus_halves_pick_entry_points_through_one_predicate() {
 fn no_worked_example_citation_is_rendered_as_prose() {
     let mut leaked: Vec<String> = Vec::new();
     let mut pages = 0usize;
-    for entry in fs::read_dir("doc").expect("doc/ is readable") {
-        let path = entry.expect("readable entry").path();
-        if path.extension().is_none_or(|e| e != "html") {
+    for entry in fa::read_dir("doc").expect("doc/ is readable") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "html") {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(text) = fa::read_to_string(&path) else {
             continue;
         };
         pages += 1;
@@ -2934,7 +2909,7 @@ fn strip_comment_spans(html: &str) -> Vec<String> {
 /// stripper ever swallowed the whole page, or if the pages stopped being generated at all.
 #[test]
 fn the_source_browsers_still_show_the_citations_in_their_source() {
-    let text = fs::read_to_string("doc/lib-random-src.html").expect("the random source page");
+    let text = fa::read_to_string("doc/lib-random-src.html").expect("the random source page");
     assert!(
         text.contains("Example: @RND-001"),
         "the source browser shows the library's own comments verbatim"
@@ -2962,20 +2937,16 @@ fn the_source_browsers_still_show_the_citations_in_their_source() {
 fn no_internal_tracker_tag_reaches_the_reference_prose() {
     let mut leaked: Vec<String> = Vec::new();
     let mut pages = 0usize;
-    for entry in fs::read_dir("doc").expect("doc/ is readable") {
-        let path = entry.expect("readable entry").path();
-        if path.extension().is_none_or(|e| e != "html") {
+    for entry in fa::read_dir("doc").expect("doc/ is readable") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "html") {
             continue;
         }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let name = fa::file_name(&path).unwrap_or_default();
         if page_is_exempt(&name) {
             continue;
         }
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(text) = fa::read_to_string(&path) else {
             continue;
         };
         pages += 1;
@@ -3091,7 +3062,7 @@ fn the_tag_guard_still_sees_a_leak_in_prose() {
 /// WHY (`heavy`, `a measurement`) fails here until it also says where the test runs.
 #[test]
 fn every_ignore_reason_says_how_it_runs() {
-    let baseline = fs::read_to_string("tests/ignored_tests.baseline").expect("read the baseline");
+    let baseline = fa::read_to_string("tests/ignored_tests.baseline").expect("read the baseline");
     let markers = [
         "--ignored",
         "miri.yml",
@@ -3132,6 +3103,7 @@ fn every_ignore_reason_says_how_it_runs() {
 /// `every_test_binary_matches_a_subject` alone, and the two loft#1520 guards beside it kept a
 /// bare `bash` and failed the Windows daily the day they reached `main`.
 fn git_bash() -> std::ffi::OsString {
+    // @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
     #[cfg(windows)]
     {
         let mut roots: Vec<std::path::PathBuf> = Vec::new();
@@ -3143,7 +3115,7 @@ fn git_bash() -> std::ffi::OsString {
         roots.push(std::path::PathBuf::from(r"C:\Program Files"));
         for r in roots {
             let c = r.join("Git").join("bin").join("bash.exe");
-            if c.is_file() {
+            if fa::is_file(&c) {
                 return c.into_os_string();
             }
         }
@@ -3182,11 +3154,12 @@ fn every_subject_claims_the_paths_it_names() {
         ("src/lsp.rs", "lsp"),
         ("src/ffi_deliver.rs", "wasm"),
         ("src/engine_host.rs", "host"),
+        ("src/file_access/emulated.rs", "winrules"),
         ("doc/claude/TESTING.md", "docs"),
     ];
     for (path, want) in cells {
         assert!(
-            root.join(path).exists(),
+            fa::exists(root.join(path)),
             "{path} no longer exists — pick another representative for `{want}`, \
              or the cell stops measuring the pattern"
         );
@@ -3195,7 +3168,7 @@ fn every_subject_claims_the_paths_it_names() {
              p=$(subject_paths \"$n\") || continue; \
              [[ \"{path}\" =~ $p ]] && echo \"$n\"; done"
         );
-        let out = std::process::Command::new(git_bash())
+        let out = loft::platform::process::harness_command(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -3216,7 +3189,7 @@ fn every_subject_claims_the_paths_it_names() {
     // path is unreachable from `--changed` by construction.
     let script = "source scripts/test_subjects.sh; \
                   for n in $SUBJECT_NAMES; do subject_paths \"$n\" >/dev/null || echo \"$n\"; done";
-    let out = std::process::Command::new(git_bash())
+    let out = loft::platform::process::harness_command(git_bash())
         .args(["-c", script])
         .current_dir(root)
         .output()
@@ -3249,7 +3222,7 @@ fn changed_selects_subjects_by_path() {
             "source scripts/test_subjects.sh; changed_paths() {{ printf '%s\\n' {list}; }}; \
              changed_filter HEAD"
         );
-        let out = std::process::Command::new(git_bash())
+        let out = loft::platform::process::harness_command(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -3304,7 +3277,7 @@ fn every_test_binary_matches_a_subject() {
     // genuine finding, because a genuine finding has stdout.  The shell itself is `git_bash()`
     // — on Windows a bare `bash` is the WSL launcher, which is what failed this test twice.
     let run = || {
-        std::process::Command::new(git_bash())
+        loft::platform::process::harness_command(git_bash())
             .args([
                 "-c",
                 "source scripts/test_subjects.sh && unmatched_binaries",
@@ -3384,7 +3357,7 @@ fn every_test_binary_matches_a_subject() {
 /// coverage replayed for release evidence.  Reclassifying is a one-word edit here.
 #[test]
 fn nightly_gate_classes_drive_every_list_that_reads_them() {
-    let wf = std::fs::read_to_string(".github/workflows/miri.yml").expect("read miri.yml");
+    let wf = fa::read_to_string(".github/workflows/miri.yml").expect("read miri.yml");
     let lines: Vec<&str> = wf.lines().collect();
     let jobs_at = lines
         .iter()
@@ -3559,7 +3532,7 @@ fn nightly_gate_classes_drive_every_list_that_reads_them() {
 /// still go red rather than a sign it has gone blind.
 #[test]
 fn the_link_check_answers_its_known_cases() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args(["tools/indexer/fix_broken_links.py", "--self-test"])
         .output()
         .expect("failed to spawn tools/indexer/fix_broken_links.py --self-test");
@@ -3573,7 +3546,7 @@ fn the_link_check_answers_its_known_cases() {
 
 #[test]
 fn every_markdown_link_resolves() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg("tools/indexer/fix_broken_links.py")
         .output()
         .expect("failed to spawn tools/indexer/fix_broken_links.py");
@@ -3614,7 +3587,6 @@ fn every_markdown_link_resolves() {
 #[test]
 fn the_generated_pages_match_their_sources() {
     use std::path::Path;
-    use std::process::Command;
     let registry_derived =
         |p: &str| (p.starts_with("doc/lib-") && p.ends_with(".html")) || p == "doc/libraries.html";
     let without_lib_entries = |s: &str| {
@@ -3624,7 +3596,7 @@ fn the_generated_pages_match_their_sources() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let tracked = Command::new("git")
+    let tracked = loft::platform::process::harness_command("git")
         .args(["ls-files", "-z"])
         .output()
         .expect("git ls-files");
@@ -3639,18 +3611,18 @@ fn the_generated_pages_match_their_sources() {
     // in place; hold their lock for both (see `doc_rewrite_lock`).
     let _rewrite = doc_rewrite_lock();
     let copy = std::env::temp_dir().join(format!("loft-gendoc-drift-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&copy);
+    let _ = fa::remove_dir_all(&copy);
     for f in &files {
         let to = copy.join(f);
         if let Some(dir) = to.parent() {
-            fs::create_dir_all(dir).expect("create the copy's directory");
+            fa::create_dir_all(dir).expect("create the copy's directory");
         }
         // A tracked path can be absent from the checkout (deleted, not yet committed).
-        if Path::new(f).is_file() {
-            fs::copy(f, &to).expect("copy a tracked file");
+        if fa::is_file(Path::new(f)) {
+            fa::copy(f, &to).expect("copy a tracked file");
         }
     }
-    let run = Command::new(env!("CARGO_BIN_EXE_gendoc"))
+    let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_gendoc"))
         .current_dir(&copy)
         .output()
         .expect("run gendoc");
@@ -3664,7 +3636,7 @@ fn the_generated_pages_match_their_sources() {
         .iter()
         .filter(|f| f.starts_with("doc/") && !registry_derived(f))
     {
-        let (Ok(made), Ok(committed)) = (fs::read(copy.join(f)), fs::read(f)) else {
+        let (Ok(made), Ok(committed)) = (fa::read(copy.join(f)), fa::read(f)) else {
             continue;
         };
         let same = if f == "doc/search-index.js" || f == "doc/sitemap.xml" {
@@ -3680,9 +3652,9 @@ fn the_generated_pages_match_their_sources() {
     let tracked_set: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
     let mut stack = vec![copy.join("doc")];
     while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).expect("read the copy's doc/").flatten() {
-            let path = entry.path();
-            if path.is_dir() {
+        for entry in fa::read_dir(&dir).expect("read the copy's doc/") {
+            let path = entry.os_spelling();
+            if fa::is_dir(&path) {
                 stack.push(path);
                 continue;
             }
@@ -3698,7 +3670,7 @@ fn the_generated_pages_match_their_sources() {
             }
         }
     }
-    let _ = fs::remove_dir_all(&copy);
+    let _ = fa::remove_dir_all(&copy);
     assert!(
         drift.is_empty(),
         "the committed doc/ pages are not what gendoc makes of this tree — run \
@@ -3713,11 +3685,11 @@ fn the_generated_pages_match_their_sources() {
 /// are assertions, not output.
 fn diagnostic_literals() -> Vec<(String, usize, String)> {
     fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        for e in fs::read_dir(dir).expect("src/ is readable") {
-            let p = e.expect("entry").path();
-            if p.is_dir() {
+        for e in fa::read_dir(dir).expect("src/ is readable") {
+            let p = e.os_spelling();
+            if fa::is_dir(&p) {
                 rs_files(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
+            } else if fa::has_extension(&p, "rs") {
                 out.push(p);
             }
         }
@@ -3727,7 +3699,7 @@ fn diagnostic_literals() -> Vec<(String, usize, String)> {
     files.sort();
     let mut out = Vec::new();
     for f in files {
-        let text = fs::read_to_string(&f).expect("source");
+        let text = fa::read_to_string(&f).expect("source");
         let body = text.split("#[cfg(test)]").next().unwrap_or("");
         for open in ["diagnostic!(", "let msg = format!("] {
             let mut from = 0;
@@ -3845,7 +3817,7 @@ fn the_diagnostic_tag_test_sees_each_spelling() {
 /// pin; moving the bar or the split rule does move it.
 #[test]
 fn the_outlier_report_reproduces_the_hand_count() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args([
             "bench/portal/outliers.py",
             "tests/fixtures/portal/2026-10-02-arm64-darwin.tsv",

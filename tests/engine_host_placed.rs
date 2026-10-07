@@ -13,12 +13,14 @@
 // same conversation whether the kernel is in this process or in a worker — with
 // the consumer's source byte-identical across both runs.
 
+// @PLN184 C2 approved exemption (owner, 2026-10-07): library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 fn workspace_root() -> PathBuf {
@@ -31,8 +33,8 @@ fn scratch(name: &str) -> PathBuf {
     let dir = workspace_root()
         .join("target/test-tmp/engine-host-placed")
         .join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -68,18 +70,18 @@ impl Drop for Guard {
 fn place_engine_host(dir: &Path, placement: &str) -> PathBuf {
     let real = workspace_root().join("lib").join("engine_host");
     let pkg = dir.join("libs").join("engine_host");
-    std::fs::create_dir_all(pkg.join("src")).expect("create package");
-    std::fs::copy(
+    fa::create_dir_all(pkg.join("src")).expect("create package");
+    fa::copy(
         real.join("src").join("engine_host.loft"),
         pkg.join("src").join("engine_host.loft"),
     )
     .expect("copy the library source");
-    let manifest = std::fs::read_to_string(real.join("loft.toml")).expect("read manifest");
+    let manifest = fa::read_to_string(real.join("loft.toml")).expect("read manifest");
     let manifest = manifest.replace(
         "[native]",
         &format!("placement = \"{placement}\"\n\n[native]"),
     );
-    std::fs::write(pkg.join("loft.toml"), manifest).expect("write manifest");
+    fa::write(pkg.join("loft.toml"), manifest).expect("write manifest");
     dir.join("libs")
 }
 
@@ -207,9 +209,9 @@ fn drive(name: &str, placement: &str) -> (Vec<String>, String) {
     let port = free_port();
     let libs = place_engine_host(&dir, placement);
     let consumer = dir.join("consumer.loft");
-    std::fs::write(&consumer, consumer_source(port)).expect("write consumer");
+    fa::write(&consumer, consumer_source(port)).expect("write consumer");
 
-    let child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(&libs)

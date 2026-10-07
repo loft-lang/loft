@@ -24,9 +24,9 @@
 
 #![cfg(feature = "registry")]
 
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -147,18 +147,18 @@ fn handle_request(mut stream: TcpStream, files: &HashMap<String, Vec<u8>>) {
 fn tmpdir(name: &str) -> PathBuf {
     let mut p = env::temp_dir();
     p.push(format!("loft_e2e_{}_{}", std::process::id(), name));
-    if p.exists() {
-        let _ = fs::remove_dir_all(&p);
+    if fa::exists(&p) {
+        let _ = fa::remove_dir_all(&p);
     }
-    fs::create_dir_all(&p).unwrap();
+    fa::create_dir_all(&p).unwrap();
     p
 }
 
 fn write_file(path: &Path, content: &str) {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).unwrap();
+        fa::create_dir_all(parent).unwrap();
     }
-    fs::write(path, content).unwrap();
+    fa::write(path, content).unwrap();
 }
 
 /// Build a sample loft package on disk and return its path.
@@ -274,7 +274,7 @@ fn end_to_end_install_against_fixture_server() {
     // 1. Build a real package tarball.
     let pkg_dir = make_sample_package("e2e", "0.1.0", &tmp);
     let pkg_out = loft::package::package_create(&pkg_dir, Some(&tmp)).expect("package_create");
-    let tarball_bytes = fs::read(&pkg_out.tarball).expect("read tarball");
+    let tarball_bytes = fa::read(&pkg_out.tarball).expect("read tarball");
 
     // 2. Stand up the fixture server with index.json + tarball.
     let mut files = HashMap::new();
@@ -332,7 +332,7 @@ fn end_to_end_install_against_fixture_server() {
     // dir so we don't dirty the dev's working tree.
     let prev_cwd = env::current_dir().expect("cwd");
     let install_cwd = tmpdir("end_to_end_install_cwd");
-    env::set_current_dir(&install_cwd).expect("chdir");
+    fa::set_current_dir(&install_cwd).expect("chdir");
 
     let report = loft::install::install_one("e2e", None, &opts).expect("install_one");
     assert_eq!(report.installed.len(), 1);
@@ -343,19 +343,22 @@ fn end_to_end_install_against_fixture_server() {
 
     // 5. Cache dir contains the extracted package.
     let extracted = home_dir.join(".loft").join("registry").join("e2e-0.1.0");
-    assert!(extracted.exists(), "extracted dir missing: {extracted:?}");
-    assert!(extracted.join("loft.toml").exists(), "loft.toml missing");
     assert!(
-        extracted.join("src").join("e2e.loft").exists(),
+        fa::exists(&extracted),
+        "extracted dir missing: {extracted:?}"
+    );
+    assert!(fa::exists(extracted.join("loft.toml")), "loft.toml missing");
+    assert!(
+        fa::exists(extracted.join("src").join("e2e.loft")),
         "src missing"
     );
-    assert!(extracted.join("README.md").exists(), "README missing");
+    assert!(fa::exists(extracted.join("README.md")), "README missing");
 
     // 6. Extracted contents match the original source.
     let original_src =
-        fs::read_to_string(pkg_dir.join("src").join("e2e.loft")).expect("read original src");
+        fa::read_to_string(pkg_dir.join("src").join("e2e.loft")).expect("read original src");
     let extracted_src =
-        fs::read_to_string(extracted.join("src").join("e2e.loft")).expect("read extracted src");
+        fa::read_to_string(extracted.join("src").join("e2e.loft")).expect("read extracted src");
     assert_eq!(
         original_src, extracted_src,
         "extracted source bytes differ from original"
@@ -380,14 +383,14 @@ fn end_to_end_install_against_fixture_server() {
     assert_eq!(report2.skipped_cached.len(), 1);
 
     // Restore cwd before tmpdir cleanup.
-    env::set_current_dir(prev_cwd).ok();
+    fa::set_current_dir(prev_cwd).ok();
 
     // Cleanup.
     drop(_reg);
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
-    let _ = fs::remove_dir_all(&install_cwd);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&install_cwd);
 }
 
 /// A `skip_lockfile` install lands the package but writes NO lockfile — the mode
@@ -402,7 +405,7 @@ fn skip_lockfile_installs_without_writing_a_lockfile() {
 
     let pkg_dir = make_sample_package("skiplock", "0.1.0", &tmp);
     let pkg_out = loft::package::package_create(&pkg_dir, Some(&tmp)).expect("package_create");
-    let tarball_bytes = fs::read(&pkg_out.tarball).expect("read tarball");
+    let tarball_bytes = fa::read(&pkg_out.tarball).expect("read tarball");
 
     let mut files = HashMap::new();
     files.insert("/placeholder".to_string(), b"placeholder".to_vec());
@@ -450,32 +453,30 @@ fn skip_lockfile_installs_without_writing_a_lockfile() {
     };
     let prev_cwd = env::current_dir().expect("cwd");
     let install_cwd = tmpdir("skip_lockfile_install_cwd");
-    env::set_current_dir(&install_cwd).expect("chdir");
+    fa::set_current_dir(&install_cwd).expect("chdir");
 
     let report = loft::install::install_one("skiplock", None, &opts).expect("install_one");
 
     // Restore cwd before any assertion can unwind.
-    env::set_current_dir(&prev_cwd).ok();
+    fa::set_current_dir(&prev_cwd).ok();
 
     // The package installed…
     assert_eq!(report.installed.len(), 1, "package should install");
     assert!(
-        home_dir
-            .join(".loft/registry/skiplock-0.1.0/loft.toml")
-            .exists(),
+        fa::exists(home_dir.join(".loft/registry/skiplock-0.1.0/loft.toml")),
         "extracted package missing"
     );
     // …but NO lockfile was written, in cwd or anywhere the default path would land.
     assert!(
-        !install_cwd.join("loft.lock").exists(),
+        !fa::exists(install_cwd.join("loft.lock")),
         "skip_lockfile must not write a lockfile"
     );
 
     drop(_reg);
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
-    let _ = fs::remove_dir_all(&install_cwd);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&install_cwd);
 }
 
 #[test]
@@ -485,7 +486,7 @@ fn install_rejects_tarball_with_wrong_sha256() {
     // Build a tarball but advertise a WRONG sha256 in the index.
     let pkg_dir = make_sample_package("badsha", "0.1.0", &tmp);
     let pkg_out = loft::package::package_create(&pkg_dir, Some(&tmp)).expect("package_create");
-    let tarball_bytes = fs::read(&pkg_out.tarball).expect("read");
+    let tarball_bytes = fa::read(&pkg_out.tarball).expect("read");
 
     let mut files = HashMap::new();
     files.insert("/badsha-0.1.0.tar.gz".to_string(), tarball_bytes);
@@ -533,19 +534,19 @@ fn install_rejects_tarball_with_wrong_sha256() {
     };
     let prev_cwd = env::current_dir().expect("cwd");
     let install_cwd = tmpdir("install_rejects_bad_sha_cwd");
-    env::set_current_dir(&install_cwd).expect("chdir");
+    fa::set_current_dir(&install_cwd).expect("chdir");
 
     let result = loft::install::install_one("badsha", None, &opts);
     assert!(result.is_err(), "install should reject mismatched sha256");
     let err = result.unwrap_err();
     assert!(err.contains("sha256 mismatch"), "msg: {err}");
 
-    env::set_current_dir(prev_cwd).ok();
+    fa::set_current_dir(prev_cwd).ok();
     drop(_reg);
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
-    let _ = fs::remove_dir_all(&install_cwd);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&install_cwd);
 }
 
 #[test]
@@ -575,19 +576,19 @@ fn install_rejects_missing_package_in_index() {
     };
     let prev_cwd = env::current_dir().expect("cwd");
     let install_cwd = tmpdir("install_missing_pkg_cwd");
-    env::set_current_dir(&install_cwd).expect("chdir");
+    fa::set_current_dir(&install_cwd).expect("chdir");
 
     let result = loft::install::install_one("does-not-exist", None, &opts);
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(err.contains("not found in registry"), "msg: {err}");
 
-    env::set_current_dir(prev_cwd).ok();
+    fa::set_current_dir(prev_cwd).ok();
     drop(_reg);
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
-    let _ = fs::remove_dir_all(&install_cwd);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&install_cwd);
 }
 
 /// Several processes resolving one `use <pkg>` at once — a server and its clients, or
@@ -603,8 +604,8 @@ fn concurrent_installs_of_one_package_all_succeed() {
     let tmp = tmpdir("concurrent_installs");
     let pkg_dir = make_sample_package("race", "0.1.0", &tmp);
     let pkg_out = loft::package::package_create(&pkg_dir, Some(&tmp)).expect("package_create");
-    let tarball_bytes = fs::read(&pkg_out.tarball).expect("read tarball");
-    let original_src = fs::read_to_string(pkg_dir.join("src").join("race.loft")).expect("src");
+    let tarball_bytes = fa::read(&pkg_out.tarball).expect("read tarball");
+    let original_src = fa::read_to_string(pkg_dir.join("src").join("race.loft")).expect("src");
 
     let mut files = HashMap::new();
     files.insert("/placeholder".to_string(), b"placeholder".to_vec());
@@ -642,7 +643,7 @@ fn concurrent_installs_of_one_package_all_succeed() {
         let (_home, _lh) = HomeGuard::set(&home_dir);
         let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
         let lock_path = home_dir.join("project").join("loft.lock");
-        fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+        fa::create_dir_all(lock_path.parent().unwrap()).unwrap();
         let barrier = Arc::new(std::sync::Barrier::new(THREADS));
         let workers: Vec<_> = (0..THREADS)
             .map(|_| {
@@ -678,7 +679,7 @@ fn concurrent_installs_of_one_package_all_succeed() {
         assert!(placed >= 1, "round {round}: nobody installed the package");
         let extracted = home_dir.join(".loft/registry/race-0.1.0");
         assert_eq!(
-            fs::read_to_string(extracted.join("src").join("race.loft")).expect("extracted src"),
+            fa::read_to_string(extracted.join("src").join("race.loft")).expect("extracted src"),
             original_src,
             "round {round}: the extracted source is whole"
         );
@@ -687,11 +688,11 @@ fn concurrent_installs_of_one_package_all_succeed() {
             .expect("a lockfile was written");
         assert_eq!(lock.packages.len(), 1, "round {round}: one locked package");
         assert_eq!(lock.packages[0].name, "race");
-        let strays: Vec<_> = fs::read_dir(home_dir.join(".loft/registry"))
+        let strays: Vec<_> = fa::read_dir(home_dir.join(".loft/registry"))
             .unwrap()
-            .chain(fs::read_dir(lock_path.parent().unwrap()).unwrap())
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .into_iter()
+            .chain(fa::read_dir(lock_path.parent().unwrap()).unwrap())
+            .map(|e| e.file_name().unwrap_or_default().to_string())
             .filter(|n| n.contains(".tmp") || n.ends_with(".tar.gz") || n.starts_with(".staging"))
             .collect();
         assert!(
@@ -700,9 +701,9 @@ fn concurrent_installs_of_one_package_all_succeed() {
         );
         drop(_reg);
         drop(_home);
-        let _ = fs::remove_dir_all(&home_dir);
+        let _ = fa::remove_dir_all(&home_dir);
     }
-    let _ = fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 // ── Tarball extract roundtrip ─────────────────────────────────────
@@ -721,16 +722,19 @@ fn extract_tarball_roundtrip_matches_original() {
         .expect("extract_tarball");
 
     let inside = extract_root.join("rt-0.1.0");
-    assert!(inside.exists(), "extracted root missing");
-    assert!(inside.join("loft.toml").exists(), "loft.toml missing");
-    assert!(inside.join("src").join("rt.loft").exists(), "src missing");
-    assert!(inside.join("README.md").exists(), "README missing");
+    assert!(fa::exists(&inside), "extracted root missing");
+    assert!(fa::exists(inside.join("loft.toml")), "loft.toml missing");
+    assert!(
+        fa::exists(inside.join("src").join("rt.loft")),
+        "src missing"
+    );
+    assert!(fa::exists(inside.join("README.md")), "README missing");
 
-    let original = fs::read(pkg_dir.join("src").join("rt.loft")).unwrap();
-    let extracted = fs::read(inside.join("src").join("rt.loft")).unwrap();
+    let original = fa::read(pkg_dir.join("src").join("rt.loft")).unwrap();
+    let extracted = fa::read(inside.join("src").join("rt.loft")).unwrap();
     assert_eq!(original, extracted, "src bytes differ after roundtrip");
 
-    let _ = fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// Transitive install: a depends on b, both in the fixture
@@ -744,20 +748,20 @@ fn end_to_end_install_with_transitive_dep() {
 
     // Build two packages — a (depends on b) and b.
     let a_src_root = tmp.join("a_src");
-    fs::create_dir_all(&a_src_root).unwrap();
+    fa::create_dir_all(&a_src_root).unwrap();
     let a_dir = make_sample_package("ta", "0.1.0", &a_src_root);
     let a_out_dir = tmp.join("a_out");
-    fs::create_dir_all(&a_out_dir).unwrap();
+    fa::create_dir_all(&a_out_dir).unwrap();
     let a_out = loft::package::package_create(&a_dir, Some(&a_out_dir)).expect("a pkg");
     let b_src_root = tmp.join("b_src");
-    fs::create_dir_all(&b_src_root).unwrap();
+    fa::create_dir_all(&b_src_root).unwrap();
     let b_dir = make_sample_package("tb", "0.1.0", &b_src_root);
     let b_out_dir = tmp.join("b_out");
-    fs::create_dir_all(&b_out_dir).unwrap();
+    fa::create_dir_all(&b_out_dir).unwrap();
     let b_out = loft::package::package_create(&b_dir, Some(&b_out_dir)).expect("b pkg");
 
-    let a_bytes = fs::read(&a_out.tarball).unwrap();
-    let b_bytes = fs::read(&b_out.tarball).unwrap();
+    let a_bytes = fa::read(&a_out.tarball).unwrap();
+    let b_bytes = fa::read(&b_out.tarball).unwrap();
 
     let mut files = HashMap::new();
     files.insert("/ta-0.1.0.tar.gz".to_string(), a_bytes);
@@ -821,7 +825,7 @@ fn end_to_end_install_with_transitive_dep() {
     };
     let prev_cwd = env::current_dir().expect("cwd");
     let install_cwd = tmpdir("end_to_end_transitive_cwd");
-    env::set_current_dir(&install_cwd).expect("chdir");
+    fa::set_current_dir(&install_cwd).expect("chdir");
 
     let report = loft::install::install_one("ta", None, &opts).expect("install_one");
     // Both ta and tb should be installed.
@@ -830,8 +834,8 @@ fn end_to_end_install_with_transitive_dep() {
     assert!(names.contains(&"tb"), "tb missing from report: {names:?}");
 
     let reg = home_dir.join(".loft").join("registry");
-    assert!(reg.join("ta-0.1.0").exists());
-    assert!(reg.join("tb-0.1.0").exists());
+    assert!(fa::exists(reg.join("ta-0.1.0")));
+    assert!(fa::exists(reg.join("tb-0.1.0")));
 
     // Lockfile has both with the dep edge recorded.
     let lock = loft::lockfile::read_lockfile(&install_cwd.join("loft.lock"))
@@ -841,12 +845,12 @@ fn end_to_end_install_with_transitive_dep() {
     let ta_lock = lock.packages.iter().find(|p| p.name == "ta").expect("ta");
     assert_eq!(ta_lock.deps, vec!["tb"]);
 
-    env::set_current_dir(prev_cwd).ok();
+    fa::set_current_dir(prev_cwd).ok();
     drop(_reg);
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
-    let _ = fs::remove_dir_all(&install_cwd);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&install_cwd);
 }
 
 // ── loft search S4 — offline cache fallback ───────────────────────
@@ -924,8 +928,8 @@ fn load_index_reporting_falls_back_to_cache_when_registry_unreachable() {
     }
 
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
 }
 
 /// @PLN143 — a pinned script's sidecar decides which version is INSTALLED, and the run
@@ -1015,13 +1019,13 @@ fn a_sidecar_pin_decides_the_install_and_is_not_rewritten() {
         .chain(report.skipped_cached.iter())
         .map(|(n, v)| format!("{n} {v}"))
         .collect();
-    let after = fs::read_to_string(&sidecar).expect("read sidecar");
-    let newest_extracted = home_dir.join(".loft/registry/pinpkg-0.2.0").exists();
+    let after = fa::read_to_string(&sidecar).expect("read sidecar");
+    let newest_extracted = fa::exists(home_dir.join(".loft/registry/pinpkg-0.2.0"));
 
     drop(_reg);
     drop(_home);
-    let _ = fs::remove_dir_all(&tmp);
-    let _ = fs::remove_dir_all(&home_dir);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
 
     assert_eq!(
         installed,
@@ -1068,7 +1072,7 @@ fn offline_does_not_trust_the_cached_advisory_feed_unchecked() {
     let (_guard, _lock) = HomeGuard::set(&home);
 
     let cache = home.join(".loft").join("registry");
-    fs::create_dir_all(&cache).expect("cache dir");
+    fa::create_dir_all(&cache).expect("cache dir");
     write_file(&cache.join("advisories.json"), advisory_feed());
     // 64 bytes that are the right SHAPE for a signature and verify against nothing.
     write_file(&cache.join("advisories.json.sig"), &"a1".repeat(32));
@@ -1101,7 +1105,7 @@ fn offline_still_serves_the_cached_feed_when_unsigned_is_allowed() {
     let (_guard, _lock) = HomeGuard::set(&home);
 
     let cache = home.join(".loft").join("registry");
-    fs::create_dir_all(&cache).expect("cache dir");
+    fa::create_dir_all(&cache).expect("cache dir");
     write_file(&cache.join("advisories.json"), advisory_feed());
 
     let feed = loft::registry_advisories::load_or_fetch(&loft::registry_advisories::LoadOptions {
@@ -1129,7 +1133,7 @@ fn a_refused_advisory_feed_is_not_left_in_the_cache() {
     // `index.json` for `advisories.json`, and no `.sig` beside it means the fetched
     // signature is empty — unverifiable, which is the point.
     let served = tmpdir("1048-served");
-    fs::create_dir_all(&served).expect("served dir");
+    fa::create_dir_all(&served).expect("served dir");
     write_file(&served.join("advisories.json"), advisory_feed());
     let url = common::file_url(&served.join("index.json"));
     let (_url_guard, _url_lock) = RegUrlGuard::set(&url);
@@ -1149,7 +1153,7 @@ fn a_refused_advisory_feed_is_not_left_in_the_cache() {
         "the refresh returned {outcome:?} for an unverifiable feed"
     );
     assert!(
-        !cached_feed.exists(),
+        !fa::exists(&cached_feed),
         "a refused feed was written to {} — it will be read by the next run",
         cached_feed.display()
     );

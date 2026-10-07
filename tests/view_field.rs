@@ -11,6 +11,7 @@
 //! changes is the emitted signature and what the site reads, and that is what is pinned here —
 //! together with every DECLINE, so one that quietly stops declining shows up as a failure here
 //! rather than as a wrong answer in a consumer.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,7 +21,8 @@ const GUARD: &str = "tests/scripts/164-view-field.loft";
 const FORWARD: &str = "tests/scripts/164-forward-tuple.loft";
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_VIEW_FIELD")
         .env_remove("LOFT_NO_FORWARD_TUPLE");
@@ -56,8 +58,8 @@ fn emitted_from(file: &str, env: &[(&str, &str)]) -> String {
         "--native-emit failed:\n{}",
         String::from_utf8_lossy(&run.stderr)
     );
-    let text = std::fs::read_to_string(&out).expect("the emitted source");
-    let _ = std::fs::remove_file(&out);
+    let text = fa::read_to_string(&out).expect("the emitted source");
+    let _ = fa::remove_file(&out);
     text
 }
 

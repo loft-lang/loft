@@ -87,19 +87,20 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   `LOFT_POISON` suite + the ownership fuzz gate + `LOFT_NATIVE_LEAK_CHECK` (read ownership.md's
   own `OPEN` line rather than a number restated here — it is `OPEN: 1` as of 2026-09-11,
   `D-own-40`, and this row read "0 open" for a cycle after that stopped being true).*
-- ~ **H-Drop** — the hook runs once per resource, at the death of the record that owns it (the
-  owner's scope end in reverse declaration order; a displacing REASSIGNMENT, after the new value
-  is computed and before anything after the statement; a CONTAINER's death through the cascade),
-  and responsibility moves with a copy.  *Gate: `tests/ownership_drop_gate.rs` — 223 generated
+- ✓ **H-Drop** — the hook runs once per structure holding a lease on the resource (`(H-Lease)`),
+  at that structure's death (the owner's scope end in reverse declaration order; a displacing
+  REASSIGNMENT, after the new value is computed and before anything after the statement; a
+  CONTAINER's death through the cascade).  *Gate: `tests/ownership_drop_gate.rs` — 223 generated
   cells on both backends, scored on the release itself (TESTING.md § The drop gate).*  The
   free-side instruments cannot stand in for it: `LOFT_POISON`, the leak check and
   `ownership_cfg`'s Check D (`LOFT_OWN_ORACLE=check`) ask whether a FREE is sound, and each is
   clean on a program that loses or doubles a hook — Check D read `clean — 0 RED` over the
   loft#1517 guards while twelve of their cells were wrong.  A drop has no safe direction to err
-  in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  **`~`
-  because the gate pins 94 cells that release wrongly today, none with a diagnostic** —
-  `heap-history.md` `D-heap-1` and `D-heap-7` carry them, and the row turns ✓ when both baselines are
-  empty.  *Trace guards beside it, all `tests/scripts/`, all both-backends:
+  in (`(H-Drop)`'s own ⚠), which is why its gate scores the release and not a free.  The gate's
+  baselines are not open defects: their cells run with the lease refusals off, and every one is a
+  copy `(H-Copy-Refuse)` or `(H-Spent)` refuses by default
+  (`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`).  A cell the rules permit that
+  releases wrongly must name an open `heap.md` deviation in `LEASE_DEVIATIONS`, which is empty.  *Trace guards beside it, all `tests/scripts/`, all both-backends:
   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
   and scope-end clauses, 20 cells, all green since loft#1517 closed),
   `a-copy-of-a-tuple-with-a-droppable-member-releases-once` and
@@ -107,9 +108,11 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   `1510-a-mixed-own-view-locals-record-hooks-once` (the witness's own releases),
   `a-shared-destination-releases-the-arm-that-did-not-run` and
   `a-branch-arm-releases-the-source-the-other-arm-took` (the copy clause per path).*
-- ☐ **H-Drop-Not** — the old value of an overwritten FIELD or ELEMENT, an element taken OUT, and a
+- ✓ **H-Drop-Not** — the old value of an overwritten FIELD or ELEMENT, an element taken OUT, and a
   keyed collection's records are NOT released by the language.  A documented boundary, so the
-  falsifiable claim is that nothing releases them; unrowed and unguarded.
+  falsifiable claim is that nothing releases them.  *Gate: `tests/ownership_drop_gate.rs`
+  `p_n1`–`p_n4`, one cell per clause, both backends: the cell marks the id `X`, and a release
+  of it scores `RELEASED_NOT`.*
 
 ## ownership.md
 
@@ -239,17 +242,14 @@ not yet graduated to that oracle. Design + phase↔rule map:
 - ☐ **P-Opt** — present ⟹ bound, absent ⟹ null capture, cursor intact. *Pin: P5.*
 - ☐ **P-Rep** — `(a)*` collects a `vector<τ>` (count + values + length + leak); `+` needs ≥1; a
   separator is consumed, not captured. *Pin: P6.*
-- ✗ **P-Anchor / P-Revert / P-IterBound** — **NOT SHIPPED** (measured 2026-09-25, `D-match-6`,
-  loft#1678). The row read `☐` — which this section's legend defines as *shipped + both-backends,
-  not yet graduated to the oracle* — over three rules whose machinery does not exist:
-  `OpMatchAnchor` and `OpMatchRevert` appear nowhere in `src/`, and `max_lookahead` only in one
-  doc comment. An iterator subject is MATERIALISED into a vector instead
-  (`Parser::collect_iterator_subject`), so there is no memo, no backtracking over the stream and
-  no bound: an endless source reaches 696 MB in 13 s on `--interpret` and 2.13 GB in 18 s on
-  `--native`, where `(P-IterBound)` promises a defined runtime error and never a hang. A finite
-  200 000-element source is correct on both backends in 0.45 s, so the defect is the absent
-  ceiling and not the materialisation. *No pin — P7 covers `35p-iterator-match.loft`, which tests
-  the materialising design these three rules do not describe.*
+- ✗ **P-Anchor / P-Revert** — **NOT SHIPPED**: `OpMatchAnchor` and `OpMatchRevert` appear
+  nowhere in `src/`.  An iterator subject is MATERIALISED into a vector instead
+  (`Parser::collect_iterator_subject`), which agrees with the memoising cursor on every
+  observable of a side-effect-free source.  *No pin — no machinery to pin.*
+- ✓ **P-IterBound** — an endless iterator subject stops with the defined `max_lookahead` error,
+  never a hang, on both backends; `LOFT_MAX_LOOKAHEAD` moves the bound and a source at the bound
+  still matches.  *Guard: `tests/exit_codes.rs` `a_match_over_an_iterator_stops_at_max_lookahead`;
+  control: `a-match-over-an-iterator-materialises-its-whole-source.loft` (D-match-6, closed).*
 - ☐ **Capture typing (types.md § Pattern captures)** — alternation-unify (`⊔`), optional / absent
   (`τ?`), repetition / rest (`vector<τ>`) — NO new type former. *Pin: P4–P6 typecheck cases.*
 

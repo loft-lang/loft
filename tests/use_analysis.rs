@@ -8,7 +8,7 @@
 // iterate the analysis without wiring it into emission. Design:
 // doc/claude/plans/25-nullable-sequences/{use-analysis-prework,materialization-algorithm}-design.md.
 
-use std::process::Command;
+use loft::file_access as fa;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Write `src` to a probe path no concurrent test can also produce, and return it.
@@ -31,17 +31,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 fn write_probe(dir_name: &str, stem: &str, src: &str) -> std::path::PathBuf {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let dir = std::env::temp_dir().join(dir_name);
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let path = dir.join(format!("{}_{n}_{stem}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
 /// Run the loft binary on a source string with the verdict dump on; return stderr.
 fn dump(src: &str) -> String {
     let path = write_probe("loft_use_analysis", "probe", src);
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", "--check"])
         .arg(&path)
         .env("LOFT_MATERIALIZE_DUMP", "1")
@@ -54,7 +54,7 @@ fn dump(src: &str) -> String {
         .env("LOFT_NO_JOIN_OWN", "1")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -211,7 +211,7 @@ fn verdicts_per_boundary_cell() {
 /// Run with the verdict dump on at an explicit elision tier (env-selected).
 fn dump_at_tier(src: &str, tier: u8) -> String {
     let path = write_probe("loft_use_analysis_t1", &format!("probe_t{tier}"), src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args(["--interpret", "--check"])
         .arg(&path)
         .env("LOFT_MATERIALIZE_DUMP", "1")
@@ -222,7 +222,7 @@ fn dump_at_tier(src: &str, tier: u8) -> String {
         cmd.env("LOFT_ELIDE_T1", "1");
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -276,7 +276,7 @@ fn tier1_flips_existing_local_src_cell() {
 fn tier1_runtime_correct_both_backends() {
     let script = "tests/scripts/85-tier1-local-source-matrix.loft";
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend, script])
             .env("LOFT_ELIDE_T1", "1")
             .env("LOFT_STORES", "warn")
@@ -664,7 +664,7 @@ fn main() {
 /// Run a source on a backend, optionally with `LOFT_JOIN_OWN`; return (stdout, stderr).
 fn run_backend(src: &str, backend: &str, join_own: bool) -> (String, String) {
     let path = write_probe("loft_join_own", "probe", src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args([backend])
         .arg(&path)
         .env("LOFT_STORES", "warn")
@@ -685,7 +685,7 @@ fn run_backend(src: &str, backend: &str, join_own: bool) -> (String, String) {
         cmd.env("LOFT_NO_OWNER_WITNESS", "1");
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -800,7 +800,7 @@ fn main() {
 /// (the IR dump, used to read the emitted return-type dependency).
 fn introspect(src: &str, join_own: bool) -> String {
     let path = write_probe("loft_join_own", "introspect", src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("introspect").arg(&path).env("LOFT_NO_CACHE", "1");
     if join_own {
         cmd.env_remove("LOFT_NO_JOIN_OWN");
@@ -808,7 +808,7 @@ fn introspect(src: &str, join_own: bool) -> String {
         cmd.env("LOFT_NO_JOIN_OWN", "1");
     }
     let out = cmd.output().expect("spawn loft introspect");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -996,7 +996,7 @@ fn main() { cmove(); csurv(); cmut(); loop_outside(); loop_local(); recset(); }
 /// Like `dump`, but with the survival split flag on.
 fn dump_survival(src: &str) -> String {
     let path = write_probe("loft_use_analysis", "survival", src);
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", "--check"])
         .arg(&path)
         .env("LOFT_MATERIALIZE_DUMP", "1")
@@ -1005,7 +1005,7 @@ fn dump_survival(src: &str) -> String {
         .env("LOFT_NO_JOIN_OWN", "1")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -1105,7 +1105,7 @@ fn run_move_elide_src(
     move_on: bool,
 ) -> (String, String, bool) {
     let path = write_probe("loft_use_analysis", stem, src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg(if native { "--native" } else { "--interpret" })
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
@@ -1116,7 +1116,7 @@ fn run_move_elide_src(
         cmd.env("LOFT_NO_MOVE_ELIDE", "1");
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -1180,7 +1180,7 @@ fn op_count(introspect: &str, name: &str, op: &str) -> usize {
 
 fn introspect_move_elide_src(src: &str, stem: &str, move_on: bool) -> String {
     let path = write_probe("loft_use_analysis", stem, src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args(["introspect"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1");
@@ -1189,7 +1189,7 @@ fn introspect_move_elide_src(src: &str, stem: &str, move_on: bool) -> String {
         cmd.env("LOFT_NO_MOVE_ELIDE", "1");
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -1614,13 +1614,13 @@ fn main() {
 /// Spawn `loft --report-copies --check` and return its stderr (the report).
 fn report(src: &str) -> String {
     let path = write_probe("loft_use_analysis", "report", src);
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--report-copies", "--interpret", "--check"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -1654,7 +1654,7 @@ fn report_copies_is_user_facing_and_prints_once() {
 /// Spawn `loft --check` with (or without) `LOFT_WARN_COPIES` and return its stderr.
 fn warn(src: &str, gated_on: bool) -> String {
     let path = write_probe("loft_use_analysis", "warn", src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args(["--interpret", "--check"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1");
@@ -1662,7 +1662,7 @@ fn warn(src: &str, gated_on: bool) -> String {
         cmd.env("LOFT_WARN_COPIES", "1");
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -1723,10 +1723,10 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("loft_781_{}_{n}", std::process::id()));
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("probe dirs");
+    fa::create_dir_all(&lib).expect("probe dirs");
     // One project, so the library is the author's own code and its lints are addressed to
     // this build (loft#1260).
-    std::fs::write(
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"probe781\"\nversion = \"0.1.0\"\ncategories = [\"testing\"]\n",
     )
@@ -1734,7 +1734,7 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
 
     // The copy is line 6 of the library: `xs` is named into the struct and used again
     // on the next line, so it survives and cannot be moved.
-    std::fs::write(
+    fa::write(
         lib.join("copier781.loft"),
         "// 1\npub struct Holder { v: vector<integer> }\n\n\
          pub fn make_it() -> integer {\n  xs = [1, 2, 3];\n  \
@@ -1744,14 +1744,14 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
 
     // Line 6 of the ENTRY is a `const` — where the notice used to land.
     let entry = root.join("main781.loft");
-    std::fs::write(
+    fa::write(
         &entry,
         "use copier781::*;\n// 2\n// 3\n// 4\n// 5\nconst UNRELATED = 0.75;\n// 7\n\
          fn main() {\n  println(\"{make_it()}\");\n}\n",
     )
     .expect("write entry");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -1761,7 +1761,7 @@ fn a_dependency_copy_is_reported_against_the_dependency_file() {
         .expect("spawn loft");
     let err = String::from_utf8_lossy(&out.stderr).into_owned();
     let all = format!("{}{err}", String::from_utf8_lossy(&out.stdout));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         all.contains("copy of vector<integer>") && all.contains("`xs`"),

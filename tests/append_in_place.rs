@@ -12,8 +12,8 @@
 //! the body keeps the lift and the copy, which is the exclusion the matrix's A2/A4
 //! demanded.  Read off `loft introspect`, the same instrument the design was written on.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct Pt { x: float = 0.0, y: float = 0.0 }
@@ -25,7 +25,7 @@ fn main() { println(\"{len(in_place(3))} {len(kept(3))}\"); }
 ";
 
 fn introspect(src: &std::path::Path) -> String {
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("introspect")
         .arg(src)
         .env("LOFT_TIMEOUT", "120")
@@ -47,9 +47,9 @@ fn ir_of<'a>(dump: &'a str, name: &str) -> &'a str {
 #[test]
 fn a_route_r_callee_builds_the_element_in_place_and_an_nrvo_callee_keeps_the_copy() {
     let src = std::env::temp_dir().join("loft_append_in_place_probe.loft");
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     let dump = introspect(&src);
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 
     let built = ir_of(&dump, "n_in_place");
     assert!(
@@ -94,9 +94,9 @@ fn main() { println(\"{len(tags(3))} {len(evs(3))} {len(bags(3))} {len(crates(3)
 #[test]
 fn a_heap_record_builder_takes_the_element_and_a_struct_enum_field_keeps_the_copy() {
     let src = std::env::temp_dir().join("loft_append_in_place_heap_probe.loft");
-    std::fs::write(&src, HEAP_PROBE).expect("write probe");
+    fa::write(&src, HEAP_PROBE).expect("write probe");
     let dump = introspect(&src);
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 
     let built = ir_of(&dump, "n_tags");
     assert!(

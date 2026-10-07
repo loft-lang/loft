@@ -17,8 +17,8 @@
 //! fires at all would pass a suppression test on its own, so the true positive below is
 //! what says the instrument is still live.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -27,10 +27,10 @@ fn loft_bin() -> PathBuf {
 /// Compile `source` and return how many `slow-reference-parameter` notices it produced.
 fn advice_count(name: &str, source: &str) -> usize {
     let dir = std::env::temp_dir().join(format!("loft-ref-fwd-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{name}.loft"));
-    std::fs::write(&file, source).expect("write probe");
-    let out = Command::new(loft_bin())
+    fa::write(&file, source).expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "60")

@@ -5,7 +5,6 @@
 //! cells (`tests/scripts/a-read-only-record-copy-is-a-view.loft`): the cells' values pass on
 //! either form, so only this pin sees an admission drift.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-read-only-record-copy-is-a-view.loft";
 
@@ -24,7 +23,8 @@ const EXPECTED: &[(&str, &[&str])] = &[
 ];
 
 fn trace(env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))
         .env("LOFT_TIMEOUT", "120")

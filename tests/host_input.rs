@@ -8,8 +8,9 @@
 //! bytes) is proven with the Node harness in `doc/claude/WEB_APPS.md`; it is not
 //! run here because it needs the wasm toolchain + Node.
 
+use loft::file_access as fa;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -34,10 +35,10 @@ const FIXTURE: &str = r#"fn main() {
 fn run(backend: &str, stdin: &str) -> String {
     let id = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("loft_host_input_{}_{id}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("hi.loft");
-    std::fs::write(&path, FIXTURE).expect("write fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&path, FIXTURE).expect("write fixture");
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args([backend, path.to_str().unwrap()])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())
@@ -52,7 +53,7 @@ fn run(backend: &str, stdin: &str) -> String {
         .write_all(stdin.as_bytes())
         .expect("write stdin");
     let out = child.wait_with_output().expect("wait");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     if out.status.success() && !stdout.is_empty() {
         return stdout;
@@ -107,10 +108,10 @@ fn host_output_goes_to_stderr_on_both_backends() {
         let id = SEQ.fetch_add(1, Ordering::Relaxed);
         let dir =
             std::env::temp_dir().join(format!("loft_host_output_{}_{id}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("mkdir");
+        fa::create_dir_all(&dir).expect("mkdir");
         let path = dir.join("ho.loft");
-        std::fs::write(&path, fixture).expect("write fixture");
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        fa::write(&path, fixture).expect("write fixture");
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend, path.to_str().unwrap()])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .stdin(Stdio::null())
@@ -118,7 +119,7 @@ fn host_output_goes_to_stderr_on_both_backends() {
             .stderr(Stdio::piped())
             .output()
             .expect("run loft");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&dir);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert_eq!(
@@ -165,10 +166,10 @@ fn run_with_open_stdin(
 ) -> String {
     let id = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!("loft_host_wait_{}_{id}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("hw.loft");
-    std::fs::write(&path, source).expect("write fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&path, source).expect("write fixture");
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args([backend, path.to_str().unwrap()])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())
@@ -211,7 +212,7 @@ fn run_with_open_stdin(
     }
     let out = child.wait_with_output().expect("wait");
     drop(host.join());
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     match status {
         Some(_) => String::from_utf8_lossy(&out.stdout).into_owned(),
         None => format!(

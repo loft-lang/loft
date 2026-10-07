@@ -157,19 +157,23 @@ impl Placement {
 
 /// The call arena — the shared store a struct or a vector crosses in, rather
 /// than being re-encoded into a second wire vocabulary (@PLN119 arc B).
+// @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
 #[cfg(unix)]
 pub mod arena;
 
 /// The transport: the shared mapping, the spin-then-sleep handshake, the frame
 /// codec, and the two ends of a call.  Unix only — the mapping is `mmap`; see the
 /// Platform note above.
+// @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
 #[cfg(unix)]
 pub mod wire;
 
 /// Routing a placed library's calls from the interpreter into its worker —
 /// what makes the declaration take effect on an ordinary `use`.
+// @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
 #[cfg(unix)]
 pub mod dispatch;
 
+// @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
 #[cfg(unix)]
 pub use wire::{Wire, Worker, serve, serve_remote};

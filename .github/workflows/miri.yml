@@ -108,11 +108,14 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
 jobs:
   stale-plans-audit:
+    # @windows-exempt: platform-free — audits plan text
     # @nightly-class: report — plan-tracker drift; says nothing about the language
     name: Stale-plan audit (drift advisory + mislabel gate)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
@@ -156,6 +159,7 @@ jobs:
           esac
 
   stale-claims:
+    # @windows-exempt: platform-free — audits reference-doc claims
     # @nightly-class: report — a limitation the reference still states after its issue closed (@PLN176)
     name: Stale limitation claims in the reference docs
     # Nightly-only: a sentence goes stale when its ISSUE closes, which is an event outside
@@ -211,6 +215,7 @@ jobs:
           fi
 
   miri:
+    # @windows-exempt: a Linux-only tool-class interpreter (Miri over the unsafe store code, which has no Windows branch); the macOS leg shows portability
     # @nightly-class: unsound — hard UB — alignment, OOB, UAF, uninit
     name: Miri hard-UB gate (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -310,6 +315,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   asan:
+    # @windows-exempt: a Linux-only tool (AddressSanitizer); the defect class is platform-independent memory safety
     # @nightly-class: unsound — an out-of-bounds or use-after-free access
     name: ASan UAF/OOB sweep (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -433,6 +439,7 @@ jobs:
   # SYSTEM frame surfaces on the Linux leg (different TLS impl), suppress THAT specific
   # frame in lsan_suppressions.txt — never raise the baseline off zero for a real leak.
   asan-leak-gate:
+    # @windows-exempt: a Linux-only tool (LeakSanitizer); Windows has the store-heap ceiling
     # @nightly-class: report — a LEAK, not unsoundness — the baseline is still being triaged
     name: ASan interpreter leak gate (${{ matrix.os }})
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
@@ -597,6 +604,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   poison:
+    # @windows-exempt: a platform-independent invariant sweep (arena use-after-free); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a store-internal use-after-free the allocator hides
     name: LOFT_POISON arena-UAF gate (store-internal use-after-free)
     runs-on: ubuntu-latest
@@ -671,6 +679,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   native-poison:
+    # @windows-exempt: a platform-independent invariant sweep (arena use-after-free, --native); the native corpus runs on windows-latest daily
     # @nightly-class: unsound — a store use-after-free or leak the --native backend alone makes
     name: LOFT_POISON + leak gate on the --native corpus
     runs-on: ubuntu-latest
@@ -731,6 +740,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   poison-claim:
+    # @windows-exempt: a platform-independent invariant sweep (unwritten claims); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a read of memory nothing wrote, hidden by zero-filled claims
     name: LOFT_POISON_CLAIM gate (a claimed slot read before it is written)
     runs-on: ubuntu-latest
@@ -787,6 +797,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   stack-shadow:
+    # @windows-exempt: a platform-independent invariant sweep (stack slots); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a frame slot nobody wrote, mistyped, or stale
     name: LOFT_VERIFY_STACK gate (a frame slot nobody wrote, mistyped, or stale)
     runs-on: ubuntu-latest
@@ -859,6 +870,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   tsan:
+    # @windows-exempt: a Linux-only tool (ThreadSanitizer); data races are platform-independent
     # @nightly-class: unsound — a data race, which is UB and has no other coverage
     name: ThreadSanitizer (par/threading data-race gate)
     runs-on: ubuntu-latest
@@ -923,6 +935,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   native-asan:
+    # @windows-exempt: a Linux-only tool (AddressSanitizer on --native)
     # @nightly-class: unsound — an OOB / UAF store access the `--native` codegen emits
     name: Native-backend ASan (--native codegen)
     runs-on: ubuntu-latest
@@ -1008,6 +1021,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   valgrind:
+    # @windows-exempt: a Linux-only tool (valgrind); Windows has the store-heap ceiling
     # @nightly-class: unsound — an invalid or uninitialised read in the SHIPPED release binary
     name: Valgrind memcheck sweep (release binary, both backends)
     # Nightly-only: ~1200 memcheck runs exceed the 20-min PR ceiling on their own — @CI_BUDGET.
@@ -1089,6 +1103,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   release-gate-sweeps:
+    # @windows-exempt: a platform-independent invariant sweep (fuzz differentials); the corpus runs on windows-latest daily
     # @nightly-class: report — coverage replayed for release evidence, not an instrument
     name: Release-gate sweeps (the ignored tests whose reason names this job)
     # Nightly-only: rustc per cell / per run puts both over the PR ceiling — @CI_BUDGET.
@@ -1168,6 +1183,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   debug-asserts:
+    # @windows-exempt: a platform-independent invariant sweep (debug assertions); the corpus runs on windows-latest daily
     # @nightly-class: unsound — a violated internal invariant
     name: Debug-assertions gate (loft's internal invariants)
     runs-on: ubuntu-latest
@@ -1233,6 +1249,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   audit:
+    # @windows-exempt: platform-free — reads Cargo.lock advisories
     # @nightly-class: report — an advisory against a dependency is not the language broken
     name: Dependency advisories (cargo audit over Cargo.lock)
     # Nightly-only: it measures the advisory database, not this diff — @CI_BUDGET.
@@ -1259,6 +1276,7 @@ jobs:
         run: cargo audit
 
   toolchain-matrix:
+    # @windows-exempt: varies the Rust toolchain, not the platform
     # @nightly-class: report — beta/nightly std and lint churn must never page us
     name: Suite under ${{ matrix.toolchain }}
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
@@ -1377,6 +1395,7 @@ jobs:
   # `@`-tag / markdown link can land on `main`; this nightly run surfaces it
   # within a day.  Same single-binary check, on stable.
   index-hygiene:
+    # @windows-exempt: platform-free — checks the tracker index text
     # @nightly-class: report — documentation drift
     name: doc index hygiene (nightly)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
@@ -1433,6 +1452,7 @@ jobs:
           retention-days: 14
 
   library-health:
+    # @windows-exempt: a library's platforms are its own CI's choice
     # @nightly-class: report — informational, by its own name
     name: Library health audit (informational)
     # Nightly-only: measures the WORLD (or exceeds the 20-min PR ceiling), not this diff — @CI_BUDGET.
@@ -1520,6 +1540,7 @@ jobs:
   # deduped GitHub issue on any red gate, so a week of red nightlies is a single
   # tracked issue, not seven (and auto-resolves it when the gates go green again).
   notify:
+    # @windows-exempt: platform-free — writes an issue
     name: Nightly gate failure → tracked issue
     # An automatic ISSUE is an interruption, so it is reserved for the case that
     # actually warrants one: **the language itself is unsound** — hard UB, a data
@@ -1631,6 +1652,7 @@ jobs:
   # This hands the run over by id instead.  Its name matches the digest's META_JOB filter, so the
   # still-running hand-over is not read as one of the gates.
   red-steps-digest:
+    # @windows-exempt: platform-free — writes an issue
     name: → tracked issue (red-steps digest)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
@@ -1647,6 +1669,7 @@ jobs:
         run: gh workflow run advisory-failures.yml -f run_id=${{ github.run_id }}
 
   daily-status:
+    # @windows-exempt: platform-free — writes the daily status
     name: Daily status (the one place to look)
     needs: [stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,

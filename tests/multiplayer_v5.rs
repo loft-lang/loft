@@ -28,7 +28,7 @@
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -205,7 +205,7 @@ struct ServerGuard {
 
 impl ServerGuard {
     fn spawn(server_script: &str, port: u16) -> Self {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(examples_dir().join(server_script))
             .env("LOFT_TICTACTOE_PORT", port.to_string())
@@ -356,7 +356,7 @@ impl Drop for ServerGuard {
 }
 
 fn spawn_client(client_script: &str, port: u16) -> Child {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(examples_dir().join(client_script))
         .current_dir(examples_dir())
@@ -375,7 +375,7 @@ fn spawn_client_with_args(
     label: &str,
     extra_env: &[(&str, &str)],
 ) -> Child {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(examples_dir().join(client_script))
         .arg(label)
@@ -674,7 +674,7 @@ fn v5_t4_catch_up_after_reconnect() {
 /// test (it had been ignored since Stage B removed the monorepo libs).
 #[test]
 fn v5_t5_world_tick_and_decay() {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(examples_dir().join("v5_t5_world_timings.loft"))
         .current_dir(examples_dir())

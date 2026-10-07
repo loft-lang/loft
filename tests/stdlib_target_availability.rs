@@ -22,6 +22,7 @@
 //! shape that actually bit (a feature gate directly above the definition, with no
 //! fallback sibling). It is a tripwire on the known failure, not a cfg evaluator.
 
+use loft::file_access as fa;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -36,17 +37,17 @@ const WASM_FEATURES: &[&str] = &["random", "wasm-native-threads"];
 /// Every `.rs` file under `src/`, read as text.
 fn rust_sources() -> Vec<(PathBuf, String)> {
     fn walk(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in entries {
+            let p = e.os_spelling();
+            if fa::is_dir(&p) {
                 walk(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
+            } else if fa::has_extension(&p, "rs") {
                 // Two source files are not valid UTF-8 throughout; lossy is fine
                 // for an attribute scan.
-                if let Ok(bytes) = std::fs::read(&p) {
+                if let Ok(bytes) = fa::read(&p) {
                     out.push((p, String::from_utf8_lossy(&bytes).into_owned()));
                 }
             }
@@ -62,16 +63,16 @@ fn rust_sources() -> Vec<(PathBuf, String)> {
 /// only part of this an author writes.
 fn stdlib_templates() -> Vec<(String, String)> {
     let dir = workspace_root().join("default");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut files: Vec<PathBuf> = fa::read_dir(&dir)
         .expect("read default/")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     files.sort();
     let mut out = Vec::new();
     for f in files {
-        let text = std::fs::read_to_string(&f).expect("read stdlib file");
+        let text = fa::read_to_string(&f).expect("read stdlib file");
         let lines: Vec<&str> = text.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             if !(line.starts_with("#rust") || line.starts_with("#iterator")) {

@@ -638,6 +638,16 @@ impl IntegerSpec {
     /// they were unified: the `i32` FIELD stored `0` where its local and its element stored
     /// null — loft#1296's disagreement reopened from the other side.  An earlier version of
     /// this comment claimed *"two readers, one fact"*; that was never true.
+    /// Is this the FULL `integer` — the one range nothing narrows to?  `IntegerSpec`'s i32/u32
+    /// bounds cannot hold the i64 range, so it has two bound encodings (the `signed32`
+    /// template ending at `i32::MAX`, the `wide` one at `u32::MAX`, formal/types.md D2) and is
+    /// told from a range by those and by carrying no `forced_size`: the `i32` ALIAS has the
+    /// signed-32 template's exact range in 4 bytes, and is a narrow range like any other.
+    #[must_use]
+    pub fn is_full_integer(&self) -> bool {
+        self.forced_size.is_none() && (self.is_signed32_template() || self.is_wide_template())
+    }
+
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
         self.is_wide_template() || self.is_signed32_template()
@@ -3333,16 +3343,27 @@ impl Type {
     /// In a vector they are not: the element width IS the stride, so handing a
     /// `vector<integer>` to a `vector<u8>` parameter re-reads each 8-byte
     /// element as eight 1-byte ones — silently, since the element COUNT is
-    /// stored and still agrees.  Width comes from the canonical
-    /// [`IntegerSpec::byte_width`] (so a range-typed element and its alias —
-    /// `integer(0,100)` and `u8` — are correctly the same layout), and the sign
-    /// of the lower bound separates `i8` from `u8`, which share a width but not
-    /// a reading.
+    /// stored and still agrees.
+    ///
+    /// Two integer elements are one storage when their BYTES mean the same values: the same
+    /// nullability and width, as the storage home derives them (`Data::narrow_vector_element`
+    /// — a null code is reserved for a `τ?` element only), and below 8 bytes the same encoding
+    /// base, since a narrow element is stored as `value - part_min`.  So `u8` and
+    /// `integer limit(0, 255)` are one storage, `limit(100, 355) size(1)` is not `u8` although
+    /// both are one byte, and every 8-byte element is stored raw and is one storage whatever
+    /// range it declares (`@FR-C-Refl` decided on storage — D-types-26).
     #[must_use]
     pub fn same_element_storage(&self, other: &Type) -> bool {
         match (self.base(), other.base()) {
             (Type::Integer(a), Type::Integer(b)) => {
-                a.byte_width(!a.not_null) == b.byte_width(!b.not_null) && (a.min < 0) == (b.min < 0)
+                let (a_null, b_null) = (
+                    matches!(self, Type::Optional(_)),
+                    matches!(other, Type::Optional(_)),
+                );
+                let (a_w, b_w) = (a.byte_width(a_null), b.byte_width(b_null));
+                a_null == b_null
+                    && a_w == b_w
+                    && (a_w >= 8 || a.part_min(a_w, a_null) == b.part_min(b_w, b_null))
             }
             (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
             // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is
@@ -3663,7 +3684,7 @@ impl Type {
             Type::Optional(tp) => format!("{}?", tp.argument(data, d_nr)),
             _ => {
                 let d = data.def(d_nr);
-                self.show(data, &Function::new(&d.name, &d.position.file))
+                self.show(data, &Function::new(&d.name, d.position.file.as_str()))
             }
         }
     }
@@ -3786,9 +3807,27 @@ fn element_offsets_alignment_max(types: &[Type]) -> u8 {
 /// (`calculate_positions_with_groups`) agree on every byte offset.
 #[must_use]
 pub fn element_stack_size(t: &Type) -> usize {
+    element_stack_size_in(t, false)
+}
+
+/// `@FR-T-Record` — does a tuple LOCAL's frame slot hold each `text` member as the tuple's own
+/// text?  The one switch both halves of the layout read: the slot size a tuple variable is
+/// given (`variables::size(Tuple, Context::Variable)`) and the member offsets every emitter
+/// lays the slot out by (`state::codegen::tuple_slot_owned`).  A by-value tuple parameter and
+/// a tuple value on the eval stack stay borrowed either way.
+pub const TUPLE_LOCAL_TEXT_OWNED: bool = true;
+
+/// [`element_stack_size`] for a tuple held in an OWNED slot or not.  A `text` member of an
+/// owned tuple — a tuple LOCAL's frame slot — is the tuple's own text, a `String`, as a text
+/// local is (`variables::size(Text, Context::Variable)`); in a borrowed position — a tuple
+/// value on the eval stack, a by-value parameter — it is the `Str` a text argument is
+/// (`@FR-T-Record`).  Every other member is the same width either way.
+#[must_use]
+pub fn element_stack_size_in(t: &Type, owned: bool) -> usize {
     match t {
         // @PLN25 slice (b): `Optional(τ)` shares its base's sentinel storage size.
-        Type::Optional(inner) => element_stack_size(inner),
+        Type::Optional(inner) => element_stack_size_in(inner, owned),
+        Type::Text(_) if owned => std::mem::size_of::<String>(),
         Type::Boolean | Type::Enum(_, false, _) => 1,
         Type::Single | Type::Character => 4,
         // P249 — fn-ref slot is 20 bytes (8 B d_nr + 12 B closure DbRef);
@@ -3822,7 +3861,8 @@ pub fn element_stack_size(t: &Type) -> usize {
             elems
                 .iter()
                 .map(|t| {
-                    crate::variables::aligned_stack_step(element_stack_size(t) as u32) as usize
+                    crate::variables::aligned_stack_step(element_stack_size_in(t, owned) as u32)
+                        as usize
                 })
                 .sum()
         }
@@ -3897,14 +3937,22 @@ pub fn element_storage_align(t: &Type) -> usize {
 /// `tests/layout_alignment.rs` holds the two to the same answer.
 #[must_use]
 pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
-    let mut offsets = Vec::with_capacity(types.len());
-    let mut pos = 0usize;
-    for t in types {
-        pos = pos.next_multiple_of(element_storage_align(t));
-        offsets.push(pos);
-        pos += element_storage_size(t);
-    }
-    offsets
+    // `@FR-L-Tuple` — the record's own packing, largest alignment first
+    // (`LinkedFieldGroup::record_member_offsets`), so the two agree byte for byte.
+    let sa: Vec<(u16, u8)> = types
+        .iter()
+        .map(|t| {
+            (
+                element_storage_size(t) as u16,
+                element_storage_align(t) as u8,
+            )
+        })
+        .collect();
+    LinkedFieldGroup::record_member_offsets(&sa)
+        .0
+        .into_iter()
+        .map(usize::from)
+        .collect()
 }
 
 /// Byte offset of each element in a tuple-like layout.
@@ -3926,12 +3974,20 @@ pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
 /// functions so a call site has to say which it means.
 #[must_use]
 pub fn element_stack_offsets(types: &[Type]) -> Vec<usize> {
+    element_stack_offsets_in(types, false)
+}
+
+/// [`element_stack_offsets`] for a tuple held in an OWNED slot or not — see
+/// [`element_stack_size_in`]: only a `text` member's width differs.
+#[must_use]
+pub fn element_stack_offsets_in(types: &[Type], owned: bool) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(types.len());
     let mut pos: usize = 0;
     for t in types {
         offsets.push(pos);
         // @PLN114 — one stepped slot per element; see `element_stack_size`.
-        pos += crate::variables::aligned_stack_step(element_stack_size(t) as u32) as usize;
+        pos +=
+            crate::variables::aligned_stack_step(element_stack_size_in(t, owned) as u32) as usize;
     }
     offsets
 }
@@ -4295,22 +4351,23 @@ mod tuple_stack_layout_tests {
     /// @PLN114 D1 — the storage view sizes elements as record FIELDS; `@C138` places each on
     /// its natural boundary.
     ///
-    /// Hand-computed: `(u8, u32, u16)` keeps its order, so the u32 waits for 4 and the u16
-    /// follows at 8 — 10 bytes, padded to 12, a multiple of the 4-byte alignment.  The
-    /// `__tuple<…>` record's layout answers the same (`tests/layout_alignment.rs`).
+    /// Hand-computed (`@FR-L-Tuple`, @C139): a stored tuple packs as a record, largest
+    /// alignment first — `(u8, u32, u16)` puts the u32 at 0, the u16 at 4 and the u8 at 6: 7
+    /// bytes, padded to 8, as `struct { a: u8, b: u32, c: u16 }`.  The `__tuple<…>` record's
+    /// layout answers the same (`tests/layout_alignment.rs`).
     #[test]
     fn storage_view_packs_like_a_record() {
         use super::{element_storage_offsets, element_storage_size};
         let elems = vec![narrow(1), narrow(4), narrow(2)];
-        assert_eq!(element_storage_offsets(&elems), vec![0, 4, 8]);
+        assert_eq!(element_storage_offsets(&elems), vec![6, 0, 4]);
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            12,
-            "u8, pad 3, u32, u16, pad 2"
+            8,
+            "u32, u16, u8, pad 1"
         );
 
         let pair = vec![narrow(1), narrow(2)];
-        assert_eq!(element_storage_offsets(&pair), vec![0, 2]);
+        assert_eq!(element_storage_offsets(&pair), vec![2, 0]);
         assert_eq!(element_storage_size(&Type::Tuple(pair)), 4);
     }
 
@@ -4328,8 +4385,8 @@ mod tuple_stack_layout_tests {
         );
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            12,
-            "storage: 1, 4 and 2 on their own boundaries"
+            8,
+            "storage: 4, 2 and 1, largest alignment first"
         );
     }
 
@@ -4575,6 +4632,156 @@ pub struct Argument {
     pub const_pos: (u32, u32),
 }
 
+/// @PLN187 (@C140) — where a declared type names a user `type` alias, by position: the alias
+/// itself, a vector's elements, a tuple's members.  `type Handle = integer` declared without
+/// `pub` is ABSTRACT outside its file (`parser::abstract_alias`), so the checker follows these
+/// positions through a program while the `Type` stays the alias's underlying type.  A
+/// position no alias names is `Plain`; a compound whose positions are all plain is `Plain`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum AliasFact {
+    #[default]
+    Plain,
+    /// The value IS the alias (its def number).
+    Alias(u32),
+    /// A vector whose elements carry the inner fact.
+    Vector(Box<AliasFact>),
+    /// A tuple whose members carry these facts, in order.
+    Tuple(Vec<AliasFact>),
+    /// An empty vector literal `[]` — fits a vector of any fact.  Never recorded.
+    Empty,
+    /// A lambda whose body yields the inner fact — what binds a generic's result type
+    /// variable (`map(v, |x| x)`).  Never recorded.
+    Lambda(Box<AliasFact>),
+}
+
+impl AliasFact {
+    #[must_use]
+    pub fn is_plain(&self) -> bool {
+        matches!(self, AliasFact::Plain)
+    }
+
+    /// Every alias the fact names, at any position.
+    pub fn aliases(&self, out: &mut Vec<u32>) {
+        match self {
+            AliasFact::Alias(a) => out.push(*a),
+            AliasFact::Vector(inner) => inner.aliases(out),
+            AliasFact::Tuple(ms) => ms.iter().for_each(|m| m.aliases(out)),
+            AliasFact::Plain | AliasFact::Empty | AliasFact::Lambda(_) => {}
+        }
+    }
+
+    /// `vector<inner>`, plain when its elements are.
+    #[must_use]
+    pub fn vector(inner: AliasFact) -> AliasFact {
+        match inner {
+            AliasFact::Plain | AliasFact::Empty => AliasFact::Plain,
+            f => AliasFact::Vector(Box::new(f)),
+        }
+    }
+
+    /// `(members…)`, plain when every member is.
+    #[must_use]
+    pub fn tuple(members: Vec<AliasFact>) -> AliasFact {
+        let members: Vec<AliasFact> = members
+            .into_iter()
+            .map(|m| {
+                if m == AliasFact::Empty {
+                    AliasFact::Plain
+                } else {
+                    m
+                }
+            })
+            .collect();
+        if members.iter().all(AliasFact::is_plain) {
+            AliasFact::Plain
+        } else {
+            AliasFact::Tuple(members)
+        }
+    }
+
+    /// The IR's text for it: `""` plain, `a<n>` an alias, `v<f>` a vector, `t(<f>,…)` a tuple,
+    /// `_` a plain member inside a tuple.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        fn put(f: &AliasFact, out: &mut String) {
+            match f {
+                AliasFact::Plain | AliasFact::Empty | AliasFact::Lambda(_) => out.push('_'),
+                AliasFact::Alias(a) => {
+                    out.push('a');
+                    out.push_str(&a.to_string());
+                }
+                AliasFact::Vector(inner) => {
+                    out.push('v');
+                    put(inner, out);
+                }
+                AliasFact::Tuple(ms) => {
+                    out.push_str("t(");
+                    for (i, m) in ms.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        put(m, out);
+                    }
+                    out.push(')');
+                }
+            }
+        }
+        if self.is_plain() {
+            return String::new();
+        }
+        let mut out = String::new();
+        put(self, &mut out);
+        out
+    }
+
+    /// The inverse of [`Self::encode`]; anything unreadable is `Plain`.
+    #[must_use]
+    pub fn decode(text: &str) -> AliasFact {
+        fn get(b: &[u8], at: &mut usize) -> AliasFact {
+            match b.get(*at) {
+                Some(b'a') => {
+                    *at += 1;
+                    let start = *at;
+                    while b.get(*at).is_some_and(u8::is_ascii_digit) {
+                        *at += 1;
+                    }
+                    std::str::from_utf8(&b[start..*at])
+                        .ok()
+                        .and_then(|d| d.parse().ok())
+                        .map_or(AliasFact::Plain, AliasFact::Alias)
+                }
+                Some(b'v') => {
+                    *at += 1;
+                    AliasFact::vector(get(b, at))
+                }
+                Some(b't') if b.get(*at + 1) == Some(&b'(') => {
+                    *at += 2;
+                    let mut ms = Vec::new();
+                    loop {
+                        ms.push(get(b, at));
+                        match b.get(*at) {
+                            Some(b',') => *at += 1,
+                            Some(b')') => {
+                                *at += 1;
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    AliasFact::tuple(ms)
+                }
+                Some(b'_') => {
+                    *at += 1;
+                    AliasFact::Plain
+                }
+                _ => AliasFact::Plain,
+            }
+        }
+        let mut at = 0;
+        get(text.as_bytes(), &mut at)
+    }
+}
+
 #[derive(Clone)]
 #[allow(clippy::struct_excessive_bools)] // independent property flags (mutable/constant/const_field/nullable/primary); an enum would add indirection without clarity
 pub struct Attribute {
@@ -4610,6 +4817,9 @@ pub struct Attribute {
     /// bridge, the engine host, placement) reads this mark to hand it a scratch store or
     /// the null sentinel — never the caller's offered result record.
     pub work_buffer: bool,
+    /// @PLN187 (C140) — a field declared `pub`: outside its file it can be read, written,
+    /// matched and named in a literal.  Every field is private to its file without it.
+    pub pub_field: bool,
     /// The initial value of this attribute if it is not given.
     pub value: Value,
     /// A constraint expression checked on every field write.
@@ -4621,6 +4831,8 @@ pub struct Attribute {
     /// `size(N)` annotation (e.g. `i32`), this holds the alias def_nr so
     /// `fill_database` / codegen can consult `forced_size(alias_nr)`.  `0`
     /// means "no alias" — fall back to the limit()-based heuristic.
+    /// @PLN187 — where this parameter's or field's DECLARED type names a `type` alias.
+    pub fact: AliasFact,
     pub alias_d_nr: u32,
     /// P213: for fn-ref struct fields, the def_nr of the lambda assigned
     /// at the (single) construction site.  Used by `fill_database`'s
@@ -4874,6 +5086,32 @@ impl LinkedFieldGroup {
     /// Mirrors `group_size`'s internal packing — first member at 0,
     /// each subsequent member at the next natural-alignment offset.
     #[must_use]
+    pub fn record_member_offsets(member_sizes_aligns: &[(u16, u8)]) -> (Vec<u16>, u16) {
+        // `@FR-L-Tuple` / `@FR-L-Struct` (@C139) — a stored TUPLE is a record, packed as any
+        // record is: the members with the LARGEST alignment first, members of equal alignment
+        // in written order, each on its natural boundary; the size rounded up to the largest
+        // alignment.  The ORDER of the bytes changes nothing a program sees — member `i` is
+        // still `t.i`, and the tuple prints in written order.  An index group keeps
+        // [`Self::group_member_offsets`]: its consumers read `color` at `left + 8`.
+        let mut order: Vec<usize> = (0..member_sizes_aligns.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(member_sizes_aligns[i].1));
+        let mut offsets = vec![0u16; member_sizes_aligns.len()];
+        let mut pos: u16 = 0;
+        let mut max_align: u16 = 1;
+        for i in order {
+            let (size, align) = member_sizes_aligns[i];
+            let align_u16 = u16::from(align.max(1));
+            max_align = max_align.max(align_u16);
+            pos = pos.next_multiple_of(align_u16);
+            offsets[i] = pos;
+            pos += size;
+        }
+        (offsets, pos.next_multiple_of(max_align))
+    }
+
+    /// Per-member offsets inside a group in WRITTEN order — the index group's layout; a
+    /// tuple's is [`Self::record_member_offsets`].
+    #[must_use]
     pub fn group_member_offsets(member_sizes_aligns: &[(u16, u8)]) -> Vec<u16> {
         let mut offsets = Vec::with_capacity(member_sizes_aligns.len());
         let mut pos: u16 = 0;
@@ -4938,6 +5176,11 @@ pub struct Definition {
     /// Related type for fields, and the return type for functions
     pub returned: Type,
     /// Whether the return type was declared `not null` (only meaningful for functions)
+    /// @PLN187 — where the DECLARED result type names a `type` alias (`-> Handle`,
+    /// `-> (Handle, u8)`); for an alias definition, where its right-hand side does.
+    /// `returned` holds the underlying type; this keeps what a caller in another file sees,
+    /// so a non-`pub` alias can stay abstract there (C140).
+    pub returned_fact: AliasFact,
     pub returned_not_null: bool,
     /// Rust code
     pub rust: String,
@@ -5062,6 +5305,12 @@ pub struct Definition {
     /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
     /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
     pub operator_form: bool,
+    /// `@FR-Const-Foreign` — the declared return type is `-> const T`: the producer hands out
+    /// data loft does not own (a mapped file, a library's adopted buffer), so the value is
+    /// value-const and a binding of the call's result takes `(Const-Value)` (@C139).
+    /// Persisted through the IR store (`DEF_RETURNED_CONST`), so a cached stdlib keeps it;
+    /// mirrored in `tools/ir_schema/ir.loft`.
+    pub returned_const: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -5132,7 +5381,7 @@ impl Definition {
     /// Declared in `default/` — the standard library.
     #[must_use]
     pub fn is_stdlib(&self) -> bool {
-        crate::file_access::is_stdlib_source(&self.position.file)
+        crate::file_access::is_stdlib_source(self.position.file.as_str())
     }
 
     #[must_use]
@@ -5143,7 +5392,7 @@ impl Definition {
         if !self.name.starts_with("n_") || self.name.starts_with("n___lambda_") {
             return false;
         }
-        if crate::file_access::is_stdlib_source(&self.position.file) {
+        if crate::file_access::is_stdlib_source(self.position.file.as_str()) {
             return false;
         }
         // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers.
@@ -5436,8 +5685,16 @@ impl Definition {
         vars: &crate::variables::Function,
         buf: Option<u16>,
         null_ref: u32,
+        self_nr: u32,
     ) -> bool {
         match v.unspan() {
+            // A call to ITSELF is fresh when every other site is (loft#1881): a terminating run
+            // ends at one of those, and the answer is the AND over all of them, so a body whose
+            // other sites borrow is refused on those.  Read as "not proven", a recursive generic
+            // copying its base case (`if i == 0 { y: T = v[0]; y } else { ev(v, i - 1) }`) left
+            // its result unlifted and leaked one record per inline call, where its concrete
+            // twin was lifted and freed (@FR-G-Mono).
+            Value::Call(nr, _) if *nr == self_nr => true,
             // Null is a value, not a store — it can neither leak nor dangle.  So is the null
             // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
             // `null` tail is spelled: read as "not proven", it refused every instance that
@@ -5452,7 +5709,7 @@ impl Definition {
             // unknown shape it refused a body that returns its fresh buffer, so a bounded
             // generic reaching that operator (`fn diff<T: Subtractable>(a, b) -> T { a - b }`)
             // left its result unlifted and leaked one record per inline call (loft#1820).
-            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref),
+            Value::Return(inner) => Self::site_is_fresh(inner, vars, buf, null_ref, self_nr),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -5460,14 +5717,14 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars, buf, null_ref)
-                    && Self::site_is_fresh(els, vars, buf, null_ref)
+                Self::site_is_fresh(then, vars, buf, null_ref, self_nr)
+                    && Self::site_is_fresh(els, vars, buf, null_ref, self_nr)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref, self_nr)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -5583,7 +5840,7 @@ impl Definition {
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
                 continue;
             }
             match site.unspan() {
@@ -5631,7 +5888,7 @@ impl Definition {
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref, u32::MAX) {
                 continue;
             }
             match site.unspan() {
@@ -5670,7 +5927,7 @@ impl Definition {
     }
 
     #[must_use]
-    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
+    pub fn monomorph_return_is_fresh(&self, null_ref: u32, self_nr: u32) -> bool {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let mut seen_return = false;
@@ -5681,7 +5938,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
+            if !Self::site_is_fresh(inner, vars, buf, null_ref, self_nr) {
                 all_fresh = false;
             }
         }
@@ -6068,6 +6325,18 @@ impl Clone for OpSetCache {
     }
 }
 
+/// The answer to [`Data::is_name_only`], kept beside the definition count that produced it —
+/// the [`OpSetCache`] shape, for its reasons: the table is still growing when the first
+/// question arrives, and a clone's definitions diverge, so a clone starts EMPTY.
+#[derive(Default)]
+struct NameOnlyCache(std::sync::Mutex<Option<(u32, std::sync::Arc<HashSet<u32>>)>>);
+
+impl Clone for NameOnlyCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
 /// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
 /// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
 /// was declared under.
@@ -6167,7 +6436,7 @@ pub struct Data {
     /// The file each source was parsed from, as the parser met it.  A definition written
     /// in a source's own file is never a private import there — adoption can leave a
     /// declaration under the `source` of the file that first NAMED it (@C98).
-    source_files: HashMap<u16, std::sync::Arc<str>>,
+    source_files: HashMap<u16, crate::lexer::FileName>,
     /// loft#788 — bare names that MORE THAN ONE import binds, and to different
     /// definitions: `(name, importing_source) → the losing def_nrs`.
     ///
@@ -6308,6 +6577,8 @@ pub struct Data {
     /// Lazy cache of the op-number sets the use/dead-store/ownership walks read
     /// (see [`crate::use_analysis::OpSets`] and [`OpSetCache`]).
     op_sets: OpSetCache,
+    /// @PLN187 — the name-only types ([`Self::is_name_only`]).
+    name_only: NameOnlyCache,
 }
 
 #[must_use]
@@ -6988,6 +7259,7 @@ impl Data {
             declared_embeds: Vec::new(),
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
+            name_only: NameOnlyCache::default(),
         }
     }
 
@@ -7111,6 +7383,7 @@ impl Data {
         // could in principle land back on its old value over a different table.  This
         // is the one place that happens, and dropping the cache here costs one rebuild.
         self.op_sets = OpSetCache::default();
+        self.name_only = NameOnlyCache::default();
         self.def_names.clear();
         // loft#788 — derived from the imports exactly as `def_names` is, so it
         // is rebuilt by the same replay. Keeping stale entries would refuse a
@@ -7463,10 +7736,12 @@ impl Data {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
             alias_d_nr: u32::MAX,
+            fact: AliasFact::Plain,
             assigned_lambda_d_nr: u32::MAX,
             links: Vec::new(),
             lexeme: false,
@@ -7509,7 +7784,7 @@ impl Data {
             bound_holder: false,
             name: name.to_string(),
             source: self.source,
-            position: position.clone(),
+            position: *position,
             def_type,
             parent: u32::MAX,
             first_child: u32::MAX,
@@ -7519,6 +7794,7 @@ impl Data {
             code: Value::Null,
             returned: Type::Unknown(rec),
             returned_not_null: false,
+            returned_fact: AliasFact::Plain,
             rust: String::new(),
             native: String::new(),
             cap: String::new(),
@@ -7526,7 +7802,7 @@ impl Data {
             known_type: u16::MAX,
             code_position: 0,
             code_length: 0,
-            variables: Function::new(name, &position.file),
+            variables: Function::new(name, position.file.as_str()),
             pub_visible: false,
             null_safe: false,
             op_priority: OP_NORMAL,
@@ -7542,6 +7818,7 @@ impl Data {
             instance_args: Vec::new(),
             builtin: false,
             operator_form: false,
+            returned_const: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,
@@ -8808,8 +9085,8 @@ impl Data {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
         if self.def(winner).name.starts_with("n_")
-            && crate::file_access::is_stdlib_source(&at.file)
-            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
+            && crate::file_access::is_stdlib_source(at.file.as_str())
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
         {
             format!(
                 "`{name}` is a standard-library function, and its name is reserved for it: a program cannot define its own `{name}` (the standard library's is at {at}); choose another name"
@@ -9564,7 +9841,7 @@ impl Data {
             // the first overload's pass-2 body then read *Unknown variable* for its own
             // parameter, and every program with three overloads lost its watcher
             // (measured, @PLN162 step 14).
-            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
             && o_nr != u32::MAX
             && self.def(o_nr).def_type == DefType::Dynamic
             && self.def(o_nr).source == self.source
@@ -9586,7 +9863,7 @@ impl Data {
         } else if d_nr == u32::MAX
             && generic_members
             && crate::keys::method_in_set_enabled()
-            && !crate::file_access::is_stdlib_source(&lexer.pos().file)
+            && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
             && (o_nr == u32::MAX
                 || (self.def(o_nr).def_type == DefType::Dynamic
                     && self.def(o_nr).source == self.source))
@@ -10494,7 +10771,7 @@ impl Data {
         if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
             return u32::MAX;
         }
-        let position = self.definitions[template as usize].position.clone();
+        let position = self.definitions[template as usize].position;
         let enum_mixed = match self.definitions[template as usize].returned.base() {
             Type::Enum(_, mixed, _) => Some(*mixed),
             _ => None,
@@ -10558,7 +10835,7 @@ impl Data {
             .children_of(template)
             .filter(|&c| self.def_type(c) == DefType::EnumValue)
             .collect();
-        let position = self.definitions[d as usize].position.clone();
+        let position = self.definitions[d as usize].position;
         for v in variants {
             let vname = self.definitions[v as usize].name.clone();
             let vd = self.add_def(&vname, &position, DefType::EnumValue);
@@ -10623,6 +10900,7 @@ impl Data {
         a.mutable = f.mutable;
         a.constant = f.constant;
         a.const_field = f.const_field;
+        a.pub_field = f.pub_field;
         a.value_const = f.value_const;
         a.init = f.init;
         a.nullable = f.nullable;
@@ -10950,7 +11228,7 @@ impl Data {
         if let Some(nr) = self.def_names.get(&name, struct_source) {
             return nr;
         }
-        let pos = lexer.pos().clone();
+        let pos = *lexer.pos();
         // Create + register the synth under the STRUCT's source (not the current parse source),
         // so `add_def`'s `(name, source)` registration + dual-definition guard match the lookup
         // key above, and a `rebuild_indices` (cache-load path) re-derives the SAME key from the
@@ -12659,7 +12937,30 @@ impl Data {
     /// above its declaration was refused where a `pub` one compiled (loft#1856).
     fn passes_on(&self, d_nr: u32) -> bool {
         let d = &self.definitions[d_nr as usize];
-        d.pub_visible || matches!(d.def_type, DefType::Unknown)
+        d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
+    }
+
+    /// @PLN187 (@C140, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+    /// (or a visible `pub` field) of its own file?  Outside that file it can be named, passed
+    /// and stored, never built — [`crate::api_surface::name_only_defs`] is the closure.
+    #[must_use]
+    pub fn is_name_only(&self, d_nr: u32) -> bool {
+        let n = self.definitions();
+        let mut cache = self
+            .name_only
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let set = match &*cache {
+            Some((at, set)) if *at == n => std::sync::Arc::clone(set),
+            _ => {
+                let set = std::sync::Arc::new(crate::api_surface::name_only_defs(self));
+                *cache = Some((n, std::sync::Arc::clone(&set)));
+                set
+            }
+        };
+        drop(cache);
+        set.contains(&d_nr)
     }
 
     /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
@@ -12730,14 +13031,12 @@ impl Data {
             && self
                 .source_files
                 .get(&source)
-                .is_none_or(|f| *self.definitions[def_nr as usize].position.file != **f)
+                .is_none_or(|f| self.definitions[def_nr as usize].position.file != *f)
     }
 
     /// Record the file `source` is parsed from (see `source_files`).
-    pub fn note_source_file(&mut self, source: u16, file: &std::sync::Arc<str>) {
-        self.source_files
-            .entry(source)
-            .or_insert_with(|| std::sync::Arc::clone(file));
+    pub fn note_source_file(&mut self, source: u16, file: crate::lexer::FileName) {
+        self.source_files.entry(source).or_insert(file);
     }
 
     /// Bind an imported `def_nr` at `key` in `into_source` — only where the key is free,
@@ -14048,7 +14347,7 @@ fn span_clone_and_eq_roundtrip() {
         line: 17,
         pos: 4,
     };
-    let v = Value::Span(Box::new((pos.clone(), Value::Int(7))));
+    let v = Value::Span(Box::new((pos, Value::Int(7))));
     let v2 = v.clone();
     assert_eq!(v, v2, "clone must be Eq");
     let dbg = format!("{v:?}");
@@ -14069,10 +14368,10 @@ fn span_unspan_strips_wrapper() {
     };
     let inner = Value::Int(42);
     // Single wrap.
-    let wrapped = Value::Span(Box::new((pos.clone(), inner.clone())));
+    let wrapped = Value::Span(Box::new((pos, inner.clone())));
     assert_eq!(wrapped.unspan(), &inner);
     // Doubly wrapped.
-    let double = Value::Span(Box::new((pos.clone(), wrapped.clone())));
+    let double = Value::Span(Box::new((pos, wrapped.clone())));
     assert_eq!(double.unspan(), &inner);
     // Non-Span passes through unchanged.
     assert_eq!(inner.unspan(), &inner);

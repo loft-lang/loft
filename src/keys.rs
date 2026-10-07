@@ -355,6 +355,9 @@ pub struct DbRef {
     pub pos: u32,
 }
 
+/// The `pos` bit that marks a null as already reported ([`DbRef::NULL_REPORTED`]).
+pub const REPORTED_BIT: u32 = 0x8000_0000;
+
 impl DbRef {
     /// The canonical null-reference sentinel (`store_nr == u16::MAX`).  Store
     /// allocation asserts `slot != u16::MAX`, so this is distinct from every
@@ -366,6 +369,27 @@ impl DbRef {
         rec: 0,
         pos: 0,
     };
+
+    /// A null whose absence is already ACCOUNTED for: the access that found the place absent
+    /// reported it (an out-of-range index, `@FR-H-Index`), or a store's `else` arm owns it
+    /// (`@FR-H-Write-Else`).  A write that lands nowhere through it says nothing more; a write
+    /// through any other null reports `write_dropped` (`@FR-E-Report`).  The mark is the top
+    /// bit of `pos`, a word a null never reads — every null test asks `rec` or `store_nr` —
+    /// and `pos + field` keeps the bit, so a field written under a reported element is
+    /// accounted for too.  No real record's position reaches it: a store is far below 2^31
+    /// words.
+    pub const NULL_REPORTED: DbRef = DbRef {
+        store_nr: u16::MAX,
+        rec: 0,
+        pos: REPORTED_BIT,
+    };
+
+    /// True for a write target that names no record and whose absence nothing has reported
+    /// yet — the one question a dropped write asks before it reports (`@FR-E-Report`).
+    #[must_use]
+    pub const fn absence_unreported(&self) -> bool {
+        self.rec == 0 && self.pos & REPORTED_BIT == 0
+    }
 
     /// True when this reference is the null sentinel (absent value).  The
     /// single home for the null test: every store accessor consults it before
@@ -492,6 +516,26 @@ pub fn uaf_any_enabled() -> bool {
 pub fn poison_enabled() -> bool {
     static POISON: OnceLock<bool> = OnceLock::new();
     *POISON.get_or_init(|| env_set("LOFT_POISON"))
+}
+
+/// `LOFT_POISON_HOST=windows` (@PLN184 Track W) — a loft PROGRAM runs as if on Windows, on
+/// Linux and macOS: its paths are read under Windows' rules and the file system answers by
+/// them (`file_access`'s emulated host).  Same family as `LOFT_POISON`: a run-mode switch that
+/// makes a defect invisible on a normal run show, real code in every build.  `None` when
+/// unset; an unknown value says so once and is off.  On Windows it changes nothing.
+#[must_use]
+pub fn poison_host() -> Option<crate::file_access::Flavor> {
+    static HOST: OnceLock<Option<crate::file_access::Flavor>> = OnceLock::new();
+    *HOST.get_or_init(|| match env_value("LOFT_POISON_HOST").as_deref() {
+        None | Some("" | "0") => None,
+        Some(v) if v.eq_ignore_ascii_case("windows") => Some(crate::file_access::Flavor::Windows),
+        Some(v) => {
+            crate::loft_eprintln!(
+                "loft: LOFT_POISON_HOST={v} is not a host loft emulates (windows); ignored"
+            );
+            None
+        }
+    })
 }
 
 /// `LOFT_COPY_DUMP=1` (@PLN90 phase 1) — print one line per executed deep STRUCTURE copy
@@ -1598,6 +1642,30 @@ pub fn trace_byte_copy() -> bool {
 pub fn rebind_own_buffer_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_OWN_BUFFER"))
+}
+
+/// `LOFT_NO_APPEND_TWIN=1` — `X += f(args)` builds f's result in a buffer of its own and
+/// copies it into X again (`@FR-R-AppendTwin` off): the first bisect step for a wrong or
+/// doubled vector after an append of a call result.
+pub fn append_twin_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APPEND_TWIN"))
+}
+
+/// `LOFT_NO_PUSH_RUN=1` — a straight-line run of byte appends pushes each through the
+/// runtime again (`@FR-R-PushFill`'s run clause off): the first bisect step for a wrong byte
+/// or length after `v += [a]; v += [b]; …`.
+pub fn push_run_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_RUN"))
+}
+
+/// `LOFT_NO_TYPED_READ=1` — every native `f#read` goes through the generic `OpReadFile`
+/// (`@FR-R-TypedRead` off): the first bisect step for a wrong value or a wrong `#next` out of
+/// a fixed-width integer read.
+pub fn typed_read_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TYPED_READ"))
 }
 
 /// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop

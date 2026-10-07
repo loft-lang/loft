@@ -84,7 +84,7 @@ pub fn active() -> bool {
 /// warning — never an error (the program itself is unaffected).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crate::data::Data) {
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Ok(content) = crate::file_access::read_to_string(path) else {
         eprintln!("live-reload: cannot read {path}; reload disabled");
         return;
     };
@@ -155,7 +155,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     // id the running program's `parse` did.
     let entry_source = (0..shadow.definitions())
         .map(|d| shadow.def(d))
-        .find(|def| &*def.position.file == path)
+        .find(|def| def.position.file == path)
         .map_or(crate::data::STD_SOURCE, |def| def.source);
     let mut files: Vec<WatchedFile> = vec![WatchedFile {
         path: path.to_string(),
@@ -175,7 +175,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         if files.iter().any(|w| *w.path == **f) {
             continue;
         }
-        let Ok(c) = std::fs::read_to_string(&**f) else {
+        let Ok(c) = crate::file_access::read_to_string(&**f) else {
             continue; // unreadable (virtual / moved) — not watchable
         };
         files.push(WatchedFile {
@@ -215,7 +215,7 @@ pub fn poll(state: &mut State) -> bool {
         host.last_check = Instant::now();
         let mut grew = false;
         for i in 0..host.files.len() {
-            let Ok(content) = std::fs::read_to_string(&host.files[i].path) else {
+            let Ok(content) = crate::file_access::read_to_string(&host.files[i].path) else {
                 continue; // transient (editor mid-save); next poll retries
             };
             if content == host.files[i].last_content {

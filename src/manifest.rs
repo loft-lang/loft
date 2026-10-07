@@ -358,7 +358,7 @@ impl Manifest {
 /// Returns `None` when the file does not exist or cannot be read.
 #[must_use]
 pub fn read_manifest(path: &str) -> Option<Manifest> {
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = crate::file_access::read_to_string(path).ok()?;
     let mut m = parse_manifest(&content, path);
     // @PLN146 F4 — an `[[embed]] source` is relative to the file that declares it,
     // and only the reader knows which file that was.  Recording it here rather than
@@ -1082,7 +1082,7 @@ fn inline_field<'a>(value: &'a str, field: &str) -> Option<&'a str> {
 /// Answers whether it wrote: `false` when `name` is already declared (in any form,
 /// including a path dependency) or the file cannot be read.
 pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = crate::file_access::read_to_string(path) else {
         return false;
     };
     let lines: Vec<&str> = text.lines().collect();
@@ -1122,7 +1122,7 @@ pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
     }
     let mut body = out.join("\n");
     body.push('\n');
-    std::fs::write(path, body).is_ok()
+    crate::file_access::write(path, body).is_ok()
 }
 
 /// Move an EXISTING `[dependencies]` declaration of `name` to `requirement` — the half of
@@ -1131,7 +1131,7 @@ pub fn record_dependency(path: &str, name: &str, requirement: &str) -> bool {
 /// Answers whether the file changed: `false` when `name` is not declared, or is declared in a
 /// shape with no version to move (a path dependency), so the caller can say what it did.
 pub fn replace_dependency(path: &str, name: &str, requirement: &str) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = crate::file_access::read_to_string(path) else {
         return false;
     };
     let mut in_deps = false;
@@ -1174,7 +1174,7 @@ pub fn replace_dependency(path: &str, name: &str, requirement: &str) -> bool {
     }
     let mut body = out.join("\n");
     body.push('\n');
-    std::fs::write(path, body).is_ok()
+    crate::file_access::write(path, body).is_ok()
 }
 
 /// `{ version = "…", … }` with its `version` value replaced, or `None` when it has none.
@@ -1203,7 +1203,7 @@ mod tests {
             name,
             std::process::id()
         ));
-        let mut f = std::fs::File::create(&path).unwrap();
+        let mut f = crate::file_access::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         path
     }
@@ -1807,7 +1807,7 @@ n_demo_fn_b = "demo_fn_b"
             std::process::id(),
             tag.len()
         ));
-        std::fs::write(&p, body).expect("write manifest");
+        crate::file_access::write(&p, body).expect("write manifest");
         p
     }
 
@@ -1817,12 +1817,12 @@ n_demo_fn_b = "demo_fn_b"
     fn record_dependency_opens_a_section_and_keeps_the_rest() {
         let p = temp_manifest("new", "[package]\nname = \"app\"\nversion = \"0.1.0\"\n");
         assert!(record_dependency(p.to_str().unwrap(), "cbor", "^0.1.3"));
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = crate::file_access::read_to_string(&p).unwrap();
         assert!(text.contains("[dependencies]"), "{text}");
         assert!(text.contains("cbor = \"^0.1.3\""), "{text}");
         // Everything that was there is still there, unreordered.
         assert!(text.starts_with("[package]\nname = \"app\""), "{text}");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     /// Into an existing section, at the end of its declarations — a hand-written manifest
@@ -1834,7 +1834,7 @@ n_demo_fn_b = "demo_fn_b"
             "[package]\nname = \"app\"\n\n[dependencies]\n# what we depend on\n             glb = \"^0.1\"\n\n[library]\nentry = \"src/app.loft\"\n",
         );
         assert!(record_dependency(p.to_str().unwrap(), "cbor", "0.1.2"));
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = crate::file_access::read_to_string(&p).unwrap();
         let deps_at = text.find("[dependencies]").expect("section");
         let lib_at = text.find("[library]").expect("library section");
         let cbor_at = text.find("cbor = \"0.1.2\"").expect("the new entry");
@@ -1844,7 +1844,7 @@ n_demo_fn_b = "demo_fn_b"
         );
         assert!(text.contains("# what we depend on"), "comment kept\n{text}");
         assert!(text.contains("glb = \"^0.1\""), "sibling kept\n{text}");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     /// Idempotent, and blind to the shape a declaration takes: a path dependency IS a
@@ -1856,9 +1856,9 @@ n_demo_fn_b = "demo_fn_b"
             "[package]\nname = \"app\"\n\n[dependencies]\ncbor = { path = \"../cbor\" }\n",
         );
         assert!(!record_dependency(p.to_str().unwrap(), "cbor", "^0.1.3"));
-        let text = std::fs::read_to_string(&p).unwrap();
+        let text = crate::file_access::read_to_string(&p).unwrap();
         assert!(text.contains("path = \"../cbor\""), "{text}");
         assert!(!text.contains("^0.1.3"), "{text}");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 }

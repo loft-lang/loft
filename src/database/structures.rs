@@ -2235,7 +2235,7 @@ impl Stores {
                 let crate::json::Parsed::Array(items) = parsed else {
                     return Err(mismatch());
                 };
-                // @P357: the collection field is WRITTEN empty before any item is
+                // The collection field is WRITTEN empty before any item is
                 // appended, whatever the item count.  Nothing else initialises it: the
                 // first `record_new` READS the field's handle to find the vector, so a
                 // field holding the claim's bytes — an element the loop above just

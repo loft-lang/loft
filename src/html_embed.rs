@@ -141,7 +141,7 @@ pub fn validate(decls: &[EmbedDecl]) -> Result<Vec<PageFile>, String> {
         } else {
             Path::new(&d.root).join(&rel)
         };
-        if !source.is_file() {
+        if !crate::file_access::is_file(&source) {
             errors.push(format!(
                 "loft.toml: [[embed]] `{declared}` has no file at `{}`.\n  \
                  The page carries the bytes themselves, so they have to exist when it \
@@ -192,12 +192,9 @@ pub fn base_fs_js(files: &[PageFile]) -> Result<String, String> {
     use std::fmt::Write as _;
     let mut entries = String::new();
     for f in files {
-        let bytes = std::fs::read(&f.source).map_err(|e| {
-            format!(
-                "loft: cannot embed '{}' into the page: {e}",
-                f.source.display()
-            )
-        })?;
+        // The error names the file.
+        let bytes = crate::file_access::read(&f.source)
+            .map_err(|e| format!("loft: cannot embed into the page: {e}"))?;
         if !entries.is_empty() {
             entries.push(',');
         }
@@ -231,9 +228,9 @@ mod tests {
     /// A temp dir holding one file, so the existence check has something to find.
     fn fixture(name: &str, body: &[u8]) -> (PathBuf, String) {
         let dir = std::env::temp_dir().join(format!("loft_embed_unit_{name}"));
-        let _ = std::fs::create_dir_all(dir.join("assets"));
+        let _ = crate::file_access::create_dir_all(dir.join("assets"));
         let rel = format!("assets/{name}.pack");
-        std::fs::write(dir.join(&rel), body).expect("write fixture");
+        crate::file_access::write(dir.join(&rel), body).expect("write fixture");
         (dir.clone(), rel)
     }
 
@@ -289,7 +286,7 @@ mod tests {
         let (root, rel) = fixture("dup", b"x");
         let r = root.to_string_lossy().to_string();
         let other = "assets/dup2.pack";
-        std::fs::write(root.join(other), b"y").expect("write second");
+        crate::file_access::write(root.join(other), b"y").expect("write second");
         // Two declarations that AGREE are one file — an app and a library it uses may
         // both name the pack they read.
         let twice = vec![decl(&rel, None, &r), decl(&rel, None, &r)];

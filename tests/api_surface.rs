@@ -6,7 +6,7 @@
 //! signature is SEALED, not dropped) and the exclusions (a private / unreachable non-`pub`
 //! type and a non-`pub` fn are not in the surface).
 
-use std::process::Command;
+use loft::file_access as fa;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
@@ -17,15 +17,15 @@ fn api_surface(src: &str) -> String {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let file = dir.join("lib.loft");
-    std::fs::write(&file, src).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&file, src).unwrap();
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg(&file)
         .output()
         .expect("run loft api-surface");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         out.status.success(),
         "api-surface exited non-zero: {}",
@@ -41,18 +41,18 @@ fn api_diff_cli(base: &str, new: &str, json: bool) -> (String, i32) {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let fb = dir.join("base.loft");
     let fn_ = dir.join("new.loft");
-    std::fs::write(&fb, base).unwrap();
-    std::fs::write(&fn_, new).unwrap();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    fa::write(&fb, base).unwrap();
+    fa::write(&fn_, new).unwrap();
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("api-surface").arg("--diff").arg(&fb).arg(&fn_);
     if json {
         cmd.arg("--json");
     }
     let out = cmd.output().expect("run loft api-surface --diff");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         out.status.code().unwrap_or(-1),
@@ -115,13 +115,13 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let released_f = dir.join("released.loft");
     let baseline_f = dir.join("lib.api-baseline");
     let current_f = dir.join("current.loft");
-    std::fs::write(&released_f, released).unwrap();
-    std::fs::write(&current_f, current).unwrap();
-    let emit = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&released_f, released).unwrap();
+    fa::write(&current_f, current).unwrap();
+    let emit = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg(&released_f)
         .arg("--emit-baseline")
@@ -132,15 +132,15 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
         "emit-baseline failed: {}",
         String::from_utf8_lossy(&emit.stderr)
     );
-    std::fs::write(&baseline_f, &emit.stdout).unwrap();
-    let chk = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&baseline_f, &emit.stdout).unwrap();
+    let chk = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg("--check")
         .arg(&baseline_f)
         .arg(&current_f)
         .output()
         .expect("check");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         String::from_utf8_lossy(&chk.stdout).into_owned(),
         chk.status.code().unwrap_or(-1),
@@ -150,9 +150,9 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
 #[test]
 fn surface_membership_and_tiers() {
     let s = api_surface(
-        "struct Widget { x: integer }\n\
-         struct Hidden { z: integer }\n\
-         pub struct Public { v: integer }\n\
+        "struct Widget { pub x: integer }\n\
+         struct Hidden { pub z: integer }\n\
+         pub struct Public { pub v: integer }\n\
          pub fn make() -> Widget { Widget { x: 5 } }\n\
          pub fn plain(a: integer) -> integer { a + 1 }\n\
          fn helper() -> Hidden { Hidden { z: 0 } }\n",
@@ -176,11 +176,11 @@ fn surface_membership_and_tiers() {
 
 #[test]
 fn closure_is_transitive() {
-    // `build` returns `Outer` (sealed); `Outer` has a field of non-`pub` `Inner` → `Inner`
-    // is sealed too. Proves the closure follows struct field types, transitively.
+    // `build` returns `Outer` (sealed); `Outer` has a `pub` field of non-`pub` `Inner` → `Inner`
+    // is sealed too. Proves the closure follows `pub` struct field types, transitively.
     let s = api_surface(
-        "struct Inner { n: integer }\n\
-         struct Outer { i: Inner }\n\
+        "struct Inner { pub n: integer }\n\
+         struct Outer { pub i: Inner }\n\
          pub fn build() -> Outer { Outer { i: Inner { n: 1 } } }\n",
     );
     assert!(s.contains("build · fn · public"), "build missing:\n{s}");
@@ -198,9 +198,9 @@ fn closure_is_transitive() {
 fn signatures_over_every_kind() {
     // Commit 2 — resolved signatures attached, in the clean user-facing type spelling.
     let s = api_surface(
-        "struct Widget { x: integer, tag: text }\n\
-         enum Shape { Circle { r: integer }, Square { side: integer }, Point }\n\
-         pub struct Public { v: integer }\n\
+        "struct Widget { pub x: integer, pub tag: text }\n\
+         enum Shape { Circle { pub r: integer }, Square { pub side: integer }, Point }\n\
+         pub struct Public { pub v: integer }\n\
          pub fn make(n: integer, label: text) -> Widget { Widget { x: n, tag: label } }\n\
          pub fn maybe(a: integer) -> Widget? { if a > 0 { Widget { x: a, tag: \"\" } } else { null } }\n\
          pub fn area(s: Shape) -> integer { 0 }\n",
@@ -251,29 +251,31 @@ fn determinism_corpus() {
 
     // --- invariances: a cosmetic edit is NOT a diff ---
     same(
-        "pub fn f() -> integer { 1 }\nstruct S { a: integer }\npub fn g() -> S { S{a:1} }\n",
-        "struct S { a: integer }\npub fn g() -> S { S{a:1} }\npub fn f() -> integer { 1 }\n",
+        "pub fn f() -> integer { 1 }\nstruct S { pub a: integer }\npub fn g() -> S { S{a:1} }\n",
+        "struct S { pub a: integer }\npub fn g() -> S { S{a:1} }\npub fn f() -> integer { 1 }\n",
         "reordered top-level defs",
     );
     same(
-        "pub struct W { x: integer, tag: text }\n",
-        "pub struct W { tag: text, x: integer }\n",
+        "pub struct W { pub x: integer, pub tag: text }\n",
+        "pub struct W { pub tag: text, pub x: integer }\n",
         "reordered struct fields (named construction → not API)",
     );
     same(
-        "pub enum E { A { p: integer, q: text }, B }\n",
-        "pub enum E { B, A { q: text, p: integer } }\n",
+        "pub enum E { A { pub p: integer, pub q: text }, B }\n",
+        "pub enum E { B, A { pub q: text, pub p: integer } }\n",
         "reordered enum variants + variant fields",
     );
     same(
-        "pub struct W{x:integer}\n",
-        "pub struct W {  x : integer  }\n",
+        "pub struct W{pub x:integer}\n",
+        "pub struct W {  pub x : integer  }\n",
         "whitespace / formatting",
     );
-    same(
+    // A non-`pub` alias a `pub` signature names is ABSTRACT outside its file (C140): a caller
+    // of the first `f` cannot add to its result, so the two surfaces are not the same API.
+    differ(
         "type Score = integer;\npub fn f() -> Score { 1 }\n",
         "pub fn f() -> integer { 1 }\n",
-        "a transparent alias vs its expansion",
+        "an abstract alias vs its expansion",
     );
 
     // --- real changes MUST differ (positive controls — no vacuous determinism) ---
@@ -288,13 +290,13 @@ fn determinism_corpus() {
         "fn param REORDER (positional — a real API change, must NOT be canonicalised away)",
     );
     differ(
-        "pub struct W { x: integer }\n",
-        "pub struct W { x: text }\n",
+        "pub struct W { pub x: integer }\n",
+        "pub struct W { pub x: text }\n",
         "field type change",
     );
     differ(
-        "pub struct W { x: integer }\n",
-        "pub struct W { x: integer, y: text }\n",
+        "pub struct W { pub x: integer }\n",
+        "pub struct W { pub x: integer, pub y: text }\n",
         "added field",
     );
 }
@@ -349,9 +351,9 @@ fn diff_cli_json() {
 }
 
 // Commit 5 — the @PLN97 LAYOUT axis: a second verdict beside the API axis.
-const POINT_V1: &str = "pub struct Point { x: integer, y: integer }\n\
+const POINT_V1: &str = "pub struct Point { pub x: integer, pub y: integer }\n\
                         pub fn make() -> Point { Point{x:1,y:2} }\n";
-const POINT_REORDERED: &str = "pub struct Point { y: integer, x: integer }\n\
+const POINT_REORDERED: &str = "pub struct Point { pub y: integer, pub x: integer }\n\
                                pub fn make() -> Point { Point{x:1,y:2} }\n";
 
 #[test]
@@ -394,7 +396,7 @@ fn pr_check_baseline_round_trip() {
     // Commit 7 — the deliverable. Emit a baseline of the released source, then check current
     // against it: a drop-in stays green (exit 0); an injected API break OR layout reshape reds
     // (exit 1) — the positive control per axis, no vacuous green.
-    let released = "pub struct Point { x: integer, y: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n";
+    let released = "pub struct Point { pub x: integer, pub y: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n";
 
     // drop-in: add a fn
     let (out, code) = emit_and_check(
@@ -410,7 +412,7 @@ fn pr_check_baseline_round_trip() {
     // injected API break: drop a param
     let (out, code) = emit_and_check(
         released,
-        "pub struct Point { x: integer, y: integer }\npub fn make() -> Point { Point{x:0,y:0} }\n",
+        "pub struct Point { pub x: integer, pub y: integer }\npub fn make() -> Point { Point{x:0,y:0} }\n",
     );
     assert_eq!(code, 1, "an API break reds:\n{out}");
     assert!(
@@ -421,7 +423,7 @@ fn pr_check_baseline_round_trip() {
     // injected layout reshape: reorder fields (an API drop-in but a data break)
     let (out, code) = emit_and_check(
         released,
-        "pub struct Point { y: integer, x: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n",
+        "pub struct Point { pub y: integer, pub x: integer }\npub fn make(a: integer) -> Point { Point{x:a,y:0} }\n",
     );
     assert_eq!(code, 1, "a layout reshape reds:\n{out}");
     assert!(
@@ -436,7 +438,7 @@ fn committed_dogfood_baseline_is_a_drop_in() {
     // api-compat`'s green case. Catches a `lib.loft` change that forgot to regenerate the
     // baseline, and a loft change that reshapes its layout.
     let root = env!("CARGO_MANIFEST_DIR");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg("--check")
         .arg(format!("{root}/tests/fixtures/api_compat/lib.api-baseline"))
@@ -493,8 +495,8 @@ fn a_trailing_defaulted_parameter_is_additive_and_nothing_else_is() {
 
     // A receiver does not change the rule.
     let (out, code) = api_diff_cli(
-        "pub struct S { n: integer }\npub fn m(self: S, a: integer) -> integer { a }\n",
-        "pub struct S { n: integer }\npub fn m(self: S, a: integer, b: boolean = false) -> integer { a }\n",
+        "pub struct S { pub n: integer }\npub fn m(self: S, a: integer) -> integer { a }\n",
+        "pub struct S { pub n: integer }\npub fn m(self: S, a: integer, b: boolean = false) -> integer { a }\n",
         false,
     );
     assert_eq!(code, 0, "a method's trailing default is a drop-in:\n{out}");
@@ -543,12 +545,12 @@ fn a_trailing_defaulted_parameter_is_additive_and_nothing_else_is() {
 #[test]
 fn a_generic_library_lists_its_templates_not_its_instances() {
     let out = api_surface(
-        "pub struct Grid<T> { cells: vector<T>, w: integer }\n\
+        "pub struct Grid<T> { pub cells: vector<T>, pub w: integer }\n\
          pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }\n\
          pub fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }\n\
-         pub enum Slot<T> { Full { v: T }, Hole }\n\
+         pub enum Slot<T> { Full { pub v: T }, Hole }\n\
          pub fn fulls(v: vector<Slot<integer>>) -> integer { len(v) }\n\
-         pub struct Pair<K, V> { k: K, v: V }\n\
+         pub struct Pair<K, V> { pub k: K, pub v: V }\n\
          pub fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }\n",
     );
     assert_eq!(
@@ -569,7 +571,7 @@ fn a_generic_library_lists_its_templates_not_its_instances() {
 #[test]
 fn a_vector_parameter_lists_no_wrapper_struct() {
     let out = api_surface(
-        "pub struct Mine { n: integer }\npub fn total(v: vector<Mine>) -> integer { len(v) }\n",
+        "pub struct Mine { pub n: integer }\npub fn total(v: vector<Mine>) -> integer { len(v) }\n",
     );
     assert!(!out.contains("main_vector"), "{out}");
     assert!(
@@ -583,13 +585,13 @@ fn a_vector_parameter_lists_no_wrapper_struct() {
 /// naming the type).
 #[test]
 fn a_generic_librarys_baseline_round_trips() {
-    let lib = "pub struct Grid<T> { cells: vector<T>, w: integer }\n\
+    let lib = "pub struct Grid<T> { pub cells: vector<T>, pub w: integer }\n\
                pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }\n";
     let (out, code) = emit_and_check(lib, lib);
     assert_eq!(code, 0, "an unchanged generic library checks clean:\n{out}");
     let (out, code) = emit_and_check(
         lib,
-        "pub struct Grid<T, U> { cells: vector<T>, w: integer, u: U }\n",
+        "pub struct Grid<T, U> { pub cells: vector<T>, pub w: integer, pub u: U }\n",
     );
     assert_ne!(code, 0, "a second type variable is a break:\n{out}");
 }

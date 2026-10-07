@@ -18,6 +18,9 @@
 // the seam a reproducible build needs; the timestamp is still right for a
 // casual one.
 
+// @PLN184 A7 exemption: build.rs runs before the crate it would call exists.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 fn main() {
     // @PLN184 — Windows gives a program's main thread 1 MiB of stack where Linux gives 8 MiB,
     // so a parse or a recursion that runs on Linux overflowed on Windows (the frame-headroom

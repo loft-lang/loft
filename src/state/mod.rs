@@ -4028,13 +4028,15 @@ impl State {
         line: u32,
         data: &crate::data::Data,
     ) -> Option<u32> {
-        let want = std::path::Path::new(file).file_name()?;
+        let want = crate::file_access::file_name(file)?;
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if std::path::Path::new(&*def.position.file).file_name() != Some(want) {
+            if crate::file_access::file_name(def.position.file.as_str()).as_deref()
+                != Some(want.as_str())
+            {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -4050,14 +4052,15 @@ impl State {
     /// `line_numbers` table, scoped to the user file's function defs.
     #[must_use]
     pub fn breakable_lines_in_file(&self, file: &str, data: &crate::data::Data) -> Vec<u32> {
-        let Some(want) = std::path::Path::new(file).file_name() else {
+        let Some(want) = crate::file_access::file_name(file) else {
             return Vec::new();
         };
         let mut ls: Vec<u32> = Vec::new();
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || std::path::Path::new(&*def.position.file).file_name() != Some(want)
+                || crate::file_access::file_name(def.position.file.as_str()).as_deref()
+                    != Some(want.as_str())
             {
                 continue;
             }
@@ -6685,8 +6688,34 @@ impl State {
     }
 
     pub fn raise(&mut self, kind: crate::runtime_error::RuntimeErrorKind) {
-        let position = self.source_loc_for(self.code_pos).cloned();
+        let position = self.source_loc_for(self.code_pos).copied();
         self.raise_at(kind, position);
+    }
+
+    /// Where a recoverable fault stands, for its log line.  `code_pos` is already past the
+    /// raising op, which for a statement's LAST op — a setter's dropped write
+    /// (`@FR-E-Report`) — is the first byte of the NEXT statement, so a span looked up at it
+    /// names the line below.  A span that contains the op's own last byte is exact; without
+    /// one (an assignment carries no span) the statement's line marker before `code_pos`
+    /// names the line, in the running function's file.
+    fn recoverable_position(&self) -> Option<Position> {
+        let at = self.code_pos.saturating_sub(1);
+        if let Some(p) = self.source_loc_for(at)
+            && p.line != 0
+        {
+            return Some(*p);
+        }
+        let line = self
+            .line_numbers
+            .range(..self.code_pos)
+            .next_back()
+            .map(|(_, &l)| l)?;
+        let frame = self.running_frame_declaration()?;
+        Some(Position {
+            file: frame.file,
+            line,
+            pos: 1,
+        })
     }
 
     /// Where the innermost frame on the call stack was declared, at column 1 — the
@@ -6703,7 +6732,7 @@ impl State {
         let frame = self.call_stack.last()?;
         let declared = &data.def(frame.d_nr).position;
         Some(Position {
-            file: declared.file.clone(),
+            file: declared.file,
             line: declared.line,
             pos: 1,
         })
@@ -6798,7 +6827,7 @@ impl State {
             self.raise(kind);
             return;
         }
-        let position = self.source_loc_for(self.code_pos).cloned();
+        let position = self.recoverable_position();
         if let Some(logger) = &self.database.logger
             && let Ok(mut lg) = logger.lock()
         {
@@ -6897,15 +6926,16 @@ impl State {
             // spelling of absence (`DbRef::or_null`, @FR-L-Null).  Every typed reader
             // tests `rec == 0` before it resolves a store, so the log-and-continue path
             // reads the typed null off it exactly as it read the old container-store
-            // sentinel.
-            return crate::keys::DbRef::NULL;
+            // sentinel.  It is the REPORTED null (`DbRef::NULL_REPORTED`): this line was the
+            // report, so a write that lands nowhere through it adds none.
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         if normalized >= i64::from(len) {
             self.raise_recoverable(crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds {
                 idx: index,
                 len,
             });
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         crate::vector::get_vector(db, size, index, &self.database.allocations)
     }
@@ -7963,6 +7993,7 @@ impl State {
         leaked
             .into_iter()
             .map(|((kt, tn), n)| format!("kt={kt} {tn}×{n}"))
+            .chain(self.database.open_file_handles_entry())
             .collect()
     }
 

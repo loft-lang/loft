@@ -6,6 +6,7 @@ use super::{
     ToString, Type, Value, complete_definition, diagnostic_format, is_camel, is_lower, is_op,
     is_upper, rename, v_block, v_if,
 };
+use crate::data::AliasFact;
 
 /// What a synthesised dispatcher (@F20) hands to the arm it calls.
 ///
@@ -199,12 +200,12 @@ impl Parser {
         // from the cursor AFTER `null` rather than assumed to be eight characters.  A span
         // that crosses a line is left alone: the edit model is one line, and a `not\nnull` is
         // rare enough that prose is the honest answer there.
-        let start = self.lexer.peek_pos().clone();
+        let start = *self.lexer.peek_pos();
         if self.lexer.has_keyword("not") {
             // The start of `null` — taken before it is consumed, because `pos()` afterwards is
             // the scan cursor at the end of the token AFTER it (already past the closing `}`),
             // and a span measured to there deletes the rest of the declaration.
-            let at_null = self.lexer.peek_pos().clone();
+            let at_null = *self.lexer.peek_pos();
             self.lexer.token("null");
             if !self.first_pass {
                 diagnostic!(
@@ -352,7 +353,7 @@ impl Parser {
             if d.def_type != DefType::Function
                 || d.source != source
                 || d.synthetic.is_some()
-                || crate::file_access::is_stdlib_source(&d.position.file)
+                || crate::file_access::is_stdlib_source(d.position.file.as_str())
             {
                 continue;
             }
@@ -442,7 +443,7 @@ impl Parser {
                         // the dispatcher has nothing to pass for it, so there is no dispatcher
                         // to build.  Say so where the enum is declared rather than leaving the
                         // call site to fail as a field read (loft#1430).
-                        let at = self.data.def(*nr as u32).position().clone();
+                        let at = *self.data.def(*nr as u32).position();
                         diagnostic_at!(
                             self.lexer,
                             &at,
@@ -524,7 +525,7 @@ impl Parser {
         }
         self.data.mark_synthetic(fn_nr, "enum_dispatcher");
         self.context = fn_nr;
-        self.vars = Function::new(&name, &self.data.def(from_nr).position().file);
+        self.vars = Function::new(&name, self.data.def(from_nr).position().file.as_str());
         self.data
             .set_returned(fn_nr, self.data.def(from_nr).returned().clone());
         for a in &args {
@@ -736,7 +737,7 @@ impl Parser {
                 call_types.extend_from_slice(&forwarded.hidden_types);
             }
             let mut code = Value::Null;
-            let name_pos = self.lexer.pos().clone();
+            let name_pos = *self.lexer.pos();
             self.call(
                 &mut code,
                 u16::MAX,
@@ -823,7 +824,7 @@ impl Parser {
                         self.data.definitions[existing as usize].returned,
                         Type::Unknown(_)
                     ) {
-                    self.data.definitions[existing as usize].position = self.lexer.pos().clone();
+                    self.data.definitions[existing as usize].position = *self.lexer.pos();
                     self.data.definitions[existing as usize].def_type = DefType::EnumValue;
                     self.data.note_stub_adopted(existing);
                     existing
@@ -897,9 +898,11 @@ impl Parser {
                     } else {
                         false
                     };
+                    // @PLN187 (C140) — a variant field is private to its file, as a struct's is.
+                    let is_pub = self.lexer.has_token("pub");
                     // @PLN40 — a variant field may also be `const` (write-once).
                     let is_const = self.lexer.has_keyword("const");
-                    let field_pos = self.lexer.peek_pos().clone();
+                    let field_pos = *self.lexer.peek_pos();
                     let Some(a_name) = self.lexer.has_identifier() else {
                         diagnostic!(self.lexer, Level::Error, "Expect attribute");
                         return true;
@@ -920,6 +923,9 @@ impl Parser {
                         if idx != usize::MAX {
                             self.data.definitions[v_nr as usize].attributes[idx].lexeme = true;
                         }
+                    }
+                    if is_pub {
+                        self.mark_pub_field(v_nr, &a_name);
                     }
                     if is_const {
                         self.mark_const_field(v_nr, &a_name);
@@ -1110,14 +1116,14 @@ impl Parser {
             d_nr = self.data.add_def(&type_name, pos, DefType::Enum);
         } else if self.first_pass && self.data.def_type(d_nr) == DefType::Unknown {
             self.data.definitions[d_nr as usize].def_type = DefType::Enum;
-            self.data.definitions[d_nr as usize].position = self.lexer.pos().clone();
+            self.data.definitions[d_nr as usize].position = *self.lexer.pos();
             self.data.note_stub_adopted(d_nr);
         } else if self.first_pass {
             // a name that already exists must not be reused — that
             // would overwrite the existing definition's type and crash in
             // `set_returned` below.  Emit a clear diagnostic naming the
             // existing definition's location.
-            let prev_pos = self.data.def(d_nr).position().clone();
+            let prev_pos = *self.data.def(d_nr).position();
             let prev_kind = format!("{:?}", self.data.def(d_nr).def_type()).to_lowercase();
             diagnostic!(
                 self.lexer,
@@ -1203,12 +1209,12 @@ impl Parser {
                     Type::Unknown(_)
                 )
             {
-                self.data.definitions[existing as usize].position = self.lexer.pos().clone();
+                self.data.definitions[existing as usize].position = *self.lexer.pos();
                 self.data.definitions[existing as usize].def_type = DefType::Type;
                 self.data.note_stub_adopted(existing);
                 adopted = existing;
             } else if existing != u32::MAX {
-                let prev_pos = self.data.def(existing).position().clone();
+                let prev_pos = *self.data.def(existing).position();
                 let prev_kind = format!("{:?}", self.data.def(existing).def_type()).to_lowercase();
                 diagnostic!(
                     self.lexer,
@@ -1229,9 +1235,16 @@ impl Parser {
         };
         self.limit_refused = false;
         if self.lexer.has_token("=") {
+            self.type_fact = AliasFact::Plain;
             if let Some(tp) = self.parse_type_full(d_nr, false) {
                 if self.first_pass && !conflict && d_nr != u32::MAX {
                     self.data.set_returned(d_nr, tp);
+                }
+                // @PLN187 — where the right-hand side names another alias: a `pub type`
+                // stays transparent, and what it names keeps its own abstraction.
+                if !conflict && d_nr != u32::MAX {
+                    self.data.definitions[d_nr as usize].returned_fact =
+                        std::mem::take(&mut self.type_fact);
                 }
             } else if !self.first_pass {
                 diagnostic!(self.lexer, Level::Error, "Expected a type after =");
@@ -1403,7 +1416,7 @@ impl Parser {
                 return;
             }
             let name = format!("__const_{}", self.data.def(d_nr).name());
-            let pos = self.data.def(d_nr).position().clone();
+            let pos = *self.data.def(d_nr).position();
             let c_nr = self.data.add_def(&name, &pos, DefType::Constant);
             self.data.set_returned(c_nr, tp);
             self.data.definitions[c_nr as usize].code = literal;
@@ -1478,7 +1491,7 @@ impl Parser {
         }
         let returned = self.data.def(d_nr).returned().clone();
         let code = self.data.def(d_nr).code().clone();
-        let pos = self.data.def(d_nr).position().clone();
+        let pos = *self.data.def(d_nr).position();
         // The name as a reader writes it: `Doc.buffer` for the method, `pieces` for the global.
         let shown = crate::api_surface::classify(&self.data, d_nr)
             .map_or_else(|| self.data.def(d_nr).name().to_string(), |(_, name)| name);
@@ -2030,7 +2043,7 @@ impl Parser {
                     self.data.set_returned(c_nr, tp);
                     self.data.definitions[c_nr as usize].code = val;
                 } else {
-                    let prev_pos = self.data.def(existing).position().clone();
+                    let prev_pos = *self.data.def(existing).position();
                     let prev_kind =
                         format!("{:?}", self.data.def(existing).def_type()).to_lowercase();
                     diagnostic!(
@@ -2149,7 +2162,7 @@ impl Parser {
         }
         .filter(|d| {
             self.default
-                || !crate::file_access::is_stdlib_source(&self.data.def(*d).position().file)
+                || !crate::file_access::is_stdlib_source(self.data.def(*d).position().file.as_str())
         });
         let Some(own) = own else {
             diagnostic!(
@@ -2584,7 +2597,7 @@ impl Parser {
             return out;
         }
         loop {
-            let at = self.lexer.peek_pos().clone();
+            let at = *self.lexer.peek_pos();
             let Some(tv) = self.lexer.has_identifier() else {
                 if !self.first_pass {
                     diagnostic!(
@@ -2675,7 +2688,7 @@ impl Parser {
         if !self.lexer.peek_token("<") {
             return;
         }
-        let at = self.lexer.peek_pos().clone();
+        let at = *self.lexer.peek_pos();
         let header = self.parse_type_var_header();
         // The declaration's fields may name what its refused header declared: that is this
         // refusal's to report, not `D-Scope`'s a second time.
@@ -2815,7 +2828,7 @@ impl Parser {
         if !self.default && fn_name.starts_with("to_") && fn_name != "to_text" {
             self.data.user_operator_conversions = true;
         }
-        self.vars = Function::new(&fn_name, &self.lexer.pos().file);
+        self.vars = Function::new(&fn_name, self.lexer.pos().file.as_str());
         // @PLN110 3a — var numbers are per-function, so a stale `len(X)` binding from
         // the previous body would attach to an unrelated local here.
         self.len_bound_locals.clear();
@@ -2992,6 +3005,15 @@ impl Parser {
             for (idx, token) in std::mem::take(&mut self.pending_param_locks) {
                 self.param_locks.insert((self.context, idx as u32), token);
             }
+            // @PLN187 — each parameter keeps where its declared type names an alias.  Drained,
+            // not taken: the buffer is reused by every function, not allocated per function.
+            if self.context != u32::MAX {
+                let attrs = &mut self.data.definitions[self.context as usize].attributes;
+                for (a, fact) in attrs.iter_mut().zip(self.pending_param_facts.drain(..)) {
+                    a.fact = fact;
+                }
+            }
+            self.pending_param_facts.clear();
         }
         // @PLN115 tail — now `self.context` (the fn's def_nr) is known, record each
         // parameter's DECLARATION occurrence: `Local{fn_def, var_nr}` at the signature
@@ -3016,10 +3038,10 @@ impl Parser {
         // path selector matching this def's source file (#631) — never from the
         // source, so a script cannot mark itself.  Re-derived on every pass
         // (def_sandbox is cleared at parse start).
-        let src_file = self.data.def(self.context).position().file.clone();
+        let src_file = self.data.def(self.context).position().file;
         if let Some(profile) = self
             .sandbox
-            .designation_for(&fn_name, &src_file)
+            .designation_for(&fn_name, src_file.as_str())
             .map(str::to_string)
         {
             self.def_sandbox.insert(self.context, profile);
@@ -3076,8 +3098,12 @@ impl Parser {
             }
         }
         let mut returned_not_null = false;
+        let mut returned_const = false;
         self.pending_forward_return = None;
+        self.type_fact = AliasFact::Plain;
         let mut result = if self.lexer.has_token("->") {
+            // `@FR-Const-Foreign` — `-> const T`: the value handed out is value-const (@C139).
+            returned_const = self.lexer.has_keyword("const");
             // Will be the correct def_nr on the second pass
             if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
                 if self.has_deprecated_not_null() {
@@ -3293,11 +3319,14 @@ impl Parser {
         if generic_return_promotable && needs_tuple_rewrite {
             result = self.boxed_tuple_return(result);
         }
+        let returned_fact = std::mem::take(&mut self.type_fact);
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
         if self.first_pass {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
+            self.data.definitions[self.context as usize].returned_fact = returned_fact;
+            self.data.definitions[self.context as usize].returned_const = returned_const;
             if let Some((stub, args)) = self.pending_forward_return.take() {
                 self.forward_generic_returns
                     .push((self.context, stub, args));
@@ -3359,6 +3388,8 @@ impl Parser {
                     }
                 }
             }
+            // @PLN187 — a parameter declared with an alias abstract here holds that alias.
+            self.seed_abstract_params();
             // @PLAN59 / H1 phase 1 — the unconditional heap-return buffer:
             // every BODY-carrying plain fn returning Reference / Vector /
             // struct-Enum gets its hidden `__retbuf` attribute + backing
@@ -3456,6 +3487,7 @@ impl Parser {
             }
             self.parse_code();
             self.literal_body_constant();
+            self.refuse_unmarked_foreign_return();
             // #314 — pass-1 sibling of the pass-2 flip above: now that
             // the whole body is parsed, `scalars_to_box` is final;
             // reject any mutated scalar that more than one closure
@@ -3584,7 +3616,7 @@ impl Parser {
         // read, so the annotation's own position is captured up front and every
         // message below points at it — a signature error that pointed at the
         // following `fn` would send the author to the wrong line.
-        let at = self.lexer.pos().clone();
+        let at = *self.lexer.pos();
         let Some(symbol) = self.lexer.has_cstring() else {
             diagnostic_at!(
                 self.lexer,
@@ -3657,7 +3689,7 @@ impl Parser {
                 // closing quote onto the next token, so a diagnostic at the
                 // current cursor would point at the NEXT declaration instead
                 // of the offending annotation.
-                let sym_pos = self.lexer.peek().position.clone();
+                let sym_pos = self.lexer.peek().position;
                 if let Some(sym) = self.lexer.has_cstring() {
                     // Explicit override — for the rare case where the native
                     // symbol differs from the loft fn name (e.g. a
@@ -3898,7 +3930,7 @@ impl Parser {
         // The whole body is parsed before either check runs, so the cursor has already
         // reached the NEXT declaration — reporting at it sends the reader to an unrelated
         // function that the message never mentions.  Point at the hook itself.
-        let at = def.position().clone();
+        let at = *def.position();
         if returns {
             diagnostic_at!(
                 self.lexer,
@@ -3924,6 +3956,7 @@ impl Parser {
         // @PLN86 §7.2 (F7) — collect this list's `…#default` parameter locks fresh; the
         // caller (`parse_function`) records them once the function's def_nr exists.
         self.pending_param_locks.clear();
+        self.pending_param_facts.clear();
         // @PLN115 tail — likewise collect each parameter's name position; the def_nr /
         // var_nr are not established until after this list, so the DECLARATION
         // occurrence is recorded in `parse_function` (param arg-index == var_nr).
@@ -3934,9 +3967,8 @@ impl Parser {
             }
             // Capture the parameter name's position before it is consumed (only when
             // recording — `Position` holds a `String`, so no clone on a normal compile).
-            let attr_pos = self
-                .record_resolutions
-                .then(|| self.lexer.peek_pos().clone());
+            let attr_pos = self.record_resolutions.then(|| *self.lexer.peek_pos());
+            self.type_fact = AliasFact::Plain;
             let Some(attr_name) = self.lexer.has_identifier() else {
                 diagnostic!(self.lexer, Level::Error, "Expect attribute");
                 return false;
@@ -3976,13 +4008,13 @@ impl Parser {
             let mut ref_pos = (0, 0);
             let mut const_pos = (0, 0);
             let typedef = if self.lexer.has_token(":") {
-                let at_ref = self.lexer.peek_pos().clone();
+                let at_ref = *self.lexer.peek_pos();
                 if self.lexer.has_token("&") {
                     reference = true;
                     ref_pos = (at_ref.line, at_ref.pos);
                 }
                 // Will be the correct def_nr on the second pass
-                let at_const = self.lexer.peek_pos().clone();
+                let at_const = *self.lexer.peek_pos();
                 if self.lexer.has_keyword("const") {
                     constant = true;
                     const_pos = (at_const.line, at_const.pos);
@@ -4037,7 +4069,7 @@ impl Parser {
                 Vec::new()
             };
             let val = if self.lexer.has_token("=") {
-                let dpos = self.lexer.pos().clone();
+                let dpos = *self.lexer.pos();
                 // loft#699 — where the default's value is BUILT decides whether it can be
                 // replayed at a call site.  Mark the source position first: one that turns
                 // out to need a temporary is re-parsed from here into a function of its own.
@@ -4212,6 +4244,8 @@ impl Parser {
                     typedef.source_name(&self.data)
                 );
             }
+            self.pending_param_facts
+                .push(std::mem::take(&mut self.type_fact));
             (*arguments).push(Argument {
                 name: attr_name,
                 typedef,
@@ -4343,7 +4377,12 @@ impl Parser {
         type_name: &str,
         returned: bool,
     ) -> Option<Type> {
-        let t = self.parse_type_inner(on_d, type_name, returned)?;
+        // @PLN187 — this level's fact, set by the alias arm or `sub_type`'s vector; a
+        // nested level takes its own before returning here.
+        self.own_fact = None;
+        let t = self.parse_type_inner(on_d, type_name, returned);
+        self.type_fact = self.own_fact.take().unwrap_or_default();
+        let t = t?;
         // @PLN125 arc A step A2b — `Self.X`, an interface's ASSOCIATED TYPE used in one
         // of its own method signatures:
         //
@@ -4698,6 +4737,11 @@ impl Parser {
                 DefType::Type | DefType::Enum | DefType::EnumValue | DefType::Struct
             )
         {
+            // @PLN187 — the outermost type of a declaration was spelled with a user alias.
+            // @PLN187 — a user alias spelled here: its fact is the alias itself.
+            if dt == DefType::Type && self.data.def(tp_nr).source != crate::data::STD_SOURCE {
+                self.own_fact = Some(AliasFact::Alias(tp_nr));
+            }
             if matches!(dt, DefType::EnumValue)
                 || (self.first_pass && matches!(dt, DefType::Struct))
             {
@@ -4791,11 +4835,15 @@ impl Parser {
         if self.lexer.has_token("(") {
             // Tuple type: (T1, T2, ...)
             let mut types = Vec::new();
+            let mut facts = Vec::new();
             loop {
                 if self.lexer.peek_token(")") {
                     break;
                 }
-                if let Some(tp) = self.parse_type_full(on_d, false) {
+                self.type_fact = AliasFact::Plain;
+                let member = self.parse_type_full(on_d, false);
+                facts.push(std::mem::take(&mut self.type_fact));
+                if let Some(tp) = member {
                     types.push(tp);
                 } else {
                     break;
@@ -4805,6 +4853,8 @@ impl Parser {
                 }
             }
             self.lexer.token(")");
+            // @PLN187 — `(Handle, u8)`: each member's fact, by position.
+            self.type_fact = AliasFact::tuple(facts);
             if types.len() < 2 {
                 diagnostic!(
                     self.lexer,
@@ -4849,7 +4899,9 @@ impl Parser {
             }
             Some(Type::Tuple(types))
         } else if self.lexer.has_token("fn") {
-            Some(self.parse_fn_type(on_d))
+            let tp = self.parse_fn_type(on_d);
+            self.type_fact = AliasFact::Plain;
+            Some(tp)
         } else if let Some(id) = self.lexer.has_identifier() {
             self.parse_type(on_d, &id, returned)
         } else {
@@ -4858,7 +4910,14 @@ impl Parser {
     }
 
     pub(crate) fn sub_type(&mut self, on_d: u32, type_name: &str, link: Link) -> Option<Type> {
-        let tp = self.sub_type_inner(on_d, type_name, link)?;
+        self.type_fact = AliasFact::Plain;
+        let tp = self.sub_type_inner(on_d, type_name, link);
+        // @PLN187 — `vector<Handle>`: the element's fact, one level down.  Any other
+        // collection holds records, whose fields carry their own facts.
+        if type_name == "vector" {
+            self.own_fact = Some(AliasFact::vector(std::mem::take(&mut self.type_fact)));
+        }
+        let tp = tp?;
         // #318 sink R3: no collection of a closure-carrying struct.
         // An element copy embeds a closure record whose raw DbRefs
         // point into the constructing frame (silent corruption once
@@ -5768,13 +5827,13 @@ impl Parser {
                 // returned type — it must NOT be adopted, or `struct iterator`
                 // would silently shadow the builtin.  Without the def_type guard
                 // it fell through here; now it lands in the conflict arm below.
-                self.data.definitions[d_nr as usize].position = self.lexer.pos().clone();
+                self.data.definitions[d_nr as usize].position = *self.lexer.pos();
                 self.data.definitions[d_nr as usize].def_type = DefType::Struct;
                 self.data.definitions[d_nr as usize].returned =
                     Type::Reference(d_nr, crate::data::Deps::none());
                 self.data.note_stub_adopted(d_nr);
             } else {
-                let prev_pos = self.data.def(d_nr).position().clone();
+                let prev_pos = *self.data.def(d_nr).position();
                 let prev_kind = format!("{:?}", self.data.def(d_nr).def_type()).to_lowercase();
                 diagnostic!(
                     self.lexer,
@@ -5807,13 +5866,14 @@ impl Parser {
         // SHAPE of the declaration has to point at.
         let mut field_at: Vec<(String, crate::lexer::Position)> = Vec::new();
         loop {
-            self.lexer.has_token("pub");
+            // @PLN187 (C140) — a field is private to its file; `pub` shows it.
+            let is_pub = self.lexer.has_token("pub");
             // @PLN40 — a `const` field is write-once at construction.  Consume the
             // keyword (if present) and mark the field once it has parsed; see
             // doc/claude/plans/40-const-fields/.
             let is_const = self.lexer.has_keyword("const");
             // The field name is the current token, so this is its START.
-            let field_pos = self.lexer.peek_pos().clone();
+            let field_pos = *self.lexer.peek_pos();
             let Some(a_name) = self.lexer.has_identifier() else {
                 diagnostic!(self.lexer, Level::Error, "Expect attribute");
                 self.context = context;
@@ -5829,17 +5889,16 @@ impl Parser {
             }
             self.lexer.token(":");
             self.init_field_deps.clear();
-            field_at.push((a_name.clone(), field_pos.clone()));
+            field_at.push((a_name.clone(), field_pos));
             self.parse_field(d_nr, &a_name);
+            if is_pub {
+                self.mark_pub_field(d_nr, &a_name);
+            }
             if is_const {
                 self.mark_const_field(d_nr, &a_name);
             }
             if !self.init_field_deps.is_empty() {
-                init_deps.push((
-                    a_name.clone(),
-                    self.init_field_deps.clone(),
-                    field_pos.clone(),
-                ));
+                init_deps.push((a_name.clone(), self.init_field_deps.clone(), field_pos));
             }
             if !self.lexer.has_token(",") || self.lexer.peek_token("}") {
                 break;
@@ -6853,6 +6912,14 @@ impl Parser {
     /// after [`Self::parse_field`], once the field's attribute exists.  Rejects
     /// `const virtual(…)`: a virtual field is already computed and read-only, so
     /// `const` on it is redundant.  See doc/claude/plans/40-const-fields/.
+    /// @PLN187 (@C140, @FR-F-Visible) — `pub` on a field: readable and writable wherever its type is visible.
+    fn mark_pub_field(&mut self, on_d: u32, a_name: &str) {
+        let idx = self.data.attr(on_d, a_name);
+        if idx != usize::MAX {
+            self.data.definitions[on_d as usize].attributes[idx].pub_field = true;
+        }
+    }
+
     fn mark_const_field(&mut self, on_d: u32, a_name: &str) {
         let idx = self.data.attr(on_d, a_name);
         if idx == usize::MAX {
@@ -6889,6 +6956,7 @@ impl Parser {
         // so `fill_database` / codegen can consult `forced_size(alias)` even
         // though the resolved Type::Integer collapses the alias info.
         let mut alias_d_nr: u32 = u32::MAX;
+        let mut field_fact = AliasFact::Plain; // @PLN187
         loop {
             // @PLN40 Phase 2 — consume a `const` before the field type (`v: const T`).
             // Runs on BOTH passes so the lexer position stays aligned; the flag is
@@ -6923,7 +6991,11 @@ impl Parser {
                         self.expression(&mut q);
                     }
                     self.lexer.token(")");
-                } else if let Some(tp) = self.parse_type(d_nr, &id, false) {
+                } else if let Some(tp) = {
+                    self.type_fact = AliasFact::Plain;
+                    self.parse_type(d_nr, &id, false)
+                } {
+                    field_fact = self.type_fact.clone();
                     defined = true;
                     // If the type carries a not-null flag (e.g. integer not null),
                     // propagate it to the field's nullable flag so is_null and
@@ -6937,8 +7009,13 @@ impl Parser {
                     // limit()-based heuristic for `integer limit(0, 255)`.
                     // @PLN25: peel `Optional(τ)` so a nullable narrow field (`u8?`)
                     // captures its alias and stores at the narrow width like `u8`.
+                    // A QUALIFIED alias (`units::Coord`) reads its library's name as `id`: the
+                    // alias the type resolved to is the one recorded (@PLN187).
                     if matches!(tp.base(), Type::Integer(_)) && id != "integer" {
-                        alias_d_nr = self.data.def_nr(&id);
+                        alias_d_nr = match &field_fact {
+                            AliasFact::Alias(a) => *a,
+                            _ => self.data.def_nr(&id),
+                        };
                     }
                     a_type = tp;
                     // '= expr' shorthand for a field default value
@@ -6946,7 +7023,11 @@ impl Parser {
                     // @PLN86 P6.4 — links after a scalar/named field type.
                     self.parse_field_links(d_nr, a_name);
                 }
-            } else if let Some(tp) = self.parse_type_full(d_nr, false) {
+            } else if let Some(tp) = {
+                self.type_fact = AliasFact::Plain;
+                self.parse_type_full(d_nr, false)
+            } {
+                field_fact = self.type_fact.clone();
                 // Plan-06 phase 4d: tuple-typed struct fields are now
                 // accepted.  Storage layout uses the synthetic
                 // `__tuple<…>` struct's positions (registered via
@@ -7035,6 +7116,7 @@ impl Parser {
             if alias_d_nr != u32::MAX {
                 self.data.definitions[d_nr as usize].attributes[a].alias_d_nr = alias_d_nr;
             }
+            self.data.definitions[d_nr as usize].attributes[a].fact = field_fact;
             if is_computed {
                 self.data.definitions[d_nr as usize].attributes[a].constant = true;
             }
@@ -7140,7 +7222,7 @@ impl Parser {
             let at = field_at
                 .iter()
                 .find(|(n, _)| *n == name)
-                .map_or_else(|| self.lexer.pos().clone(), |(_, p)| p.clone());
+                .map_or_else(|| *self.lexer.pos(), |(_, p)| *p);
             diagnostic_at!(
                 self.lexer,
                 &at,
@@ -7265,7 +7347,7 @@ impl Parser {
             && !matches!(value, Value::Null)
             && !self.convert(value, &tp, a_type)
         {
-            let at = self.lexer.pos().clone();
+            let at = *self.lexer.pos();
             self.validate_convert("default value", &tp, a_type, &at);
         }
         // A default is lowered HERE, in the STRUCT's context, which has no
@@ -7612,7 +7694,7 @@ impl Parser {
         let outer_context = self.context;
         let outer_vars = std::mem::replace(
             &mut self.vars,
-            Function::new(fn_name, &self.lexer.pos().file),
+            Function::new(fn_name, self.lexer.pos().file.as_str()),
         );
         let outer_loop = self.in_loop;
         self.in_loop = false;
@@ -7671,7 +7753,7 @@ impl Parser {
         // null, so the caller read a freed store — invisible in a normal run, a SIGSEGV
         // under the POISON gate.
         let mut ops = vec![expr];
-        let pos = self.lexer.pos().clone();
+        let pos = *self.lexer.pos();
         let tail = self.block_result("return from block", &result, &tp, &mut ops, &pos);
         self.finish_body(v_block(ops, tail, "block"), Type::Void);
         self.data.definitions[d_nr as usize]
@@ -7802,7 +7884,7 @@ impl Parser {
         let mut made: Vec<(u32, u32)> = Vec::new();
         for &t in &targets {
             let name = self.hook_cascade_name(Hook::Copy, t);
-            let pos = self.data.def(t).position().clone();
+            let pos = *self.data.def(t).position();
             let c_nr = self.data.add_def(&name, &pos, DefType::Function);
             self.data.set_returned(c_nr, Type::Void);
             let self_tp = self.cascade_self_type(t);
@@ -7834,7 +7916,7 @@ impl Parser {
             if target == u32::MAX {
                 continue;
             }
-            let pos = self.data.def(d_nr).position().clone();
+            let pos = *self.data.def(d_nr).position();
             let c_nr = self.data.add_def(&name, &pos, DefType::Function);
             self.data.set_returned(c_nr, Type::Void);
             let self_tp = self.cascade_self_type(d_nr);
@@ -7849,8 +7931,8 @@ impl Parser {
             let _ = self
                 .data
                 .add_attribute(&mut self.lexer, c_nr, "n", int_tp.clone());
-            let file = self.data.def(d_nr).position().file.clone();
-            let mut vars = Function::new(&name, &file);
+            let file = self.data.def(d_nr).position().file;
+            let mut vars = Function::new(&name, file.as_str());
             let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
             vars.become_argument(self_var);
             vars.defined(self_var);
@@ -7870,8 +7952,8 @@ impl Parser {
     /// The body of a record's or a collection's copy cascade — see [`Self::synth_copy_cascades`].
     fn fill_copy_cascade(&mut self, t: u32, c_nr: u32) {
         let name = self.hook_cascade_name(Hook::Copy, t);
-        let file = self.data.def(t).position().file.clone();
-        let mut vars = Function::new(&name, &file);
+        let file = self.data.def(t).position().file;
+        let mut vars = Function::new(&name, file.as_str());
         let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
@@ -7990,7 +8072,7 @@ impl Parser {
                 if self.data.def_nr(&name) != u32::MAX {
                     continue;
                 }
-                let pos = self.lexer.pos().clone();
+                let pos = *self.lexer.pos();
                 let w_nr = self.data.add_def(&name, &pos, DefType::Function);
                 self.data.set_returned(w_nr, Type::Void);
                 let _ = self
@@ -8008,7 +8090,7 @@ impl Parser {
         let mut made: Vec<(u32, u32)> = Vec::new();
         for &t in &targets {
             let name = Self::drop_cascade_name(&self.data, t);
-            let pos = self.data.def(t).position().clone();
+            let pos = *self.data.def(t).position();
             let c_nr = self.data.add_def(&name, &pos, DefType::Function);
             self.data.set_returned(c_nr, Type::Void);
             let self_tp = self.cascade_self_type(t);
@@ -8102,8 +8184,8 @@ impl Parser {
             .database
             .position(self.data.def(first).known_type(), "enum");
         let name = self.hook_cascade_name(hook, t);
-        let file = self.data.def(t).position().file.clone();
-        let mut vars = Function::new(&name, &file);
+        let file = self.data.def(t).position().file;
+        let mut vars = Function::new(&name, file.as_str());
         let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
@@ -8532,8 +8614,8 @@ impl Parser {
     /// collection, and each record releases the generator frames it holds.
     fn fill_keyed_frames(&mut self, w_nr: u32, tp: &Type) {
         let name = self.data.def(w_nr).name.clone();
-        let file = self.data.def(w_nr).position().file.clone();
-        let mut vars = Function::new(&name, &file);
+        let file = self.data.def(w_nr).position().file;
+        let mut vars = Function::new(&name, file.as_str());
         let self_var = vars.add_variable("self", tp, &mut self.lexer);
         vars.become_argument(self_var);
         vars.defined(self_var);
@@ -8601,8 +8683,8 @@ impl Parser {
     /// holding the null handle frees nothing.
     fn fill_handle_release(&mut self, t: u32, c_nr: u32) {
         let name = Self::drop_cascade_name(&self.data, t);
-        let file = self.data.def(t).position().file.clone();
-        let mut vars = Function::new(&name, &file);
+        let file = self.data.def(t).position().file;
+        let mut vars = Function::new(&name, file.as_str());
         let self_tp = self.cascade_self_type(t);
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
@@ -8618,8 +8700,8 @@ impl Parser {
     /// Build the body of the cascade declared for `t` — see [`Self::synth_drop_cascades`].
     fn fill_drop_cascade(&mut self, t: u32, c_nr: u32) {
         let name = Self::drop_cascade_name(&self.data, t);
-        let file = self.data.def(t).position().file.clone();
-        let mut vars = Function::new(&name, &file);
+        let file = self.data.def(t).position().file;
+        let mut vars = Function::new(&name, file.as_str());
         // The declaration's own answer, so the body and the signature cannot disagree about
         // what `self` is — a collection's cascade takes the collection (D-heap-13).
         let self_tp = self.cascade_self_type(t);

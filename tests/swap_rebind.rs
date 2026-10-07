@@ -4,8 +4,8 @@
 //! every cell's rebind is emitted as `OpRebindRecord` on `--native`, the cells answer the same
 //! with the switch on and off, and no store is left behind — a released store the exchange
 //! kept instead of freeing reads as a leak here and nowhere else.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft";
 
@@ -22,7 +22,8 @@ const SITES: &[(&str, usize)] = &[
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
@@ -51,8 +52,8 @@ fn every_cell_rebinds_through_the_exchange() {
     let rs = std::env::temp_dir().join(format!("loft_swap_rebind_{}.rs", std::process::id()));
     let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], &[]);
     assert!(ok, "emit failed:\n{err}");
-    let src = std::fs::read_to_string(&rs).expect("emitted source");
-    let _ = std::fs::remove_file(&rs);
+    let src = fa::read_to_string(&rs).expect("emitted source");
+    let _ = fa::remove_file(&rs);
     for (cell, want) in SITES {
         let head = format!("fn {cell}(");
         let body = src

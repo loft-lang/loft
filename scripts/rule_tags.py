@@ -1188,9 +1188,29 @@ def main():
         live, drift, regs = open_register()
         print(f"{len(regs)} chapters with a Deviations section · "
               f"{len(live)} open entries · {len(drift)} chapter(s) whose count disagrees\n")
+        devs = defined_deviations()
         for f, stated, found, tags in drift:
             print(f"  {f}: states OPEN: {stated}, lists {found} "
                   f"({', '.join(tags) if tags else 'none'})")
+            # An entry the chapter itself writes as OPEN that the register resolves CLOSED is
+            # outranked by a later-dated entry of the same tag — a closure this chapter never
+            # recorded, or a REUSED number.  `interfaces.md` listed `D-gen-7 (OPEN, loft#1872)`
+            # over a closed `D-gen-7` of loft#1868, and the drift line alone read "lists 0 (none)".
+            own = next((e for g, _, e in regs if g == f), [])
+            for t, st, iss, _ in own:
+                if st == "OPEN" and t not in tags and devs.get(t, (0, "?"))[1] == "CLOSED":
+                    print(f"    {t} is written OPEN here ({', '.join(iss) or 'no issue'}) but "
+                          f"another entry of that tag outranks it CLOSED — record the closure, "
+                          f"or renumber a reused tag")
+        # README.md's area table restates each chapter's count — a FOURTH decoder of the one
+        # number, and the one a reader meets first.  It read `calls.md … **0 open**` over a
+        # register stating and listing `D-call-28`.
+        open_by = collections.Counter(f for f, *_ in live)
+        for line in open(os.path.join(FORMAL, "README.md"), encoding="utf-8"):
+            row = re.match(r"\| \[([\w-]+\.md)\]\([\w-]+\.md\) \|[^|]*\| \*\*(\d+) (?:open|own)", line)
+            if row and int(row.group(2)) != open_by.get(row.group(1), 0):
+                print(f"  README.md: {row.group(1)} reads {row.group(2)} open, the register "
+                      f"lists {open_by.get(row.group(1), 0)}")
         untracked = [(f, t) for f, t, iss, unres in live if not iss and not unres]
         unresolvable = [(f, t) for f, t, iss, unres in live if unres]
         print(f"{len(live) - len(untracked) - len(unresolvable)} open entr(y/ies) tracked by an "
@@ -1208,7 +1228,7 @@ def main():
                 print(f"  ⚠ {len(unreachable)} could not be asked "
                       f"({', '.join('loft#%d' % n for n in unreachable)}) — unknown, not clean")
             for f, tag, iss, _ in live:
-                hit = [int(n) for n in iss if int(n) in done]
+                hit = [int(n) for n in iss if n.isdigit() and int(n) in done]
                 if hit:
                     print(f"  {f}: {tag} is OPEN but names "
                           f"{', '.join('loft#%d' % n for n in hit)}, CLOSED — re-measure")

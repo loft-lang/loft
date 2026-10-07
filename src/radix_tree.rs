@@ -798,6 +798,21 @@ pub fn rtree_len(store: &Store, tree: u32) -> u32 {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+/// A test's collection field: a one-word host record in store 0 whose slot at offset 4 names
+/// the EMPTY tree.  The slot is WRITTEN, as a record's construction writes a collection
+/// field's default — a claim promises no value (`@FR-H-Claim`), so a fixture that only
+/// claims hands `add` whatever bytes the block held.
+#[cfg(test)]
+pub(crate) fn empty_collection(store: &mut Store) -> crate::keys::DbRef {
+    let rec = store.claim(1);
+    store.set_u32_raw(rec, 4, 0);
+    crate::keys::DbRef {
+        store_nr: 0,
+        rec,
+        pos: 4,
+    }
+}
+
 /// Claim an empty tree with room for `initial` nodes; returns its record id.
 ///
 /// The record id is the tree's identity and is stored in the owning field, the

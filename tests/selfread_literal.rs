@@ -9,9 +9,9 @@
 //!
 //! The cell corpus (`bytecode-comparisons/V-w-selfread-literal-cells.loft`) can only say
 //! the VALUES hold; this pins WHICH route each cell takes, read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-w-selfread-literal-cells.loft";
@@ -34,20 +34,21 @@ fn cells() -> PathBuf {
 }
 
 fn emit(src: &Path, out: &Path) -> String {
-    let status = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--native-emit")
-        .arg(out)
-        .arg(src)
-        .env("LOFT_TIMEOUT", "120")
-        .output()
-        .expect("spawn loft --native-emit");
+    let status =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--native-emit")
+            .arg(out)
+            .arg(src)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 #[test]
@@ -75,5 +76,5 @@ fn each_cell_takes_exactly_the_route_predicted() {
         assert_eq!(s, *snap, "{name}: whole-vector snapshot mentions");
         assert_eq!(t, *temps, "{name}: hoisted read-temp mentions");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

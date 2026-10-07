@@ -10,6 +10,7 @@
 //! call's buffer, that buffer is NOT pooled at function entry, a bound local that is itself a
 //! return buffer keeps its in-place copy, and `LOFT_NO_ADOPT_FIRST_BIND=1` restores the copy
 //! — and the store census the change buys.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -21,7 +22,8 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // B1 on its own: B1b (`tests/adopt_buffer_reuse.rs`) pools the buffer this file pins as null.
     // The tests run in parallel on one source file, and its program cache is shared: an
     // `introspect` that read another process's half-written entry listed a truncated program.
@@ -40,12 +42,12 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 fn introspect(env: &[(&str, &str)]) -> String {
@@ -133,7 +135,7 @@ fn native_binds_the_minted_store_directly() {
         copies_into(lit, "cv"),
         "render_lit_then_call: the promoted buffer local still copies its rebind in place"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -149,7 +151,7 @@ fn the_switch_restores_the_copy_on_native() {
         !c1.contains("let mut var_b: DbRef = n_mk_loc("),
         "c1 under LOFT_NO_ADOPT_FIRST_BIND: no plain assignment"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]

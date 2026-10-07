@@ -498,7 +498,6 @@
 821-vector-tuple-element-write.loft
 822-vector-tuple-spellings.loft
 823-element-bind-ownership.loft
-824-reference-parameter-dispatch.loft
 82-file-scope-const.loft
 82-fn-ref-forward.loft
 832-tuple-pattern-elements.loft
@@ -608,7 +607,6 @@
 898-linked-group-clear.loft
 899-unbound-file-read-only-vector.loft
 899-unbound-file-read-temp.loft
-89-sizeof.loft
 900-linked-group-remove.loft
 901-linked-group-fill.loft
 903-loop-remove.loft
@@ -754,11 +752,9 @@ pln110-size-enum.loft
 pln110-size-hash.loft
 pln110-size-scalar.loft
 pln110-size-sorted-index-spatial.loft
-pln110-size-struct.loft
 pln110-size-vector.loft
 pln110-text-surface-golden.loft
 pln114-h1-self-referential-default.loft
-pln114-layout-widths.loft
 pln114-par-tuple-storage-read.loft
 pln119-assign-to-file-scope-text.loft
 pln119b-file-scope-text-constant-reads.loft
@@ -769,7 +765,6 @@ pln125-a-forward-return.loft
 pln125-b-drop.loft
 pln125-c-index.loft
 pln127-reflect-consumer.loft
-pln127-reflect.loft
 pln133-optional-unify.loft
 pln133-text-tail-delivery.loft
 pln23-field-iter-nullable.loft

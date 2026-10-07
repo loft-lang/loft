@@ -1,85 +1,25 @@
-diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
-index 771ea5222..72bb1f50b 100644
---- b/src/generation/dispatch.rs
-+++ a/src/generation/dispatch.rs
-@@ -1380,18 +1380,7 @@ impl Output<'_> {
-             // `_src == _dst` guard re-derived this and LEAKED the owned arm — `_src`
-             // (a fresh `m_none()`) never equals `_dst` (the old slot), so it
-             // materialised + dropped the owned store.
--            // The interpreter's twin takes this guard only where the right-hand side does not
--            // read the destination (`!stash_old_for_post_free`): `c = pick(d, c, k)` hands the
--            // callee the store the bind would adopt into, and the buffer arm then aliases the
--            // argument it was computed from (loft#1884, a leaked record once a later function
--            // re-took the slot).  Such a rebind keeps the copy below on both backends.
--            let rhs_reads_dst = self.declared.contains(&var) && {
--                let mut reads = false;
--                to.walk(&mut |n| reads |= matches!(n, Value::Var(x) if *x == var));
--                reads
--            };
-             let join_witness = if crate::keys::join_own_enabled()
--                && !rhs_reads_dst
-                 && let crate::use_analysis::Own::Join { base } =
-                     crate::use_analysis::ownership_of(self.data, self.def_nr, to)
-                 && base != u16::MAX
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 7c584d074..65b5159c4 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -14357,20 +14357,12 @@ impl Parser {
-                 _ => false,
-             }
-         }
--        // …a Join only: where no leaf mints (`if c { return a; } b`, a BORROW of one of
--        // several parameters), nothing binds an owned local, and the instance declares the set
--        // its twin does (`-> F["a", "b"]`) so the caller copies (loft#1884).
-         let n = bl.operators.len();
--        let borrows_only = matches!(
--            crate::use_analysis::return_ownership(&self.data, d_nr),
--            crate::use_analysis::Own::Borrowed { .. }
--        );
--        if !borrows_only
--            && bl
--                .operators
--                .iter()
--                .enumerate()
--                .any(|(i, op)| bare_param_leaf(op, &def.variables, i + 1 == n))
-+        if bl
-+            .operators
-+            .iter()
-+            .enumerate()
-+            .any(|(i, op)| bare_param_leaf(op, &def.variables, i + 1 == n))
-         {
-             return None;
-         }
-diff --git b/src/use_analysis.rs a/src/use_analysis.rs
-index 1dcc309a7..ced7d9f79 100644
---- b/src/use_analysis.rs
-+++ a/src/use_analysis.rs
-@@ -2098,11 +2098,6 @@ impl Own {
-             (Own::Borrowed { base: a }, Own::Borrowed { base: b }) if a == b => {
-                 Own::Borrowed { base: a }
-             }
--            // Two borrows of DIFFERENT stores are still a borrow — no arm owns anything — of
--            // one of several bases, which no single witness names (loft#1884: `if c { return
--            // a; } b` read as a `Join` witnessed by `a`, so the run that answered `b` adopted
--            // the caller's record and freed it).  Every reader copies that on every run.
+diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+index ae7f5c557..74ce6c0f6 100644
+--- a/src/use_analysis.rs
++++ b/src/use_analysis.rs
+@@ -2123,7 +2123,6 @@ impl Own {
+             // one of several bases, which no single witness names (loft#1884: `if c { return
+             // a; } b` read as a `Join` witnessed by `a`, so the run that answered `b` adopted
+             // the caller's record and freed it).  Every reader copies that on every run.
 -            (Own::Borrowed { .. }, Own::Borrowed { .. }) => Own::Borrowed { base: u16::MAX },
              _ => Own::Join {
                  base: self.base().or_else(|| other.base()).unwrap_or(u16::MAX),
              },
-@@ -2498,15 +2493,6 @@ impl<'a> Ownership<'a> {
-         let class = self.classify(tail.unwrap(), &def.variables, &defs);
-         self.visiting_vars = outer_vars;
-         self.visiting.remove(&d_nr);
--        // `@FR-F-Ret`, loft#1884 — every early `return` delivers as the tail does, so the
--        // function's return is the JOIN of all of them: `if c { return p; } F { … }` hands back
--        // its parameter on one path and a fresh value on the other, and read off the tail alone
--        // it was owned, the caller adopted the parameter's store, and its free released the
--        // caller's own record.  Joined, the bind copies the borrowed arm (`OpBindOrCopy`).
+@@ -2566,11 +2565,7 @@ impl<'a> Ownership<'a> {
+         // its parameter on one path and a fresh value on the other, and read off the tail alone
+         // it was owned, the caller adopted the parameter's store, and its free released the
+         // caller's own record.  Joined, the bind copies the borrowed arm (`OpBindOrCopy`).
+-        let early = self.early_return_values(d_nr);
 -        let class = self
--            .early_return_ownerships(d_nr)
+-            .classify_sites(&early, d_nr, &defs)
 -            .into_iter()
 -            .fold(class, Own::join);
-         self.ret_memo.insert(d_nr, class);
-         class
-     }
++
+         self.visiting_vars = outer_vars;
+         self.frames.pop();
+         self.visiting.remove(&d_nr);

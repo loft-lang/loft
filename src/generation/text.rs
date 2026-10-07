@@ -33,6 +33,14 @@ impl Output<'_> {
         w: &mut dyn Write,
         vals: &[Value],
     ) -> std::io::Result<()> {
+        // `@FR-R-AppendTwin` — inside a twin the buffer's clear is the caller's elements:
+        // eligibility admitted it only before the body's first write, so it clears nothing
+        // the twin's own result needs.
+        if let [Value::Var(nr)] = vals
+            && self.append_twin_views.contains(nr)
+        {
+            return write!(w, "()");
+        }
         if let [Value::Var(nr)] = vals {
             let v_nr = self.var_place(*nr);
             // `@FR-R-RefillBuffer` — the entry clear of a refilling buffer resets the length
@@ -317,6 +325,25 @@ impl Output<'_> {
     }
 
     /// Use this to emit `OpFormatText`/`OpFormatStackText` as a call to `ops::format_text`.
+    /// The `&mut String` a format op writes into, by what text variable `nr` holds: a text
+    /// local's own `String` (`&mut var_s`), a `&text` parameter's `&mut String` as it is, and a
+    /// `&text` LOCAL link's raw `*mut String` re-borrowed (`&mut *var_c`, inside the `unsafe`
+    /// the text dispatch opens for a raw link).  Spelled per op it was the parameter's form
+    /// for both kinds of link, and a formatted append through a local link (`c += "{i}"`) did
+    /// not compile (E0308) where the plain append beside it did.
+    fn format_dest(&self, nr: u16, stack: bool) -> String {
+        let place = self.var_place(nr);
+        let vars = self.data.def(self.def_nr).variables();
+        let link = matches!(vars.tp(nr).base(), Type::RefVar(_));
+        if link && !vars.is_argument(nr) {
+            format!("&mut *{place}")
+        } else if stack {
+            place
+        } else {
+            format!("&mut {place}")
+        }
+    }
+
     pub(super) fn format_text(&mut self, w: &mut dyn Write, vals: &[Value]) -> std::io::Result<()> {
         if let [
             Value::Var(nr),
@@ -326,7 +353,6 @@ impl Output<'_> {
             Value::Int(token),
         ] = vals
         {
-            let s_nr = self.var_place(*nr);
             let val_expr = self.generate_expr_buf(val)?;
             // All text-returning calls produce either `Str` or `String` (never `&str`).
             // Wrap with `&*` so `format_text` (which expects `&str`) always gets the right type.
@@ -361,9 +387,10 @@ impl Output<'_> {
                 val_expr
             };
             let width_expr = self.generate_expr_buf(width)?;
+            let dest = self.format_dest(*nr, false);
             write!(
                 w,
-                "ops::format_text(&mut {s_nr}, {val_str}, {width_expr}, {dir}, {token})"
+                "ops::format_text({dest}, {val_str}, {width_expr}, {dir}, {token})"
             )?;
             return Ok(());
         }
@@ -393,13 +420,12 @@ impl Output<'_> {
             Value::Int(dir),
         ] = vals
         {
-            let s_nr = self.var_place(*nr);
             let val_expr = self.generate_expr_buf(val)?;
             let width_expr = self.generate_expr_buf(width)?;
-            let prefix = if stack { "" } else { "&mut " };
+            let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_long_with_tag({prefix}{s_nr}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
+                "ops::format_long_with_tag({dest}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
             )?;
             return Ok(());
         }
@@ -422,15 +448,14 @@ impl Output<'_> {
             dir,
         ] = vals
         {
-            let s_nr = self.var_place(*nr);
             let val_expr = self.generate_expr_buf(val)?;
             let width_expr = self.generate_expr_buf(width)?;
             let prec_expr = self.generate_expr_buf(prec)?;
             let dir_expr = self.generate_expr_buf(dir)?;
-            let prefix = if stack { "" } else { "&mut " };
+            let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_float({prefix}{s_nr}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+                "ops::format_float({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
             )?;
             return Ok(());
         }
@@ -454,15 +479,14 @@ impl Output<'_> {
             dir,
         ] = vals
         {
-            let s_nr = self.var_place(*nr);
             let val_expr = self.generate_expr_buf(val)?;
             let width_expr = self.generate_expr_buf(width)?;
             let prec_expr = self.generate_expr_buf(prec)?;
             let dir_expr = self.generate_expr_buf(dir)?;
-            let prefix = if stack { "" } else { "&mut " };
+            let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_single({prefix}{s_nr}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+                "ops::format_single({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
             )?;
             return Ok(());
         }

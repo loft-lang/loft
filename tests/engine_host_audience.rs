@@ -6,10 +6,11 @@
 //! erase / ignore / clear / select / snapshot / join-replay) drives BOTH
 //! servers; the per-client transcripts must be equal.
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 mod common;
@@ -24,7 +25,7 @@ mod common;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -92,22 +93,18 @@ fn spawn_server(script: &str) -> Guard {
     // leg's `use server;` (a registry package) could never resolve and that leg
     // only ever "passed" by being CI-skipped.  With a manifest declaring `server`,
     // it resolves offline from the installed registry and the leg actually runs.
-    let src = std::fs::read_to_string(root().join(script)).expect("read fixture");
-    let name = std::path::Path::new(script)
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    let src = fa::read_to_string(root().join(script)).expect("read fixture");
+    let name = fa::file_name(script).unwrap();
     // Per-script pkg dir: the kernel + original legs run sequentially (the first
     // Guard drops/kills before the second spawns), but a per-script dir keeps each
     // leg's manifest/script fully isolated regardless of ordering.
     let pkg = test_tmp().join(format!("eh_aud_{}_{name}_pkg", std::process::id()));
-    std::fs::create_dir_all(&pkg).expect("create pkg dir");
-    std::fs::write(pkg.join("loft.toml"), SERVER_MANIFEST).expect("write manifest");
-    std::fs::write(pkg.join("loft.lock"), SERVER_LOCK).expect("write lock");
+    fa::create_dir_all(&pkg).expect("create pkg dir");
+    fa::write(pkg.join("loft.toml"), SERVER_MANIFEST).expect("write manifest");
+    fa::write(pkg.join("loft.lock"), SERVER_LOCK).expect("write lock");
     let tmp = pkg.join(format!("eh_aud_{}_{name}", std::process::id()));
-    std::fs::write(&tmp, src).expect("write fixture copy");
-    let child = Command::new(root().join("target/release/loft"))
+    fa::write(&tmp, src).expect("write fixture copy");
+    let child = loft::platform::process::harness_command(root().join("target/release/loft"))
         .env("LOFT_OFFLINE", "1") // hermetic: no registry fetches, installed-only
         .args(["--interpret", "--no-warnings", "--lib"])
         .arg(root().join("lib"))
@@ -115,12 +112,8 @@ fn spawn_server(script: &str) -> Guard {
         .current_dir(&pkg)
         // Captured, not nulled: when the server dies at startup on a CI
         // box, ws_connect's panic prints these (the only forensics there).
-        .stdout(Stdio::from(
-            std::fs::File::create(server_log_path("out")).unwrap(),
-        ))
-        .stderr(Stdio::from(
-            std::fs::File::create(server_log_path("err")).unwrap(),
-        ))
+        .stdout(Stdio::from(fa::create(server_log_path("out")).unwrap()))
+        .stderr(Stdio::from(fa::create(server_log_path("err")).unwrap()))
         .spawn()
         .expect("spawn server");
     Guard(Some(child))
@@ -133,20 +126,20 @@ fn spawn_server(script: &str) -> Guard {
 /// it built.  Used to run the original-port leg only where `server` exists.
 fn server_available() -> bool {
     let pkg = test_tmp().join(format!("eh_aud_{}_srvprobe", std::process::id()));
-    if std::fs::create_dir_all(&pkg).is_err() {
+    if fa::create_dir_all(&pkg).is_err() {
         return false;
     }
-    if std::fs::write(pkg.join("loft.toml"), SERVER_MANIFEST).is_err()
-        || std::fs::write(pkg.join("loft.lock"), SERVER_LOCK).is_err()
+    if fa::write(pkg.join("loft.toml"), SERVER_MANIFEST).is_err()
+        || fa::write(pkg.join("loft.lock"), SERVER_LOCK).is_err()
     {
         return false;
     }
     let probe = pkg.join("srvprobe.loft");
     let body = "use server::*;\nfn _p(s: server::Server) -> server::Server { s }\nfn main() {}\n";
-    if std::fs::write(&probe, body).is_err() {
+    if fa::write(&probe, body).is_err() {
         return false;
     }
-    Command::new(root().join("target/release/loft"))
+    loft::platform::process::harness_command(root().join("target/release/loft"))
         .env("LOFT_OFFLINE", "1")
         .args(["--interpret", "--no-warnings"])
         .arg(&probe)
@@ -161,7 +154,7 @@ fn server_log_path(ext: &str) -> std::path::PathBuf {
 }
 
 fn server_logs() -> String {
-    let read = |ext: &str| std::fs::read_to_string(server_log_path(ext)).unwrap_or_default();
+    let read = |ext: &str| fa::read_to_string(server_log_path(ext)).unwrap_or_default();
     format!(
         "server stdout:\n{}\nserver stderr:\n{}",
         read("out"),
@@ -277,7 +270,7 @@ fn scenario(port: u16) -> (Vec<String>, Vec<String>) {
 
 #[test]
 fn kernel_port_matches_original() {
-    if !root().join("target/release/loft").exists() {
+    if !fa::exists(root().join("target/release/loft")) {
         eprintln!("skipping: release loft not built");
         return;
     }

@@ -17,9 +17,9 @@
 //! Design + the strictness verification (why it catches the A1b class the runtime gates miss):
 //! `doc/claude/plans/94-cfg-ownership-dataflow/PHASE4_DESIGN.md`.
 
+use loft::file_access as fa;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -31,7 +31,7 @@ fn root() -> PathBuf {
 
 /// Run the oracle in `mode` over `file` (with any extra env) and return its stderr lines.
 fn run_oracle(file: &str, mode: &str, extra_env: &[(&str, &str)], native: bool) -> String {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(if native { "--native" } else { "--interpret" })
         .arg(root().join(file))
         .env("LOFT_NO_CACHE", "1") // force scopes::check to re-run on the user file
@@ -135,7 +135,7 @@ fn the_a1b_wrong_plan_fails_at_run_time_and_the_oracles_agree_on_it() {
         ("LOFT_NO_P2_OBJECT_WORKREF", "1"),
     ];
     let run = |env: &[(&str, &str)]| -> (bool, String) {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(root().join(A1B_UAF))
             .env("LOFT_NO_CACHE", "1");
@@ -203,7 +203,7 @@ fn oracle_fact_check_flags_an_injected_owned_fact() {
 #[test]
 fn oracle_is_a_pure_observer_si1() {
     let introspect = |mode: Option<&str>| {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("introspect").arg(root().join(A1B_UAF));
         if let Some(m) = mode {
             cmd.env("LOFT_OWN_ORACLE", m);
@@ -239,9 +239,9 @@ fn oracle_fact_is_backend_identical_si2() {
 fn oracle_clean_on_generated_fuzz_corpus() {
     let fuzz_dir = root().join("doc/claude/plans/85-store-lifetime-retirement/fuzz");
     let cells = std::env::temp_dir().join(format!("loft_oracle_fuzz_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&cells);
-    std::fs::create_dir_all(&cells).expect("create cell dir");
-    let generated = Command::new("python3")
+    let _ = fa::remove_dir_all(&cells);
+    fa::create_dir_all(&cells).expect("create cell dir");
+    let generated = loft::platform::process::harness_command("python3")
         .arg(fuzz_dir.join("grammar_gen.py"))
         .arg("--out")
         .arg(&cells)
@@ -255,14 +255,14 @@ fn oracle_clean_on_generated_fuzz_corpus() {
 
     let mut offenders = Vec::new();
     let mut count = 0usize;
-    for entry in std::fs::read_dir(&cells).expect("read cells") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for entry in fa::read_dir(&cells).expect("read cells") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
         count += 1;
         // `check_reds` takes a repo-relative path; this cell is absolute, so run the binary directly.
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")
@@ -277,12 +277,12 @@ fn oracle_clean_on_generated_fuzz_corpus() {
         if !reds.is_empty() {
             offenders.push(format!(
                 "{}:\n{}",
-                path.file_name().unwrap().to_string_lossy(),
+                fa::file_name(&path).unwrap(),
                 reds.iter().cloned().collect::<Vec<_>>().join("\n")
             ));
         }
     }
-    let _ = std::fs::remove_dir_all(&cells);
+    let _ = fa::remove_dir_all(&cells);
     assert!(count >= 54, "expected ≥54 generated cells, got {count}");
     assert!(
         offenders.is_empty(),
@@ -306,12 +306,12 @@ const LEAK_SCAN_BASELINE: usize = 0;
 fn oracle_leak_scan_ratchet() {
     let dir = root().join("tests/scripts");
     let mut total = 0usize;
-    for entry in std::fs::read_dir(&dir).expect("read tests/scripts") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for entry in fa::read_dir(&dir).expect("read tests/scripts") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")
@@ -346,7 +346,7 @@ fn oracle_leak_scan_ratchet() {
 fn oracle_leak_scan_flags_an_injected_leak() {
     let ctrl = "doc/claude/plans/94-cfg-ownership-dataflow/probes/07-leak-positive-control.loft";
     let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(root().join(ctrl))
             .env("LOFT_NO_CACHE", "1")
@@ -388,7 +388,7 @@ fn oracle_adopt_leak_flags_an_injected_leak() {
     let ctrl =
         "doc/claude/plans/94-cfg-ownership-dataflow/probes/09-adopt-leak-positive-control.loft";
     let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(root().join(ctrl))
             .env("LOFT_NO_CACHE", "1")
@@ -428,7 +428,7 @@ fn oracle_over_free_check_flags_an_injected_free() {
     let ctrl =
         "doc/claude/plans/94-cfg-ownership-dataflow/probes/08-overfree-positive-control.loft";
     let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(root().join(ctrl))
             .env("LOFT_NO_CACHE", "1")
@@ -475,7 +475,7 @@ fn oracle_over_free_check_flags_an_injected_free() {
 fn oracle_over_free_check_sees_a_nullable_view_local() {
     let ctrl = "doc/claude/plans/94-cfg-ownership-dataflow/probes/08b-overfree-positive-control-nullable.loft";
     let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(root().join(ctrl))
             .env("LOFT_NO_CACHE", "1")
@@ -509,7 +509,7 @@ fn oracle_over_free_check_sees_a_nullable_view_local() {
 fn oracle_override_check_flags_an_injected_free_of_a_never_free_binding() {
     let guard = "tests/scripts/a-nullable-view-local-does-not-free-what-it-displaces.loft";
     let reds = |env: &[(&str, &str)]| -> Vec<String> {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--check")
             .arg(root().join(guard))
             .env("LOFT_NO_CACHE", "1")
@@ -547,7 +547,7 @@ fn oracle_override_check_flags_an_injected_free_of_a_never_free_binding() {
 #[test]
 fn a_witnessed_local_carries_no_dead_displacement_free() {
     let guard = "tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft";
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--check")
         .arg(root().join(guard))
         .env("LOFT_NO_CACHE", "1")

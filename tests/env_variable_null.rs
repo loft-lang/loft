@@ -21,7 +21,6 @@
 //! environment would report green over a program measuring nothing.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -36,7 +35,7 @@ fn probe() -> PathBuf {
 /// `env_remove`d rather than merely unmentioned, so an outer environment that happens to
 /// define it cannot turn the first cell green for the wrong reason.
 fn run(backend: &str, with_env: bool) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(probe())
         .env("LOFT_TIMEOUT", "300")

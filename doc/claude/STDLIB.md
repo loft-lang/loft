@@ -599,16 +599,16 @@ pub enum JsonValue {
   JBool { value: boolean },
   JNumber { value: float },
   JString { value: text },
-  JArray { items: vector<JsonValue> },
-  JObject { fields: vector<JsonField> },
+  JArray { pub items: vector<JsonValue> },
+  JObject { pub fields: vector<JsonField> },
   JInteger { value: integer },
 }
 ```
 <!-- from default/06_json.loft -->
 ```loft
 pub struct JsonField {
-  name: text,
-  value: JsonValue,
+  pub name: text,
+  pub value: JsonValue,
 }
 ```
 

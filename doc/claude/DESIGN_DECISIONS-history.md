@@ -4677,3 +4677,55 @@ rounding in the layout routine rather than in each collection, and asked for eve
 stored bytes to be covered — persisted images (the layout identity changes, so `(L-Sound)`
 rebuilds), binary file I/O (kept at the wire width), remote and lazy stores (they verify the
 same identity) — and for the strict access to stop at the bytecode, whose operands stay packed.
+
+**Amended 2026-10-06 — the check moved from the access to the compiler.**  As first built,
+`Store::read` / `Store::write` were aligned `ptr::read` / `ptr::write` behind a per-access
+alignment test that panicked in every build.  A renewed portal run measured that test at 11–13 %
+on native store-heavy routines (gridmesh `build_index` 18.0 → 20.6 ms, cbor `encode_bytes` 760 →
+880 µs, Rust twins unchanged): it kept `read` from inlining into the keyed and vector paths.  The
+owner's ruling: "Introducing runtime overhead for validation is not a good idea. Those should be
+done compile time and certainly out of optimized pathes."  So `Stores::validate_all_layouts` now
+reports a misaligned place as a compile-time `type layout:` error, and `read` / `write` claim no
+alignment (`read_unaligned` / `write_unaligned`, defined at any offset).  A first draft asserted
+it in `Stores::finish`, which the emitted native `init()` also runs at startup, so it moved to the
+compiler's own layout validation.  The layout guarantee itself is unchanged.
+
+## C139 — A tuple IS a record; foreign data is value-const and never presented as writable
+
+Decided 2026-10-06 by the owner, in the discussion of loft#1875 (a `&` link to a narrow or text
+tuple member is refused).  The question as it arrived was a choice of storage for the two
+members; the owner reframed it: a tuple is just a record with fixed field names, its layout is
+no different from any record's, and it should be able to live on the stack and interact well with
+rustc — rustc's own types and field order are an optimisation that can be read from the record
+layout, or kept out of the records entirely where the rewrite rules allow.
+
+Foreign data came up through text: a rustc library returns a string, and loft should read it
+without first copying it into its own structure.  The owner then generalised it — foreign data is
+any structure, traversed and read whole or in parts — and settled writes in two steps.  A first
+reading (a write through a link copies the part and rebinds the name, `c += "!"` ≡
+`c = c + "!"`) was reconsidered the same day: foreign data is never presented as writable, the
+write is an error, and `c = t.0 + "!"` is the way to get the same result.  Last, the owner pointed
+out that foreign structures are their own type presenting as a normal loft structure, and loft
+already has read-only (value-const) structures, so the compiler refuses the write with no runtime
+check.  Measured while writing it down: `file_map`'s read-only vector is refused at run time
+today (loft#1897).
+
+The last question — whether a stored tuple keeps its written member order (`(L-Tuple)` as it
+read) or packs by descending alignment like a struct — the owner settled the same day: a stored
+tuple is nothing other than a record, so its fields may change order with the larger aligned ones
+first, with no effect on their names or their text presentation.  Measured: `(u8, u32, u16)` is
+12 bytes today against 8 for the equivalent struct (loft#1898).
+
+## C140 — private by default, `pub` is consent: fields, literals and variants
+
+**Question.** A library's struct fields were readable and writable by every importer (`pub` on a
+field was parsed and discarded), so no library could change a record's representation without
+breaking a consumer, and a `pub fn` returning a non-`pub` type handed its caller a value whose
+type it could not name (OCaml_BAR H3: no abstract type).  **Measured** (d364c4fb2): type names
+were already private by default and enforced; no field anywhere carried `pub` (stdlib 47 fields,
+libraries 956, tests 4395); `pub` on a variant field did not parse.  **Decided** 2026-10-06 (owner,
+@PLN187): private by default with three type levels (invisible / name only / `pub`), name only
+decided by the file's own `pub` signatures; enum variant fields follow the struct rule; a
+non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
+**Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
+contract 1 because it adds refusals.

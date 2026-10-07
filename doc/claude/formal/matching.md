@@ -108,12 +108,14 @@ spelled as an `if` was quiet (loft#1343).  The last arm is the fallback now, as 
 > `P-Cap`, `P-Rest`, `P-Multi`, `P-Atomic` are verified passing on both backends via
 > `tests/scripts/35*.loft` (worklist: [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md)).
 >
-> ⚠ **`P-Anchor`, `P-Revert` and `P-IterBound` are NOT among them, and are not shipped** —
-> they describe a memoising cursor that was never built, and the ops they name exist nowhere in
-> `src/`.  The shipped design materialises an iterator subject into a vector instead, which
-> leaves `(P-IterBound)`'s bound absent and an endless source unbounded (**D-match-6**, in
-> [matching-history.md](matching-history.md)).  A section banner covers the rules a reader then
-> reads under it, so it names its exceptions.
+> ⚠ **`P-Anchor` and `P-Revert` are NOT among them** — they describe a memoising cursor that
+> was never built, and the ops they name exist nowhere in `src/`.  The shipped design
+> materialises an iterator subject into a vector instead (§ How it is built, below), and
+> `(P-IterBound)` holds by bounding that materialise: past `max_lookahead` the pull stops with
+> the defined error on both backends (guard: `tests/exit_codes.rs`
+> `a_match_over_an_iterator_stops_at_max_lookahead`; D-match-6 in
+> [matching-history.md](matching-history.md)).  A section banner covers the rules a reader
+> then reads under it, so it names its exceptions.
 > Overview + phase↔rule map: [../plans/35-match-peg/FORMAL-DESIGN.md](../plans/35-match-peg/FORMAL-DESIGN.md).
 
 PEG patterns generalise a *point* pattern (unit/struct variant, `_`) to a **sequence** that may

@@ -21,9 +21,20 @@ pub struct Args {
   words: vector<text>
 }
 
+/// A path argument, written in loft's spelling (`/` separates on every platform).
+pub struct Path {
+  text: text
+}
+
 /// Vouch for `word` as an option: `{flag("--verbose")}`.
 pub fn flag(word: text) -> Flag {
   Flag { word: word }
+}
+
+/// A path for a hole: `{path("out/x.txt")}` reaches the program in the host's spelling —
+/// `out\x.txt` on Windows — where a text hole holding `out/x.txt` arrives as it is written.
+pub fn path(p: text) -> Path {
+  Path { text: p }
 }
 
 /// Splice `words` as one argv word each: `git add -- {args(paths)}`.  Each is a hole value,
@@ -35,7 +46,7 @@ pub fn args(words: vector<text>) -> Args {
 /// A program and its arguments, built from a format string.
 pub struct Command {
   /// The words handed to the program: `argv[0]` is the program itself.
-  argv: vector<text>,
+  pub argv: vector<text>,
   /// The last word may still grow: the literal or hole before touched no whitespace.
   open: boolean,
   /// The word being built held a null hole: what still touches it is dropped with it.
@@ -43,7 +54,7 @@ pub struct Command {
   /// The quote a literal opened and has not yet closed: "" outside a quoted span.
   quote: text,
   /// Why this command must not run; "" when it may.
-  refused: text
+  pub refused: text
 }
 
 fn refuse(self: Command, why: text) {
@@ -127,6 +138,20 @@ pub fn hole_flag(self: Command, v: Flag) {
   self.grow(v.word);
 }
 
+/// A path hole: the path in the host's spelling, one word or part of one.  A name some
+/// platform cannot hold refuses the command, as it refuses the path anywhere else.
+pub fn hole_path(self: Command, v: Path) {
+  if self.skip { return; }
+  out = "";
+  err = "";
+  if process_run("@path:{word(v.text)}", "", out, err) != 0 {
+    self.refuse(err);
+    self.drop_word();
+    return;
+  }
+  self.value(out);
+}
+
 /// A list spliced as words: the first joins the word in progress, the rest are words of
 /// their own.  An empty list drops the word it sits in, as a null hole does.
 pub fn hole_args(self: Command, v: Args) {
@@ -146,35 +171,111 @@ pub fn hole_args(self: Command, v: Args) {
 }
 
 /// What a finished program left: `ok` when it exited 0, its `code` (`128 + n` when signal
-/// `n` ended it, -1 when it could not be started — `stderr` then says why), and both
-/// streams as they arrived.
+/// `n` ended it, -1 when it could not be started — `stderr` then says why, -2 when the
+/// run's `timeout` stopped it and everything it started), and both streams as they arrived.
 pub struct Run {
-  ok: boolean,
-  code: integer,
-  stdout: text,
-  stderr: text
+  pub ok: boolean,
+  pub code: integer,
+  pub stdout: text,
+  pub stderr: text,
+  /// The run's `timeout` passed: the program and everything it started were stopped.
+  pub timed_out: boolean
 }
 
 // The mechanics, in the loft binary (`src/process_run.rs`): one reader per pipe from the
 // moment the child exists, so no stream is left without a reader.  The argv is one text,
-// each word prefixed by its byte length.
+// each word prefixed by its byte length.  A text that starts with `@op:` asks the binary
+// for one of the other operations below, its words encoded the same way.
 fn process_run(argv: text, input: text, out: &text, err: &text) -> integer process#update;
 #native
 
+// One word, prefixed by its byte length.
+fn word(w: text) -> text {
+  "{size(w)}:{w}"
+}
+
 fn encoded(self: Command) -> text {
   enc = "";
-  for w in self.argv { enc += "{size(w)}:{w}"; }
+  for w in self.argv { enc += word(w); }
   enc
 }
 
 /// Run the program to completion with `input` on its stdin, both streams collected: the
 /// OK-notice shape, `r = c.run(); assert(r.ok, r.stderr)`.  A refused command never runs.
-pub fn run(self: Command, input: text = "") -> Run {
+/// With a `timeout` (milliseconds; 0 waits as long as it takes) a program still running
+/// then is stopped together with everything it started, and the run says `timed_out`.
+pub fn run(self: Command, input: text = "", timeout: integer = 0) -> Run {
   if self.refused != "" {
-    return Run { ok: false, code: -1, stdout: "", stderr: self.refused };
+    return Run { ok: false, code: -1, stdout: "", stderr: self.refused, timed_out: false };
   }
   out = "";
   err = "";
-  code = process_run(self.encoded(), input, out, err);
-  Run { ok: code == 0, code: code, stdout: out, stderr: err }
+  code = 0;
+  if timeout > 0 {
+    code = process_run("@run:{word("{timeout}")}{self.encoded()}", input, out, err);
+  } else {
+    code = process_run(self.encoded(), input, out, err);
+  }
+  Run { ok: code == 0, code: code, stdout: out, stderr: err, timed_out: code == -2 }
+}
+
+/// A program started with `start()`, running beside this one.  Its input is empty and its
+/// output is this program's own, so no pipe exists that could be left without a reader.
+pub struct Process {
+  handle: integer,
+  /// The program's exit code once it has ended (`wait` answered true, or `stop`): its own,
+  /// or `128 + n` for signal `n`; -1 before, and when it could not be started.
+  pub code: integer,
+  /// Why the program could not be started; "" when it was.
+  pub error: text
+}
+
+/// Start the program and return at once.  It runs until it ends, `stop()` ends it, or this
+/// program ends — whichever is first — and everything it starts goes with it.  A refused
+/// command, or one that cannot be started, gives a `Process` that has already ended, with
+/// `error` saying why.
+pub fn start(self: Command) -> Process {
+  if self.refused != "" {
+    return Process { handle: 0, code: -1, error: self.refused };
+  }
+  out = "";
+  err = "";
+  h = process_run("@start:{self.encoded()}", "", out, err);
+  if h <= 0 {
+    return Process { handle: 0, code: -1, error: err };
+  }
+  Process { handle: h, code: -1, error: "" }
+}
+
+/// Wait up to `ms` milliseconds for the program to end: true when it has (and `code` is
+/// then its exit code).
+pub fn wait(self: Process, ms: integer) -> boolean {
+  if self.handle <= 0 { return true; }
+  out = "";
+  err = "";
+  r = process_run("@wait:{word("{self.handle}")}{word("{ms}")}", "", out, err);
+  if r == 0 { return false; }
+  if r == 1 { self.code = out as integer ?? -1; }
+  self.handle = 0;
+  true
+}
+
+/// Is the program still running?
+pub fn alive(self: Process) -> boolean {
+  if self.handle <= 0 { return false; }
+  out = "";
+  err = "";
+  process_run("@alive:{word("{self.handle}")}", "", out, err) == 1
+}
+
+/// End the program and everything it started; `code` then says how it ended.  A program
+/// that has already ended is left as it is.
+pub fn stop(self: Process) {
+  if self.handle <= 0 { return; }
+  out = "";
+  err = "";
+  if process_run("@stop:{word("{self.handle}")}", "", out, err) == 1 {
+    self.code = out as integer ?? -1;
+  }
+  self.handle = 0;
 }

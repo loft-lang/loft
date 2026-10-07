@@ -353,7 +353,44 @@ DESIGN_DECISIONS.md C123.
                   naming the qualifier of the library that owns it.
               L's own code reaches all of its items.  A package qualifying its OWN name
               (`L::name` inside L) means "in this file" and is not an outside reach.
+
+  (F-Visible) everything a file F declares is private to F; `pub` gives consent (C140).
+              A TYPE T of F, outside F, is
+                - INVISIBLE when T is not `pub` and no `pub` item of F names it: not named;
+                - NAME ONLY when T is not `pub` but a `pub` fn's signature of F, or a `pub`
+                  field of a visible type of F, names it (transitively through type
+                  arguments): named, passed and stored; never built; its variant names
+                  hidden;
+                - `pub` when declared `pub`: as name only, and built — a struct literal when
+                  every field is `pub`, an enum's variants.
+              A FIELD of a struct or of a variant is private to F; `pub` on it makes it
+              readable, writable and matchable wherever its type is visible.  A literal of a
+              name-only type outside F is refused, naming the cure (build it with F's
+              functions, or `pub` on the type).
+              An ALIAS `type A = τ` of F that is name only is ABSTRACT outside F: a value of
+              A is bound, handed to a parameter, variable, field or result declared A,
+              compared with `==` and printed; reading τ — an operator, a member or element
+              read, a method or parameter of τ, destructuring, a place or result declared
+              τ — is refused, and so is a plain τ handed where A is declared.  A
+              `vector<A>` holds A's: an element read and a loop variable are A, and an
+              operation that never looks at an element (`len`, `+=` of `vector<A>`,
+              `insert`, `reverse` — a callee whose parameter is an untyped `vector` or an
+              unbounded `vector<T>`) takes it; a bounded generic (`sort`, `sum`) reads τ.
+              The same holds at every depth a value carries A: a tuple member, a vector
+              of vectors, a transparent `pub type` that names A, a keyed lookup's key, the
+              value of an `if` / `match` / block / comprehension (its branches must agree),
+              a destructured or pattern-bound member, a lambda's parameter and result
+              through a generic's type variable, a named argument.  An `if` on an A, a
+              `match` on one, and a literal or variant pattern against an A member read τ.
+              Inside F, and as a `pub type`, A is τ.  A tuple spelled inline is no declaration: its
+              members are visible wherever it is.
 ```
+
+**`(F-Visible)` in words.** The levels are decided by what F's own `pub` items mention, so a
+`pub fn` just works: the type it returns can be named by the caller and passed back, while its
+fields and its construction stay F's until F says otherwise.  The census
+(`scripts/pub_census.sh`, `LOFT_TRACE_VISIBILITY=1`) lists every outside use that lacks its
+`pub`; one check (`Parser::check_visibility`) answers both it and the refusal.
 
 **In words.** `pub` is the boundary a library draws, and the owner's ruling is that the
 boundary holds: definitions without it "should not be reachable at all" from outside.  A
@@ -377,7 +414,14 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation is closed; the record is in [calls-history.md](calls-history.md).
+**OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
+
+- **D-call-28 (OPEN, @PLN187)** — violates `(F-Visible)`: a private field read, written or matched
+  outside its file, a literal of a `pub` type with a private field and a variant of a non-`pub`
+  enum are refused only under `LOFT_PUB_ENFORCE=1`.  The published libraries carry their `pub`
+  first (@PLN187 step 5), so no consumer of a published release breaks; then the refusal is the
+  default.  Naming and the build refusal for a name-only type already hold on every build.
+  Guard `tests/pub_visibility.rs` (`@C140`).
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

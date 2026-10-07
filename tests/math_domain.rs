@@ -8,7 +8,7 @@
 //! MUST stay `float?` even under the flag — is the load-bearing assertion (a wrong non-null
 //! proof would store a runtime null into a non-null slot).
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -18,8 +18,8 @@ fn loft_bin() -> std::path::PathBuf {
 /// opted out via `LOFT_NO_MATH_DOMAIN`. Returns `(compiled_ok, stdout+stderr)`.
 fn compile(tag: &str, src: &str, domain_on: bool) -> (bool, String) {
     let path = std::env::temp_dir().join(format!("loft_mathdom_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write temp");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&path, src).expect("write temp");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&path)
         .current_dir(env!("CARGO_MANIFEST_DIR"));
@@ -29,7 +29,7 @@ fn compile(tag: &str, src: &str, domain_on: bool) -> (bool, String) {
         cmd.env("LOFT_NO_MATH_DOMAIN", "1");
     }
     let out = cmd.output().expect("invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

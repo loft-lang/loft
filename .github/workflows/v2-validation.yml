@@ -20,6 +20,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
@@ -97,6 +99,7 @@ jobs:
   # misalignment corpus-wide.  Under nextest each test is its own process, so a
   # guard fire fails exactly that test and names the site.
   v2-guard:
+    # @windows-exempt: a platform-independent invariant sweep (stack alignment); the corpus runs on windows-latest daily
     name: V2 stack_align_guard sweep (ubuntu)
     runs-on: ubuntu-latest
     steps:
@@ -150,6 +153,7 @@ jobs:
   # UAF / uninit / leak), not the store layer's intentional aliasing.  Grow the
   # curated list as more shapes are validated clean.
   v2-miri:
+    # @windows-exempt: a Linux-only tool-class interpreter (Miri)
     name: V2 Miri hard-UB (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:

@@ -384,7 +384,7 @@ pub fn advisories_paths() -> (PathBuf, PathBuf) {
 /// `install::index_stale` shape — caller uses mtime.
 #[must_use]
 pub fn cache_stale(path: &std::path::Path) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
+    let Ok(meta) = crate::file_access::metadata(path) else {
         return true;
     };
     let Ok(modified) = meta.modified() else {
@@ -433,7 +433,7 @@ pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String>
     let url = advisories_url();
 
     let content_bytes: Vec<u8> = if opts.offline {
-        if !cache_path.exists() {
+        if !crate::file_access::exists(&cache_path) {
             return Ok(None);
         }
         // Verify here too.  This was the one branch of the four that read the cached
@@ -452,7 +452,7 @@ pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String>
                 // through).  An ABSENT signature falls back to the cached one — the
                 // offline/bundle path — but the verdict still comes first.
                 let sig_bytes = if fetched.signature.is_empty() {
-                    std::fs::read(&sig_path).unwrap_or_default()
+                    crate::file_access::read(&sig_path).unwrap_or_default()
                 } else {
                     fetched.signature.clone()
                 };
@@ -469,7 +469,7 @@ pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String>
                 .map_err(|e| format!("cache advisories: {e}"))?;
                 fetched.content
             }
-            Err(_) if !cache_path.exists() => {
+            Err(_) if !crate::file_access::exists(&cache_path) => {
                 // Network failed AND no cache — soft error; treat
                 // as "no advisories available", caller decides what
                 // to log.

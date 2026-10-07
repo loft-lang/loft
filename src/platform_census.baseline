@@ -1,0 +1,35 @@
+# Platform gates per file outside platform / file_access: src/ is @PLN184 B1, tests/ is C1.
+# Only shrinks: see src/platform_census.rs.  Format: <lines> <file>
+5 src/host.rs
+4 src/lib_placement.rs
+5 src/main.rs
+4 src/native_utils.rs
+1 src/self_update.rs
+2 tests/common/mod.rs
+3 tests/common/timing.rs
+1 tests/crash_report_file.rs
+1 tests/crash_report_naming.rs
+1 tests/doc_hygiene.rs
+1 tests/engine_host_kernel.rs
+1 tests/engine_host_placed.rs
+1 tests/error_path_state.rs
+1 tests/exit_codes.rs
+2 tests/format_width_is_bounded.rs
+1 tests/fs_symlink.rs
+2 tests/lazy_sql_source.rs
+1 tests/lib_git.rs
+1 tests/lib_process.rs
+2 tests/n3_use_native.rs
+3 tests/native.rs
+11 tests/native_source_key.rs
+2 tests/ownership_drop_gate.rs
+3 tests/p254_cache_poisoning.rs
+1 tests/placement_parity.rs
+1 tests/placement_remote.rs
+1 tests/placement_worker.rs
+3 tests/registry_publish_categories.rs
+1 tests/self_update_swap.rs
+1 tests/store_persist_loft.rs
+1 tests/wasm_debug_relay.rs
+1 tests/windows_probe.rs
+2 tests/wrap.rs

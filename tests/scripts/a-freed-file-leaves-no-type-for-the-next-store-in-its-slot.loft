@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-Claim` — a store minted without a type (`read_bytes`'s `vector<u8>`, a listing, a
+// parsed vector) says so in its root record's type tag, and freeing it closes no file.
+//
+// A claim writes nothing (@C137), and the root record's header is its size word AND its type
+// tag.  A raw mint wrote only the size, so a store slot a freed `File` had held handed the new
+// root that `File`'s tag.  Freeing the vector then ran the `File` release: it read the handle
+// field past the record's end — the vector's LENGTH — and closed whichever live file that
+// index named.  A program writing to that file afterwards lost the write, with no diagnostic;
+// under `-C debug-assertions=on` the read itself stopped the run (`Fld 36 is outside of
+// record 1 size 32`, tests/scripts/19-files.loft).
+//
+// Each cell keeps four files open and written (`"x"`), then, for every length `n` in `1..=8` —
+// wider than the handles those files hold, so the handle index is never read (`File.ref` is
+// private, C140) — frees a `File` (a fresh slot), mints a raw store of length `n` into that slot
+// and frees it, then writes `"y"` to every open file.  Hand-computed: each holds exactly
+// `"xy"`.  On the defect some `n` names an open file's handle and its `"y"` is lost.
+//
+// @falsified-at: 4ffa0ef90 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-freed-file-leaves-no-type-for-the-next-store-in-its-slot.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS, on a plain build — both cells answer `live file holds x, want xy`
+//   on both backends (each cell failing alone under `--tests`).  The patch removes only the
+//   root tag write in `Stores::database_named`.
+//   WITNESS: under `-C debug-assertions=on` the control stops at the read instead —
+//   `Fld 36 is outside of record 1 size 32`, in `close_file_handle`.
+//   HOLDS: `LOFT_ZERO_CLAIM=1` on the control passes, which is how the tag went stale: C137
+//   stopped zeroing claims and nothing else wrote the word.
+
+fn scratch(tag: text) -> text {
+  d = "{temp_dir() ?? "/tmp"}/loft_stale_tag_{tag}_{now()}_{ticks()}";
+  mkdir_all(d);
+  d
+}
+
+fn clean(d: text) {
+  for n in list_dir(d) ?? [] { delete("{d}/{n}"); }
+  rmdir(d);
+}
+
+// A File minted and freed here, so its store slot is the lowest free one.
+fn touch(p: text) -> boolean { t = file(p); t.format == TextFile }
+
+// The raw mints: each answers its length, and its store is freed on return.
+fn by_bytes(p: text) -> integer { v = read_bytes(p) ?? []; len(v) }
+fn by_listing(d: text) -> integer { v = list_dir(d) ?? []; len(v) }
+
+// A bait file whose length is `n` bytes.
+fn bait(p: text, n: integer) {
+  s = "";
+  for _ in 0..n { s += "b"; }
+  file(p).write(s);
+}
+
+// Every open file written a second time, then read back from disk.
+fn each_holds_xy(d: text, fs: vector<File>) -> text {
+  for g in fs { g += "y"; }
+  out = "";
+  for i in 0..4 { out += "{file("{d}/live{i}.txt").content()} "; }
+  out
+}
+
+fn test_a_byte_vector_in_a_freed_files_slot() {
+  d = scratch("bytes");
+  fs: vector<File> = [];
+  for i in 0..4 {
+    fs += [file("{d}/live{i}.txt")];
+  }
+  for g in fs { g += "x"; }
+  total = 0;
+  for n in 1..9 {
+    bait("{d}/bait{n}.txt", n);
+    assert(touch("{d}/bait{n}.txt"), "bait {n} is a text file");
+    total += by_bytes("{d}/bait{n}.txt");
+  }
+  got = each_holds_xy(d, fs);
+  assert(total == 36 && got == "xy xy xy xy ", "bytes: total {total}, files {got}");
+  clean(d);
+}
+
+fn test_a_listing_in_a_freed_files_slot() {
+  d = scratch("listing");
+  fs: vector<File> = [];
+  for i in 0..4 {
+    fs += [file("{d}/live{i}.txt")];
+  }
+  for g in fs { g += "x"; }
+  total = 0;
+  for n in 1..9 {
+    sub = "{d}/sub{n}";
+    mkdir_all(sub);
+    for i in 0..n { file("{sub}/e{i}.txt").write("e"); }
+    assert(touch("{d}/live0.txt"), "live0 is a text file");
+    total += by_listing(sub);
+    clean(sub);
+  }
+  got = each_holds_xy(d, fs);
+  assert(total == 36 && got == "xy xy xy xy ", "listing: total {total}, files {got}");
+  clean(d);
+}
+
+fn main() {
+  test_a_byte_vector_in_a_freed_files_slot();
+  test_a_listing_in_a_freed_files_slot();
+}

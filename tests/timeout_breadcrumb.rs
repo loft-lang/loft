@@ -17,8 +17,8 @@
 //! asserted; they move with the machine and pinning them would make this a
 //! change-detector.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -31,15 +31,15 @@ fn loft_bin() -> PathBuf {
 /// than the run.
 fn run_until_deadline(name: &str, body: &str, extra: &[&str]) -> String {
     let path = std::env::temp_dir().join(format!("loft_timeout_{name}.loft"));
-    std::fs::write(&path, body).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&path, body).expect("write probe");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     for a in extra {
         cmd.arg(a);
     }
     cmd.arg(&path).env("LOFT_TIMEOUT", "3");
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -168,12 +168,12 @@ fn a_fast_program_reports_nothing() {
 #[test]
 fn a_hang_inside_a_native_is_hard_killed_and_named() {
     let path = std::env::temp_dir().join("loft_timeout_native952.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "fn wait952() -> text {\n  host_input()\n}\nfn main() {\n  t = wait952();\n  println(\"never {t}\");\n}\n",
     )
     .expect("write probe");
-    let mut child = Command::new(loft_bin())
+    let mut child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "3")
@@ -186,7 +186,7 @@ fn a_hang_inside_a_native_is_hard_killed_and_named() {
     // close it first.
     let _stdin = child.stdin.take();
     let out = child.wait_with_output().expect("wait for loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

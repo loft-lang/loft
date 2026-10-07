@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TypedRead` — a fixed-width integer read (`f#read(2) as i16`) decodes the same value,
+// at the same sign and byte order, and leaves `#next` where the generic read leaves it.  The
+// native build routes such a read to `OpReadFileInt::<W, SIGNED>`; the interpreter's read is
+// the reference, and every value below is computed by hand from the sixteen bytes.
+//
+//   FE 01 80 7F  FF FF FF 7F  01 02 03 04  05 06 07 88
+//
+// A `u32` is not a 4-byte SIGNED type, so the rewrite leaves it to the generic read; its cell
+// keeps a future widening from taking it at the wrong sign.
+//
+// @falsified-at: none — a keeps-the-answer guard: the build before the rewrite answers every
+//   cell right, so no control ref can fail it.  Scored by a PLANT instead: one site's
+//   `OpReadFileInt::<2, true>` respelled `<2, false>` in the emitted Rust fails at
+//   `LE @4: i16 65535` (want -1); the unplanted emission passes every cell.
+//   CHANNEL: value.  HOLDS: both backends exact on every cell, `LOFT_NO_TYPED_READ=1` equal.
+
+fn path(tag: text) -> text { "{temp_dir() ?? "/tmp"}/loft_typed_read_{tag}.bin" }
+
+fn write_sixteen(p: text) {
+  w = file(p);
+  w.set_file_size(0);
+  w#format = LittleEndian;
+  for b in [254, 1, 128, 127, 255, 255, 255, 127, 1, 2, 3, 4, 5, 6, 7, 136] {
+    w += (b as u8?) ?? (0 as u8);
+  }
+}
+
+fn opened(tag: text, little: boolean) -> File {
+  p = path(tag);
+  write_sixteen(p);
+  f = file(p);
+  if little { f#format = LittleEndian; } else { f#format = BigEndian; }
+  f
+}
+
+fn test_little_endian_sixteen_bit() {
+  f = opened("le16", true);
+  a = f#read(2) as i16 as integer;
+  f#next = 0;
+  b = f#read(2) as u16 as integer;
+  f#next = 4;
+  c = f#read(2) as i16 as integer;
+  f#next = 4;
+  d = f#read(2) as u16 as integer;
+  assert(a == 510 && b == 510, "LE @0: i16 {a} u16 {b}, want 510 510");
+  assert(c == -1 && d == 65535, "LE @4: i16 {c} u16 {d}, want -1 65535");
+}
+
+fn test_big_endian_sixteen_bit() {
+  f = opened("be16", false);
+  a = f#read(2) as i16 as integer;
+  f#next = 0;
+  b = f#read(2) as u16 as integer;
+  assert(a == -511 && b == 65025, "BE @0: i16 {a} u16 {b}, want -511 65025");
+}
+
+fn test_eight_bit_takes_its_sign_from_the_range() {
+  f = opened("b8", true);
+  f#next = 2;
+  a = f#read(1) as i8 as integer;
+  f#next = 2;
+  b = f#read(1) as u8 as integer;
+  assert(a == -128 && b == 128, "@2: i8 {a} u8 {b}, want -128 128");
+}
+
+fn test_thirty_two_and_sixty_four_bit() {
+  f = opened("w", true);
+  f#next = 4;
+  a = f#read(4) as i32 as integer;
+  f#next = 8;
+  c = f#read(8) as integer;
+  g = opened("wb", false);
+  b = g#read(4) as i32 as integer;
+  g#next = 8;
+  d = g#read(8) as integer;
+  assert(a == 2147483647, "LE i32 @4: {a}, want 2147483647");
+  assert(b == -33456001, "BE i32 @0: {b}, want -33456001");
+  assert(c == -8644934341102468607, "LE integer @8: {c}");
+  assert(d == 72623859790382984, "BE integer @8: {d}");
+  f#next = 4;
+  e = f#read(4) as u32 as integer;
+  assert(e == 2147483647, "LE u32 @4: {e}, want 2147483647");
+}
+
+fn test_unsigned_thirty_two_bit_stays_unsigned() {
+  g = opened("u32", true);
+  g#next = 4;
+  a = g#read(2) as u16 as integer;
+  g#next = 4;
+  b = g#read(4) as u32 as integer;
+  // FF FF FF 7F little-endian is 0x7FFFFFFF; read FF FF alone as u16 is 65535.
+  assert(a == 65535 && b == 2147483647, "u16 {a} u32 {b}");
+}
+
+fn test_next_advances_by_each_read() {
+  f = opened("seq", true);
+  a = f#read(2) as i16 as integer;
+  b = f#read(2) as i16 as integer;
+  c = f#read(2) as i16 as integer;
+  assert(a == 510 && b == 32640 && c == -1, "sequence {a} {b} {c}, want 510 32640 -1");
+  assert(f#next == 6, "#next after three reads: {f#next}, want 6");
+}
+
+fn test_a_short_read_answers_null_and_moves_nothing() {
+  f = opened("eof", true);
+  f#next = 15;
+  v = (f#read(2) as i16 as integer) ?? 99;
+  assert(v == 99, "a read past the end: {v}, want the default 99");
+  assert(f#next == 15, "#next after the short read: {f#next}, want 15");
+}

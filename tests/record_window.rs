@@ -9,8 +9,8 @@
 //! header and `LOFT_HOIST_VERIFY=1` picks the checking monomorphisation.  The guard
 //! (`tests/scripts/158-record-window.loft`) says the VALUES hold on both backends; this pins
 //! what is emitted.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/158-record-window.loft";
 
@@ -20,7 +20,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         "loft_record_window_{}_{tag}.rs",
         std::process::id()
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -34,13 +35,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

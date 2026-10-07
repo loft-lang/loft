@@ -40,6 +40,9 @@
 #   ./scripts/find_problems.sh --peek                  # in-flight peek
 #   ./scripts/find_problems.sh --wait                  # wait for a --bg run
 #   ./scripts/find_problems.sh --stop                  # stop THIS checkout's --bg run
+#   ./scripts/find_problems.sh --poison-host windows   # the selection under the emulated
+#                                                      #   Windows host (LOFT_POISON_HOST): on
+#                                                      #   request, never the standing gate
 #
 # The selection flags combine with --bg: `--full --bg`, `--subject parser --bg`.
 #
@@ -274,9 +277,9 @@ selection_needs() {
     src="$REPO_ROOT/tests/$b.rs"
     [[ -f "$src" ]] || { NEED_RELEASE=1; NEED_WASM=1; return 0; }
     # A SPAWN of the release binary — `join("target/release/loft")` or a
-    # `Command::new(…release/loft…)` on a non-comment line.  `parse_errors`,
+    # `harness_command(…release/loft…)` (or `Command::new`) on a non-comment line.  `parse_errors`,
     # `testing` and `exit_codes` only NAME the path in a comment or a string.
-    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|Command::new\([^)]*release/loft' && NEED_RELEASE=1
+    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|(Command::new|harness_command)\([^)]*release/loft' && NEED_RELEASE=1
     if [[ "$b" =~ wasm|html|deliver|browser|gl_|android ]] || grep -qE -- '"--html"|"--native-wasm"|wasm32|"--deliver"' "$src"; then
       NEED_WASM=1
     fi
@@ -558,6 +561,12 @@ while [[ $# -gt 0 ]]; do
       else
         SELECT_LABEL="curated"; TEST_SELECT="$(curated_filter)"
       fi ;;
+    --poison-host)
+      # @PLN184 Track W — every selected test meets Windows' rules over this file system.
+      shift
+      [[ "${1:-}" == windows ]] || { echo "--poison-host takes: windows" >&2; exit 2; }
+      export LOFT_POISON_HOST=windows
+      shift ;;
     --list-subjects)
       echo "subjects (use: --subject <name>):"
       for s in $(subject_names); do
@@ -588,7 +597,7 @@ set -- "${_args[@]+"${_args[@]}"}"
 # Announced only by the modes that actually RUN something.  `--peek`/`--wait`/
 # `--stop` inspect an existing run, and telling them which selection they would
 # have used is noise about a decision they are not making.
-announce_selection() { echo "selection: $SELECT_LABEL"; }
+announce_selection() { echo "selection: $SELECT_LABEL${LOFT_POISON_HOST:+ under LOFT_POISON_HOST=$LOFT_POISON_HOST}"; }
 
 # A run of the curated or full set links every test binary — 382 of them, 16 GB under
 # `target/debug` (2026-09-28) — and a disk that cannot hold that ends the run in the
@@ -789,3 +798,10 @@ echo "=== Wall-clock timing summary ==="
 cat "$TIMINGS_FILE"
 echo "wrote problems summary to $OUT"
 wc -l "$OUT"
+# The exit status says what the run found, so a caller that judges it — `ci-run.sh recheck`'s
+# `changed` step — cannot report a pass over a failure: 1 when the summary names a failed test
+# or the hard cap ended the run before everything ran.  (The runner's own status is swallowed
+# above so the summary is always written.)
+if [ "$(sed -n 2p "$OUT")" != "(none)" ] || grep -aq "^HARD CAP: " "$LOG"; then
+  exit 1
+fi

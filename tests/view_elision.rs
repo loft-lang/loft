@@ -12,8 +12,8 @@
 //! switch (`LOFT_NO_VIEW_ELISION=1`), which is what makes this test red on the build before
 //! the elision and on a build that lost it.  Read off `loft introspect`, the instrument the
 //! design was written on.
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct Pt { ptx: float, pty: float }
@@ -29,7 +29,8 @@ fn main() {
 ";
 
 fn introspect(src: &std::path::Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect").arg(src).env("LOFT_TIMEOUT", "120");
     for (k, v) in env {
         cmd.env(k, v);
@@ -64,7 +65,7 @@ fn bytecode_of<'a>(dump: &'a str, name: &str) -> &'a str {
 /// test's cleanup remove the probe another is about to introspect.
 fn write_probe(name: &str) -> PathBuf {
     let src = std::env::temp_dir().join(format!("loft_view_elision_{name}.loft"));
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     src
 }
 
@@ -92,7 +93,7 @@ fn a_read_only_local_keeps_the_view_and_is_freed_by_identity() {
         !bc.contains("BindOrCopy") && !bc.contains("CopyRecord"),
         "the interpreter must bind the view with a plain PutRef:\n{bc}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }
 
 #[test]
@@ -106,7 +107,7 @@ fn a_written_local_and_a_rebound_base_keep_the_copy() {
             "{name} must own a copy — its local is written, or its base is rebound:\n{ir}"
         );
     }
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }
 
 #[test]
@@ -118,5 +119,5 @@ fn the_switch_restores_the_copy() {
         c1.contains("OpFreeRef(a(1))") && !c1.contains("OpFreeRefIfDistinct(a(1)"),
         "under LOFT_NO_VIEW_ELISION=1 the local must own a copy again:\n{c1}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }

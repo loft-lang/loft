@@ -23,16 +23,16 @@
 //! `use one;` would pass with the fix reverted, so the control below writes exactly that
 //! and asserts it too — one axis moved, everything else held.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A three-module package: an aggregator, a module owning a `const`, and a module whose own
@@ -68,10 +68,10 @@ fn build_package(root: &Path, import: &str) {
 /// succeeded.
 fn run_consumer(tag: &str, import: &str) -> (String, bool) {
     let root = std::env::temp_dir().join(format!("loft_962_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     build_package(&root, import);
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--lib")
         .arg(&root)
@@ -86,7 +86,7 @@ fn run_consumer(tag: &str, import: &str) -> (String, bool) {
         String::from_utf8_lossy(&out.stderr)
     );
     let ok = out.status.success();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     (all, ok)
 }
 

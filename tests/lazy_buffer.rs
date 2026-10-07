@@ -10,8 +10,9 @@
 //! entry mint is left in the rewritten functions and the switch (`LOFT_NO_LAZY_BUFFER=1`)
 //! restores every one, that a free is never taken for a use, and that the interpreter's
 //! entry init is the non-allocating sentinel.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str =
     "doc/claude/plans/164-activation-arena/bytecode-comparisons/A0-lazy-buffer-cells.loft";
@@ -40,7 +41,8 @@ const REWRITTEN: [(&str, usize); 13] = [
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args).env("LOFT_TIMEOUT", "120");
     for (k, v) in env {
         cmd.env(k, v);
@@ -59,12 +61,12 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let src = cells();
     let res = loft(&["--native-emit", &out.to_string_lossy(), &src], env);
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         res.status,
         String::from_utf8_lossy(&res.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// The body of one emitted function.
@@ -171,8 +173,8 @@ fn no_entry_mint_is_left_and_the_switch_restores_them() {
         "f1 mints before its early return:\n{f1}"
     );
     assert!(f1[..ret].contains("OpFreeRef(cell,var___ref_1"), "{f1}");
-    let _ = std::fs::remove_file(&on_path);
-    let _ = std::fs::remove_file(&off_path);
+    let _ = fa::remove_file(&on_path);
+    let _ = fa::remove_file(&off_path);
 }
 
 #[test]

@@ -72,7 +72,7 @@ pattern_matches() {
   esac
 }
 
-SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host'
+SUBJECT_NAMES='parser scopes codegen runtime store wasm packages lsp sql docs host winrules'
 
 # Spelled as a case-function, not `declare -A`: macOS ships bash 3.2 as BOTH /bin/sh and
 # /bin/bash, which has no associative arrays — the array form made every `--subject` run on a
@@ -84,13 +84,16 @@ subject_patterns() {
     (scopes)    echo '~slot ~leak ~ownership ~use_analysis ~uaf ~frame_vars ~closure ~callarg ~alias ~borrow ~branch_join ~join_witness ~copy_advice ~double_move ~loop_binding ~own_ ~owns_ ~ref_param ~redundant_free ~returned_text ~value_struct ~text_buffer ~text_return ~early_text ~nullable_ret ~generic_discharged ~link_ ~callee_disturb ~buffer_is_place ~compact =lease_refuse =copy_lease =heap_sound =read_after_move ~byte_copy ~vec_copy ~repeat_run ~text_run ~rebind_own_buffer ~work_buffer =dump_determinism ~copy_view' ;;
     (codegen)   echo '~codegen ~leaf_inline ~forward_walk ~same_read ~in_range ~discharge_into ~single_use ~range_end_header ~copy_fresh_dest ~inplace_callee_hoist ~fused_append ~scalar_hoist ~mint_hoist ~record_push ~move_append ~retbuf_adopt ~selfread_literal ~literal_hoist ~discharge_set ~literal_walk ~complete_write ~element_first ~view_header ~wrapper_op ~callee_inputs ~push_hoist ~next_counter ~leaf_chain ~lazy_buffer ~nested_in_place ~emission_audit ~native ~n2_ ~n3_ ~g2_ ~ir_ ~introspect ~slots ~entry_signature ~differential ~hoist ~vector_base ~loop_buffer ~push_fill ~lazy_split ~invariant_arith ~bounded_nest ~repeat_fill ~twin_base ~record_ptr ~loop_record ~group_push ~range_arith ~guarded_chain ~release_pass ~e1_ ~n0_ ~behavior_golden ~compile_scaling ~windows ~append_in_place ~retbuf ~view_elision ~adopt_first_bind ~adopt_buffer_reuse ~lift_adopt ~return_field ~fn_header ~one_of_several_args ~literal_exit_buffer ~place_result ~view_field ~field_mint ~iteration_base ~nested_field ~mint_window ~copy_in_place ~leaving_free ~enum_record ~push_window ~join_read ~bounded_sum ~text_borrow ~char_walk ~split_table ~guard_free ~prealloc_stride ~heap_discharge ~walk_accumulator ~record_window ~scalar_file_read ~compiled_stdlib ~prealloc_elide ~loop_layout ~start_step ~swap_rebind ~refill_buffer ~refill_text ~rebind_buffer ~pure_reuse' ;;
     (runtime)   echo '~wrap ~issues ~thread ~par_ ~parallel ~parity ~coroutine ~runtime ~dispatch ~code_base ~fast_table ~frame_headroom ~panic ~exit_codes ~crash ~error_path ~soft_halt ~log ~math ~format_width ~profiling ~sandbox ~script_mode ~self_append ~timeout ~json_corpus ~test ~env_ ~fs_ ~frame_readers' ;;
-    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures =concurrent_warm_start' ;;
+    (store)     echo '~store ~database ~data_ ~paged ~lazy ~field_without ~layout ~watermark ~binary_io ~heap_free ~clear_release ~reset_capacity ~poison_claim ~value_record ~foreign_store ~foreign_bridge ~locked_writes ~dropped_writes ~prefill_image ~pooled_buffer ~keyed_fast ~siphash ~data_structures =concurrent_warm_start' ;;
     (wasm)      echo '~wasm ~html ~deliver ~browser ~gl_ ~android' ;;
-    (packages)  echo '~registry ~package =imports ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust' ;;
+    (packages)  echo '~registry ~package =imports =pub_visibility ~api_ ~compat ~manifest ~extract ~resolution ~cache ~self_update ~install ~lib_ ~library ~module_name ~path_flag ~placement ~stdlib_target ~undeclared ~dep_ ~transitive =tls_trust' ;;
     (lsp)       echo '~lsp ~dap ~debugger ~repl' ;;
     (sql)       echo '~lazy_sql ~sql' ;;
     (docs)      echo '~compiled_stdlib ~doc ~features ~index_hygiene ~comment ~viewer ~check_line ~expectation ~function_coverage ~typst' ;;
     (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world' ;;
+    # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
+    # the emulated Windows host itself; the rest are the file, directory and process families.
+    (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe' ;;
     (*)        return 1 ;;
   esac
 }
@@ -126,6 +129,7 @@ subject_paths() {
     (sql)      echo '^src/database/sql_|^src/database/lazy\.rs' ;;
     (docs)     echo '^doc/|^default/.*\.loft$|\.md$' ;;
     (host)     echo '^src/engine_host\.rs|^src/host\.rs|^src/rpc\.rs|^src/serve\.rs' ;;
+    (winrules) echo '^src/file_access/|^src/platform\.rs|^src/database/io\.rs|^src/database/loft_file\.rs|^src/state/io\.rs|^src/png_store\.rs' ;;
     (*)        return 1 ;;
   esac
 }

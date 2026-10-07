@@ -225,6 +225,19 @@ impl Output<'_> {
                                 .expect("eager_tuple_kinds admits only single-slot kinds");
                             write!(w, "__values.push({img}); ")?;
                         }
+                    } else {
+                        // Any other tuple-valued yield — a variable, a call — is bound once
+                        // and read member by member: matched on the literal alone, it pushed
+                        // nothing and the consumer read zeros.
+                        let mut buf: Vec<u8> = Vec::new();
+                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        let code = String::from_utf8_lossy(&buf).into_owned();
+                        write!(w, "let __yt = {code}; ")?;
+                        for (i, &kind) in kinds.iter().enumerate() {
+                            let img = super::coroutine::yield_slot_i64(kind, &format!("__yt.{i}"))
+                                .expect("eager_tuple_kinds admits only single-slot kinds");
+                            write!(w, "__values.push({img}); ")?;
+                        }
                     }
                     write!(w, "}}")?;
                 } else if self.yield_collect {
@@ -396,6 +409,15 @@ impl Output<'_> {
                     // field already claimed that spelling (loft#928).
                     if matches!(variables.tp(var), Type::Text(_)) {
                         return write!(w, "&self.var_{field}");
+                    }
+                    // @PLN167 decision 1 — a LINKED narrow field reads as its decoded value.
+                    if let Some(slot) = variables.linked_narrow_slot(var) {
+                        return write!(w, "{}", slot.decode_rust(&format!("self.var_{field}")));
+                    }
+                    // A tuple field read whole is a value: cloned, since a read must not move
+                    // it out of the struct, and rebuilt plain when a link encodes a member.
+                    if matches!(variables.tp(var).base(), Type::Tuple(_)) {
+                        return write!(w, "{}", self.tuple_field_value(var, field));
                     }
                     return write!(w, "self.var_{field}");
                 } else if self.text_borrowed(var) {
@@ -594,11 +616,20 @@ impl Output<'_> {
                 let idx = node.tupleget_idx();
                 let variables = self.data.def(self.def_nr).variables();
                 let (name, deref) = crate::generation::tuple_base(variables, var);
+                // A generator's tuple local is its struct field (loft#1899).
+                let name = if deref { name } else { self.var_place(var) };
                 if deref {
                     // A `&`-bound tuple LOCAL: the element sits behind a raw pointer.
                     // `T-Ref-El` admits only scalars here, so none of the text/borrow
                     // spellings below can apply to this base.
                     return write!(w, "unsafe {{ {name}.{idx} }}");
+                }
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                if let Some(Some(slot)) = self
+                    .linked_tuple_slots(var)
+                    .and_then(|s| s.get(usize::from(idx)).copied())
+                {
+                    return write!(w, "{}", slot.decode_rust(&format!("{name}.{idx}")));
                 }
                 // loft#1038 — one derivation for what the slot holds, shared with the
                 // WRITE arm and with `set_var`'s clone rule (`tuple_elem_is_text`).
@@ -631,6 +662,8 @@ impl Output<'_> {
                 let idx = node.tupleput_idx();
                 let variables = self.data.def(self.def_nr).variables();
                 let (name, deref) = crate::generation::tuple_base(variables, var);
+                // A generator's tuple local is its struct field (loft#1899).
+                let name = if deref { name } else { self.var_place(var) };
                 // A text element is a `String` slot, so the value has to arrive owned —
                 // the same rule the tuple LITERAL arm below obeys through this flag.
                 // Without it `t.0 = "X"` emitted `var_t.0 = "X";` and rustc refused the
@@ -676,6 +709,21 @@ impl Output<'_> {
                     write!(w, "unsafe {{ ")?;
                 }
                 write!(w, "{name}.{idx} = ")?;
+                // `@FR-T-Record` — a narrow member a `&` names takes its value encoded.
+                let narrow = self
+                    .linked_tuple_slots(var)
+                    .and_then(|s| s.get(usize::from(idx)).copied().flatten());
+                let (narrow_open, narrow_close) = match narrow {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both
+                            .split_once('\u{0}')
+                            .expect("the marker is in the template");
+                        (a.to_string(), b.to_string())
+                    }
+                    None => (String::new(), String::new()),
+                };
+                write!(w, "{narrow_open}")?;
                 if bool_cast.is_some() {
                     write!(w, "(")?;
                 }
@@ -685,33 +733,35 @@ impl Output<'_> {
                 if elem_is_fn {
                     self.fn_ref_context = true;
                 }
+                let var_src = matches!(node.tupleput_inner().kind(), ValueType::Var);
+                if elem_is_text && var_src {
+                    write!(w, "(")?;
+                }
                 let r = self.output_code_node(w, node.tupleput_inner());
                 self.fn_ref_context = prev_fn_ref_ctx;
                 self.tuple_text_to_string = prev;
                 // The same conversion the `Tuple` element loop applies, for the same
                 // reason: this position knows the slot is an owned `String` and the
-                // value emitted into it does not.  A `TupleGet`/`Var` source naming an
-                // owned text LOCAL already emitted un-borrowed (the flag above), so for
-                // that one this would only add a copy.
-                //
-                // A text ARGUMENT is the exception, and the carve-out did not know it: a
-                // text parameter arrives BORROWED (`&str`), so the same bare spelling is a
-                // type error at an owned slot — `p.1 = s` on
-                // `fn f(p: (integer, text), s: text)` was rustc E0308 *"expected `String`,
-                // found `&str`"* while the literal `p.1 = "x"` beside it compiled
-                // (loft#1278).  The tuple LITERAL arm has always converted a `Var` here;
-                // only this arm carved it out, so the two spellings of the same write
-                // disagreed about the same source.
-                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var)
-                    && self.text_borrowed(node.tupleput_inner().var_nr());
-                if elem_is_text
-                    && (!matches!(node.tupleput_inner().kind(), ValueType::Var) || borrowed_var_src)
-                {
+                // value emitted into it does not.  A `Var` source is wrapped whole —
+                // `(<source>).to_string()` — because a text variable reads in several
+                // spellings: an owned local's bare name, a borrowed one's `&str`, a `&text`
+                // parameter's or a caller's work buffer's `&*var_x`, a generator field's
+                // `&self.var_x`.  A bare owned `String` is a MOVE, so a loop that reuses
+                // the variable — a compiler work text included — or any later read did not
+                // compile (E0382), and a suffix on a prefixed spelling binds inside it
+                // (`&*var_x.clone()` is a `&str`, E0308) (loft#1901).  A text PARAMETER
+                // arrives borrowed (`&str`), which is why `p.1 = s` on
+                // `fn f(p: (integer, text), s: text)` needs the conversion too (loft#1278).
+                // The member gets its own text either way (`@FR-T-Record`).
+                if elem_is_text && var_src {
+                    write!(w, ").to_string()")?;
+                } else if elem_is_text {
                     write!(w, ".to_string()")?;
                 }
                 if let Some(cast) = bool_cast {
                     write!(w, ") as {cast}")?;
                 }
+                write!(w, "{narrow_close}")?;
                 if deref {
                     write!(w, " }}")?;
                 }
@@ -1435,10 +1485,23 @@ impl Output<'_> {
         // the value crosses a forwarding frame.  Snapshot the allocation counter here and ask
         // `cr_fnref_minted` afterwards; a CAPTURE's stamp predates this and is left alone.
         // Heap returns only — a text return crosses as an owned `String`.
-        let heap_return = matches!(
-            ret_type.base(),
-            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-        );
+        // `@FR-R-FnRefValue` — every arm of this dispatch answers the record's TUPLE: the arms
+        // are called without a buffer (each is admitted, so `emit_user_call_args` drops it),
+        // nothing is minted, and an absent fn-ref answers the null record's fields.
+        let value_fields: Option<Vec<(i64, &'static str)>> = super::hoist::fnref_value(
+            &self.value_records.fnref_sites,
+            &self.value_records.fns,
+            self.def_nr,
+            v_nr,
+        )
+        .and_then(|rec| self.value_records.types.get(&rec))
+        .map(|t| t.fields.clone());
+        crate::rewrite_census::fired("R-FnRefValue", usize::from(value_fields.is_some()));
+        let heap_return = value_fields.is_none()
+            && matches!(
+                ret_type.base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            );
         write!(w, "{{ ")?;
         if heap_return {
             write!(w, "let __vc_seq = codegen_runtime::cr_alloc_serial(cell); ")?;
@@ -1453,10 +1516,11 @@ impl Output<'_> {
             // right: the pair is then built inside EACH branch.
             let is_fn_arg =
                 i < param_types.len() && matches!(param_types[i].base(), Type::Function(..));
+            // Set either way: an argument takes its OWN parameter's context, never the
+            // caller's — a call whose RESULT is a fn-ref is emitted in that context, and an
+            // integer argument inheriting it was spelled `(3_i32 as u32, DbRef::NULL)`.
             let prev_fn_ref_ctx = self.fn_ref_context;
-            if is_fn_arg {
-                self.fn_ref_context = true;
-            }
+            self.fn_ref_context = is_fn_arg;
             let expr = self.generate_expr_buf(arg)?;
             self.fn_ref_context = prev_fn_ref_ctx;
             // P265: when the fn-ref's parameter at this index is text,
@@ -1486,14 +1550,8 @@ impl Output<'_> {
                 )
                 && crate::generation::dispatch::tuple_has_text_leaf(param_elems)
             {
-                let name = self
-                    .data
-                    .def(self.def_nr)
-                    .variables()
-                    .name(*var)
-                    .to_string();
                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
-                    &format!("var_{name}"),
+                    &self.var_place(*var),
                     param_elems,
                 ))
             } else {
@@ -1504,8 +1562,26 @@ impl Output<'_> {
             let text_link_arg = link_arg
                 && matches!(param_types[i].base(),
                     Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
+            // `@FR-R-FnRefValue` — a parameter every arm receives as a tuple takes the tuple,
+            // built as a direct call builds it (`emit_call_arg` against one arm).
+            let tuple_param = super::hoist::fnref_param(
+                &self.value_records.fnref_sites,
+                &self.value_records.params,
+                self.def_nr,
+                v_nr,
+                i,
+            )
+            .is_some()
+                && !candidates.is_empty();
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
+            } else if tuple_param {
+                let cand = self.data.def(candidates[0].d_nr);
+                self.current_call_def = candidates[0].d_nr;
+                let mut buf = Vec::new();
+                self.emit_call_arg(&mut buf, cand, i, arg)?;
+                let spelled = String::from_utf8(buf).unwrap_or_default();
+                write!(w, "let _farg_{i} = {spelled}; ")?;
             } else if link_arg
                 && !(text_link_arg && store_mask & (1 << i) != 0)
                 && !candidates.is_empty()
@@ -1717,6 +1793,10 @@ impl Output<'_> {
                 }
             }
             let _ = has_closure;
+            // The arm's own number, for `emit_user_call_args` (whether it drops a buffer) and
+            // the twin forms (keyed by identity): left as it was, it named whichever call the
+            // argument bindings above emitted last.
+            self.current_call_def = *d_nr;
             // Route through output_call_user_fn → emit_op → custom emitter
             // (or DefaultEmitter::user_fn_call_body when no emitter is
             // registered for this candidate).
@@ -1733,6 +1813,7 @@ impl Output<'_> {
                     )?;
                 } else {
                     let inst_def = self.data.def(inst);
+                    self.current_call_def = inst;
                     self.output_call_user_fn(w, inst_def, &synthetic)?;
                 }
             }
@@ -1770,10 +1851,18 @@ impl Output<'_> {
         // range), and the call answers the return type's null, as the interpreter's guard in
         // `generate_call_ref` does; the program continues (C80).
         write!(w, " _ => ")?;
-        match ret_type.base() {
-            Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
-            Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
-            _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+        if let Some(fields) = &value_fields {
+            write!(
+                w,
+                "{}",
+                super::hoist::tuple_reads(fields, "DbRef::NULL", "stores")
+            )?;
+        } else {
+            match ret_type.base() {
+                Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
+                Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
+                _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+            }
         }
         write!(w, " }}")?;
         if heap_return {
@@ -2017,6 +2106,9 @@ impl Output<'_> {
             // `from_u32_unchecked`, for which `0x8000_0000` is undefined
             // behaviour (loft#1014).
             Type::Character => write!(w, "0"),
+            // The absent fn-ref (`@FR-L-FnAbsent`): no definition, no environment — the spelling
+            // `default_native_value` gives a function slot.
+            Type::Function(..) => write!(w, "(0_u32, DbRef::NULL)"),
             Type::Integer(_) => write!(w, "i64::MIN"),
             Type::Float => write!(w, "f64::NAN"),
             Type::Single => write!(w, "f32::NAN"),
@@ -2791,6 +2883,60 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
+    /// `@FR-R-PushFill`'s run clause ([`super::hoist::push_run`]): reserve the run's bytes
+    /// once and write them through one push window, closed after the last.  A vector with
+    /// no record takes the statements as they stand — the runtime's own refusal.
+    fn output_push_run(
+        &mut self,
+        w: &mut dyn Write,
+        run: &super::hoist::PushRun<'_>,
+        operators: &[Value],
+        at: usize,
+    ) -> std::io::Result<()> {
+        let vec = self.expr_string(run.vector)?;
+        let min = self.expr_string(run.min)?;
+        let k = run.vals.len();
+        self.hoist_counter += 1;
+        let n = self.hoist_counter;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "if !({vec}).is_null() && ({vec}).rec != 0 {{ //@FR-R-PushFill run of {k}"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  vector::pre_alloc_vector(&({vec}), 1_u32, 1_u32, &mut stores.allocations); vector::reserve_more(&({vec}), {k}_i64, 1_u32, &mut stores.allocations); let mut __ph_{n} = vector::push_header(&({vec}), &stores.allocations); let mut __pw_{n} = vector::push_window(&__ph_{n}, 1_u32, &stores.allocations);"
+        )?;
+        for val in &run.vals {
+            let e = self.expr_string(val)?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "  {{ let __pv = loft::store::Store::byte_raw(({min}) as i32, ({e}) as i32); unsafe {{ stores.push_windowed::<u8, false>(&mut __ph_{n}, &mut __pw_{n}, &({vec}), 1, __pv) }} }};"
+            )?;
+        }
+        self.indent(w)?;
+        writeln!(
+            w,
+            "  stores.push_window_close::<false>(&mut __ph_{n}, __pw_{n}.len, &({vec}));"
+        )?;
+        self.indent(w)?;
+        writeln!(w, "}} else {{")?;
+        for op in &operators[at..=run.last] {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            self.indent(w)?;
+            self.output_code_inner(w, op)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-PushFill/run", 1);
+        Ok(())
+    }
+
     /// `@FR-R-PushFill`'s repeat-literal clause — a `[c; n]` template and its copies are one
     /// fill of the tail; the two statements stand as the fallback for a count or a vector the
     /// fill refuses.
@@ -3378,6 +3524,27 @@ impl Output<'_> {
                 repeat_skip = Some(vnr + 1);
                 continue;
             }
+            // `@FR-R-PushFill`'s run clause — a straight-line run of byte appends to one
+            // vector reserves once and writes through one window.
+            if !self.hoist_disabled
+                && !self.push_fill_disabled
+                && !self.push_window_disabled
+                && !self.in_coroutine_body
+                && crate::keys::push_run_enabled()
+                && let Some(run) = super::hoist::push_run(
+                    operators,
+                    vnr,
+                    self.data,
+                    self.data.def(self.def_nr).variables(),
+                )
+                && let Some(path) = super::hoist::vector_path(self.data, run.vector)
+                && self.active_push_header(&path).is_none()
+                && !self.push_windows.iter().any(|(p, _)| *p == path)
+            {
+                self.output_push_run(w, &run, operators, vnr)?;
+                repeat_skip = Some(run.last);
+                continue;
+            }
             // loft#1753 — a statement that calls into a frame first records the line it calls
             // from in THIS frame, which is what `stack_trace()` reports as the callee frame's
             // `line`: the call site that entered it, as the interpreter's `CallFrame.line` is.
@@ -3472,6 +3639,57 @@ impl Output<'_> {
                 && matches!(a2.unspan(), Value::Int(0))
             {
                 continue;
+            }
+            // `@FR-R-AppendTwin` — inside a twin, the buffer's leading length reset is skipped and
+            // its mint runs only for a buffer the caller did not hand in.
+            if let Some(tb) = self.append_twin_buf
+                && let Value::Call(d, a) = v.unspan()
+                && let Some(Value::Var(first)) = a.first().map(Value::unspan)
+                && *first == tb
+            {
+                match self.data.def(*d).name() {
+                    "OpSetInt4" => continue,
+                    "OpDatabase" => {
+                        let b = sanitize(self.data.def(self.def_nr).variables().name(tb));
+                        self.indent(w)?;
+                        writeln!(
+                            w,
+                            "if var_{b}.store_nr == u16::MAX {{ //@FR-R-AppendTwin mint"
+                        )?;
+                        self.indent(w)?;
+                        self.output_code_inner(w, v)?;
+                        writeln!(w, ";")?;
+                        self.indent(w)?;
+                        writeln!(w, "}}")?;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            // `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin: f's twin builds
+            // its result after X's elements, and the copy is gone.
+            if crate::keys::append_twin_enabled() && !self.in_coroutine_body {
+                let mut memo = std::mem::take(&mut self.ap_memo);
+                let site = super::append_twin::call_site(v, self.data, self.def_nr, &mut memo);
+                self.ap_memo = memo;
+                if let Some(site) = site {
+                    let mut args = site.args.to_vec();
+                    args[site.at] = site.dest.clone();
+                    let call = Value::Call(site.callee, args);
+                    if let Value::Call(_, a) = &call {
+                        self.ap_site_next = Some((site.callee, a.as_ptr() as usize));
+                    }
+                    self.indent(w)?;
+                    self.output_code_inner(w, &call)?;
+                    writeln!(w, "; //@FR-R-AppendTwin")?;
+                    assert!(
+                        self.ap_site_next.take().is_none(),
+                        "@FR-R-AppendTwin: the rewritten call of {} was emitted without its twin's \
+                         name — the plain callee would clear the destination",
+                        self.data.def(site.callee).name()
+                    );
+                    continue;
+                }
             }
             // `@FR-R-RefillBuffer` — a refilling buffer's vector-field zero empties the vector
             // in place: a fresh mint holds no vector there (a no-op), a kept store holds the

@@ -14,18 +14,19 @@
 // in it, a rename, a binary file), and a real checkout's history is whatever it
 // happens to be that day.
 
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `placement = "process"` (`lib_placement::wire` is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn scratch(name: &str) -> PathBuf {
     let base = std::env::var_os("TMPDIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-lib-git").join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -35,7 +36,7 @@ fn workspace_root() -> PathBuf {
 
 /// Run git in `dir` and answer its stdout, trimmed of the trailing newline.
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = loft::platform::process::harness_command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -47,12 +48,16 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// Build a repository whose history contains the shapes that break a naive
 /// reader, and answer its path.
 fn repo(name: &str) -> Option<PathBuf> {
-    if Command::new("git").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         return None;
     }
     let dir = scratch(name);
     let run = |args: &[&str]| {
-        let ok = Command::new("git")
+        let ok = loft::platform::process::harness_command("git")
             .arg("-C")
             .arg(&dir)
             .args(args)
@@ -68,7 +73,7 @@ fn repo(name: &str) -> Option<PathBuf> {
             String::from_utf8_lossy(&ok.stderr)
         );
     };
-    Command::new("git")
+    loft::platform::process::harness_command("git")
         .arg("init")
         .arg("-q")
         .arg("-b")
@@ -76,13 +81,13 @@ fn repo(name: &str) -> Option<PathBuf> {
         .arg(&dir)
         .output()
         .expect("git init");
-    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").expect("write a");
+    fa::write(dir.join("a.txt"), "one\ntwo\nthree\n").expect("write a");
     run(&["add", "a.txt"]);
     // A subject with a TAB in it. `tools/viewer/refresh.sh` splits `git log` on
     // TAB, so this line is what silently shifts its fields — and the reason
     // `lib/git` asks git for `%x1f` separators instead.
     run(&["commit", "-q", "-m", "first\tcommit with a tab"]);
-    std::fs::write(dir.join("b.txt"), "héllo ✓\n").expect("write b");
+    fa::write(dir.join("b.txt"), "héllo ✓\n").expect("write b");
     run(&["add", "b.txt"]);
     run(&[
         "commit",
@@ -97,12 +102,12 @@ fn repo(name: &str) -> Option<PathBuf> {
 fn run_loft(dir: &Path, program: &str, placement: &str) -> (String, String) {
     let lib = dir.join("libs");
     let src = lib.join("git").join("src");
-    std::fs::create_dir_all(&src).expect("create lib dir");
+    fa::create_dir_all(&src).expect("create lib dir");
     // A copy of the real library with only its manifest edited, so the test
     // exercises the shipped source rather than a paraphrase of it.
     let real = workspace_root().join("lib").join("git");
-    std::fs::copy(real.join("src").join("git.loft"), src.join("git.loft")).expect("copy source");
-    let manifest = std::fs::read_to_string(real.join("loft.toml")).expect("read manifest");
+    fa::copy(real.join("src").join("git.loft"), src.join("git.loft")).expect("copy source");
+    let manifest = fa::read_to_string(real.join("loft.toml")).expect("read manifest");
     let manifest = manifest
         .lines()
         .map(|l| {
@@ -114,14 +119,14 @@ fn run_loft(dir: &Path, program: &str, placement: &str) -> (String, String) {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(lib.join("git").join("loft.toml"), manifest).expect("write manifest");
+    fa::write(lib.join("git").join("loft.toml"), manifest).expect("write manifest");
 
     // `#cwd` so the program runs in the repository rather than beside its own
     // source — which is what every tool in this tree wants, and what the viewer
     // driver does.
     let path = dir.join("probe.loft");
-    std::fs::write(&path, format!("#cwd\npub use git::*;\n{program}")).expect("write probe");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&path, format!("#cwd\npub use git::*;\n{program}")).expect("write probe");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(&lib)
@@ -220,8 +225,8 @@ fn the_working_tree_and_diff_queries_agree_with_git() {
     };
     // A modification, an untracked file, and a rename — the three shapes
     // `refresh.sh` handles by hand, one of which (the rename) it got wrong once.
-    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\nfour\n").expect("modify a");
-    std::fs::write(dir.join("new.txt"), "fresh\n").expect("add new");
+    fa::write(dir.join("a.txt"), "one\ntwo\nthree\nfour\n").expect("modify a");
+    fa::write(dir.join("new.txt"), "fresh\n").expect("add new");
     let program = "fn main() {\n\
                    \x20   for c in uncommitted() { println(\"unc={c.status}|{c.path}\"); }\n\
                    \x20   for c in changed(\"main\") { println(\"chg={c.status}|{c.path}\"); }\n\
@@ -284,9 +289,9 @@ fn the_viewer_state_dump_reports_what_git_reports() {
         eprintln!("skip: no git on this machine");
         return;
     };
-    std::fs::write(dir.join("c.txt"), "untracked\n").expect("write untracked");
+    fa::write(dir.join("c.txt"), "untracked\n").expect("write untracked");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(workspace_root().join("lib"))
@@ -304,7 +309,7 @@ fn the_viewer_state_dump_reports_what_git_reports() {
     );
 
     let read = |name: &str| -> String {
-        std::fs::read_to_string(dir.join("tools/viewer/state").join(name))
+        fa::read_to_string(dir.join("tools/viewer/state").join(name))
             .unwrap_or_else(|e| panic!("no {name}: {e}"))
     };
     // Read the documents with a plain substring check rather than a JSON parser:
@@ -343,7 +348,7 @@ fn the_viewer_state_dump_reports_what_git_reports() {
         // card rather than an error.
         for name in [format!("{sha}.diff"), format!("{sha}.files.json")] {
             assert!(
-                dir.join("tools/viewer/state/commits").join(&name).is_file(),
+                fa::is_file(dir.join("tools/viewer/state/commits").join(&name)),
                 "no {name} written"
             );
         }
@@ -377,12 +382,16 @@ const NOTHING_TO_READ: &str = "fn main() {\n\
 /// reporting git's own text as data.
 #[test]
 fn a_question_with_no_answer_is_empty_not_a_failure() {
-    if Command::new("git").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: no git on this machine");
         return;
     }
     let dir = scratch("emptyrepo");
-    Command::new("git")
+    loft::platform::process::harness_command("git")
         .args(["init", "-q", "-b", "main"])
         .arg(&dir)
         .output()

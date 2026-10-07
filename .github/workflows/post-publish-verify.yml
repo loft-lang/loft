@@ -28,8 +28,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   acquisition-chain:
+    # @windows-exempt: approved exemption (owner, 2026-10-07) — a clean-Windows install leg is future work outside @PLN184
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

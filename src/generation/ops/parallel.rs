@@ -233,7 +233,13 @@ fn tuple_arg_prep(ctx: &EmitCtx<'_, '_>, fn_d_nr: u32, elem_size: i32) -> (Strin
         // @PLN114 — the element rows are STORAGE, so offsets come from the storage
         // view.  Using the stack view made a `par` over `vector<(u8,u16)>` read the
         // row at the wrong stride (the interpreter twin had the same defect).
-        let offsets = crate::data::element_storage_offsets(elems);
+        // `@FR-L-Tuple` — the record's own finished positions (largest alignment first).
+        let offsets: Vec<usize> =
+            crate::data::stored_tuple_offsets(ctx.output.data, ctx.output.stores, elems)
+                .map_or_else(
+                    || crate::data::element_storage_offsets(elems),
+                    |o| o.into_iter().map(usize::from).collect(),
+                );
         let reads: Vec<String> = elems
             .iter()
             .zip(offsets.iter())

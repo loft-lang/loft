@@ -38,10 +38,10 @@ index cd35e2ac4..37582e363 100644
  /// The hash of the `default/*.loft` source these bodies were compiled from.
  pub(crate) const SOURCE_HASH: u64 = 8494925563378724926;
 diff --git b/src/data.rs a/src/data.rs
-index cf0f5b4bc..e255d55cb 100644
+index c4bea8c0d..939ece36a 100644
 --- b/src/data.rs
 +++ a/src/data.rs
-@@ -3845,23 +3845,14 @@ pub fn element_stack_size(t: &Type) -> usize {
+@@ -3866,23 +3866,14 @@ pub fn element_stack_size(t: &Type) -> usize {
  /// is what makes `(u8, u16)` occupy 16 bytes where `struct { a: u8, b: u16 }`
  /// occupies 3.
  ///
@@ -69,7 +69,7 @@ index cf0f5b4bc..e255d55cb 100644
          // Measured against the record oracle: `(u8, text)` is 5 bytes, so a stored
          // `text` element is the 4-byte heap pointer, NOT the 16-byte stack `Str`.
          // `read_tuple_at_wide` says the same ("text: 4-byte heap-pointer") and
-@@ -3878,29 +3869,13 @@ pub fn element_storage_size(t: &Type) -> usize {
+@@ -3899,29 +3890,13 @@ pub fn element_storage_size(t: &Type) -> usize {
      }
  }
  
@@ -101,7 +101,7 @@ index cf0f5b4bc..e255d55cb 100644
          offsets.push(pos);
          pos += element_storage_size(t);
      }
-@@ -4292,26 +4267,25 @@ mod tuple_stack_layout_tests {
+@@ -4313,26 +4288,25 @@ mod tuple_stack_layout_tests {
          })
      }
  
@@ -137,7 +137,7 @@ index cf0f5b4bc..e255d55cb 100644
      }
  
      /// The stack view is unchanged and deliberately WIDER — a push occupies a whole
-@@ -4328,8 +4302,8 @@ mod tuple_stack_layout_tests {
+@@ -4349,8 +4323,8 @@ mod tuple_stack_layout_tests {
          );
          assert_eq!(
              element_storage_size(&Type::Tuple(elems)),
@@ -149,7 +149,7 @@ index cf0f5b4bc..e255d55cb 100644
      }
  
 diff --git b/src/data_store.rs a/src/data_store.rs
-index 455fea908..7178d6eca 100644
+index 539483321..292fc3891 100644
 --- b/src/data_store.rs
 +++ a/src/data_store.rs
 @@ -84,7 +84,7 @@ pub(crate) const NDCALLREF_VAR: u32 = 8;
@@ -352,10 +352,10 @@ index 455fea908..7178d6eca 100644
  /// Which `Node` variant a [`Value`] is.  Mirrors the native `data::Value`
  /// variants 1:1; `Other(discriminant)` only on an unrecognised byte.
 diff --git b/src/database/allocation.rs a/src/database/allocation.rs
-index 04e99313d..074a1ceb6 100644
+index ee611023f..3950017e2 100644
 --- b/src/database/allocation.rs
 +++ a/src/database/allocation.rs
-@@ -7787,7 +7787,7 @@ mod p318_hash_deepcopy {
+@@ -7853,7 +7853,7 @@ mod p318_hash_deepcopy {
              pos: src.pos + list_pos,
          };
          let elem = stores.store_mut(&src).claim(cell_words);
@@ -551,10 +551,10 @@ index 6bed33f0f..27d22f633 100644
                  let storage_alignment = crate::data::LinkedFieldGroup::group_alignment(
                      &member_sa.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
 diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 6d7bcf632..8000919c6 100644
+index baa800ce8..e9ca9738a 100644
 --- b/src/parser/objects.rs
 +++ a/src/parser/objects.rs
-@@ -1863,11 +1863,9 @@ impl Parser {
+@@ -1864,11 +1864,9 @@ impl Parser {
                          } else if matches!(tp, Type::Text(_)) {
                              None
                          } else {
@@ -567,7 +567,7 @@ index 6d7bcf632..8000919c6 100644
                              if db_sz == 0 {
                                  None
                              } else {
-@@ -1904,13 +1902,9 @@ impl Parser {
+@@ -1905,13 +1903,9 @@ impl Parser {
                      if packed > 0 {
                          Some(i64::from(packed))
                      } else {
@@ -582,7 +582,7 @@ index 6d7bcf632..8000919c6 100644
                          if db_sz == 0 {
                              None
                          } else {
-@@ -1975,8 +1969,7 @@ impl Parser {
+@@ -1976,8 +1970,7 @@ impl Parser {
                  && matches!(read_type, Type::Vector(_, _))
                  && let Value::Int(n) = n_code
              {
@@ -593,7 +593,7 @@ index 6d7bcf632..8000919c6 100644
                      diagnostic!(
                          self.lexer,
 diff --git b/src/store.rs a/src/store.rs
-index fbdd9c6c9..507222880 100644
+index 00d898b91..a6864a477 100644
 --- b/src/store.rs
 +++ a/src/store.rs
 @@ -3733,14 +3733,16 @@ impl Store {
@@ -698,7 +698,7 @@ index fbdd9c6c9..507222880 100644
          unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
      }
  
-@@ -5956,12 +5917,9 @@ mod tests {
+@@ -5966,12 +5927,9 @@ mod tests {
              foreign.read::<u32>(FOREIGN_REC, 8),
              plain.read::<u32>(rec, 8)
          );
@@ -712,7 +712,7 @@ index fbdd9c6c9..507222880 100644
          );
          let seen =
              unsafe { std::slice::from_raw_parts(foreign.elem_base(FOREIGN_REC), len as usize) };
-@@ -6085,7 +6043,7 @@ mod tests {
+@@ -6095,7 +6053,7 @@ mod tests {
          }
          assert_eq!(
              view.read::<u32>(FOREIGN_REC, 8),
@@ -721,13 +721,13 @@ index fbdd9c6c9..507222880 100644
          );
          let seen = unsafe { std::slice::from_raw_parts(view.elem_base(FOREIGN_REC), 7) };
          assert_eq!(seen, &data[5..12]);
-@@ -6243,18 +6201,23 @@ mod tests {
+@@ -6253,18 +6211,23 @@ mod tests {
          let _ = store.addr::<i64>(rec, 4);
      }
  
 -    /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
 -    /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
--    /// refused in every build — where `read_unaligned` used to answer it.
+-    /// refused in every build.
 +    /// The other half: the same read through [`Store::read`] is fine, because
 +    /// `read_unaligned` states the alignment the data actually has.
 +    ///

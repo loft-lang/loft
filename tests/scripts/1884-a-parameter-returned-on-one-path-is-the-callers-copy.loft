@@ -16,8 +16,9 @@
 // `base`, any other `k` answers `k:[k]`, and `0` answers null where the return is nullable.
 //
 // @falsified-at: eff213317 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
-// @falsified-by: tests/falsified/1884-a-parameter-returned-on-one-path-is-the-callers-copy.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1884-a-parameter-returned-on-one-path-is-the-callers-copy.patch — interpret leaked kt=97 F×2 -> clean, native leaked kt=97 F×2 -> clean
 //   CHANNEL: the VALUE — the caller's own record was freed and read back as the next call's.
+//   The planted patch (the early-return join removed) shows as a LEAK on both backends.
 //   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
 //   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.
 

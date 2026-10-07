@@ -10,7 +10,7 @@
 //! and the `--fn` filter.  Assertion-based rather than byte-exact golden, so a
 //! harmless codegen/format shift doesn't force a golden re-bless.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -26,7 +26,7 @@ fn fixture() -> std::path::PathBuf {
 
 /// Run `loft introspect <args> <fixture>` and return (stdout, success).
 fn introspect(args: &[&str]) -> (String, bool) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .args(args)
         .arg(fixture())
@@ -195,7 +195,7 @@ fn json_mode_respects_section_selection() {
 /// Run `introspect --show-ownership <flags> tests/data/ownership_corpus.loft`.
 fn ownership(flags: &[&str]) -> String {
     let corpus = workspace_root().join("tests/data/ownership_corpus.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg("--show-ownership")
         .args(flags)
@@ -274,7 +274,7 @@ fn show_ownership_is_deterministic() {
 #[test]
 fn timeline_summary_reports_working_set_no_leak() {
     let corpus = workspace_root().join("tests/data/ownership_corpus.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&corpus)
         .env("LOFT_STORES", "timeline")
@@ -320,7 +320,7 @@ fn section_fn<'a>(stdout: &'a str, fn_name: &str) -> &'a str {
 /// so this gate does not need to reproduce the bugs.
 #[test]
 fn ownership_overlay_silent_after_captured_group_fix() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg("--show-ownership")
         .arg(workspace_root().join("tests/data/uaf_overlay.loft"))
@@ -343,7 +343,7 @@ fn ownership_overlay_silent_after_captured_group_fix() {
 /// CLI error — a missing input file exits non-zero.
 #[test]
 fn missing_file_errors() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg("/no/such/introspect_input.loft")
         .current_dir(workspace_root())
@@ -378,13 +378,13 @@ fn resolution(args: &[&str]) -> String {
     static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let prog = std::env::temp_dir().join(format!("loft_res_{}_{n}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         "use typeshift::*;\nfn main() { v = ts_touch(); assert(v == 7, \"lib\") }\n",
     )
     .expect("write temp program");
     let lib = workspace_root().join("tests/lib");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .args(args)
         .arg("--lib")
@@ -393,7 +393,7 @@ fn resolution(args: &[&str]) -> String {
         .current_dir(workspace_root())
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -502,7 +502,7 @@ fn compiling_the_same_file_twice_gives_the_same_bytecode_and_slots() {
         "tests/scripts/85-short-lambda-capture.loft",
     ] {
         let run = || -> String {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg("introspect")
                 .arg(workspace_root().join(name))
                 .current_dir(workspace_root())
@@ -547,7 +547,7 @@ fn compiling_the_same_file_twice_gives_the_same_bytecode_and_slots() {
 #[test]
 fn a_set_stack_ref_is_followed_by_the_next_op() {
     let file = workspace_root().join("tests/data/set_stack_ref.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["introspect", "--show-bytecode"])
         .arg(&file)
         .current_dir(workspace_root())
@@ -570,7 +570,7 @@ fn a_set_stack_ref_is_followed_by_the_next_op() {
             lines[i]
         );
     }
-    let run = Command::new(loft_bin())
+    let run = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret"])
         .arg(&file)
         .current_dir(workspace_root())

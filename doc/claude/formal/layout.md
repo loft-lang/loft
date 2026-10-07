@@ -213,7 +213,9 @@ change even though the field pointer is unchanged.
               is the largest of its fields', and size(τ) is a multiple of align(τ) — so the
               element after it in a collection, and the field after it when it is inlined,
               start aligned too.  A record starts on an 8-byte word, so an aligned offset is an
-              aligned address, and the store's reads and writes are aligned accesses.  The
+              aligned address.  The compiler checks the rule once, over every finished layout
+              (`Stores::validate_all_layouts`); no access re-tests it at run time, and the
+              store's reads and writes claim no alignment, so a defect cannot become UB.  The
               bytes of a FOREIGN store (a producer's buffer), the interpreter's bytecode stream
               and its stack frames (laid out by the frame allocator) are outside the rule: all
               three are read unaligned.  (@C138)
@@ -224,9 +226,12 @@ change even though the field pointer is unchanged.
               [tag byte] followed by the variant's fields (L-Struct packing).  Variants are
               numbered from 1: 0 is the absent value (L-Null) and 255 is the null a write
               spells, so an enum holds at most 254 variants and the parser refuses the 255th.
-  (L-Tuple)   a tuple (τ₀,…,τₙ) is stored as a synthetic __tuple<…> struct that KEEPS its
-              member order: each member at the next position its alignment divides, the size
-              rounded up to the largest member alignment (L-Align).  That placement is computed
+  (L-Tuple)   a tuple (τ₀,…,τₙ) is a record (tuples.md T-Record), stored as a synthetic
+              __tuple<…> struct packed by L-Struct — largest alignment first, the size rounded
+              up to the largest member alignment (L-Align) — so the ORDER of its members in the
+              bytes is the record's, not the written one.  That order has no effect on a
+              member's name (`0` … `n` stay the written positions), on `t.i`, or on the text a
+              tuple prints as (`(a, b)`, written order) (@C139).  That placement is computed
               by calc::calculate_positions_with_groups (read back by data::stored_tuple_offsets)
               and restated by data::element_storage_offsets / element_storage_size for the par
               paths that copy a stored row without the type table; the two must agree.  The
@@ -241,8 +246,8 @@ alignment first, so padding only appears at the end, where the size is rounded u
 record's alignment: `struct { n: integer, b: boolean }` is 9 bytes of fields and 16 bytes of
 record. That rounding is what keeps element 1 of a `vector` aligned. Enums carry a 1-byte tag; a
 variant with data is that tag plus the variant's own fields. A tuple is stored as a hidden
-struct that keeps its member order, so `(u8, u32, u16)` places its members at 0, 4 and 8 and
-takes 12 bytes.
+struct packed like any other, so `(u8, u32, u16)` places its `u32` first: members `1`, `2` and
+`0` at 0, 4 and 6, 8 bytes in all.  Member `0` is still `t.0` and still prints first.
 
 ⚠ A tuple lives in two places — on the stack and in a record — and the two are computed by
 different code. @PLN114 split the one ambiguous `element_offsets` into the two named views so a
@@ -416,7 +421,7 @@ layout, and `f#read` infers a record count from the same width.
 
 ## Deviations
 
-**OPEN: 0.**  Every entry is closed; the record — `D-layout-1` to `-11` — is in
+**OPEN: 0.**  The closed record — `D-layout-1` to `-12` — is in
 [layout-history.md](layout-history.md).
 
 ## Conformance

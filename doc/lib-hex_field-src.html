@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_field source</h1>
 <article>
-<p><a href="lib-hex_field.html">← hex_field</a> · <a href="lib-hex_field-api.html">API reference</a> · version 0.1.6</p>
+<p><a href="lib-hex_field.html">← hex_field</a> · <a href="lib-hex_field-api.html">API reference</a> · version 0.1.7</p>
 <p class="lib-legend">9 file(s), 3343 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -210,10 +210,10 @@
 <span id="src-hex-field-loft-L66"></span>
 <span id="src-hex-field-loft-L67"><span class="cm">// A vector map: loops concatenated, loop i occupying [vm_start[i], vm_start[i+1]).</span></span>
 <span id="src-hex-field-loft-L68"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">VecMap</span> {</span>
-<span id="src-hex-field-loft-L69">  vm_k:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-field-loft-L70">  vm_m:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-field-loft-L71">  vm_start: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
-<span id="src-hex-field-loft-L72">  vm_loops: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-field-loft-L69">  <span class="kw">pub</span> vm_k:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-field-loft-L70">  <span class="kw">pub</span> vm_m:     <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-field-loft-L71">  <span class="kw">pub</span> vm_start: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-field-loft-L72">  <span class="kw">pub</span> vm_loops: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-hex-field-loft-L73">}</span>
 <span id="src-hex-field-loft-L74"></span>
 <span id="src-hex-field-loft-L75"><span class="cm">// A chunk anchored at (q0,r0), w x h cells.  THE primitive — everything else builds</span></span>
@@ -856,16 +856,16 @@
 <span id="src-hex-field-loft-L712"><span class="cm">// What a load produced.  `doc_code` is the refusal code; the field members are</span></span>
 <span id="src-hex-field-loft-L713"><span class="cm">// meaningful only when it is HXF_OK.</span></span>
 <span id="src-hex-field-loft-L714"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">HexDoc</span> {</span>
-<span id="src-hex-field-loft-L715">  doc_code:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-field-loft-L716">  doc_cells:   <span class="en">HexSet</span>,</span>
-<span id="src-hex-field-loft-L717">  doc_heights: <span class="en">Heights</span>,</span>
-<span id="src-hex-field-loft-L718">  doc_labels:  <span class="en">Labels</span>,</span>
-<span id="src-hex-field-loft-L719">  doc_edges:   <span class="en">EdgeSet</span>,</span>
-<span id="src-hex-field-loft-L720">  doc_layers:  <span class="en">Layers</span>,</span>
-<span id="src-hex-field-loft-L721">  doc_has_h:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-hex-field-loft-L722">  doc_has_l:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-hex-field-loft-L723">  doc_has_e:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-hex-field-loft-L724">  doc_skipped: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// unknown sections skipped — the forward-compat count</span></span>
+<span id="src-hex-field-loft-L715">  <span class="kw">pub</span> doc_code:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-field-loft-L716">  <span class="kw">pub</span> doc_cells:   <span class="en">HexSet</span>,</span>
+<span id="src-hex-field-loft-L717">  <span class="kw">pub</span> doc_heights: <span class="en">Heights</span>,</span>
+<span id="src-hex-field-loft-L718">  <span class="kw">pub</span> doc_labels:  <span class="en">Labels</span>,</span>
+<span id="src-hex-field-loft-L719">  <span class="kw">pub</span> doc_edges:   <span class="en">EdgeSet</span>,</span>
+<span id="src-hex-field-loft-L720">  <span class="kw">pub</span> doc_layers:  <span class="en">Layers</span>,</span>
+<span id="src-hex-field-loft-L721">  <span class="kw">pub</span> doc_has_h:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-hex-field-loft-L722">  <span class="kw">pub</span> doc_has_l:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-hex-field-loft-L723">  <span class="kw">pub</span> doc_has_e:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-hex-field-loft-L724">  <span class="kw">pub</span> doc_skipped: <span class="ty"><a href="stdlib-types.html">integer</a></span>,   <span class="cm">// unknown sections skipped — the forward-compat count</span></span>
 <span id="src-hex-field-loft-L725">}</span>
 <span id="src-hex-field-loft-L726"></span>
 <span id="src-hex-field-loft-L727"><span class="cm">// ── writing ──────────────────────────────────────────────────────────────</span></span>
@@ -1169,15 +1169,15 @@
 <span id="src-hex-field-loft-L1025"><span class="cm">// are present) and its named layers.  `stencil_from` builds one; `stencil_rotate` and</span></span>
 <span id="src-hex-field-loft-L1026"><span class="cm">// `stencil_mirror` transform it.</span></span>
 <span id="src-hex-field-loft-L1027"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Stencil</span> {</span>
-<span id="src-hex-field-loft-L1028">  sn_cells:   <span class="en">HexSet</span>,</span>
-<span id="src-hex-field-loft-L1029">  sn_heights: <span class="en">Heights</span>,</span>
-<span id="src-hex-field-loft-L1030">  sn_labels:  <span class="en">Labels</span>,</span>
-<span id="src-hex-field-loft-L1031">  sn_edges:   <span class="en">EdgeSet</span>,</span>
-<span id="src-hex-field-loft-L1032">  sn_layers:  <span class="en">Layers</span>,</span>
+<span id="src-hex-field-loft-L1028">  <span class="kw">pub</span> sn_cells:   <span class="en">HexSet</span>,</span>
+<span id="src-hex-field-loft-L1029">  <span class="kw">pub</span> sn_heights: <span class="en">Heights</span>,</span>
+<span id="src-hex-field-loft-L1030">  <span class="kw">pub</span> sn_labels:  <span class="en">Labels</span>,</span>
+<span id="src-hex-field-loft-L1031">  <span class="kw">pub</span> sn_edges:   <span class="en">EdgeSet</span>,</span>
+<span id="src-hex-field-loft-L1032">  <span class="kw">pub</span> sn_layers:  <span class="en">Layers</span>,</span>
 <span id="src-hex-field-loft-L1033">  sn_has_h:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
 <span id="src-hex-field-loft-L1034">  sn_has_l:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
 <span id="src-hex-field-loft-L1035">  sn_has_e:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-hex-field-loft-L1036">  sn_code:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-field-loft-L1036">  <span class="kw">pub</span> sn_code:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-hex-field-loft-L1037">}</span>
 <span id="src-hex-field-loft-L1038"></span>
 <span id="src-hex-field-loft-L1039"><span class="cm">// Build the field FIRST, then construct the stencil: these take their arguments</span></span>

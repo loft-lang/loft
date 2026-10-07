@@ -8,6 +8,7 @@ use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
+pub mod append_twin;
 mod calls;
 mod coroutine;
 mod dispatch;
@@ -694,6 +695,11 @@ pub struct Output<'a> {
     /// another `RefVar` (the #257 shape) is not one of these — it copies the pointer it was
     /// given — so the read side asks this set rather than the type alone.
     pub local_record_link: HashSet<u16>,
+    /// `@FR-T-Record` — per tuple local of this function, the narrow members a `&` names,
+    /// one bit per member (`tuple_links::linked_narrow_members`).  Each is declared at its
+    /// storage width inside the Rust tuple and holds its field encoding, so the link is the
+    /// field's byte pointer; [`Output::linked_tuple_slots`] answers per member.
+    pub linked_members: std::collections::HashMap<u16, u64>,
     /// Hidden return-buffer (retbuf) attribute vars that have an entry-buffer
     /// witness `_rb_w_<name>` emitted in the prologue (capturing the caller's
     /// buffer at function entry).  A CONDITIONAL reassignment of such a
@@ -879,6 +885,18 @@ pub struct Output<'a> {
     /// The refill twins calls have asked for, and the ones already emitted.
     pub rt_requests: Vec<u32>,
     pub rt_emitted: HashSet<u32>,
+    /// `@FR-R-AppendTwin` — the buffer of the append twin being emitted, and every local
+    /// that views it; `None` outside a twin.
+    pub append_twin_buf: Option<u16>,
+    pub append_twin_views: HashSet<u16>,
+    /// The append twins calls have asked for, the ones already emitted, and the eligibility
+    /// answers ([`append_twin::eligible`]).
+    pub ap_requests: Vec<u32>,
+    pub ap_emitted: HashSet<u32>,
+    pub ap_memo: HashMap<u32, bool>,
+    /// The caller-side rewrite's call, `(callee, argument slice)`, waiting for its name: a
+    /// call left unnamed here would hand X to the plain callee, which clears it.
+    pub ap_site_next: Option<(u32, usize)>,
     /// Set while a refill twin's body is emitted: its return buffer, whose literal text sets
     /// refill their slots; its name takes `__rt`.
     pub refill_twin_buf: Option<u16>,
@@ -1347,6 +1365,12 @@ pub struct Output<'a> {
     /// is derived — keeping membership and spelling in ONE lookup is what stops an emitter
     /// from reading a field under a name the struct definition never used.
     pub coroutine_persistent_fields: HashMap<u16, String>,
+    /// loft#1899 — a generator's scalar LINK locals (`c = &x`), each kept as a struct field
+    /// holding the raw pointer: `(local spelling, field spelling)`.  Not in
+    /// `coroutine_persistent_fields`, so every read and write through the link keeps its
+    /// local `var_c` spelling; each state re-reads the pointer from the field and each bind
+    /// stores it back, so a link made before a `yield` still names its place after it.
+    pub coroutine_link_fields: HashMap<u16, (String, String)>,
     /// Coroutine-persistent vars whose allocating initialiser has already been emitted inside
     /// the current `impl LoftCoroutine`.  A second `Set(v, Null)` on the same field is the
     /// @P302 in-place clear, which must NOT re-run `null_named` (that would orphan the store).
@@ -1702,6 +1726,15 @@ pub(crate) fn var_tuple_elems(vars: &crate::variables::Function, var: u16) -> Op
 /// @PLN87 L1 gives every local link — raw so the source stays readable beside the link,
 /// which is legal loft and not legal Rust borrowing.
 #[must_use]
+/// A Rust tuple of `parts`, with the trailing comma a one-member tuple needs.
+fn tuple_spelling(parts: &[String]) -> String {
+    if parts.len() == 1 {
+        format!("({},)", parts[0])
+    } else {
+        format!("({})", parts.join(", "))
+    }
+}
+
 pub(crate) fn tuple_base(vars: &crate::variables::Function, var: u16) -> (String, bool) {
     let name = sanitize(vars.name(var));
     if is_raw_tuple_link(vars, var) {
@@ -2294,6 +2327,7 @@ impl<'a> Output<'a> {
             indent: 0,
             declared: HashSet::new(),
             local_record_link: HashSet::new(),
+            linked_members: std::collections::HashMap::new(),
             retbuf_witness: HashSet::new(),
             witness_vars: HashSet::new(),
             predeclared: HashSet::new(),
@@ -2354,6 +2388,12 @@ impl<'a> Output<'a> {
             refill_text_pending: None,
             rt_requests: Vec::new(),
             rt_emitted: HashSet::new(),
+            append_twin_buf: None,
+            append_twin_views: HashSet::new(),
+            ap_requests: Vec::new(),
+            ap_emitted: HashSet::new(),
+            ap_memo: HashMap::new(),
+            ap_site_next: None,
             refill_twin_buf: None,
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
@@ -2475,6 +2515,7 @@ impl<'a> Output<'a> {
             yield_collect_refuse: None,
             yield_lazy_wrap: None,
             coroutine_persistent_fields: HashMap::new(),
+            coroutine_link_fields: HashMap::new(),
             coroutine_allocated_vars: HashSet::new(),
             fn_ref_context: false,
             i32_literal_context: false,
@@ -2720,6 +2761,7 @@ impl Output<'_> {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
+        self.linked_members = crate::tuple_links::linked_narrow_members(self.data, def_nr);
         self.header_dbrefs.clear();
         self.param_rec_ptrs.clear();
         self.indent = 0;
@@ -2749,6 +2791,7 @@ impl Output<'_> {
                 &self.value_records.fns,
                 &self.value_records.params,
                 &self.value_records.view_offs,
+                &self.value_records.fnref_sites,
             );
             self.forward_sites = hoist::forward_sites(
                 self.data,
@@ -2784,9 +2827,11 @@ impl Output<'_> {
         if let Some(b) = self.refill_twin_buf {
             self.complete_writes.db_vars.remove(&b);
         }
-        self.refill = if crate::keys::refill_buffer_enabled() {
+        self.refill = if crate::keys::refill_buffer_enabled() && self.append_twin_buf.is_none() {
             hoist::refill_buffers(self.data, self.stores, def_nr)
         } else {
+            // `@FR-R-AppendTwin` — a twin's buffer is never cleared or refilled: it holds the
+            // caller's elements, and a refill's keep or release would reach them.
             hoist::RefillBuffers::default()
         };
         // `@FR-R-RefillText`'s collection clause needs the append's no-prefill mint: a
@@ -2888,7 +2933,8 @@ impl Output<'_> {
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
-            let mut walks = hoist::borrowed_text_walks(self.data, def_nr, &sliced);
+            let mut walks =
+                hoist::borrowed_text_walks(self.data, def_nr, &sliced, &self.split_tables);
             walks.extend(hoist::borrowed_discharge_temps(
                 self.data,
                 def_nr,
@@ -2912,7 +2958,10 @@ impl Output<'_> {
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
-        self.ret_adopt = if self.retbuf_adopt_disabled {
+        // `@FR-R-AppendTwin` — a twin never adopts: adoption makes the result local BE the
+        // buffer at emission time, which the IR the twin's eligibility read does not say, and
+        // its bind clears that buffer — the caller's elements.
+        self.ret_adopt = if self.retbuf_adopt_disabled || self.append_twin_buf.is_some() {
             None
         } else {
             hoist::ret_adopt(self.data, def_nr)
@@ -5536,6 +5585,22 @@ impl Output<'_> {
         {
             return slot.rust_type().to_string();
         }
+        // `@FR-T-Record` — a tuple local whose narrow members a `&` names holds each of them
+        // at its storage width.
+        if let Some(slots) = self.linked_tuple_slots(var) {
+            let Type::Tuple(elems) = tp.base() else {
+                unreachable!("linked_tuple_slots answers only for a tuple")
+            };
+            let parts: Vec<String> = elems
+                .iter()
+                .zip(&slots)
+                .map(|(e, s)| match s {
+                    Some(slot) => slot.rust_type().to_string(),
+                    None => rust_type(e, &Context::Variable),
+                })
+                .collect();
+            return tuple_spelling(&parts);
+        }
         // @PLN167 decision 2 — a link to a text field or element holds the slot's `DbRef`.
         if self
             .data
@@ -5565,8 +5630,75 @@ impl Output<'_> {
                     .expect("the marker is in the template");
                 (a.to_string(), b.to_string())
             }
-            None => (String::new(), String::new()),
+            None => match self.linked_tuple_slots(var) {
+                // `@FR-T-Record` — a whole tuple written to a local with linked narrow
+                // members: bind it once, then rebuild it with those members encoded.
+                Some(slots) => {
+                    let parts: Vec<String> = slots
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| match s {
+                            Some(slot) => slot.encode_rust(&format!("__tl.{i}")),
+                            None => format!("__tl.{i}"),
+                        })
+                        .collect();
+                    (
+                        "{ let __tl = ".to_string(),
+                        format!("; {} }}", tuple_spelling(&parts)),
+                    )
+                }
+                None => (String::new(), String::new()),
+            },
         }
+    }
+
+    /// A generator's tuple FIELD `self.var_<field>` read whole: each member a link encodes
+    /// decoded, every other member cloned (loft#1899).
+    #[must_use]
+    pub(crate) fn tuple_field_value(&self, var: u16, field: &str) -> String {
+        let vars = self.data.def(self.def_nr).variables();
+        let Type::Tuple(elems) = vars.tp(var).base() else {
+            return format!("self.var_{field}");
+        };
+        let Some(slots) = self.linked_tuple_slots(var) else {
+            return format!("self.var_{field}.clone()");
+        };
+        let parts: Vec<String> = slots
+            .iter()
+            .zip(elems)
+            .enumerate()
+            .map(|(i, (s, e))| match s {
+                Some(slot) => slot.decode_rust(&format!("self.var_{field}.{i}")),
+                None if matches!(e.base(), Type::Text(_) | Type::Tuple(_)) => {
+                    format!("self.var_{field}.{i}.clone()")
+                }
+                None => format!("self.var_{field}.{i}"),
+            })
+            .collect();
+        tuple_spelling(&parts)
+    }
+
+    /// `@FR-T-Record` — for a by-value tuple local of this function some of whose narrow
+    /// members a `&` names, the field encoding each member holds (`None` for a member kept
+    /// at its wide Rust type).  `None` for every other variable, which is spelled as
+    /// `rust_type` says.
+    #[must_use]
+    pub(crate) fn linked_tuple_slots(
+        &self,
+        var: u16,
+    ) -> Option<Vec<Option<crate::data::NarrowSlot>>> {
+        if !self.linked_members.contains_key(&var) {
+            return None;
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let Type::Tuple(elems) = vars.tp(var).base() else {
+            return None;
+        };
+        Some(
+            (0..elems.len())
+                .map(|i| crate::tuple_links::member_slot(&self.linked_members, elems, var, i))
+                .collect(),
+        )
     }
 
     /// The wide value of linked narrow local `var`'s Rust variable, or its bare name.
@@ -5579,7 +5711,31 @@ impl Output<'_> {
             .linked_narrow_slot(var)
         {
             Some(slot) => slot.decode_rust(&format!("var_{name}")),
-            None => format!("var_{name}"),
+            None => match self.linked_tuple_slots(var) {
+                // `@FR-T-Record` — a tuple local read whole is the plain tuple: each linked
+                // member decoded, every other member as it is (a `String` or nested tuple
+                // cloned, since the read must not move it out of the local).
+                Some(slots) => {
+                    let vars = self.data.def(self.def_nr).variables();
+                    let Type::Tuple(elems) = vars.tp(var).base() else {
+                        unreachable!("linked_tuple_slots answers only for a tuple")
+                    };
+                    let parts: Vec<String> = slots
+                        .iter()
+                        .zip(elems)
+                        .enumerate()
+                        .map(|(i, (s, e))| match s {
+                            Some(slot) => slot.decode_rust(&format!("var_{name}.{i}")),
+                            None if matches!(e.base(), Type::Text(_) | Type::Tuple(_)) => {
+                                format!("var_{name}.{i}.clone()")
+                            }
+                            None => format!("var_{name}.{i}"),
+                        })
+                        .collect();
+                    tuple_spelling(&parts)
+                }
+                None => format!("var_{name}"),
+            },
         }
     }
 
@@ -6289,7 +6445,7 @@ impl Output<'_> {
                 let user_fn = name.starts_with("n_") || name.starts_with("t_");
                 let opaque = user_fn
                     && !matches!(callee.code(), Value::Block(_))
-                    && (!crate::file_access::is_stdlib_source(&callee.position.file)
+                    && (!crate::file_access::is_stdlib_source(callee.position.file.as_str())
                         || callee
                             .attributes()
                             .iter()
@@ -6525,7 +6681,7 @@ impl Output<'_> {
     /// the operators the program actually emits — a table entry is never a guess about
     /// what might run.
     fn ckpt_site(&mut self, symbol: &str) -> usize {
-        let pos = self.data.def(self.def_nr).position().clone();
+        let pos = *self.data.def(self.def_nr).position();
         // The statement-level `// loft:` stream is the only position the emitter carries.
         // Before the first one in a body it is still the PREVIOUS function's line, so a
         // body that has not emitted one yet falls back to the definition's own line
@@ -7215,7 +7371,7 @@ extern crate loft;"
                     ref t => format!(" -> {}", t.rust_type()),
                 };
                 use std::fmt::Write as _;
-                if data.c_symbol_is_lazy(&def.position().file) {
+                if data.c_symbol_is_lazy(def.position().file.as_str()) {
                     let fn_ty = format!(
                         "unsafe extern \"C\" fn({}){ret}",
                         sig.params
@@ -9111,7 +9267,38 @@ extern crate loft;"
             }
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
-        self.output_refill_twins(w, program_store.as_ref())
+        self.output_refill_twins(w, program_store.as_ref())?;
+        self.output_append_twins(w, program_store.as_ref())
+    }
+
+    /// `@FR-R-AppendTwin` — the append twins calls asked for: each callee's body with its
+    /// buffer as the caller's destination and none of its clears.  A twin's calls may ask
+    /// for more twins of any kind, so until none is left.
+    fn output_append_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        while let Some(at) = self
+            .ap_requests
+            .iter()
+            .position(|r| !self.ap_emitted.contains(r))
+        {
+            let dnr = self.ap_requests[at];
+            self.ap_emitted.insert(dnr);
+            let Some(b) = append_twin::buffer(self.data, dnr) else {
+                continue;
+            };
+            self.append_twin_buf = Some(b);
+            self.append_twin_views = append_twin::views(self.data.def(dnr).variables(), b);
+            let r = self.output_function(w, dnr, program_store);
+            self.append_twin_buf = None;
+            self.append_twin_views.clear();
+            r?;
+            self.output_ranged_variants(w, program_store)?;
+            self.output_refill_twins(w, program_store)?;
+        }
+        Ok(())
     }
 
     /// `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
@@ -9828,7 +10015,7 @@ extern crate loft;"
             // carried on (loft#1263).
             writeln!(
                 w,
-                "  if test != 1 {{\n    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n    let kind = loft::runtime_error::RuntimeErrorKind::AssertionFailed {{ message: msg.to_string() }};\n    if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n    loft::runtime_error::RuntimeError::assertion_failed(msg.to_string(), file.to_string(), line as u32).report_and_exit();\n  }}"
+                "  if test != 1 {{\n    let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n    let kind = loft::runtime_error::RuntimeErrorKind::AssertionFailed {{ message: msg.to_string() }};\n    if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n    loft::runtime_error::RuntimeError::assertion_failed(msg.to_string(), &file.to_string(), line as u32).report_and_exit();\n  }}"
             )?;
             writeln!(w, "}}\n")?;
             return Ok(());
@@ -9889,7 +10076,7 @@ extern crate loft;"
             // Same shared decision as `n_assert` above (loft#1263).
             writeln!(
                 w,
-                "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  let kind = loft::runtime_error::RuntimeErrorKind::UserPanic {{ message: msg.to_string() }};\n  if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n  loft::runtime_error::RuntimeError::user_panic(msg.to_string(), file.to_string(), line as u32).report_and_exit();"
+                "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};\n  let kind = loft::runtime_error::RuntimeErrorKind::UserPanic {{ message: msg.to_string() }};\n  if loft::runtime_error::logged_in_production(stores, &kind, &file.to_string(), line as u32) {{ return; }}\n  loft::runtime_error::RuntimeError::user_panic(msg.to_string(), &file.to_string(), line as u32).report_and_exit();"
             )?;
             writeln!(w, "}}\n")?;
             return Ok(());
@@ -9902,7 +10089,7 @@ extern crate loft;"
             writeln!(
                 w,
                 "// loft:{}:{}",
-                crate::file_access::portable_str(&def.position().file),
+                crate::file_access::portable_str(def.position().file.as_str()),
                 def.position().line
             )?;
         }
@@ -9916,6 +10103,8 @@ extern crate loft;"
             if self.emitting_ranged { "__rg" } else { "" },
             if self.refill_twin_buf.is_some() {
                 "__rt"
+            } else if self.append_twin_buf.is_some() {
+                "__ap"
             } else {
                 ""
             }
@@ -10158,7 +10347,35 @@ extern crate loft;"
             // @PLN167 decision 1 — a narrow by-value PARAMETER something in this body links
             // arrives as the caller's `i64` and holds its field encoding from here on: one
             // shadowing `let` at entry re-encodes it; the calling convention is untouched.
+            let linked_members = crate::tuple_links::linked_narrow_members(self.data, def_nr);
             for v in vars.arguments() {
+                // `@FR-T-Record` — the same for a by-value TUPLE parameter whose narrow
+                // members something links: one shadowing `let` rebuilds it with those
+                // members encoded.
+                if let Type::Tuple(elems) = vars.tp(v).base()
+                    && linked_members.contains_key(&v)
+                {
+                    use std::fmt::Write as _;
+                    let name = sanitize(vars.name(v));
+                    let (mut member_types, mut members) = (Vec::new(), Vec::new());
+                    for (i, e) in elems.iter().enumerate() {
+                        if let Some(slot) =
+                            crate::tuple_links::member_slot(&linked_members, elems, v, i)
+                        {
+                            member_types.push(slot.rust_type().to_string());
+                            members.push(slot.encode_rust(&format!("var_{name}.{i}")));
+                        } else {
+                            member_types.push(rust_type(e, &Context::Variable));
+                            members.push(format!("var_{name}.{i}"));
+                        }
+                    }
+                    let _ = write!(
+                        vdb_prologue,
+                        "\n  let mut var_{name}: {} = {};",
+                        tuple_spelling(&member_types),
+                        tuple_spelling(&members)
+                    );
+                }
                 if let Some(slot) = vars.linked_narrow_slot(v) {
                     use std::fmt::Write as _;
                     let name = sanitize(vars.name(v));
@@ -10887,16 +11104,13 @@ extern crate loft;"
             // this symbol's — and one of them is the shim loft built itself,
             // which arc D deliberately made indistinguishable from a declared
             // one.  The package is the thing the author can act on.
-            let from =
-                self.data
-                    .c_owner_pkg(&def.position().file)
-                    .map_or_else(String::new, |pkg| {
-                        let stem = std::path::Path::new(pkg)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(pkg);
-                        format!(" (package `{stem}`)")
-                    });
+            let from = self
+                .data
+                .c_owner_pkg(def.position().file.as_str())
+                .map_or_else(String::new, |pkg| {
+                    let stem = crate::file_access::name_of(pkg);
+                    format!(" (package `{stem}`)")
+                });
             writeln!(
                 w,
                 "{{ compile_error!(\"loft: `{name}` is bound to the C symbol '{}' with #c{from}, and the {which} target has no C ABI to reach it — a wasm module cannot open a shared library. Give the library a wasm implementation, host it out of process, or drop the {flag} claim\") }}",
@@ -11737,12 +11951,11 @@ mod scrub_tests {
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default");
         let mut seen: Vec<String> = Vec::new();
-        for entry in std::fs::read_dir(&root).expect("default/ is readable") {
-            let path = entry.expect("a readable entry").path();
-            if path.extension().is_none_or(|e| e != "loft") {
+        for path in crate::file_access::read_dir(&root).expect("default/ is readable") {
+            if !crate::file_access::has_extension(&path, "loft") {
                 continue;
             }
-            let text = std::fs::read_to_string(&path).expect("a readable .loft file");
+            let text = crate::file_access::read_to_string(&path).expect("a readable .loft file");
             for (i, _) in text.match_indices("crate::") {
                 let rest = &text[i + "crate::".len()..];
                 let name: String = rest
@@ -11761,7 +11974,7 @@ mod scrub_tests {
                      imported by the generated preamble, rewritten to `loft::{name}::`, nor \
                      an item of the generated crate — a native program reaching that \
                      template will fail with `cannot find {name} in crate`",
-                    path.display()
+                    path.native()
                 );
                 seen.push(name);
             }

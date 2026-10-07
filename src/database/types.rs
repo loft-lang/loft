@@ -900,11 +900,20 @@ impl Stores {
                 // where a native `&integer` link could not point.
                 let member_sa: Vec<(u16, u8)> =
                     g.field_indices.iter().map(|&i| sizes[i as usize]).collect();
-                let offsets = crate::data::LinkedFieldGroup::group_member_offsets(&member_sa);
                 let storage_alignment = crate::data::LinkedFieldGroup::group_alignment(
                     &member_sa.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
                 );
-                let storage_size = crate::data::LinkedFieldGroup::group_size(&member_sa);
+                // A stored tuple packs as a record (`@FR-L-Tuple`); an index group keeps its
+                // written order.
+                let (offsets, storage_size) =
+                    if matches!(g.kind, crate::data::LinkedFieldKind::Tuple) {
+                        crate::data::LinkedFieldGroup::record_member_offsets(&member_sa)
+                    } else {
+                        (
+                            crate::data::LinkedFieldGroup::group_member_offsets(&member_sa),
+                            crate::data::LinkedFieldGroup::group_size(&member_sa),
+                        )
+                    };
                 (
                     g.field_indices.clone(),
                     storage_size,
@@ -1459,6 +1468,9 @@ impl Stores {
                 _ => {}
             }
         }
+        // `@FR-L-Align` (@C138) — checked here, at compile time, and nowhere at run time:
+        // `Store::read` / `Store::write` claim no alignment and do not re-test it per access.
+        issues.extend(self.alignment_violations());
         // Dedup — recursion can produce the same issue multiple times
         // when a struct is referenced from many places.
         issues.sort();
@@ -3378,6 +3390,8 @@ pub struct TypeFacts(std::sync::atomic::AtomicU8);
 const FACTS_KNOWN: u8 = 1;
 const FACTS_OWNS_HEAP: u8 = 2;
 const FACTS_ZERO_DEFAULT: u8 = 4;
+const FILE_KNOWN: u8 = 8;
+const HOLDS_FILE: u8 = 16;
 
 impl TypeFacts {
     /// `(owns_heap, zero_default)` when derived already.
@@ -3392,7 +3406,19 @@ impl TypeFacts {
         let bits = FACTS_KNOWN
             | if owns_heap { FACTS_OWNS_HEAP } else { 0 }
             | if zero_default { FACTS_ZERO_DEFAULT } else { 0 };
-        self.0.store(bits, std::sync::atomic::Ordering::Relaxed);
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a value of the type can hold a `File` record, when derived already.
+    #[inline]
+    pub(super) fn holds_file(&self) -> Option<bool> {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & FILE_KNOWN != 0).then_some(bits & HOLDS_FILE != 0)
+    }
+
+    pub(super) fn set_holds_file(&self, holds: bool) {
+        let bits = FILE_KNOWN | if holds { HOLDS_FILE } else { 0 };
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(super) fn forget(&self) {
@@ -3851,6 +3877,35 @@ mod layout_tests {
         let s = Stores::new();
         let unexpected = s.validate_all_layouts();
         assert!(unexpected.is_empty(), "{unexpected:?}");
+    }
+
+    /// `@FR-L-Align` (@C138) — the compiler's layout check reports a field the layout left
+    /// off its natural boundary.  `Store::read` / `Store::write` do not re-test alignment at
+    /// run time, so this is where a misaligned layout is caught.
+    #[test]
+    fn validate_all_layouts_reports_a_misaligned_field() {
+        let mut s = Stores::new();
+        let int_c = s.name("integer");
+        let bool_c = s.name("boolean");
+        let pair = s.structure("Pair", 0);
+        s.field(pair, "b", bool_c);
+        s.field(pair, "n", int_c);
+        s.finish();
+        let clean = s.validate_all_layouts();
+        assert!(clean.is_empty(), "{clean:?}");
+        // The plant: `n` one byte off its 8-byte boundary.
+        let Parts::Struct(fields) = &mut s.types[pair as usize].parts else {
+            panic!("Pair is a struct");
+        };
+        let n = fields.iter_mut().find(|f| f.name == "n").expect("Pair.n");
+        n.position += 1;
+        let issues = s.validate_all_layouts();
+        assert!(
+            issues
+                .iter()
+                .any(|i| i.starts_with("Pair.n: offset") && i.contains("alignment 8")),
+            "{issues:?}"
+        );
     }
 
     /// Build the shape that makes `finish()` promote: `Node` is the content of an

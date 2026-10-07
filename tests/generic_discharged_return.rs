@@ -28,8 +28,8 @@
 //! [`the_harness_can_fail`] is the control for the harness itself: a program that really is
 //! broken must be reported as broken, so a green run above means something.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -54,15 +54,15 @@ fn main() {\n\
 
 fn write_minimal(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft1026-{}-{}", name, std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("minimal.loft");
-    std::fs::write(&file, MINIMAL).expect("write probe");
+    fa::write(&file, MINIMAL).expect("write probe");
     file
 }
 
 /// Run `loft` with `args` plus extra env; return `(exit-ok, stdout, stderr)`.
 fn run(args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1");
@@ -178,9 +178,9 @@ fn both_backends_answer_the_same() {
 #[test]
 fn the_harness_can_fail() {
     let dir = std::env::temp_dir().join(format!("loft1026-ctl-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("control.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "pub fn gctl<T>(x: T, a: T?) -> T { _ = x; a? }\n\
          fn test_this_must_fail() {\n\

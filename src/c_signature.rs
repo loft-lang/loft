@@ -60,7 +60,7 @@ impl CTarget {
     #[must_use]
     pub fn host() -> CTarget {
         CTarget {
-            long_bits: if cfg!(windows) { 32 } else { 64 },
+            long_bits: crate::platform::c_long_bits(),
             char_signed: !cfg!(any(target_arch = "aarch64", target_arch = "arm")),
         }
     }

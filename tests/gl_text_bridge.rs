@@ -20,13 +20,14 @@
 //! Skips cleanly without chrome / node / python3, in the same shape as
 //! `tests/html_render.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -70,7 +71,7 @@ impl Drop for ServerGuard<'_> {
 /// drift from it.
 fn spawn_root_server(port: u16) -> Option<Child> {
     let py = which("python3").or_else(|| which("python"))?;
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
         .arg(repo_root())
         .stdout(std::process::Stdio::null())
@@ -100,7 +101,7 @@ fn text_and_texture_bridge_produces_real_pixels() {
     };
     let root = repo_root();
     let harness = root.join("tools/html_render_check.mjs");
-    if !harness.exists() {
+    if !fa::exists(&harness) {
         eprintln!("SKIP: tools/html_render_check.mjs missing");
         return;
     }
@@ -116,7 +117,7 @@ fn text_and_texture_bridge_produces_real_pixels() {
 
     let url = format!("http://127.0.0.1:{port}/tests/data/gl_text_probe.html");
     let screenshot = std::env::temp_dir().join("gl_text_bridge_probe.png");
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", "3000"])

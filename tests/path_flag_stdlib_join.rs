@@ -19,8 +19,8 @@
 //! the named target (`resolve_test_target`), never from `--path`. [`the_path_flag_does_not_move_test_discovery`]
 //! pins that, so a future change that DOES entangle the two fails with a name attached.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -33,15 +33,15 @@ fn project_root() -> PathBuf {
 
 fn write_probe(tag: &str, body: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_1112_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{tag}.loft"));
-    std::fs::write(&path, body).expect("write probe");
+    fa::write(&path, body).expect("write probe");
     path
 }
 
 /// Run `--tests <target>`, optionally with `--path <dir>`; return `(output, exit code)`.
 fn run_tests(path_flag: Option<&str>, target: &PathBuf) -> (String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     if let Some(p) = path_flag {
         cmd.arg("--path").arg(p);
@@ -123,8 +123,8 @@ fn the_path_flag_does_not_move_test_discovery() {
     let dir = target.parent().expect("probe parent").to_path_buf();
     // A second file in a SUBDIRECTORY, so a recursive walk is distinguishable from a flat one.
     let sub = dir.join("nested");
-    std::fs::create_dir_all(&sub).expect("nested dir");
-    std::fs::write(
+    fa::create_dir_all(&sub).expect("nested dir");
+    fa::write(
         sub.join("t2.loft"),
         "fn test_p1112_two() { assert(2 == 2, \"two\"); }\n",
     )

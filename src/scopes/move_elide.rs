@@ -30,6 +30,7 @@ pub(super) fn elide_borrows(data: &mut Data) {
             continue;
         }
         let plans = crate::use_analysis::elision_plans(
+            d_nr,
             &data.def(d_nr).code,
             &data.def(d_nr).variables,
             data,

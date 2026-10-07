@@ -8,6 +8,7 @@
 extern crate loft;
 
 use loft::diagnostics::Level;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use loft::platform::sep_str;
 use loft::scopes;
@@ -296,7 +297,7 @@ fn struct_fields_resolve_in_use_loaded_package() {
 #[test]
 fn declared_dep_beats_same_named_package_file() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new(root.join("target/release/loft"))
+    let out = loft::platform::process::harness_command(root.join("target/release/loft"))
         .args(["--interpret", "--no-warnings"])
         .arg(root.join("tests/fixtures/dep_shadow/consumer/shadowlib.loft"))
         .current_dir(&root)
@@ -319,28 +320,28 @@ fn declared_dep_beats_same_named_package_file() {
 #[test]
 fn i337_manifest_path_dep_resolves_non_sibling() {
     let tmp = std::env::temp_dir().join("loft_i337_pathdep");
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let dep_root = tmp.join("elsewhere").join("nested").join("a");
-    std::fs::create_dir_all(dep_root.join("src")).unwrap();
-    std::fs::write(
+    fa::create_dir_all(dep_root.join("src")).unwrap();
+    fa::write(
         dep_root.join("loft.toml"),
         "[package]\nname = \"a\"\nversion = \"0.0.1\"\n[library]\nentry = \"src/a.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep_root.join("src").join("a.loft"),
         "pub fn a_hello() -> text { \"hello from a\" }\n",
     )
     .unwrap();
     let b_root = tmp.join("b");
-    std::fs::create_dir_all(b_root.join("src")).unwrap();
-    std::fs::write(
+    fa::create_dir_all(b_root.join("src")).unwrap();
+    fa::write(
         b_root.join("loft.toml"),
         "[package]\nname = \"b\"\nversion = \"0.0.1\"\n[library]\nentry = \"src/b.loft\"\n\
          [dependencies]\na = { path = \"../elsewhere/nested/a\" }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         b_root.join("src").join("b.loft"),
         "use a::*;\n\nfn main() {\n  log_info(\"{a_hello()}\");\n}\n",
     )
@@ -394,9 +395,9 @@ fn pkg_deps_resolve_before_the_dependent_is_parsed() {
 /// `siblings` becomes `src/<name>.loft`; the entry `use`s them in order.
 fn i826_pkg(tag: &str, entry_body: &str, siblings: &[(&str, &str)]) -> std::path::PathBuf {
     let root = std::env::temp_dir().join(format!("loft_i826_{tag}"));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("src")).unwrap();
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"pkg\"\nversion = \"0.0.1\"\n[library]\nentry = \"src/pkg.loft\"\n",
     )
@@ -405,13 +406,13 @@ fn i826_pkg(tag: &str, entry_body: &str, siblings: &[(&str, &str)]) -> std::path
         .iter()
         .map(|(n, _)| format!("use {n}::*;\n"))
         .collect();
-    std::fs::write(
+    fa::write(
         root.join("src").join("pkg.loft"),
         format!("{uses}{entry_body}"),
     )
     .unwrap();
     for (n, body) in siblings {
-        std::fs::write(root.join("src").join(format!("{n}.loft")), body).unwrap();
+        fa::write(root.join("src").join(format!("{n}.loft")), body).unwrap();
     }
     root.join("src").join("pkg.loft")
 }
@@ -657,27 +658,27 @@ fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
         for (first, second) in [("errand", "spawn"), ("spawn", "errand")] {
             let root = std::env::temp_dir()
                 .join(format!("loft_1766_{tag}_{first}_{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(root.join("src")).unwrap();
-            std::fs::create_dir_all(root.join("tests")).unwrap();
-            std::fs::write(
+            let _ = fa::remove_dir_all(&root);
+            fa::create_dir_all(root.join("src")).unwrap();
+            fa::create_dir_all(root.join("tests")).unwrap();
+            fa::write(
                 root.join("loft.toml"),
                 "[package]\nname = \"pkg\"\nversion = \"0.0.1\"\n[library]\nentry = \"src/pkg.loft\"\n",
             )
             .unwrap();
-            std::fs::write(
+            fa::write(
                 root.join("src/pkg.loft"),
                 format!("use {first};\nuse {second};\n"),
             )
             .unwrap();
-            std::fs::write(root.join("src/errand.loft"), errand).unwrap();
-            std::fs::write(root.join("src/spawn.loft"), spawn).unwrap();
-            std::fs::write(
+            fa::write(root.join("src/errand.loft"), errand).unwrap();
+            fa::write(root.join("src/spawn.loft"), spawn).unwrap();
+            fa::write(
                 root.join("tests/t.loft"),
                 format!("use pkg;\nuse errand::*;\nuse spawn::*;\nfn main() {{ {body} }}\n"),
             )
             .unwrap();
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
                 .arg(root.join("tests/t.loft"))
                 .env("LOFT_NO_CACHE", "1")
@@ -697,7 +698,7 @@ fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
                      {stdout:?}\n{stderr}"
                 ),
             }
-            let _ = std::fs::remove_dir_all(&root);
+            let _ = fa::remove_dir_all(&root);
         }
     }
 }

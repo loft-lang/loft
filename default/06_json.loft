@@ -26,8 +26,8 @@ pub enum JsonValue {
   JBool { value: boolean },
   JNumber { value: float },
   JString { value: text },
-  JArray { items: vector<JsonValue> },
-  JObject { fields: vector<JsonField> },
+  JArray { pub items: vector<JsonValue> },
+  JObject { pub fields: vector<JsonField> },
   JInteger { value: integer },
 }
 
@@ -35,8 +35,8 @@ pub enum JsonValue {
 /// `vector<JsonField>` in source order, so a lookup by name is a linear
 /// scan — fine for the object sizes typical in configuration / API responses.
 pub struct JsonField {
-  name: text,
-  value: JsonValue,
+  pub name: text,
+  pub value: JsonValue,
 }
 
 /// Parse JSON text into a `JsonValue` tree.  Malformed input returns

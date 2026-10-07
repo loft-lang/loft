@@ -358,8 +358,6 @@ tests/falsified/a-view-of-a-const-value-is-read-only.patch
 tests/falsified/a-whole-value-copy-of-a-droppable-releases-once-refused.patch
 tests/falsified/a-write-inside-a-generic-keeps-its-own-row.patch
 tests/falsified/c118-an-append-reaches-an-absent-collection-through-a-link.patch
-tests/falsified/c131-a-cast-to-a-variant-answers-the-variant.patch
-tests/falsified/c131-a-cast-to-a-variant-is-refused-where-it-cannot-keep-its-promise.patch
 tests/falsified/c91-a-collection-and-an-enum-value-compare-by-content.patch
 tests/falsified/c91-a-struct-compares-by-content-through-its-references.patch
 tests/falsified/c91-a-vector-compares-by-content.patch

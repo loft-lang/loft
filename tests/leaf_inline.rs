@@ -7,8 +7,8 @@
 //! must not — is a red test rather than a quiet slowdown or a lucky value.  It also runs the
 //! cells under every switch, since the default run never reaches the paths a switch restores,
 //! and checks the drawing hash loop the rules were built for no longer calls its leaf.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-leaf-call-inlined-answers-what-the-call-answers.loft";
 
@@ -48,7 +48,8 @@ const SWITCHES: [&str; 4] = [
 ];
 
 fn loft(args: &[&str], file: &Path, env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .arg(file)
         .env("LOFT_TIMEOUT", "120")
@@ -116,9 +117,9 @@ fn the_cells_hold_under_every_switch() {
 #[test]
 fn the_hash_loop_no_longer_calls_its_leaf() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_inline_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("hash.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "pub fn seed_hash(hseed: integer, hidx: integer, hsalt: integer) -> float {\n\
          \x20 hx = ((hseed * 73856093) ^ (hidx * 19349663) ^ (hsalt * 83492791)) & 0xFFFFFFFF;\n\
@@ -158,5 +159,5 @@ fn the_hash_loop_no_longer_calls_its_leaf() {
     let (a, _, ok_a) = loft(&["--interpret"], &file, &[]);
     let (b, _, ok_b) = loft(&["--interpret"], &file, &[("LOFT_NO_INLINE_LEAF", "1")]);
     assert!(ok_a && ok_b && a == b, "same answer either way: {a} / {b}");
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
 }

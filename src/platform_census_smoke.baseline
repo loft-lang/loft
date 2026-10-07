@@ -1,0 +1,3 @@
+# Tracked scripts with no Windows smoke invocation in scripts/windows_smoke.tsv (@PLN184 D4).
+# Only shrinks: see src/platform_census.rs.
+221

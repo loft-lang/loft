@@ -8,8 +8,6 @@ use crate::keys::DbRef;
 use crate::store::Store;
 use crate::vector;
 #[cfg(not(host_fs))]
-use std::collections::BTreeMap;
-#[cfg(not(host_fs))]
 use std::io::{Seek as _, SeekFrom, Write as _};
 
 enum Format {
@@ -36,10 +34,10 @@ fn fill_absent(store: &mut Store, file: &DbRef) {
 }
 
 #[cfg(not(host_fs))]
-fn fill_file(path: &std::path::Path, store: &mut Store, file: &DbRef) -> bool {
+fn fill_file(path: &crate::file_access::PathText, store: &mut Store, file: &DbRef) -> bool {
     store.set_long(file.rec, file.pos + 8, i64::MIN); // current
     store.set_long(file.rec, file.pos + 16, i64::MIN); // next
-    if let Ok(data) = path.metadata() {
+    if let Ok(data) = crate::file_access::metadata(path) {
         store.set_long(file.rec, file.pos, i64::MIN); // no size
         let tp = if data.is_dir() {
             Format::Directory
@@ -550,8 +548,7 @@ impl Stores {
             return false;
         };
         let store = self.store_mut(file);
-        let path = std::path::Path::new(&resolved);
-        fill_file(path, store, file)
+        fill_file(&crate::file_access::at(&resolved), store, file)
     }
 
     /// FS-E: ask the JS host for the metadata.  Both browser shells arrive
@@ -609,26 +606,21 @@ impl Stores {
         let Some(resolved) = self.resolve_path(file_path) else {
             return false;
         };
-        let path = std::path::Path::new(&resolved);
-        if let Ok(iter) = std::fs::read_dir(path) {
+        if let Ok(entries) = crate::file_access::read_dir(crate::file_access::at(&resolved)) {
             let vector = DbRef {
                 store_nr: result.store_nr,
                 rec: result.rec,
                 pos: result.pos,
             };
-            let mut res = BTreeMap::new();
-            for entry in iter.flatten() {
-                if let Some(name) = entry.path().to_str() {
-                    // Normalise to forward slashes so loft paths are consistent on
-                    // all platforms (Windows returns backslash-separated paths).
-                    // Through the shared helper, so a Unix filename that legitimately
-                    // contains a backslash is not split into a fake two-segment path —
-                    // this listing is data a loft program reads back.
-                    res.insert(crate::file_access::given(name), entry);
-                }
-                // A non-UTF-8 name degrades that ENTRY (skipped), never the
-                // listing: aborting here returned a silently truncated vector.
-            }
+            // `@FR-Path-Sep` — the portable form, as every path loft gives a program: parsed by
+            // the host's rules, so a Unix filename that legitimately holds a backslash is not
+            // split into a fake two-segment path.  `@FR-Path-Utf8` — a name that is not text
+            // is listed with U+FFFD, and two such names that show alike are two entries, so
+            // the listing is a list (already sorted), never a map keyed by the shown name.
+            let res: Vec<(String, crate::file_access::PathText)> = entries
+                .into_iter()
+                .map(|entry| (entry.for_program().portable(), entry))
+                .collect();
             for (name, entry) in res {
                 let elm =
                     vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
@@ -645,7 +637,7 @@ impl Stores {
                 // well-formed `NotExists` element by `fill_file`'s own error
                 // path; keep listing — a mid-loop abort silently dropped every
                 // entry sorting after it.
-                fill_file(&entry.path(), store, &elm);
+                fill_file(&entry, store, &elm);
             }
         }
         true
@@ -704,8 +696,8 @@ impl Stores {
         };
         let store = self.store_mut(result);
         if let Ok((img, width, height)) = crate::png_store::read(&resolved, store) {
-            if let Some(name) = std::path::Path::new(&resolved).file_name() {
-                let name_pos = store.set_str(name.to_str().unwrap());
+            if let Some(name) = crate::file_access::at(&resolved).file_name() {
+                let name_pos = store.set_str(name);
                 store.set_u32_raw(result.rec, result.pos, name_pos);
                 store.set_int(result.rec, result.pos + 4, i64::from(width));
                 store.set_int(result.rec, result.pos + 8, i64::from(height));
@@ -762,13 +754,14 @@ impl Stores {
                 // Read-write, so a read through the same `File` after it sees what was
                 // written (loft#1861: `File::create` opened it write-only, and the read
                 // answered nothing on both backends).
-                match std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&resolved_name)
-                {
+                match crate::file_access::open_with(
+                    crate::file_access::at(&resolved_name),
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .create(true)
+                        .truncate(true),
+                ) {
                     Ok(f) => {
                         s.set_i32_raw(file.rec, file.pos + 28, f_nr);
                         self.files
@@ -782,7 +775,7 @@ impl Stores {
                         // Warn and skip the write (the recoverable-fault
                         // posture); the next write retries the create.
                         crate::loft_eprintln!(
-                            "loft: cannot create {resolved_name} for writing: {e} — write skipped"
+                            "loft: cannot create a file for writing: {e} — write skipped"
                         );
                         return false;
                     }
@@ -835,20 +828,17 @@ impl Stores {
             }
         };
         #[cfg(not(host_fs))]
-        let names: Option<Vec<String>> = match std::fs::read_dir(std::path::Path::new(&resolved)) {
-            Ok(iter) => {
-                let mut v = Vec::new();
-                for entry in iter.flatten() {
-                    // Keep only the final path component; skip non-UTF-8 names
-                    // (that ENTRY degrades, never the whole listing).
-                    if let Some(name) = entry.file_name().to_str() {
-                        v.push(name.to_owned());
-                    }
-                }
-                Some(v)
-            }
-            Err(_) => None,
-        };
+        // Only the final path component; `@FR-Path-Utf8` — a name that is not text is listed
+        // with U+FFFD in its place.
+        let names: Option<Vec<String>> =
+            crate::file_access::read_dir(crate::file_access::at(&resolved))
+                .ok()
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|e| e.file_name().map(str::to_owned))
+                        .collect()
+                });
         let Some(mut names) = names else {
             return DbRef::NULL;
         };
@@ -881,7 +871,8 @@ impl Stores {
         #[cfg(host_fs)]
         let data: Option<Vec<u8>> = crate::wasm::host_fs_read_binary(&resolved);
         #[cfg(not(host_fs))]
-        let data: Option<Vec<u8>> = std::fs::read(std::path::Path::new(&resolved)).ok();
+        let data: Option<Vec<u8>> =
+            crate::file_access::read(crate::file_access::at(&resolved)).ok();
         let Some(data) = data else { return DbRef::NULL };
         // Owning field is a 4-byte vector pointer; the inner record holds the
         // bytes one-per-element (length at offset 4, payload at offset 8).
@@ -908,7 +899,7 @@ impl Stores {
             let Some(resolved) = self.resolve_path(path) else {
                 return DbRef::NULL;
             };
-            let Ok(file) = std::fs::File::open(std::path::Path::new(&resolved)) else {
+            let Ok(file) = crate::file_access::open(crate::file_access::at(&resolved)) else {
                 return DbRef::NULL;
             };
             let Ok(meta) = file.metadata() else {
@@ -970,7 +961,7 @@ impl Stores {
         }
         #[cfg(not(host_fs))]
         {
-            std::fs::write(std::path::Path::new(&resolved), &data).is_ok()
+            crate::file_access::write(crate::file_access::at(&resolved), &data).is_ok()
         }
     }
 }

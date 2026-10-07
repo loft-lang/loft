@@ -15,8 +15,8 @@
 //! is an ERROR that creates nothing; an installed library's docs go to loft's own
 //! doc cache instead of the CWD; and the reported path is absolute.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -24,8 +24,8 @@ fn loft_bin() -> PathBuf {
 
 fn tmp_root(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("loft_911_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("mkdir root");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir root");
     root
 }
 
@@ -35,7 +35,7 @@ fn tmp_root(tag: &str) -> PathBuf {
 #[test]
 fn an_unresolvable_name_creates_nothing_and_fails() {
     let root = tmp_root("noresolve");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .args(["doc", "definitely_not_a_package_zzz"])
         .output()
@@ -50,19 +50,19 @@ fn an_unresolvable_name_creates_nothing_and_fails() {
         "the refusal must say what it looked for; got:\n{stderr}"
     );
     assert!(
-        !root.join("definitely_not_a_package_zzz").exists(),
+        !fa::exists(root.join("definitely_not_a_package_zzz")),
         "no directory may be created for a name that resolved to nothing"
     );
-    let left: Vec<_> = std::fs::read_dir(&root)
+    let left: Vec<_> = fa::read_dir(&root)
         .expect("read root")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name())
+        .into_iter()
+        .map(|e| e.os_name().unwrap_or_default())
         .collect();
     assert!(
         left.is_empty(),
         "the working directory must be untouched, found: {left:?}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// A real package directory still documents in place, and the API sections are
@@ -72,20 +72,20 @@ fn an_unresolvable_name_creates_nothing_and_fails() {
 fn a_package_directory_documents_its_own_api() {
     let root = tmp_root("pkgdir");
     let pkg = root.join("mylib");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir pkg");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir pkg");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"mylib\"\nversion = \"0.2.0\"\n",
     )
     .expect("write manifest");
-    std::fs::write(
+    fa::write(
         pkg.join("src/mylib.loft"),
         "// Add two numbers together and answer the sum.\n\
          pub fn add_two(a: integer, b: integer) -> integer { a + b }\n",
     )
     .expect("write src");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .arg("doc")
         .arg(&pkg)
@@ -108,22 +108,22 @@ fn a_package_directory_documents_its_own_api() {
         stdout.contains(&printed_dir),
         "the absolute output path must be printed ({printed_dir}); got:\n{stdout}"
     );
-    let index = std::fs::read_to_string(pkg.join("doc/index.html")).expect("index.html");
+    let index = fa::read_to_string(pkg.join("doc/index.html")).expect("index.html");
     assert!(
         index.contains("API Reference"),
         "the index must link the API it extracted"
     );
-    let api: String = std::fs::read_dir(pkg.join("doc"))
+    let api: String = fa::read_dir(pkg.join("doc"))
         .expect("read doc")
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("api-"))
-        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .into_iter()
+        .filter(|e| e.file_name().is_some_and(|n| n.starts_with("api-")))
+        .filter_map(|e| fa::read_to_string(&e).ok())
         .collect();
     assert!(
         api.contains("add_two"),
         "the extracted API must carry the function's signature"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// A doc comment is TEXT on the API page: its `<` and `&` are shown, not read as markup, and a
@@ -133,30 +133,30 @@ fn a_package_directory_documents_its_own_api() {
 fn a_doc_comment_is_shown_as_text_on_the_api_page() {
     let root = tmp_root("pkgesc");
     let pkg = root.join("esclib");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir pkg");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir pkg");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"esclib\"\nversion = \"0.1.0\"\n",
     )
     .expect("write manifest");
-    std::fs::write(
+    fa::write(
         pkg.join("src/esclib.loft"),
         "// Answers a vector<T> & a <b>bold</b> claim, via `first(v)`.\n\
          pub fn first_of(x: integer) -> integer { x }\n",
     )
     .expect("write src");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .arg("doc")
         .arg(&pkg)
         .output()
         .expect("run loft doc");
     assert!(out.status.success(), "loft doc failed");
-    let api: String = std::fs::read_dir(pkg.join("doc"))
+    let api: String = fa::read_dir(pkg.join("doc"))
         .expect("read doc")
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("api-"))
-        .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+        .into_iter()
+        .filter(|e| e.file_name().is_some_and(|n| n.starts_with("api-")))
+        .filter_map(|e| fa::read_to_string(&e).ok())
         .collect();
     assert!(
         api.contains(
@@ -164,7 +164,7 @@ fn a_doc_comment_is_shown_as_text_on_the_api_page() {
         ),
         "the doc must be escaped text with its span as code; got:\n{api}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// `-o <dir>` puts the output exactly where it is told — the escape hatch for the
@@ -173,20 +173,20 @@ fn a_doc_comment_is_shown_as_text_on_the_api_page() {
 fn out_flag_redirects_the_output() {
     let root = tmp_root("outflag");
     let pkg = root.join("mylib");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir pkg");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir pkg");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"mylib\"\nversion = \"0.2.0\"\n",
     )
     .expect("write manifest");
-    std::fs::write(
+    fa::write(
         pkg.join("src/mylib.loft"),
         "// Answer a constant.\npub fn one() -> integer { 1 }\n",
     )
     .expect("write src");
     let elsewhere = root.join("elsewhere");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .arg("doc")
         .arg(&pkg)
@@ -200,12 +200,12 @@ fn out_flag_redirects_the_output() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        elsewhere.join("index.html").exists(),
+        fa::exists(elsewhere.join("index.html")),
         "-o must place the pages in the named directory"
     );
     assert!(
-        !pkg.join("doc").exists(),
+        !fa::exists(pkg.join("doc")),
         "-o must not also write beside the source"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

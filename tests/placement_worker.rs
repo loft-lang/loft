@@ -15,8 +15,10 @@
 // lives with the language wiring; what is proven here is that a call CAN cross
 // with its value, its type, and its error behaviour intact.
 
+// @PLN184 C2 approved exemption (owner, 2026-10-07): library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use loft::host::Value;
 use loft::lib_placement::Worker;
 use std::path::{Path, PathBuf};
@@ -26,8 +28,8 @@ fn scratch(name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-placement").join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -38,13 +40,13 @@ fn workspace_root() -> PathBuf {
 /// Write a one-file library package and return its root.
 fn library(dir: &Path, name: &str, source: &str) -> PathBuf {
     let root = dir.join(name);
-    std::fs::create_dir_all(root.join("src")).expect("create package");
-    std::fs::write(
+    fa::create_dir_all(root.join("src")).expect("create package");
+    fa::write(
         root.join("loft.toml"),
         format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n[library]\nplacement = \"process\"\n"),
     )
     .expect("write manifest");
-    std::fs::write(root.join("src").join(format!("{name}.loft")), source).expect("write source");
+    fa::write(root.join("src").join(format!("{name}.loft")), source).expect("write source");
     root
 }
 
@@ -276,7 +278,7 @@ fn a_worker_killed_mid_call_is_an_error_not_a_hang() {
 
     std::thread::sleep(std::time::Duration::from_millis(400));
     // SIGKILL: the worker gets no chance to answer, which is the whole point.
-    let killed = std::process::Command::new("kill")
+    let killed = loft::platform::process::harness_command("kill")
         .arg("-KILL")
         .arg(pid.to_string())
         .status()

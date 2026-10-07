@@ -11,10 +11,11 @@
 //! 3. the fix-up edit → swaps again (v1 → v2 of the temp-def chain);
 //! 4. a signature change → rejected; the last good body keeps serving.
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "common/mod.rs"]
@@ -30,7 +31,7 @@ mod common;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -155,18 +156,18 @@ fn main() {{
 #[test]
 fn live_reload_swaps_a_running_fn() {
     let port = common::bind_port(PORT_BASE);
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let dir = test_tmp().join(format!("eh_reload_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let prog = dir.join("srv.loft");
     let sig = "p: text, n: integer";
-    std::fs::write(&prog, program(BODY_A, sig)).unwrap();
+    fa::write(&prog, program(BODY_A, sig)).unwrap();
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child = Command::new(loft_bin())
+    let child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
@@ -187,7 +188,7 @@ fn live_reload_swaps_a_running_fn() {
     assert!(n0 >= 1);
 
     // 1. Clean edit → live swap, counter continuity (the world survived).
-    std::fs::write(&prog, program("\"B:{p}#{n}\"", sig)).unwrap();
+    fa::write(&prog, program("\"B:{p}#{n}\"", sig)).unwrap();
     let n1 = await_prefix(&ws, "B:ping");
     assert!(
         n1 > n0,
@@ -195,7 +196,7 @@ fn live_reload_swaps_a_running_fn() {
     );
 
     // 2. Broken edit → the old body keeps serving; the loop survives.
-    std::fs::write(&prog, program("\"C:{p}#{n}\" +", sig)).unwrap();
+    fa::write(&prog, program("\"C:{p}#{n}\" +", sig)).unwrap();
     std::thread::sleep(Duration::from_millis(800));
     let n2 = await_prefix(&ws, "B:ping");
     assert!(
@@ -204,12 +205,12 @@ fn live_reload_swaps_a_running_fn() {
     );
 
     // 3. The fix-up → swaps to the corrected body.
-    std::fs::write(&prog, program("\"C:{p}#{n}\"", sig)).unwrap();
+    fa::write(&prog, program("\"C:{p}#{n}\"", sig)).unwrap();
     let n3 = await_prefix(&ws, "C:ping");
     assert!(n3 > n2);
 
     // 4. Signature change → rejected; the last good body keeps serving.
-    std::fs::write(
+    fa::write(
         &prog,
         program("\"D:{p}#{n}\"", "p: text, n: integer, x: integer"),
     )
@@ -218,7 +219,7 @@ fn live_reload_swaps_a_running_fn() {
     let n4 = await_prefix(&ws, "C:ping");
     assert!(n4 > n3, "signature changes never half-apply");
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// #346/#347 — the reload host must install from ANY cwd (the shadow session
@@ -227,21 +228,21 @@ fn live_reload_swaps_a_running_fn() {
 /// (the shadow gate is errors-only, parity with the main session).
 #[test]
 fn reload_installs_from_foreign_cwd_with_warnings() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     // `v[i]` with no defensive check is the canonical standing warning.
     let prog_src = "fn main() {\n  v = [1, 2, 3];\n  i = 1;\n  if v[i] != null {\n    println(\"x\");\n  }\n}\n";
     let dir = std::env::temp_dir().join(format!("eh_reload_cwd_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     assert!(
-        !dir.join("default").exists(),
+        !fa::exists(dir.join("default")),
         "probe cwd must not contain a stdlib dir"
     );
     let prog = dir.join("warny.loft");
-    std::fs::write(&prog, prog_src).unwrap();
-    let out = Command::new(loft_bin())
+    fa::write(&prog, prog_src).unwrap();
+    let out = loft::platform::process::harness_command(loft_bin())
         .env("LOFT_LIVE_RELOAD", "1")
         .env("LOFT_OFFLINE", "1")
         .args(["--interpret"])
@@ -258,7 +259,7 @@ fn reload_installs_from_foreign_cwd_with_warnings() {
         !stderr.contains("reload disabled"),
         "warnings alone must never disable reload, stderr:\n{stderr}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// #350 + #351 — a live edit lands in a MODULE file (not the entry), and the
@@ -269,31 +270,31 @@ fn reload_installs_from_foreign_cwd_with_warnings() {
 // @speed 1.6
 #[test]
 fn live_reload_module_file_with_lib_and_cross_file_calls() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let dir = std::env::temp_dir().join(format!("eh_reload_libs_{}", std::process::id()));
     let src = dir.join("src");
-    std::fs::create_dir_all(&src).unwrap();
+    fa::create_dir_all(&src).unwrap();
     // The module resolves what ITS file imports — the library and a sibling module — and
     // nothing of the file that `use`s it: a fresh parse refuses a module calling its
     // importer's `double`, and a reload that accepted it was accepting a program the
     // language refuses (the shadow session used to parse the program under the prelude's
     // source id, where every name read as global — @PLN162 step 14).
     let module = src.join("viewmod.loft");
-    std::fs::write(
+    fa::write(
         &module,
         "pub use engine_host::*;\npub use mathmod::*;\n\npub fn view_msg(n: integer) -> text {\n    \"view {n}\"\n}\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         src.join("mathmod.loft"),
         "pub fn double(n: integer) -> integer {\n    n * 2\n}\n",
     )
     .unwrap();
     let main = src.join("main.loft");
-    std::fs::write(
+    fa::write(
         &main,
         r#"use viewmod::*;
 use engine_host::*;
@@ -314,9 +315,9 @@ fn main() {
     )
     .unwrap();
     let out_path = dir.join("stdout.txt");
-    let out_file = std::fs::File::create(&out_path).unwrap();
+    let out_file = fa::create(&out_path).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child = Command::new(loft_bin())
+    let child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
@@ -334,7 +335,7 @@ fn main() {
     let await_marker = |marker: &str| -> bool {
         let deadline = vm_deadline(20);
         while Instant::now() < deadline {
-            if std::fs::read_to_string(&out_path)
+            if fa::read_to_string(&out_path)
                 .unwrap_or_default()
                 .contains(marker)
             {
@@ -347,7 +348,7 @@ fn main() {
     assert!(await_marker("view "), "baseline body must run first");
 
     // The MODULE edit: lib-qualified + cross-file calls in the new body.
-    std::fs::write(
+    fa::write(
         &module,
         "pub use engine_host::*;\npub use mathmod::*;\n\npub fn view_msg(n: integer) -> text {\n    \"VIEW c={engine_host::clients()} d={double(n)}\"\n}\n",
     )
@@ -355,9 +356,9 @@ fn main() {
     assert!(
         await_marker("VIEW c=0 d="),
         "module edit must land live with lib + cross-file calls resolved (#350/#351); got:\n{}",
-        std::fs::read_to_string(&out_path).unwrap_or_default()
+        fa::read_to_string(&out_path).unwrap_or_default()
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// The port band reproduces POSIX `cksum` — the checksum `find_problems.sh` has always piped

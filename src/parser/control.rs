@@ -818,6 +818,7 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_block_inner(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
+        let mut last_fact = crate::data::AliasFact::Plain; // @PLN187
         if let Value::Var(v) = val
             && let Type::Reference(r, _) = self.vars.tp(*v).clone()
             && context == "block"
@@ -1015,7 +1016,7 @@ impl Parser {
                     // unreachable statement, which is what the caret should sit on.  So
                     // this site names its position rather than taking `report_pos`'s
                     // consumed-source default, which would point at the terminator above.
-                    let at = self.lexer.peek().position.clone();
+                    let at = self.lexer.peek().position;
                     self.lexer.pos_diagnostic_coded(
                         Level::Warning,
                         &at,
@@ -1109,6 +1110,13 @@ impl Parser {
             self.stmt_if_pending = self.lexer.peek_token("if") || self.lexer.peek_token("match");
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
+            last_fact = std::mem::take(&mut self.operand_fact); // @PLN187
+            // `@FR-H-Write-Else` — an `else` left over after a whole statement can only be a
+            // store's failure arm: an `if` or a value-`if` has already consumed its own.
+            if self.lexer.peek_token("else") {
+                self.parse_store_else(&mut n);
+                t = Type::Void;
+            }
             self.block_tail_null_literal = matches!(&last_expr_peek.has, LexItem::Token(tok) if tok == "null")
                 && matches!(n.unspan(), Value::Null);
             self.stmt_if_pending = saved_stmt_if;
@@ -1346,6 +1354,7 @@ impl Parser {
             if !matches!(t, Type::Never) {
                 t = Type::Void;
             }
+            last_fact = crate::data::AliasFact::Plain;
             match l.last() {
                 Some(
                     Value::If(_, _, _) | Value::Loop(_) | Value::Block(_) | Value::Parallel(_),
@@ -1516,11 +1525,10 @@ impl Parser {
             // drop) — a deterministic channel: loft's `eprintln!` stderr races
             // with `process::exit` and truncates unreliably.
             use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
                 let _ = writeln!(f, "TRA {fname} => {}", verdict.label());
             }
         }
@@ -1706,8 +1714,8 @@ impl Parser {
                 let at = l
                     .last()
                     .and_then(Value::span_pos)
-                    .cloned()
-                    .or_else(|| Some(self.data.def(self.context).position().clone()));
+                    .copied()
+                    .or_else(|| Some(*self.data.def(self.context).position()));
                 self.n_store_violation(&t, result, "the return value", at.as_ref());
             }
             // The accumulator IS the return value, so it carries the declared
@@ -1821,6 +1829,11 @@ impl Parser {
         self.index_bounded.truncate(ib_base);
         self.divisor_nonzero.truncate(dz_base);
         self.math_sign_proven.truncate(ms_base);
+        // @PLN187 — a block's value carries its last expression's fact.
+        if self.abstract_on() {
+            self.operand_fact = last_fact.clone();
+            self.produced = Some(last_fact);
+        }
         *val = v_block(l, t.clone(), "block");
         t
     }
@@ -2222,7 +2235,7 @@ impl Parser {
                 // The tail is what the message is about, and a call already carries its own
                 // span (wrapped at the `(` on pass 2).  Prefer it: the block-tail check can
                 // only run once the block is closed, so the default lands on the `}`.
-                if let Some(tail) = l[last].span_pos().cloned() {
+                if let Some(tail) = l[last].span_pos().copied() {
                     self.lexer.pos_diagnostic(Level::Error, &tail, msg);
                 } else {
                     diagnostic!(self.lexer, Level::Error, "{msg}");
@@ -2490,8 +2503,8 @@ impl Parser {
             let ret_at = if is_return {
                 l[last]
                     .span_pos()
-                    .cloned()
-                    .or_else(|| Some(self.data.def(self.context).position().clone()))
+                    .copied()
+                    .or_else(|| Some(*self.data.def(self.context).position()))
             } else {
                 None
             };
@@ -2549,7 +2562,7 @@ impl Parser {
                         test: t.clone(),
                         should: result.clone(),
                         context: context.to_string(),
-                        at: tail_pos.clone(),
+                        at: *tail_pos,
                     });
                 } else {
                     self.validate_convert(context, t, result, tail_pos);
@@ -5524,8 +5537,10 @@ impl Parser {
         // read as a struct literal here.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
-        let cond_at = self.lexer.peek().position.clone();
+        let cond_at = self.lexer.peek().position;
         let tp = self.expression(&mut test);
+        let cond_fact = std::mem::take(&mut self.operand_fact);
+        self.check_subject(&cond_fact, "branching on it"); // @PLN187
         self.in_control_head = outer_head;
         self.warn_constant_condition(&tp, &cond_at, "if");
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
@@ -5580,6 +5595,8 @@ impl Parser {
         let write_state = self.vars.save_and_clear_write_state();
         self.vars.clear_write_state();
         let mut true_type = self.parse_block("if", &mut true_code, expected);
+        let true_fact = std::mem::take(&mut self.operand_fact); // @PLN187
+        let mut false_fact = crate::data::AliasFact::Empty;
         let true_is_null_literal = self.block_tail_null_literal;
         if !is_bindings.is_empty()
             && let Value::Block(bl) = &mut true_code
@@ -5629,7 +5646,7 @@ impl Parser {
         // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
         let had_else = self.lexer.has_token("else");
         // Where the else arm starts: a tuple arm pair that does not join is reported there.
-        let else_pos = self.lexer.pos().clone();
+        let else_pos = *self.lexer.pos();
         if had_else {
             self.vars.restore_write_state(&write_state);
             self.vars.clear_write_state();
@@ -5671,6 +5688,7 @@ impl Parser {
                     true_type.clone()
                 };
                 let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                false_fact = std::mem::take(&mut self.operand_fact);
                 if true_type == Type::Unknown(0) {
                     false_type = chain_type;
                 } else {
@@ -5712,6 +5730,7 @@ impl Parser {
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
                 false_type = self.parse_block("else", &mut false_code, &true_type);
+                false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
                 // value is whichever arm ran, so the expression promises no more than either.
@@ -5892,6 +5911,13 @@ impl Parser {
             }
         }
         *code = v_if(test, true_code, false_code);
+        // @PLN187 — an `if` that yields a value carries what its branches yield.
+        if had_else && !matches!(result_tp.base(), Type::Void | Type::Never) {
+            self.settle_join(&[true_fact, false_fact]);
+        } else if self.abstract_on() {
+            self.produced = Some(crate::data::AliasFact::Plain);
+        }
+        self.operand_fact = self.produced.clone().unwrap_or_default();
         // loft#1019 — an arm that OWNS what it yields needs a home in this frame when
         // the merged type is a view (`Parser::own_joined_call_arms`).
         self.own_joined_call_arms(code, &result_tp);
@@ -5990,7 +6016,18 @@ impl Parser {
         let is_stmt = std::mem::replace(&mut self.stmt_if_pending, false);
         let outer_arms = std::mem::replace(&mut self.arms_of_statement_construct, is_stmt);
         let outer_void = std::mem::replace(&mut self.match_void_arm, false);
+        // @PLN187 — this match's subject and arm facts; a nested match keeps its own.
+        let outer_subject = std::mem::take(&mut self.match_subject);
+        let outer_arm_facts = std::mem::take(&mut self.match_arm_facts);
         let r = self.parse_match_inner(code);
+        let arm_facts = std::mem::replace(&mut self.match_arm_facts, outer_arm_facts);
+        self.match_subject = outer_subject;
+        if !matches!(r.base(), Type::Void | Type::Null | Type::Never) {
+            self.settle_join(&arm_facts);
+        } else if self.abstract_on() {
+            self.produced = Some(crate::data::AliasFact::Plain);
+        }
+        self.operand_fact = self.produced.clone().unwrap_or_default();
         // @FR-F-Block discards a STATEMENT's arms, so a void one there is no defect.  In
         // VALUE position the path that ran yields nothing, and the exemption let the match
         // take the other arms' type: `v = match k { 1 => { 5 }, _ => { println(…) } }`
@@ -6022,7 +6059,7 @@ impl Parser {
             *self.complexity.entry(self.context).or_insert(0) += 1 + self.cc_nest;
         }
         // Save position of the match keyword for exhaustiveness diagnostics.
-        let match_pos = self.lexer.pos().clone();
+        let match_pos = *self.lexer.pos();
         // 1. Parse the subject expression.
         let mut subject = Value::Null;
         // A struct literal built in place types as `Rewritten(τ)` on the first pass — a signal to
@@ -6030,6 +6067,14 @@ impl Parser {
         // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
         // match `void`, and a local bound to it refused pass 2's real type.
         let mut subject_type = self.expression(&mut subject).unrewritten();
+        // @PLN187 — a tuple subject is inspected position by position, by its patterns; any
+        // other abstract subject is read by the match itself.
+        let subject_fact = std::mem::take(&mut self.operand_fact);
+        if matches!(subject_type.base(), Type::Tuple(_)) {
+            self.match_subject = subject_fact;
+        } else {
+            self.check_subject(&subject_fact, "matching on it");
+        }
         // `(T-Ref)`: a `&(…)` binding denotes the bound tuple itself, so a tuple pattern over it
         // reads every element through the reference, as `t.0` does.  The subject becomes the
         // tuple of those element reads, which the tuple match stores and projects like any
@@ -6118,7 +6163,7 @@ impl Parser {
             Type::Iterator(elem_box, _) => {
                 let elm_tp = (**elem_box).clone();
                 let iter_tp = subject_type.clone();
-                let match_pos = self.lexer.pos().clone();
+                let match_pos = *self.lexer.pos();
                 let (buf, vec_tp, setup) =
                     self.collect_iterator_subject(subject, &iter_tp, &elm_tp, &match_pos);
                 let mut match_code = Value::Null;
@@ -6376,6 +6421,9 @@ impl Parser {
             let mut variant_def_nr = self.data.variant_of(e_nr, &pattern_name);
             if variant_def_nr == u32::MAX {
                 variant_def_nr = self.data.def_nr(&pattern_name);
+            }
+            if self.data.def_type(variant_def_nr) == DefType::EnumValue {
+                self.check_visibility("variant", variant_def_nr, usize::MAX);
             }
 
             // for plain struct match, the pattern name must match the struct type.
@@ -7135,6 +7183,10 @@ impl Parser {
         self.vars.clear_write_state();
         let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        if self.abstract_on() {
+            let fact = std::mem::take(&mut self.operand_fact);
+            self.match_arm_facts.push(fact); // @PLN187
+        }
         if (bare_null && matches!(arm_code.unspan(), Value::Null))
             || (block_arm && self.block_tail_null_literal)
         {
@@ -7172,7 +7224,7 @@ impl Parser {
         } else {
             expected
         };
-        let at = self.lexer.pos().clone();
+        let at = *self.lexer.pos();
         // A bare arm is a block arm without the braces, so its value is hinted the way a
         // block tail's is: without it an empty `[]` arm had no element type to build with and
         // lowered to the placeholder `Insert([Null])`, which the chain emitted as a jump over
@@ -7349,6 +7401,9 @@ impl Parser {
         while !self.lexer.peek_token("}") {
             if let Some(field_name) = self.lexer.has_identifier() {
                 let attr_idx = self.data.attr(s_nr, &field_name);
+                if attr_idx != usize::MAX {
+                    self.check_visibility("pattern-field", s_nr, attr_idx);
+                }
                 if attr_idx == usize::MAX {
                     if !self.first_pass {
                         diagnostic!(
@@ -7460,6 +7515,9 @@ impl Parser {
         while !self.lexer.peek_token("}") {
             if let Some(field_name) = self.lexer.has_identifier() {
                 let attr_idx = self.data.attr(e_nr, &field_name);
+                if attr_idx != usize::MAX {
+                    self.check_visibility("pattern-field", e_nr, attr_idx);
+                }
                 if attr_idx != usize::MAX {
                     let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
                     let field_type = self.data.attr_type(e_nr, attr_idx);
@@ -7945,6 +8003,7 @@ impl Parser {
 
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
+                    self.check_visibility("pattern-field", variant_def_nr, attr_idx);
                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                     if self.lexer.has_token(":") {
                         // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
@@ -8216,6 +8275,13 @@ impl Parser {
     /// patterns after the rest and `(P-Point)` makes a variant one of them, so the tail
     /// takes the forms the head does — it just reads at a negative index (loft#1419).
     fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
+        // @FR-P-Point — a plain struct `S { f… }` is a point pattern too: the element's own
+        // struct name opens it, and `parse_field_sub_pattern` parses it as a field's would.
+        if let Type::Reference(s_nr, _) = elm_tp.peel_link()
+            && self.data.def_type(*s_nr) == DefType::Struct
+        {
+            return matches!(&self.lexer.peek().has, LexItem::Identifier(id) if *id == self.data.def(*s_nr).name());
+        }
         let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
             return false;
         };
@@ -8460,7 +8526,7 @@ impl Parser {
                         "a `match` over an iterator read more than {limit} elements (max_lookahead) — \
                          the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD"
                     )),
-                    Value::str(&match_pos.file),
+                    Value::str(match_pos.file.as_str()),
                     Value::Int(match_pos.line as i32),
                 ],
             );
@@ -8921,7 +8987,11 @@ impl Parser {
             // the `name:pat` path.  A real type name identifies the scalar capture.
             if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id != "_") {
                 self.lexer.cont(); // Type
-                res = Some(self.lexer.peek_token("*") || self.lexer.peek_token("+"));
+                // A `{` after the name opens a plain-struct PATTERN (`p: Pt { x: 3 }`): that is
+                // `name: pattern`, not a type annotation.
+                if !self.lexer.peek_token("{") {
+                    res = Some(self.lexer.peek_token("*") || self.lexer.peek_token("+"));
+                }
             }
         }
         self.lexer.revert(save);
@@ -10243,6 +10313,7 @@ impl Parser {
             };
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
+                    self.check_visibility("pattern-field", variant_def_nr, attr_idx);
                     // `@FR-P-Point` — a field may itself be a pattern.  In a listed pattern
                     // it TESTS the field and captures nothing, so it becomes this branch's
                     // condition (the caller ANDs it into the branch's own guard).  A
@@ -10599,7 +10670,31 @@ impl Parser {
             self.expression(&mut hi);
             return (Value::Boolean(false), Type::Boolean);
         }
-        let pat_pos = self.lexer.pos().clone();
+        // @FR-G-Pat-Group — a `( … )` in a pattern is a GROUP: `(2 | 3)` is the alternation and
+        // `(2..=5)` the range, one condition either way.  Handed to `expression` it was a value:
+        // `2 | 3` the bitwise or (3), and a parenthesised range never finished parsing.
+        if self.lexer.has_token("(") {
+            let mut cond = Value::Null;
+            loop {
+                let (pat, _) = self.parse_match_pattern(subject_type, subject_var);
+                let mut one = Value::Null;
+                self.build_scalar_cond(&mut one, subject_var, subject_type, pat);
+                cond = if matches!(cond, Value::Null) {
+                    one
+                } else {
+                    v_if(cond, Value::Boolean(true), one)
+                };
+                if !self.lexer.has_token("|") {
+                    break;
+                }
+            }
+            self.lexer.token(")");
+            return (
+                v_block(vec![cond], Type::Boolean, "or_pattern"),
+                Type::Boolean,
+            );
+        }
+        let pat_pos = *self.lexer.pos();
         let mut lit = Value::Null;
         let negate = self.lexer.has_token("-");
         let lit_type = if let Some(n) = self.lexer.has_integer() {
@@ -10755,15 +10850,21 @@ impl Parser {
             } else if let Some(id) = self.lexer.has_identifier() {
                 if id == "_" {
                     is_wildcard = true;
-                } else if self.lexer.has_token("@") {
-                    // binding pattern `name @ pattern` — bind the subject to
-                    // a variable and continue parsing the sub-pattern.
+                } else if self.lexer.has_token("@") || self.lexer.has_token(":") {
+                    // @FR-P-Cap at the arm root — `name: pattern` (and the older `name @ pattern`)
+                    // binds the subject and the sub-pattern still tests it; `name: _` is the
+                    // catch-all that binds it.
                     let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     arm_bindings.push(v_set(bind_nr, Value::Var(v)));
-                    // Parse the sub-pattern after `@`.
-                    let (pat, _) = self.parse_match_pattern(subject_type, v);
-                    pattern_val = Some(pat);
+                    if matches!(&self.lexer.peek().has, crate::lexer::LexItem::Identifier(n) if n == "_")
+                    {
+                        self.lexer.has_identifier();
+                        is_wildcard = true;
+                    } else {
+                        let (pat, _) = self.parse_match_pattern(subject_type, v);
+                        pattern_val = Some(pat);
+                    }
                 } else {
                     // Bare identifier without `@` — wildcard binding (binds subject to name).
                     let bind_nr = self.pattern_binding(&id, subject_type);
@@ -11115,7 +11216,7 @@ impl Parser {
         self.lexer.token(":");
         // @PLN35 PC3 — record the sub-rule edge (enclosing rule -> invoked rule) at the invocation
         // site, so the post-parse termination pass can reject a left-recursive cycle.
-        let site = self.lexer.peek().position.clone();
+        let site = self.lexer.peek().position;
         self.lexer.has_identifier(); // rule
         if !self.first_pass && self.context != u32::MAX {
             self.subrule_edges.push((self.context, fn_nr, site));
@@ -11176,7 +11277,7 @@ impl Parser {
         let mut adj: std::collections::HashMap<u32, Vec<(u32, crate::lexer::Position)>> =
             std::collections::HashMap::new();
         for (from, to, pos) in &edges {
-            adj.entry(*from).or_default().push((*to, pos.clone()));
+            adj.entry(*from).or_default().push((*to, *pos));
         }
         let cycles = Self::find_subrule_cycles(&adj);
         for (site, cycle) in &cycles {
@@ -11240,7 +11341,7 @@ impl Parser {
     pub(crate) fn check_reshape_under_reference(&mut self) {
         for r in crate::scopes::reshape_refusals(&self.data, &self.database) {
             let pos = crate::lexer::Position {
-                file: r.file.into(),
+                file: crate::lexer::intern_file(&r.file),
                 line: r.line,
                 pos: 1,
             };
@@ -11299,7 +11400,7 @@ impl Parser {
                             let idx = path.iter().position(|x| x == callee).unwrap_or(0);
                             let mut cycle = path[idx..].to_vec();
                             cycle.push(*callee);
-                            out.push((pos.clone(), cycle));
+                            out.push((*pos, cycle));
                         }
                     }
                     0 => Self::dfs_subrule(*callee, adj, color, path, reported, out),
@@ -12187,7 +12288,20 @@ impl Parser {
             }
             let elem_type = elem_type.clone();
             let elem_get = Value::TupleGet(tmp, i as u16);
+            // @FR-P-Cap at a tuple element — `(whole: Circle { r }, k)` binds the element as a
+            // bare name does, and the sub-pattern after the `:` still tests it.
+            if let Some(name) = self.lexer.peek_named_arg()
+                && Self::is_binding_name(&name)
+            {
+                self.lexer.has_identifier();
+                self.lexer.token(":");
+                let bind_nr = self.pattern_binding(&name, &elem_type);
+                self.vars.defined(bind_nr);
+                self.tuple_pattern_element(i, Some(bind_nr)); // @PLN187
+                bindings.push(v_set(bind_nr, elem_get.clone()));
+            }
             if self.peek_is_variant_subpattern(&elem_type) {
+                self.tuple_pattern_element(i, None); // @PLN187 — a tag test reads the member
                 // @FR-P-Point — a unit or struct variant is a point pattern over ONE
                 // value, and a tuple element is one value, so an enum element takes
                 // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
@@ -12250,10 +12364,12 @@ impl Parser {
                     // binding variable — always matches, captures element value
                     let bind_nr = self.pattern_binding(&id, &elem_type);
                     self.vars.defined(bind_nr);
+                    self.tuple_pattern_element(i, Some(bind_nr)); // @PLN187
                     bindings.push(v_set(bind_nr, elem_get));
                 }
             } else {
                 // literal: build elem_get == literal condition
+                self.tuple_pattern_element(i, None); // @PLN187 — a literal compares the member
                 let negate = self.lexer.has_token("-");
                 let lit: Value = if let Some(n) = self.lexer.has_integer() {
                     let v = n as i32;
@@ -12899,6 +13015,9 @@ impl Parser {
         // variant_of chokepoint (the (enum, variant) scope key), not the bare
         // global def_nr.  `is` is always enum-typed here (see the match above).
         let variant_def_nr = self.data.variant_of(e_nr, variant_name);
+        if variant_def_nr != u32::MAX && self.data.def_type(variant_def_nr) == DefType::EnumValue {
+            self.check_visibility("variant", variant_def_nr, usize::MAX);
+        }
         if variant_def_nr == u32::MAX || self.data.def_type(variant_def_nr) != DefType::EnumValue {
             if !self.first_pass {
                 diagnostic!(
@@ -13167,7 +13286,7 @@ impl Parser {
                     self.data.def(variant_def_nr).name(),
                     self.data.def(variant_def_nr).name(),
                 );
-                self.capture_took_body = Some(self.lexer.peek().position.clone());
+                self.capture_took_body = Some(self.lexer.peek().position);
             }
             if condition.is_empty() {
                 *code = stable_check;
@@ -13673,7 +13792,7 @@ impl Parser {
             // running program promoted (@PLN162 step 14).  A session's eval is never promoted.
             let owned = def.source == crate::data::MAIN_SOURCE
                 || (def.source == crate::data::STD_SOURCE
-                    && !crate::file_access::is_stdlib_source(&def.position.file));
+                    && !crate::file_access::is_stdlib_source(def.position.file.as_str()));
             if def.def_type != DefType::Function || !owned || def.is_reentered_eval() {
                 continue;
             }
@@ -15055,6 +15174,42 @@ impl Parser {
             }
         }
         l.iter().any(|op| walk(op, v, false, self))
+    }
+
+    /// Is the vector local `v` rebound, ANYWHERE in the body, from a call that READS `v`
+    /// through one of its arguments (`v = g(v)`, `v = f(w, v.len())`)?  Once `v` is renamed
+    /// onto the return buffer, the straight-line collapse hands that call `v` itself as ITS
+    /// return buffer, so the callee empties the buffer it is reading — `acc = g(acc)` answered
+    /// `[]` on both backends (loft#1895).  Refusing the rename leaves `v` a local of its own
+    /// on `Bind`: the call fills a work-ref and the return copies `v` into the buffer.
+    ///
+    /// Structural, so both passes agree: it asks for the call and the mention, never for the
+    /// `__ref_N` the call is handed, which a callee declared later has on pass 2 only.
+    fn var_rebound_reading_itself(&self, l: &[Value], v: u16) -> bool {
+        fn reads(arg: &Value, v: u16) -> bool {
+            let mut seen = false;
+            arg.walk(&mut |n| {
+                if matches!(n, Value::Var(x) if *x == v) {
+                    seen = true;
+                }
+            });
+            seen
+        }
+        fn walk(op: &Value, v: u16, this: &Parser) -> bool {
+            match op.unspan() {
+                Value::Set(w, rhs) if *w == v => {
+                    let Value::Call(d, args) = rhs.unspan() else {
+                        return false;
+                    };
+                    !this.data.def(*d).name.starts_with("Op") && args.iter().any(|a| reads(a, v))
+                }
+                Value::Loop(bl) | Value::Block(bl) => bl.operators.iter().any(|o| walk(o, v, this)),
+                Value::If(_, t, f) => walk(t, v, this) || walk(f, v, this),
+                Value::Insert(ops) => ops.iter().any(|o| walk(o, v, this)),
+                _ => false,
+            }
+        }
+        l.iter().any(|op| walk(op, v, self))
     }
 
     /// Is the vector local `v` bound, ANYWHERE in the body, from a call that cannot be handed a
@@ -18215,6 +18370,7 @@ impl Parser {
             && (Self::var_bound_to_branch(body, v)
                 || self.var_call_rebound_nested(body, v)
                 || self.var_bound_from_fresh_call(body, v)
+                || self.var_rebound_reading_itself(body, v)
                 || self
                     .branch_sunk_vectors
                     .contains(&(self.context, n.to_string())));
@@ -19064,6 +19220,7 @@ impl Parser {
             } else {
                 self.expression(&mut v)
             };
+            self.check_returned("return");
             if r_type == Type::Void {
                 diagnostic!(
                     self.lexer,
@@ -19551,7 +19708,7 @@ impl Parser {
     /// Parse an assert or panic keyword call: `assert(expr, msg)` / `panic(msg)`.
     /// The opening `(` is consumed by the caller; this function parses args and `)`.
     pub(crate) fn parse_intrinsic_call(&mut self, val: &mut Value, name: &str) -> Type {
-        let call_pos = self.lexer.pos().clone();
+        let call_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut types = Vec::new();
         if !self.lexer.has_token(")") {
@@ -19583,7 +19740,7 @@ impl Parser {
     /// Reads the line at `pos.file:pos.line`, finds `assert(`, and extracts
     /// the text up to the matching `)`.
     fn extract_assert_expr(pos: &crate::lexer::Position) -> String {
-        let line = Self::read_source_line(&pos.file, pos.line);
+        let line = Self::read_source_line(pos.file.as_str(), pos.line);
         // Find "assert(" and extract the condition
         if let Some(start) = line.find("assert(") {
             let after = start + 7; // skip "assert("
@@ -19644,7 +19801,7 @@ impl Parser {
                     .to_string();
             }
         }
-        if let Ok(content) = std::fs::read_to_string(file) {
+        if let Ok(content) = crate::file_access::read_to_string(file) {
             content
                 .lines()
                 .nth(line as usize - 1)
@@ -19692,7 +19849,10 @@ impl Parser {
             let (a_file, a_line) = if list.len() >= 4 {
                 (list[2].clone(), list[3].clone())
             } else {
-                (Value::str(&call_pos.file), Value::Int(call_pos.line as i32))
+                (
+                    Value::str(call_pos.file.as_str()),
+                    Value::Int(call_pos.line as i32),
+                )
             };
             let d_nr = self.data.def_nr("n_assert");
             *val = Value::Call(d_nr, vec![test, message, a_file, a_line]);
@@ -19712,7 +19872,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(&call_pos.file),
+                    Value::str(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -19734,7 +19894,7 @@ impl Parser {
                 d_nr,
                 vec![
                     message,
-                    Value::str(&call_pos.file),
+                    Value::str(call_pos.file.as_str()),
                     Value::Int(call_pos.line as i32),
                 ],
             );
@@ -19750,7 +19910,7 @@ impl Parser {
         name: &str,
         name_pos: &Position,
     ) -> Type {
-        let call_pos = self.lexer.pos().clone();
+        let call_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut types: Vec<Type> = Vec::new();
         let mut arg_pos: Vec<Position> = Vec::new();
@@ -19828,6 +19988,10 @@ impl Parser {
             (d_nr != u32::MAX).then_some(d_nr)
         };
         let mut arg_idx = 0usize;
+        // @PLN187 — each positional argument's abstract alias, checked against the callee's
+        // parameters once `dispatch_call` has chosen it.
+        let mut arg_aliases: Vec<crate::data::AliasFact> = Vec::new();
+        let mut named_facts: Vec<(String, crate::data::AliasFact)> = Vec::new();
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         loop {
@@ -19858,6 +20022,10 @@ impl Parser {
                 let mut p = Value::Null;
                 let t = self.expression(&mut p);
                 self.expected = Type::Unknown(0);
+                let fact = std::mem::take(&mut self.operand_fact);
+                if self.abstract_on() {
+                    named_facts.push((arg_name.clone(), fact));
+                }
                 named_args.push((arg_name, p, t));
                 // accept trailing comma on the last named arg.
                 if !self.lexer.has_token(",") || self.lexer.peek_token(")") {
@@ -19951,7 +20119,7 @@ impl Parser {
             // Capture each argument's start so a later type-mismatch diagnostic
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
-            arg_pos.push(self.lexer.peek_pos().clone());
+            arg_pos.push(*self.lexer.peek_pos());
             // loft#1883 — a record-backed `&(…)` parameter names its argument's record, so a
             // struct field of tuple type is read with its address.
             let prev_place = self.tuple_place_wanted;
@@ -19961,6 +20129,7 @@ impl Parser {
                         if matches!(inner.base(), Type::Reference(t, _)
                             if self.data.def(*t).name().starts_with("__tuple<")))
             });
+            self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
             let mut t = self.expression(&mut p);
             self.tuple_place_wanted = prev_place;
             // A member of a call result handed on as an argument is read where it lives
@@ -19977,6 +20146,10 @@ impl Parser {
                 t = view_tp;
             }
             self.expected = Type::Unknown(0);
+            let fact = std::mem::take(&mut self.operand_fact);
+            if self.abstract_on() {
+                arg_aliases.push(fact);
+            }
             types.push(t);
             list.push(p);
             arg_idx += 1;
@@ -20005,6 +20178,7 @@ impl Parser {
                 }
             }
         }
+        self.last_called = u32::MAX;
         let ret = self.dispatch_call(
             val,
             source,
@@ -20016,6 +20190,8 @@ impl Parser {
             &arg_pos,
             name_pos,
         );
+        self.recall_vector_builtin(name, arg_aliases.first());
+        self.check_call_arguments(val, &arg_aliases, &named_facts);
         // Plan-07 phase 1, step 1.13 — wrap user-typed Call / CallRef
         // at the `(` token position so runtime errors inside the call
         // (panic, divide-by-zero in callee, etc.) can be reported with
@@ -20059,7 +20235,7 @@ impl Parser {
         if matches!(arg.unspan(), Value::Var(_)) {
             return;
         }
-        let Some(pos) = arg_pos.first().cloned() else {
+        let Some(pos) = arg_pos.first().copied() else {
             return;
         };
         diagnostic_at!(
@@ -20355,6 +20531,42 @@ impl Parser {
                     if let Some(kinds) = &tkinds {
                         args.extend(kinds.iter().map(|k| Value::Int(k.code())));
                     }
+                    // A TUPLE has no null of its own: an exhausted advance answers a present
+                    // tuple whose every member is null — what a missed read of a tuple answers
+                    // (`v[i]` past the end, `@FR-T-Absent`).  The channel cannot say so (the
+                    // interpreter's null is chosen by byte size, and an `(integer, integer)` is
+                    // a `Str`'s), so the advance is followed by the generator's own state: the
+                    // handle is bound once, and an advance that found it done is replaced.
+                    if let Type::Tuple(members) = yield_tp.base()
+                        && !members.is_empty()
+                        && !args.is_empty()
+                    {
+                        let members = members.clone();
+                        let handle = self.create_unique("next_gen", &types[0]);
+                        self.vars.defined(handle);
+                        // A view of the caller's handle: advancing it must not release it.
+                        self.vars.set_skip_free(handle);
+                        let got = self.create_unique("next_val", &yield_tp);
+                        self.vars.defined(got);
+                        // A pass-through: the tuple is handed to whoever binds this `next()`
+                        // (`@FR-G-Own`), so this temporary releases nothing it holds.
+                        self.vars.set_skip_free(got);
+                        let source = std::mem::replace(&mut args[0], Value::Var(handle));
+                        let done = self.cl("OpCoroutineExhausted", &[Value::Var(handle)]);
+                        let nulls =
+                            Value::Tuple(members.iter().map(|m| self.null_value(m)).collect());
+                        *val = v_block(
+                            vec![
+                                v_set(handle, source),
+                                v_set(got, Value::Call(op, args)),
+                                v_if(done, nulls, Value::Var(got)),
+                            ],
+                            yield_tp.clone(),
+                            "next_tuple",
+                        );
+                        self.expr_not_null = false;
+                        return yield_tp;
+                    }
                     *val = Value::Call(op, args);
                     // The advance answers null once the generator is done, whatever the
                     // argument was: a handle read out of a field (`next(t.g)`, loft#1585) must
@@ -20418,7 +20630,7 @@ impl Parser {
                 args.push(Value::str(""));
                 tps.push(Type::Text(Deps::none()));
             }
-            args.push(Value::str(&call_pos.file));
+            args.push(Value::str(call_pos.file.as_str()));
             tps.push(Type::Text(Deps::none()));
             args.push(Value::Int(call_pos.line as i32));
             tps.push(Type::Integer(IntegerSpec::wide()));
@@ -21552,8 +21764,8 @@ impl Parser {
         let name = Self::method_spelling(self.data.def(selected).name());
         let at = arg_pos
             .first()
-            .cloned()
-            .unwrap_or_else(|| self.lexer.peek_pos().clone());
+            .copied()
+            .unwrap_or_else(|| *self.lexer.peek_pos());
         Some(self.dispatch_call(
             val,
             u16::MAX,
@@ -21580,10 +21792,6 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the empty and the filled argument list share one selection tail"
-    )]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,
@@ -21591,11 +21799,39 @@ impl Parser {
         on: Type,
         select: &MethodSelect,
     ) -> Type {
+        // @PLN187 — a method's receiver and arguments are checked like a free call's: the
+        // receiver's fact (`method_receiver`, from `parse_part`) and each argument's, against
+        // the definition the call selects.
+        let name = std::mem::take(&mut self.postfix_member);
+        let receiver = std::mem::take(&mut self.method_receiver);
+        let outer = std::mem::replace(&mut self.method_facts, (vec![receiver], Vec::new()));
+        let tp = self.parse_method_selecting_inner(val, hint_nr, on, select, &name);
+        let (positional, named) = std::mem::replace(&mut self.method_facts, outer);
+        if self.abstract_on() {
+            self.recall_vector_builtin(&name, positional.first());
+            self.check_call_arguments(val, &positional, &named);
+            self.method_checked = true;
+        }
+        tp
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the empty and the filled argument list share one selection tail"
+    )]
+    fn parse_method_selecting_inner(
+        &mut self,
+        val: &mut Value,
+        hint_nr: u32,
+        on: Type,
+        select: &MethodSelect,
+        method: &str,
+    ) -> Type {
         let mut list = vec![val.clone()];
         let mut types = vec![on];
         // arg_pos aligns with `list` by index; slot 0 is the receiver (its
         // position is the method-name token, the best available caret).
-        let mut arg_pos: Vec<Position> = vec![self.lexer.peek_pos().clone()];
+        let mut arg_pos: Vec<Position> = vec![*self.lexer.peek_pos()];
         // @F17 — named arguments reach the METHOD spelling too.  `parse_call` and
         // this loop are the language's two argument lists, and only the free one
         // collected `name: value`, so `show(c, loud: true)` compiled while
@@ -21650,6 +21886,8 @@ impl Parser {
                 let mut p = Value::Null;
                 let t = self.expression(&mut p);
                 self.expected = Type::Unknown(0);
+                let fact = std::mem::take(&mut self.operand_fact);
+                self.method_facts.1.push((arg_name.clone(), fact));
                 named_args.push((arg_name, p, t));
                 // accept a trailing comma on the last named arg.
                 if !self.lexer.has_token(",") || self.lexer.peek_token(")") {
@@ -21699,9 +21937,13 @@ impl Parser {
                 self.expected = h;
             }
             let mut p = Value::Null;
-            arg_pos.push(self.lexer.peek_pos().clone());
+            arg_pos.push(*self.lexer.peek_pos());
+            let before = self.method_facts.0.clone();
+            self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
             let t = self.expression(&mut p);
             self.expected = Type::Unknown(0);
+            let fact = std::mem::take(&mut self.operand_fact);
+            self.method_facts.0.push(fact);
             types.push(t);
             list.push(p);
             if !self.lexer.has_token(",") {
@@ -21709,6 +21951,8 @@ impl Parser {
             }
         }
         self.lexer.token(")");
+        // @PLN187 — what the arguments called is not this call (a special form records none)
+        self.last_called = u32::MAX;
         let selected = self.select_method_def(select, &types);
         // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
         // the whole answer, as `Parser::call` makes it for the bare spelling.

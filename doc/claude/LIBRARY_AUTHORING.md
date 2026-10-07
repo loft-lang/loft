@@ -724,6 +724,32 @@ floor)` rather than a bare BREAK.  The fingerprint is identical on `--interpret`
 `--native`, which is the other half of the claim: a pack built on one backend is readable
 by the other.
 
+**When loft moves the layout under an unchanged library**, the library ships the change as a
+release whose `loft` floor names the first loft build that has it.  The steps, in order:
+
+1. **Prove the delta is loft's change and nothing else.**  Diff the layout descriptor the pin
+   is computed from, old loft against new: every changed line must be one the loft change
+   explains (C138's alignment, for example, rounds sizes up and moves no field).  A change you
+   cannot explain is not re-pinned.
+2. **Re-pin, move `data_compatible_with`, bump the version** — in one commit, as above.  Check
+   whether the library ships persisted data in the old layout; such data is refused, not
+   misread (`formal/layout.md`), so consumers rebuild it, and the CHANGELOG says so.
+3. **Floor `loft` on the DAY that carries the change**, not on a release that does not exist
+   yet: `loft = ">=<release>.<yyyymmdd>"`, the date of the first `main` commit that contains it
+   ([PACKAGES.md § The `loft` floor names a release or a DAY](PACKAGES.md)).  Check that no
+   earlier `main` commit carries the same date without the change.  A loft below the floor
+   skips this release and keeps resolving to the previous one, whose layout matches it — from
+   the loft whose resolver reads the floor (`registry_index::floor_admits`) on; an older loft
+   resolves the release and its load refuses it, naming the floor, so a user there pins the
+   previous version.
+4. **Publish through a library PR with auto-merge**, then the loft-ship skill.  A release that
+   already went out with a floor too low is corrected by a follow-up release with the right
+   floor, and the earlier one is yanked when lofts it does not fit would otherwise resolve to
+   it ([LIBRARY_PUBLISH.md § 5b](LIBRARY_PUBLISH.md#5b-yank-a-vulnerable-version)).
+
+The loft change that caused it carries the `libs:migration` label, listing the libraries it
+moves ([.github/LABELS.md](../../.github/LABELS.md)).
+
 The mechanical `[auto]` core of the full correctness bar — see
 [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md) for the Goal-by-Goal + doc-quality
 `[review]` items and the registry `verified` administration.

@@ -20,8 +20,8 @@
 //! So this is the A/B on one binary, and it asserts BOTH directions: the shipped gate is
 //! clean, and the gate removed is not. Without the second half the first proves nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// The escaping shape the gate refuses: the result of a call in a loop is APPENDED to a
 /// vector, so it lands in a `__lift_N` temp whose free is a plain `OpFreeRef`. Reusing a
@@ -58,7 +58,8 @@ fn main() {
 /// to every element it does not qualify (an NRVO callee, a nullable return, a record
 /// with a collection field).
 fn run(src: &std::path::Path, ungated: bool) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(src)
         .env("LOFT_STRICT_STORES", "1")
@@ -83,11 +84,11 @@ fn the_buffer_reuse_gate_is_what_keeps_a_reassigned_result_alive() {
 
 fn both_directions(name: &str, probe: &str) {
     let src = std::env::temp_dir().join(format!("loft_retbuf_reuse_{name}.loft"));
-    std::fs::write(&src, probe).expect("write probe");
+    fa::write(&src, probe).expect("write probe");
 
     let shipped = run(&src, false);
     let ungated = run(&src, true);
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 
     assert!(
         !shipped.contains("strict-store"),

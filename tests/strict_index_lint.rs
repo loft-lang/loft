@@ -24,7 +24,6 @@
 //! skips the re-parse (hence the diagnostics) on a warm run.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -40,7 +39,7 @@ fn corpus() -> PathBuf {
 const LINT_MSG: &str = "is typed non-null but reads null on overrun";
 
 fn run(backend: &str, flag_on: bool) -> (String, String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(corpus())
         .env("LOFT_TIMEOUT", "180")

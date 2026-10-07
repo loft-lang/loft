@@ -16,9 +16,9 @@
 //! `LOFT_TLS_TEST_BINARY` runs the cases against another `loft` — a build from before the
 //! shared TLS config refuses the CA even with `SSL_CERT_FILE` set, which is this test's control.
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tls/");
@@ -87,10 +87,10 @@ fn start_server() -> (u16, Arc<Mutex<Vec<String>>>) {
 fn search(ca: Option<&str>) -> (Vec<String>, String) {
     let (port, seen) = start_server();
     let home = std::env::temp_dir().join(format!("loft_tls_trust_{}_{port}", std::process::id()));
-    std::fs::create_dir_all(&home).expect("a scratch home");
+    fa::create_dir_all(&home).expect("a scratch home");
     let bin = std::env::var("LOFT_TLS_TEST_BINARY")
         .unwrap_or_else(|_| env!("CARGO_BIN_EXE_loft").to_string());
-    let mut cmd = Command::new(bin);
+    let mut cmd = loft::platform::process::harness_command(bin);
     cmd.args(["search", "anything"])
         // `LOFT_HOME` too: on Windows `$HOME` is not where loft looks (registry_index::cache_dir,
         // @P332), so without it `search` read the real profile's cached index and never
@@ -108,7 +108,7 @@ fn search(ca: Option<&str>) -> (Vec<String>, String) {
         cmd.env("SSL_CERT_FILE", ca);
     }
     let out = cmd.output().expect("loft runs");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     let seen = seen.lock().expect("log").clone();
     (seen, String::from_utf8_lossy(&out.stderr).to_string())
 }

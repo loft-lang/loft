@@ -5,6 +5,7 @@
 
 //! Testing framework
 use loft::data::Context;
+use loft::file_access as fa;
 use loft::scopes;
 extern crate loft;
 #[path = "common/mod.rs"]
@@ -245,8 +246,8 @@ impl Test {
         state: &mut State,
         config: &LogConfig,
     ) -> File {
-        let _ = std::fs::create_dir_all("tests/dumps");
-        let mut w = File::create(format!("tests/dumps/{}_{}.txt", self.file, self.name)).unwrap();
+        let _ = fa::create_dir_all("tests/dumps");
+        let mut w = fa::create(format!("tests/dumps/{}_{}.txt", self.file, self.name)).unwrap();
         writeln!(w, "{code}").unwrap();
         let to = state.database.types.len();
         for tp in types..to {
@@ -304,7 +305,7 @@ impl Drop for Test {
         // Emitted BEFORE parse/execute so a panic still leaves the file.
         #[cfg(feature = "emit-repro")]
         {
-            let _ = std::fs::create_dir_all("/tmp/loft-repro");
+            let _ = fa::create_dir_all("/tmp/loft-repro");
             let path = format!("/tmp/loft-repro/{}.loft", self.name);
             let header = format!(
                 "// Auto-generated reproducer for tests/{}.rs::{}\n\
@@ -322,7 +323,7 @@ impl Drop for Test {
             } else {
                 "\n"
             };
-            let _ = std::fs::write(&path, header + &code + tail);
+            let _ = fa::write(&path, header + &code + tail);
         }
         p.parse_str(&code, &self.name, false);
         for (d, s) in &self.sizes {
@@ -494,9 +495,9 @@ impl Test {
         // on every test cost ~15 % of a test binary's instructions.
         // Write code output when the result is tested, not only for errors or warnings.
         if self.result != Value::Null || !self.tp.is_unknown() {
-            std::fs::create_dir_all("tests/generated")?;
+            fa::create_dir_all("tests/generated")?;
             let mut o = Output::new(&p.data, &p.database);
-            let w = &mut File::create(format!("tests/generated/{}_{}.rs", self.file, self.name))?;
+            let w = &mut fa::create(format!("tests/generated/{}_{}.rs", self.file, self.name))?;
             let def_nr = p.data.definitions();
             // Find the entry function n_test and emit only reachable functions.
             let test_fn = p.data.def_nr("n_test");

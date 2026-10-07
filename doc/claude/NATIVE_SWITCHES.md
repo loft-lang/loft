@@ -341,6 +341,27 @@ second pushed vector keep the header mints.
 
 ## Guarded reads and integer arithmetic
 
+**`LOFT_NO_APPEND_TWIN=1`** (`@FR-R-AppendTwin`, default-ON, generation time, `--native`
+only) builds `f`'s result in a buffer of its own for `X += f(args)` and copies it into X
+again — with it off, an admitted callee's append twin `f__ap` writes after X's elements
+(cbor's `encode` arms and array children, the encode_bytes probe −40 %).  The first bisect
+step for a wrong, doubled or truncated vector after an append of a call result;
+`LOFT_TRACE_APPEND_TWIN=1` names each function's verdict, the first node that declined it,
+and each call site refused with its reason.
+
+**`LOFT_NO_PUSH_RUN=1`** (`@FR-R-PushFill`'s run clause, default-ON, generation time,
+`--native` only) pushes a straight-line run of byte appends (`v += [a]; v += [b]; …`) one by
+one through the runtime again — with it off, the run reserves once and writes through one
+push window (cbor's `head`, the encode_bytes probe −13 %).  The first bisect step for a wrong
+byte or length after such a run.
+
+**`LOFT_NO_TYPED_READ=1`** (`@FR-R-TypedRead`, default-ON, generation time, `--native` only)
+sends every `f#read` through the generic `OpReadFile` again — with it off, a read that lands a
+fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
+`OpReadFileInt::<W, SIGNED>`, width and sign fixed at the site and the bytes taken by value
+from the file's buffer (`binary_read` 2.54 → 1.91 ms).  The first bisect step for a wrong
+value or a wrong `#next` out of such a read; the interpreter's read is the reference.
+
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that

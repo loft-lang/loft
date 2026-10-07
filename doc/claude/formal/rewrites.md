@@ -449,7 +449,16 @@ versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` deci
                  address, the record's length untouched), the group's field sets and
                  the address (R-RecPtr)'s mint clause holds are that pointer, its
                  finish is the window's length bump, and the close writes the
-                 record's length once after every copy of the loop.
+                 record's length once after every copy of the loop.  THE RUN
+                 CLAUSE: a STRAIGHT-LINE run of k >= 2 byte appends to one vector
+                 path, `v += [a]; v += [b]; …` with only line markers between them,
+                 is one reservation of k and one window, closed after the last —
+                 the loop's window over a count known statically.  No pushed value
+                 may read v's root or any non-scalar local (a view could reach v's
+                 store and read the length the window has not written back), nor
+                 call anything but an operator; a path a loop already holds a push
+                 header or window for keeps its pushes, and a vector with no record
+                 runs the appends as they stand.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -1491,7 +1500,7 @@ handles, so every one of its 1 272 mints per call paid the dispatch and a `set_d
 walk whose whole effect was two zero words.  Falsified by sabotage: `push_record_hoisted_zero`
 made to skip its `zero_range` turns the reused-buffer cell red on `--native` under
 `LOFT_POISON_CLAIM=1` — the slot's poisoned handle is read as the element's `xs` vector, a
-store guard panic naming record `3735928559` — while a plain run can stay green on stale
+store guard panic naming the poisoned record — while a plain run can stay green on stale
 bytes that happen to read as an empty handle, which is why that falsifier and not the plain
 run guards the clause.  Switch
 `LOFT_NO_HEAP_RECORD_PUSH`; cells `tests/scripts/157-group-push.loft` g2, g3, g8–g10; pins
@@ -2159,6 +2168,29 @@ exactly as the append copies them.  No guard is needed: the conditions are all s
 **BUILT** (`src/vec_copy.rs` after the byte-copy pass, `LOFT_NO_VEC_COPY`; guard
 `tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
 `tests/vec_copy.rs`).
+
+### A fixed-width integer read is typed at its site
+
+```
+  (R-TypedRead)  `OpReadFile(f, OpCreateStack(t), n, τ)` into an `integer` local t, where
+                 τ is a fixed-width integer and n its width — `integer` / `long` 8 signed,
+                 a byte or short type 1 or 2 with the sign its range gives, a 4-byte type
+                 signed — reads through the same format test, `#next` and handle as the
+                 generic read, decoding W = n bytes at sign S fixed at the site, the bytes
+                 taken by value.  A short read leaves t unchanged and advances `#next` by
+                 what arrived, as the generic read does.  `boolean`, `character`, text, a
+                 float, a collection, an n that is not τ's width and a slot that is not an
+                 `i64` local keep the generic read.  Native only; the interpreter's read is
+                 the reference the guard compares against.
+```
+
+**In words.**  The generic read asked, per call, whether τ is text and which width and sign
+it decodes, and copied the bytes through a slice on the stack — facts the site has at
+compile time, and a reload that stalled on the bytes just written.  The decode is the
+generic one's, arm for arm, so the answer cannot differ; what moved is when it is decided.
+
+**BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
+guard `tests/scripts/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
 ### A walk of a scalar literal builds no vector
 
@@ -4395,6 +4427,133 @@ scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty
 fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
 `(R-TextBorrow)`'s pins with this rule off.
 
+**BUILT** for a fold that is a synthesised temporary (`codegen_runtime::fold_compare`; the
+emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` ask ONE
+predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
+fold's block is neither lifted nor built; guard
+`tests/scripts/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
+the operand clause below.
+
+```
+  (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
+                 that is never built, when ALL of:
+                 (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
+                     fold, l a text LITERAL, s a text PARAMETER or LOCAL;
+                 (2) every other mention of x is an operand of an admitted P, or x's
+                     own release;
+                 (3) s holds at every such P the value it held at the binding: no
+                     path from the binding to a P writes s — no assignment, no
+                     append, no `&s` hand-off, no call handed s's work buffer;
+                 (4) the binding and every P that reads x lie in one activation
+                     of one function, and that function is not a generator.
+                 Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
+                 on the fast path the ASCII test spans the inspected bytes of
+                 s and of l as well as the fold's own operand.  The written form,
+                 taken from the first non-ASCII byte, builds F'(s) + l at most
+                 ONCE per binding of x (a frame slot filled on first use), so no
+                 run builds it more often than the program as written.
+                 Declines, keeping x built: a second binding; any other mention —
+                 a return, a format, a store, an append, `len`/`size`, an index, a
+                 call argument, a capture, a link `&x`; an s that is a field or an
+                 element (a store write between binding and P could change it); a
+                 non-literal l; a generator.
+```
+
+**In words.**  `prefix = name.to_lowercase() + ":"` exists only to be compared, like the fold
+the rule already removes; reading it as the pair it was built from removes the text and
+both of its allocations.  (3) is what makes deferring the fold sound: F' is pure, so F'(s)
+at the P equals F'(s) at the binding exactly when s did not change in between, and a local
+or parameter can be checked for that by its writes, where a field cannot.  The once-per-
+binding slot keeps a non-ASCII run from rebuilding x on every P.  Priced on server
+`header` (`bench/portal/analysis/over-9x.md`, lever D): −14 %.  Switch and trace are the
+rule's own.  Falsifier: hand-computed cells on both backends — the `header` shape; s written
+between binding and P (declines); x formatted once besides the compare (declines); x bound
+on two branches (declines); s non-ASCII with the P in a loop (the written form, built
+once — `LOFT_ALLOC_SITES` counts one build).
+
+### A text local built in its work buffer is a view of it
+
+```
+  (R-WorkView)   a text LOCAL x whose every binding is the value of a text BUILD
+                 into one work buffer w — the parser's `Add text` or `Formatted
+                 string` block, which clears w, appends to it and answers w — is a
+                 VIEW of w (`&str` into w), not a copy of it, when ALL of:
+                 (1) every binding of x builds into the SAME w, and w is a
+                     `__work_*` text local of this function (not a parameter, not
+                     a text-return buffer, not a `par` worker's buffer);
+                 (2) on every path from a binding of x to a read of x, w is not
+                     written: no other build into w, no clear, append, assignment
+                     or format into it, no call handed w as a work buffer, no
+                     release of w;
+                 (3) x is read only as a text VALUE — an operand of an op or a
+                     call at a `text` position, the source of a bind or a format
+                     into ANOTHER slot — and never written (`x += …` would write
+                     w), linked (`&x`), returned, stored, captured or yielded;
+                 (4) a binding inside a loop reaches only reads in the same
+                     iteration: a read that a later iteration's build into w can
+                     reach declines;
+                 (5) the function is not a generator.
+                 w keeps its capacity across calls and iterations ((R-WorkBuffer)'s
+                 text clause), so after the first build no binding of x allocates.
+                 Declines, keeping the copy: any of (1)-(5) unproved.  The analysis
+                 is a path question over the body; a branch or a loop it cannot
+                 resolve declines.
+```
+
+**In words.**  Today the build fills w and then copies w into x (`.to_string()`), which is
+one allocation for w and one for x on every binding.  A view drops the second, and the pooled
+w drops the first after the first call.  The rule rests on ONE invariant, condition (2):
+nothing writes w while x is live.  That is what separates it from `(R-FoldCompare)`'s
+operand clause, whose condition is local to x's own mentions.  Here the condition ranges over
+every site that can write w, and the parser shares one work buffer between expressions of a
+function, so a missed writer leaves x reading another expression's text with no diagnostic.
+Native only; the interpreter's text locals own their bytes and are the reference.  Reach:
+every text local built by `+` or a format string (the text-build class: `map_json`,
+`render_inline`, `format_iso`), unpriced.  Switch `LOFT_NO_WORK_VIEW`; trace
+`LOFT_TRACE_WORK_VIEW` names each admitted local and the condition each decline failed.
+Falsifier: `LOFT_HOIST_VERIFY=1` re-reads x as an owned copy at every read and compares;
+cells on both backends — two locals built into one w with the first read after the second
+build (declines, both values right); a build into w inside a callee handed w; x read in the
+next iteration of a loop that rebuilds w; `x += "!"` after the binding (declines); and a
+planted defect that admits a local with a later build into w must read the wrong text under
+the verify switch.
+
+### A call result appended to a vector is built in it
+
+```
+  (R-AppendTwin) `X += f(args)`, f returning a vector through its hidden buffer B, is
+                 f's APPEND TWIN called with X as B: f's body with none of B's clears,
+                 B minted only when null, and every call that hands B (or a view of it)
+                 to a callee AS that callee's buffer calling the callee's own twin.
+                 Admission asks the CALLEE, over its IR: every mention of B or of a
+                 view of B (a local whose dependencies reach it, an alias the body
+                 binds of it) is a clear, mint or length reset before the body's first
+                 write to B; an append into it (OpAppendVector, OpAppendTextBytes,
+                 OpPreAllocVector, an OpPush kind) whose values do not read it; the
+                 self-replace of B by its own view; a call handing it on to an
+                 admitted callee as that callee's buffer; or its value flowing out as
+                 the result.  Anything else — a length read, an index, a walk, B as an
+                 ordinary argument, a free, an insert at an index — observes what B
+                 held on entry, and declines; so do a fn-ref call, a `par` and a
+                 yield.  Admission is a fixpoint over the call graph: a recursive
+                 builder calls its own twin.  The CALLER asks that X's root be a local
+                 or the frame's own buffer and that no argument name that root or a
+                 local whose dependencies reach it: a caller never hands a buffer one
+                 of its other arguments reaches (loft#1895).  A twin emits the IR's
+                 own semantics — no adoption of B by a result local (R-RetAdopt) and
+                 no refill — so what admission read is what runs.
+```
+
+**In words.**  A builder clears the buffer it is handed and writes its result into it, and a
+caller that appends that result then copies it.  The twin starts writing after the
+caller's elements instead, so the copy is gone — but only a body that never looks at what
+the buffer held may run that way, which is what admission checks, mention by mention.
+Native only; the interpreter copies and is the reference.
+
+**BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
+`emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
+`tests/scripts/a-call-result-appended-is-built-in-the-destination.loft`).
+
 ### A call whose result is moved whole into an element builds it there
 
 ```
@@ -4423,9 +4582,12 @@ child built where it will live.  The ok-false path is the ownership question, an
 answer is the one `(R-PushRec)` already gives a minted element: an element minted but not
 finished is NOT a member of the container (`vector_finish` is the one visibility step), its
 slot is capacity the next append reuses, and whatever heap the failed child placed is
-released by the CALLEE on its failing path exactly as it releases its own buffer today — the
-caller frees nothing.  A callee that answers `ok=false` after placing heap into r.v without
-releasing it is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
+released by the CALLER: where the plain form drops the failed result, the twin's caller runs
+the record's release walk over e — the same walk, over the same record shape, that freeing
+the discarded result runs — so the callee changes nothing but where it writes.  A failure is
+then identical to the plain form's in every value, member and live record; only spare
+capacity differs, which is representation (C122).  A caller that leaves e unfinished
+without releasing it, or finishes it on a failing path, is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
 D5 and D6 it takes the row 12.04 → 6.49 M ns/op, and it is the one step without which that
 ladder stops at 8.3×.  Sites: `(R-Callee)`'s admission (a second emission like
 `(R-Inputs)`' `__inv`), `Output::user_fn_call_body` for the tuple answer, the append
@@ -4442,24 +4604,39 @@ live-record count equal to the plain form's; a finish planted on the failing pat
                  (R-ValueRecord) admits, answers R's tuple when EVERY function of
                  that signature in the program — the arms of the dispatch `match`
                  the emitter writes — is (R-ValueRecord)-admitted; the `_ =>` arm
-                 answers the null tuple.  Decided per fn-ref TYPE over the whole
-                 program in a pre-pass: one unadmitted function of the signature
-                 keeps the buffer road for every call of that type, and a capture
-                 (a closure fn-ref) declines.  The interpreter is untouched: the
-                 tuple is native's representation of the same record (C122).
+                 answers the null record's fields.  Its parameter i of a record type
+                 is passed as a tuple when every arm receives parameter i as one
+                 (R-ValueLocal).  Decided per dispatch over the whole program inside
+                 (R-ValueRecord)'s fixpoint: the arms are one GROUP, so one arm the
+                 fixpoint declines — its body, a site consuming its record — takes
+                 the whole group back to the buffer road, and a group's result
+                 consumed as a record at a fn-ref call site (an argument the callee
+                 keeps as a record, a field it is not read through) declines it as a
+                 direct call's would.  A capturing arm, an optional result, a `par`
+                 worker, a `&text` argument that picks a store instance, and a fn-ref
+                 target no listed dispatch reaches keep the record outright.  An arm
+                 is a function whose RECORD matches the signature's, not only its
+                 Rust ABI: the type checker refuses any other in that slot.  The
+                 interpreter is untouched: the tuple is native's representation of
+                 the same record (C122), so the IR pass leaves every arm's signature.
 ```
 
 **In words.** `resolve(r.style)` minted a store, wrote four fields, adopted and freed it per
 call, to hand back a record `default_style` had already answered in registers (the fn-ref
 result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
-in the emitted binary (`src/generation/emit.rs:1766` writes the `match`), so the admission
+in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admission
 `(R-ValueRecord)` proves per function lifts to the signature.  Sound where every arm is
-admitted — the pre-pass reads the fixpoint `(R-ValueRecord)` already computes; a null fn-ref
-answers the null tuple exactly as the buffer road answers a null record.  Priced on zttext
-`flow_layout_full` (over-9x.md): −27 % alone.  Switch `LOFT_NO_FNREF_VALUE`.  Falsifier: a
-program with two functions of one signature, one admitted and one answering a heap record —
-the call must take the buffer road; the switch A/B on the flow row with hand-computed boxes;
-`make rewrite-census` with `(R-ValueRecord)`'s admissions unchanged.
+admitted; a null fn-ref answers the null tuple exactly as the buffer road answers a null
+record.  The parameter half is what makes the result half reach `flow_layout_full`: its
+`measure(r.str, resolve(r.style))` hands the resolved record straight to a second dispatch,
+which consumed it as a record while `measure`'s arms kept theirs.
+
+**BUILT** (`hoist::value_records` — the site map `FnRefSites`, `close_fnref_groups`,
+`fnref_value` / `fnref_param` read by `value_shape`, `site_walk` and `local_uses_ok`; the
+dispatch's tuple mode in `emit.rs`; `fnref::dispatch_arms` narrowed to the record;
+`value_record::rewrite_program` leaves the arms; `LOFT_NO_FNREF_VALUE`, `LOFT_TRACE_VALUEREC`;
+guard `tests/scripts/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; measured in
+`bench/portal/analysis/over-9x.md` § zttext).
 
 ### A lookup's found entry is answered as a view the caller reads in place
 
@@ -4503,11 +4680,13 @@ trace and falsifiers apply, plus the cells named here.  Priced in
 `bench/portal/analysis/over-9x.md`.
 
 - **The split-table verdict, for `(R-TextBorrow)`.**  A `Set(t, split(…))` whose `t` is a
-  split table `(R-SplitTable)` lowered is not a store write: `borrowed_text_walks`
-  (`src/generation/hoist.rs`) takes the body's split tables, not only the walked vector's,
-  and `may_write_store` skips such a bind.  `(R-Header)`'s loop clause admits by the same
-  verdict.  Cell: a walk whose body splits the walked text and reads the pieces (borrows);
-  one that appends to the walked vector (declines).  server `header`: 9.43 → 7.30 M.
+  split table `(R-SplitTable)` lowered is not a store write, and neither is the mint or a
+  free of the buffer the table leaves dead.  **BUILT** for the walk: `borrowed_text_walks`
+  reads each statement of the loop as emitted (`as_emitted_by_tables`, `src/generation/
+  hoist.rs`), every other statement judged unchanged; guard
+  `tests/scripts/a-walked-text-borrows-beside-a-split-table.loft`, whose element-replacing
+  cell is the one a dangling borrow fails.  Still PROPOSED: `(R-Header)`'s loop clause
+  admitting by the same verdict.
 - **The match-binding clause, for `(R-TextBorrow)`.**  A text bound by a match pattern that
   the arm reads only as a text VALUE — an operand, a `text` argument the callee does not
   store, the source of a format into another slot, `size`, a comparison, a `Str` result —

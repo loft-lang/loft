@@ -22,8 +22,8 @@
 //! silently succeeds.  Hence four groups over two libraries, interleaved in the
 //! directory so the group a file belongs to is never the file next to it.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -47,11 +47,11 @@ fn loft_bin() -> PathBuf {
 /// loaded box, which is where gates run.
 fn fixture(who: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("loft_925_{}_{who}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src")).expect("mkdir src");
-    std::fs::create_dir_all(root.join("tests")).expect("mkdir tests");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("src")).expect("mkdir src");
+    fa::create_dir_all(root.join("tests")).expect("mkdir tests");
     let w = |rel: &str, body: &str| {
-        std::fs::write(root.join(rel), body).unwrap_or_else(|e| panic!("write {rel}: {e}"));
+        fa::write(root.join(rel), body).unwrap_or_else(|e| panic!("write {rel}: {e}"));
     };
 
     w(
@@ -151,7 +151,7 @@ fn fixture(who: &str) -> PathBuf {
 }
 
 fn run(root: &PathBuf, extra: &[(&str, &str)]) -> (i32, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.current_dir(root)
         .args(["test", "tests"])
         .env("LOFT_TIMEOUT", "180");

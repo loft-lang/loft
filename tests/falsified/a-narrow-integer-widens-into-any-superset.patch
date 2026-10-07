@@ -1,9 +1,9 @@
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index ae2f9949c..15acc84c5 100644
+index 02ee1d7e9..99d2e5777 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -4735,7 +4735,7 @@ impl Parser {
-         if d.forced_size.is_none() && (d.is_signed32_template() || d.is_wide_template()) {
+@@ -5062,7 +5062,7 @@ impl Parser {
+         if d.is_full_integer() {
              return false;
          }
 -        s.min < d.min || s.max > d.max

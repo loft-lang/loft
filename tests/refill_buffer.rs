@@ -4,8 +4,8 @@
 //! which callees mint their return buffer with `OpDatabaseRefill` and empty its vector fields
 //! in place, that the text-holding type declines, and that both switch states answer the same
 //! and leave no store behind on `--native`.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft";
 
@@ -20,7 +20,8 @@ const CALLEES: &[(&str, bool)] = &[
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
@@ -60,8 +61,8 @@ fn the_refillable_builders_mint_with_the_kept_store() {
     let rs = std::env::temp_dir().join(format!("loft_refill_{}.rs", std::process::id()));
     let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], &[]);
     assert!(ok, "emit failed:\n{err}");
-    let src = std::fs::read_to_string(&rs).expect("emitted source");
-    let _ = std::fs::remove_file(&rs);
+    let src = fa::read_to_string(&rs).expect("emitted source");
+    let _ = fa::remove_file(&rs);
     for (callee, refills) in CALLEES {
         let b = body(&src, callee);
         assert_eq!(
@@ -103,8 +104,8 @@ fn a_refilled_repeat_literal_is_overwritten_in_place() {
     let rs = std::env::temp_dir().join(format!("loft_refill_ip_{}.rs", std::process::id()));
     let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells], &[]);
     assert!(ok, "emit failed:\n{err}");
-    let src = std::fs::read_to_string(&rs).expect("emitted source");
-    let _ = std::fs::remove_file(&rs);
+    let src = fa::read_to_string(&rs).expect("emitted source");
+    let _ = fa::remove_file(&rs);
     for callee in ["n_bump", "n_grow", "n_tri", "n_half"] {
         assert!(
             body(&src, callee).contains("//@FR-R-RefillBuffer in place"),

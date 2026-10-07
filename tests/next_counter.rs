@@ -9,9 +9,9 @@
 //! loops bind a `next` counter, and that no iterator block still pays a null test — and the
 //! switch (`LOFT_NO_NEXT_COUNTER=1`, `@FR-R-Switch`), which is what makes it red on the build
 //! before the unit and on one that lost it.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/loop-start-cells.loft";
@@ -39,7 +39,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -49,12 +50,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(next counters bound, null tests)`.
@@ -101,7 +102,7 @@ fn cells() -> PathBuf {
 #[test]
 fn a_computed_start_binds_one_next_counter_and_no_iterator_pays_a_null_test() {
     let out = std::env::temp_dir().join("loft_next_counter_on.rs");
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     let rust = emit(&cells(), &out, &[]);
     let got = counts(&rust);
     let mut wrong = Vec::new();
@@ -120,7 +121,7 @@ fn a_computed_start_binds_one_next_counter_and_no_iterator_pays_a_null_test() {
 #[test]
 fn the_switch_restores_the_null_encoded_counter() {
     let out = std::env::temp_dir().join("loft_next_counter_off.rs");
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     let rust = emit(&cells(), &out, &[("LOFT_NO_NEXT_COUNTER", "1")]);
     let got = counts(&rust);
     let mut wrong = Vec::new();

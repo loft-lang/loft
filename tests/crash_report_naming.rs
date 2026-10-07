@@ -21,8 +21,10 @@
 //! sibling test that installs or publishes first would pin what this one asserts
 //! — which is exactly what happened when this started life in that file.
 
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `fork` and the POSIX signal handler the crash reporter rides (unix-only by design) have no Windows equivalent; Windows substitute: none
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 
 /// Fault a forked child for real and answer how it died.
@@ -55,7 +57,7 @@ fn crash_a_child() -> libc::c_int {
 #[test]
 fn the_report_names_the_opcode_and_states_a_missing_source_span() {
     let dir = std::env::temp_dir().join(format!("loft-crash-806-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let target: PathBuf = dir.join("report.txt");
     // SAFETY: single-threaded here; the fork happens below.
     unsafe {
@@ -78,7 +80,7 @@ fn the_report_names_the_opcode_and_states_a_missing_source_span() {
         "the child must die of the signal — the handler reports, it does not swallow"
     );
 
-    let report = std::fs::read_to_string(&target).expect("crash report");
+    let report = fa::read_to_string(&target).expect("crash report");
     assert!(
         report.contains("OpAppendStackText"),
         "the report must name the opcode; `op=249` is not a diagnostic.\ngot:\n{report}"
@@ -91,5 +93,5 @@ fn the_report_names_the_opcode_and_states_a_missing_source_span() {
         "an absent source span must be stated, not silently skipped.\ngot:\n{report}"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

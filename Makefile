@@ -122,6 +122,10 @@ export CARGO_INCREMENTAL := 0
 endif
 endif
 
+# @PLN184 D1 — every Python script a recipe runs decodes files as UTF-8, as it does on
+# Linux; a Windows Python defaults to cp1252 and misreads any non-ASCII byte.
+export PYTHONUTF8 := 1
+
 # macOS: cc-rs invocations (notably `ring`'s build script) need the SDK path
 # on -isysroot.  When `xcode-select -p` points at the bare Command Line Tools,
 # plain `cc` does not auto-detect it and the build fails with
@@ -1096,6 +1100,11 @@ release-checklist:  ## Per-release checklist: what CI proved, and what is left f
 # how long files are and whether their sections are comparable subjects (file-sizes),
 # and whether a contract doc has absorbed its own history instead of splitting it into
 # an `-history.md` companion (doc_history_report).  A REPORT, never a gate.
+# @PLN184 E2 — where Windows parity stands: every census count and every exemption, one page.
+# A REPORT (`--check` exits 1 while a count is open); the release checklist reads it.
+windows-parity:
+	python3 scripts/windows_parity.py $(ARGS)
+
 file-sizes:  ## Are doc/source files too long to use, and do they hold one subject?
 	@python3 scripts/file-sizes.py $(ARGS) || true
 	@echo

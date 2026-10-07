@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (D-gen-7 and D-gen-8 opened and closed 2026-10-05, loft#1868; D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
+OPEN: **0** (D-gen-10 opened 2026-10-05 and closed 2026-10-06, loft#1872; D-gen-7 and D-gen-8 opened and closed 2026-10-05, loft#1868; D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
 `D-gen-4` on 2026-09-02.
 
 ⚠ **This line read `OPEN: 0` because *"a rules doc adds no code deviation"* — a claim about the
@@ -16,6 +16,19 @@ until the walk that first asked found four defects there.  It has now produced o
 The oracle under it (`86-interfaces.loft`, `48-generics.loft`, and the numbered scripts) is real,
 but it is an oracle for the shapes those files happen to write; `D-gen-1` is what it could not
 see.
+
+### D-gen-10 — OPENED (2026-10-05) AND CLOSED (2026-10-06, loft#1872): a recursive instance's struct result read inline
+
+`(G-Mono)` says an instance answers as its concrete twin does.  The twin `fn pick(n, a: S,
+b: S) -> S` returns `S["a", "b"]` through a caller's buffer; the recursive generic instance
+returned a bare `S` with no buffer, and its recursive arm's result was a store of its own that
+a caller reading a field straight off the call (`pick(1, a, b).x`) never released — one record
+per call on `--interpret`.  The vector half was silent: the instance handed the caller's own
+vector up on its borrow arm and the call site's lift freed it.  The instance now binds such a
+join into one owned local, and a returned whole vector is always a copy (`(F-Ret)`).  Guard:
+`1872-a-generic-instance-answers-as-its-twin-when-read-inline.loft`.  Recorded in the rules
+doc as `D-gen-7`, a number this register had already given loft#1868's entry; the reuse let the
+register read the closed entry's date and count the open one as closed.
 
 ### D-gen-8 — OPENED AND CLOSED (2026-10-05, found by loft#1868's matrix): a compound on an open instance's field
 

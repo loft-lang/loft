@@ -7,7 +7,6 @@
 //! this pin sees the elision drift.  The IR and the native Rust do not change, which the
 //! third test checks: the op is the head `--native`'s append-group recognisers read.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-literal-append-claims-its-vector-once.loft";
 
@@ -26,7 +25,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
 
 fn introspect(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

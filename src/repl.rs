@@ -839,11 +839,15 @@ fn process_line<W: Write>(
                 let word = filter.get(1).map_or("", String::as_str);
                 print!(
                     "{}",
-                    crate::repl_doc::api(
+                    crate::repl_doc::api_for(
                         index.as_ref().map_err(String::as_str),
                         lib,
                         word,
-                        crate::repl_doc::WIDTH
+                        crate::repl_doc::WIDTH,
+                        std::env::current_dir()
+                            .ok()
+                            .and_then(|d| crate::doc_site::locked_version(lib, &d))
+                            .as_deref(),
                     )
                 );
             }
@@ -1887,7 +1891,7 @@ enum SessionShape {
 /// stdout/stderr are pumped by detached threads into one shared buffer (a pipe left
 /// undrained would fill and stall the game at its next print).
 struct GameProc {
-    child: std::process::Child,
+    child: crate::platform::process::Running,
     output: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
@@ -2243,7 +2247,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be read.
     pub fn load_program(&mut self, path: &str) -> std::io::Result<Result<(), Vec<DiagEntry>>> {
-        let src = std::fs::read_to_string(path)?;
+        let src = crate::file_access::read_to_string(path)?;
         // Reset to a pristine stdlib (+ the session's `--lib` dirs) parser before loading, so
         // a **re-launch is idempotent**: `load_program_str` is additive, and re-parsing a
         // `use`-program over an already-loaded one re-loads its libraries → "Cannot redefine".
@@ -2268,7 +2272,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be read.
     pub fn compile(&mut self, path: &str) -> std::io::Result<Vec<DiagEntry>> {
-        let src = std::fs::read_to_string(path)?;
+        let src = crate::file_access::read_to_string(path)?;
         let sp = self.savepoint();
         let pre_diag = self.parser.diagnostics.entries().len();
         self.parser.parse_str(&src, path, false);
@@ -2308,7 +2312,7 @@ impl ReplSession {
         // does not run a bare test function (every native call faults "Unknown definition").
         // Parse the file **by path** (`parse`, not `parse_str`): that sets up the source dir +
         // `use` context a bare-function call needs.  Read it first for a clean io error.
-        let _ = std::fs::read_to_string(path)?;
+        let _ = crate::file_access::read_to_string(path)?;
         let abs = crate::file_access::plain_canonical_str(path);
         let mut parser = Parser::new();
         // Parsed against again after compiling: no whole-program signature rewrite.
@@ -2370,8 +2374,8 @@ impl ReplSession {
             if !def.name.starts_with("n_") || def.name.starts_with("n___lambda_") {
                 continue;
             }
-            if crate::file_access::is_stdlib_source(&def.position.file)
-                || !in_file(&def.position.file)
+            if crate::file_access::is_stdlib_source(def.position.file.as_str())
+                || !in_file(def.position.file.as_str())
             {
                 continue;
             }
@@ -2443,13 +2447,13 @@ impl ReplSession {
         use std::io::{Error, ErrorKind};
         // Find the package root: the nearest ancestor of `start` holding a loft.toml.
         let abs = crate::file_access::plain_canonical(std::path::Path::new(start));
-        let mut root = if abs.is_dir() {
+        let mut root = if crate::file_access::is_dir(&abs) {
             Some(abs.as_path())
         } else {
             abs.parent()
         };
         while let Some(dir) = root {
-            if dir.join("loft.toml").exists() {
+            if crate::file_access::exists(dir.join("loft.toml")) {
                 break;
             }
             root = dir.parent();
@@ -2476,27 +2480,24 @@ impl ReplSession {
         }
         // Every tests/*.loft, in name order (stable output for the panel).
         let tests_dir = root.join("tests");
-        if !tests_dir.is_dir() {
+        if !crate::file_access::is_dir(&tests_dir) {
             return Err(Error::new(
                 ErrorKind::NotFound,
                 format!("package {} has no tests/ directory", root.display()),
             ));
         }
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&tests_dir)?
-            .flatten()
-            .map(|e| e.path())
+        let mut files: Vec<std::path::PathBuf> = crate::file_access::read_dir(&tests_dir)?
+            .iter()
+            .map(crate::file_access::PathText::os_spelling)
             .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+                crate::file_access::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft"))
             })
             .collect();
         files.sort();
         let mut out = Vec::with_capacity(files.len());
         for f in files {
-            let name = f.file_name().map_or_else(
-                || f.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let name = crate::file_access::file_name(&f)
+                .unwrap_or_else(|| f.to_string_lossy().into_owned());
             let results = self.run_file_tests_with(&f.to_string_lossy(), &lib_dirs)?;
             out.push((name, results));
         }
@@ -2526,9 +2527,8 @@ impl ReplSession {
         // it), so a path that resolves anywhere else — `..`, a symlink, an absolute escape —
         // fails this equality and is refused.
         match crate::file_access::try_plain_canonical(std::path::Path::new(path)) {
-            Some(p) if &p == allowed => {
-                std::fs::write(allowed, content).map_err(|e| format!("write failed: {e}"))
-            }
+            Some(p) if &p == allowed => crate::file_access::write(allowed, content)
+                .map_err(|e| format!("write failed: {e}")),
             _ => Err("path is outside the editable file".to_string()),
         }
     }
@@ -2545,7 +2545,7 @@ impl ReplSession {
     /// A message when a game is already running or the spawn fails.
     pub fn launch_game(&mut self, file: &str) -> Result<(), String> {
         if let Some(g) = &mut self.game
-            && matches!(g.child.try_wait(), Ok(None))
+            && g.child.alive()
         {
             return Err("a game is already running — stop it first".to_string());
         }
@@ -2553,41 +2553,39 @@ impl ReplSession {
             || std::env::current_exe().map_err(|e| format!("cannot locate loft binary: {e}")),
             |b| Ok(std::path::PathBuf::from(b)),
         )?;
-        let mut cmd = std::process::Command::new(bin);
-        cmd.arg(file);
+        use crate::platform::process::{Program, Spawn};
+        let mut spawn = Spawn::new(Program::os(bin)).arg(file);
         for d in &self.parser.lib_dirs {
-            cmd.arg("--lib").arg(d);
+            spawn = spawn.arg("--lib").arg(d);
         }
         // @PLN18 02 (the 6b wire-up): an IDE-launched game is live-editable
         // by default — the child's file watcher reacts to every IDE save and
         // hot-swaps the edited fn (tier 0); its `live-reload:` stderr lines
         // are the structured feedback.  LOFT_LIVE_RELOAD=0 opts out.
         if std::env::var_os("LOFT_LIVE_RELOAD").is_none() {
-            cmd.env("LOFT_LIVE_RELOAD", "1");
+            spawn = spawn.env("LOFT_LIVE_RELOAD", "1");
         }
         // @PLN18 08-S7 editor support — an IDE-launched game is DEBUGGABLE by
         // default: the D!: control channel answers on the game's port
         // (loopback-only) and a compiled game keeps the parked interpreter
         // for breakpoint flips.  Opt out with =0 (the LIVE_RELOAD pattern).
         if std::env::var_os("LOFT_DEBUG_CONTROL").is_none() {
-            cmd.env("LOFT_DEBUG_CONTROL", "1");
+            spawn = spawn.env("LOFT_DEBUG_CONTROL", "1");
         }
         if std::env::var_os("LOFT_LIVE_FLIP").is_none() {
-            cmd.env("LOFT_LIVE_FLIP", "1");
+            spawn = spawn.env("LOFT_LIVE_FLIP", "1");
         }
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
         // A `--native` game serves from a GRANDCHILD of this child (the S1
-        // process-model finding) — own group so stop_game can reach it all.
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        let mut child = cmd
-            .spawn()
+        // process-model finding): the tree is owned, so stop_game reaches it all.
+        let mut child = spawn
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .start()
             .map_err(|e| format!("cannot launch game: {e}"))?;
         let output = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        drain_pipe(child.stdout.take(), &output);
-        drain_pipe(child.stderr.take(), &output);
+        drain_pipe(child.take_stdout(), &output);
+        drain_pipe(child.take_stderr(), &output);
         self.game = Some(GameProc { child, output });
         Ok(())
     }
@@ -2603,17 +2601,12 @@ impl ReplSession {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
-        match g.child.try_wait() {
-            Ok(None) => Some((true, chunk, None)),
-            Ok(Some(status)) => {
-                self.game = None;
-                Some((false, chunk, status.code()))
-            }
-            Err(_) => {
-                self.game = None;
-                Some((false, chunk, None))
-            }
+        if g.child.alive() {
+            return Some((true, chunk, None));
         }
+        let code = g.child.finish().ok().and_then(|s| s.code());
+        self.game = None;
+        Some((false, chunk, code))
     }
 
     /// Stop the running game (kill the child this session spawned — never any other
@@ -2623,29 +2616,9 @@ impl ReplSession {
         let mut g = self.game.take()?;
         // Stop the whole TREE this session created, not just the handle it holds: a
         // `--native` game's real server is a GRANDCHILD (driver → compiled binary), so
-        // reaping the child alone leaves the server running and holding its port.
-        //
-        // Unix reaches the tree through the process group the launch put the child in.
-        // Windows has no process group, so it walks the tree by parent link instead —
-        // and the ordering is the whole of it: `taskkill /T` needs the child ALIVE to
-        // walk from, so it must run BEFORE the kill below, not after.  Measured on
-        // `windows-latest`: the grandchild survives a bare `child.kill()` and still
-        // holds its port, and `taskkill /T /F` terminates it ("the process with PID N
-        // (child process of PID M) has been terminated") — see WINDOWS.md § Known gaps.
-        #[cfg(unix)]
-        unsafe {
-            libc::killpg(g.child.id() as i32, libc::SIGKILL);
-        }
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &g.child.id().to_string()])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
-        let _ = g.child.kill();
-        let _ = g.child.wait();
+        // reaping the child alone would leave the server running and holding its port.
+        // The launch owns the tree (`platform::process`), which stops it on every platform.
+        let _ = g.child.stop_tree();
         Some(std::mem::take(
             &mut *g
                 .output
@@ -3662,12 +3635,10 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be opened for appending.
     pub fn enable_persistence(&mut self, path: &Path) -> std::io::Result<()> {
-        self.record = Some(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)?,
-        );
+        self.record = Some(crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().create(true).append(true),
+        )?);
         Ok(())
     }
 
@@ -3697,7 +3668,7 @@ impl ReplSession {
     /// is an empty session.  Returns how many entries were restored vs skipped.
     pub fn resume_from(&mut self, path: &Path) -> ResumeStats {
         let mut stats = ResumeStats::default();
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(bytes) = crate::file_access::read(path) else {
             return stats; // no prior session
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -3721,7 +3692,7 @@ impl ReplSession {
     /// Discard the saved session at `path` (the `:reset` command and the
     /// `--fresh` flag) so the next launch starts clean.  Best-effort.
     pub fn clear_session(path: &Path) {
-        let _ = std::fs::remove_file(path);
+        let _ = crate::file_access::remove_file(path);
     }
 
     /// Evaluate one input line/statement against the session.
@@ -5020,7 +4991,7 @@ impl ReplSession {
         let bytes = store.raw_bytes();
         out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(bytes);
-        std::fs::write(path, &out)?;
+        crate::file_access::write(path, &out)?;
         Ok(true)
     }
 
@@ -5037,7 +5008,7 @@ impl ReplSession {
     /// layout key is computed against the current schema, so an image referencing
     /// a struct this session has not defined is correctly refused.
     pub fn load_session_image(&mut self, path: &Path) -> ImageLoad {
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(bytes) = crate::file_access::read(path) else {
             return ImageLoad::Missing;
         };
         let Some((env, store_bytes, key)) = Self::decode_session_image(&bytes) else {
@@ -5250,91 +5221,14 @@ impl ReplSession {
     /// type), the `[ ]` forms it supports, and the interfaces it meets.  Text, for the REPL.
     #[must_use]
     pub fn ops_text(&self, ty: &str) -> String {
-        use std::fmt::Write as _;
-        let data = &self.parser.data;
-        let ty_nr = data.def_nr(ty);
-        if ty.is_empty() || ty_nr == u32::MAX {
-            return format!(
-                "no type `{ty}` in scope — `:ops integer`, `:ops text`, `:ops <YourType>`\n"
-            );
-        }
-        let mut out = format!("{ty}\n");
-        let prefix = format!("t_{}{ty}_", ty.len());
-        let mut rows: Vec<(String, String)> = Vec::new();
-        for d in 0..data.definitions() {
-            let def = data.def(d);
-            if !def.operator_form || def.def_type != DefType::Function {
-                continue;
-            }
-            let Some(rest) = def.name.strip_prefix(&prefix) else {
-                continue;
-            };
-            let form = rest.split('#').next().unwrap_or(rest);
-            let symbol = match form {
-                "compare" => "<  <=  >  >=".to_string(),
-                "plus" => "+  +=".to_string(),
-                "minus" => "-  -=".to_string(),
-                "times" => "*  *=".to_string(),
-                "divided_by" => "/  /=".to_string(),
-                "remainder" => "%  %=".to_string(),
-                "negate" => "-x".to_string(),
-                "next" => "for e in x".to_string(),
-                "to_text" => "\"{x}\"".to_string(),
-                f => f
-                    .strip_prefix("to_")
-                    .map_or_else(|| f.to_string(), |t| format!("x as {t}")),
-            };
-            let sig = format!(
-                "operator {form}{}",
-                crate::api_surface::signature_of(data, d, "fn")
-            );
-            if !rows.iter().any(|(_, s)| *s == sig) {
-                rows.push((symbol, sig));
-            }
-        }
-        let _ = writeln!(out, "  operators");
-        for (symbol, sig) in &rows {
-            let _ = writeln!(out, "    {symbol:<14} {sig}");
-        }
-        let _ = writeln!(
-            out,
-            "    {:<14} compare by value — a record field by field; no type redefines them",
-            "==  !="
-        );
-        let index_forms = match ty {
-            "vector" => "v[i] an element · v[a..b] a slice",
-            "text" => "s[i] one character · s[a..b] a slice (byte offsets)",
-            "hash" | "sorted" | "index" | "spatial" | "trie" => "c[key] the record with that key",
-            _ if matches!(data.def(ty_nr).def_type, DefType::Struct | DefType::Enum)
-                && !data.def(ty_nr).is_stdlib() =>
-            {
-                "none — a type of its own reads an element through a named method (@F114)"
-            }
-            _ => "none",
-        };
-        let _ = writeln!(out, "  [ ]\n    {index_forms}");
-        let mut met = Vec::new();
-        for d in 0..data.definitions() {
-            let def = data.def(d);
-            if def.def_type == DefType::Interface
-                && !def.name.starts_with("__")
-                && self.parser.satisfaction_failures(d, ty_nr).is_empty()
-            {
-                met.push(def.name.clone());
-            }
-        }
-        met.sort();
-        met.dedup();
-        let _ = writeln!(
-            out,
-            "  meets\n    {}",
-            if met.is_empty() {
-                "no interface".to_string()
-            } else {
-                met.join(", ")
-            }
-        );
-        out
+        crate::doc_site::type_capabilities(&self.parser, ty).map_or_else(
+            || {
+                format!(
+                    "no type `{ty}` in scope — `:ops integer`, `:ops text`, `:ops <YourType>`\n"
+                )
+            },
+            |c| crate::doc_site::caps_text(&c),
+        )
     }
 
     /// `:doc <name>` (@PLN183) — a feature (`@F2`, `??`, `match`), then a function, type or
@@ -5426,7 +5320,7 @@ impl ReplSession {
             if def.def_type != DefType::Function
                 || !def.name.starts_with("n_")
                 || def.name.starts_with("n_repl")
-                || &*def.position.file != "<repl>"
+                || def.position.file != "<repl>"
             {
                 continue;
             }

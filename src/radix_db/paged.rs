@@ -223,12 +223,7 @@ fn build(w: &Width, relayout: bool) -> (Store, DbRef, Vec<Key>, usize) {
     let keys = keys_for(w);
     let pts = points(w);
     let mut store = Store::new_in_use(1 << 18);
-    let coll_rec = store.claim(1);
-    let coll = DbRef {
-        store_nr: 0,
-        rec: coll_rec,
-        pos: 4,
-    };
+    let coll = crate::radix_tree::empty_collection(&mut store);
     let mut order: Vec<usize> = (0..pts.len()).collect();
     let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
     for i in (1..order.len()).rev() {

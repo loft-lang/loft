@@ -266,12 +266,12 @@ pub fn check_generated_with(src: &str, poison: bool) -> Result<(), String> {
         std::process::id(),
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    if std::fs::write(&tmp, src).is_err() {
+    if crate::file_access::write(&tmp, src).is_err() {
         return Ok(()); // an I/O error is a harness condition, not a finding
     }
     let path = tmp.to_string_lossy().to_string();
     p.parse(&path, false);
-    let _ = std::fs::remove_file(&tmp);
+    let _ = crate::file_access::remove_file(&tmp);
 
     let rejected = !p.diagnostics.is_empty()
         && p.diagnostics.lines().iter().any(|l| {

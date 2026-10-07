@@ -9,6 +9,8 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -201,6 +203,7 @@ jobs:
   # any build leg fails, `needs: build` skips this job and no draft appears, so the
   # owner never ships a partial release.  See RELEASE_PUBLISH.md § Tag & publish.
   draft-release:
+    # @windows-exempt: platform-free — assembles the release from built artefacts
     name: Assemble draft release
     needs: build
     runs-on: ubuntu-latest
@@ -265,6 +268,7 @@ jobs:
     secrets: inherit
 
   crates-io:
+    # @windows-exempt: platform-free — publishes the crate
     name: Publish to crates.io
     needs: build
     runs-on: ubuntu-latest

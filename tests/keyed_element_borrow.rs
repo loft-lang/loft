@@ -26,8 +26,8 @@
 //! [`harness_can_fail`] is the control for the harness itself: a script whose assertion
 //! is deliberately false must fail, otherwise "the script printed OK" proves nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -39,7 +39,7 @@ fn probe() -> PathBuf {
 
 /// Run `file` on `backend` with extra env; return `(ok, stdout, stderr)`.
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -80,7 +80,7 @@ fn main() { println(\"{ztail(3).q}\"); }\n";
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_882_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -92,13 +92,13 @@ fn write_temp(tag: &str, src: &str) -> PathBuf {
 #[test]
 fn keyed_element_is_typed_as_a_borrow() {
     let path = write_temp("static", MINIMAL);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("failed to invoke loft introspect");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(out.status.success(), "introspect must exit 0");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
 
@@ -164,7 +164,7 @@ fn harness_can_fail() {
     );
     let path = write_temp("control", &src);
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

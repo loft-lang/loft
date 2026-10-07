@@ -7,9 +7,10 @@
 //! forms).  `LOFT_NO_RANGE_ARITH=1` restores every template.  The cell corpus
 //! (`tests/scripts/157-range-arith.loft`) says the VALUES hold on both backends, in every
 //! switch state and under the falsifiers; this pins what is emitted.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str = "tests/scripts/157-range-arith.loft";
 
@@ -97,7 +98,8 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_RANGE_ARITH")
@@ -126,13 +128,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         env,
     );
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

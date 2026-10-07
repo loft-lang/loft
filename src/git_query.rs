@@ -37,6 +37,7 @@
 
 use crate::database::Stores;
 use crate::keys::{DbRef, Str};
+use crate::platform::process::{Program, Spawn};
 
 /// The questions `lib/git` may ask. The numbers are a wire between the loft
 /// declaration and this table, so they are **append-only**: renumbering one
@@ -179,14 +180,14 @@ fn run(query: Query, a: &str, b: &str, n: i64, dir: &str) -> (i64, String) {
             format!("'{a}' cannot be a git ref — a ref may not begin with '-'"),
         );
     }
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = Spawn::new(Program::search("git"));
     if !dir.is_empty() {
-        cmd.arg("-C").arg(dir);
+        cmd.push_arg("-C").push_arg(dir);
     }
-    cmd.args(argv(query, a, b, n));
+    cmd.push_args(argv(query, a, b, n));
     // No shell is involved anywhere on this path, so nothing in `a` or `b` is
     // ever interpreted — it is one `execve` with an argv this process built.
-    match cmd.output() {
+    match cmd.run(b"") {
         Ok(out) if out.status.success() => (
             i64::from(out.status.code().unwrap_or(-2)),
             String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -231,12 +232,12 @@ fn run(query: Query, a: &str, b: &str, n: i64, dir: &str) -> (i64, String) {
 /// with no repository (loft#1061).  The answer is an exit status rather than a parsed
 /// message, so it does not depend on git's wording or the caller's locale.
 fn is_repository(dir: &str) -> bool {
-    let mut cmd = std::process::Command::new("git");
+    let mut cmd = Spawn::new(Program::search("git"));
     if !dir.is_empty() {
-        cmd.arg("-C").arg(dir);
+        cmd.push_arg("-C").push_arg(dir);
     }
-    cmd.args(["rev-parse", "--git-dir"]);
-    cmd.output().is_ok_and(|o| o.status.success())
+    cmd.push_args(["rev-parse", "--git-dir"]);
+    cmd.run(b"").is_ok_and(|o| o.status.success())
 }
 
 /// `git_query(kind, a, b, n, dir, out) -> integer` — the single native behind

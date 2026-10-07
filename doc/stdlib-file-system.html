@@ -26,8 +26,8 @@
 <div class="section-desc"><p>Types and functions for reading and writing files. A File value is obtained via file() and carries the path, format, and an internal reference. Capability groups — the fs/env split a sandbox profile grants via `fs#read` / `fs#update` / `env#read`; the functions below link in their signature.</p></div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-file-system.html">EnvVariable</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  value: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> value: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 }</code></pre>
 <p>One entry of the process environment, as <code>env_variables()</code> answers them: the variable's name and its value, both as plain text.</p>
 </div>
@@ -58,14 +58,14 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-file-system.html">File</a></span> {
-  path: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> path: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 
-  size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 
   <span class="cm">// A fresh File reads as `NotExists` until `file()` has determined the real format for</span>
   <span class="cm">// the path, so this default is a placeholder rather than a claim about the path — it is</span>
   <span class="cm">// overwritten before any read.</span>
-  format: <span class="en"><a href="stdlib-file-system.html">Format</a></span> = <span class="en">NotExists</span>,
+  <span class="kw">pub</span> format: <span class="en"><a href="stdlib-file-system.html">Format</a></span> = <span class="en">NotExists</span>,
 
   ref: <span class="ty"><a href="stdlib-types.html">i32</a></span>?,
 

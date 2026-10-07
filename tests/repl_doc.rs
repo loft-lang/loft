@@ -10,10 +10,11 @@
 //! example in a scratch session.
 
 use loft::doc_catalogue::{self, GROUPS, MAINTAINERS_GROUP};
+use loft::file_access as fa;
 use loft::repl::ReplSession;
 use loft::repl_doc;
 use std::io::Write as _;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// The words a reader sees, Markdown's punctuation and the terminal's decoration removed:
 /// backticks, emphasis and heading marks, list bullets, fences, and the underline the terminal
@@ -32,7 +33,7 @@ fn words(s: &str) -> Vec<String> {
 /// A page's body as published in `doc/features/<tag>.md`: the generator's header removed, and
 /// the `<!-- keys -->` comment, which is data and not text.
 fn page_body(tag: &str) -> Option<String> {
-    let page = std::fs::read_to_string(format!("doc/features/{tag}.md")).ok()?;
+    let page = fa::read_to_string(format!("doc/features/{tag}.md")).ok()?;
     let title_line = page.find("\n# ")?;
     let after_title = page[title_line + 1..].split_once('\n')?.1;
     Some(
@@ -215,7 +216,7 @@ fn ops_and_doc_answer_from_the_session() {
 
 #[test]
 fn an_example_runs_in_a_scratch_session() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("repl")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -10,8 +10,8 @@
 //! forwarding body) keeps its buffer — and the switch: `LOFT_NO_VALUE_RECORD=1` restores the
 //! return buffer for every admitted function (default-on since @PLN157 § V-ah stage 1 gave the
 //! call-site gate the emitter's own fn-ref arm scan).
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-aa-value-record-cells.loft";
@@ -99,7 +99,8 @@ const CHAIN_EXPECTED: &[(&str, bool)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -113,12 +114,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Does `rust` declare `name` with a TUPLE return (the value form)?
@@ -154,7 +155,7 @@ fn each_cell_returns_by_value_exactly_where_predicted() {
         ),
         "an admitted fn must not keep its __retbuf parameter"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -260,7 +261,7 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
             "{name}'s parameters are tuples"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -318,7 +319,7 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
         !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
         "n_read_colour_pair mints and copies nothing"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -333,5 +334,5 @@ fn the_switch_restores_every_return_buffer() {
             "{name}: LOFT_NO_VALUE_RECORD=1 must restore its return buffer"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

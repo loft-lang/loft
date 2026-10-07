@@ -6,8 +6,8 @@
 //! directory, so the tests cover the on-disk cache flow exactly
 //! as users hit it.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -24,7 +24,7 @@ fn tmp_subdir(name: &str) -> PathBuf {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
     ));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    fa::create_dir_all(&dir).expect("create temp dir");
     dir
 }
 
@@ -34,7 +34,7 @@ fn tmp_subdir(name: &str) -> PathBuf {
 fn write_marker_script(dir: &std::path::Path, marker: &str) -> PathBuf {
     let script = dir.join("p254.loft");
     let body = format!("fn main() {{ println(\"{marker}\"); }}\n");
-    std::fs::write(&script, body).expect("write script");
+    fa::write(&script, body).expect("write script");
     script
 }
 
@@ -51,7 +51,7 @@ fn first_run_creates_cache_with_safe_permissions() {
     let marker = "P254_FRESH_CACHE";
     let script = write_marker_script(&dir, marker);
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -69,30 +69,28 @@ fn first_run_creates_cache_with_safe_permissions() {
     );
 
     let cache_dir = cache_dir_for(&script);
-    assert!(cache_dir.is_dir(), "cache dir missing");
+    assert!(fa::is_dir(&cache_dir), "cache dir missing");
 
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let md = std::fs::metadata(&cache_dir).expect("stat cache dir");
+        let md = fa::metadata(&cache_dir).expect("stat cache dir");
         // P254 — directory must be 0o700 after first cache write.
         assert_eq!(md.mode() & 0o777, 0o700, "cache dir mode wrong");
         // P254 — every cached binary inside must also be 0o700.
-        for entry in std::fs::read_dir(&cache_dir)
-            .expect("read cache dir")
-            .flatten()
-        {
-            let cmd = std::fs::metadata(entry.path()).expect("stat cache file");
+        for entry in fa::read_dir(&cache_dir).expect("read cache dir") {
+            let cmd = fa::metadata(&entry).expect("stat cache file");
             assert_eq!(
                 cmd.mode() & 0o777,
                 0o700,
                 "cache file {} mode wrong",
-                entry.path().display()
+                entry.os_spelling().display()
             );
         }
     }
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
@@ -102,7 +100,7 @@ fn second_run_reuses_safe_cache() {
     let script = write_marker_script(&dir, marker);
 
     // Prime the cache.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -110,17 +108,17 @@ fn second_run_reuses_safe_cache() {
     assert!(out.status.success());
 
     let cache_dir = cache_dir_for(&script);
-    let entries: Vec<_> = std::fs::read_dir(&cache_dir)
+    let entries: Vec<_> = fa::read_dir(&cache_dir)
         .expect("read cache dir")
-        .flatten()
-        .map(|e| e.path())
+        .into_iter()
+        .map(|e| e.os_spelling())
         .collect();
     assert_eq!(entries.len(), 1, "expected exactly one cached binary");
 
     // Second run — should reuse the cached binary.  A reuse touches the entry (the cache
     // keeps its most recently used binaries), so the mtime is no longer the witness; the
     // run's own verdict is.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .env("LOFT_TIMING", "1")
@@ -134,10 +132,10 @@ fn second_run_reuses_safe_cache() {
         "recompile happened when the cache was usable: {stderr}"
     );
 
-    let entries2: Vec<_> = std::fs::read_dir(&cache_dir)
+    let entries2: Vec<_> = fa::read_dir(&cache_dir)
         .expect("read cache dir 2")
-        .flatten()
-        .map(|e| e.path())
+        .into_iter()
+        .map(|e| e.os_spelling())
         .collect();
     assert_eq!(entries2.len(), 1, "expected exactly one cached binary");
     assert_eq!(
@@ -145,9 +143,10 @@ fn second_run_reuses_safe_cache() {
         "cache file path changed across runs"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
+// @PLN184 C2 approved exemption (owner, 2026-10-07): POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
 #[cfg(unix)]
 // @speed 1.0
 #[test]
@@ -158,7 +157,7 @@ fn group_writable_cache_is_recompiled() {
     let script = write_marker_script(&dir, marker);
 
     // Prime the cache.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -166,19 +165,19 @@ fn group_writable_cache_is_recompiled() {
     assert!(out.status.success());
 
     let cache_dir = cache_dir_for(&script);
-    let cached = std::fs::read_dir(&cache_dir)
+    let cached = fa::read_dir(&cache_dir)
         .expect("read cache dir")
-        .flatten()
+        .into_iter()
         .next()
         .expect("at least one cache file")
-        .path();
+        .os_spelling();
 
     // Loosen the cache file's mode to simulate an attacker-friendly cache
     // (group + other write).  The next run must reject it and recompile.
-    std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o766))
+    fa::set_permissions(&cached, std::fs::Permissions::from_mode(0o766))
         .expect("loosen cache mode");
 
-    let mtime_before = std::fs::metadata(&cached)
+    let mtime_before = fa::metadata(&cached)
         .expect("stat before")
         .modified()
         .expect("mtime before");
@@ -186,7 +185,7 @@ fn group_writable_cache_is_recompiled() {
     // Sleep so a recompile produces a strictly newer mtime.
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -207,13 +206,13 @@ fn group_writable_cache_is_recompiled() {
     );
 
     // After the recompile the cache file should be back to 0o700.
-    let cached_after = std::fs::read_dir(&cache_dir)
+    let cached_after = fa::read_dir(&cache_dir)
         .expect("read cache dir 2")
-        .flatten()
+        .into_iter()
         .next()
         .expect("at least one cache file")
-        .path();
-    let md_after = std::fs::metadata(&cached_after).expect("stat after");
+        .os_spelling();
+    let md_after = fa::metadata(&cached_after).expect("stat after");
     assert_eq!(
         md_after.mode() & 0o777,
         0o700,
@@ -224,9 +223,10 @@ fn group_writable_cache_is_recompiled() {
         "cache mtime should be newer after recompile"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
+// @PLN184 C2 approved exemption (owner, 2026-10-07): POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
 #[cfg(unix)]
 // @speed 0.9
 #[test]
@@ -236,7 +236,7 @@ fn poisoned_cache_binary_is_not_executed() {
     let script = write_marker_script(&dir, marker);
 
     // Prime the cache so we know the cache filename loft will look for.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -245,27 +245,27 @@ fn poisoned_cache_binary_is_not_executed() {
     assert!(String::from_utf8_lossy(&out.stdout).contains(marker));
 
     let cache_dir = cache_dir_for(&script);
-    let cached = std::fs::read_dir(&cache_dir)
+    let cached = fa::read_dir(&cache_dir)
         .expect("read cache dir")
-        .flatten()
+        .into_iter()
         .next()
         .expect("at least one cache file")
-        .path();
+        .os_spelling();
 
     // Replace the cached binary with a "poisoned" shell script that
     // would print an attacker marker if loft ran it.  Make it group-
     // writable so the safety check rejects it; the recompile path
     // overwrites it before we ever execute.
     use std::os::unix::fs::PermissionsExt;
-    std::fs::write(
+    fa::write(
         &cached,
         b"#!/bin/sh\necho P254_POISONED_BINARY_RAN\nexit 0\n",
     )
     .expect("write poison");
-    std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o777))
+    fa::set_permissions(&cached, std::fs::Permissions::from_mode(0o777))
         .expect("loosen poison mode");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -289,7 +289,7 @@ fn poisoned_cache_binary_is_not_executed() {
         "missing P254 reject warning; stderr={stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
@@ -298,7 +298,7 @@ fn no_cache_env_var_skips_cache() {
     let marker = "P254_NO_CACHE_ENV";
     let script = write_marker_script(&dir, marker);
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .env("LOFT_NATIVE_NO_CACHE", "1")
@@ -313,9 +313,9 @@ fn no_cache_env_var_skips_cache() {
 
     let cache_dir = cache_dir_for(&script);
     assert!(
-        !cache_dir.exists() || std::fs::read_dir(&cache_dir).map_or(true, |d| d.count() == 0),
+        !fa::exists(&cache_dir) || fa::read_dir(&cache_dir).map_or(true, |d| d.is_empty()),
         "LOFT_NATIVE_NO_CACHE=1 should not write to the cache directory"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

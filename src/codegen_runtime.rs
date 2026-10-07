@@ -336,7 +336,7 @@ pub fn from_loft_ref(stores: &mut Stores, r: loft_ffi::LoftRef) -> DbRef {
 use crate::vector;
 use std::cell::{Cell, RefCell, UnsafeCell};
 #[cfg(not(host_fs))]
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
 use std::io::{Read, Seek, SeekFrom, Write as _};
 // #620 — see `n_now`: `wasm32-wasip2` shares the real-clock path.
@@ -512,7 +512,18 @@ pub fn cr_park_or_free(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &s
     stores.park_or_free(&db, name);
 }
 
+#[inline]
 pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
+    // A null reference frees nothing: answered here, in the caller, where a function's exit
+    // frees of buffers it never minted were each a call that returned at its first test.
+    if db.store_nr == u16::MAX {
+        return;
+    }
+    free_ref_slow(cell, db, name);
+}
+
+#[inline(never)]
+fn free_ref_slow(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     // A generator handle addresses no store — free the coroutine, which releases the heap
     // locals it still owns.  Mirrors the interpreter's `free_ref_db` (loft#835).
@@ -526,10 +537,7 @@ pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     if (db.store_nr as usize) >= stores.allocations.len() {
         return;
     }
-    // Plan-57 Phase C: single-ownership (ref-count removed) — close the file
-    // handle whenever its File store is freed.
-    #[cfg(not(host_fs))]
-    stores.close_file_handle(&db);
+    // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
     stores.free_named(&db, name);
 }
 
@@ -1019,6 +1027,77 @@ impl<'a> Iterator for LazySplit<'a> {
     }
 }
 
+/// `@FR-R-FoldCompare` — which text predicate [`fold_compare`] answers.
+pub mod fold_op {
+    /// `F(t) == other`.
+    pub const EQ: u8 = 0;
+    /// `F(t) != other`.
+    pub const NE: u8 = 1;
+    /// `F(t).starts_with(other)`, or with `fold_right` `other.starts_with(F(t))`.
+    pub const STARTS: u8 = 2;
+    /// `F(t).ends_with(other)`, or with `fold_right` `other.ends_with(F(t))`.
+    pub const ENDS: u8 = 3;
+}
+
+/// `@FR-R-FoldCompare` — the predicate `op` over the case fold `F(t)` (`to_uppercase` when
+/// `upper`, else `to_lowercase`) and `other` read as written, with `F(t)` the receiver
+/// unless `fold_right` puts it in the argument position — answered without building
+/// `F(t)` while every byte the predicate inspects, in both operands, is ASCII: there the
+/// fold is byte-wise and one-to-one.  The first non-ASCII byte in that span takes the
+/// written form (`F(t)` built, the predicate applied), because Unicode case is not
+/// byte-local (U+212A KELVIN SIGN lowercases to `k`, `ß` uppercases to `SS`).
+#[inline]
+#[must_use]
+pub fn fold_compare(op: u8, fold_right: bool, upper: bool, t: &str, other: &str) -> bool {
+    let fold = |b: u8| {
+        if upper {
+            b.to_ascii_uppercase()
+        } else {
+            b.to_ascii_lowercase()
+        }
+    };
+    // `a` folded equals `b` as written, both all ASCII and of one length.
+    let same =
+        |a: &[u8], b: &[u8]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| fold(*x) == *y);
+    let (tb, ob) = (t.as_bytes(), other.as_bytes());
+    let fast = match (op, fold_right) {
+        (fold_op::EQ | fold_op::NE, _) => (tb.is_ascii() && ob.is_ascii()).then(|| same(tb, ob)),
+        (fold_op::STARTS, false) => {
+            let span = &tb[..tb.len().min(ob.len())];
+            (ob.is_ascii() && span.is_ascii()).then(|| tb.len() >= ob.len() && same(span, ob))
+        }
+        (fold_op::STARTS, true) => {
+            let span = &ob[..ob.len().min(tb.len())];
+            (tb.is_ascii() && span.is_ascii()).then(|| ob.len() >= tb.len() && same(tb, span))
+        }
+        (fold_op::ENDS, false) => {
+            let span = &tb[tb.len() - tb.len().min(ob.len())..];
+            (ob.is_ascii() && span.is_ascii()).then(|| tb.len() >= ob.len() && same(span, ob))
+        }
+        (fold_op::ENDS, true) => {
+            let span = &ob[ob.len() - ob.len().min(tb.len())..];
+            (tb.is_ascii() && span.is_ascii()).then(|| ob.len() >= tb.len() && same(tb, span))
+        }
+        _ => None,
+    };
+    if let Some(answer) = fast {
+        return if op == fold_op::NE { !answer } else { answer };
+    }
+    let folded = if upper {
+        t.to_uppercase()
+    } else {
+        t.to_lowercase()
+    };
+    match (op, fold_right) {
+        (fold_op::EQ, _) => folded == other,
+        (fold_op::NE, _) => folded != other,
+        (fold_op::STARTS, false) => folded.starts_with(other),
+        (fold_op::STARTS, true) => other.starts_with(folded.as_str()),
+        (fold_op::ENDS, false) => folded.ends_with(other),
+        _ => other.ends_with(folded.as_str()),
+    }
+}
+
 /// Start a [`LazySplit`] over `text`.
 #[inline]
 #[must_use]
@@ -1247,6 +1326,17 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // out-of-range element write hands this a null PLACE (loft#1374 made an absent read
     // answer `nullref`); there is nothing to write into, so the write is dropped.
     if to.store_nr == u16::MAX {
+        // The write is dropped; a given-up source is still released (`release_copy_source`),
+        // under the same borrowed-store exception the copy below applies.
+        if (tp as u16) & crate::keys::COPY_FREE_SOURCE != 0
+            && !cr_take_fnref_borrowed(data.store_nr)
+        {
+            stores.release_copy_source(&data, &to);
+        }
+        // @FR-E-Report — the dropped write's report, the setters' cold branch's twin.
+        if to.absence_unreported() {
+            stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+        }
         return;
     }
     // mirror `state/io.rs::copy_record`'s tag handling and
@@ -1264,6 +1354,19 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
     let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
     let tp = raw_tp & crate::keys::COPY_TP_MASK;
+    // `@FR-Const-Foreign` — the interpreter's twin (`State::do_copy_record`): a VECTOR read
+    // out of a foreign store is copied element by element, as a bind of it copies; its bytes
+    // lie outside the store's own blocks, where the record copy would read a record that is
+    // not there.
+    if let Some(crate::database::Parts::Vector(elem)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+        && (data.store_nr as usize) < stores.allocations.len()
+        && stores.allocations[data.store_nr as usize].is_foreign()
+    {
+        let elem = *elem;
+        stores.vector_add(&to, &data, elem);
+        return;
+    }
     let size = u32::from(stores.size(tp));
     if crate::keys::trace_copy() {
         crate::loft_eprintln!(
@@ -1295,15 +1398,8 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if stores.copy_check_enabled() {
         stores.report_copy_mismatches(&data, &to, tp, "OpCopyRecord");
     }
-    if free_source
-        && !borrowed
-        && data.store_nr != to.store_nr
-        && !stores.is_stack_store(data.store_nr)
-        && !stores.allocations[data.store_nr as usize].free
-        && !stores.allocations[data.store_nr as usize].read_only
-        && !stores.allocations[data.store_nr as usize].is_free_protected()
-    {
-        stores.free(&data);
+    if free_source && !borrowed {
+        stores.release_copy_source(&data, &to);
     }
 }
 
@@ -1729,12 +1825,15 @@ pub fn OpStep(
 #[cfg(not(host_fs))]
 pub fn read_file_text_into(path: &str, buf: &mut String) {
     buf.clear();
-    let Ok(mut f) = File::open(path) else { return };
+    let at = crate::file_access::at(path);
+    let Ok(mut f) = crate::file_access::open(&at) else {
+        return;
+    };
     match f.read_to_string(buf) {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
             buf.clear();
-            let size = std::fs::metadata(path).map_or(0, |m| m.len());
+            let size = crate::file_access::metadata(&at).map_or(0, |m| m.len());
             crate::loft_eprintln!(
                 "warning: file({path:?}).content() got non-UTF-8 bytes ({size} bytes in \
                  file) — returning null. Read the bytes exactly with `read_bytes(path)`, \
@@ -1873,7 +1972,7 @@ pub fn OpSizeFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef) -> i64 {
     let Some(file_path) = stores.resolve_path(&file_path) else {
         return i64::MIN;
     };
-    if let Ok(meta) = std::fs::metadata(&file_path) {
+    if let Ok(meta) = crate::file_access::metadata(crate::file_access::at(&file_path)) {
         meta.len().cast_signed()
     } else {
         i64::MIN
@@ -1928,11 +2027,12 @@ pub fn OpTruncateFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, size: i
             .store_mut(&file)
             .set_long(file.rec, file.pos + 16, i64::MIN);
     }
-    OpenOptions::new()
-        .write(true)
-        .open(&file_path)
-        .and_then(|f| f.set_len(size as u64))
-        .is_ok()
+    crate::file_access::open_with(
+        crate::file_access::at(&file_path),
+        OpenOptions::new().write(true),
+    )
+    .and_then(|f| f.set_len(size as u64))
+    .is_ok()
 }
 
 /// Resize through the host: read, slice or zero-extend, write back.  The host
@@ -2012,13 +2112,14 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
     let Some(file_name) = stores.resolve_path(&file_name) else {
         return i32::MIN;
     };
-    match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&file_name)
-    {
+    match crate::file_access::open_with(
+        crate::file_access::at(&file_name),
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false),
+    ) {
         Ok(f) => {
             stores
                 .store_mut(file)
@@ -2035,7 +2136,7 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
             f_nr
         }
         Err(e) => {
-            crate::loft_eprintln!("file open error for {file_name:?}: {e}");
+            crate::loft_eprintln!("file open error: {e}");
             i32::MIN
         }
     }
@@ -2060,7 +2161,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
     let Some(file_name) = stores.resolve_path(&file_name) else {
         return i32::MIN;
     };
-    match OpenOptions::new().read(true).open(&file_name) {
+    match crate::file_access::open(crate::file_access::at(&file_name)) {
         Ok(mut f) => {
             if initial_pos > 0 {
                 let _ = f.seek(SeekFrom::Start(initial_pos as u64));
@@ -2076,7 +2177,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
             f_nr
         }
         Err(e) => {
-            crate::loft_eprintln!("file open error for {file_name:?}: {e}");
+            crate::loft_eprintln!("file open error: {e}");
             i32::MIN
         }
     }
@@ -2639,18 +2740,29 @@ pub fn OpReadFile<T: FileVal>(
     if file.rec == 0 {
         return;
     }
-    let format = stores.store(&file).get_byte(file.rec, file.pos + 32, 0);
+    // The File record's fields read through one resolve of its store (`OpReadFileInt`'s
+    // reason).  `#next` holds the byte offset to read from.
+    let (format, raw_next, open_ref) = {
+        let st = stores.store(&file);
+        (
+            st.get_byte(file.rec, file.pos + 32, 0),
+            st.get_long(file.rec, file.pos + 16),
+            st.get_i32_raw(file.rec, file.pos + 28),
+        )
+    };
     if format != 1 && format != 2 && format != 3 && format != 5 {
         return;
     }
     let little_endian = format == 2;
-    // Track read position: #next holds the byte offset to read from.
-    let raw_next = stores.store(&file).get_long(file.rec, file.pos + 16);
     let next_pos = if raw_next == i64::MIN { 0 } else { raw_next };
     stores
         .store_mut(&file)
         .set_long(file.rec, file.pos + 8, next_pos);
-    let file_ref = file_handle_read(stores, &file, next_pos);
+    let file_ref = if open_ref == i32::MIN {
+        file_handle_read(stores, &file, next_pos)
+    } else {
+        open_ref
+    };
     if file_ref == i32::MIN {
         return;
     }
@@ -2685,6 +2797,121 @@ pub fn OpReadFile<T: FileVal>(
     stores
         .store_mut(&file)
         .set_long(file.rec, file.pos + 16, next_pos + nread as i64);
+}
+
+/// [`OpReadFile`] for a fixed-width INTEGER read whose width and sign the call site knows
+/// (`f#read(2) as i16`), with `OpReadFile`'s own parameters so the generator only renames the
+/// callee (`generation::ops::file_ops`): the same format test, cursor and handle walk, without
+/// the text test and the type-table lookup the generic decode makes per read, and the bytes
+/// taken by value (`LoftFile::take_array`).  `W` is 1, 2, 4 or 8 bytes;
+/// `SIGNED` is the sign the type's range gives (`State::dispatch_read_data`'s rule), and a
+/// 4- or 8-byte read is signed as the generic decode reads it.  A short read leaves `val`
+/// unchanged and advances `#next` by what arrived, exactly as the generic path does.
+#[cfg(not(host_fs))]
+pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    val: &mut i64,
+    _bytes: i64,
+    _db_tp: i32,
+) {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if file.rec == 0 {
+        return;
+    }
+    // The File record's fields read through ONE resolve of its store, and written through one
+    // more after the read: five lookups per read were most of what was left of it.
+    let (format, raw_next, open_ref) = {
+        let st = stores.store(&file);
+        (
+            st.get_byte(file.rec, file.pos + 32, 0),
+            st.get_long(file.rec, file.pos + 16),
+            st.get_i32_raw(file.rec, file.pos + 28),
+        )
+    };
+    if format != 1 && format != 2 && format != 3 && format != 5 {
+        return;
+    }
+    let little_endian = format == 2;
+    let next_pos = if raw_next == i64::MIN { 0 } else { raw_next };
+    let file_ref = if open_ref == i32::MIN {
+        file_handle_read(stores, &file, next_pos)
+    } else {
+        open_ref
+    };
+    if file_ref == i32::MIN {
+        stores
+            .store_mut(&file)
+            .set_long(file.rec, file.pos + 8, next_pos);
+        return;
+    }
+    let bytes = stores
+        .files
+        .get_mut(file_ref as usize)
+        .and_then(|x| x.as_mut())
+        .and_then(loft_file_take::<W>);
+    let nread = if let Some(b) = bytes {
+        *val = decode_int::<W, SIGNED>(&b, little_endian);
+        W
+    } else {
+        0
+    };
+    let st = stores.store_mut(&file);
+    st.set_long(file.rec, file.pos + 8, next_pos);
+    st.set_long(file.rec, file.pos + 16, next_pos + nread as i64);
+}
+
+/// The host-bridge build reads through [`OpReadFile`]; the specialisation is the native file's.
+#[cfg(host_fs)]
+pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
+    cell: &std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    val: &mut i64,
+    bytes: i64,
+    db_tp: i32,
+) {
+    OpReadFile(cell, file, val, bytes, db_tp);
+}
+
+#[cfg(not(host_fs))]
+#[inline]
+fn loft_file_take<const W: usize>(f: &mut crate::database::loft_file::LoftFile) -> Option<[u8; W]> {
+    f.take_array::<W>()
+}
+
+/// The integer `W` bytes encode, in the file's byte order, sign-extended when `SIGNED`.
+#[cfg(not(host_fs))]
+#[inline]
+fn decode_int<const W: usize, const SIGNED: bool>(b: &[u8; W], little_endian: bool) -> i64 {
+    match W {
+        1 if SIGNED => i64::from(b[0] as i8),
+        1 => i64::from(b[0]),
+        2 => {
+            let d = [b[0], b[1]];
+            match (little_endian, SIGNED) {
+                (true, true) => i64::from(i16::from_le_bytes(d)),
+                (true, false) => i64::from(u16::from_le_bytes(d)),
+                (false, true) => i64::from(i16::from_be_bytes(d)),
+                (false, false) => i64::from(u16::from_be_bytes(d)),
+            }
+        }
+        4 => {
+            let d = [b[0], b[1], b[2], b[3]];
+            i64::from(if little_endian {
+                i32::from_le_bytes(d)
+            } else {
+                i32::from_be_bytes(d)
+            })
+        }
+        _ => {
+            let d = [b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]];
+            if little_endian {
+                i64::from_le_bytes(d)
+            } else {
+                i64::from_be_bytes(d)
+            }
+        }
+    }
 }
 
 /// Read through the host bridge from the position `#next` names.
@@ -5467,13 +5694,14 @@ pub fn fs_rmdir(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        match std::fs::remove_dir(path) {
+        let at = crate::file_access::at(path);
+        match crate::file_access::remove_dir(&at) {
             Ok(()) => FS_OK,
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => FS_NOT_FOUND,
                 std::io::ErrorKind::PermissionDenied => FS_PERMISSION_DENIED,
                 _ if fs_is_dir(path)
-                    && std::fs::read_dir(path).is_ok_and(|mut d| d.next().is_some()) =>
+                    && crate::file_access::read_dir(&at).is_ok_and(|d| !d.is_empty()) =>
                 {
                     FS_NOT_EMPTY
                 }
@@ -5496,7 +5724,11 @@ pub fn fs_delete(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::remove_file(path), path, true)
+        fs_classify(
+            crate::file_access::remove_file(crate::file_access::at(path)),
+            path,
+            true,
+        )
     }
 }
 
@@ -5513,7 +5745,11 @@ pub fn fs_move(from: &str, to: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::rename(from, to), from, false)
+        fs_classify(
+            crate::file_access::rename(crate::file_access::at(from), crate::file_access::at(to)),
+            from,
+            false,
+        )
     }
 }
 
@@ -5530,7 +5766,11 @@ pub fn fs_mkdir(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::create_dir(path), path, false)
+        fs_classify(
+            crate::file_access::create_dir(crate::file_access::at(path)),
+            path,
+            false,
+        )
     }
 }
 
@@ -5547,7 +5787,11 @@ pub fn fs_mkdir_all(path: &str) -> i64 {
     }
     #[cfg(not(host_fs))]
     {
-        fs_classify(std::fs::create_dir_all(path), path, false)
+        fs_classify(
+            crate::file_access::create_dir_all(crate::file_access::at(path)),
+            path,
+            false,
+        )
     }
 }
 
@@ -5560,7 +5804,7 @@ pub fn fs_is_dir(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        std::path::Path::new(path).is_dir()
+        crate::file_access::is_dir(crate::file_access::at(path))
     }
 }
 
@@ -5576,7 +5820,7 @@ pub fn fs_is_symlink(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+        crate::file_access::is_symlink(crate::file_access::at(path))
     }
 }
 
@@ -5589,7 +5833,7 @@ pub fn fs_is_file(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        std::path::Path::new(path).is_file()
+        crate::file_access::is_file(crate::file_access::at(path))
     }
 }
 
@@ -5638,6 +5882,13 @@ impl Stores {
     #[must_use]
     pub fn fs_is_file_at(&self, raw: &str) -> bool {
         self.resolve_path(raw).is_some_and(|p| fs_is_file(&p))
+    }
+
+    /// `mtime(path)`: 0 for a refused path, as for a missing one.
+    #[must_use]
+    pub fn fs_mtime_at(&self, raw: &str) -> i64 {
+        self.resolve_path(raw)
+            .map_or(0, |p| Stores::os_mtime_native(&p))
     }
 
     #[must_use]
@@ -5769,6 +6020,22 @@ fn with_call_frames<R>(f: impl FnOnce(&[(&'static str, &'static str, u32, u32)])
     })
 }
 
+/// Where the running native frame was declared, for a RECOVERABLE fault's log line — the same
+/// position the halting path names on `--native` (`State::running_frame_declaration` is the
+/// interpreter's twin), because the generated code keeps no per-statement line.  `None` on the
+/// lean tier, which pushes no frames, and outside any loft frame.
+pub(crate) fn running_frame_position() -> Option<crate::lexer::Position> {
+    with_call_frames(|frames| {
+        frames
+            .last()
+            .map(|(_, file, line, _)| crate::lexer::Position {
+                file: crate::lexer::intern_file(file),
+                line: *line,
+                pos: 1,
+            })
+    })
+}
+
 /// The loft frames this native thread is inside, innermost first.
 ///
 /// The `--native` counterpart of the interpreter's `State::current_call_chain`, in the
@@ -5891,7 +6158,7 @@ pub const NATIVE_MAIN_STACK: usize = 512 * 1024 * 1024;
 #[cold]
 #[inline(never)]
 fn cr_stack_overflow(file: &str, line: u32) -> ! {
-    crate::runtime_error::RuntimeError::stack_overflow(file.to_string(), line).report_and_exit()
+    crate::runtime_error::RuntimeError::stack_overflow(file, line).report_and_exit()
 }
 
 /// The LEAN tier's frame entry (@PLN157, loft#1426 M1): the recursion cap

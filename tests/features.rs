@@ -9,18 +9,16 @@
 //! example stops running, CI goes red.  The native half is
 //! `tests/native.rs::native_features`; the no-drift half is `make features-check`.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Collect the generated feature examples (sorted for a stable failure order).
 fn feature_examples() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/docs/features") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/docs/features") {
         Ok(rd) => rd
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -78,7 +76,7 @@ fn features_examples_interpret() {
                         break;
                     };
                     let started = std::time::Instant::now();
-                    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+                    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                         .args(["--interpret", &f.to_string_lossy()])
                         .env("LOFT_TIMEOUT", "60")
                         .env("LOFT_NO_NATIVE_LIBS", "1")
@@ -125,7 +123,7 @@ fn features_examples_interpret() {
                 format!(
                     "  {:>7.2}s  {}",
                     d.as_secs_f64(),
-                    p.file_name().unwrap_or(p.as_os_str()).to_string_lossy()
+                    fa::file_name(p).unwrap_or_else(|| p.to_string_lossy().into_owned())
                 )
             })
             .collect();

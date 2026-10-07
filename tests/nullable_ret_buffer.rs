@@ -40,8 +40,8 @@
 //! checks only ONE of those two is not either — a UAF-only assertion went green the moment
 //! gate 1 landed, while the store had simply stopped being freed at all.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     let mut p = std::env::current_exe().expect("test binary path");
@@ -59,10 +59,10 @@ fn loft_bin() -> PathBuf {
 /// in the batch and passed when the test was run alone.
 fn run(src: &str, backend: &str, retbuf: bool, tag: &str) -> (String, String) {
     let dir = std::env::temp_dir().join(format!("loft938_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{tag}.loft"));
-    std::fs::write(&file, src).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&file, src).expect("write probe");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&file)
         .env("LOFT_TIMEOUT", "300")
@@ -231,7 +231,7 @@ fn the_boundary_matrix_passes_on_both_backends() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/probes/938-nullable-collection-return-buffer.loft");
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_TIMEOUT", "300")
@@ -254,7 +254,7 @@ fn native_optional_unify_compiles_correctly() {
     let script =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/pln133-optional-unify.loft");
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_TIMEOUT", "300")
@@ -342,10 +342,10 @@ fn main() {
 #[test]
 fn dispatch_arm_returning_a_local_delivers_into_the_buffer() {
     let dir = std::env::temp_dir().join(format!("loft938_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("two_site.loft");
-    std::fs::write(&file, TWO_SITE_DISPATCH).expect("write probe");
-    let out = Command::new(loft_bin())
+    fa::write(&file, TWO_SITE_DISPATCH).expect("write probe");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "300")

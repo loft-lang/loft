@@ -286,6 +286,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     vec_get_int_nullable::<false>,
     vec_set_int::<false>,
     vec_end_jump::<false>,
+    null_reported::<false>,
     cast_text_from_bool::<false>,
     range_default::<false>,
     conv_character_from_null::<false>,
@@ -636,6 +637,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     vec_get_int_nullable::<true>,
     vec_set_int::<true>,
     vec_end_jump::<true>,
+    null_reported::<true>,
     cast_text_from_bool::<true>,
     range_default::<true>,
     conv_character_from_null::<true>,
@@ -986,6 +988,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     vec_get_int_nullable_r,
     vec_set_int_r,
     vec_end_jump_r,
+    null_reported_r,
     cast_text_from_bool_r,
     range_default_r,
     conv_character_from_null_r,
@@ -1336,6 +1339,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpVecGetIntNullable",
     "OpVecSetInt",
     "OpVecEndJump",
+    "OpNullReported",
     "OpCastTextFromBool",
     "OpRangeDefault",
     "OpConvCharacterFromNull",
@@ -1431,7 +1435,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 222;
+pub const OP_NORMAL: u16 = 223;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -4195,6 +4199,8 @@ fn set_ref<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_u32_raw(db.rec, db.pos + u32::from(v_fld), v.rec);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4220,6 +4226,8 @@ fn set_db_ref<const F: bool>(s: &mut State) {
             store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
             store.set_u32_raw(db.rec, off + 4, r.rec);
             store.set_u32_raw(db.rec, off + 8, r.pos);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4472,6 +4480,8 @@ fn set_enum<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_byte(db.rec, db.pos + u32::from(v_fld), 0, i32::from(v));
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4521,6 +4531,8 @@ fn set_boolean<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_byte(db.rec, db.pos + u32::from(v_fld), 0, i32::from(v));
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4598,6 +4610,8 @@ fn set_int<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_int(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4621,6 +4635,8 @@ fn set_character<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_u32_raw(db.rec, db.pos + u32::from(v_fld), v as u32);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4644,6 +4660,8 @@ fn set_single<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_single(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4667,6 +4685,8 @@ fn set_float<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_float(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4694,6 +4714,8 @@ fn set_byte<const F: bool>(s: &mut State) {
                 (v_min),
                 v as i32,
             );
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4721,6 +4743,8 @@ fn set_byte_nullable<const F: bool>(s: &mut State) {
         if db.rec != 0 {
             s.database
                 .set_byte_nullable(&db, db.pos + u32::from(v_fld), (v_min), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4748,6 +4772,8 @@ fn set_short<const F: bool>(s: &mut State) {
         if db.rec != 0 {
             s.database
                 .set_short_nullable(&db, db.pos + u32::from(v_fld), (v_min), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4805,6 +4831,8 @@ fn set_int4<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_i32_raw(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4862,6 +4890,8 @@ fn set_int4_raw<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_u32_raw(db.rec, db.pos + u32::from(v_fld), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -4947,6 +4977,8 @@ fn set_short_raw<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .set_i16_raw(db.rec, db.pos + u32::from(v_fld), (v_min), v);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -5024,6 +5056,8 @@ fn set_text<const F: bool>(s: &mut State) {
             let store = s.database.store_mut(&db);
             let s_pos = store.set_str(&s_val);
             store.set_u32_raw(db.rec, db.pos + u32::from(v_fld), s_pos);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -5047,6 +5081,8 @@ fn set_text_replace<const F: bool>(s: &mut State) {
             s.database
                 .store_mut(&db)
                 .refill_str(db.rec, db.pos + u32::from(v_fld), &s_val);
+        } else if db.absence_unreported() {
+            s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
 }
@@ -7153,6 +7189,18 @@ fn vec_end_jump<const F: bool>(s: &mut State) {
 fn vec_end_jump_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     vec_end_jump::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn null_reported<const F: bool>(s: &mut State) {
+    let new_value = DbRef::NULL_REPORTED;
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn null_reported_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    null_reported::<true>(s);
     s.regs_out()
 }
 

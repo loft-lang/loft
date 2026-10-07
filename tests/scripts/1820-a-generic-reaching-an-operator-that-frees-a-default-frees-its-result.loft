@@ -39,7 +39,7 @@
 // operands after the loop and writes through them: a freed `p` answers another value there.
 //
 // (Measured on the `fn Op…` spelling: @C132 re-spelled the cells to `operator` methods, same values.)
-// @falsified-by: tests/falsified/1820-a-generic-reaching-an-operator-that-frees-a-default-frees-its-result.patch — interpret leaked kt=91 E×160, kt=92 Vc×160, kt=97 Rj×160, kt=93 Rc×120, kt=94 Vi×120 ... and 4 more -> clean, native leaked kt=91 E×160, kt=92 Vc×160, kt=97 Rj×160, kt=93 Rc×120, kt=94 Vi×120 ... and 4 more -> clean
+// @falsified-by: tests/falsified/1820-a-generic-reaching-an-operator-that-frees-a-default-frees-its-result.patch — interpret leaked kt=97 Vc×160, kt=98 Rc×120, kt=99 Vi×120, kt=100 Ri×120, kt=101 Vs×80 ... and 2 more -> clean, native leaked kt=97 Vc×160, kt=98 Rc×120, kt=99 Vi×120, kt=100
 
 value struct Vc { x: integer }
 struct Rc { x: integer }

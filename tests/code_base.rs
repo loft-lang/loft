@@ -10,6 +10,7 @@
 //! and then run — so these cells define functions after earlier runs, enough of them that the
 //! buffer has to grow, and read each result back.  And the one structural fact the cache rests
 //! on — nothing writes the bytecode except through `edit_code` — is checked over the source.
+use loft::file_access as fa;
 use loft::repl::{Eval, ReplSession};
 use std::path::Path;
 
@@ -53,12 +54,12 @@ fn the_bytecode_is_written_only_by_its_writer() {
     let mut sites = Vec::new();
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read src") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
+        for entry in fa::read_dir(&dir).expect("read src") {
+            let path = entry.os_spelling();
+            if fa::is_dir(&path) {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let text = std::fs::read_to_string(&path).expect("read file");
+            } else if fa::has_extension(&path, "rs") {
+                let text = fa::read_to_string(&path).expect("read file");
                 for (n, line) in text.lines().enumerate() {
                     let code = line.trim_start();
                     if code.starts_with("//") {

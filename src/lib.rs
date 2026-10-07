@@ -1,5 +1,7 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 #![warn(clippy::pedantic)]
 #![allow(
     // Numeric casts: pervasive in the interpreter's hot paths; every
@@ -354,6 +356,8 @@ pub mod ownership_cfg;
 pub mod paged_reader;
 pub mod place_result;
 pub mod placement;
+#[cfg(test)]
+mod platform_census;
 pub mod pure_reuse;
 pub mod rebind_place;
 pub mod repeat_run;
@@ -367,6 +371,7 @@ pub mod single_use;
 pub mod siphash;
 pub mod slot_alias;
 pub mod text_run;
+pub mod tuple_links;
 pub mod use_analysis;
 pub mod value_record;
 mod variables;
@@ -467,7 +472,9 @@ pub mod triggers;
 pub mod verify_self;
 
 pub mod doc_catalogue;
+pub mod doc_construct;
 pub mod doc_render;
+pub mod doc_site;
 pub mod documentation;
 pub mod migrate_long;
 pub mod stdlib_sources;

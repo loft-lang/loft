@@ -522,7 +522,7 @@ impl<'a> JParser<'a> {
             }
             LexItem::Identifier(name) => {
                 let name = name.clone();
-                let pos = r.position.clone();
+                let pos = r.position;
                 self.parse_identifier_value(&name, &pos)
             }
             _ => {
@@ -1400,5 +1400,22 @@ mod tests {
         assert!(matches!(&fields[1].2, Parsed::Ident(s) if s == "Hourly"));
         assert!(matches!(fields[2].2, Parsed::Int(12345)));
         assert!(matches!(fields[3].2, Parsed::Number(n) if (n - 0.15).abs() < 1e-9));
+    }
+}
+
+#[cfg(test)]
+mod line_end_tests {
+    /// loft#1908 — a document written with Windows line ends (`\r\n`) reads as the same
+    /// document: JSON allows a carriage return wherever it allows a space.
+    #[test]
+    fn a_document_with_windows_line_ends_reads_as_with_unix_ones() {
+        let unix = "{\n  \"a\": {\n    \"b\": [1, 2]\n  },\n  \"c\": \"x\"\n}\n";
+        let windows = unix.replace('\n', "\r\n");
+        let (u, w) = (super::parse(unix), super::parse(&windows));
+        assert!(w.is_ok(), "{w:?}");
+        assert_eq!(
+            format!("{:?}", u.unwrap()).len(),
+            format!("{:?}", w.unwrap()).len()
+        );
     }
 }

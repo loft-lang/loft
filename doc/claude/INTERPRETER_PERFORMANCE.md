@@ -209,6 +209,36 @@ counts as copied bytes (8 per integer return).  A frame records the call's posit
 its source line: the line is looked up only when a stack is rendered (`State::call_line`),
 since that lookup on every call was a quarter of a recursive function's time.
 
+## The compiled standard library
+
+An interpreted program runs the standard library's LOOPING loft functions compiled: their
+native code is built into the loft binary, so `--interpret` needs no rustc at run time
+(C71: libraries compile, scripts interpret — the standard library is a library).  It is the
+same path an installed library takes, with three differences:
+
+- **What is compiled** — `compiled_stdlib::export_set`: non-generic functions the shared-store
+  dispatch can cross, with a loft body that loops.  A one-operation body gains nothing from the
+  bridge; output and file primitives stay out; generics are monomorphised per program and stay
+  interpreted (`sum<T>`).
+- **How it ships** — `make compiled-stdlib` generates `src/compiled_stdlib_gen.rs` (`@generated`,
+  exempt from `rustfmt`) with the native bodies, a name → bridge table, the standard library's
+  type PREFIX and the source hash it was compiled from.  `extensions::wire_shared_native_fns`
+  looks a bridge up in that table before `dlsym`.  Regenerate after a stdlib change, or a
+  code-generator change that alters what these functions emit;
+  `tests/compiled_stdlib.rs::compiled_stdlib_up_to_date` fails until you do.
+- **When it is used** — `compiled_stdlib::mark` checks, at start-up, that the program's type
+  table begins with that prefix and that `default/*.loft` hashes the same.  On any mismatch the
+  program runs the loft bodies interpreted: slower, never wrong.  `LOFT_NO_COMPILED_STDLIB=1`
+  interprets them anyway — the A/B for a wrong answer or a timing, and this section is its home.
+
+The kernels it retired are in KERNELS.md § Removed (`split`, `lines`).  The design record is
+[plans/181-compiled-stdlib.md](plans/181-compiled-stdlib.md).
+
+**Open work.**  Each of these still runs the loft bodies interpreted — correct, not yet fast:
+`loft test`'s in-process runner, the REPL, the debugger, a host embedding, and the browser
+(no bridge dispatcher).  If regenerating the file after a code-generator change proves frequent,
+generating it in the build is the fix.
+
 ## Measuring an interpreter change: pin the layout first
 
 Two ordinary builds of the interpreter can differ by 15 % on one loop with IDENTICAL instruction

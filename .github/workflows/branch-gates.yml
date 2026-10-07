@@ -23,12 +23,15 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   LOFT_TMPDIR: ${{ github.workspace }}/target/loft-native-cache
 
 jobs:
   quick-suite:
+    # @windows-exempt: a Linux subset of the Test job; the full suite runs on windows-latest daily (ci.yml test)
     name: quick suite (wrap + issues, ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 30

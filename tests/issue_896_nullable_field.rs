@@ -20,11 +20,11 @@
 //! `OpClearKeyed` that keeps a replaced `Some` from leaking), a struct copy carrying the
 //! discriminant, and the value crossing a call in both directions.
 
+use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 fn run(args: &[&str], prog: &Path) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(args)
         .arg(prog)
         .env("LOFT_NO_CACHE", "1")
@@ -37,14 +37,17 @@ fn run(args: &[&str], prog: &Path) -> (bool, String) {
 }
 
 fn rustc_available() -> bool {
-    Command::new("rustc").arg("--version").output().is_ok()
+    loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 fn probe(name: &str, body: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_issue896_probe");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{name}.loft"));
-    std::fs::write(&path, body).expect("write probe");
+    fa::write(&path, body).expect("write probe");
     path
 }
 

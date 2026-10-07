@@ -36,26 +36,26 @@ enum Scanned {
 // `set_tokens` / `set_keywords` before the first `parse_string` or `parse_file` — they
 // are what makes this reusable for a language other than loft.
 pub struct Lexer {
-  file: text,
+  pub file: text,
   // we can switch files
-  data: text,
-  index: integer,
-  line: integer,
-  pos: integer,
-  start: integer,
+  pub data: text,
+  pub index: integer,
+  pub line: integer,
+  pub pos: integer,
+  pub start: integer,
   // the start of the last encountered token (till index)
   // @PLN116 — an enum field needs an explicit default (an enum's 0 is null, and a
   // non-null field may not hold null); `Unknown` is the honest "nothing scanned yet"
   // zero, and it is reset to `Unknown` at parse start (see `parse_string`) anyway.
-  scanned: Scanned = Unknown,
+  pub scanned: Scanned = Unknown,
   // the type of the last scanned thing or token
-  formatting: boolean,
+  pub formatting: boolean,
   // the last scan was a formatting expression
-  keywords: hash<SKeyword[name]>,
-  tokens: hash<SToken[start]>,
-  behind: boolean,
+  pub keywords: hash<SKeyword[name]>,
+  pub tokens: hash<SToken[start]>,
+  pub behind: boolean,
   // was the last comment behind code
-  comment: text, // the last encountered comment, dismissed when new code is parsed
+  pub comment: text, // the last encountered comment, dismissed when new code is parsed
 }
 // Only within a single file can we remember anchor points and return to them later.
 

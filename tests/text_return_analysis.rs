@@ -14,7 +14,7 @@
 //! Running the binary with `LOFT_TRA_DUMP=1` prints `TRA <fn> => <kind>` per
 //! text-returning fn (read-only; no codegen change).  This test diffs the two.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -55,7 +55,7 @@ fn expected_verdicts(corpus: &str) -> Vec<(String, String)> {
 #[test]
 fn text_return_analysis_matches_corpus() {
     let corpus = corpus_path();
-    let text = std::fs::read_to_string(&corpus).expect("read corpus.loft");
+    let text = fa::read_to_string(&corpus).expect("read corpus.loft");
     let expected = expected_verdicts(&text);
     assert!(
         expected.len() >= 15,
@@ -67,8 +67,8 @@ fn text_return_analysis_matches_corpus() {
     // deterministic channel (loft's stderr races with `process::exit` and
     // truncates unreliably).
     let dump = std::env::temp_dir().join(format!("loft_tra_{}.txt", std::process::id()));
-    let _ = std::fs::remove_file(&dump);
-    let out = Command::new(loft_bin())
+    let _ = fa::remove_file(&dump);
+    let out = loft::platform::process::harness_command(loft_bin())
         .env("LOFT_TRA_DUMP", &dump)
         // Force a fresh parse: the program cache is content-keyed, so a warm hit
         // would skip the parse (and the dump).
@@ -83,8 +83,8 @@ fn text_return_analysis_matches_corpus() {
         "corpus should run cleanly; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let dumped = std::fs::read_to_string(&dump).unwrap_or_default();
-    let _ = std::fs::remove_file(&dump);
+    let dumped = fa::read_to_string(&dump).unwrap_or_default();
+    let _ = fa::remove_file(&dump);
 
     // Collect `TRA <fn> => <verdict>` lines, stripping a leading `n_` so generic
     // monomorphs (n_f_*) match the source name.

@@ -8,6 +8,7 @@
 extern crate loft;
 
 use loft::diagnostics::Level;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use loft::platform::sep_str;
 use loft::scopes;
@@ -223,21 +224,23 @@ fn issue940_the_shadow_boundary_holds_on_both_backends() {
     let main = format!("tests{s}lib{s}issue940_main.loft");
     let libs = format!("tests{s}lib");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg(backend)
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            // This asserts on WARNINGS, which the parser produces.  The whole-program cache
-            // is default-on and a warm bundle replays the diagnostics it recorded — correct,
-            // but this test writes both source files fresh each run and then runs the same
-            // program twice (once per backend), so the second invocation must re-derive the
-            // warnings from THIS source rather than serve any earlier bundle.
-            .env("LOFT_NO_CACHE", "1")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg(backend)
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        // This asserts on WARNINGS, which the parser produces.  The whole-program cache
+        // is default-on and a warm bundle replays the diagnostics it recorded — correct,
+        // but this test writes both source files fresh each run and then runs the same
+        // program twice (once per backend), so the second invocation must re-derive the
+        // warnings from THIS source rather than serve any earlier bundle.
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
@@ -269,16 +272,18 @@ fn issue940_the_shadow_boundary_holds_on_both_backends() {
 #[test]
 fn issue940_the_lint_has_an_opt_out() {
     let s = sep_str();
-    let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--interpret")
-        .arg("--lib")
-        .arg(format!("tests{s}lib"))
-        .arg(format!("tests{s}lib{s}issue940_main.loft"))
-        .env("LOFT_ERRORS", "compact")
-        .env("LOFT_TIMEOUT", "180")
-        .env("LOFT_NO_SHADOWED_BY_METHOD", "1")
-        .output()
-        .expect("failed to invoke the loft binary");
+    let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_loft"
+    )))
+    .arg("--interpret")
+    .arg("--lib")
+    .arg(format!("tests{s}lib"))
+    .arg(format!("tests{s}lib{s}issue940_main.loft"))
+    .env("LOFT_ERRORS", "compact")
+    .env("LOFT_TIMEOUT", "180")
+    .env("LOFT_NO_SHADOWED_BY_METHOD", "1")
+    .output()
+    .expect("failed to invoke the loft binary");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -491,15 +496,17 @@ fn pln102_c98_a_local_may_shadow_a_library_function() {
     let main = format!("tests{s}lib{s}issue852_main.loft");
     let libs = format!("tests{s}lib");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg(backend)
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg(backend)
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             stdout.contains("turn=42 call=200 other=300"),
@@ -532,15 +539,17 @@ fn issue853_a_library_free_fn_outranks_a_stdlib_method_of_the_same_name() {
     let main = format!("tests{s}lib{s}issue853_main.loft");
     let libs = format!("tests{s}lib");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg(backend)
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg(backend)
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             stdout.contains("qualified=5 stdlib_free=3 stdlib_method=true"),
@@ -593,15 +602,17 @@ fn issue1080_a_module_reached_by_two_names_is_loaded_once() {
     let main = format!("tests{s}lib{s}issue1080_main.loft");
     let libs = format!("tests{s}lib{s}issue1080_pkg{s}src");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg(backend)
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg(backend)
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             stdout.contains("flat=7 inside=8"),
@@ -660,15 +671,15 @@ fn issue1080_two_different_files_of_one_name_are_still_distinct() {
 #[test]
 fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
     let dir = std::env::temp_dir().join("loft_issue1094");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let libs = dir.join("libs");
-    std::fs::create_dir_all(&libs).expect("libs");
-    std::fs::write(
+    fa::create_dir_all(&libs).expect("libs");
+    fa::write(
         libs.join("depa.loft"),
         "pub struct Frame { fa_x: float }\npub fn depa_helper() -> integer { 1 }\n",
     )
     .expect("depa");
-    std::fs::write(
+    fa::write(
         libs.join("depb.loft"),
         "pub struct Frame { fb_y: float }\npub fn takes_frame(f: Frame) -> float { f.fb_y }\n",
     )
@@ -676,16 +687,18 @@ fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
 
     let run = |name: &str, body: &str| -> String {
         let main = dir.join(name);
-        std::fs::write(&main, body).expect("main");
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--interpret")
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        fa::write(&main, body).expect("main");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -766,28 +779,30 @@ fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
 fn a_library_s_bounded_generic_does_not_swallow_a_same_named_struct() {
     let dir = std::env::temp_dir().join("loft_tv_bound_collision");
     let libdir = dir.join("lib");
-    std::fs::create_dir_all(&libdir).expect("create temp lib dir");
-    std::fs::write(
+    fa::create_dir_all(&libdir).expect("create temp lib dir");
+    fa::write(
         libdir.join("tvboundlib.loft"),
         "pub fn render<T: Printable>(v: T) -> text { \"<{v}>\" }\n",
     )
     .expect("write lib");
     let main = dir.join("main.loft");
-    std::fs::write(
+    fa::write(
         &main,
         "use tvboundlib::*;\nstruct T { z: integer }\nfn main() { println(\"[{T{z:9}}] {render(4)}\"); }\n",
     )
     .expect("write main");
-    let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--interpret")
-        .arg("--lib")
-        .arg(libdir.as_os_str())
-        .arg(main.as_os_str())
-        .output()
-        .expect("failed to invoke loft binary");
+    let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_loft"
+    )))
+    .arg("--interpret")
+    .arg("--lib")
+    .arg(libdir.as_os_str())
+    .arg(main.as_os_str())
+    .output()
+    .expect("failed to invoke loft binary");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         stdout.contains("[{z:9}]"),
         "the consumer's own `struct T` must render its fields, not empty; got stdout {stdout:?} stderr {stderr:?}"
@@ -818,19 +833,19 @@ fn a_library_s_bounded_generic_does_not_swallow_a_same_named_struct() {
 fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
     let dir = std::env::temp_dir().join("loft_two_lib_holder_namespace");
     let libdir = dir.join("lib");
-    std::fs::create_dir_all(&libdir).expect("create temp lib dir");
-    std::fs::write(
+    fa::create_dir_all(&libdir).expect("create temp lib dir");
+    fa::write(
         libdir.join("holdera.loft"),
         "pub fn show_a<T: Printable>(v: T) -> text { \"A<{v}>\" }\n",
     )
     .expect("write lib a");
-    std::fs::write(
+    fa::write(
         libdir.join("holderb.loft"),
         "pub fn show_b<T: Equatable>(a: T, b: T) -> boolean { a != b }\n",
     )
     .expect("write lib b");
     let main = dir.join("main.loft");
-    std::fs::write(
+    fa::write(
         &main,
         "use holdera::*;\n\
          use holderb::*;\n\
@@ -844,16 +859,18 @@ fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
          }\n",
     )
     .expect("write main");
-    let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--interpret")
-        .arg("--lib")
-        .arg(libdir.as_os_str())
-        .arg(main.as_os_str())
-        .output()
-        .expect("failed to invoke loft binary");
+    let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_loft"
+    )))
+    .arg("--interpret")
+    .arg("--lib")
+    .arg(libdir.as_os_str())
+    .arg(main.as_os_str())
+    .output()
+    .expect("failed to invoke loft binary");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         stdout.contains("[T<1>] A<4> true false T<1>"),
         "the consumer's own `to_text` and `OpEq` must win for its own type, and BOTH libraries' \
@@ -876,11 +893,11 @@ fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
 #[test]
 fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
     let tmp = std::env::temp_dir().join(format!("loft_c98_fac_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let pkg = |name: &str, entry: &str, inner: &str| {
         let d = tmp.join(name);
-        std::fs::create_dir_all(d.join("src")).expect("package dir");
-        std::fs::write(
+        fa::create_dir_all(d.join("src")).expect("package dir");
+        fa::write(
             d.join("loft.toml"),
             format!(
                 "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n\n\
@@ -888,8 +905,8 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
             ),
         )
         .expect("manifest");
-        std::fs::write(d.join(format!("src/{name}.loft")), entry).expect("entry");
-        std::fs::write(d.join("src/inner.loft"), inner).expect("module");
+        fa::write(d.join(format!("src/{name}.loft")), entry).expect("entry");
+        fa::write(d.join("src/inner.loft"), inner).expect("module");
         d
     };
     let fac = pkg(
@@ -909,8 +926,8 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
     );
     let run = |libs: &[&std::path::Path], program: &str| {
         let src = tmp.join("prog.loft");
-        std::fs::write(&src, program).expect("program");
-        let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_loft"));
+        fa::write(&src, program).expect("program");
+        let mut c = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         c.arg("--interpret").arg(&src);
         for l in libs {
             c.arg("--lib").arg(l);
@@ -969,7 +986,7 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
         &format!("use facp::*;\nuse fac2::*;\n{bare}"),
     );
     assert_eq!(out, "3\n", "`pub use inner::(Thing);` passes it on:\n{err}");
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A type named by a construction AND by a written annotation, and resolved by neither, is
@@ -984,10 +1001,10 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
 #[test]
 fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
     let dir = std::env::temp_dir().join(format!("loft_c98_stub_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let libs = dir.join("libs");
-    std::fs::create_dir_all(&libs).expect("libs");
-    std::fs::write(
+    fa::create_dir_all(&libs).expect("libs");
+    fa::write(
         libs.join("lat.loft"),
         "pub struct Hex { q: integer, r: integer }\n\
          pub fn nb(h: Hex, d: integer) -> Hex { Hex { q: h.q + d, r: h.r } }\n",
@@ -995,16 +1012,18 @@ fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
     .expect("lat");
     let run = |name: &str, body: &str| -> (bool, String) {
         let main = dir.join(name);
-        std::fs::write(&main, body).expect("main");
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--interpret")
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        fa::write(&main, body).expect("main");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -1046,7 +1065,7 @@ fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
         ok && cured.contains("3 6"),
         "the qualified spelling is the cure:\n{cured}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// A CONSTANT behind a bare `use` gets the same cure as a function or a type (@C98): the
@@ -1055,22 +1074,24 @@ fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
 #[test]
 fn a_constant_behind_a_bare_use_names_the_import_cure() {
     let dir = std::env::temp_dir().join(format!("loft_c98_const_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let libs = dir.join("libs");
-    std::fs::create_dir_all(&libs).expect("libs");
-    std::fs::write(libs.join("clk.loft"), "pub const UNITS: integer = 3000;\n").expect("clk");
+    fa::create_dir_all(&libs).expect("libs");
+    fa::write(libs.join("clk.loft"), "pub const UNITS: integer = 3000;\n").expect("clk");
     let run = |name: &str, body: &str| -> (bool, String) {
         let main = dir.join(name);
-        std::fs::write(&main, body).expect("main");
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--interpret")
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        fa::write(&main, body).expect("main");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -1095,7 +1116,7 @@ fn a_constant_behind_a_bare_use_names_the_import_cure() {
         ok && cured.contains('3'),
         "the qualified spelling is the cure:\n{cured}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// loft#1769 — a name TWO plain imports deep names the loaded library that has it.  `main`
@@ -1108,9 +1129,9 @@ fn a_constant_behind_a_bare_use_names_the_import_cure() {
 #[test]
 fn a_name_two_imports_deep_names_the_library_that_has_it() {
     let dir = std::env::temp_dir().join(format!("loft_1769_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let libs = dir.join("libs");
-    std::fs::create_dir_all(&libs).expect("libs");
+    fa::create_dir_all(&libs).expect("libs");
     for (name, body) in [
         ("top", "use mid::*;\npub fn t() -> integer { m() + 1 }\n"),
         (
@@ -1125,20 +1146,22 @@ fn a_name_two_imports_deep_names_the_library_that_has_it() {
         ),
         ("twin", "pub struct Pair { q: integer }\n"),
     ] {
-        std::fs::write(libs.join(format!("{name}.loft")), body).expect("lib");
+        fa::write(libs.join(format!("{name}.loft")), body).expect("lib");
     }
     let run = |name: &str, body: &str| -> (bool, String) {
         let main = dir.join(name);
-        std::fs::write(&main, body).expect("main");
-        let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-            .arg("--interpret")
-            .arg("--lib")
-            .arg(&libs)
-            .arg(&main)
-            .env("LOFT_ERRORS", "compact")
-            .env("LOFT_TIMEOUT", "180")
-            .output()
-            .expect("failed to invoke the loft binary");
+        fa::write(&main, body).expect("main");
+        let out = loft::platform::process::harness_command(std::path::PathBuf::from(env!(
+            "CARGO_BIN_EXE_loft"
+        )))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libs)
+        .arg(&main)
+        .env("LOFT_ERRORS", "compact")
+        .env("LOFT_TIMEOUT", "180")
+        .output()
+        .expect("failed to invoke the loft binary");
         let text = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
@@ -1198,7 +1221,7 @@ fn a_name_two_imports_deep_names_the_library_that_has_it() {
         !ok && text.contains("Undefined type Pair") && !text.contains("it is in `"),
         "two libraries declare it, so no cure is guessed:\n{text}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// A library directory's HIDDEN entries are no part of it (loft#1761): `.loft/` is the cache a
@@ -1207,16 +1230,16 @@ fn a_name_two_imports_deep_names_the_library_that_has_it() {
 #[test]
 fn a_hidden_directory_in_a_library_is_not_loaded() {
     let dir = std::env::temp_dir().join(format!("loft_hidden_dir_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join(".loft").join("cache")).unwrap();
-    std::fs::create_dir_all(dir.join("sub")).unwrap();
-    std::fs::write(dir.join("a.loft"), "pub fn hd_visible() -> integer { 1 }\n").unwrap();
-    std::fs::write(
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(dir.join(".loft").join("cache")).unwrap();
+    fa::create_dir_all(dir.join("sub")).unwrap();
+    fa::write(dir.join("a.loft"), "pub fn hd_visible() -> integer { 1 }\n").unwrap();
+    fa::write(
         dir.join("sub").join("b.loft"),
         "pub fn hd_nested() -> integer { 2 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dir.join(".loft").join("cache").join("c.loft"),
         "pub fn hd_hidden() -> integer { 3 }\n",
     )
@@ -1224,7 +1247,7 @@ fn a_hidden_directory_in_a_library_is_not_loaded() {
     let mut p = Parser::new();
     p.parse_dir("default", true, false).unwrap();
     p.parse_dir(&dir.to_string_lossy(), false, false).unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert_ne!(
         p.data.def_nr("n_hd_visible"),
         u32::MAX,

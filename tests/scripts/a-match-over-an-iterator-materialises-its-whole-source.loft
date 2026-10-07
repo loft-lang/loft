@@ -9,14 +9,11 @@
 //
 // ⚠ What it deliberately does NOT contain is the case the rule is about.  `(P-IterBound)` says
 // a repetition over an iterator is *"bounded by `max_lookahead`; exceeding it is a DEFINED
-// runtime error (never a hang) — preserving termination"*, and measured 2026-09-25 there is no
-// bound: an ENDLESS source reaches 696 MB in 13 s on `--interpret` and 2.13 GB in 18 s on
-// `--native`, ended only by `LOFT_TIMEOUT` and an external `ulimit -v` respectively.  That cell
-// cannot live in the corpus — it would hang the suite and threaten the box, and a time bound
-// does not bound memory.  It is `D-match-6` / loft#1678, with the repro in the issue.
-//
-// So this file is the CONTROL half, and it is the half that says what the cure must not break:
-// when a ceiling lands, every count below must still answer exactly as it does now.
+// runtime error (never a hang) — preserving termination"*.  An ENDLESS source cannot live in
+// the corpus at the default bound of one million, so that cell is
+// `tests/exit_codes.rs::a_match_over_an_iterator_stops_at_max_lookahead`, which lowers the
+// bound with `LOFT_MAX_LOOKAHEAD` (D-match-6 / loft#1678, closed).  This file is the CONTROL
+// half: the ceiling must not change any count below.
 //
 // Axes it MOVES:  the repetition's shape (whole-source `( V )*`, and a fixed head before the
 //                 run) and source length (empty, one, and four thousand).
@@ -30,9 +27,9 @@
 //                 repetition at all.  Written as a cell first, and it did not compile.
 //
 // @falsified-at: not applicable — this file guards behaviour that is CORRECT today and is not
-//   the fix for any open defect.  It is the control that a future `max_lookahead` must leave
-//   alone, so there is no build on which it is expected to fail.  Scored by construction
-//   instead: each count is hand-computed from the generator's own loop bound, and
+//   the fix for any open defect.  It is the control that `max_lookahead` must leave alone, so
+//   there is no build on which it is expected to fail.  Scored by construction instead: each
+//   count is hand-computed from the generator's own loop bound, and
 //   `test_a_four_thousand_element_source_keeps_every_element` fails if the materialisation
 //   drops or duplicates even one.
 //

@@ -21,8 +21,8 @@
 //! `test`, beside a `test_*` is not a test — the run says `ok` having never called it. A
 //! camel-case `testDouble` cannot reach that trap, because loft refuses the NAME.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -36,11 +36,11 @@ fn run_tests(case: &str, source: &str, extra: &[&str]) -> String {
 /// [`run_tests`] with environment variables set for the child.
 fn run_tests_env(case: &str, source: &str, extra: &[&str], env: &[(&str, &str)]) -> String {
     let dir = std::env::temp_dir().join(format!("loft_discovery_{case}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("case dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("case dir");
     let file = dir.join("subject.loft");
-    std::fs::write(&file, source).expect("source");
-    let out = Command::new(loft_bin())
+    fa::write(&file, source).expect("source");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--tests")
         .args(extra)
         .arg("subject.loft")
@@ -54,7 +54,7 @@ fn run_tests_env(case: &str, source: &str, extra: &[&str], env: &[(&str, &str)])
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     combined
 }
 
@@ -157,7 +157,7 @@ fn the_native_entry_point_runs_the_same_set() {
 }
 
 fn rustc_available() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
@@ -168,7 +168,7 @@ fn rustc_available() -> bool {
 #[test]
 fn the_corpus_witness_reports_the_name_based_count() {
     let witness = Path::new("tests/scripts/1010-test-runner-discovery.loft");
-    let source = std::fs::read_to_string(witness).expect("the discovery witness");
+    let source = fa::read_to_string(witness).expect("the discovery witness");
     let report = run_tests("witness", &source, &[]);
     assert_eq!(
         ran_set(&report),

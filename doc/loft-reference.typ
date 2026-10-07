@@ -6980,7 +6980,7 @@ Calling the inner function directly does the same thing, and calling it twice is
 
 Every language surface and every part of the toolchain the catalogue tracks, in one list.  Each entry has a page of its own in `doc/features/` in the repository, where `\@F2` is `F2.md`.
 
-The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 76 of the 90 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
+The two halves read differently.  An `\@F` page says what the feature is and how it aids you, and 77 of the 91 carry a runnable example; the rest name what demonstrates them instead, because a loft program cannot run the compiler that runs it.  An `\@I` page says what the part does and where it lives in the source — it describes how loft is built, not something you write.
 
 The catalogue is generated from the `loft-lang/features` issue tracker, which is the single source of truth: every entry is an issue, and `make features-check` regenerates this page and fails on any difference.  A feature you can name and cannot find below is missing from the TRACKER — that is a gap in the catalogue rather than a gap in loft, and the chapters of this reference are the wider list.
 
@@ -7076,6 +7076,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F123\*\* — Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view
 - \*\*\@F124\*\* — Operators on a program's own type — `operator compare`, `plus`, `minus`, `times`, `negate`, `divided\_by`, `remainder`, `to\_\<type\>`
 - \*\*\@F125\*\* — Text slicing — `s\[a..b\]`, `s\[a..\]`, `s\[..b\]`, `s\[i\]` (byte offsets; `char\_slice` for characters)
+- \*\*\@F126\*\* — A store's failure arm — `place = value else { … }` runs when the write did not land
 
 === Tooling and infrastructure
 
@@ -8734,8 +8735,8 @@ Wraps a field value in a type-discriminated enum for compile-time field iteratio
 
 ```rust
 pub struct StructField {
-  name: text,
-  value: FieldValue,
+  pub name: text,
+  pub value: FieldValue,
   // Was the field DECLARED nullable (`text?` rather than `text`)?
   //
   // The payload variants above are typed non-null, and `τ?` shares `τ`'s
@@ -8746,7 +8747,7 @@ pub struct StructField {
   //
   // Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:
   // the two field lists describe the same declaration and must agree.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 ```
 
@@ -8794,8 +8795,8 @@ Types and functions for reading and writing files. A File value is obtained via 
 
 ```rust
 pub struct EnvVariable {
-  name: text,
-  value: text,
+  pub name: text,
+  pub value: text,
 }
 ```
 
@@ -8834,14 +8835,14 @@ True when the result is `FileResult.Ok`. Use to test a file op for success.
 
 ```rust
 pub struct File {
-  path: text,
+  pub path: text,
 
-  size: integer,
+  pub size: integer,
 
   // A fresh File reads as `NotExists` until `file()` has determined the real format for
   // the path, so this default is a placeholder rather than a claim about the path — it is
   // overwritten before any read.
-  format: Format = NotExists,
+  pub format: Format = NotExists,
 
   ref: i32?,
 
@@ -8966,10 +8967,10 @@ pub fn read_bytes(path: text) -> vector<u8> ?fs#read
 Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `\[\]`); discharge with `?? \[\]` to keep the old shape.  Binary-exact (round-trips with write\_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.
 
 ```rust
-pub fn file_map(path: text) -> vector<u8> ?fs#read
+pub fn file_map(path: text) -> const vector<u8> ?fs#read
 ```
 
-Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. A WRITE, to it or a slice, is refused at run time: copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
+Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. The vector is `const`: a WRITE, to it or a slice, is refused when the program is compiled — copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
 
 ```rust
 pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update
@@ -9497,12 +9498,12 @@ Build a one-character text from a Unicode CODE POINT — the inverse of the `ch 
 pub enum ArgValue {
   NullVal,
   BoolVal { b: boolean },
-  IntVal { n: integer },
-  LongVal { n: integer },
+  IntVal { pub n: integer },
+  LongVal { pub n: integer },
   FloatVal { f: float },
   SingleVal { f: single },
   CharVal { c: character },
-  TextVal { t: text },
+  TextVal { pub t: text },
   RefVal { store: integer, rec: integer, pos: integer },
   FnVal { d_nr: integer },
   OtherVal { description: text },
@@ -9513,9 +9514,9 @@ Typed union of inspectable argument/variable values. Each variant wraps one prim
 
 ```rust
 pub struct ArgInfo {
-  name: text,
-  type_name: text,
-  value: ArgValue,
+  pub name: text,
+  pub type_name: text,
+  pub value: ArgValue,
 }
 ```
 
@@ -9523,9 +9524,9 @@ One function argument in a stack frame.
 
 ```rust
 pub struct VarInfo {
-  name: text,
+  pub name: text,
   type_name: text,
-  value: ArgValue,
+  pub value: ArgValue,
 }
 ```
 
@@ -9533,11 +9534,11 @@ One local variable or parameter in a stack frame (see `stack\_trace`).
 
 ```rust
 pub struct StackFrame {
-  function: text,
+  pub function: text,
   file: text,
-  line: integer,
-  arguments: vector<ArgInfo>,
-  variables: vector<VarInfo>,
+  pub line: integer,
+  pub arguments: vector<ArgInfo>,
+  pub variables: vector<VarInfo>,
 }
 ```
 
@@ -9571,8 +9572,8 @@ pub enum JsonValue {
   JBool { value: boolean },
   JNumber { value: float },
   JString { value: text },
-  JArray { items: vector<JsonValue> },
-  JObject { fields: vector<JsonField> },
+  JArray { pub items: vector<JsonValue> },
+  JObject { pub fields: vector<JsonField> },
   JInteger { value: integer },
 }
 ```
@@ -9582,8 +9583,8 @@ Typed union of JSON values.  The discriminant (1..7) picks the active variant; v
 
 ```rust
 pub struct JsonField {
-  name: text,
-  value: JsonValue,
+  pub name: text,
+  pub value: JsonValue,
 }
 ```
 
@@ -9779,19 +9780,19 @@ These are STORAGE kinds, because storage is what the descriptor records. A narro
 
 ```rust
 pub struct FieldInfo {
-  name: text,
+  pub name: text,
   /// The field type's name, as the store records it.
-  type_name: text,
+  pub type_name: text,
   /// Byte offset of the field within its record.
-  position: integer,
-  kind: TypeKind,
+  pub position: integer,
+  pub kind: TypeKind,
   /// Was the field DECLARED nullable (`text?` rather than `text`)?
   ///
   /// Not a layout fact — a nullable field occupies the same bytes and spells an
   /// absent value with a sentinel — so nothing in the stored bytes implies it,
   /// and it reaches you only because the compiler records it. It is what a
   /// generated `CREATE TABLE` needs for `NOT NULL`.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 ```
 
@@ -9816,19 +9817,19 @@ WHICH keyed collection a type is — the shape of its lookup.
 
 ```rust
 pub struct KeyInfo {
-  name: text,
+  pub name: text,
   /// Byte offset of this field within the ELEMENT record — the same number the
   /// element type's `FieldInfo.position` carries, so a caller joins the two by
   /// VALUE rather than by matching names. A name is a display fact; the
   /// position is what the collection actually keys on.
-  position: integer,
+  pub position: integer,
   /// Does the collection order this key ascending?
   ///
   /// `true` for a kind that has no order of its own (`hash`, `radix`), and for a
   /// `trie`, whose single key IS ordered ascending by byte. Only a kind that can
   /// be declared descending ever answers `false`. Match `collection` first where the
   /// difference between "ascending" and "unordered" matters.
-  ascending: boolean,
+  pub ascending: boolean,
 }
 ```
 
@@ -9836,9 +9837,9 @@ One key field of a keyed collection.
 
 ```rust
 pub struct VariantInfo {
-  name: text,
+  pub name: text,
   /// The discriminant this variant is stored as. Never 0 — 0 means absent.
-  tag: integer,
+  pub tag: integer,
 }
 ```
 
@@ -9846,16 +9847,16 @@ One variant of an enum.
 
 ```rust
 pub struct TypeInfo {
-  name: text,
-  kind: TypeKind,
+  pub name: text,
+  pub kind: TypeKind,
   /// Bytes one record of this type occupies; 0 for a type with no record.
-  size: integer,
-  const fields: vector<FieldInfo>,
-  const variants: vector<VariantInfo>,
+  pub size: integer,
+  pub const fields: vector<FieldInfo>,
+  pub const variants: vector<VariantInfo>,
   /// For a vector or a keyed collection, the element type's name.
-  element: text,
+  pub element: text,
   /// For a keyed collection, which of the six it is; `NotKeyed` otherwise.
-  collection: CollectionKind,
+  pub collection: CollectionKind,
   /// The key fields of a keyed collection, in KEY ORDER — the order a composite
   /// lookup binds them in, which is why it is a vector and not a set.
   ///
@@ -9864,7 +9865,7 @@ pub struct TypeInfo {
   /// keys through its `Some` payload. Empty rather than partial is deliberate —
   /// a query built from half a composite key is a WRONG query, not a narrower
   /// one, so a key list is delivered whole or not at all.
-  const keys: vector<KeyInfo>,
+  pub const keys: vector<KeyInfo>,
 }
 ```
 
@@ -9896,7 +9897,7 @@ Unlike `type\_of`, no parser intercept: the name is a RUNTIME value, so the look
 pub struct ValueInfo {
   /// What the type's own descriptor says lives at that position — never what
   /// the caller expected to find there.
-  kind: TypeKind,
+  pub kind: TypeKind,
   /// The SCALAR at that position holds loft's NULL.
   ///
   /// Separate from the payload because a null is not a value a payload can
@@ -9907,10 +9908,10 @@ pub struct ValueInfo {
   /// `false` for a `kind` that has no scalar reading and for `OtherKind` — a
   /// field that was never read is not a field that read as null, and those are
   /// three answers rather than two.
-  is_null: boolean,
-  i: integer,
-  f: float,
-  t: text,
+  pub is_null: boolean,
+  pub i: integer,
+  pub f: float,
+  pub t: text,
 }
 ```
 

@@ -6,6 +6,7 @@
 //! through `push_frame`.  A new entry path that pushed a frame itself would run the function's
 //! operators without that room.  The values are guarded by
 //! `tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft`.
+use loft::file_access as fa;
 use std::path::Path;
 
 #[test]
@@ -14,12 +15,12 @@ fn a_frame_reaches_the_call_stack_only_through_push_frame() {
     let mut sites = Vec::new();
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read src") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
+        for entry in fa::read_dir(&dir).expect("read src") {
+            let path = entry.os_spelling();
+            if fa::is_dir(&path) {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let text = std::fs::read_to_string(&path).expect("read file");
+            } else if fa::has_extension(&path, "rs") {
+                let text = fa::read_to_string(&path).expect("read file");
                 for (n, line) in text.lines().enumerate() {
                     let code = line.trim_start();
                     if !code.starts_with("//") && code.contains("call_stack.push(") {
@@ -47,7 +48,7 @@ fn a_frame_reaches_the_call_stack_only_through_push_frame() {
 fn the_guard_program_holds_every_frame_inside_its_room() {
     let file = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft");
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_HEADROOM_VERIFY", "1")

@@ -22,8 +22,10 @@
 //! Probe 5 — UDP on the port a TCP listener already holds (the 05a auto-path
 //!           binds both).  Different protocols, so unix allows it; this asks
 //!           what Windows does.
+// @PLN184 approved exemption (owner, 2026-10-07): a Windows-only probe crate by design (windows-probe workflow)
 #![cfg(windows)]
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
@@ -250,7 +252,7 @@ const ROLE_PIDFILE: &str = "LOFT_WINPROBE_PIDFILE";
 /// Re-invoke this test binary as `role`, running only the helper cell.
 fn spawn_role(role: &str, port: u16) -> std::process::Child {
     let exe = std::env::current_exe().expect("current_exe");
-    let mut cmd = std::process::Command::new(exe);
+    let mut cmd = loft::platform::process::harness_command(exe);
     cmd.args(["--exact", "winprobe_role_helper", "--nocapture"])
         .env(ROLE, role)
         .env(ROLE_PORT, port.to_string())
@@ -281,7 +283,7 @@ fn winprobe_role_helper() {
         // The real server: hold the port until killed.
         "grandchild" => {
             if let Ok(pidfile) = std::env::var(ROLE_PIDFILE) {
-                std::fs::write(pidfile, std::process::id().to_string()).expect("pid file");
+                fa::write(pidfile, std::process::id().to_string()).expect("pid file");
             }
             let listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind");
             let deadline = Instant::now() + Duration::from_secs(120);
@@ -305,7 +307,7 @@ fn winprobe_role_helper() {
 fn probe_child_kill_reaches_the_grandchild() {
     let port = 18203u16;
     let pidfile = std::env::temp_dir().join(format!("loft_winprobe_4a_{}.pid", std::process::id()));
-    let _ = std::fs::remove_file(&pidfile);
+    let _ = fa::remove_file(&pidfile);
     // SAFETY: set before the child is spawned, and no other thread of this test reads or
     // writes the environment; the child and grandchild inherit it.
     unsafe { std::env::set_var(ROLE_PIDFILE, &pidfile) };
@@ -329,14 +331,14 @@ fn probe_child_kill_reaches_the_grandchild() {
     // the child reaches nothing here, because the child is already dead and the tree walk
     // goes by parent link (probe 4b is that ordering, the right way round).
     if !reaped {
-        let pid = std::fs::read_to_string(&pidfile).unwrap_or_default();
+        let pid = fa::read_to_string(&pidfile).unwrap_or_default();
         let pid = pid.trim();
         assert!(
             !pid.is_empty(),
             "the grandchild wrote no pid to {} — it cannot be cleaned up",
             pidfile.display()
         );
-        let _ = std::process::Command::new("taskkill")
+        let _ = loft::platform::process::harness_command("taskkill")
             .args(["/F", "/PID", pid])
             .output();
         assert!(
@@ -344,7 +346,7 @@ fn probe_child_kill_reaches_the_grandchild() {
             "the orphaned grandchild (pid {pid}) still holds port {port} after taskkill"
         );
     }
-    let _ = std::fs::remove_file(&pidfile);
+    let _ = fa::remove_file(&pidfile);
 }
 
 /// Probe 4b — the sequence `Repl::stop_game` runs on Windows, in its exact order:
@@ -364,7 +366,7 @@ fn probe_taskkill_tree_reaches_the_grandchild() {
         await_port(port, true, Duration::from_secs(30)),
         "the grandchild never took port {port} — the probe measured nothing"
     );
-    let out = std::process::Command::new("taskkill")
+    let out = loft::platform::process::harness_command("taskkill")
         .args(["/T", "/F", "/PID", &child.id().to_string()])
         .output()
         .expect("taskkill runs");

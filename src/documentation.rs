@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::fs::{DirEntry, File};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
@@ -25,20 +24,18 @@ struct Topic {
 #[must_use]
 fn gather_topics() -> Vec<Topic> {
     let mut result: Vec<Topic> = Vec::new();
-    let dir = std::fs::read_dir("tests/docs").unwrap();
-    let mut entries: Vec<_> = dir.filter_map(Result::ok).collect();
-    entries.sort_by_key(DirEntry::file_name);
+    // Sorted by name: every entry shares the directory.
+    let entries = crate::file_access::read_dir("tests/docs").unwrap();
     entries
         .iter()
-        .map(DirEntry::path)
+        .map(crate::file_access::PathText::os_spelling)
         .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+            crate::file_access::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft"))
         })
         .for_each(|file| {
-            let file_handle = File::open(file.clone()).expect("failed to open file");
+            let file_handle = crate::file_access::open(&file).expect("failed to open file");
             let reader = BufReader::new(file_handle);
-            let filename = file.file_stem().unwrap().to_string_lossy().into_owned();
+            let filename = crate::file_access::file_stem(&file).unwrap();
             let mut name = String::new();
             let mut title = String::new();
             reader.lines().for_each(|line_result| {
@@ -78,13 +75,8 @@ pub fn generate_docs<S: std::hash::BuildHasher>(
         if entry.filename.starts_with("00-") {
             continue;
         }
-        let stem = entry
-            .file
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
-        if let Ok(source) = std::fs::read_to_string(&entry.file) {
+        let stem = crate::file_access::file_stem(&entry.file).unwrap_or_default();
+        if let Ok(source) = crate::file_access::read_to_string(&entry.file) {
             let html = render_doc_page(
                 &source,
                 &entry.name,
@@ -94,7 +86,7 @@ pub fn generate_docs<S: std::hash::BuildHasher>(
                 stdlib_sections,
                 link_map,
             );
-            std::fs::write(format!("doc/{stem}.html"), html)?;
+            crate::file_access::write(format!("doc/{stem}.html"), html)?;
         }
     }
     Ok(())
@@ -109,7 +101,7 @@ fn flush_intro_para(result: &mut String, para_buf: &mut String) {
 
 fn index_intro(topic: &Topic) -> std::io::Result<String> {
     let mut result = String::new();
-    let file = File::open(&topic.file).expect("failed to open file");
+    let file = crate::file_access::open(&topic.file).expect("failed to open file");
     let source = BufReader::new(file);
     let mut in_header = true;
     let mut in_list = false;
@@ -487,7 +479,7 @@ fn write_index(
 </body>\n\
 </html>\n"
     );
-    std::fs::write("doc/index.html", html)
+    crate::file_access::write("doc/index.html", html)
 }
 
 fn html_esc(s: &str) -> String {
@@ -1235,12 +1227,11 @@ pub const SITE_OG_IMAGE: &str = "https://loft-lang.org/loft/images/hero-brick-bu
 /// # Errors
 /// Returns the I/O error if either file cannot be written.
 pub fn generate_sitemap() -> std::io::Result<usize> {
-    let mut pages: Vec<String> = std::fs::read_dir("doc")?
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| {
-            let p = e.path();
-            if p.extension().is_some_and(|x| x == "html") {
-                p.file_name().map(|n| n.to_string_lossy().into_owned())
+    let mut pages: Vec<String> = crate::file_access::read_dir("doc")?
+        .iter()
+        .filter_map(|p| {
+            if crate::file_access::extension(p).is_some_and(|x| x == "html") {
+                p.file_name().map(str::to_string)
             } else {
                 None
             }
@@ -1266,9 +1257,9 @@ pub fn generate_sitemap() -> std::io::Result<usize> {
         let _ = writeln!(xml, "  <url><loc>{loc}</loc></url>");
     }
     xml.push_str("</urlset>\n");
-    std::fs::write("doc/sitemap.xml", xml)?;
+    crate::file_access::write("doc/sitemap.xml", xml)?;
 
-    std::fs::write(
+    crate::file_access::write(
         "doc/robots.txt",
         format!("User-agent: *\nAllow: /\nSitemap: {SITE_BASE}sitemap.xml\n"),
     )?;
@@ -1418,7 +1409,7 @@ pub fn get_topic_sources() -> Vec<TopicSource> {
         .into_iter()
         .filter(|t| !t.filename.starts_with("00-"))
         .filter_map(|t| {
-            std::fs::read_to_string(&t.file)
+            crate::file_access::read_to_string(&t.file)
                 .ok()
                 .map(|source| TopicSource {
                     filename: t.filename,
@@ -1973,15 +1964,15 @@ pub fn extract_api_items(content: &str) -> Vec<crate::registry_index::ApiItem> {
 #[must_use]
 pub fn pkg_api_items(pkg_dir: &std::path::Path) -> Vec<crate::registry_index::ApiItem> {
     let mut items = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(pkg_dir.join("src")) {
+    if let Ok(rd) = crate::file_access::read_dir(pkg_dir.join("src")) {
         let mut srcs: Vec<std::path::PathBuf> = rd
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+            .iter()
+            .map(crate::file_access::PathText::os_spelling)
+            .filter(|p| crate::file_access::extension(p).is_some_and(|x| x == "loft"))
             .collect();
         srcs.sort();
         for f in srcs {
-            if let Ok(src) = std::fs::read_to_string(&f) {
+            if let Ok(src) = crate::file_access::read_to_string(&f) {
                 items.extend(extract_api_items(&src));
             }
         }
@@ -2046,18 +2037,14 @@ pub fn render_pkg_api_text(pkg_dir: &std::path::Path) -> std::io::Result<String>
     use std::fmt::Write as _;
 
     let manifest_path = pkg_dir.join("loft.toml");
-    let manifest = if manifest_path.exists() {
+    let manifest = if crate::file_access::exists(&manifest_path) {
         crate::manifest::read_manifest(&manifest_path.to_string_lossy()).unwrap_or_default()
     } else {
         crate::manifest::Manifest::default()
     };
-    let pkg_name = manifest.name.unwrap_or_else(|| {
-        pkg_dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned()
-    });
+    let pkg_name = manifest
+        .name
+        .unwrap_or_else(|| crate::file_access::file_name(pkg_dir).unwrap_or_default());
     let version = manifest.version.unwrap_or_else(|| "0.0.0".to_string());
 
     let mut out = String::new();
@@ -2066,22 +2053,22 @@ pub fn render_pkg_api_text(pkg_dir: &std::path::Path) -> std::io::Result<String>
     let _ = writeln!(out, "# use it with: use {pkg_name}::*;");
 
     let src_dir = pkg_dir.join("src");
-    let mut files: Vec<std::path::PathBuf> = match std::fs::read_dir(&src_dir) {
+    let mut files: Vec<std::path::PathBuf> = match crate::file_access::read_dir(&src_dir) {
         Ok(read) => read
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("loft"))
+            .iter()
+            .map(crate::file_access::PathText::os_spelling)
+            .filter(|p| crate::file_access::extension(p).as_deref() == Some("loft"))
             .collect(),
         Err(_) => Vec::new(),
     };
     files.sort();
     for file in files {
-        let content = std::fs::read_to_string(&file)?;
+        let content = crate::file_access::read_to_string(&file)?;
         let sections = parse_pkg_api(&content);
         if sections.iter().all(|s| s.items.is_empty()) {
             continue;
         }
-        let fname = file.file_name().unwrap_or_default().to_string_lossy();
+        let fname = crate::file_access::file_name(&file).unwrap_or_default();
         let _ = writeln!(out, "\n## src/{fname}");
         for section in sections {
             if section.items.is_empty() {
@@ -2122,36 +2109,32 @@ pub fn generate_pkg_docs(
     out_override: Option<&std::path::Path>,
 ) -> std::io::Result<()> {
     let manifest_path = pkg_dir.join("loft.toml");
-    let manifest = if manifest_path.exists() {
+    let manifest = if crate::file_access::exists(&manifest_path) {
         crate::manifest::read_manifest(&manifest_path.to_string_lossy()).unwrap_or_default()
     } else {
         crate::manifest::Manifest::default()
     };
-    let pkg_name = manifest.name.unwrap_or_else(|| {
-        pkg_dir
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned()
-    });
+    let pkg_name = manifest
+        .name
+        .unwrap_or_else(|| crate::file_access::file_name(pkg_dir).unwrap_or_default());
     let version = manifest.version.unwrap_or_else(|| "0.0.0".to_string());
 
     // Create the output directory.  A package the caller pointed at gets `doc/`
     // beside its source; an installed library is given a destination of its own
     // (loft#911) because its source tree is shared, immutable cache content.
     let out_dir = out_override.map_or_else(|| pkg_dir.join("doc"), std::path::Path::to_path_buf);
-    std::fs::create_dir_all(&out_dir)?;
+    crate::file_access::create_dir_all(&out_dir)?;
 
     // Copy style.css from the main doc directory if it exists.
     let main_style = std::path::Path::new("doc/style.css");
     let pkg_style = out_dir.join("style.css");
-    if main_style.exists() && !pkg_style.exists() {
-        std::fs::copy(main_style, &pkg_style)?;
+    if crate::file_access::exists(main_style) && !crate::file_access::exists(&pkg_style) {
+        crate::file_access::copy(main_style, &pkg_style)?;
     }
 
     // Gather topic pages from docs/*.loft
     let docs_dir = pkg_dir.join("docs");
-    let topics = if docs_dir.is_dir() {
+    let topics = if crate::file_access::is_dir(&docs_dir) {
         gather_pkg_topics(&docs_dir)
     } else {
         Vec::new()
@@ -2164,18 +2147,16 @@ pub fn generate_pkg_docs(
     // Parse API sections from src/*.loft
     let src_dir = pkg_dir.join("src");
     let mut all_api_sections = Vec::new();
-    if src_dir.is_dir() {
-        let mut src_files: Vec<_> = std::fs::read_dir(&src_dir)?
-            .filter_map(Result::ok)
+    if crate::file_access::is_dir(&src_dir) {
+        // Sorted by name: every entry shares the directory.
+        let src_files: Vec<_> = crate::file_access::read_dir(&src_dir)?
+            .into_iter()
             .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("loft"))
+                crate::file_access::extension(e).is_some_and(|ext| ext.eq_ignore_ascii_case("loft"))
             })
             .collect();
-        src_files.sort_by_key(std::fs::DirEntry::file_name);
         for entry in src_files {
-            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+            if let Ok(content) = crate::file_access::read_to_string(&entry) {
                 all_api_sections.extend(parse_pkg_api(&content));
             }
         }
@@ -2210,21 +2191,21 @@ pub fn generate_pkg_docs(
         description: &format!("The {pkg_name} package for Loft — API reference and guides."),
     };
     let index_html = page_html(&pkg_name, &nav, &pkg_name, &index_body, &index_meta);
-    std::fs::write(out_dir.join("index.html"), index_html)?;
+    crate::file_access::write(out_dir.join("index.html"), index_html)?;
 
     // Generate topic pages.
     let link_map: HashMap<String, String> = HashMap::new();
     for topic in &topics {
         let stem = &topic.filename;
         let nav = build_pkg_nav(&pkg_name, &topic_info, &section_names, stem);
-        if let Ok(source) = std::fs::read_to_string(&topic.file) {
+        if let Ok(source) = crate::file_access::read_to_string(&topic.file) {
             let body = render_topic_body(&source, &link_map);
             let topic_meta = PageMeta {
                 slug: &topic.filename,
                 description: &topic.title,
             };
             let html = page_html(&topic.name, &nav, &topic.name, &body, &topic_meta);
-            std::fs::write(out_dir.join(format!("{stem}.html")), html)?;
+            crate::file_access::write(out_dir.join(format!("{stem}.html")), html)?;
         }
     }
 
@@ -2243,7 +2224,7 @@ pub fn generate_pkg_docs(
             description: &sec_desc,
         };
         let html = page_html(&section.name, &nav, &section.name, &body, &sec_meta);
-        std::fs::write(out_dir.join(format!("{stem}.html")), html)?;
+        crate::file_access::write(out_dir.join(format!("{stem}.html")), html)?;
     }
 
     let topic_count = topics.len();
@@ -2262,27 +2243,19 @@ pub fn generate_pkg_docs(
 /// Gather topic files from a package's docs/ directory.
 fn gather_pkg_topics(docs_dir: &std::path::Path) -> Vec<Topic> {
     let mut result = Vec::new();
-    let Ok(dir) = std::fs::read_dir(docs_dir) else {
+    // Sorted by name: every entry shares the directory.
+    let Ok(entries) = crate::file_access::read_dir(docs_dir) else {
         return result;
     };
-    let mut entries: Vec<_> = dir.filter_map(Result::ok).collect();
-    entries.sort_by_key(DirEntry::file_name);
     for entry in entries {
-        let path = entry.path();
-        if !path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        {
+        let path = entry.os_spelling();
+        if !crate::file_access::extension(&path).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
             continue;
         }
-        let filename = path
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+        let filename = crate::file_access::file_stem(&path).unwrap_or_default();
         let mut name = filename.clone();
         let mut title = String::new();
-        if let Ok(file) = File::open(&path) {
+        if let Ok(file) = crate::file_access::open(&path) {
             let reader = BufReader::new(file);
             for line in reader.lines().map_while(Result::ok) {
                 if let Some(s) = line.strip_prefix("// @NAME: ") {

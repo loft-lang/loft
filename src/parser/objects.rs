@@ -493,6 +493,11 @@ impl Parser {
             return Type::Reference(self.context, crate::data::Deps::none());
         }
         let mut source = u16::MAX;
+        // Where the NAME of a call stands: `name_pos` for a bare `f(…)`, the token after `::`
+        // for a qualified `lib::f(…)` — the occurrence a hover or a rename resolves, and where
+        // a diagnostic about the call points (@PLN183: hovering `dbl` in `demo::dbl(2)` found
+        // nothing, the recorded span covering `dem` instead).
+        let mut call_pos = *name_pos;
         let qualified = self.lexer.has_token("::");
         let nm = if qualified {
             source = self.data.get_source(name);
@@ -504,7 +509,8 @@ impl Parser {
             if source == u16::MAX && self.own_lib.as_deref() == Some(name) {
                 source = self.data.source;
             }
-            if let Some(id) = self.lexer.has_identifier() {
+            if let Some((id, id_pos)) = self.lexer.has_identifier_pos() {
+                call_pos = id_pos;
                 // loft#1848 — `lib::name` reaches only what `use lib::*` would.
                 if source != u16::MAX
                     && source != self.data.source
@@ -687,7 +693,7 @@ impl Parser {
             && self.type_arguments_then_call()
         {
             if !self.first_pass {
-                let at = self.lexer.peek_pos().clone();
+                let at = *self.lexer.peek_pos();
                 diagnostic_at!(
                     self.lexer,
                     &at,
@@ -731,7 +737,7 @@ impl Parser {
                 });
                 *code = Value::Int(i32::from(tp));
             } else {
-                t = self.parse_call(code, source, &nm, name_pos);
+                t = self.parse_call(code, source, &nm, &call_pos);
             }
         } else if self.closure_param != u16::MAX
             && !self.first_pass
@@ -2311,7 +2317,7 @@ impl Parser {
         // @PLN165 D8 — a unit variant of an OPEN instance (`Hole` in a template returning
         // `Slot<T>`) has no layout: built by each monomorph, as a literal of one is.
         if variant_nr != u32::MAX && self.data.is_open_instance(variant_nr) {
-            let pos = self.lexer.pos().clone();
+            let pos = *self.lexer.pos();
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
@@ -2663,7 +2669,7 @@ impl Parser {
                 // * not a `Reference` — that struct-valued kind is refused at the
                 //   declaration with a message that names the real limitation, and one
                 //   rule keeps one home.
-                let decl_pos = self.data.def(d_nr).position().clone();
+                let decl_pos = *self.data.def(d_nr).position();
                 let use_pos = self.lexer.pos();
                 let reads_above_its_declaration = use_pos.file == decl_pos.file
                     && (use_pos.line, use_pos.pos) < (decl_pos.line, decl_pos.pos);
@@ -2742,7 +2748,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position.clone();
+                let before = self.lexer.peek().position;
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -2829,7 +2835,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position.clone();
+                let before = self.lexer.peek().position;
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -4904,6 +4910,9 @@ impl Parser {
             return false;
         }
         let nr = self.data.attr(td_nr, &field);
+        if nr != usize::MAX {
+            self.check_visibility("literal-field", td_nr, nr);
+        }
         if nr == usize::MAX {
             if let Some(s) = self.suggest_field_name(td_nr, &field) {
                 diagnostic!(
@@ -5041,9 +5050,9 @@ impl Parser {
                 // fix can spell `{}` -> `[]` as an edit.  Both are needed: `{ }` is the same
                 // construct with a gap, and a length assumed from the opener would leave the
                 // `}` behind.
-                let open = self.lexer.peek_pos().clone();
+                let open = *self.lexer.peek_pos();
                 let empty = self.lexer.has_token("{") && {
-                    let close = self.lexer.peek_pos().clone();
+                    let close = *self.lexer.peek_pos();
                     self.lexer.has_token("}") && {
                         braces_span = (open.line == close.line && close.pos >= open.pos)
                             .then(|| (open.line, open.pos, close.pos + 1 - open.pos));
@@ -5132,7 +5141,7 @@ impl Parser {
                         std::mem::replace(&mut self.rebuild_watch_hit, false),
                     )
                 });
-                let value_pos = self.lexer.peek_pos().clone();
+                let value_pos = *self.lexer.peek_pos();
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 if let Some((w, hit)) = outer_watch {
                     if self.rebuild_watch_hit {
@@ -5518,7 +5527,7 @@ impl Parser {
         self.lexer.token("}");
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
-        let pos = self.lexer.pos().clone();
+        let pos = *self.lexer.pos();
         fields.insert(1, Value::Text(pos.file.to_string()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
@@ -5588,7 +5597,7 @@ impl Parser {
                 if self.cyclic_instances.insert(inst) {
                     let shown =
                         Type::Reference(inst, crate::data::Deps::none()).source_name(&self.data);
-                    let at = self.data.def(inst).position().clone();
+                    let at = *self.data.def(inst).position();
                     self.lexer.pos_diagnostic(
                         Level::Error,
                         &at,
@@ -5703,6 +5712,13 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        let built = if self.data.def_type(td_nr) == DefType::EnumValue {
+            "variant"
+        } else {
+            "literal"
+        };
+        self.check_visibility(built, td_nr, usize::MAX);
+        self.refuse_building_a_name_only_type(td_nr);
         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
         // Allocate the `Some` record, set the discriminant present, and parse the body as a
@@ -5727,7 +5743,7 @@ impl Parser {
         // the cursor sits past the closing `}` — on the next statement for a one-line literal.
         // Keep the opening brace's position to point the caret at the literal it names
         // (DIAGNOSTICS.md § Adding a code, step 4).
-        let literal_pos = self.lexer.pos().clone();
+        let literal_pos = *self.lexer.pos();
         let mut list = Vec::new();
         let mut new_object = false;
         let mut in_place_var: Option<u16> = None;

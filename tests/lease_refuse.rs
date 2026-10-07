@@ -19,8 +19,8 @@
 //! it for all the others — an in-process cell could not have an on and an off case at once.
 //! `tests/post_scope_lints_under_tests.rs` is the same shape for the same reason.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 fn loft_bin() -> PathBuf {
@@ -38,8 +38,8 @@ fn check(tag: &str, source: &str, mode: &str, env: &[(&str, &str)]) -> (String, 
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, source).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&path, source).expect("write probe");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--check")
         .arg(mode)
         .arg(&path)
@@ -50,7 +50,7 @@ fn check(tag: &str, source: &str, mode: &str, env: &[(&str, &str)]) -> (String, 
         cmd.env(k, v);
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (
         format!(
             "{}{}",
@@ -381,10 +381,10 @@ fn no_message_names_a_compiler_temp() {
 fn a_compilation_is_judged_on_its_own_lease_records() {
     use loft::parser::Parser;
     let dir = std::env::temp_dir().join(format!("loft_lease_records_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let refusals = |name: &str, body: &str| -> Vec<String> {
         let src = dir.join(name);
-        std::fs::write(&src, program(body)).unwrap();
+        fa::write(&src, program(body)).unwrap();
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         p.parse(src.to_str().unwrap(), false);
@@ -415,5 +415,5 @@ fn a_compilation_is_judged_on_its_own_lease_records() {
         second.is_empty(),
         "the second program writes no copy, and was refused on the first program's record: {second:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

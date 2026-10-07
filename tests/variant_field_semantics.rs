@@ -21,8 +21,8 @@
 //!
 //! [`harness_can_fail`] is the control for the harness itself.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -34,7 +34,7 @@ fn probe() -> PathBuf {
 }
 
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -94,7 +94,7 @@ fn harness_can_fail() {
                print(\"980 variant field OK\\n\");\n}\n";
     let path =
         std::env::temp_dir().join(format!("loft_980_cannotpass_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     for backend in ["--interpret", "--native"] {
         let (ok, stdout, _) = run(backend, &path, &[]);
         assert!(
@@ -103,5 +103,5 @@ fn harness_can_fail() {
              cells above prove nothing"
         );
     }
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }

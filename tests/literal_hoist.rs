@@ -9,9 +9,9 @@
 //! declining shape (an append, a loop-var part, an element write, an escape, a heap
 //! element, a non-const param read, a sanitized-name collision) keeps the per-iteration
 //! build — and the switch (`LOFT_NO_LITERAL_HOIST=1`).  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-x-invariant-literal-cells.loft";
@@ -34,7 +34,8 @@ const EXPECTED: &[(&str, usize)] = &[
 const MARK: &str = "V-x invariant literal";
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -44,12 +45,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 fn guard_counts(rust: &str) -> HashMap<String, usize> {
@@ -83,7 +84,7 @@ fn each_cell_guards_exactly_the_builds_predicted() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(g, *guards, "{name}: guarded invariant-literal builds");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -95,5 +96,5 @@ fn the_switch_restores_the_per_iteration_build() {
         0,
         "under LOFT_NO_LITERAL_HOIST=1 every literal rebuilds per iteration"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

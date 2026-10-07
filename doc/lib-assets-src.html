@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>assets source</h1>
 <article>
-<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.3.1</p>
-<p class="lib-legend">7 file(s), 1277 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-assets.html">← assets</a> · <a href="lib-assets-api.html">API reference</a> · version 0.4.2</p>
+<p class="lib-legend">7 file(s), 1283 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -34,11 +34,11 @@
 <tr><td><code>Blob</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L42">42</a></td><td>—</td><td><a href="#src-assets-loft-L196">196</a> <a href="#src-assets-loft-L202">202</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L288">288</a> <a href="#src-assets-loft-L540">540</a> <a href="#src-assets-loft-L590">590</a> … (29 total)</td></tr>
 <tr><td><code>PageInfo</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L54">54</a></td><td>—</td><td><a href="#src-assets-loft-L158">158</a> <a href="#src-assets-loft-L340">340</a> <a href="#src-assets-loft-L366">366</a> <a href="#src-assets-loft-L423">423</a> <a href="#src-assets-loft-L448">448</a> <a href="#src-assets-loft-L559">559</a> … (15 total)</td></tr>
 <tr><td><code>Cell</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L68">68</a></td><td>—</td><td><a href="#src-assets-loft-L159">159</a> <a href="#src-assets-loft-L341">341</a> <a href="#src-assets-loft-L366">366</a> <a href="#src-assets-loft-L424">424</a> <a href="#src-assets-loft-L448">448</a> <a href="#src-assets-loft-L570">570</a> … (15 total)</td></tr>
-<tr><td><code>Seq</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L82">82</a></td><td>—</td><td><a href="#src-assets-loft-L160">160</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L17">17</a></td></tr>
-<tr><td><code>Def</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L98">98</a></td><td>—</td><td><a href="#src-assets-loft-L161">161</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L19">19</a> <a href="#tests-scene-loft-L21">21</a> <a href="#tests-scene-loft-L23">23</a> … (7 total)</td></tr>
-<tr><td><code>Anim</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L114">114</a></td><td>—</td><td><a href="#src-assets-loft-L162">162</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L27">27</a> <a href="#tests-worked-examples-loft-L74">74</a></td></tr>
-<tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a> <a href="#tests-worked-examples-loft-L21">21</a></td></tr>
-<tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L47">47</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (10 total)</td></tr>
+<tr><td><code>Seq</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L82">82</a></td><td>—</td><td><a href="#src-assets-loft-L160">160</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L53">53</a> <a href="#tests-scene-loft-L17">17</a></td></tr>
+<tr><td><code>Def</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L98">98</a></td><td>—</td><td><a href="#src-assets-loft-L161">161</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L53">53</a> <a href="#tests-scene-loft-L19">19</a> <a href="#tests-scene-loft-L21">21</a> <a href="#tests-scene-loft-L23">23</a> … (7 total)</td></tr>
+<tr><td><code>Anim</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L114">114</a></td><td>—</td><td><a href="#src-assets-loft-L162">162</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L53">53</a> <a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L27">27</a> <a href="#tests-worked-examples-loft-L74">74</a></td></tr>
+<tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L123">123</a></td><td>—</td><td><a href="#src-assets-loft-L163">163</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L53">53</a> <a href="#tests-scene-loft-L29">29</a> <a href="#tests-scene-loft-L38">38</a> <a href="#tests-worked-examples-loft-L21">21</a></td></tr>
+<tr><td><code>Placed</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L134">134</a></td><td>—</td><td><a href="#src-assets-loft-L164">164</a> <a href="#src-assets-loft-L590">590</a> <a href="#tests-layout-loft-L53">53</a> <a href="#tests-scene-loft-L30">30</a> <a href="#tests-scene-loft-L32">32</a> <a href="#tests-scene-loft-L34">34</a> … (10 total)</td></tr>
 <tr><td><code>Pack</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L157">157</a></td><td>—</td><td><a href="#src-assets-loft-L173">173</a> <a href="#src-assets-loft-L174">174</a> <a href="#src-assets-loft-L213">213</a> <a href="#src-assets-loft-L230">230</a> <a href="#src-assets-loft-L244">244</a> <a href="#src-assets-loft-L257">257</a> … (12 total)</td></tr>
 <tr><td><code>new_pack</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L173">173</a></td><td>—</td><td><a href="#tests-pack-loft-L52">52</a> <a href="#tests-pack-loft-L57">57</a> <a href="#tests-pack-loft-L88">88</a> <a href="#tests-pack-loft-L113">113</a> <a href="#tests-pack-loft-L128">128</a> <a href="#tests-pack-loft-L142">142</a> … (21 total)</td></tr>
 <tr><td><code>meta_path</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L183">183</a></td><td>—</td><td><a href="#src-assets-loft-L215">215</a> <a href="#src-assets-loft-L231">231</a> <a href="#src-assets-loft-L232">232</a> <a href="#tests-pack-loft-L43">43</a> <a href="#tests-pack-loft-L44">44</a> <a href="#tests-pack-loft-L165">165</a> … (8 total)</td></tr>
@@ -57,8 +57,8 @@
 <tr><td><code>texels</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L478">478</a></td><td>—</td><td><a href="#tests-page-loft-L26">26</a> <a href="#tests-page-loft-L91">91</a> <a href="#tests-proxy-loft-L79">79</a> <a href="#tests-worked-examples-loft-L45">45</a></td></tr>
 <tr><td><code>Tile</code> <span class="search-kind">struct</span></td><td><a href="#src-assets-loft-L494">494</a></td><td>—</td><td><a href="#src-assets-loft-L541">541</a> <a href="#tests-page-loft-L37">37</a> <a href="#tests-page-loft-L38">38</a> <a href="#tests-page-loft-L54">54</a> <a href="#tests-page-loft-L55">55</a> <a href="#tests-page-loft-L67">67</a> … (13 total)</td></tr>
 <tr><td><code>page_grid</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L540">540</a></td><td>—</td><td><a href="#tests-page-loft-L36">36</a> <a href="#tests-page-loft-L53">53</a> <a href="#tests-page-loft-L66">66</a> <a href="#tests-page-loft-L83">83</a> <a href="#tests-page-loft-L98">98</a> <a href="#tests-page-loft-L102">102</a> … (7 total)</td></tr>
-<tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L588">588</a></td><td>—</td><td><a href="#src-assets-loft-L612">612</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L39">39</a> <a href="#tests-layout-loft-L43">43</a> <a href="#tests-layout-loft-L58">58</a> <a href="#tests-layout-loft-L59">59</a></td></tr>
-<tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L610">610</a></td><td>—</td><td><a href="#tests-layout-loft-L30">30</a> <a href="#tests-layout-loft-L31">31</a> <a href="#tests-layout-loft-L38">38</a></td></tr>
+<tr><td><code>layout_descriptor</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L588">588</a></td><td>—</td><td><a href="#src-assets-loft-L612">612</a> <a href="#tests-layout-loft-L37">37</a> <a href="#tests-layout-loft-L45">45</a> <a href="#tests-layout-loft-L49">49</a> <a href="#tests-layout-loft-L64">64</a> <a href="#tests-layout-loft-L65">65</a></td></tr>
+<tr><td><code>layout_fingerprint</code> <span class="search-kind">fn</span></td><td><a href="#src-assets-loft-L610">610</a></td><td>—</td><td><a href="#tests-layout-loft-L36">36</a> <a href="#tests-layout-loft-L37">37</a> <a href="#tests-layout-loft-L44">44</a></td></tr>
 </table>
 <h2 id="src-assets-loft">src/assets.loft</h2>
 <pre class="src"><code><span id="src-assets-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -103,9 +103,9 @@
 <span id="src-assets-loft-L40"><span class="cm">/// like one sprite — a store's minimum image is 8 KiB, and a finer key fetches a</span></span>
 <span id="src-assets-loft-L41"><span class="cm">/// page's worth either way.</span></span>
 <span id="src-assets-loft-L42"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Blob</span> {</span>
-<span id="src-assets-loft-L43">  bl_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L44">  bl_kind: <span class="en">BlobKind</span> = <span class="en">Bytes</span>,</span>
-<span id="src-assets-loft-L45">  bl_bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
+<span id="src-assets-loft-L43">  <span class="kw">pub</span> bl_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L44">  <span class="kw">pub</span> bl_kind: <span class="en">BlobKind</span> = <span class="en">Bytes</span>,</span>
+<span id="src-assets-loft-L45">  <span class="kw">pub</span> bl_bytes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
 <span id="src-assets-loft-L46">}</span>
 <span id="src-assets-loft-L47"></span>
 <span id="src-assets-loft-L48"><span class="cm">/// A texture page's SHAPE, and the blob key its pixels live under.</span></span>
@@ -115,10 +115,10 @@
 <span id="src-assets-loft-L52"><span class="cm">/// texture, to decide what to prefetch — gets that from the boot load without</span></span>
 <span id="src-assets-loft-L53"><span class="cm">/// fetching a single texel.</span></span>
 <span id="src-assets-loft-L54"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">PageInfo</span> {</span>
-<span id="src-assets-loft-L55">  pi_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L56">  pi_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L57">  pi_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L58">  pi_blob: <span class="ty"><a href="stdlib-types.html">text</a></span>,          <span class="cm">// the `Rgba` blob holding this page's pixels</span></span>
+<span id="src-assets-loft-L55">  <span class="kw">pub</span> pi_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L56">  <span class="kw">pub</span> pi_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L57">  <span class="kw">pub</span> pi_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L58">  <span class="kw">pub</span> pi_blob: <span class="ty"><a href="stdlib-types.html">text</a></span>,          <span class="cm">// the `Rgba` blob holding this page's pixels</span></span>
 <span id="src-assets-loft-L59">}</span>
 <span id="src-assets-loft-L60"></span>
 <span id="src-assets-loft-L61"><span class="cm">/// One sprite's rect within a page, plus the origin a stage places it by.</span></span>
@@ -129,28 +129,28 @@
 <span id="src-assets-loft-L66"><span class="cm">/// and an empty proxy hits nothing, so a consumer that finds one absent falls back</span></span>
 <span id="src-assets-loft-L67"><span class="cm">/// to the cell rect rather than colliding with everything.</span></span>
 <span id="src-assets-loft-L68"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Cell</span> {</span>
-<span id="src-assets-loft-L69">  ce_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L70">  ce_page: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L71">  ce_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L72">  ce_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L73">  ce_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L74">  ce_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L75">  ce_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L76">  ce_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L77">  ce_proxy: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;,</span>
+<span id="src-assets-loft-L69">  <span class="kw">pub</span> ce_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L70">  <span class="kw">pub</span> ce_page: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L71">  <span class="kw">pub</span> ce_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L72">  <span class="kw">pub</span> ce_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L73">  <span class="kw">pub</span> ce_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L74">  <span class="kw">pub</span> ce_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L75">  <span class="kw">pub</span> ce_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L76">  <span class="kw">pub</span> ce_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L77">  <span class="kw">pub</span> ce_proxy: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;shapes::<span class="en">Rect</span>&gt;,</span>
 <span id="src-assets-loft-L78">}</span>
 <span id="src-assets-loft-L79"></span>
 <span id="src-assets-loft-L80"><span class="cm">/// An animation: a run of cells laid out in one page's grid. Mirrors `stage`'s</span></span>
 <span id="src-assets-loft-L81"><span class="cm">/// `Sequence`, so a loader hands it straight over.</span></span>
 <span id="src-assets-loft-L82"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Seq</span> {</span>
-<span id="src-assets-loft-L83">  sq_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L84">  sq_page: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L85">  sq_first: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L86">  sq_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L87">  sq_fps: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">12.0</span>,</span>
-<span id="src-assets-loft-L88">  sq_mode: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-assets-loft-L89">  sq_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
-<span id="src-assets-loft-L90">  sq_rows: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
+<span id="src-assets-loft-L83">  <span class="kw">pub</span> sq_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L84">  <span class="kw">pub</span> sq_page: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L85">  <span class="kw">pub</span> sq_first: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L86">  <span class="kw">pub</span> sq_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L87">  <span class="kw">pub</span> sq_fps: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">12.0</span>,</span>
+<span id="src-assets-loft-L88">  <span class="kw">pub</span> sq_mode: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-assets-loft-L89">  <span class="kw">pub</span> sq_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
+<span id="src-assets-loft-L90">  <span class="kw">pub</span> sq_rows: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
 <span id="src-assets-loft-L91">}</span>
 <span id="src-assets-loft-L92"></span>
 <span id="src-assets-loft-L93"><span class="cm">/// An object definition — GameMaker's *object*, the thing a room places.</span></span>
@@ -159,34 +159,34 @@
 <span id="src-assets-loft-L96"><span class="cm">/// definition (see `anim_of`) rather than living in a game's source. A light</span></span>
 <span id="src-assets-loft-L97"><span class="cm">/// carries its radius, colour and power here and is placed exactly like a sprite.</span></span>
 <span id="src-assets-loft-L98"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Def</span> {</span>
-<span id="src-assets-loft-L99">  df_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L100">  df_kind: <span class="en">DefKind</span> = <span class="en">Sprite</span>,</span>
-<span id="src-assets-loft-L101">  df_cell: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,          <span class="cm">// the still sprite, when it has no sequence</span></span>
-<span id="src-assets-loft-L102">  df_w: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L103">  df_h: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L104">  df_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L105">  df_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L106">  df_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-assets-loft-L107">  df_radius: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// light only: reach is 0 at exactly this distance</span></span>
-<span id="src-assets-loft-L108">  df_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-assets-loft-L109">  df_power: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L99">  <span class="kw">pub</span> df_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L100">  <span class="kw">pub</span> df_kind: <span class="en">DefKind</span> = <span class="en">Sprite</span>,</span>
+<span id="src-assets-loft-L101">  <span class="kw">pub</span> df_cell: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,          <span class="cm">// the still sprite, when it has no sequence</span></span>
+<span id="src-assets-loft-L102">  <span class="kw">pub</span> df_w: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L103">  <span class="kw">pub</span> df_h: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L104">  <span class="kw">pub</span> df_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L105">  <span class="kw">pub</span> df_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L106">  <span class="kw">pub</span> df_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-assets-loft-L107">  <span class="kw">pub</span> df_radius: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// light only: reach is 0 at exactly this distance</span></span>
+<span id="src-assets-loft-L108">  <span class="kw">pub</span> df_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-assets-loft-L109">  <span class="kw">pub</span> df_power: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-assets-loft-L110">}</span>
 <span id="src-assets-loft-L111"></span>
 <span id="src-assets-loft-L112"><span class="cm">/// One row of a definition's animation table: `(action, facing) -&gt; sequence`.</span></span>
 <span id="src-assets-loft-L113"><span class="cm">/// Build `an_key` as `"{def}/{action}/{facing}"`, which is what `anim_of` looks up.</span></span>
 <span id="src-assets-loft-L114"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Anim</span> {</span>
-<span id="src-assets-loft-L115">  an_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L116">  an_def: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L117">  an_action: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L118">  an_facing: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L119">  an_seq: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L115">  <span class="kw">pub</span> an_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L116">  <span class="kw">pub</span> an_def: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L117">  <span class="kw">pub</span> an_action: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L118">  <span class="kw">pub</span> an_facing: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L119">  <span class="kw">pub</span> an_seq: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
 <span id="src-assets-loft-L120">}</span>
 <span id="src-assets-loft-L121"></span>
 <span id="src-assets-loft-L122"><span class="cm">/// A room: a named space that placed instances live in.</span></span>
 <span id="src-assets-loft-L123"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Scene</span> {</span>
-<span id="src-assets-loft-L124">  sc_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L125">  sc_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L126">  sc_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L124">  <span class="kw">pub</span> sc_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L125">  <span class="kw">pub</span> sc_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L126">  <span class="kw">pub</span> sc_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-assets-loft-L127">}</span>
 <span id="src-assets-loft-L128"></span>
 <span id="src-assets-loft-L129"><span class="cm">/// A placed instance — GameMaker's *room instance*.</span></span>
@@ -195,19 +195,19 @@
 <span id="src-assets-loft-L132"><span class="cm">/// goblins are the same goblin. The fields mirror `stage::Place`, so loading a scene</span></span>
 <span id="src-assets-loft-L133"><span class="cm">/// is a copy rather than a translation.</span></span>
 <span id="src-assets-loft-L134"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Placed</span> {</span>
-<span id="src-assets-loft-L135">  pd_scene: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L136">  pd_order: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L137">  pd_def: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L138">  pd_x: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L139">  pd_y: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L140">  pd_depth: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L141">  pd_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-assets-loft-L142">  pd_rot: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L143">  pd_sx: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-assets-loft-L144">  pd_sy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-assets-loft-L145">  pd_alpha: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-assets-loft-L146">  pd_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-assets-loft-L147">  pd_visible: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>,</span>
+<span id="src-assets-loft-L135">  <span class="kw">pub</span> pd_scene: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L136">  <span class="kw">pub</span> pd_order: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L137">  <span class="kw">pub</span> pd_def: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L138">  <span class="kw">pub</span> pd_x: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L139">  <span class="kw">pub</span> pd_y: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L140">  <span class="kw">pub</span> pd_depth: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L141">  <span class="kw">pub</span> pd_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-assets-loft-L142">  <span class="kw">pub</span> pd_rot: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L143">  <span class="kw">pub</span> pd_sx: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-assets-loft-L144">  <span class="kw">pub</span> pd_sy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-assets-loft-L145">  <span class="kw">pub</span> pd_alpha: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-assets-loft-L146">  <span class="kw">pub</span> pd_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-assets-loft-L147">  <span class="kw">pub</span> pd_visible: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>,</span>
 <span id="src-assets-loft-L148">}</span>
 <span id="src-assets-loft-L149"></span>
 <span id="src-assets-loft-L150"><span class="cm">/// A pack's METADATA half — every collection a game reads at boot.</span></span>
@@ -218,13 +218,13 @@
 <span id="src-assets-loft-L155"><span class="cm">/// every part is needed from the first frame, and being a wrapper struct it cannot be</span></span>
 <span id="src-assets-loft-L156"><span class="cm">/// paged anyway. The bytes are the other store's job.</span></span>
 <span id="src-assets-loft-L157"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Pack</span> {</span>
-<span id="src-assets-loft-L158">  pages: <span class="ty">hash</span>&lt;<span class="en">PageInfo</span>[pi_name]&gt;,</span>
-<span id="src-assets-loft-L159">  cells: <span class="ty">hash</span>&lt;<span class="en">Cell</span>[ce_key]&gt;,</span>
-<span id="src-assets-loft-L160">  seqs: <span class="ty">hash</span>&lt;<span class="en">Seq</span>[sq_key]&gt;,</span>
-<span id="src-assets-loft-L161">  defs: <span class="ty">hash</span>&lt;<span class="en">Def</span>[df_name]&gt;,</span>
-<span id="src-assets-loft-L162">  anims: <span class="ty">hash</span>&lt;<span class="en">Anim</span>[an_key]&gt;,</span>
-<span id="src-assets-loft-L163">  scenes: <span class="ty">hash</span>&lt;<span class="en">Scene</span>[sc_name]&gt;,</span>
-<span id="src-assets-loft-L164">  placed: <span class="ty">index</span>&lt;<span class="en">Placed</span>[pd_scene, pd_order]&gt;,</span>
+<span id="src-assets-loft-L158">  <span class="kw">pub</span> pages: <span class="ty">hash</span>&lt;<span class="en">PageInfo</span>[pi_name]&gt;,</span>
+<span id="src-assets-loft-L159">  <span class="kw">pub</span> cells: <span class="ty">hash</span>&lt;<span class="en">Cell</span>[ce_key]&gt;,</span>
+<span id="src-assets-loft-L160">  <span class="kw">pub</span> seqs: <span class="ty">hash</span>&lt;<span class="en">Seq</span>[sq_key]&gt;,</span>
+<span id="src-assets-loft-L161">  <span class="kw">pub</span> defs: <span class="ty">hash</span>&lt;<span class="en">Def</span>[df_name]&gt;,</span>
+<span id="src-assets-loft-L162">  <span class="kw">pub</span> anims: <span class="ty">hash</span>&lt;<span class="en">Anim</span>[an_key]&gt;,</span>
+<span id="src-assets-loft-L163">  <span class="kw">pub</span> scenes: <span class="ty">hash</span>&lt;<span class="en">Scene</span>[sc_name]&gt;,</span>
+<span id="src-assets-loft-L164">  <span class="kw">pub</span> placed: <span class="ty">index</span>&lt;<span class="en">Placed</span>[pd_scene, pd_order]&gt;,</span>
 <span id="src-assets-loft-L165">}</span>
 <span id="src-assets-loft-L166"></span>
 <span id="src-assets-loft-L167"><span class="cm">// --- Writing a pack, and reading one back ---</span></span>
@@ -555,14 +555,14 @@
 <span id="src-assets-loft-L492"><span class="cm">/// PNG and a canvas rendered in this process are the same tile here, which is what</span></span>
 <span id="src-assets-loft-L493"><span class="cm">/// lets a sprite authored as text skip the file it used to have to become.</span></span>
 <span id="src-assets-loft-L494"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Tile</span> {</span>
-<span id="src-assets-loft-L495">  ti_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-assets-loft-L496">  ti_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L497">  ti_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-assets-loft-L498">  ti_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
+<span id="src-assets-loft-L495">  <span class="kw">pub</span> ti_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-assets-loft-L496">  <span class="kw">pub</span> ti_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L497">  <span class="kw">pub</span> ti_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-assets-loft-L498">  <span class="kw">pub</span> ti_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u8</a></span>&gt;,</span>
 <span id="src-assets-loft-L499">  <span class="cm">/// Where the stage places the sprite BY, in cell-local texels — the feet of a</span></span>
 <span id="src-assets-loft-L500">  <span class="cm">/// character rather than its top-left corner.</span></span>
-<span id="src-assets-loft-L501">  ti_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-assets-loft-L502">  ti_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L501">  <span class="kw">pub</span> ti_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-assets-loft-L502">  <span class="kw">pub</span> ti_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-assets-loft-L503">}</span>
 <span id="src-assets-loft-L504"></span>
 <span id="src-assets-loft-L505"><span class="cm">/// `n` zero bytes.</span></span>
@@ -688,7 +688,7 @@
 <span id="tests-layout-loft-L6"><span class="cm">// a field that moves reads a neighbour's value out of packs already in the wild.</span></span>
 <span id="tests-layout-loft-L7"><span class="kw">use</span> assets::*;</span>
 <span id="tests-layout-loft-L8"></span>
-<span id="tests-layout-loft-L9"><span class="cm">/// What the layout of `assets` 0.2.0 hashes to.</span></span>
+<span id="tests-layout-loft-L9"><span class="cm">/// What the layout of `assets` 0.4.0 hashes to.</span></span>
 <span id="tests-layout-loft-L10"><span class="cm">///</span></span>
 <span id="tests-layout-loft-L11"><span class="cm">/// A CHANGE HERE IS A FORMAT CHANGE.  Packs written by an earlier release are read at</span></span>
 <span id="tests-layout-loft-L12"><span class="cm">/// the offsets this number stands for, so if this test fails, one of two things</span></span>
@@ -702,44 +702,50 @@
 <span id="tests-layout-loft-L20"><span class="cm">///</span></span>
 <span id="tests-layout-loft-L21"><span class="cm">/// 0.1.0 hashed to 21440911.  It moved at 0.2.0 because `Cell` gained `ce_proxy`</span></span>
 <span id="tests-layout-loft-L22"><span class="cm">/// (@PLN146 F7) — the FIRST answer above, an edit we made, so `data_compatible_with`</span></span>
-<span id="tests-layout-loft-L23"><span class="cm">/// moved with it.  The old number stays written down here: a pin nobody can compare</span></span>
-<span id="tests-layout-loft-L24"><span class="cm">/// against does not say a format changed, only that one is different.</span></span>
-<span id="tests-layout-loft-L25"><span class="cm">///</span></span>
-<span id="tests-layout-loft-L26"><span class="cm">/// Measured identical on the interpreter and `--native`.</span></span>
-<span id="tests-layout-loft-L27"><span class="en">LAYOUT_0_2_0</span> = <span class="nm">2433656147</span>;</span>
-<span id="tests-layout-loft-L28"></span>
-<span id="tests-layout-loft-L29"><span class="kw">fn</span> <span class="fn-call">test_the_layout_of_this_release_is_the_one_it_promises</span>() {</span>
-<span id="tests-layout-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_fingerprint</span>() == <span class="en">LAYOUT_0_2_0</span>,</span>
-<span id="tests-layout-loft-L31">         <span class="st">"the pack layout changed: {layout_fingerprint()} (was {LAYOUT_0_2_0}) — read the note on LAYOUT_0_2_0, and layout_descriptor() for the field that moved"</span>);</span>
-<span id="tests-layout-loft-L32">}</span>
-<span id="tests-layout-loft-L33"></span>
-<span id="tests-layout-loft-L34"><span class="kw">fn</span> <span class="fn-call">test_the_fingerprint_is_taken_over_real_content</span>() {</span>
-<span id="tests-layout-loft-L35">  <span class="cm">// A hash of nothing is a stable number too, so the pin above would survive a</span></span>
-<span id="tests-layout-loft-L36">  <span class="cm">// descriptor that had gone empty.  2166136261 is FNV-1a's offset basis: the answer</span></span>
-<span id="tests-layout-loft-L37">  <span class="cm">// for empty input, and what this must not be.</span></span>
-<span id="tests-layout-loft-L38">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_fingerprint</span>() != <span class="nm">2166136261</span>, <span class="st">"the fingerprint consumed something"</span>);</span>
-<span id="tests-layout-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(<span class="fn-call">layout_descriptor</span>()) &gt; <span class="nm">1000</span>, <span class="st">"the descriptor is a description"</span>);</span>
-<span id="tests-layout-loft-L40">}</span>
-<span id="tests-layout-loft-L41"></span>
-<span id="tests-layout-loft-L42"><span class="kw">fn</span> <span class="fn-call">test_every_pack_type_resolves</span>() {</span>
-<span id="tests-layout-loft-L43">  d = <span class="fn-call">layout_descriptor</span>();</span>
-<span id="tests-layout-loft-L44">  <span class="cm">// Reflection answering MISSING means a type was renamed out from under the</span></span>
-<span id="tests-layout-loft-L45">  <span class="cm">// descriptor's own list — the fingerprint would change, but not say why.</span></span>
-<span id="tests-layout-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!d.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"MISSING"</span>), <span class="st">"every pack type resolved:\n{d}"</span>);</span>
-<span id="tests-layout-loft-L47">  <span class="kw">for</span> t <span class="kw">in</span> [<span class="st">"Blob"</span>, <span class="st">"PageInfo"</span>, <span class="st">"Cell"</span>, <span class="st">"Seq"</span>, <span class="st">"Def"</span>, <span class="st">"Anim"</span>, <span class="st">"Scene"</span>, <span class="st">"Placed"</span>, <span class="st">"Pack"</span>] {</span>
-<span id="tests-layout-loft-L48">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"{t} size="</span>), <span class="st">"{t} is described"</span>);</span>
-<span id="tests-layout-loft-L49">  }</span>
-<span id="tests-layout-loft-L50">}</span>
-<span id="tests-layout-loft-L51"></span>
-<span id="tests-layout-loft-L52"><span class="kw">fn</span> <span class="fn-call">test_the_descriptor_carries_positions_not_declaration_order</span>() {</span>
-<span id="tests-layout-loft-L53">  <span class="cm">// The load-bearing property: a field's POSITION is what a stored pack is read at,</span></span>
-<span id="tests-layout-loft-L54">  <span class="cm">// and it is not the order the field was written in.  `ce_key` is declared first</span></span>
-<span id="tests-layout-loft-L55">  <span class="cm">// and sits at 48, after the six integers and two floats — so a descriptor that</span></span>
-<span id="tests-layout-loft-L56">  <span class="cm">// reported declaration order (or all zeroes) would hash to a stable number and</span></span>
-<span id="tests-layout-loft-L57">  <span class="cm">// gate nothing.</span></span>
-<span id="tests-layout-loft-L58">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_descriptor</span>().<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"ce_key text @48"</span>),</span>
-<span id="tests-layout-loft-L59">         <span class="st">"a text field placed after the fixed-width ones:\n{layout_descriptor()}"</span>);</span>
-<span id="tests-layout-loft-L60">}</span>
+<span id="tests-layout-loft-L23"><span class="cm">/// moved with it.  0.2.0 to 0.3.1 hashed to 2433656147.  It moved at 0.4.0 with no</span></span>
+<span id="tests-layout-loft-L24"><span class="cm">/// edit here — the SECOND answer: loft's C138 rounds a record's size up to its</span></span>
+<span id="tests-layout-loft-L25"><span class="cm">/// alignment (`(L-Align)`), so `Blob` went 9 -&gt; 12, `Cell` 60 -&gt; 64, `Def` 73 -&gt; 80,</span></span>
+<span id="tests-layout-loft-L26"><span class="cm">/// `Scene` 20 -&gt; 24 and `Placed` 98 -&gt; 104 bytes, every field at the position it had.</span></span>
+<span id="tests-layout-loft-L27"><span class="cm">/// A collection's element stride is its record's size, so a 0.3.x pack is refused by</span></span>
+<span id="tests-layout-loft-L28"><span class="cm">/// a loft with C138 (it names those five types) rather than misread.  The old numbers</span></span>
+<span id="tests-layout-loft-L29"><span class="cm">/// stay written down here: a pin nobody can compare against does not say a format</span></span>
+<span id="tests-layout-loft-L30"><span class="cm">/// changed, only that one is different.</span></span>
+<span id="tests-layout-loft-L31"><span class="cm">///</span></span>
+<span id="tests-layout-loft-L32"><span class="cm">/// Measured identical on the interpreter and `--native`.</span></span>
+<span id="tests-layout-loft-L33"><span class="en">LAYOUT_0_4_0</span> = <span class="nm">3641078007</span>;</span>
+<span id="tests-layout-loft-L34"></span>
+<span id="tests-layout-loft-L35"><span class="kw">fn</span> <span class="fn-call">test_the_layout_of_this_release_is_the_one_it_promises</span>() {</span>
+<span id="tests-layout-loft-L36">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_fingerprint</span>() == <span class="en">LAYOUT_0_4_0</span>,</span>
+<span id="tests-layout-loft-L37">         <span class="st">"the pack layout changed: {layout_fingerprint()} (was {LAYOUT_0_4_0}) — read the note on LAYOUT_0_4_0, and layout_descriptor() for the field that moved"</span>);</span>
+<span id="tests-layout-loft-L38">}</span>
+<span id="tests-layout-loft-L39"></span>
+<span id="tests-layout-loft-L40"><span class="kw">fn</span> <span class="fn-call">test_the_fingerprint_is_taken_over_real_content</span>() {</span>
+<span id="tests-layout-loft-L41">  <span class="cm">// A hash of nothing is a stable number too, so the pin above would survive a</span></span>
+<span id="tests-layout-loft-L42">  <span class="cm">// descriptor that had gone empty.  2166136261 is FNV-1a's offset basis: the answer</span></span>
+<span id="tests-layout-loft-L43">  <span class="cm">// for empty input, and what this must not be.</span></span>
+<span id="tests-layout-loft-L44">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_fingerprint</span>() != <span class="nm">2166136261</span>, <span class="st">"the fingerprint consumed something"</span>);</span>
+<span id="tests-layout-loft-L45">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call"><a href="stdlib-text.html">size</a></span>(<span class="fn-call">layout_descriptor</span>()) &gt; <span class="nm">1000</span>, <span class="st">"the descriptor is a description"</span>);</span>
+<span id="tests-layout-loft-L46">}</span>
+<span id="tests-layout-loft-L47"></span>
+<span id="tests-layout-loft-L48"><span class="kw">fn</span> <span class="fn-call">test_every_pack_type_resolves</span>() {</span>
+<span id="tests-layout-loft-L49">  d = <span class="fn-call">layout_descriptor</span>();</span>
+<span id="tests-layout-loft-L50">  <span class="cm">// Reflection answering MISSING means a type was renamed out from under the</span></span>
+<span id="tests-layout-loft-L51">  <span class="cm">// descriptor's own list — the fingerprint would change, but not say why.</span></span>
+<span id="tests-layout-loft-L52">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!d.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"MISSING"</span>), <span class="st">"every pack type resolved:\n{d}"</span>);</span>
+<span id="tests-layout-loft-L53">  <span class="kw">for</span> t <span class="kw">in</span> [<span class="st">"Blob"</span>, <span class="st">"PageInfo"</span>, <span class="st">"Cell"</span>, <span class="st">"Seq"</span>, <span class="st">"Def"</span>, <span class="st">"Anim"</span>, <span class="st">"Scene"</span>, <span class="st">"Placed"</span>, <span class="st">"Pack"</span>] {</span>
+<span id="tests-layout-loft-L54">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"{t} size="</span>), <span class="st">"{t} is described"</span>);</span>
+<span id="tests-layout-loft-L55">  }</span>
+<span id="tests-layout-loft-L56">}</span>
+<span id="tests-layout-loft-L57"></span>
+<span id="tests-layout-loft-L58"><span class="kw">fn</span> <span class="fn-call">test_the_descriptor_carries_positions_not_declaration_order</span>() {</span>
+<span id="tests-layout-loft-L59">  <span class="cm">// The load-bearing property: a field's POSITION is what a stored pack is read at,</span></span>
+<span id="tests-layout-loft-L60">  <span class="cm">// and it is not the order the field was written in.  `ce_key` is declared first</span></span>
+<span id="tests-layout-loft-L61">  <span class="cm">// and sits at 48, after the six integers and two floats — so a descriptor that</span></span>
+<span id="tests-layout-loft-L62">  <span class="cm">// reported declaration order (or all zeroes) would hash to a stable number and</span></span>
+<span id="tests-layout-loft-L63">  <span class="cm">// gate nothing.</span></span>
+<span id="tests-layout-loft-L64">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">layout_descriptor</span>().<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"ce_key text @48"</span>),</span>
+<span id="tests-layout-loft-L65">         <span class="st">"a text field placed after the fixed-width ones:\n{layout_descriptor()}"</span>);</span>
+<span id="tests-layout-loft-L66">}</span>
 </code></pre>
 <h2 id="tests-pack-loft">tests/pack.loft</h2>
 <pre class="src"><code><span id="tests-pack-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

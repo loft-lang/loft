@@ -1,0 +1,13 @@
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index 5ab7f6aa1..91f6ec79e 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -1067,7 +1067,7 @@ pub fn fold_compare(op: u8, fold_right: bool, upper: bool, t: &str, other: &str)
+         (fold_op::EQ | fold_op::NE, _) => (tb.is_ascii() && ob.is_ascii()).then(|| same(tb, ob)),
+         (fold_op::STARTS, false) => {
+             let span = &tb[..tb.len().min(ob.len())];
+-            (ob.is_ascii() && span.is_ascii()).then(|| tb.len() >= ob.len() && same(span, ob))
++            ob.is_ascii().then(|| tb.len() >= ob.len() && same(span, ob))
+         }
+         (fold_op::STARTS, true) => {
+             let span = &ob[..ob.len().min(tb.len())];

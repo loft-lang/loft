@@ -70,6 +70,8 @@ permissions:
   actions: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   # Harden crate downloads against the transient crates.io HTTP/2 flake
@@ -117,6 +119,7 @@ jobs:
   # name, so without the shim the three required contexts never appear and the
   # PR sits BLOCKED forever.
   changes:
+    # @windows-exempt: platform-free — classifies the diff
     name: Classify diff
     runs-on: ubuntu-latest
     outputs:
@@ -226,6 +229,7 @@ jobs:
   # the `mergeable into main` context to branch protection's required checks so
   # a red here blocks merge.
   mergeable:
+    # @windows-exempt: platform-free — asks git whether the branch merges
     name: mergeable into main
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -260,6 +264,7 @@ jobs:
   # publish and registry-merge would be red for hours after each release, across work
   # that has nothing to do with it — which teaches everyone to merge past a red check.
   release-published:
+    # @windows-exempt: platform-free — reads the registry
     name: previous release reached the registry
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
@@ -278,6 +283,7 @@ jobs:
   # see the `on:` comment), so there is nothing to shim for it.  Both legs run on
   # ubuntu: the matrix value names the check, never runs anything OS-specific.
   test-skip:
+    # @windows-exempt: platform-free — reports a docs-only skip for every matrix leg
     name: Test (${{ matrix.os }})
     needs: changes
     if: needs.changes.outputs.code == 'false'
@@ -297,6 +303,7 @@ jobs:
   # remove `Test (windows-latest)` from branch protection's required contexts —
   # a repo-settings change; left required here so this needs no settings change.
   windows-pr-placeholder:
+    # @windows-leg: reports the daily windows-latest Test run on a PR
     name: Test (windows-latest)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -311,6 +318,7 @@ jobs:
   # push-to-main and daily.  Left required here so no branch-protection change is
   # needed; drop the context from the required set to retire this job.
   macos-pr-placeholder:
+    # @windows-exempt: platform-free — reports the macOS run
     name: Test (macos-latest)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -318,6 +326,7 @@ jobs:
       - run: echo "macOS full suite runs on push-to-main + daily (off the PR matrix). Per-PR macOS coverage is Miri-macOS + the ASan-macOS UAF/OOB sweep. This required context is a non-blocking placeholder on PRs."
 
   test:
+    # @windows-leg: the legs come from changes.outputs.legs: windows-latest on push to main and daily
     name: Test (${{ matrix.os }})${{ matrix.shard && format(' [{0}]', matrix.shard) || '' }}
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1134,6 +1143,7 @@ jobs:
   # condition so it stays mutually exclusive with the `test-skip` shim, which
   # publishes this same context on a docs-only diff.
   test-pr-gate:
+    # @windows-exempt: platform-free — aggregates the Test legs
     name: Test (ubuntu-latest)
     needs: [changes, test]
     if: always() && github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
@@ -1154,6 +1164,7 @@ jobs:
   # wasm / html tests spawn, so running those here would add cost without
   # coverage.
   guard:
+    # @windows-exempt: a platform-independent invariant sweep (stack alignment); the corpus runs on windows-latest daily
     name: stack_align_guard sweep (ubuntu)
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1229,6 +1240,7 @@ jobs:
   # a doc ref/link breaks) but never blocks the merge.  The authoritative daily
   # catch runs nightly (miri.yml).
   index-hygiene:
+    # @windows-exempt: platform-free — checks the tracker index text
     name: doc index hygiene (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1284,6 +1296,7 @@ jobs:
   # `oracle_leak_scan_ratchet`.  ADVISORY (not in required-status-checks): red on a PR that adds
   # a finding, never blocking the merge.
   leak-scan:
+    # @windows-exempt: a platform-independent invariant sweep (ownership leaks); the corpus runs on windows-latest daily
     name: ownership leak scan (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1318,6 +1331,7 @@ jobs:
   # moved count is a measurement to explain or re-pin, so it shows red HERE and does not fail
   # a test leg or the merge.  Both rows, release and debug, since each is pinned.
   frontend-pins:
+    # @windows-exempt: a per-platform allocation pin; rows for other platforms report unpinned by design
     name: front-end allocation pins (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1384,6 +1398,7 @@ jobs:
   # stable.  (The seeded-`rand` case was dropped — `rand` moved to the `random`
   # library, @PLAN12, and is not in the core bundle these tests drive.)
   wasm-bridge:
+    # @windows-exempt: platform-free — runs the wasm bundle under node
     name: wasm node bridge (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1418,6 +1433,7 @@ jobs:
   # an admin promotes it to required.  Catches staleness a change INTRODUCES; the
   # existing stale-bundle debt is a one-off rebuild (release checklist item B).
   bundle-fresh:
+    # @windows-exempt: platform-free — compares a stamp
     name: browser bundle freshness (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1442,6 +1458,7 @@ jobs:
   # renderer regression shows red without blocking the merge (the rendering logic
   # is also covered by the lib/markdown unit tests in the required `Test` job).
   viewer-smoke:
+    # @windows-exempt: platform-free — the markdown viewer renders HTML
     name: markdown viewer smoke (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1476,6 +1493,7 @@ jobs:
         run: cargo nextest run --profile ci --test viewer_markdown
 
   fixtures-check:
+    # @windows-exempt: platform-free — compares fixture trees with pinned tags
     name: lib fixtures vs pinned tags (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1490,6 +1508,7 @@ jobs:
         run: scripts/sync-fixtures.sh --check
 
   fixtures-unreleased:
+    # @windows-exempt: platform-free — compares fixture files with their repositories
     name: fixture files the canonical repo lacks (ubuntu, GATED)
     runs-on: ubuntu-latest
     steps:
@@ -1514,6 +1533,7 @@ jobs:
         run: scripts/sync-fixtures.sh --check-unreleased
 
   registry-coverage:
+    # @windows-exempt: platform-free — reads the registry index
     name: library registry coverage (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1529,6 +1549,7 @@ jobs:
         run: scripts/check_registry_coverage.sh
 
   comment-quality:
+    # @windows-exempt: platform-free — lints comment text
     name: comment quality vs baseline (ubuntu, advisory)
     runs-on: ubuntu-latest
     steps:
@@ -1547,6 +1568,7 @@ jobs:
   # status word in a contract doc — so the regrowth is seen on the PR that brings it rather
   # than found at release.  Not a required check; `advisory-failures.yml` files it as an issue.
   doc-timeline:
+    # @windows-exempt: platform-free — reads doc history
     name: documentation timeline (ubuntu, advisory)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -1570,6 +1592,7 @@ jobs:
   # generated-code-freshness meta-tests (ci.yml validates those on stable).
   # detect_leaks=0 until the LeakSanitizer live-at-exit baseline is triaged.
   asan:
+    # @windows-exempt: a Linux-only tool (AddressSanitizer); the defect class is platform-independent memory safety
     name: ASan UAF/OOB gate (ubuntu)
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1659,6 +1682,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   clippy:
+    # @windows-leg: the cross-target Windows clippy step (x86_64-pc-windows-msvc) in this job
     name: Clippy
     runs-on: ubuntu-latest
 
@@ -1696,6 +1720,13 @@ jobs:
 
       - name: Clippy (all targets, all features, deny warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
+      # @PLN184 E1 — the Windows leg of this job: lint the code `cfg(windows)` hides from the
+      # Linux run, cross-target on this runner (no Windows runner needed for a lint).  Without
+      # default features: `ring` (registry, remote-store) needs a Windows C toolchain to build.
+      - name: Clippy (the Windows target, deny warnings)
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo clippy --lib --bins --no-default-features --features mmap,native-extensions,threading,random --target x86_64-pc-windows-msvc -- -D warnings
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
@@ -1707,6 +1738,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   fmt:
+    # @windows-exempt: platform-free — formatting is text
     name: Format
     runs-on: ubuntu-latest
 
@@ -1737,6 +1769,7 @@ jobs:
   # that must agree; a partial rebuild silently breaks runtime loading.
   # Keeping them in one job reuses the wasm target cache for speed.
   gallery:
+    # @windows-exempt: platform-free — builds and probes the browser bundle
     name: Browser build + probe
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -1895,6 +1928,7 @@ jobs:
   # surfaces the failure earlier (8s job) and explains it more
   # clearly than the test panic.
   doc-check:
+    # @windows-exempt: platform-free — checks documentation text
     name: Doc hygiene
     runs-on: ubuntu-latest
 
@@ -1955,6 +1989,7 @@ jobs:
   #     number with no catalogue entry (a typo or stale number).
   # Both are pure shell — no build needed.
   feature-catalogue:
+    # @windows-exempt: platform-free — checks the catalogue text
     name: Feature catalogue
     runs-on: ubuntu-latest
     steps:
@@ -1975,6 +2010,7 @@ jobs:
   # conclusion) so the toolchain matrix's `continue-on-error` can't hide a red
   # beta/nightly behind a green run.
   nightly-status:
+    # @windows-exempt: platform-free — reports the nightly
     name: Nightly health (informational)
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'

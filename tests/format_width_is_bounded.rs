@@ -19,8 +19,8 @@
 //! process under a hard address-space cap, must finish.  A regression fails this test in
 //! milliseconds instead of triggering the kernel OOM killer.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// A cap far above what these one-line programs need and far below the runaway.
 const ADDRESS_SPACE_KIB: &str = "2000000"; // 2 GiB
@@ -35,7 +35,7 @@ fn loft_bin() -> PathBuf {
 /// rather than a single allocation site.
 fn run_capped(source: &str) -> String {
     let dir = std::env::temp_dir().join(format!("loft-fmt-bound-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     // One file per source.  The tests here run as threads of a single process, so a
     // shared probe path lets one case overwrite the file another has not yet read.
     let mut key = std::collections::hash_map::DefaultHasher::new();
@@ -44,13 +44,13 @@ fn run_capped(source: &str) -> String {
         "probe-{:016x}.loft",
         std::hash::Hasher::finish(&key)
     ));
-    std::fs::write(&file, source).expect("write probe");
+    fa::write(&file, source).expect("write probe");
     let script = format!(
         "ulimit -v {ADDRESS_SPACE_KIB}; exec {} --interpret {}",
         loft_bin().display(),
         file.display()
     );
-    let out = Command::new("bash")
+    let out = loft::platform::process::harness_command("bash")
         .arg("-c")
         .arg(&script)
         .env("LOFT_TIMEOUT", "60")
@@ -85,6 +85,7 @@ fn run_capped(source: &str) -> String {
 /// (Before this, the Windows leg failed for an unrelated reason: a bare `bash` resolves to
 /// `C:\Windows\System32\bash.exe`, the WSL launcher, which has no distribution installed —
 /// so the test reported a memory-cap failure that was really a missing shell.)
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `ulimit -v` (an address-space cap on the child) has no Windows equivalent; Windows substitute: none
 #[cfg_attr(windows, ignore = "no `ulimit -v` on Windows; the cap is the guard")]
 #[test]
 fn a_width_below_zero_pads_nothing() {
@@ -124,6 +125,7 @@ fn a_width_below_zero_pads_nothing() {
 /// (Before this, the Windows leg failed for an unrelated reason: a bare `bash` resolves to
 /// `C:\Windows\System32\bash.exe`, the WSL launcher, which has no distribution installed —
 /// so the test reported a memory-cap failure that was really a missing shell.)
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `ulimit -v` (an address-space cap on the child) has no Windows equivalent; Windows substitute: none
 #[cfg_attr(windows, ignore = "no `ulimit -v` on Windows; the cap is the guard")]
 #[test]
 fn a_positive_width_still_pads() {

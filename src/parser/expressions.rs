@@ -745,6 +745,7 @@ impl Parser {
             self.data.def(self.context).returned().clone()
         };
         self.parse_block("return from block", &mut v, &result);
+        self.check_result(&v);
         self.finish_body(v, result)
     }
 
@@ -1248,7 +1249,7 @@ impl Parser {
         // Start of the expression — an "Unknown variable" caret on a bare-Var
         // expression (e.g. a single call argument) must point here, not at the
         // cursor that has drifted to the closing `)` / `;` by detection time.
-        let expr_pos = self.lexer.peek_pos().clone();
+        let expr_pos = *self.lexer.peek_pos();
         if self.lexer.has_token("for") {
             self.parse_for(val);
             Type::Void
@@ -1462,6 +1463,12 @@ impl Parser {
                 // came out as 300 (`@FR-I-Narrow`), into `iterator<float>` as the integer's
                 // bits read as a float, a `null` or a `text` crashed the interpreter and broke
                 // the native build, and a nullable ended the loop early on `--native` only.
+                // The yielded value's type from here on: the element type once the store face
+                // converted it.  A call's tuple result is a `__tuple` RECORD that the
+                // conversion unboxes into a stack tuple, so asking the hand-over below about
+                // the pre-conversion type copied that stack tuple as if it were the record
+                // (`OpCopyRecord` over a tuple value: SIGSEGV, loft#1903).
+                let mut v_tp = v_tp;
                 if let Type::Iterator(elem_tp, _) = r_type.base() {
                     let elem = (**elem_tp).clone();
                     if v_tp == Type::Null {
@@ -1469,6 +1476,8 @@ impl Parser {
                         v = self.null_value(&elem);
                     } else if !self.convert_store_dense(&mut v, &v_tp, &elem, "the yielded value") {
                         self.validate_convert("yield", &v_tp, &elem, &expr_start.position);
+                    } else if matches!(elem.base(), Type::Tuple(_)) {
+                        v_tp = elem;
                     }
                 }
                 // @P328 — when yielding a NON-CAPTURING closure into an
@@ -1580,12 +1589,12 @@ impl Parser {
     pub(crate) fn parse_while(&mut self, code: &mut Value) {
         // @PLN86 3.1 — the `while`'s position, taken before the condition so an
         // unbounded-loop diagnostic points at the `while` itself.
-        let while_pos = self.lexer.peek_pos().clone();
+        let while_pos = *self.lexer.peek_pos();
         let mut cond = Value::Null;
         // loft#986 — see `in_control_head`: the `{` after the condition opens the body.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
-        let cond_at = self.lexer.peek().position.clone();
+        let cond_at = self.lexer.peek().position;
         let cond_tp = self.expression(&mut cond);
         self.in_control_head = outer_head;
         // The same coercion `if` performs — a `while` over a collection handle is the
@@ -3665,7 +3674,11 @@ use a separate collection or add after the loop"
         let counted = target != u16::MAX && self.vars.reads(target) > 0;
         let outer_target = std::mem::replace(&mut self.assign_target_discounted, target);
         let outer_taken = std::mem::replace(&mut self.assign_target_taken, false);
+        // @PLN187 — the place's abstract alias (its read settled it) against the value's.
+        let place_fact = std::mem::take(&mut self.operand_fact);
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        let value_fact = std::mem::take(&mut self.operand_fact);
+        self.check_assignment(op, to, &place_fact, &value_fact);
         let taken = std::mem::replace(&mut self.assign_target_taken, outer_taken);
         self.assign_target_discounted = outer_target;
         // `x = x` is the identity (#330): the statement is erased and writes nothing, so it is
@@ -4228,7 +4241,7 @@ use a separate collection or add after the loop"
             && self.vars.is_argument(var_nr)
             && self.lexer.peek_token("[");
         let prev_read_target = std::mem::replace(&mut self.expected, f_type.clone());
-        let rhs_pos = self.lexer.peek_pos().clone();
+        let rhs_pos = *self.lexer.peek_pos();
         // @PLN87 B-Ref-AnnotationOnly — a plain `=` RHS is the one expression position
         // where a leading `&` binds a reference, so open the head there.  A COMPOUND
         // assignment (`b += &a`) is excluded on purpose: it mutates `b`, it does not
@@ -4765,6 +4778,17 @@ use a separate collection or add after the loop"
             };
             if let Some((t, i)) = member_src {
                 amp_unlowered = false;
+                // A link to a text member of a by-value PARAMETER can write it: the parameter
+                // takes its owned copy first (loft#1278), and on this pass the link names it.
+                let mut t = t;
+                if let Type::Tuple(elems) = self.vars.tp(t).base()
+                    && elems
+                        .get(i as usize)
+                        .is_some_and(|e| matches!(e.base(), Type::Text(_)))
+                    && let Some(shadow) = self.promote_written_tuple_param(t)
+                {
+                    t = shadow;
+                }
                 match self.linkable_tuple_member(t, i) {
                     Ok(elem) => {
                         self.vars.record_amp_link(var_nr, t);
@@ -8160,6 +8184,165 @@ use a separate collection or add after the loop"
     /// passed with borrowed text elements however deeply they sit, so `((integer, text), …)`
     /// needs the owning promotion exactly as `(integer, text)` does (loft#1278, and the same
     /// one-level-in fact loft#1005 had to learn on the read side).
+    /// `@FR-Const-Foreign` — does `code`, the assignment just built, bind the value of a call to
+    /// a `-> const T` producer (`Definition::returned_const`: a mapped file, a library's adopted
+    /// buffer)?  Searched through the wrappers an assignment is built in — the `Set` of the
+    /// target, a block's tail — because the call is what decides, not how the bind is spelled.
+    fn binds_foreign_value(&self, code: &Value, target: u16) -> bool {
+        match code.unspan() {
+            Value::Set(v, rhs) if *v == target => self.value_is_foreign(rhs, &[]),
+            // A SLICE of foreign data bound to a local is a view of the same bytes, read in
+            // place without a copy (`OpSliceView`, @PLN174 F4b) — foreign itself.
+            Value::Call(d, args)
+                if self.data.def(*d).name() == "OpSliceView"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == target)
+                    && matches!(args.get(1).map(Value::unspan),
+                        Some(Value::Var(src)) if self.foreign_bound.contains(&(self.context, *src))) =>
+            {
+                true
+            }
+            Value::Insert(ops) => ops.iter().any(|o| self.binds_foreign_value(o, target)),
+            Value::Block(b) => b
+                .operators
+                .iter()
+                .any(|o| self.binds_foreign_value(o, target)),
+            _ => false,
+        }
+    }
+
+    /// `@FR-Const-Foreign` — is `v` foreign data: a call to a `-> const T` producer
+    /// (`Definition::returned_const`), a variable bound to foreign data, an `if` either of
+    /// whose arms is foreign (a null-coalesce `file_map(p) ?? []` answers the mapped bytes on
+    /// one), a block whose tail is, or a variable `scope` (the enclosing block's statements)
+    /// bound to such a value — the coalesce's temp.  Anything else is the program's own: a
+    /// copy, a literal, a computed value.
+    fn value_is_foreign(&self, v: &Value, scope: &[Value]) -> bool {
+        match v.unspan() {
+            Value::Call(d, _) => {
+                (*d as usize) < self.data.definitions.len() && self.data.def(*d).returned_const
+            }
+            Value::If(_, a, b) => {
+                self.value_is_foreign(a, scope) || self.value_is_foreign(b, scope)
+            }
+            Value::Block(b) => b
+                .operators
+                .last()
+                .is_some_and(|t| self.value_is_foreign(t, &b.operators)),
+            Value::Var(x) => {
+                self.foreign_bound.contains(&(self.context, *x))
+                    || scope.iter().any(|op| {
+                        matches!(op.unspan(), Value::Set(y, rhs)
+                            if y == x && self.value_is_foreign(rhs, scope))
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// `@FR-Const-Foreign` — a function whose result is foreign data says so: `-> const T`.
+    /// Declared `-> T`, it would hand the caller foreign data as a writable value, which
+    /// `(Const-Foreign)` forbids (@C139), so it is refused with the cure — the declaration
+    /// says `const`, or the function returns a copy.  Asked of the body's tail and of every
+    /// `return`.
+    pub(crate) fn refuse_unmarked_foreign_return(&mut self) {
+        if self.first_pass || self.data.def(self.context).returned_const {
+            return;
+        }
+        let code = self.data.def(self.context).code();
+        let mut foreign = match code.unspan() {
+            Value::Block(b) => b
+                .operators
+                .last()
+                .is_some_and(|t| self.value_is_foreign(t, &b.operators)),
+            _ => false,
+        };
+        if !foreign {
+            code.walk(&mut |n| {
+                if let Value::Return(r) = n.unspan()
+                    && self.value_is_foreign(r, &[])
+                {
+                    foreign = true;
+                }
+            });
+        }
+        if foreign {
+            let name = self
+                .data
+                .def(self.context)
+                .name()
+                .trim_start_matches("n_")
+                .to_string();
+            let tp = self
+                .data
+                .display_type_name(&self.data.def(self.context).returned().clone());
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "'{name}' returns read-only data the program does not own (a mapped file or a \
+                 library's buffer) as a writable `{tp}` — declare it `-> const {tp}`, or return \
+                 a copy"
+            );
+        }
+    }
+
+    /// `@FR-Const-Foreign` / `@FR-Const-Value` — foreign data is never presented as writable
+    /// (@C139): a variable whose FIRST binding is a `-> const T` producer's value is
+    /// value-const, so every write through it is refused before the program runs.  A later
+    /// binding of such a value into a variable that is not value-const would present it as
+    /// writable, so it is refused, with the cure: bind it to a name of its own (`w = v` then
+    /// binds a copy).
+    fn bind_foreign_value(&mut self, v: u16, code: &Value, first_bind: bool) {
+        if v as usize >= self.vars.count() as usize || !self.binds_foreign_value(code, v) {
+            return;
+        }
+        if first_bind {
+            self.vars.set_value_const(v);
+            self.foreign_bound.insert((self.context, v));
+        } else if !self.vars.is_value_const(v) && !self.first_pass {
+            let name = self.vars.name(v).to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "'{name}' is writable, and this value is read-only data the program does not own \
+                 (a mapped file or a library's buffer) — bind it to a name of its own \
+                 (`m = file_map(p)`), and copy that where a writable value is needed (`{name} = m`)"
+            );
+        }
+    }
+
+    /// loft#1278 — a by-value tuple PARAMETER carrying text whose member is written takes an
+    /// owned shadow local (`__tp_<name>`, seeded at function entry), the first time any write
+    /// names it: a plain `t.0 = …` and a compound `t.0 += …` alike.  The parameter itself is
+    /// the caller's tuple passed borrowed (`&str` members on `--native`), so a write to it
+    /// cannot land; the shadow is `(F-ParamScalar)`'s own copy.  First pass only — the name is
+    /// remapped, so the second pass reads every mention as the shadow.  `None` when `root`
+    /// needs no shadow.
+    fn promote_written_tuple_param(&mut self, root: u16) -> Option<u16> {
+        if !self.first_pass
+            || root >= self.vars.count()
+            || !self.vars.is_argument(root)
+            || !Self::tuple_carries_text(self.vars.tp(root))
+        {
+            return None;
+        }
+        let name = self.vars.name(root).to_string();
+        let tp = self.vars.tp(root).clone();
+        let shadow = self
+            .vars
+            .add_variable(&format!("__tp_{name}"), &tp, &mut self.lexer);
+        self.vars.set_promoted_from(shadow, root);
+        // The promoted local inherits the const axis, so the const guard still
+        // fires on it — the same pairing the text promotion keeps (@PLN40).
+        if self.vars.is_value_const(root) {
+            self.vars.set_value_const(shadow);
+        }
+        if self.vars.is_const_binding(root) {
+            self.vars.set_const_binding(shadow);
+        }
+        self.vars.remap_name(&name, shadow);
+        Some(shadow)
+    }
+
     fn tuple_carries_text(tp: &Type) -> bool {
         match tp.base() {
             Type::Tuple(members) => members
@@ -8242,7 +8425,7 @@ use a separate collection or add after the loop"
         // would otherwise leak into it.  `&&` is its own token, so this never
         // mis-fires on logical-and.  The start position also points the caret below
         // at the `&` (the cursor has drifted to `;`/`}` by detection time).
-        let stmt_start_pos = self.lexer.peek_pos().clone();
+        let stmt_start_pos = *self.lexer.peek_pos();
         let started_with_amp = self.lexer.peek_token("&");
         // loft#756 — mark the names in a `( … ) =` LHS as bindings for the whole
         // LHS parse.  Only ever SET here (never cleared): a nested parse_assign
@@ -8323,9 +8506,11 @@ use a separate collection or add after the loop"
             // is a real annotation (`= …` follows), mirroring the param parser.
             let is_value_const = self.lexer.has_keyword("const");
             let mut got_annotation = false;
+            self.type_fact = crate::data::AliasFact::Plain;
             if let Some(tp) = self.parse_type_full(u32::MAX, false)
                 && self.lexer.peek_token("=")
             {
+                self.declare_local_alias(v_nr);
                 // @PLN25 E2/E3 — the nullable-element rewrite now happens at the
                 // vector-type-resolution chokepoint (definitions.rs `sub_type`
                 // `vector` arm), so a `vector<S>` annotation already arrives
@@ -8433,7 +8618,7 @@ use a separate collection or add after the loop"
                         .collect()
                 });
                 let host_field_pos = (first_pos as u16).saturating_sub(offsets[0]);
-                let rhs_pos = self.lexer.pos().clone();
+                let rhs_pos = *self.lexer.pos();
                 let mut rhs = Value::Null;
                 let rhs_type = self.expression(&mut rhs);
                 // The store meets the field's type like every other store does (`@FR-C-Tuple`
@@ -8486,8 +8671,10 @@ use a separate collection or add after the loop"
                 );
             }
             let mut rhs = Value::Null;
-            let destr_rhs_pos = self.lexer.pos().clone();
+            let destr_rhs_pos = *self.lexer.pos();
             let mut rhs_type = self.expression(&mut rhs);
+            let rhs_fact = std::mem::take(&mut self.operand_fact);
+            self.bind_unpacked(&rhs_fact, &var_nrs); // @PLN187
             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
             // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
             // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`
@@ -8839,25 +9026,7 @@ use a separate collection or add after the loop"
             // value parameter its own copy, so writing the callee's copy is exactly right
             // and the caller's tuple is untouched either way.
             let mut lhs = lhs;
-            if self.first_pass
-                && self.vars.is_argument(lhs.root)
-                && Self::tuple_carries_text(self.vars.tp(lhs.root))
-            {
-                let name = self.vars.name(lhs.root).to_string();
-                let tp = self.vars.tp(lhs.root).clone();
-                let shadow = self
-                    .vars
-                    .add_variable(&format!("__tp_{name}"), &tp, &mut self.lexer);
-                self.vars.set_promoted_from(shadow, lhs.root);
-                // The promoted local inherits the const axis, so the const guard still
-                // fires on it — the same pairing the text promotion keeps (@PLN40).
-                if self.vars.is_value_const(lhs.root) {
-                    self.vars.set_value_const(shadow);
-                }
-                if self.vars.is_const_binding(lhs.root) {
-                    self.vars.set_const_binding(shadow);
-                }
-                self.vars.remap_name(&name, shadow);
+            if let Some(shadow) = self.promote_written_tuple_param(lhs.root) {
                 lhs.root = shadow;
             }
             // loft#1532 — a heap value written into a member is COPIED in: the tuple literal
@@ -8916,6 +9085,12 @@ use a separate collection or add after the loop"
         let mut to = code.clone();
         for op in ["=", "+=", "-=", "*=", "%=", "/="] {
             if self.lexer.has_token(op) {
+                // loft#1278's promotion for the routes past the member-assignment branch above:
+                // a compound write to a parameter tuple's member (`t.0 += "!"`) writes it too.
+                // The second pass reads `t` as the shadow, so the answer is not needed here.
+                if let Value::TupleGet(root, _) = to.unspan() {
+                    let _ = self.promote_written_tuple_param(*root);
+                }
                 // @PLN167 C1 — `t = &…` BINDS the link: its target is the variable itself,
                 // not the text field every other mention of a store-kind link is spelled as.
                 if op == "="
@@ -9000,7 +9175,7 @@ use a separate collection or add after the loop"
                     && !matches!(code.unspan(), Value::Var(_))
                     && self.raw_write_is_host_owned(code)
                 {
-                    let pos = self.lexer.peek_pos().clone();
+                    let pos = *self.lexer.peek_pos();
                     // @PLN86 F5 — a ONE-LEVEL struct field write whose field carries an
                     // `#update` link is gated PER-FIELD (admission admits iff the token is
                     // granted).  A write to a field with NO update link, an index write, a
@@ -9238,6 +9413,11 @@ use a separate collection or add after the loop"
                 self.declaring_const = u16::MAX;
                 if first_bind.is_some() {
                     self.first_bind_targets.pop();
+                }
+                if op == "="
+                    && let Value::Var(v) = to.unspan()
+                {
+                    self.bind_foreign_value(*v, code, first_bind.is_some());
                 }
                 // loft#1205 — the discharged read runs before the compound, which was built
                 // for a place the seed has just made non-null.  Prepended FIRST so the F2
@@ -10060,10 +10240,13 @@ use a separate collection or add after the loop"
         (*cond.unspan() == expected).then_some(v)
     }
     /// `@FR-B-Ref-Lvalue` — can a link name member `i` of the tuple local `t`?  `Ok` with the
-    /// member's type when it can, `Err` with it when it cannot: a member is stored at its full
-    /// width, so a link reads it at that width, and a NARROW member would need the narrow
-    /// encoding a linked LOCAL is given (`set_linked_narrow`), which a member's fixed layout
-    /// cannot take.  A heap member is not a scalar place at all.
+    /// member's type when it can, `Err` with it when it cannot.  A tuple is a record
+    /// (`@FR-T-Record`), so a scalar member is a field a link names: a NARROW member of a
+    /// by-value tuple holds its field encoding once a link names it
+    /// (`tuple_links::linked_narrow_members`, both backends), as a linked narrow LOCAL does.
+    /// A narrow member reached through a `&(…)` link is still refused: that tuple is the
+    /// caller's, in either of its two representations, and neither encodes the member.  A heap
+    /// member is not a scalar place at all.
     pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
         // A member of a `&(…)` link (a parameter, or a local link) is the CALLER's tuple at the
         // member's offset: the link's reference plus that offset, as the member read through
@@ -10077,7 +10260,14 @@ use a separate collection or add after the loop"
             _ => None,
         };
         let elem = elem.unwrap_or(Type::Unknown(0));
-        if crate::data::is_scalar(&elem) && crate::data::NarrowSlot::of_type(&elem).is_none() {
+        let by_value = matches!(self.vars.tp(t).base(), Type::Tuple(_));
+        // A TEXT member is the tuple's own text where the tuple owns it (`@FR-T-Record`,
+        // `Function::tuple_owns_text`): a link names that `String` as `&s` names a text local.
+        let owned_text = matches!(elem.base(), Type::Text(_)) && self.vars.tuple_owns_text(t);
+        if owned_text
+            || (crate::data::is_scalar(&elem)
+                && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none()))
+        {
             Ok(elem)
         } else {
             Err(elem)
@@ -10109,7 +10299,8 @@ use a separate collection or add after the loop"
         let why = if !crate::data::is_scalar(elem) {
             "a link to a member names a scalar place, and this member is not a scalar"
         } else if crate::data::NarrowSlot::of_type(elem).is_some() {
-            "a narrow member is stored at full width, and a link reads at the member's own width"
+            "the tuple is reached through a `&` link, and a link to a narrow member of a linked \
+             tuple is not supported"
         } else {
             "the tuple is itself reached through a `&` link, and a link into it is not supported"
         };
@@ -10139,9 +10330,23 @@ use a separate collection or add after the loop"
                     || matches!(self.vars.tp(*t).base(), Type::RefVar(inner)
                         if matches!(inner.base(), Type::Tuple(_))) =>
             {
-                self.linkable_tuple_member(*t, *i)
+                // A link to a text member of a by-value PARAMETER can write it, so the parameter
+                // takes the owned copy a write to the member gives it (loft#1278); the second
+                // pass reads every mention of it as that copy.
+                // On this (first) pass the link names the copy it just created, so both passes
+                // type the link alike.
+                let mut t = *t;
+                if let Type::Tuple(elems) = self.vars.tp(t).base()
+                    && elems
+                        .get(*i as usize)
+                        .is_some_and(|e| matches!(e.base(), Type::Text(_)))
+                    && let Some(shadow) = self.promote_written_tuple_param(t)
+                {
+                    t = shadow;
+                }
+                self.linkable_tuple_member(t, *i)
                     .ok()
-                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(*t, *i)]))
+                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(t, *i)]))
             }
             // The bare element op IS the place.  An enum element arrives in this spelling on
             // the first pass, before its enum getter wraps it; without this arm the first pass

@@ -10,22 +10,22 @@
 //! `dispatch_reentry.rs`.  And the one structural fact the flag rests on — a runtime error is
 //! stored in exactly one place, `Stores::raise_runtime_error`, which sets the flag with it —
 //! is checked over the source, so a new raise site cannot bypass it.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn run(name: &str, src: &str) -> (String, String, bool) {
     let dir = std::env::temp_dir().join(format!("loft_dispatch_stop_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{name}.loft"));
-    std::fs::write(&file, src).expect("write program");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    fa::write(&file, src).expect("write program");
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "60")
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -73,12 +73,12 @@ fn a_runtime_error_is_stored_only_by_its_setter() {
     let mut sites = Vec::new();
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read src") {
-            let path = entry.expect("entry").path();
-            if path.is_dir() {
+        for entry in fa::read_dir(&dir).expect("read src") {
+            let path = entry.os_spelling();
+            if fa::is_dir(&path) {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
-                let text = std::fs::read_to_string(&path).expect("read file");
+            } else if fa::has_extension(&path, "rs") {
+                let text = fa::read_to_string(&path).expect("read file");
                 for (n, line) in text.lines().enumerate() {
                     if line.contains("runtime_error = Some(")
                         && !line.trim_start().starts_with("//")

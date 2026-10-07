@@ -16,16 +16,16 @@
 //! root's path copy is 0.3.0.  Every copy's `probe_id()` names itself, so a cell cannot
 //! pass by loading the wrong one.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A package directory: its manifest (with `deps` as `[dependencies]` lines) and an entry
@@ -73,7 +73,7 @@ struct Fixture {
 /// A fresh home (0.1.0 and 0.2.0 cached) and an empty root project directory.
 fn fixture(tag: &str) -> Fixture {
     let base = std::env::temp_dir().join(format!("loft_1849_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let home = base.join("home");
     cached_probe(&home, "0.1.0");
     cached_probe(&home, "0.2.0");
@@ -105,7 +105,7 @@ impl Fixture {
     }
 
     fn run(&self, backend: &str) -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args([backend, "src/main.loft"])
             .env("LOFT_HOME", &self.home)
             .env("HOME", &self.home)
@@ -126,7 +126,7 @@ impl Fixture {
     /// The root's `loft.lock` must not record a registry `probepkg` when the root declared a
     /// path copy: a run that wrote one would pin the next run to the copy this one refused.
     fn lock_has_no_registry_probe(&self) -> bool {
-        std::fs::read_to_string(self.root.join("loft.lock"))
+        fa::read_to_string(self.root.join("loft.lock"))
             .map_or(true, |l| !l.contains("name = \"probepkg\""))
     }
 }

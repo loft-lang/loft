@@ -14,8 +14,8 @@
 //! Beside it, loft#1534: the non-sentinel proof's escape collector reads a by-reference
 //! argument through its `OpCreateStack` spelling, so a callee's overflow into a local the
 //! proof trusted answers `null` on native as it does on the interpreter.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ao-invariant-arith-cells.loft";
@@ -28,7 +28,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         "loft_invariant_arith_{}_{tag}.rs",
         std::process::id()
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)
@@ -40,13 +41,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 
@@ -75,8 +76,9 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
         "loft_invariant_arith_{}_{tag}.loft",
         std::process::id()
     ));
-    std::fs::write(&file, src).expect("write the probe");
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    fa::write(&file, src).expect("write the probe");
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native")
         .arg(&file)
         .env("LOFT_TIMEOUT", "120")
@@ -87,7 +89,7 @@ fn run_native(tag: &str, src: &str, env: &[(&str, &str)]) -> (String, String) {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("spawn loft --native");
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),

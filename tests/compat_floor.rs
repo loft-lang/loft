@@ -17,17 +17,18 @@
 //!
 //! Design: `doc/claude/plans/library-compat-contract/README.md`.
 
+use loft::file_access as fa;
 use loft::manifest::{FloorCheck, check_floor, read_manifest};
 
 /// Round-trip through the real `read_manifest` entry point rather than an internal parser,
 /// so the test exercises the path a package actually takes.
 fn manifest_of(tag: &str, content: &str) -> loft::manifest::Manifest {
     let dir = std::env::temp_dir().join(format!("loft_floor_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("loft.toml");
-    std::fs::write(&path, content).expect("write manifest");
+    fa::write(&path, content).expect("write manifest");
     let m = read_manifest(path.to_str().expect("utf-8 path")).expect("manifest parses");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     m
 }
 

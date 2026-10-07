@@ -12,9 +12,9 @@
 //! pins the EMISSION per cell — which cells hoist, how many scalars each — and the switch
 //! (`LOFT_NO_MINT_HOIST=1`) that restores the per-iteration reads, which is what makes it
 //! red on the build before the admission and on one that lost it.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-s-mint-hoist-cells.loft";
@@ -42,7 +42,8 @@ const EXPECTED: &[(&str, usize)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
@@ -52,12 +53,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: how many `__vs_` scalars its preludes bind.
@@ -97,7 +98,7 @@ fn each_cell_hoists_exactly_the_scalars_predicted() {
             "{name}: hoisted scalars — the cell's prediction vs the emitted prelude"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -112,5 +113,5 @@ fn the_switch_restores_the_per_iteration_reads() {
             "{name}: under LOFT_NO_MINT_HOIST=1 a record-appending loop hoists nothing"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

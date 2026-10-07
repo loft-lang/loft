@@ -9,13 +9,13 @@ use mesh;
 
 // A simple PBR-like material.
 pub struct Material {
-  name: text,
-  base_color_r: float not null,
-  base_color_g: float not null,
-  base_color_b: float not null,
-  base_color_a: float not null,
-  metallic: float not null,
-  roughness: float not null
+  pub name: text,
+  pub base_color_r: float not null,
+  pub base_color_g: float not null,
+  pub base_color_b: float not null,
+  pub base_color_a: float not null,
+  pub metallic: float not null,
+  pub roughness: float not null
 }
 
 pub fn material(mname: text) -> Material {
@@ -52,10 +52,10 @@ pub fn set_color(self: Material, scr: float, scg: float, scb: float) {
 
 // A node in the scene graph with a mesh, material, and transform.
 pub struct Node {
-  name: text,
-  mesh_idx: integer not null,
-  material_idx: integer not null,
-  transform: math::Mat4
+  pub name: text,
+  pub mesh_idx: integer not null,
+  pub material_idx: integer not null,
+  pub transform: math::Mat4
 }
 
 pub fn node(nn: text, nm: integer, nmat: integer) -> Node {
@@ -71,11 +71,11 @@ pub fn node_at(nn: text, nm: integer, nmat: integer, xf: math::Mat4) -> Node {
 
 pub struct Camera {
   name: text,
-  fov: float not null,
-  near: float not null,
-  far: float not null,
-  position: math::Vec3,
-  target: math::Vec3
+  pub fov: float not null,
+  pub near: float not null,
+  pub far: float not null,
+  pub position: math::Vec3,
+  pub target: math::Vec3
 }
 
 pub fn camera(cname: text) -> Camera {
@@ -92,14 +92,14 @@ pub fn camera(cname: text) -> Camera {
 pub enum LightType { Directional, Point, Spot }
 
 pub struct Light {
-  name: text,
-  light_type: LightType not null,
-  color_r: float not null,
-  color_g: float not null,
-  color_b: float not null,
-  intensity: float not null,
-  position: math::Vec3,
-  direction: math::Vec3
+  pub name: text,
+  pub light_type: LightType not null,
+  pub color_r: float not null,
+  pub color_g: float not null,
+  pub color_b: float not null,
+  pub intensity: float not null,
+  pub position: math::Vec3,
+  pub direction: math::Vec3
 }
 
 pub fn directional_light(ln: text, lr: float, lg: float, lb: float, li: float, ldir: math::Vec3) -> Light {
@@ -122,12 +122,12 @@ pub fn point_light(ln: text, lr: float, lg: float, lb: float, li: float, lpos: m
 
 // A complete 3D scene.
 pub struct Scene {
-  name: text,
-  meshes: vector<mesh::Mesh>,
-  materials: vector<Material>,
-  nodes: vector<Node>,
-  cameras: vector<Camera>,
-  lights: vector<Light>
+  pub name: text,
+  pub meshes: vector<mesh::Mesh>,
+  pub materials: vector<Material>,
+  pub nodes: vector<Node>,
+  pub cameras: vector<Camera>,
+  pub lights: vector<Light>
 }
 
 pub fn scene(sn: text) -> Scene {

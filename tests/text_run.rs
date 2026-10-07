@@ -6,7 +6,6 @@
 //! read as `text_from_byte_range` behind its guard, a declined one keeps its vector.  The
 //! cells' values pass on either form, so only this pin sees an admission drift.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-byte-run-read-once-as-text-is-read-in-place.loft";
 
@@ -23,7 +22,8 @@ const EXPECTED: &[(&str, usize)] = &[
 
 fn introspect(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

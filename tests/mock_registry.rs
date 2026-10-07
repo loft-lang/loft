@@ -8,6 +8,7 @@
 
 #![cfg(feature = "registry")]
 
+use loft::file_access as fa;
 use loft::registry_advisories::{self, Severity};
 use loft::registry_index;
 
@@ -19,7 +20,7 @@ fn fixture_path(rel: &str) -> std::path::PathBuf {
 
 #[test]
 fn mock_index_parses() {
-    let content = std::fs::read_to_string(fixture_path("index.json")).unwrap();
+    let content = fa::read_to_string(fixture_path("index.json")).unwrap();
     let idx = registry_index::parse_index(&content).expect("parse mock index");
     assert!(idx.packages.contains_key("test_alpha"));
     assert!(idx.packages.contains_key("test_beta"));
@@ -30,7 +31,7 @@ fn mock_index_parses() {
 
 #[test]
 fn mock_advisories_classify() {
-    let content = std::fs::read_to_string(fixture_path("advisories.json")).unwrap();
+    let content = fa::read_to_string(fixture_path("advisories.json")).unwrap();
     let feed = registry_advisories::parse_advisories(&content).expect("parse mock advisories");
     assert_eq!(feed.advisories.len(), 2);
 
@@ -49,7 +50,7 @@ fn mock_advisories_classify() {
 
 #[test]
 fn find_best_version_skips_yanked() {
-    let content = std::fs::read_to_string(fixture_path("index.json")).unwrap();
+    let content = fa::read_to_string(fixture_path("index.json")).unwrap();
     let idx = registry_index::parse_index(&content).unwrap();
     let alpha = &idx.packages["test_alpha"];
     // 0.1.0 is yanked → best is 0.2.0.
@@ -82,11 +83,10 @@ fn file_url_fetches_local_index() {
 /// Build a directory of stand-in release artifacts and run the generator over it.
 /// The bytes are arbitrary; what is under test is the entry's shape, and a real
 /// 18 MB source zip would only make the test slow.
-#[cfg(unix)]
 fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    std::fs::create_dir_all(dir).unwrap();
-    std::fs::write(dir.join(format!("loft-{version}-src.zip")), b"source").unwrap();
+    fa::create_dir_all(dir).unwrap();
+    fa::write(dir.join(format!("loft-{version}-src.zip")), b"source").unwrap();
     // Real zips, each carrying a `SHA256SUMS`: the generator reads the manifest out of
     // the bundle to derive `manifest_sha256`, so a stand-in byte string would exercise a
     // different code path than the one that runs at release time.
@@ -98,7 +98,7 @@ fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
              z.writestr('loft-{version}-{triple}/SHA256SUMS','{triple}  default/a.loft\\n')\n\
              z.close()\n"
         );
-        let out = std::process::Command::new("python3")
+        let out = loft::platform::process::harness_command("python3")
             .args(["-c", &script])
             .arg(&zip)
             .output()
@@ -109,7 +109,7 @@ fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/gen-toolchain-entry.py"))
         .args(["--version", version])
         .arg("--dir")
@@ -127,10 +127,9 @@ fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
 }
 
 #[test]
-#[cfg(unix)]
 fn generated_toolchain_entry_parses_and_drives_self_update() {
     let dir = std::env::temp_dir().join("loft-toolchain-entry-parse");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let entry = generated_toolchain_entry(&dir, "2026.7.2");
 
     // Splice it into an index exactly as the registry PR will.
@@ -202,7 +201,7 @@ fn generated_toolchain_entry_parses_and_drives_self_update() {
         loft::self_update::Plan::NoBuildForTarget { .. } => {}
         other => panic!("an unpublished triple must be reported, got {other:?}"),
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// Splicing a toolchain entry must never date the index EARLIER than it already is.
@@ -215,24 +214,23 @@ fn generated_toolchain_entry_parses_and_drives_self_update() {
 /// this could only ever be caught by a reader of the diff; it was, on the first real
 /// submission, which is one submission later than a test costs.
 #[test]
-#[cfg(unix)]
 fn splicing_the_toolchain_entry_never_moves_updated_backwards() {
     let dir = std::env::temp_dir().join("loft_splice_updated_test");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let version = "2026.7.2";
     // `--published` is older than the index's own `updated`, the ordering that bit.
     let _ = generated_toolchain_entry(&dir, version);
 
     let index = dir.join("index.json");
     let newer = "2026-08-29T22:22:51Z";
-    std::fs::write(
+    fa::write(
         &index,
         format!("{{\"schema_version\": 1, \"updated\": \"{newer}\", \"packages\": {{}}}}"),
     )
     .unwrap();
 
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/gen-toolchain-entry.py"))
         .args(["--version", version])
         .arg("--dir")
@@ -251,7 +249,7 @@ fn splicing_the_toolchain_entry_never_moves_updated_backwards() {
 
     // Read it back through the parser that consumes the index in production, so the
     // test cannot pass on a file the client would reject.
-    let text = std::fs::read_to_string(&index).unwrap();
+    let text = fa::read_to_string(&index).unwrap();
     let spliced = loft::registry_index::parse_index(&text).expect("spliced index parses");
     assert_eq!(
         spliced.updated, newer,
@@ -267,5 +265,5 @@ fn splicing_the_toolchain_entry_never_moves_updated_backwards() {
         pkg.versions.contains_key(version),
         "the spliced entry must carry {version}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

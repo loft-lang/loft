@@ -253,12 +253,16 @@ pub fn lookup_in(
 /// stdlib/library ones).  Shared by [`symbol_at`] and [`lookup`].
 fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -> Option<Hover> {
     let (kind, cname) = crate::api_surface::classify(data, d)?;
-    let pos = data.def(d).position.clone();
+    let pos = data.def(d).position;
     // Read the definition's own source ONCE — for the `///` doc AND to locate the
     // name (the parser records `pos` at the body start, past the name).
     let src = read_def_source(text, name, stdlib_dir, &pos);
     let doc = src.as_deref().map_or_else(Vec::new, |s| {
-        doc_block_above(s, pos.line, crate::file_access::is_stdlib_source(&pos.file))
+        doc_block_above(
+            s,
+            pos.line,
+            crate::file_access::is_stdlib_source(pos.file.as_str()),
+        )
     });
     let def_col = src
         .as_deref()
@@ -268,7 +272,7 @@ fn hover_of_def(data: &Data, d: u32, text: &str, name: &str, stdlib_dir: &str) -
         signature: render_signature(data, d, kind, &cname),
         name: cname,
         doc,
-        def_file: collapse_slashes(&pos.file),
+        def_file: collapse_slashes(pos.file.as_str()),
         def_line: pos.line,
         def_col,
     })
@@ -333,12 +337,12 @@ pub fn resolve_at(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<H
                 "{tname}.{fname}: {}",
                 p.data.display_type_name(&p.data.attr_type(type_def, attr))
             );
-            let pos = p.data.def(type_def).position.clone();
+            let pos = p.data.def(type_def).position;
             Some(Hover {
                 name: fname,
                 signature: sig,
                 doc: Vec::new(),
-                def_file: collapse_slashes(&pos.file),
+                def_file: collapse_slashes(pos.file.as_str()),
                 def_line: pos.line,
                 def_col: pos.pos,
             })
@@ -388,13 +392,13 @@ fn render_signature(data: &Data, d: u32, kind: &str, name: &str) -> String {
 /// relative (e.g. `default/01_code.loft`); the stdlib root is the parent of
 /// `stdlib_dir` (`…/default`).  `None` when the source can't be read.
 fn read_def_source(buf: &str, buf_name: &str, stdlib_dir: &str, pos: &Position) -> Option<String> {
-    if &*pos.file == buf_name {
+    if pos.file == buf_name {
         return Some(buf.to_string());
     }
     let root = Path::new(stdlib_dir)
         .parent()
         .map_or_else(|| Path::new("").to_path_buf(), Path::to_path_buf);
-    std::fs::read_to_string(root.join(&*pos.file)).ok()
+    crate::file_access::read_to_string(root.join(pos.file)).ok()
 }
 
 /// The contiguous comment block directly above the declaration on `decl_line`
@@ -495,6 +499,128 @@ fn name_col_on_line(src: &str, decl_line: u32, name: &str) -> Option<u32> {
     let line = src.lines().nth(decl_line.saturating_sub(1) as usize)?;
     let byte_idx = line.find(needle)?;
     Some(line[..byte_idx].chars().count() as u32 + 1)
+}
+
+/// The type name a local's resolved signature names (`v: vector<integer>` → `vector`,
+/// `p: Point` → `Point`), for deciding which `[ ]` construct is under the cursor.
+fn operand_type(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<String> {
+    let h = resolve_at(text, stdlib_dir, line, col)?;
+    let ty = h.signature.split_once(": ")?.1.trim();
+    let name: String = ty
+        .trim_start_matches('&')
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty()).then_some(name)
+}
+
+/// @PLN183 P4 — the hover on a language construct (`??`, `match`, `v[1]`, `a..b`, `+=`):
+/// the catalogue entry that documents it, as Markdown — its title, its one-paragraph summary
+/// and where the whole entry lives.  An operator whose left operand is a program type with an
+/// `operator` definition for it shows that definition first: on `m + m` the reader wants
+/// `operator plus`, then the feature.  `None` when the cursor is on no named construct.
+#[must_use]
+pub fn construct_hover(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<String> {
+    let type_of = |c: u32| operand_type(text, stdlib_dir, line, c);
+    use std::fmt::Write as _;
+    let key = crate::doc_construct::construct_at(text, line, col, &type_of)?;
+    let entry = crate::doc_catalogue::by_key(key)?;
+    let mut out = String::new();
+    if matches!(key, "op:arith" | "op:compare" | "op:compound")
+        && let Some(def) = operator_definition(text, stdlib_dir, line, col)
+    {
+        let _ = write!(out, "```loft\n{def}\n```\n\n");
+    }
+    let _ = write!(
+        out,
+        "**@{} — {}**\n\n{}\n\n[The whole entry]({})",
+        entry.tag,
+        entry.title,
+        entry.summary(),
+        entry.page()
+    );
+    Some(out)
+}
+
+/// @PLN183 P4 — a completion item's documentation, asked for when the editor shows the item
+/// (`completionItem/resolve`): a keyword's catalogue entry (its summary and where the whole
+/// entry lives), or a name's signature and `///` doc — the hover's own text.
+#[must_use]
+pub fn completion_documentation(
+    text: &str,
+    stdlib_dir: &str,
+    label: &str,
+    keyword: bool,
+) -> Option<String> {
+    if keyword {
+        let entry = crate::doc_catalogue::by_key(crate::doc_construct::keyword_construct(label)?)?;
+        return Some(format!(
+            "**@{} — {}**\n\n{}\n\n[The whole entry]({})",
+            entry.tag,
+            entry.title,
+            entry.summary(),
+            entry.page()
+        ));
+    }
+    let parser = parse_lsp_buffer(text, "buf.loft", stdlib_dir);
+    let h = lookup_in(&parser.data, label, text, "buf.loft", stdlib_dir)
+        .into_iter()
+        .next()?;
+    let mut out = format!("```loft\n{}\n```", h.signature);
+    if !h.doc.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&h.doc.join("\n"));
+    }
+    Some(out)
+}
+
+/// The `operator` definition behind the operator at `line:col`, when its left operand is a
+/// program type that defines one (the type capabilities `:ops` shows).
+fn operator_definition(text: &str, stdlib_dir: &str, line: u32, col: u32) -> Option<String> {
+    let chars: Vec<char> = text
+        .lines()
+        .nth(line.saturating_sub(1) as usize)?
+        .chars()
+        .collect();
+    let at = (col as usize).checked_sub(1)?;
+    let ops = "+-*/%<>=";
+    let start = at
+        - chars[..at]
+            .iter()
+            .rev()
+            .take_while(|c| ops.contains(**c))
+            .count();
+    let end = at + chars[at..].iter().take_while(|c| ops.contains(**c)).count();
+    let op: String = chars[start..end].iter().collect();
+    let left = chars[..start].iter().rposition(|c| !c.is_whitespace())?;
+    let ty = operand_type(text, stdlib_dir, line, u32::try_from(left + 1).ok()?)?;
+    let parser = parse_lsp_buffer(text, "buf.loft", stdlib_dir);
+    let caps = crate::doc_site::type_capabilities(&parser, &ty)?;
+    caps.operators
+        .iter()
+        .find(|(symbols, _)| symbols.split_whitespace().any(|s| s == op))
+        .map(|(_, sig)| sig.clone())
+}
+
+/// @PLN183 P3 — what the type named at `line:col` (1-based) can do, read from this buffer's
+/// own program: the editor's type page.  `None` when the word there names no type in scope.
+#[must_use]
+pub fn type_capabilities_at(
+    text: &str,
+    name: &str,
+    stdlib_dir: &str,
+    line: u32,
+    col: u32,
+) -> Option<crate::doc_site::TypeCaps> {
+    let ident = identifier_at(text, line, col)?;
+    let parser = parse_lsp_buffer(text, name, stdlib_dir);
+    let caps = crate::doc_site::type_capabilities(&parser, &ident)?;
+    let kind = &parser.data.def(parser.data.def_nr(&ident)).def_type;
+    matches!(
+        kind,
+        crate::data::DefType::Struct | crate::data::DefType::Enum | crate::data::DefType::Type
+    )
+    .then_some(caps)
 }
 
 /// The identifier under a 1-based (`line`, `col`) cursor — the token that
@@ -610,12 +736,14 @@ impl TagIndex {
     /// Parse `<index_dir>/tags.json` (required) + `features.json` (optional).
     #[must_use]
     pub fn load(index_dir: &str) -> Option<TagIndex> {
-        let tags_txt = std::fs::read_to_string(Path::new(index_dir).join("tags.json")).ok()?;
+        let tags_txt =
+            crate::file_access::read_to_string(Path::new(index_dir).join("tags.json")).ok()?;
         let tags = crate::json::parse(&tags_txt).ok()?;
-        let features = std::fs::read_to_string(Path::new(index_dir).join("features.json"))
-            .ok()
-            .and_then(|s| crate::json::parse(&s).ok())
-            .unwrap_or(Parsed::Array(Vec::new()));
+        let features =
+            crate::file_access::read_to_string(Path::new(index_dir).join("features.json"))
+                .ok()
+                .and_then(|s| crate::json::parse(&s).ok())
+                .unwrap_or(Parsed::Array(Vec::new()));
         // The `broken` array is `[{"tag":"@P999","refs":[…]}, …]`. <!--noindex-->
 
         let broken = match pj_get(&tags, "broken") {
@@ -943,7 +1071,7 @@ impl WorkspaceIndex {
     pub fn build(root: &str) -> WorkspaceIndex {
         let mut by_name: HashMap<String, Vec<Reference>> = HashMap::new();
         for path in loft_files(Path::new(root)) {
-            let Ok(text) = std::fs::read_to_string(&path) else {
+            let Ok(text) = crate::file_access::read_to_string(&path) else {
                 continue;
             };
             let file = canonical(&path);
@@ -1100,14 +1228,15 @@ pub fn uri_to_path(uri: &str) -> String {
         Some(after) if drive_prefixed(after) => after,
         _ => rest,
     };
-    if cfg!(windows) {
-        rest.replace('/', "\\")
-    } else {
-        rest.to_string()
-    }
+    // The host's separator: `\` on Windows, so a `/`-spelled URI path reads natively.
+    rest.replace('/', crate::platform::sep_str())
 }
 
 /// Every `.loft` file under `root`, skipping build / VCS / dependency dirs.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "`.loft` is matched case-sensitively on every host, as it always was"
+)]
 fn loft_files(root: &Path) -> Vec<PathBuf> {
     const SKIP: &[&str] = &[
         "target",
@@ -1120,15 +1249,14 @@ fn loft_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = crate::file_access::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if path.is_dir() {
-                if !SKIP.contains(&name.as_ref()) && !name.starts_with('.') {
+        for entry in entries {
+            let path = entry.os_spelling();
+            let name = entry.file_name().unwrap_or_default();
+            if crate::file_access::is_dir(&path) {
+                if !SKIP.contains(&name) && !name.starts_with('.') {
                     stack.push(path);
                 }
             } else if name.ends_with(".loft") {
@@ -1349,7 +1477,7 @@ pub fn method_refs(
         let cpath = canonical(&path);
         if let Some((_, t)) = open.iter().find(|(op, _)| *op == cpath) {
             files.push((cpath, (*t).to_string()));
-        } else if let Ok(t) = std::fs::read_to_string(&path) {
+        } else if let Ok(t) = crate::file_access::read_to_string(&path) {
             files.push((cpath, t));
         }
     }
@@ -2464,16 +2592,13 @@ mod uri_path_tests {
     #[test]
     fn uri_to_path_inverts_path_to_uri_on_this_platform() {
         // Round-trips with native separators, whichever platform runs the test.
-        #[cfg(windows)]
-        {
-            assert_eq!(uri_to_path("file:///C:/a/b"), r"C:\a\b");
-            assert_eq!(uri_to_path(&path_to_uri(Path::new(r"C:\a\b"))), r"C:\a\b");
-        }
-        #[cfg(not(windows))]
-        {
-            assert_eq!(uri_to_path("file:///a/b"), "/a/b");
-            assert_eq!(uri_to_path(&path_to_uri(Path::new("/a/b"))), "/a/b");
-        }
+        let (uri, native) = if crate::platform::is_windows_fs() {
+            ("file:///C:/a/b", r"C:\a\b")
+        } else {
+            ("file:///a/b", "/a/b")
+        };
+        assert_eq!(uri_to_path(uri), native);
+        assert_eq!(uri_to_path(&path_to_uri(Path::new(native))), native);
         // A non-file:// string passes through.
         assert_eq!(uri_to_path("stdin://x"), "stdin://x");
     }

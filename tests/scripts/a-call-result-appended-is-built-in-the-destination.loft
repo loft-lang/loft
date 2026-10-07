@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-AppendTwin` — `X += f(args)` answers what building f's result on its own and
+// appending it answers, when the native build builds it in X (f's append twin).  The
+// interpreter copies and is the reference; every byte below is computed by hand from a
+// CBOR-shaped encoder: a head byte `major * 32 + n` (one more byte when n >= 24), then
+// the payload.
+//
+// c1–c4 and c10 take the twin, through chains of twins (`enc_nested` → `enc_list` →
+// `enc_text` → `hdr`).  c5 and c6 read and clear a LOCAL of their own, which R-RetAdopt
+// adopts as the buffer at emission time: their twins must emit the IR's semantics — the
+// local kept, then appended — and not the adoption, which cleared the caller's bytes (the
+// defect this guard caught while the rule was built).  c7 declines: its argument reaches the
+// destination.
+//
+// @falsified-at: none — a keeps-the-answer guard: the build before the rule answers every
+//   cell right, so no control ref can fail it.  Scored by a PLANT instead: `enc_text__ap`'s
+//   call of `hdr__ap` respelled `hdr` in the emitted Rust (the plain callee clears the
+//   destination) fails at `list: 97,99,`; the unplanted emission passes every cell.
+//   CHANNEL: value.  HOLDS: both backends exact on every cell, `LOFT_NO_APPEND_TWIN=1`
+//   equal, strict stores clean.
+
+struct Packet { tag: integer, body: vector<u8> }
+
+fn hdr(major: integer, n: integer) -> vector<u8> {
+  b: vector<u8> = [];
+  if n < 24 {
+    b += [((major * 32 + n) & 255) as u8];
+  } else {
+    b += [((major * 32 + 24) & 255) as u8];
+    b += [(n & 255) as u8];
+  }
+  b
+}
+
+fn enc_text(t: text) -> vector<u8> {
+  b = hdr(3, size(t));
+  for i in 0..size(t) { b += [(t.byte_at(i) & 255) as u8]; }
+  b
+}
+
+fn enc_list(xs: vector<text>) -> vector<u8> {
+  b = hdr(4, len(xs));
+  for x in xs { b += enc_text(x); }
+  b
+}
+
+fn enc_nested(xss: vector<vector<text>>) -> vector<u8> {
+  b = hdr(4, len(xss));
+  for xs in xss { b += enc_list(xs); }
+  b
+}
+
+fn joined(v: vector<u8>) -> text {
+  s = "";
+  for x in v { s += "{x as integer},"; }
+  s
+}
+
+// c5 — reads its own buffer's length: no twin.
+fn counted(t: text) -> vector<u8> {
+  b: vector<u8> = [];
+  b += [(size(t) & 255) as u8];
+  b += [(len(b) & 255) as u8];
+  b
+}
+
+// c6 — clears its buffer after writing: no twin.
+fn late(t: text) -> vector<u8> {
+  b: vector<u8> = [];
+  b += [(1 & 255) as u8];
+  b = [];
+  b += [(size(t) & 255) as u8];
+  b
+}
+
+// c7 — its argument is the destination.
+fn dup(v: vector<u8>) -> vector<u8> {
+  b: vector<u8> = [];
+  b += v;
+  b += v;
+  b
+}
+
+fn test_a_list_of_texts() {
+  // 0x82, 0x62 'a' 'b', 0x61 'c'
+  r = enc_list(["ab", "c"]);
+  assert(joined(r) == "130,98,97,98,97,99,", "list: {joined(r)}");
+  assert(len(r) == 6, "length {len(r)}");
+}
+
+fn test_nested_lists() {
+  // 0x82, [0x81, 0x61 'x'], [0x82, 0x61 'y', 0x60]
+  r = enc_nested([["x"], ["y", ""]]);
+  assert(joined(r) == "130,129,97,120,130,97,121,96,", "nested: {joined(r)}");
+}
+
+fn test_onto_existing_bytes() {
+  out: vector<u8> = [];
+  out += [(1 & 255) as u8];
+  out += [(2 & 255) as u8];
+  out += enc_text("z");
+  assert(joined(out) == "1,2,97,122,", "onto existing: {joined(out)}");
+}
+
+fn test_into_a_field() {
+  p = Packet { tag: 3, body: [] };
+  p.body += enc_text("q");
+  p.body += enc_text("rs");
+  assert(joined(p.body) == "97,113,98,114,115," && p.tag == 3, "field: {joined(p.body)}");
+}
+
+fn test_a_long_text_takes_two_head_bytes() {
+  t = "abcdefghijklmnopqrstuvwxyz";
+  out: vector<u8> = [];
+  out += enc_text(t);
+  assert(len(out) == 28 && (out[0]? as integer) == 120 && (out[1]? as integer) == 26, "long head {joined(out)}");
+  assert((out[27]? as integer) == 122, "last byte {out[27]? as integer}");
+}
+
+fn test_a_callee_reading_its_buffer() {
+  out: vector<u8> = [];
+  out += [(9 & 255) as u8];
+  out += counted("hi");
+  assert(joined(out) == "9,2,1,", "counted: {joined(out)}");
+}
+
+fn test_a_callee_clearing_after_writing() {
+  out: vector<u8> = [];
+  out += [(9 & 255) as u8];
+  out += late("xyz");
+  assert(joined(out) == "9,3,", "late clear: {joined(out)}");
+}
+
+fn test_an_argument_reaching_the_destination() {
+  out: vector<u8> = [];
+  out += [(1 & 255) as u8];
+  out += [(2 & 255) as u8];
+  out += dup(out);
+  assert(joined(out) == "1,2,1,2,1,2,", "self append: {joined(out)}");
+}
+
+fn test_appends_in_a_loop() {
+  out: vector<u8> = [];
+  for i in 0..4 { out += hdr(0, i * 10); }
+  // 0, 10, 20, then 30 >= 24: 0x18 30
+  assert(joined(out) == "0,10,20,24,30,", "loop: {joined(out)}");
+}

@@ -258,7 +258,10 @@ freeze — the same item can carry `contract:before-1` too, and then both halves
 
 The label is what a library sweep is built from: the migration lands as one pass over every
 library (a branch, a PR with auto-merge, a republish per library — the loft-ship skill), in the
-order the item's own steps need, usually before the change that enforces it.  The item's body
+order the item's own steps need, usually before the change that enforces it.  When the change is a
+layout or format move under libraries that did not change, each library's release floors
+`loft` on the daily build that carries it — LIBRARY_AUTHORING.md § 3, *When loft moves the
+layout under an unchanged library*.  The item's body
 names the libraries it touches and how the change is computed (a census, a rewrite), so the sweep
 does not depend on someone remembering which libraries use the old form.
 

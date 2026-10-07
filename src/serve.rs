@@ -38,7 +38,7 @@ pub fn run_serve(
     file: &str,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
-    let source = std::fs::read_to_string(file).unwrap_or_default();
+    let source = crate::file_access::read_to_string(file).unwrap_or_default();
     let shell = render_shell(file, &source);
     // One session for the lifetime of the server (slice 1 is single-session); program
     // output is captured into `output` events, not printed, exactly as `--rpc` does.

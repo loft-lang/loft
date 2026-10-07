@@ -1130,13 +1130,13 @@ fn OpNeContent(v1: reference, v2: reference, tp: const u16) -> boolean;
 fn OpGetRef(v1: reference, fld: const u16) -> reference[v1];
 #rust"stores.get_ref(&@v1, u32::from(@fld))"
 fn OpSetRef(v1: reference, fld: const u16, val: reference);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v.rec); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v.rec); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // Plan-06 phase 4d.C step 2 — full 12-byte DbRef store/load.  Used by
 // the closure half of `Type::Function = (u32, DbRef)` slots when stored
 // in vector elements / struct fields.  Layout: u32 store_nr | u32 rec |
 // u32 pos.  Null is encoded as rec == 0 (other words irrelevant).
 fn OpSetDbRef(v1: reference, fld: const u16, val: reference);
-#rust"{{let db = @v1; let r = @val; if db.rec != 0 {{ let off = db.pos + u32::from(@fld); let store = stores.store_mut(&db); store.set_u32_raw(db.rec, off, u32::from(r.store_nr)); store.set_u32_raw(db.rec, off + 4, r.rec); store.set_u32_raw(db.rec, off + 8, r.pos); }}}}"
+#rust"{{let db = @v1; let r = @val; if db.rec != 0 {{ let off = db.pos + u32::from(@fld); let store = stores.store_mut(&db); store.set_u32_raw(db.rec, off, u32::from(r.store_nr)); store.set_u32_raw(db.rec, off + 4, r.rec); store.set_u32_raw(db.rec, off + 8, r.pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetDbRef(v1: reference, fld: const u16) -> reference;
 #rust"{{let db = @v1; if db.rec == 0 {{ DbRef::NULL }} else {{ let store = stores.store(&db); let off = db.pos + u32::from(@fld); let store_nr = store.get_u32_raw(db.rec, off) as u16; let rec = store.get_u32_raw(db.rec, off + 4); let pos = store.get_u32_raw(db.rec, off + 8); DbRef {{ store_nr, rec, pos }} }}}}"
 // Get a direct field reference for a structure: vector, index, hash or spatial
@@ -1150,7 +1150,11 @@ fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
 // SAME test, `rec == 0`, because a target that names no live cell has one spelling: an index
 // out of range answers `nullref` (@FR-H-Index) and so does a keyed miss or an unfilled field.
 // A getter answers its type's null sentinel; a setter does nothing and the program continues,
-// so a write can never resolve a store for an absent target and scribble at record 0.  These
+// so a write can never resolve a store for an absent target and scribble at record 0.  The
+// dropped write reports `write_dropped` (@FR-E-Report) unless its null is already accounted
+// for (`DbRef::absence_unreported`): an out-of-range index reported where it was found, or a
+// store whose `else` arm owns the failure (@FR-H-Write-Else).  The report is the cold branch of
+// the test every setter already makes, so a write that lands pays nothing for it.  These
 // bodies are the SHARED half of the two backends — the interpreter's `fill.rs` arm and the
 // native emitter both carry this text — which is why the two agree here by construction
 // rather than by test.  (The lock half of the write rule, @FR-H-WriteLocked, is not tested
@@ -1190,7 +1194,7 @@ fn OpGetEnum(v1: reference, fld: const u16) -> enumerate;
 // instead of absent.  Disc 0 = absent (variants start at 1).
 #rust"{{let db = @v1; if db.rec == 0 {{ 0u8 }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), 0); if r < 0 {{ 255u8 }} else {{ r as u8 }} }}}}"
 fn OpSetEnum(v1: reference, fld: const u16, val: enumerate);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // @PLN17: boolean field/element storage is byte-stored with the u8 form
 // (0=false, 1=true, 255=null) — identical to a plain enum, so it inherits
 // enum's end-to-end null handling (incl. serialization).  Replaces the old
@@ -1198,32 +1202,32 @@ fn OpSetEnum(v1: reference, fld: const u16, val: enumerate);
 fn OpGetBoolean(v1: reference, fld: const u16) -> boolean;
 #rust"{{let db = @v1; if db.rec == 0 {{ 255u8 }} else {{ let r = stores.store(&db).get_byte(db.rec, db.pos + u32::from(@fld), 0); if r < 0 {{ 255u8 }} else {{ r as u8 }} }}}}"
 fn OpSetBoolean(v1: reference, fld: const u16, val: boolean);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), 0, i32::from(v)); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetShort(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_short(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpGetText(v1: reference, fld: const u16) -> text[v1];
 #rust"{{let db = @v1; if db.rec == 0 {{ Str::new(crate::state::STRING_NULL) }} else {{ let store = stores.store(&db); Str::new(store.get_str(store.get_u32_raw(db.rec, db.pos + u32::from(@fld)))) }} }}"
 fn OpSetInt(v1: reference, fld: const u16, val: integer);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetCharacter(v1: reference, fld: const u16, val: character);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v as u32); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v as u32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetSingle(v1: reference, fld: const u16, val: single);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_single(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_single(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetFloat(v1: reference, fld: const u16, val: float);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_float(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_float(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetByte(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), (@min), v as i32); }}}}"
+#rust"{{let db = @v1; let v = @val; if db.rec != 0 {{ stores.store_mut(&db).set_byte(db.rec, db.pos + u32::from(@fld), (@min), v as i32); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetByteNullable(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_byte_nullable(&db, db.pos + u32::from(@fld), (@min), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_byte_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpSetShort(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_short_nullable(&db, db.pos + u32::from(@fld), (@min), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.set_short_nullable(&db, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // 4-byte integer field read/write (post-2c `integer size(4)` subtypes).
 // Raw i32 storage with i32::MIN as the null sentinel; the stack value
 // stays i64 (widen on load, narrow on store).
 fn OpGetInt4(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i32_raw(db.rec, db.pos + u32::from(@fld)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetInt4(v1: reference, fld: const u16, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i32_raw(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i32_raw(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // 4-byte UNSIGNED read/write, for a `size(4)` type whose range runs past `i32::MAX`
 // (`u32`, or any `integer limit(0, N) size(4)` with N > 2147483647).  The signed pair
 // above cannot express those at all: it sign-extends on load, so a `u32` of 4000000000
@@ -1240,7 +1244,7 @@ fn OpSetInt4(v1: reference, fld: const u16, val: integer);
 fn OpGetInt4Raw(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld)); if r == u32::MAX {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetInt4Raw(v1: reference, fld: const u16, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ u32::MAX }} else {{ @val as u32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ u32::MAX }} else {{ @val as u32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_u32_raw(db.rec, db.pos + u32::from(@fld), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetInt4Full(v1: reference, fld: const u16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_u32_raw(db.rec, db.pos + u32::from(@fld))) }} }}"
 // 2-byte narrow-vector-element read/write for `vector<u16>` /
@@ -1253,7 +1257,7 @@ fn OpGetInt4Full(v1: reference, fld: const u16) -> integer;
 fn OpGetShortRaw(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).get_i16_raw(db.rec, db.pos + u32::from(@fld), (@min)); if r == i32::MIN {{ i64::MIN }} else {{ i64::from(r) }} }}}}"
 fn OpSetShortRaw(v1: reference, fld: const u16, min: const i32, val: integer);
-#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i16_raw(db.rec, db.pos + u32::from(@fld), (@min), v); }}}}"
+#rust"{{let db = @v1; let v = if @val == i64::MIN {{ i32::MIN }} else {{ @val as i32 }}; if db.rec != 0 {{ stores.store_mut(&db).set_i16_raw(db.rec, db.pos + u32::from(@fld), (@min), v); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // NOT-NULL `u16`/`i16` struct fields: direct `(val - min)` encoding with NO null
 // sentinel, so the full 65536-value range round-trips (`OpGetShort`'s `+1` and
 // `OpGetShortRaw`'s `u16::MAX` both swallow the max value as null).  The write
@@ -1269,14 +1273,14 @@ fn OpGetShortSpare(v1: reference, fld: const u16, min: const i32) -> integer;
 fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), (@min))) }} }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);
-#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}"
+#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // `@FR-H-TextReplace` — an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`):
 // the slot already holds 0 or a text block it owns, so the block is written over when `t`
 // fits its claim and released and claimed anew when it does not.  `OpSetText` stays the
 // INITIALISING write — a record literal into a fresh, possibly unfilled record — and never
 // reads the slot, because there it can hold bytes that are not a block.
 fn OpSetTextReplace(v1: reference, fld: const u16, val: text);
-#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
+#rust"{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 // --- Collections ---
 /// Operations on vector<T> — the primary ordered collection type.
 /// Vectors are grown by appending with += and elements are accessed by index.
@@ -2506,8 +2510,8 @@ pub enum FieldValue {
 
 /// Represents a single struct field during compile-time iteration.
 pub struct StructField {
-  name: text,
-  value: FieldValue,
+  pub name: text,
+  pub value: FieldValue,
   // Was the field DECLARED nullable (`text?` rather than `text`)?
   //
   // The payload variants above are typed non-null, and `τ?` shares `τ`'s
@@ -2518,7 +2522,7 @@ pub struct StructField {
   //
   // Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:
   // the two field lists describe the same declaration and must agree.
-  nullable: boolean,
+  pub nullable: boolean,
 }
 
 /// Converts an integer to its decimal text. Built-in types define `to_text` so

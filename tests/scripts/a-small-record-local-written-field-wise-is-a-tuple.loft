@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN180 slice 2 — a small-record LOCAL bound from an admitted call stays a tuple when its
+// fields are WRITTEN: `m.x = 5.0` becomes `TuplePut(m, 0, 5.0)` (`@FR-R-ValueLocal` in the IR
+// phase), so a plain write (c1), a compound write in a loop (c2), a write through an inline
+// sub-record path (c3, `mr.pos.px`), a write before the carrier is handed whole to a parameter
+// (c4), a write in one branch (c6) and a write before a copy into a struct field (c7: the copy
+// keeps the value written before it, and a later write does not reach it) all read back what was
+// written.  c5 — a copy APPENDED to a vector — keeps its record (a place the tuple form cannot
+// name field by field) and is the control that a decline still answers right.  Values computed
+// by hand; both backends, with the pass on and off (`LOFT_NO_IR_VALUE_RECORD=1`), under
+// LOFT_POISON and LOFT_STRICT_STORES and the native leak check.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has: before slice 2 a written
+//   carrier was simply a record, and every cell answered the same.  The receipt is a plant.
+// @falsified-by: tests/falsified/a-small-record-local-written-field-wise-is-a-tuple.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected: a plain `--native` run ships the live tier, whose `open_world` keeps records, so the pass does not run there)
+//   The plant aims every carrier write at tuple field 0.
+//   CHANNEL: an assertion, on the interpreter; by hand on `--native-release`, which runs the
+//   pass, the same assertion (exit 1).
+//   ARMED: nothing.
+//   WITNESS: `c2` answers 1809 for 1218 — `m.x += 3.0` lands in field 0 correctly, but
+//   `m.z = m.x + m.y` writes x instead of z.
+//   HOLDS: c1 passes under the plant (its one write IS field 0); the run stops at c2, so
+//   c3–c7 are unreached there.
+
+struct V3 { x: float, y: float, z: float }
+struct Pos { px: integer, py: integer }
+struct Move { pos: Pos, cost: integer }
+struct Holder { v: V3, tag: integer }
+
+fn mk3(a: float) -> V3 { V3 { x: a, y: a * 2.0, z: a * 3.0 } }
+fn total(v: V3) -> float { v.x * 100.0 + v.y * 10.0 + v.z }
+fn step(k: integer) -> Move { Move { pos: Pos { px: k, py: k * 2 }, cost: k * 3 } }
+
+fn c1() -> float { m = mk3(1.0); m.x = 5.0; m.x * 100.0 + m.y * 10.0 + m.z }
+fn c2() -> float { t = 0.0; for i in 0..3 { m = mk3(i as float); m.x += 3.0; m.z = m.x + m.y; t += m.x * 100.0 + m.z } t }
+fn c3() -> integer { mr = step(2); mr.pos.px = 9; mr.cost += 1; mr.pos.px * 100 + mr.pos.py * 10 + mr.cost }
+fn c4() -> float { m = mk3(1.0); m.y = 7.0; total(m) }
+fn c5() -> float { v: vector<V3> = []; m = mk3(2.0); m.z = 0.5; v += [m]; m.x = 99.0; v[0].x * 100.0 + v[0].y * 10.0 + v[0].z }
+fn c6(b: boolean) -> float { m = mk3(1.0); if b { m.x = 4.0 } else { m.y = 6.0 } m.x * 100.0 + m.y * 10.0 + m.z }
+
+fn c7() -> float { h = Holder { v: V3 { x: 0.0, y: 0.0, z: 0.0 }, tag: 1 }; m = mk3(2.0); m.z = 0.5; h.v = m; m.x = 99.0; h.v.x * 100.0 + h.v.y * 10.0 + h.v.z + m.x * 1000.0 }
+
+fn main() {
+  assert(c1() == 523.0, "c1 {c1()}");
+  assert(c2() == 303.0 + 406.0 + 509.0, "c2 {c2()}");
+  assert(c3() == 900 + 40 + 7, "c3 {c3()}");
+  assert(c4() == 100.0 + 70.0 + 3.0, "c4 {c4()}");
+  assert(c5() == 200.0 + 40.0 + 0.5, "c5 {c5()}");
+  assert(c6(true) == 400.0 + 20.0 + 3.0 && c6(false) == 100.0 + 60.0 + 3.0, "c6 {c6(true)} {c6(false)}");
+  assert(c7() == 200.0 + 40.0 + 0.5 + 99000.0, "c7 {c7()}");
+  println("all ok");
+}

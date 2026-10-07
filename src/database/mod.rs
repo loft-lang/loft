@@ -1626,23 +1626,33 @@ impl Stores {
     /// own failure, and the one log line is written here (`@FR-Path-Refuse`).
     #[must_use]
     pub fn resolve_path(&self, raw: &str) -> Option<String> {
-        let norm = match crate::file_access::program_path(raw) {
+        let anchored = self.program_relative && !self.source_dir.is_empty();
+        if raw.is_empty() {
+            // No name to judge: the anchor itself, or nothing.
+            return Some(if anchored {
+                crate::file_access::at(&self.source_dir)
+                    .for_program()
+                    .native()
+            } else {
+                String::new()
+            });
+        }
+        let norm = match crate::file_access::PathText::program(raw) {
             Ok(norm) => norm,
             Err(why) => {
                 crate::file_access::log_refusal_once(raw, &why);
                 return None;
             }
         };
-        let full = if !self.program_relative
-            || self.source_dir.is_empty()
-            || std::path::Path::new(&norm).is_absolute()
-        {
-            norm
+        // `norm` is in the spelling of the program's host (@PLN184 Track W), and so is the
+        // anchor it joins.
+        let full = if !anchored || norm.is_absolute() {
+            norm.native()
         } else {
-            std::path::Path::new(&self.source_dir)
-                .join(&norm)
-                .to_string_lossy()
-                .into_owned()
+            crate::file_access::at(&self.source_dir)
+                .for_program()
+                .join(&norm.native())
+                .native()
         };
         if let Err(why) = crate::file_access::case_clash(&full) {
             crate::file_access::log_refusal_once(raw, &why);
@@ -1819,7 +1829,10 @@ impl Stores {
         if let Some(logger) = &self.logger
             && let Ok(mut lg) = logger.lock()
         {
-            lg.log_runtime_kind(&kind, None);
+            lg.log_runtime_kind(
+                &kind,
+                crate::codegen_runtime::running_frame_position().as_ref(),
+            );
         }
     }
 
@@ -1956,13 +1969,13 @@ impl Stores {
             });
             // `nullref`, the one value spelling of absence (`DbRef::or_null`,
             // @FR-L-Null) — see `State::vec_get_or_raise`, its interpreter twin.
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         if normalized >= i64::from(len) {
             self.raise_recoverable_runtime(
                 crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds { idx: index, len },
             );
-            return crate::keys::DbRef::NULL;
+            return crate::keys::DbRef::NULL_REPORTED;
         }
         crate::vector::get_vector(db, size, index, &self.allocations)
     }
@@ -2811,6 +2824,10 @@ impl Stores {
                 // walk's delete per element.
                 let elem_size = u32::from(self.size(elem));
                 let words = 1 + u32::from(self.size(kt)).div_ceil(8);
+                // The reset skips the element walk, and with it each element's death: a
+                // `File` among them releases its handle here (`@FR-H-Handle`).
+                #[cfg(not(host_fs))]
+                self.release_file_leases(db);
                 // @PLN157 § V-ai — the capacity the previous fill reached, read off the
                 // record the reset is about to drop.  The buffer is reused across calls
                 // (`@FR-R-Reuse`) and the store already holds this extent

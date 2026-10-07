@@ -196,9 +196,7 @@ impl Parser {
         // @PLN115 S6 — capture the member name's position for the resolution index,
         // but only when recording: `Position` holds a `String`, so an unconditional
         // clone would tax every field access on a normal compile.
-        let field_pos = self
-            .record_resolutions
-            .then(|| self.lexer.peek_pos().clone());
+        let field_pos = self.record_resolutions.then(|| *self.lexer.peek_pos());
         let Some(field) = self.lexer.has_identifier() else {
             // `.<digits>` is the TUPLE spelling and nothing else (`@FR-T-Proj`), so reaching
             // here with one means the receiver is not a tuple — a fact only this site knows,
@@ -239,6 +237,11 @@ impl Parser {
             }
             return t;
         };
+        // @PLN187 — a method on a `vector<Handle>` may be a special form that records no
+        // definition; its name lets `check_postfix` find the declaration.
+        if self.abstract_on() {
+            self.postfix_member.clone_from(&field);
+        }
         // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
         // its DENSE type: the mutation is admissible whatever the chain's nullability, and it
         // does nothing when a link is absent (the runtime already skips it — verified on every
@@ -354,10 +357,10 @@ impl Parser {
                 .unwrap_or_default();
             let read_count = reads.len();
             if !reads.is_empty() {
-                let pos = self.lexer.peek_pos().clone();
+                let pos = *self.lexer.peek_pos();
                 let entry = self.sandbox_field_reads.entry(self.context).or_default();
                 for t in reads {
-                    entry.push((t, pos.clone()));
+                    entry.push((t, pos));
                 }
             }
             // @PLN86 F5 — remember this field access so a raw write at the assignment
@@ -562,6 +565,8 @@ impl Parser {
                     let recv = self.guard_variant_receiver(enum_d, &field, &t, code.clone());
                     *code = self.get_field(found_d_nr, found_fnr, recv);
                     self.data.attr_used(found_d_nr, found_fnr);
+                    self.check_visibility("field", found_d_nr, found_fnr);
+                    self.produced = Some(self.attr_fact_of(found_d_nr, found_fnr));
                 }
                 return t;
             } else if !self.first_pass {
@@ -796,6 +801,7 @@ impl Parser {
                         "EnumUnitLit",
                     );
                     self.data.attr_used(dnr, fnr);
+                    self.check_visibility("variant", dnr, fnr);
                     return Type::Enum(dnr, true, crate::data::Deps::none());
                 }
             }
@@ -845,6 +851,12 @@ impl Parser {
             self.expr_not_null_name.clear();
         }
         self.data.attr_used(dnr, fnr);
+        self.check_visibility("field", dnr, fnr);
+        // a field read produces the field's fact; a METHOD's slot is a routine, and its call
+        // already left the call's answer (`parse_method_selecting`)
+        if !matches!(self.data.attr_type(dnr, fnr).base(), Type::Routine(_)) {
+            self.produced = Some(self.attr_fact_of(dnr, fnr));
+        }
         // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
         self.wrap_projection_nullable(&mut t, receiver_optional);
         t
@@ -1593,8 +1605,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // rewritten to `__nullable<S>`; resolve names against the key-bearing def.
             let el = crate::typedef::key_bearing_def(&self.data, el_nr);
             let mut key_types = Vec::new();
+            let mut key_facts = Vec::new(); // @PLN187
             for k in &keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
+                if self.abstract_on() {
+                    key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                }
             }
             // @PLN48 S3 — a `spatial` RANGE SLICE `xs[(fx,fy)..(tx,ty)]` /
             // `xs[(fx,fy)..:n]` / `xs[(fx,fy)..]`: iterate the records whose Morton
@@ -1625,6 +1641,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 }
             } else {
                 let dep = self.container_dep(code, &t);
+                self.pending_key_facts = std::mem::take(&mut key_facts);
                 self.parse_key(code, &t, &key_types);
                 if let Some(cv) = dep {
                     elm_type = elm_type.depending(cv);
@@ -1664,10 +1681,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else if let Type::Sorted(el, keys, _) | Type::Index(el, keys, _) = &t {
             let el = crate::typedef::key_bearing_def(&self.data, *el);
             let mut key_types = Vec::new();
+            let mut key_facts = Vec::new(); // @PLN187
             for (k, _) in keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
+                if self.abstract_on() {
+                    key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                }
             }
             let dep = self.container_dep(code, &t);
+            self.pending_key_facts = std::mem::take(&mut key_facts);
             self.parse_key(code, &t, &key_types);
             if let Some(cv) = dep {
                 elm_type = elm_type.depending(cv);
@@ -2872,9 +2894,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 // the start of the end expression, and (after it is parsed) the start of the
                 // `]` that closes the slice.  Taken here because this is the only point that
                 // brackets the whole bound whatever it is spelled as.
-                let bound_start = self.lexer.peek_pos().clone();
+                let bound_start = *self.lexer.peek_pos();
                 let ot_type = self.expression(&mut other);
-                let bound_end = self.lexer.peek_pos().clone();
+                let bound_end = *self.lexer.peek_pos();
                 let bound_span = (bound_end.line == bound_start.line
                     && bound_end.pos > bound_start.pos)
                     .then(|| {
@@ -3342,6 +3364,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // against the key's enum exactly as `f(Green)` does against a parameter's.
             let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
             let t = self.expression(&mut p);
+            let first_fact = std::mem::take(&mut self.operand_fact);
+            self.check_key_fact(0, &first_fact); // @PLN187
             self.expected = saved_expected;
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
             if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
@@ -3385,6 +3409,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 let mut ex = Value::Null;
                 let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
                 let ex_t = self.expression(&mut ex);
+                let ex_fact = std::mem::take(&mut self.operand_fact);
+                self.check_key_fact(nr, &ex_fact); // @PLN187
                 self.expected = saved_expected;
                 if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
                     && !self.first_pass

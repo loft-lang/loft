@@ -16,15 +16,16 @@
 
 #![cfg(feature = "registry")]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
-fn exe_name() -> &'static str {
-    if cfg!(windows) { "loft.exe" } else { "loft" }
+fn exe_name() -> String {
+    format!("loft{}", std::env::consts::EXE_SUFFIX)
 }
 
 fn write(path: &Path, body: &[u8]) {
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, body).unwrap();
+    fa::create_dir_all(path.parent().unwrap()).unwrap();
+    fa::write(path, body).unwrap();
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -37,9 +38,9 @@ fn write_manifest(root: &Path) {
     let mut lines = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        for e in std::fs::read_dir(&dir).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in fa::read_dir(&dir).unwrap() {
+            let p = dir.join(e.os_name().unwrap());
+            if fa::is_dir(&p) {
                 stack.push(p);
                 continue;
             }
@@ -51,22 +52,19 @@ fn write_manifest(root: &Path) {
             if rel == "SHA256SUMS" {
                 continue;
             }
-            lines.push(format!(
-                "{}  {rel}",
-                sha256_hex(&std::fs::read(&p).unwrap())
-            ));
+            lines.push(format!("{}  {rel}", sha256_hex(&fa::read(&p).unwrap())));
         }
     }
     lines.sort();
-    std::fs::write(root.join("SHA256SUMS"), lines.join("\n") + "\n").unwrap();
+    fa::write(root.join("SHA256SUMS"), lines.join("\n") + "\n").unwrap();
 }
 
 fn scratch(name: &str) -> PathBuf {
     let d = std::env::temp_dir()
         .join("loft-self-update-swap")
         .join(name);
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
+    let _ = fa::remove_dir_all(&d);
+    fa::create_dir_all(&d).unwrap();
     d
 }
 
@@ -83,8 +81,8 @@ fn self_update_replaces_the_running_binary() {
 
     // A minimal installation, laid out as a release bundle: <root>/bin + <root>/default.
     let running = install.join("bin").join(exe_name());
-    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    fa::create_dir_all(running.parent().unwrap()).unwrap();
+    fa::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
     write(&install.join("default").join("a.loft"), b"old\n");
     write_manifest(&install);
 
@@ -95,7 +93,7 @@ fn self_update_replaces_the_running_binary() {
     write_manifest(&staged);
 
     // Run the COPY, so the process replacing `bin/loft` is running FROM `bin/loft`.
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -108,12 +106,12 @@ fn self_update_replaces_the_running_binary() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        std::fs::read(&running).unwrap(),
+        fa::read(&running).unwrap(),
         NEW_BINARY,
         "the running binary must have been replaced, not skipped"
     );
     assert_eq!(
-        std::fs::read(install.join("default").join("a.loft")).unwrap(),
+        fa::read(install.join("default").join("a.loft")).unwrap(),
         b"new\n",
         "the stdlib must move with the binary — a new bin/loft beside an old default/ \
          is the partial upgrade `verify-self` exists to catch"
@@ -129,17 +127,17 @@ fn a_dry_run_leaves_the_running_binary_alone() {
     let staged = base.join("staged");
 
     let running = install.join("bin").join(exe_name());
-    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    fa::create_dir_all(running.parent().unwrap()).unwrap();
+    fa::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
     write(&install.join("default").join("a.loft"), b"old\n");
     write_manifest(&install);
-    let before = std::fs::read(&running).unwrap();
+    let before = fa::read(&running).unwrap();
 
     write(&staged.join("bin").join(exe_name()), b"WOULD-REPLACE\n");
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--dry-run", "--from"])
         .arg(&staged)
         .output()
@@ -150,12 +148,12 @@ fn a_dry_run_leaves_the_running_binary_alone() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        std::fs::read(&running).unwrap(),
+        fa::read(&running).unwrap(),
         before,
         "--dry-run must not write"
     );
     assert_eq!(
-        std::fs::read(install.join("default").join("a.loft")).unwrap(),
+        fa::read(install.join("default").join("a.loft")).unwrap(),
         b"old\n"
     );
 }
@@ -169,11 +167,11 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
     let staged = base.join("staged");
 
     let running = install.join("bin").join(exe_name());
-    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    fa::create_dir_all(running.parent().unwrap()).unwrap();
+    fa::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
     write(&install.join("default").join("a.loft"), b"old\n");
     write_manifest(&install);
-    let before = std::fs::read(&running).unwrap();
+    let before = fa::read(&running).unwrap();
 
     write(&staged.join("bin").join(exe_name()), b"NEW\n");
     write(&staged.join("default").join("a.loft"), b"new\n");
@@ -181,7 +179,7 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
     // Corrupt AFTER the manifest is written, so the bundle disagrees with itself.
     write(&staged.join("default").join("a.loft"), b"tampered\n");
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -191,7 +189,7 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
         "a contradicted manifest must be refused"
     );
     assert_eq!(
-        std::fs::read(&running).unwrap(),
+        fa::read(&running).unwrap(),
         before,
         "a refused bundle must leave the running binary untouched"
     );
@@ -207,6 +205,7 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
 /// A `file://` base URL keeps the run local: `curl` serves the fixture zip the way the
 /// release CDN would.  Linux x86_64 only: the script derives the artifact name from
 /// `uname`, and that is the one such host CI runs the tests on.
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `scripts/install.sh` (a POSIX `sh` + `curl` + `uname` installer for the Linux bundle) has no Windows equivalent; Windows substitute: `apply_bundle`'s cells above
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn install_sh_installs_the_whole_bundle_and_it_verifies() {
@@ -220,13 +219,13 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
     let bundle = root.join(&name);
     write(
         &bundle.join("bin").join("loft"),
-        &std::fs::read(env!("CARGO_BIN_EXE_loft")).unwrap(),
+        &fa::read(env!("CARGO_BIN_EXE_loft")).unwrap(),
     );
-    for e in std::fs::read_dir("default").unwrap().flatten() {
-        if e.path().extension().is_some_and(|x| x == "loft") {
+    for e in fa::read_dir("default").unwrap() {
+        if fa::has_extension(&e, "loft") {
             write(
-                &bundle.join("default").join(e.file_name()),
-                &std::fs::read(e.path()).unwrap(),
+                &bundle.join("default").join(e.os_name().unwrap()),
+                &fa::read(&e).unwrap(),
             );
         }
     }
@@ -236,7 +235,7 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
         b"fn main() { println(\"hello\"); }\n",
     );
     write_manifest(&bundle);
-    let manifest = std::fs::read_to_string(bundle.join("SHA256SUMS")).unwrap();
+    let manifest = fa::read_to_string(bundle.join("SHA256SUMS")).unwrap();
     let listed: Vec<&str> = manifest
         .lines()
         .map(|l| &l[l.find("  ").unwrap() + 2..])
@@ -245,17 +244,16 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
     // Serve it as the releases page does: <base>/v<version>/<name>.zip plus its sidecar.
     let srv = root.join("srv");
     let dir = srv.join(format!("v{version}"));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let zip_path = dir.join(format!("{name}.zip"));
     {
-        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let mut w = zip::ZipWriter::new(fa::create(&zip_path).unwrap());
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             .unix_permissions(0o755);
         for rel in listed.iter().copied().chain(std::iter::once("SHA256SUMS")) {
             w.start_file(format!("{name}/{rel}"), opts).unwrap();
-            w.write_all(&std::fs::read(bundle.join(rel)).unwrap())
-                .unwrap();
+            w.write_all(&fa::read(bundle.join(rel)).unwrap()).unwrap();
         }
         w.finish().unwrap();
     }
@@ -263,13 +261,13 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
         &dir.join(format!("{name}.zip.sha256")),
         format!(
             "{}  {name}.zip\n",
-            sha256_hex(&std::fs::read(&zip_path).unwrap())
+            sha256_hex(&fa::read(&zip_path).unwrap())
         )
         .as_bytes(),
     );
 
     let prefix = root.join("prefix");
-    let out = std::process::Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("scripts/install.sh")
         .arg("--prefix")
         .arg(&prefix)
@@ -293,12 +291,12 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
     // hold the installation to the manifest at all.
     for rel in &listed {
         assert!(
-            prefix.join(rel).is_file(),
+            fa::is_file(prefix.join(rel)),
             "install.sh did not install {rel}\n--- stdout\n{stdout}\n--- stderr\n{stderr}"
         );
     }
     assert!(
-        prefix.join("SHA256SUMS").is_file(),
+        fa::is_file(prefix.join("SHA256SUMS")),
         "the manifest itself was not installed"
     );
     let confirm = format!("files: {} file(s) match", listed.len());
@@ -334,8 +332,8 @@ fn an_update_that_would_not_be_the_stdlib_that_loads_is_refused() {
     let staged = base.join("staged");
 
     let running = install.join("bin").join(exe_name());
-    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    fa::create_dir_all(running.parent().unwrap()).unwrap();
+    fa::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
     write(&install.join("default").join("a.loft"), b"old\n");
     // The shadow: what a previous `make install` left.  Its mere EXISTENCE re-points the
     // resolver, so the contents need not differ for the update to miss.
@@ -352,9 +350,9 @@ fn an_update_that_would_not_be_the_stdlib_that_loads_is_refused() {
     write(&staged.join("bin").join(exe_name()), b"WOULD-REPLACE\n");
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
-    let before = std::fs::read(&running).unwrap();
+    let before = fa::read(&running).unwrap();
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -376,17 +374,17 @@ fn an_update_that_would_not_be_the_stdlib_that_loads_is_refused() {
     );
     // Nothing moved — the whole point of refusing before the write.
     assert_eq!(
-        std::fs::read(&running).unwrap(),
+        fa::read(&running).unwrap(),
         before,
         "a refused update must not replace the binary"
     );
     assert_eq!(
-        std::fs::read(install.join("default").join("a.loft")).unwrap(),
+        fa::read(install.join("default").join("a.loft")).unwrap(),
         b"old\n",
         "a refused update must not replace the stdlib either"
     );
     assert_eq!(
-        std::fs::read(
+        fa::read(
             install
                 .join("share")
                 .join("loft")
@@ -409,8 +407,8 @@ fn the_same_update_installs_when_no_tree_shadows_it() {
     let staged = base.join("staged");
 
     let running = install.join("bin").join(exe_name());
-    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    fa::create_dir_all(running.parent().unwrap()).unwrap();
+    fa::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
     write(&install.join("default").join("a.loft"), b"old\n");
     write_manifest(&install);
 
@@ -419,7 +417,7 @@ fn the_same_update_installs_when_no_tree_shadows_it() {
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -429,9 +427,9 @@ fn the_same_update_installs_when_no_tree_shadows_it() {
         "an unshadowed installation must still update\nstderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(std::fs::read(&running).unwrap(), NEW_BINARY);
+    assert_eq!(fa::read(&running).unwrap(), NEW_BINARY);
     assert_eq!(
-        std::fs::read(install.join("default").join("a.loft")).unwrap(),
+        fa::read(install.join("default").join("a.loft")).unwrap(),
         b"new\n"
     );
 }
@@ -453,8 +451,8 @@ fn forcing_past_a_shadow_installs_and_names_the_state_it_leaves() {
     let staged = base.join("staged");
 
     let running = install.join("bin").join(exe_name());
-    std::fs::create_dir_all(running.parent().unwrap()).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
+    fa::create_dir_all(running.parent().unwrap()).unwrap();
+    fa::copy(env!("CARGO_BIN_EXE_loft"), &running).unwrap();
     write(&install.join("default").join("a.loft"), b"old\n");
     write(
         &install
@@ -471,7 +469,7 @@ fn forcing_past_a_shadow_installs_and_names_the_state_it_leaves() {
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--force", "--from"])
         .arg(&staged)
         .output()
@@ -483,7 +481,7 @@ fn forcing_past_a_shadow_installs_and_names_the_state_it_leaves() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(
-        std::fs::read(&running).unwrap(),
+        fa::read(&running).unwrap(),
         NEW_BINARY,
         "--force must actually install"
     );
@@ -492,7 +490,7 @@ fn forcing_past_a_shadow_installs_and_names_the_state_it_leaves() {
         "a forced install over a shadow must name what it left: {said}"
     );
     assert_eq!(
-        std::fs::read(
+        fa::read(
             install
                 .join("share")
                 .join("loft")

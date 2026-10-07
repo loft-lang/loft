@@ -172,6 +172,35 @@ paths with `==`, `starts_with`, `ends_with` and `has_component`, never as text.
   `File::open`, `Path::exists()`, `canonicalize`, a separator handled by hand) against
   `src/file_access/direct.baseline`.  A count that rises fails; one that falls fails until
   you lock it in with `LOFT_BLESS_FILE_ACCESS=1 cargo test --lib file_access::guard`.
+- **Refused by Clippy:** `clippy.toml` lists every path-taking entry point (`std::fs`,
+  the disk-touching and name-reading `Path` methods, `set_current_dir`, `libloading`, the
+  mmap store), denied in the lib and the `loft-lsp` / `loft-dap` binaries.  A file not yet
+  migrated carries one marked `#![allow(clippy::disallowed_methods, …)]` and is listed in
+  `src/file_access/clippy_allow.baseline`, which only shrinks.  Store persistence keeps its
+  allow, because the daily windows-latest run proves those OS calls.  Clippy cannot see code
+  compiled out on Linux (`cfg(windows)`), so the text ratchet above stays for that.
+- **Platform gates:** a `cfg(unix)` / `cfg(windows)` / `target_os` gate belongs in
+  `src/platform.rs` or here, never at a call site.  `src/platform_census.rs` counts the rest
+  per file in `src/` and `tests/` against `src/platform_census.baseline`, which only falls
+  (`LOFT_BLESS_PLATFORM_CENSUS=1 cargo test --lib platform_census`).
+- **A Windows run on Linux:** `LOFT_POISON_HOST=windows` puts a program on an emulated Windows
+  host ([BOTH_BACKEND_SWITCHES.md § Falsifier: the emulated Windows host](BOTH_BACKEND_SWITCHES.md#falsifier-the-emulated-windows-host)).
+
+## Processes
+
+loft starts a process ONLY through `platform::process` (`src/platform_process.rs`; its module
+docs are the contract): `Spawn::new(Program::search("cargo"))…`, then `.run(b"")` where `std`
+had `.output()`, `.status()` for `.status()`, `.start()` for `.spawn()`.
+
+- **Pick the tree:** `Tree::Owned` (the default) for a child loft drives — a stop and loft's
+  end reach everything it started.  `Tree::Foreground` for a child handed the terminal (the
+  program a run is, a script that may prompt): an owned child in a group of its own that reads
+  the terminal is stopped by `SIGTTIN`.  `Tree::Detached` only for a child meant to outlive loft.
+- **Refused by Clippy:** `std::process::Command::new` is in `clippy.toml`.  A test harness that
+  must hold the raw process takes `platform::process::harness_command`, which nothing in `src/`
+  calls.  `src/platform_process_guard.rs` counts the files that still spell `Command::new`
+  (each with a marked `#![allow]`) against `src/platform_process_clippy_allow.baseline`, which
+  only shrinks (`LOFT_BLESS_PLATFORM_PROCESS=1 cargo test --lib platform::process::guard`).
 
 ## Dependencies
 

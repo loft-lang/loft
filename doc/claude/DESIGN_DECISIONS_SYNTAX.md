@@ -258,3 +258,48 @@ in a held field and through `Equatable`), `1580` / `1581` (a function named `OpE
 nothing).
 **Catalogue:** @F37 (operators) · `formal/operators.md` (Op-Eq) · @C91 (every type is
 `Equatable`).
+
+## C140 — private by default, `pub` is consent: fields, literals and variants
+
+**Decision.** Everything a file declares is private to that file; `pub` gives consent to show
+it.  A TYPE outside its file has one of three levels: **invisible** (not `pub`, named by no `pub`
+signature of its file — it cannot be named), **name only** (not `pub`, but named by a `pub` fn's
+signature or by a `pub` field's type of a visible type, transitively through type arguments —
+it can be named, passed and stored, never built, and its variant names stay hidden) and **`pub`**
+(as name only, and built: a struct literal when every field is `pub`, an enum's variants).  A
+FIELD of a struct or of a variant is private to its file; `pub` on it makes it readable, writable
+and matchable wherever its type is visible.  No `private` keyword, no opaque-type form.
+**Why.** It keeps the pressure off the developer — a `pub fn`'s returned type is usable by its
+caller with no extra ceremony — while no detail bleeds out without explicit consent.  A name-only
+type with no `pub` field is OCaml's abstract type; with readable fields it is close to OCaml's
+private type.  Printing, JSON and placement still carry every field: the rule is about code
+depending on internals, not about the data being seen.
+
+A TUPLE has no declaration: it is spelled inline where it is used, so its members are visible
+wherever it is, and the only way to hide a value's parts is a declared type whose fields lack
+`pub` — `pub` or not, the type is what owns them.  Privacy inside a tuple's spelling
+(`(pub integer, u8)`) was declined (owner, 2026-10-06): no file would own it, and destructuring,
+assignment to the plain spelling and type equality would each need a rule that rebuilds a struct.
+
+A `type` ALIAS is a declaration, so its file owns it: a non-`pub` alias that a `pub` signature
+names is ABSTRACT outside its file — abstract types with no new syntax (owner, 2026-10-07).
+`type Handle = integer; pub fn open(…) -> Handle` lets a caller bind a `Handle`, hand it back to
+a parameter declared `Handle`, keep it in a variable or field declared `Handle`, compare it with
+`==` and print it; an operator, a member or element read, a method or parameter of `integer`,
+destructuring, and a plain value handed where a `Handle` is declared are refused.  A
+`vector<Handle>` holds `Handle`s: its elements read as `Handle`, and what never looks at an
+element (`len`, `insert`, `+=`) is open while `sort` and `sum` are not.  The abstraction follows
+the value wherever it goes — a tuple member, a branch's value, a pattern binder, a lambda's
+parameter through `map` — and an `if` or `match` on a `Handle` reads it.  So
+`type Data = (integer, text, boolean)` keeps a tuple's members private the way a struct's own
+fields are.  In its own file, and as a `pub type`, an alias is the substitution it always was.
+The abstraction is a fact the checker tracks beside the type (`parser::abstract_alias`), never
+a change to it, so nothing emitted differs.
+
+**Revisit when.** A read-only field outside its file is asked for — declined (a function covers
+it).
+Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants).
+**Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; the naming and the
+build refusal hold on every build, the field, literal and variant refusals under
+`LOFT_PUB_ENFORCE=1` until the published libraries carry their `pub` (`formal/calls.md` D-call).
+**Catalogue:** @F2 / modules.  Extends [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.

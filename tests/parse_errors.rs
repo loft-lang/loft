@@ -2685,7 +2685,7 @@ fn test() {}"
 #[test]
 fn emit_repro_produces_runnable_loft_file() {
     let path = "/tmp/loft-repro/emit_repro_produces_runnable_loft_file.loft";
-    let _ = std::fs::remove_file(path);
+    let _ = loft::file_access::remove_file(path);
 
     code!(
         "fn run() -> integer {
@@ -2695,7 +2695,7 @@ fn emit_repro_produces_runnable_loft_file() {
     .expr("run()")
     .result(Value::Int(3));
 
-    let contents = std::fs::read_to_string(path).unwrap_or_else(|e| {
+    let contents = loft::file_access::read_to_string(path).unwrap_or_else(|e| {
         panic!("emit-repro: expected {path} to be written but read failed: {e}")
     });
     assert!(

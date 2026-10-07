@@ -49,3 +49,16 @@ unchanged; [grammar.md](grammar.md) now states only what is open.
 
 **0 open** — the 12-level precedence ladder written; the prefix-`&`/infix-`&` overload + non-CFG surface resolved as decided edges (C81/C82)
 
+## Deviations carried by grammar.md until 2026-10-06
+
+Opened and closed in the same change; the chapter's `OPEN:` line never carried it.
+
+* **D-gram-5** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(G-Pat-Group)`: a `( … )` in a
+  SCALAR pattern was handed to the expression parser, so it was a value, not a group.
+  `(2 | 3) =>` was the bitwise or (3) and silently missed 2, at an arm root, after a capture and
+  in a field's pattern, on both backends; `(2..=5) =>` and `(2..5) =>` never finished parsing —
+  the compiler looped until killed.  **Fix.**  `parse_match_pattern` reads a group: patterns
+  separated by `|`, one condition, as the arm-level `|` builds.  Guards
+  `tests/scripts/a-parenthesised-alternation-is-a-pattern-group.loft` (the value) and
+  `tests/scripts/a-parenthesised-range-pattern-finishes-parsing.loft` (the hang), apart so the
+  hang cannot mask the wrong answer.  `Contract: settled` — the rule already said group.

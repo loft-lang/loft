@@ -17,8 +17,8 @@
 //! These are subprocess cells for the reason `tests/lease_refuse.rs` gives: the refusal switch is
 //! cached per process.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const PRELUDE: &str = "struct H { id: integer }\n\
@@ -40,15 +40,15 @@ fn run_env(tag: &str, body: &str, mode: &str, env: &[(&str, &str)]) -> String {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, format!("{PRELUDE}{body}\n")).expect("write cell");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    fa::write(&path, format!("{PRELUDE}{body}\n")).expect("write cell");
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(mode)
         .arg(&path)
         .env("LOFT_TIMEOUT", "240")
         .envs(env.iter().copied())
         .output()
         .expect("run loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -455,6 +455,24 @@ fn an_elided_copy_reads_its_own_value_when_the_callers_store_is_written() {
             "fn cp(p: vector<H>, n: integer) { u = p; n += 1; println(\"R{len(u)} {u[0].id} {n}\"); }\n\
              fn main() { w: vector<H> = [mk(1), mk(2)]; cp(w, 3); println(\"back {w[0].id}\"); }",
             "R2 1 4 back 1 D1 D2",
+        ),
+        // The frame's own hidden buffers are not a caller's store: a returned local promoted
+        // onto the return buffer is RENAMED after itself (`out`, `s`), and the gate still
+        // elides beside it.  A vector buffer, then a text one.
+        (
+            "control_beside_vector_return_buffer",
+            "struct SV { v: vector<H>, n: integer }\n\
+             fn ids(s: SV) -> vector<integer> { u = s.v; out: vector<integer> = []; \
+             for i in 0..len(u) { out += [u[i].id]; } out }\n\
+             fn main() { w = SV { v: [mk(1), mk(2)], n: 0 }; r = ids(w); \
+             println(\"R{r} back {w.v[0].id}\"); }",
+            "R[1,2] back 1 D1 D2",
+        ),
+        (
+            "control_beside_text_buffer",
+            "fn key(p: vector<H>) -> text { s = \"k\"; u = p; s = s + \"{u[0].id},{u[1].id}\"; s }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; println(\"R{key(w)} back {w[0].id}\"); }",
+            "Rk1,2 back 1 D1 D2",
         ),
     ]
     .into_iter()

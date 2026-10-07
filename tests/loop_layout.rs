@@ -10,7 +10,6 @@
 //! (every counted loop rotates, so the top-tested alias path runs only under
 //! `LOFT_NO_LOOP_ROTATE=1`), both cell files run under all four switch states here.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const ALIAS_CELLS: &str = "tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft";
 const ROTATE_CELLS: &str = "tests/scripts/a-loop-tests-at-its-bottom.loft";
@@ -52,7 +51,8 @@ const JUMPS: &[(&str, usize, usize)] = &[
 
 fn loft(args: &[&str], cells: &str, env: &[(&str, &str)]) -> (String, String, bool) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(cells);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

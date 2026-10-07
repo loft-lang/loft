@@ -63,7 +63,25 @@ and `remainder`** (and every ordered built-in a `compare`), the `operator` defin
 they meet those interfaces.  A program defining its own function of one of those names whose
 first parameter is such a number is refused with "Cannot redefine": rename it.
 
+**A mapped file is `const`, and writing it is a compile error.**  `file_map(path)` answers
+`const vector<u8>`, so a write to the mapping or to a slice of it, a bind of it into a writable
+variable, or passing it to a parameter that is not `const` is refused before the program runs —
+it used to stop the program at the write.  Copy what you change (`w = m`, a bind copies), and
+declare a parameter that only reads it `const`.  A function of yours can say the same of its
+result: `fn view(…) -> const vector<u8>`.
+
 ### New
+
+**A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
+runs the block exactly when the write did not take — an index past the end, a key the
+collection does not hold, a field reached through a null, a narrow slot the value does not fit,
+a locked store — and never when it landed.  The place is written once, and the block may
+`break`, `continue` or `return`.  `if !place` on the next line still works for a narrow slot.
+
+**A dropped write is reported.**  Without an `else`, a write that lands nowhere logs one
+warning — `index_out_of_bounds` for an index, `write_dropped` for a missing key or a null — and
+the program goes on, as before.  Warnings from a running program now name the statement on the
+interpreter and the function on `--native`, where they used to say `:0`.
 
 **Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place
 of `fn` — `pub operator compare(self: Date, other: Date) -> Ordering { self.ms.compare(other.ms)

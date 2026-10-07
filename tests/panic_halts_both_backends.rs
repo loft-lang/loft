@@ -24,21 +24,21 @@
 //! `log_*`, so both are guarded here.  (The other empty bodies are dead stubs whose calls
 //! the generator lowers inline, and `yield_frame`, a documented native no-op.)
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn run(backend: &str, src: &str, tag: &str) -> (i32, String, String) {
     let dir = std::env::temp_dir().join(format!("loft_panic_{}_{tag}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("p.loft");
-    std::fs::write(&path, src).expect("write");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&path, src).expect("write");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args([backend, path.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -52,13 +52,11 @@ const SRC: &str = "fn main() {\n  println(\"before\");\n  panic(\"halt-marker\")
 /// `rustc` is needed for the `--native` leg; skip cleanly where it is absent, like the
 /// other native suites.
 fn have_rustc() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
-        && PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target/release")
-            .exists()
+        && fa::exists(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release"))
 }
 
 #[test]
@@ -244,17 +242,17 @@ fn log_family_writes_on_both_backends() {
     let mut rendered = Vec::new();
     for (tag, backend) in [("li", "--interpret"), ("ln", "--native")] {
         let dir = std::env::temp_dir().join(format!("loft_logfam_{}_{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("mkdir");
-        std::fs::write(dir.join("p.loft"), prog).expect("write prog");
-        std::fs::write(dir.join("log.conf"), conf).expect("write conf");
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let _ = fa::remove_dir_all(&dir);
+        fa::create_dir_all(&dir).expect("mkdir");
+        fa::write(dir.join("p.loft"), prog).expect("write prog");
+        fa::write(dir.join("log.conf"), conf).expect("write conf");
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend, dir.join("p.loft").to_str().unwrap()])
             .env("LOFT_TIMEOUT", "180")
             .current_dir(&dir)
             .output()
             .expect("spawn loft");
-        let log = std::fs::read_to_string(dir.join("log.txt")).unwrap_or_default();
+        let log = fa::read_to_string(dir.join("log.txt")).unwrap_or_default();
         assert!(
             log.contains("LOG-MARKER-E") && log.contains("LOG-MARKER-W"),
             "[{backend}] structured log records never reached log.txt — the log family is \
@@ -285,7 +283,7 @@ fn log_family_writes_on_both_backends() {
             })
             .collect();
         rendered.push(stripped);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&dir);
     }
     assert_eq!(
         rendered[0], rendered[1],
@@ -340,18 +338,18 @@ fn production_mode_logs_and_continues_on_both_backends() {
         for (tag, backend) in [("pi", "--interpret"), ("pn", "--native")] {
             let dir =
                 std::env::temp_dir().join(format!("loft_prod_{}_{what}_{tag}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).expect("mkdir");
-            std::fs::write(dir.join("p.loft"), prog).expect("write prog");
-            std::fs::write(dir.join("log.conf"), conf).expect("write conf");
-            let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            let _ = fa::remove_dir_all(&dir);
+            fa::create_dir_all(&dir).expect("mkdir");
+            fa::write(dir.join("p.loft"), prog).expect("write prog");
+            fa::write(dir.join("log.conf"), conf).expect("write conf");
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .args([backend, dir.join("p.loft").to_str().unwrap()])
                 .env("LOFT_TIMEOUT", "180")
                 .current_dir(&dir)
                 .output()
                 .expect("spawn loft");
             let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-            let log = std::fs::read_to_string(dir.join("log.txt")).unwrap_or_default();
+            let log = fa::read_to_string(dir.join("log.txt")).unwrap_or_default();
 
             // 1. It CONTINUED.  This is the property the feature exists for, and the one
             //    `--native` did not have.
@@ -392,7 +390,7 @@ fn production_mode_logs_and_continues_on_both_backends() {
                     })
                     .collect::<Vec<_>>(),
             );
-            let _ = std::fs::remove_dir_all(&dir);
+            let _ = fa::remove_dir_all(&dir);
         }
         assert_eq!(
             rendered[0], rendered[1],

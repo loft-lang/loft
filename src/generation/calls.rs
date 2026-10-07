@@ -160,6 +160,37 @@ impl Output<'_> {
         crate::generation::ops::emit_op(&mut ctx, &name, vals)
     }
 
+    /// `@FR-R-AppendTwin` — does this call of `d` go to its append twin?  The caller-side
+    /// rewrite's own call (matched by callee and argument slice), or — inside a twin — a call
+    /// handed the twin's buffer, or a view of it, as the callee's buffer.  Either records the
+    /// request for the twin.
+    fn append_call(&mut self, d: u32, vals: &[Value]) -> bool {
+        let site = self
+            .ap_site_next
+            .is_some_and(|(c, at)| c == d && at == vals.as_ptr() as usize);
+        let handed = !site
+            && self.append_twin_buf.is_some()
+            && self
+                .data
+                .def(d)
+                .hidden_return_buffer_attr()
+                .and_then(|at| vals.get(at))
+                .is_some_and(
+                    |a| matches!(a.unspan(), Value::Var(x) if self.append_twin_views.contains(x)),
+                );
+        if !site && !handed {
+            return false;
+        }
+        if site {
+            self.ap_site_next = None;
+        }
+        if !self.ap_requests.contains(&d) {
+            self.ap_requests.push(d);
+        }
+        crate::rewrite_census::fired("R-AppendTwin", 1);
+        true
+    }
+
     /// Internal helper: emits the user-fn / Op-stub call body.  Reachable
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
@@ -190,7 +221,14 @@ impl Output<'_> {
         // is a local the enclosing frames hold for the argument variable.  The definition
         // number comes from `output_call_inner`; the identity check keeps a stale one from
         // naming another function's twin.
-        let twin_args = if (self.current_call_def as usize) < self.data.definitions.len()
+        // `@FR-R-AppendTwin` — the call appends into a destination: the caller-side rewrite's
+        // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
+        // calls the plain-bodied twin, so no other twin form applies to it.
+        let append = (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && self.append_call(self.current_call_def, vals);
+        let twin_args = if !append
+            && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
             self.twin_call_inputs(self.current_call_def, vals)
@@ -213,6 +251,7 @@ impl Output<'_> {
         // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
         // within its bound.  Not for a forward site, which spells its own call shape.
         let ranged = forward.is_none()
+            && !append
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -220,15 +259,16 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some(),
+            twin_args.is_some() || ranged || forward.is_some() || append,
         )?;
         write!(
             w,
-            "{}{}{}{}(",
+            "{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
             if ranged { "__rg" } else { "" },
-            if refill_twin { "__rt" } else { "" }
+            if refill_twin { "__rt" } else { "" },
+            if append { "__ap" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
@@ -423,7 +463,14 @@ impl Output<'_> {
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && let Some(tp) = self.value_records.param_type(self.current_call_def, idx)
         {
-            if super::hoist::tuple_arg_ready(v, &self.value_records.fns, &self.value_record_locals)
+            // A fn-ref dispatch's arm is handed `_farg_N`, which the dispatch already bound to
+            // the tuple (`@FR-R-FnRefValue`).
+            if matches!(v.unspan(), Value::RawExpr(_))
+                || super::hoist::tuple_arg_ready(
+                    v,
+                    &self.value_records.fns,
+                    &self.value_record_locals,
+                )
             {
                 return self.output_code_inner(w, v);
             }
@@ -448,11 +495,12 @@ impl Output<'_> {
         let raw_param = idx < def_fn.attributes().len()
             && crate::generation::is_raw_scalar_ref(&def_fn.attributes()[idx].typedef);
         if let Some(vr) = self.create_stack_var(v) {
-            let name = sanitize(self.data.def(self.def_nr).variables().name(vr));
+            // The variable's PLACE: a generator's local is its struct field (loft#1899).
+            let place = self.var_place(vr);
             if raw_param {
-                write!(w, "std::ptr::addr_of_mut!(var_{name})")?;
+                write!(w, "std::ptr::addr_of_mut!({place})")?;
             } else {
-                write!(w, "&mut var_{name}")?;
+                write!(w, "&mut {place}")?;
             }
         } else if raw_param
             && let Value::Call(d_nr, _) = v.unspan()
@@ -669,14 +717,8 @@ impl Output<'_> {
                                     param_elems,
                                 ) =>
                             {
-                                let name = self
-                                    .data
-                                    .def(self.def_nr)
-                                    .variables()
-                                    .name(*var)
-                                    .to_string();
                                 Some(crate::generation::dispatch::borrowed_tuple_from_owned(
-                                    &format!("var_{name}"),
+                                    &self.var_place(*var),
                                     param_elems,
                                 ))
                             }
@@ -817,6 +859,7 @@ impl Output<'_> {
                 "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ stores.store_mut(&db).refill_str(db.rec, db.pos + u32::from(@fld), &s_val); }}}}"
             }
             .to_string();
+            res = with_drop_report(&res);
         }
         // `@FR-R-RefillText`'s collection clause — a text set into an element the build
         // appended: a slot under the kept length refills the block it owns, a slot past it
@@ -840,6 +883,7 @@ impl Output<'_> {
                 "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
             }
             .to_string();
+            res = with_drop_report(&res);
         }
         // Bytecode templates wrap text values in Str::new(...) for put_stack compatibility.
         // Native code uses &str directly — strip the wrapper by extracting its argument.
@@ -1214,6 +1258,21 @@ impl Output<'_> {
             write!(w, "{res}")
         }
     }
+}
+
+/// A native text-write body — the `(R-RefillText)` forms above, which replace the
+/// `OpSetText` / `OpSetTextReplace` templates — given the setters' cold branch: a write whose
+/// place names no record reports `write_dropped` unless that absence is already accounted
+/// for (`@FR-E-Report`, `DbRef::absence_unreported`).  Every body ends by closing its
+/// `if db.rec != 0 {{ … }}` and then its own block, so the branch goes between the two.
+fn with_drop_report(body: &str) -> String {
+    let Some(head) = body.strip_suffix("}}}}") else {
+        return body.to_string();
+    };
+    format!(
+        "{head}}}}} else if db.absence_unreported() {{{{ \
+         s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}}}}}"
+    )
 }
 
 #[cfg(test)]

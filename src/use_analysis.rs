@@ -834,7 +834,7 @@ impl Uses {
         // so the default path pays nothing). A copy op borrows this for its report location.
         if self.track_pos {
             if let Some(p) = node.span_pos() {
-                self.cur_pos = Some(p.clone());
+                self.cur_pos = Some(*p);
             } else if let Value::Line(n) = node {
                 // @PLN90 S5.2 — a bare line marker is a coarse fallback for copies that
                 // sit under no span (an inline construct's `OpAppendVector`, an `[]` fold).
@@ -864,7 +864,7 @@ impl Uses {
                 // @PLN131 Q6.1 — the location moves only when the position does, so the two
                 // never disagree about which use they describe.
                 if pos >= *lu {
-                    self.last_use_loc.insert(*v, self.cur_pos.clone());
+                    self.last_use_loc.insert(*v, self.cur_pos);
                 }
                 *lu = (*lu).max(pos);
                 if ctx != Ctx::ReaderArg {
@@ -980,7 +980,7 @@ impl Uses {
                             src,
                             self.pos,
                             loop_surv,
-                            self.cur_pos.clone(),
+                            self.cur_pos,
                             projection,
                         ));
                     }
@@ -1028,7 +1028,7 @@ impl Uses {
                         src,
                         self.pos,
                         loop_surv,
-                        self.cur_pos.clone(),
+                        self.cur_pos,
                         projection,
                     ));
                 }
@@ -1301,6 +1301,7 @@ pub fn dump_link_observability(data: &Data) {
 /// follows a parameter into a mutating callee); or when it field-writes, or hands to a call, a
 /// local whose dep chain reaches a parameter — a view of one (`w = t.inn; w.v[0] = 9`).
 fn caller_stores_stable(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
@@ -1326,6 +1327,22 @@ fn caller_stores_stable(
     if opaque {
         return false;
     }
+    // The hidden buffers by their attribute FLAG, not their name: a local promoted onto the
+    // return buffer RENAMES that parameter after itself (`out` rather than `__retbuf`), and a
+    // name test then took the frame's own result for a caller's store the body writes.  A
+    // caller never hands a buffer that one of its other arguments reaches (loft#1895 closed
+    // the one rebind that did), so writing it cannot change what a parameter reads.
+    let hidden: HashSet<u16> = if d_nr == u32::MAX {
+        HashSet::default()
+    } else {
+        data.def(d_nr)
+            .attributes()
+            .iter()
+            .filter(|a| a.hidden)
+            .map(|a| function.var(&a.name))
+            .filter(|&v| v != u16::MAX)
+            .collect()
+    };
     let mut field_written = HashSet::default();
     crate::parser::find_field_written_vars(code, data, &mut field_written);
     let reaches_argument = |v: u16| {
@@ -1335,7 +1352,10 @@ fn caller_stores_stable(
             if !seen.insert(d) || d >= function.next_var() {
                 continue;
             }
-            if function.is_argument(d) && !function.name(d).starts_with("__") {
+            if function.is_argument(d)
+                && !function.name(d).starts_with("__")
+                && !hidden.contains(&d)
+            {
                 return true;
             }
             todo.extend(function.tp(d).depend());
@@ -1345,6 +1365,7 @@ fn caller_stores_stable(
     !(0..function.next_var()).any(|v| {
         if function.is_argument(v) {
             !function.name(v).starts_with("__")
+                && !hidden.contains(&v)
                 && !crate::data::is_scalar(function.tp(v).base())
                 && written.contains(&v)
         } else {
@@ -1354,12 +1375,13 @@ fn caller_stores_stable(
 }
 
 fn analyze_fn(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
     max_tier: u8,
 ) -> (Vec<VerdictRow>, Vec<ElidePlan>, Vec<MovePlan>) {
-    analyze_fn_survival(code, function, data, max_tier, false)
+    analyze_fn_survival(d_nr, code, function, data, max_tier, false)
 }
 
 /// [`analyze_fn`] with the survival split forced on.
@@ -1371,6 +1393,7 @@ fn analyze_fn(
 /// `use_analysis` tests pin (4 failures, measured).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn analyze_fn_survival(
+    d_nr: u32,
     code: &Value,
     function: &Function,
     data: &Data,
@@ -1398,7 +1421,7 @@ fn analyze_fn_survival(
         w
     };
     // A parameter's store may still be written by a route `written` does not name.
-    let caller_stable = caller_stores_stable(code, function, data, &written);
+    let caller_stable = caller_stores_stable(d_nr, code, function, data, &written);
 
     let mut vars: Vec<u16> = u.append_src.keys().copied().collect();
     vars.sort_unstable();
@@ -1613,8 +1636,8 @@ fn analyze_fn_survival(
             verdict: Verdict::Copy,
             reason,
             class,
-            loc: entry.4.clone(),
-            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).cloned().flatten()),
+            loc: entry.4,
+            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).copied().flatten()),
             survival: true,
             projection: entry.5,
         });
@@ -1640,8 +1663,8 @@ fn analyze_fn_survival(
             verdict: Verdict::Copy,
             reason,
             class,
-            loc: entry.4.clone(),
-            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).cloned().flatten()),
+            loc: entry.4,
+            source_last_use: src.and_then(|s| u.last_use_loc.get(&s).copied().flatten()),
             survival: true,
             projection: entry.5,
         });
@@ -1663,7 +1686,7 @@ fn analyze_fn_survival(
                     source: s,
                     kind: MoveKind::Construct,
                     copy_end: entry.2,
-                    loc: entry.4.clone(),
+                    loc: entry.4,
                 });
             }
         }
@@ -1677,7 +1700,7 @@ fn analyze_fn_survival(
                     source: s,
                     kind: MoveKind::Record,
                     copy_end: entry.2,
-                    loc: entry.4.clone(),
+                    loc: entry.4,
                 });
             }
         }
@@ -1887,7 +1910,7 @@ fn move_elidable_source(
 #[must_use]
 pub fn move_plans(data: &Data, d_nr: u32) -> Vec<MovePlan> {
     let def = data.def(d_nr);
-    analyze_fn(&def.code, &def.variables, data, env_tier()).2
+    analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).2
 }
 
 /// @PLN90 phase B — dump every move-elidable site when `LOFT_MOVE_ELIDE` is set (the opt-in
@@ -1904,7 +1927,7 @@ pub fn dump_move_plans(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for p in analyze_fn(&def.code, &def.variables, data, env_tier()).2 {
+        for p in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).2 {
             total += 1;
             let at = p
                 .loc
@@ -1957,14 +1980,14 @@ pub fn verdicts_for(data: &Data, d_nr: u32) -> Vec<VerdictRow> {
 #[must_use]
 pub fn verdicts_for_tier(data: &Data, d_nr: u32, max_tier: u8) -> Vec<VerdictRow> {
     let def = data.def(d_nr);
-    analyze_fn(&def.code, &def.variables, data, max_tier).0
+    analyze_fn(d_nr, &def.code, &def.variables, data, max_tier).0
 }
 
 /// The elision plans (Borrow verdicts) for one function — what the borrow rewrite
 /// consumes — at the env-selected tier.
 #[must_use]
-pub fn elision_plans(code: &Value, function: &Function, data: &Data) -> Vec<ElidePlan> {
-    analyze_fn(code, function, data, env_tier()).1
+pub fn elision_plans(d_nr: u32, code: &Value, function: &Function, data: &Data) -> Vec<ElidePlan> {
+    analyze_fn(d_nr, code, function, data, env_tier()).1
 }
 
 // ============================================================================
@@ -2685,7 +2708,15 @@ impl<'a> Ownership<'a> {
                             .iter()
                             .filter(|r| !holds_no_store(self.data, r))
                             .map(|r| {
-                                if minted && matches!(r.unspan(), Value::Var(_)) {
+                                // A bare-`Var` bind the emitters COPY is the local's own store
+                                // (@FR-B-Copy): `record_copy_source` is the one predicate both
+                                // backends copy on, at the first bind and the rebind alike.
+                                // Read as the source's borrow, a generic instance's `y: T = b;
+                                // return y` was a borrow of `b`, never lifted, and the copy the
+                                // bind had made leaked once per inline call (loft#1881).
+                                let copied = matches!(r.unspan(), Value::Var(src)
+                                    if bind_copies(self.data, func, *v, *src));
+                                if (minted && matches!(r.unspan(), Value::Var(_))) || copied {
                                     Own::Owned
                                 } else {
                                     self.classify(r, func, defs)
@@ -3786,6 +3817,20 @@ pub fn call_return_frees_source(data: &Data, d_nr: u32, call: &Value) -> bool {
     !may_return_a_borrow(data, fn_nr) || protectable_ref_args(data, d_nr, call).1
 }
 
+/// Does `v = src` COPY `src` into a store `v` owns?  The one predicate the emitters copy a
+/// whole-record bind on (`Function::record_copy_source`, at the first bind and the rebind, both
+/// backends), asked by every reader that classifies such a bind — the oracle and its
+/// flow-sensitive shadow — so a copy is owned in all of them (@FR-B-Copy).
+#[must_use]
+pub(crate) fn bind_copies(
+    data: &Data,
+    func: &crate::variables::Function,
+    v: u16,
+    src: u16,
+) -> bool {
+    func.tp(v).base().heap_def_nr().is_some() && func.record_copy_source(data, v, src).is_some()
+}
+
 /// May `fn_nr`'s result be a borrow of something the caller holds — the question both the
 /// source-free bit ([`call_return_frees_source`]) and native's argument bracket ask, so they
 /// ask it here and cannot answer it apart.
@@ -3805,7 +3850,8 @@ pub fn may_return_a_borrow(data: &Data, fn_nr: u32) -> bool {
 /// A borrow of the callee's own LOCAL (`d = inner(n); v = d.value; return v`, promoted onto
 /// its buffer) or of its hidden buffer is the callee's store going to the caller, which the
 /// adopt exists for; read as a borrow it turned that adopt into a copy (one mint per call).
-fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
+#[must_use]
+pub fn may_hand_back_a_caller_store(data: &Data, fn_nr: u32) -> bool {
     let (Own::Borrowed { base } | Own::Join { base }) = return_ownership(data, fn_nr) else {
         return false;
     };
@@ -5309,7 +5355,7 @@ pub fn dump_all(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn(&def.code, &def.variables, data, env_tier()).0 {
+        for r in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).0 {
             let bucket = match r.class {
                 CopyClass::Eliminated => "eliminated",
                 CopyClass::Avoidable => {
@@ -5594,7 +5640,7 @@ fn raise_copy_refusals(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        &*def.position.file
+        def.position.file.as_str()
     };
     let mut seen = HashSet::default();
     for (pos, line, refusal, tp) in std::mem::take(&mut cx.refusals) {
@@ -5605,7 +5651,7 @@ fn raise_copy_refusals(
             continue;
         }
         let (file, line, col) = match &pos {
-            Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, line, 0),
         };
@@ -5659,14 +5705,14 @@ fn raise_spent_reads(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        &*def.position.file
+        def.position.file.as_str()
     };
     for read in crate::spent::take(def) {
         if read.tp != u32::MAX && data.drop_cascade_nr(read.tp) == u32::MAX {
             continue;
         }
         let (file, line, col) = match &read.pos {
-            Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, read.line, 0),
         };
@@ -5825,7 +5871,7 @@ impl Census<'_> {
         use crate::lease::{Lease, Placement, Refusal};
         if let Some(p) = node.span_pos() {
             self.line = p.line;
-            self.pos = Some(p.clone());
+            self.pos = Some(*p);
         } else if let Value::Line(n) = node {
             self.line = *n;
             self.pos = None;
@@ -6253,7 +6299,7 @@ impl Census<'_> {
                 }
                 _ if crate::keys::lease_refuse_enabled() => {
                     self.refusals
-                        .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+                        .push((self.pos, self.line, r.clone(), tp.to_string()));
                 }
                 _ => {}
             }
@@ -6421,7 +6467,7 @@ pub fn warn_variant_overwritten(
         let file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut hits: Vec<(u16, u16, u32, u32)> = Vec::new();
         find_variant_arms(data, &def.code, &mut |place, tag, arm| {
@@ -6432,7 +6478,7 @@ pub fn warn_variant_overwritten(
                 tag,
                 bound: HashSet::default(),
                 stale: false,
-                at: def.position.clone(),
+                at: def.position,
                 written_at: None,
                 hits: Vec::new(),
             };
@@ -6564,9 +6610,9 @@ impl VariantWatch<'_> {
             }
             return;
         }
-        let outer = self.at.clone();
+        let outer = self.at;
         if let Some(p) = node.span_pos() {
-            self.at = p.clone();
+            self.at = *p;
         }
         self.walk_inner(node);
         self.at = outer;
@@ -6593,8 +6639,8 @@ impl VariantWatch<'_> {
             Value::Var(v) if self.stale && self.bound.contains(v) => {
                 // A position no nearer than the write's own, when the read has none.
                 let at = match &self.written_at {
-                    Some(w) if (self.at.line, self.at.pos) < (w.line, w.pos) => w.clone(),
-                    _ => self.at.clone(),
+                    Some(w) if (self.at.line, self.at.pos) < (w.line, w.pos) => *w,
+                    _ => self.at,
                 };
                 self.hits.push((*v, at));
             }
@@ -6608,7 +6654,7 @@ impl VariantWatch<'_> {
                 {
                     self.stale = true;
                     if self.written_at.is_none() {
-                        self.written_at = Some(self.at.clone());
+                        self.written_at = Some(self.at);
                     }
                 }
             }
@@ -6658,7 +6704,7 @@ pub fn warn_linked_group_append(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut cx = GroupAppends {
             data,
@@ -6684,7 +6730,7 @@ struct GroupAppends<'a> {
 impl GroupAppends<'_> {
     fn scan_block(&mut self, node: &Value, diags: &mut crate::diagnostics::Diagnostics) {
         let mut here: Vec<(u16, usize, Position)> = Vec::new();
-        let saved = self.cur.clone();
+        let saved = self.cur;
         self.collect(node, true, &mut here);
         self.report(&here, diags);
         self.cur = saved;
@@ -6696,7 +6742,7 @@ impl GroupAppends<'_> {
     }
     fn collect(&mut self, node: &Value, top: bool, out: &mut Vec<(u16, usize, Position)>) {
         if let Some(p) = node.span_pos() {
-            self.cur = Some(p.clone());
+            self.cur = Some(*p);
         } else if let Value::Line(n) = node {
             // BOTH carriers. `Span` alone silently degrades every report to the enclosing
             // function's line, because a statement's position rides a `Line` marker —
@@ -6716,7 +6762,7 @@ impl GroupAppends<'_> {
             && let Some(Value::Int(fld)) = args.get(2).map(Value::unspan)
             && *fld >= 0
             && *fld != i32::from(u16::MAX)
-            && let Some(at) = self.cur.clone()
+            && let Some(at) = self.cur
         {
             out.push((*v, *fld as usize, at));
         }
@@ -6765,7 +6811,7 @@ impl GroupAppends<'_> {
                 let file = if at.file.is_empty() {
                     self.file
                 } else {
-                    &*at.file
+                    at.file.as_str()
                 };
                 let holder = filled[0];
                 let others = filled[1..]
@@ -6963,7 +7009,7 @@ pub fn warn_dead_stores(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let func = &def.variables;
         let n = func.var_count();
@@ -7123,7 +7169,7 @@ impl DoubleMove<'_> {
     /// Walk a subtree that is CERTAIN to run, given what `st` has already been handed off.
     fn scan(&mut self, node: &Value, st: &mut Handoffs) {
         if let Some(p) = node.span_pos() {
-            self.cur = Some(p.clone());
+            self.cur = Some(*p);
         } else if let Value::Line(n) = node {
             // A bare line marker is the coarse fallback, exactly as the copy notice uses it:
             // an empty `file` means "borrow the definition's own file" (filled in by the
@@ -7176,7 +7222,7 @@ impl DoubleMove<'_> {
                 if self.ret_cascades
                     && let Some(root) = projection_root(v, self.data)
                     && self.is_caller_owned(root)
-                    && let Some(at) = self.cur.clone()
+                    && let Some(at) = self.cur
                 {
                     self.ret_found.push((root, at));
                 }
@@ -7380,7 +7426,7 @@ impl DoubleMove<'_> {
             && copied_record_releases(self.data, &args[2])
             && self.member_released_elsewhere(root, 0)
         {
-            if let Some(at) = self.cur.clone() {
+            if let Some(at) = self.cur {
                 self.proj.entry(root).or_default().push(at);
             }
             return;
@@ -7420,12 +7466,12 @@ impl DoubleMove<'_> {
         if name.starts_with('_') || name.contains('#') {
             return;
         }
-        let Some(at) = self.cur.clone() else { return };
+        let Some(at) = self.cur else { return };
         if let Some(first) = st.get(&src) {
-            self.found.push((src, first.clone(), at));
+            self.found.push((src, *first, at));
             // Drop the pending entry so a third hand-off reports once more against the
             // second, rather than N-1 times against the first.
-            st.insert(src, self.found.last().expect("just pushed").2.clone());
+            st.insert(src, self.found.last().expect("just pushed").2);
         } else {
             st.insert(src, at);
         }
@@ -7590,7 +7636,7 @@ pub fn warn_double_move(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut cx = DoubleMove {
             data,
@@ -7626,7 +7672,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                &*at.file
+                at.file.as_str()
             };
             // Name the FACT, not the cure — the cure is `--explain`'s job. Both positions
             // matter to the reader: the second is where the defect is written, the first is
@@ -7680,7 +7726,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                &*at.file
+                at.file.as_str()
             };
             if cx.is_caller_owned(root) {
                 report_caller_owned_copy(diags, name, def.variables.is_argument(root), file, &at);
@@ -7726,7 +7772,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                &*at.file
+                at.file.as_str()
             };
             report_returned_parameter_member(
                 diags,
@@ -7931,7 +7977,7 @@ pub fn c_binding_call_unsupported(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            &*pos.file
+            pos.file.as_str()
         };
         let why = uncovered(data, d_nr).unwrap_or_default();
         diags.add_at_coded(
@@ -8182,7 +8228,7 @@ pub fn warn_lost_temp_writes(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            &*def.position.file
+            def.position.file.as_str()
         };
         let mut found = Vec::new();
         let lifted = lifted_call_results(data, &def.code, &def.variables);
@@ -8197,7 +8243,7 @@ pub fn warn_lost_temp_writes(
         );
         for (callee, param, at) in found {
             let file = match &at {
-                Some(p) if !p.file.is_empty() => &*p.file,
+                Some(p) if !p.file.is_empty() => p.file.as_str(),
                 _ => def_file,
             };
             let (line, col) = at
@@ -8280,7 +8326,7 @@ fn scan_lost_temp_writes(
                         out.push((
                             *callee,
                             i as u16,
-                            node.span_pos().or(lift_at).or(at).cloned(),
+                            node.span_pos().or(lift_at).or(at).copied(),
                         ));
                     }
                 }
@@ -8314,7 +8360,7 @@ pub fn superseded_fold_diagnostics(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            &*pos.file
+            pos.file.as_str()
         };
         let shown = def.display_name();
         // (a) the successor must resolve — as a free fn `n_<succ>`, or (if X is a
@@ -8439,7 +8485,7 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn_survival(&def.code, &def.variables, data, env_tier(), true).0 {
+        for r in analyze_fn_survival(d_nr, &def.code, &def.variables, data, env_tier(), true).0 {
             // Only survival-split (source-duplicating) copies are user-facing, and only the
             // Avoidable class is the actionable worklist — mirror `report_copies`'s filter.
             if !r.survival || !matches!(r.class, CopyClass::Avoidable) {
@@ -8466,14 +8512,14 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let def_file = if def.position.file.is_empty() {
                 fallback_file
             } else {
-                &*def.position.file
+                def.position.file.as_str()
             };
             // When even the line is unknown, fall back to line 0 + the fn name.
             let (file, line, col) = r.loc.as_ref().map_or((def_file, 0, 0), |p| {
                 let f = if p.file.is_empty() {
                     def_file
                 } else {
-                    &*p.file
+                    p.file.as_str()
                 };
                 (f, p.line, p.pos)
             });
@@ -8599,7 +8645,7 @@ pub fn report_copies(data: &Data) {
         if !matches!(def.def_type, DefType::Function) {
             continue;
         }
-        for r in analyze_fn(&def.code, &def.variables, data, env_tier()).0 {
+        for r in analyze_fn(d_nr, &def.code, &def.variables, data, env_tier()).0 {
             // Only survival-split copies (source duplications) are user-facing; the var-buffer /
             // return-buffer copies are a separate elision class (and where the stdlib's copies
             // land — the survival baseline is 0), kept to the developer dump.

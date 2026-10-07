@@ -124,6 +124,14 @@ fn stored_tuple_field_offset(data: &Data, database: &Stores, elems: &[Type], idx
 ///
 /// One datum must have one derivation; the plain (non-reference) `TupleGet`/`TuplePut`
 /// branches already read `element_stack_offsets`, and these now agree with them.
+/// `@FR-T-Record` — is tuple variable `var`'s frame slot OWNED: does a `text` member hold the
+/// tuple's own text (`String`), as a text local does, rather than the `Str` a text argument
+/// borrows?  The one answer every site laying out a tuple VARIABLE's slot asks
+/// (`element_stack_offsets_in`); a tuple VALUE on the eval stack is always borrowed.
+fn tuple_slot_owned(stack: &Stack, var: u16) -> bool {
+    var != u16::MAX && stack.function.tuple_owns_text(var)
+}
+
 fn ref_tuple_field_offset(elems: &[Type], idx: usize) -> u16 {
     u16::try_from(crate::data::element_stack_offsets(elems)[idx]).unwrap_or(u16::MAX)
 }
@@ -226,7 +234,8 @@ impl State {
         // loft#1697 — generating the body changes no body, so the ownership oracle's
         // whole-function walk is done once for it, not once per question the generator asks.
         let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
-        let logging = !crate::file_access::is_stdlib_source(&data.def(def_nr).position().file);
+        let logging =
+            !crate::file_access::is_stdlib_source(data.def(def_nr).position().file.as_str());
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
         self.fused_away.clear();
@@ -401,6 +410,31 @@ impl State {
                 self.code_add(put_pos);
                 self.code_add(slot.min);
                 self.code_add(slot.code());
+            }
+            // `@FR-T-Record` — the same for a by-value TUPLE parameter's narrow members a `&`
+            // names: each arrives as the caller's 8-byte value and is re-encoded in place at
+            // entry, member by member, so the calling convention is untouched.
+            if stack.function.is_argument(v)
+                && stack.function.stack(v) != u16::MAX
+                && let Type::Tuple(elems) = stack.function.tp(v).base().clone()
+            {
+                let offsets = crate::data::element_stack_offsets(&elems);
+                for (i, off) in offsets.iter().enumerate().take(elems.len()) {
+                    let Some(slot) =
+                        crate::tuple_links::member_slot(&stack.linked_members, &elems, v, i)
+                    else {
+                        continue;
+                    };
+                    let member_abs = stack.function.stack(v) + *off as u16;
+                    let read_pos = stack.position - member_abs;
+                    stack.add_op("OpVarInt", self);
+                    self.code_add(read_pos);
+                    let put_pos = stack.position - member_abs;
+                    stack.add_op("OpPutNarrow", self);
+                    self.code_add(put_pos);
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
             }
         }
         if console {
@@ -908,8 +942,12 @@ impl State {
                 };
                 let idx = elem_idx as usize;
                 let elem_tp = elems[idx].clone();
-                let offsets = crate::data::element_stack_offsets(elems);
+                let owned = tuple_slot_owned(stack, var_nr);
+                let offsets = crate::data::element_stack_offsets_in(elems, owned);
                 let elem_offset = offsets[idx] as u16;
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                let narrow =
+                    crate::tuple_links::member_slot(&stack.linked_members, elems, var_nr, idx);
                 // The element is at tuple_var_stack_pos + elem_offset.
                 // Compute distance from current stack top to that position.
                 let tuple_var_pos = stack.function.stack(var_nr);
@@ -924,10 +962,17 @@ impl State {
                     // from the outer var's slot + outer offset).  The
                     // helper walks inner offsets and emits one OpVar*
                     // per leaf.
-                    self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs_pos);
+                    self.emit_tuple_var_push_recursive(
+                        stack,
+                        inner_elems,
+                        elem_abs_pos,
+                        u16::MAX,
+                        owned,
+                    );
                     return self.insert_types(elem_tp.clone(), code_pos, stack);
                 }
                 match elem_tp.base() {
+                    Type::Integer(_) if narrow.is_some() => stack.add_op("OpVarNarrow", self),
                     Type::Integer(_) => {
                         stack.add_op("OpVarInt", self);
                     }
@@ -946,6 +991,7 @@ impl State {
                     Type::Single => stack.add_op("OpVarSingle", self),
                     Type::Character => stack.add_op("OpVarCharacter", self),
                     Type::Enum(_, false, _) => stack.add_op("OpVarEnum", self),
+                    Type::Text(_) if owned => stack.add_op("OpVarText", self),
                     Type::Text(_) => stack.add_op("OpArgText", self),
                     Type::Reference(c, _) | Type::Enum(c, true, _) => {
                         self.types
@@ -968,6 +1014,10 @@ impl State {
                     _ => panic!("TupleGet: unsupported element type {elem_tp:?}"),
                 }
                 self.code_add(var_pos);
+                if let Some(slot) = narrow {
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
                 self.insert_types(elem_tp.clone(), code_pos, stack)
             }
             ValueType::TuplePut => {
@@ -1022,8 +1072,12 @@ impl State {
                 };
                 let idx = elem_idx as usize;
                 let elem_tp = elems[idx].clone();
-                let offsets = crate::data::element_stack_offsets(elems);
+                let owned = tuple_slot_owned(stack, var_nr);
+                let offsets = crate::data::element_stack_offsets_in(elems, owned);
                 let elem_offset = offsets[idx] as u16;
+                // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+                let narrow =
+                    crate::tuple_links::member_slot(&stack.linked_members, elems, var_nr, idx);
                 // Generate the value to write.  A `Function` element's put-op below is
                 // `OpPutFnRef`, which pops the full 20-byte pair, so the push has to be
                 // the pair too — the same decision the FIRST-Set path makes in
@@ -1051,11 +1105,12 @@ impl State {
                 // `elem_abs_pos`.  Mirrors the read-side
                 // `emit_tuple_var_push_recursive` at line 394.
                 if let Type::Tuple(inner_elems) = &elem_tp {
-                    self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs_pos);
+                    self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs_pos, u16::MAX, owned);
                     self.record_store_span(from, var_nr);
                     return Type::Void;
                 }
                 match elem_tp.base() {
+                    Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                     Type::Integer(_) => {
                         stack.add_op("OpPutInt", self);
                     }
@@ -1082,6 +1137,13 @@ impl State {
                     // ⚠ That misalignment is mostly silent: on a `(text, text)`, `t.0 = "X"`
                     // writes `.1`, a write to the LAST element falls off the end with nothing
                     // reported, and only a write onto a non-text neighbour faults. (loft#1004)
+                    Type::Text(_) if owned => {
+                        // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                        // member's `String` is emptied in place and takes it (`OpAppendText`).
+                        stack.add_op("OpClearText", self);
+                        self.code_add(var_pos);
+                        stack.add_op("OpAppendText", self);
+                    }
                     Type::Text(_) => stack.add_op("OpPutText", self),
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _) => {
                         stack.add_op("OpPutRef", self);
@@ -1099,6 +1161,10 @@ impl State {
                     _ => panic!("TuplePut: unsupported element type {elem_tp:?}"),
                 }
                 self.code_add(var_pos);
+                if let Some(slot) = narrow {
+                    self.code_add(slot.min);
+                    self.code_add(slot.code());
+                }
                 self.record_store_span(from, var_nr);
                 Type::Void
             }
@@ -1824,6 +1890,29 @@ impl State {
         }
     }
 
+    /// Free every owned text leaf of a tuple member of type `tp` whose slot starts at `base`:
+    /// the member itself when it is text, each text leaf of a nested tuple.  A borrowed slot
+    /// owns no text and frees nothing (`@FR-T-Record`).
+    fn emit_tuple_text_free(&mut self, stack: &mut Stack, tp: &Type, base: u16, owned: bool) {
+        if !owned {
+            return;
+        }
+        match tp.base() {
+            Type::Text(_) => {
+                let pos = stack.position - base;
+                stack.add_op("OpFreeText", self);
+                self.code_add(pos);
+            }
+            Type::Tuple(inner) => {
+                let offsets = crate::data::element_stack_offsets_in(inner, owned);
+                for (e, off) in inner.iter().zip(offsets) {
+                    self.emit_tuple_text_free(stack, e, base + off as u16, owned);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn gen_set_first_tuple_null(&mut self, stack: &mut Stack, v: u16) {
         // Plan-04 Phase B.3 atomic bundle: slot-aware.  Push each null
         // element value then OpPut it at the element's absolute slot
@@ -1834,23 +1923,34 @@ impl State {
             return;
         };
         let tuple_var_base = stack.function.stack(v);
-        self.emit_tuple_null_init(stack, &elems, tuple_var_base);
+        let owned = tuple_slot_owned(stack, v);
+        self.emit_tuple_null_init(stack, &elems, tuple_var_base, v, owned);
     }
 
     /// Recursive helper for `TupleGet` on a `Type::Tuple` element.
     /// The outer tuple variable is already at a known stack base; this
     /// pushes the inner tuple's leaves from the outer variable's slot
     /// at the inner offsets.  Recurses for nested-nested tuples.
-    fn emit_tuple_var_push_recursive(&mut self, stack: &mut Stack, elems: &[Type], base: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_var_push_recursive(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for (i, elem) in elems.iter().enumerate() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = elem {
-                self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs);
+                self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs, u16::MAX, owned);
                 continue;
             }
             let var_pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elem.base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpVarNarrow", self),
                 Type::Integer(_) => {
                     stack.add_op("OpVarInt", self);
                 }
@@ -1866,6 +1966,7 @@ impl State {
                 Type::Single => stack.add_op("OpVarSingle", self),
                 Type::Character => stack.add_op("OpVarCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpVarEnum", self),
+                Type::Text(_) if owned => stack.add_op("OpVarText", self),
                 Type::Text(_) => stack.add_op("OpArgText", self),
                 Type::Reference(c, _) | Type::Enum(c, true, _) => {
                     self.types
@@ -1884,6 +1985,10 @@ impl State {
                 other => panic!("Tuple push: unsupported element type {other:?}"),
             }
             self.code_add(var_pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -1893,16 +1998,26 @@ impl State {
     /// most-recently-pushed leaf and writes it to the corresponding
     /// slot offset within the variable.  For nested `Type::Tuple`
     /// elements, recurses with the inner offsets added to `base`.
-    fn emit_tuple_var_pop_put(&mut self, stack: &mut Stack, elems: &[Type], base: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_var_pop_put(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for i in (0..elems.len()).rev() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = &elems[i] {
-                self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs);
+                self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs, u16::MAX, owned);
                 continue;
             }
             let pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elems[i].base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) => {
                     stack.add_op("OpPutInt", self);
                 }
@@ -1919,6 +2034,13 @@ impl State {
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
+                Type::Text(_) if owned => {
+                    // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                    // member's `String` is emptied in place and takes it (`OpAppendText`).
+                    stack.add_op("OpClearText", self);
+                    self.code_add(pos);
+                    stack.add_op("OpAppendText", self);
+                }
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 // Every DbRef-shaped element travels as one handle, so the membership
                 // question is [`is_dbref`](crate::data::is_dbref)'s and is asked there —
@@ -1928,6 +2050,10 @@ impl State {
                 other => panic!("Tuple set: unsupported element type {other:?}"),
             }
             self.code_add(pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -1935,12 +2061,19 @@ impl State {
     /// and pushes/OpPut's a zero value at each leaf primitive's
     /// absolute stack slot.  For nested `Type::Tuple` elements,
     /// recurses with the inner offsets added to `base`.
-    fn emit_tuple_null_init(&mut self, stack: &mut Stack, elems: &[Type], base: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_null_init(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for (i, elem) in elems.iter().enumerate() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = elem {
-                self.emit_tuple_null_init(stack, inner_elems, elem_abs);
+                self.emit_tuple_null_init(stack, inner_elems, elem_abs, u16::MAX, owned);
                 continue;
             }
             match elem.base() {
@@ -1985,11 +2118,21 @@ impl State {
                 other => panic!("emit_tuple_null_init: unsupported element type {other:?}"),
             }
             let pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elem.base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) | Type::Function(..) => stack.add_op("OpPutInt", self),
                 Type::Boolean => stack.add_op("OpPutBool", self),
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Float => stack.add_op("OpPutFloat", self),
+                Type::Text(_) if owned => {
+                    // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                    // member's `String` is started in place and takes it (`OpAppendText`).
+                    stack.add_op("OpInitText", self);
+                    self.code_add(pos);
+                    stack.add_op("OpAppendText", self);
+                }
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
@@ -1997,6 +2140,10 @@ impl State {
                 _ => unreachable!(),
             }
             self.code_add(pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -3296,12 +3443,19 @@ impl State {
     // "unsupported elem". The full set: emit_tuple_put_ops, emit_tuple_var_pop_put,
     // emit_tuple_var_push_recursive, emit_tuple_null_init, and the generate_node/generate_var
     // TupleGet/TuplePut element matches.
-    fn emit_tuple_put_ops(&mut self, stack: &mut Stack, elems: &[Type], tuple_base: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_put_ops(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        tuple_base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for i in (0..elems.len()).rev() {
             let elem_abs = tuple_base + offsets[i] as u16;
             if let Type::Tuple(inner) = &elems[i] {
-                self.emit_tuple_put_ops(stack, inner, elem_abs);
+                self.emit_tuple_put_ops(stack, inner, elem_abs, u16::MAX, owned);
                 continue;
             }
             // Compute pos BEFORE add_op — `stack.add_op` calls
@@ -3312,7 +3466,10 @@ impl State {
             // time, which is then `stack_pos + size - pos` inside
             // `put_var`).  Mirrors the original flat-tuple loop.
             let pos = stack.position - elem_abs;
+            // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
+            let narrow = crate::tuple_links::member_slot(&stack.linked_members, elems, var, i);
             match elems[i].base() {
+                Type::Integer(_) if narrow.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) => stack.add_op("OpPutInt", self),
                 // P249 — fn-ref slot is 20 B (8 d_nr + 12 closure
                 // DbRef).  OpPutInt would only pop 8 B and leave the
@@ -3329,6 +3486,13 @@ impl State {
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
+                Type::Text(_) if owned => {
+                    // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                    // member's `String` is started in place and takes it (`OpAppendText`).
+                    stack.add_op("OpInitText", self);
+                    self.code_add(pos);
+                    stack.add_op("OpAppendText", self);
+                }
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 // See the sibling note in `emit_tuple_var_pop_put`: the DbRef-shaped set
                 // is [`is_dbref`](crate::data::is_dbref)'s to answer.
@@ -3337,6 +3501,10 @@ impl State {
                 other => panic!("emit_tuple_put_ops: unsupported elem {other:?}"),
             }
             self.code_add(pos);
+            if let Some(slot) = narrow {
+                self.code_add(slot.min);
+                self.code_add(slot.code());
+            }
         }
     }
 
@@ -3736,7 +3904,8 @@ impl State {
                 Type::RefVar(_) => stack.add_op("OpPutRef", self),
                 Type::Tuple(elems) => {
                     let tuple_var_base = stack.function.stack(v);
-                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base);
+                    let owned = tuple_slot_owned(stack, v);
+                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base, v, owned);
                     return;
                 }
                 other => panic!(
@@ -4536,7 +4705,10 @@ impl State {
                     // fn-ref-element projection (`generation/calls.rs`) and the
                     // TupleGet Integer arm; the d_nr is the first 8 bytes of the
                     // element slot, so `OpVarInt` at its offset reads exactly it.
-                    let offsets = crate::data::element_stack_offsets(&elems);
+                    let offsets = crate::data::element_stack_offsets_in(
+                        &elems,
+                        tuple_slot_owned(stack, *tvar),
+                    );
                     let elem_abs = stack.function.stack(*tvar) + offsets[*tidx as usize] as u16;
                     let var_pos = stack.position - elem_abs;
                     stack.add_op("OpVarInt", self);
@@ -4744,6 +4916,20 @@ impl State {
             self.emit_push_null_ref(stack);
             return stack.data.def(op).returned().clone();
         }
+        // `@FR-T-Record` — a tuple local's text MEMBER freed at scope exit
+        // (`scopes::tuple_members::tuple_text_member_frees`): every owned text leaf under it.
+        if name == "OpFreeText"
+            && let [arg] = parameters
+            && let Value::TupleGet(tv, ti) = arg.unspan()
+            && let Type::Tuple(elems) = stack.function.tp(*tv).base().clone()
+            && (*ti as usize) < elems.len()
+        {
+            let owned = tuple_slot_owned(stack, *tv);
+            let base = stack.function.stack(*tv)
+                + crate::data::element_stack_offsets_in(&elems, owned)[*ti as usize] as u16;
+            self.emit_tuple_text_free(stack, &elems[*ti as usize], base, owned);
+            return stack.data.def(op).returned().clone();
+        }
         if name == "OpCreateStack" && !parameters.is_empty() {
             if let Value::Var(wv) = &parameters[0] {
                 // Dep is the named variable at wv.stack_pos.
@@ -4754,7 +4940,9 @@ impl State {
             {
                 // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: the tuple's slot at
                 // the member's offset, the address the `TupleGet` read itself uses.
-                let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
+                let offset =
+                    crate::data::element_stack_offsets_in(elems, tuple_slot_owned(stack, *tv))
+                        [*ti as usize] as u16;
                 let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
                 self.emit_push_create_stack(stack, dep_offset);
             } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
@@ -5518,7 +5706,8 @@ impl State {
                 // store local answering the zero initialiser on native.
                 let elems = elems.clone();
                 let tuple_base = stack.function.stack(variable);
-                self.emit_tuple_var_push_recursive(stack, &elems, tuple_base);
+                let owned = tuple_slot_owned(stack, variable);
+                self.emit_tuple_var_push_recursive(stack, &elems, tuple_base, variable, owned);
                 return self.insert_types(stack.function.tp(variable).clone(), code, stack);
             }
             _ => panic!(
@@ -6368,7 +6557,8 @@ impl State {
                 // OpPut* calls at the correct sub-offsets.
                 let elems = elems.clone();
                 let tuple_var_base = stack.function.stack(var);
-                self.emit_tuple_var_pop_put(stack, &elems, tuple_var_base);
+                let owned = tuple_slot_owned(stack, var);
+                self.emit_tuple_var_pop_put(stack, &elems, tuple_var_base, var, owned);
                 return;
             }
             _ => panic!(

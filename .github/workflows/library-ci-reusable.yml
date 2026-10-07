@@ -45,8 +45,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   test:
+    # @windows-exempt: a library's platform matrix is its own repository's choice (the caller's matrix)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false                       # one broken package must not hide the others
@@ -543,6 +548,7 @@ jobs:
   # how a step gets ignored.  What it cannot read — a `gh` call that fails, an
   # unreachable index — it reports and never counts as clean.
   unreleased:
+    # @windows-exempt: platform-free — compares library refs
     runs-on: ubuntu-latest
     name: unreleased work
     steps:

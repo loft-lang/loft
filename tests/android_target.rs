@@ -20,14 +20,14 @@
 // error-path test always runs — it is cheap and guards that the flag exists and
 // fails with an actionable message.
 
+use loft::file_access as fa;
 use std::io::Write;
-use std::process::Command;
 
 fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_android_target");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(name);
-    std::fs::File::create(&path)
+    fa::create(&path)
         .expect("create probe")
         .write_all(src.as_bytes())
         .expect("write probe");
@@ -37,7 +37,7 @@ fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
 /// True if `path` is an ELF64 shared object for AArch64 (`e_machine == 183`).
 /// Reads only the header, so it needs no `readelf`/NDK tool on the test host.
 fn is_aarch64_elf(path: &std::path::Path) -> bool {
-    let Ok(bytes) = std::fs::read(path) else {
+    let Ok(bytes) = fa::read(path) else {
         return false;
     };
     // ELF magic + 64-bit class + little-endian, then e_machine (offset 18, u16 LE).
@@ -52,7 +52,7 @@ fn is_aarch64_elf(path: &std::path::Path) -> bool {
 /// byte scan — enough to confirm an exported entry without an NDK `readelf` on the
 /// test host (the name lives verbatim in `.dynstr`).
 fn so_names_symbol(path: &std::path::Path, sym: &str) -> bool {
-    std::fs::read(path).is_ok_and(|bytes| bytes.windows(sym.len()).any(|w| w == sym.as_bytes()))
+    fa::read(path).is_ok_and(|bytes| bytes.windows(sym.len()).any(|w| w == sym.as_bytes()))
 }
 
 /// `--native-android` on a non-trivial program (struct + fn + for-loop + string
@@ -92,8 +92,8 @@ fn main() {
     let out_so = std::env::temp_dir()
         .join("loft_android_target")
         .join("prog.so");
-    let _ = std::fs::remove_file(&out_so);
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let _ = fa::remove_file(&out_so);
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native-android")
         .arg(&out_so)
         .arg(&probe)
@@ -128,7 +128,7 @@ fn main() {
 #[test]
 fn android_without_ndk_reports_actionable_error() {
     let probe = write_probe("noNdk.loft", "fn main() { print(\"hi\\n\"); }");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native-android")
         .arg(&probe)
         .env_remove("ANDROID_NDK_HOME")

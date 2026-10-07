@@ -31,10 +31,16 @@
 //! read at all).  It keeps its path, and the first write or resize through it reopens the
 //! file read-write at the logical position — the program's `File` is one handle whichever
 //! operation came first (loft#1861: a write after a read failed with `Bad file descriptor`).
+//!
+//! A handle is named by a NUMBER inside the `File` record, so a copy of the record names the
+//! same handle.  The handle therefore counts the records that hold it — its LEASES — and closes
+//! only when the last one is released (`@FR-H-Handle`).  Closing it at the first release cut the
+//! handle out from under the copy: a `File` local placed in a vector and returned lost every
+//! later write through the element, silently (loft#1896).
 
+use crate::file_access::PathText;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
 
 /// Bytes a refill asks for.  A request at least this large bypasses the buffer.
 const CAPACITY: usize = 64 * 1024;
@@ -49,7 +55,9 @@ pub struct LoftFile {
     /// The bytes `buf` holds.
     len: usize,
     /// A read-only handle's path, kept to reopen it read-write on its first write.
-    reopen: Option<PathBuf>,
+    reopen: Option<PathText>,
+    /// The `File` records that name this handle: one at the open, one more per copy.
+    leases: u32,
 }
 
 impl LoftFile {
@@ -63,14 +71,28 @@ impl LoftFile {
             pos: 0,
             len: 0,
             reopen: None,
+            leases: 1,
         }
     }
 
-    /// A handle opened read-only from `path`; a write through it reopens `path` read-write.
+    /// A copy of a `File` record now names this handle too.
+    pub fn lease(&mut self) {
+        self.leases += 1;
+    }
+
+    /// A `File` record that named this handle is gone; answers whether it was the last, so
+    /// the handle closes.
+    pub fn release(&mut self) -> bool {
+        self.leases = self.leases.saturating_sub(1);
+        self.leases == 0
+    }
+
+    /// A handle opened read-only from `path` — a path the runtime resolved, in the program's
+    /// spelling (`file_access::at`); a write through it reopens `path` read-write.
     #[must_use]
-    pub fn reader(file: File, path: impl Into<PathBuf>) -> LoftFile {
+    pub fn reader(file: File, path: &str) -> LoftFile {
         LoftFile {
-            reopen: Some(path.into()),
+            reopen: Some(crate::file_access::at(path)),
             ..LoftFile::new(file)
         }
     }
@@ -84,8 +106,7 @@ impl LoftFile {
         };
         self.realign()?;
         let at = self.file.stream_position()?;
-        let mut file =
-            crate::file_access::open_read_write(&crate::file_access::PathText::from_os(&path))?;
+        let mut file = crate::file_access::open_read_write(&path)?;
         file.seek(SeekFrom::Start(at))?;
         self.file = file;
         self.at = Some(at);
@@ -170,6 +191,24 @@ impl Read for LoftFile {
 }
 
 impl LoftFile {
+    /// `W` bytes taken BY VALUE: from the buffer when it holds them whole, else through
+    /// [`Read::read_exact`].  A fixed-width scalar read decodes them from a register; copied
+    /// through a slice on the stack, every read paid a store-forwarding stall on reloading
+    /// the bytes `copy_from_slice` had just written.  `None` is a short read, answered as
+    /// `read_exact` answers it.
+    #[inline]
+    pub fn take_array<const W: usize>(&mut self) -> Option<[u8; W]> {
+        if W > 0 && self.len - self.pos >= W {
+            let mut out = [0u8; W];
+            out.copy_from_slice(&self.buf[self.pos..self.pos + W]);
+            self.pos += W;
+            self.at = self.at.map(|a| a + W as u64);
+            return Some(out);
+        }
+        let mut out = [0u8; W];
+        self.read_exact(&mut out).ok().map(|()| out)
+    }
+
     /// A request the buffer already holds whole: copied, and the logical position moved by
     /// it — exactly what `fill` and `settle` do for it, without their loop.  `false` leaves
     /// everything as it was.
@@ -264,12 +303,12 @@ mod tests {
 
     fn scratch(name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("loft_file_{name}_{}", std::process::id()));
-        crate::file_access::write(&host(&p), bytes).unwrap();
+        crate::file_access::write(host(&p), bytes).unwrap();
         p
     }
 
     fn open(p: &std::path::Path) -> LoftFile {
-        LoftFile::new(crate::file_access::open_read_write(&host(p)).unwrap())
+        LoftFile::new(crate::file_access::open_read_write(host(p)).unwrap())
     }
 
     #[test]
@@ -283,7 +322,7 @@ mod tests {
             got.extend_from_slice(&two);
         }
         assert_eq!(got, data);
-        crate::file_access::remove_file(&host(&p)).unwrap();
+        crate::file_access::remove_file(host(&p)).unwrap();
     }
 
     #[test]
@@ -300,7 +339,7 @@ mod tests {
         let got = file.read(&mut rest).unwrap();
         assert_eq!(got, data.len() - (CAPACITY + 7));
         assert_eq!(file.read(&mut ten).unwrap(), 0);
-        std::fs::remove_file(path).unwrap();
+        crate::file_access::remove_file(host(&path)).unwrap();
     }
 
     #[test]
@@ -314,14 +353,17 @@ mod tests {
         f.read_exact(&mut rest).unwrap();
         assert_eq!(&rest, b"fghij");
         drop(f);
-        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcXYfghij");
-        crate::file_access::remove_file(&host(&p)).unwrap();
+        assert_eq!(crate::file_access::read(host(&p)).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(host(&p)).unwrap();
     }
 
     #[test]
     fn a_reader_written_through_reopens_at_the_logical_position() {
         let p = scratch("reader", b"abcdefghij");
-        let mut f = LoftFile::reader(crate::file_access::open(&host(&p)).unwrap(), &p);
+        let mut f = LoftFile::reader(
+            crate::file_access::open(host(&p)).unwrap(),
+            &p.to_string_lossy(),
+        );
         let mut three = [0u8; 3];
         f.read_exact(&mut three).unwrap();
         f.write_all(b"XY").unwrap();
@@ -329,8 +371,8 @@ mod tests {
         f.read_exact(&mut rest).unwrap();
         assert_eq!(&rest, b"fghij");
         drop(f);
-        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcXYfghij");
-        crate::file_access::remove_file(&host(&p)).unwrap();
+        assert_eq!(crate::file_access::read(host(&p)).unwrap(), b"abcXYfghij");
+        crate::file_access::remove_file(host(&p)).unwrap();
     }
 
     #[test]
@@ -352,8 +394,8 @@ mod tests {
         f.write_all(b"Z").unwrap();
         assert_eq!(f.stream_position().unwrap(), 4);
         drop(f);
-        assert_eq!(std::fs::read(&p).unwrap(), b"abcZef");
-        crate::file_access::remove_file(&host(&p)).unwrap();
+        assert_eq!(crate::file_access::read(host(&p)).unwrap(), b"abcZef");
+        crate::file_access::remove_file(host(&p)).unwrap();
     }
 
     #[test]
@@ -371,6 +413,6 @@ mod tests {
         assert_eq!(f.seek(SeekFrom::Start(1)).unwrap(), 1);
         f.read_exact(&mut two).unwrap();
         assert_eq!(&two, b"12");
-        crate::file_access::remove_file(&host(&p)).unwrap();
+        crate::file_access::remove_file(host(&p)).unwrap();
     }
 }

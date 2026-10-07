@@ -551,8 +551,9 @@ pub enum CapViolation {
 #[must_use]
 pub fn def_library(data: &Data, def_nr: u32) -> Option<String> {
     let def = data.def(def_nr);
-    let file = &*def.position().file;
-    let base = std::path::Path::new(file).file_stem()?.to_str()?;
+    let file = def.position().file;
+    let stem = crate::file_access::file_stem(file.as_str())?;
+    let base = stem.as_str();
     // Strip a leading `\d+_` (stdlib module naming: `01_code` -> `code`).
     let name = match base.find('_') {
         Some(i) if i > 0 && base.as_bytes()[..i].iter().all(u8::is_ascii_digit) => &base[i + 1..],
@@ -730,11 +731,11 @@ pub fn reference_position(data: &Data, from: u32, symbol: u32) -> Option<Positio
         }
         match v {
             Value::Call(d, _) if *d == target => {
-                *found = cur.cloned();
+                *found = cur.copied();
                 return;
             }
             Value::FnRef(d, _, _) if *d >= 0 && *d as u32 == target => {
-                *found = cur.cloned();
+                *found = cur.copied();
                 return;
             }
             _ => {}
@@ -764,8 +765,7 @@ pub fn describe_violation(
     let sym_name = display_name(data, symbol);
     let lib = def_library(data, symbol);
     let libhint = lib.as_deref().unwrap_or("<unknown>");
-    let pos =
-        reference_position(data, from, symbol).unwrap_or_else(|| data.def(from).position().clone());
+    let pos = reference_position(data, from, symbol).unwrap_or_else(|| *data.def(from).position());
     let profile_name = sandboxed.get(&from);
     let profile = profile_name.and_then(|n| config.profiles.get(n));
     let allowed_libs = profile.map(|p| p.allow_libs.join(", ")).unwrap_or_default();
@@ -822,7 +822,7 @@ pub fn describe_violation(
                  add `{libhint}` to `allow_libs` — a library holding sandboxed code cannot \
                  vet itself, and allow-listing it would disable the raw-write guard and \
                  under-report the data envelope for every helper in it.",
-                suggested_path_selector(&data.def(symbol).position().file)
+                suggested_path_selector(data.def(symbol).position().file.as_str())
             )
         }
         CapViolation::UntaggedSymbol { .. } => format!(
@@ -1195,7 +1195,7 @@ pub fn admit_totality(
     for def in looped {
         violations.push(TotalityViolation::UnboundedLoop {
             def,
-            position: unbounded_loops[&def].clone(),
+            position: unbounded_loops[&def],
         });
     }
     // 3.2 — recursion cycles.
@@ -1699,7 +1699,7 @@ pub fn raw_write_violations(
         .filter(|(d, _)| sandboxed.contains_key(d))
         .map(|(&def, position)| RawWriteViolation {
             def,
-            position: position.clone(),
+            position: *position,
         })
         .collect();
     out.sort_by_key(|v| v.def);
@@ -1749,7 +1749,7 @@ pub fn field_read_violations(
                 out.push(FieldReadViolation {
                     def,
                     token: token.clone(),
-                    position: position.clone(),
+                    position: *position,
                 });
             }
         }
@@ -1808,7 +1808,7 @@ pub fn field_update_violations(
                         def,
                         field: field.clone(),
                         token: token.clone(),
-                        position: position.clone(),
+                        position: *position,
                     });
                 }
             }
@@ -1868,7 +1868,7 @@ pub fn field_append_violations(
                         def,
                         field: field.clone(),
                         token: token.clone(),
-                        position: position.clone(),
+                        position: *position,
                     });
                 }
             }
@@ -1923,7 +1923,7 @@ pub fn param_lock_violations(
                 out.push(ParamLockViolation {
                     def,
                     token: token.clone(),
-                    position: position.clone(),
+                    position: *position,
                 });
             }
         }

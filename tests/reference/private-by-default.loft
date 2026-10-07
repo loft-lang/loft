@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT_DECLARATIONS.md § Visibility — everything a file declares is private to it; `pub`
+// is consent (C140).  Inside its own file every field reads, every variant builds and every
+// literal compiles; the refusals outside the file are cells of `tests/pub_visibility.rs`.
+
+struct Unit { pub name: text, hp: integer }      // name only: reachable through spawn()
+pub enum Shape { Circle { pub r: float }, Blob { seed: integer } }
+pub fn spawn(name: text) -> Unit { Unit { name: name, hp: 100 } }
+
+fn test_the_declaring_file_reads_and_builds_everything() {
+  u = spawn("orc");
+  assert(u.name == "orc" && u.hp == 100, "its own file reads a private field");
+  s: Shape = Blob { seed: 7 };
+  v = match s { Blob { seed } => seed, Circle { r } => 0 };
+  assert(v == 7, "its own file builds and matches a variant with a private field");
+}

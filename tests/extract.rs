@@ -4,6 +4,7 @@
 //! E1: map a line selection to the enclosing function's contiguous TOP-LEVEL
 //! statement slice, refusing anything that does not map to whole statements.
 
+use loft::file_access as fa;
 use loft::lsp::{ExtractEdit, extract_function, extract_inputs, extract_outputs, extract_range};
 
 /// Apply an `ExtractEdit`: replace the selection lines with the call, then append
@@ -27,10 +28,10 @@ fn apply(text: &str, e: &ExtractEdit) -> String {
 /// The program's stdout on the interpreter (for behaviour-preserving checks).
 fn run(src: &str) -> String {
     let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let file = dir.join(format!("extract_run_{}.loft", src.len()));
-    std::fs::write(&file, src).unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    fa::write(&file, src).unwrap();
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "30")

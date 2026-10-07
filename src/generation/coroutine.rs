@@ -63,6 +63,10 @@ pub(crate) fn yield_slot_i64(kind: YieldSlot, expr: &str) -> Option<String> {
         YieldSlot::Bool => Some(format!("(({expr}) as u8) as i64")),
         // f64::to_bits → u64 / f32::to_bits → u32, both zero-extend to i64.
         YieldSlot::F64 | YieldSlot::F32 => Some(format!("(({expr}).to_bits()) as i64")),
+        // An owned copy handed over as a boxed pointer; `yield_slot_read` takes it back once.
+        YieldSlot::Text => Some(format!(
+            "(Box::into_raw(Box::new(({expr}).to_string())) as usize as i64)"
+        )),
         YieldSlot::Ref => None,
     }
 }
@@ -103,6 +107,11 @@ pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
         YieldSlot::F64 => format!("f64::from_bits(_loft_yield_buf[{slot}] as u64)"),
         YieldSlot::F32 => format!("f32::from_bits(_loft_yield_buf[{slot}] as u32)"),
         YieldSlot::Routine => format!("(_loft_yield_buf[{slot}] as u32)"),
+        // The producer's boxed `String`, taken back exactly once — the consumer reads each
+        // slot once per advance.  `0` is an exhausted advance: the tuple's text is null.
+        YieldSlot::Text => format!(
+            "{{ let _p = _loft_yield_buf[{slot}]; if _p == 0 {{              loft::state::STRING_NULL.to_string() }} else {{              *unsafe {{ Box::from_raw(_p as usize as *mut String) }} }} }}"
+        ),
         YieldSlot::Ref => format!(
             "DbRef {{ store_nr: (_loft_yield_buf[{slot}] as u16), \
              rec: (_loft_yield_buf[{s1}] as u64 as u32), \
@@ -801,13 +810,13 @@ fn escape_for_rust_literal(s: &str) -> String {
 
 /// Why a yield type is refused on the straight-line channel ladder.
 const NO_CHANNEL: &str = "has no native transport channel — every element of a yielded \
-                          tuple must have one, and a `text` element or a nested tuple does \
-                          not.";
+                          tuple must have one, and a nested tuple does not.";
 
 /// Why a yield type is refused from a LOOP body, where the collector is eager.
 const NO_EAGER_BUFFER: &str = "cannot be collected from a generator's LOOP body — the \
                                eager collector holds values by copy, and this one carries \
-                               a store handle every iteration would overwrite.  The loop \
+                               a store handle every iteration would overwrite, or a text the \
+                               collector could not release.  The loop \
                                runs eagerly because a `yield` sits inside an expression; \
                                as a statement of its own it is handed over lazily.";
 
@@ -1212,9 +1221,13 @@ fn coroutine_persistent_locals(
         // And a compiler temp a resumable body carries between its units
         // (`resumable_carried`, loft#1798): re-descent emits those units in separate Rust
         // scopes, and may run them in separate advances.
+        // And a text parameter's write copy `__tp_*`: the parameter's value from its first
+        // write on, which every later resume reads (loft#1899).
+        let param_copy = name.starts_with("__tp_");
         if name.starts_with("__")
             && !crate::variables::owns_literal_backing_store(name)
             && !heap_temp
+            && !param_copy
             && !carried.contains(&v)
         {
             continue;
@@ -1242,6 +1255,10 @@ fn coroutine_persistent_locals(
                 // A sub-generator's handle (`for x in gen()`, loft#1798): a `DbRef` like the
                 // heap arm, released by `drop_stores` when the generator is abandoned.
                 | Type::Iterator(_, _)
+                // A tuple, by value: a frame local like any other, which a later resume reads
+                // (loft#1899).  Its type and zero come from the emitter that owns tuple
+                // spelling (`local_rust_type`, `default_native_value_in`).
+                | Type::Tuple(_)
         );
         if !suitable {
             continue;
@@ -1293,6 +1310,92 @@ fn persistent_field_names(
     out
 }
 
+/// The scalar parameters a generator body WRITES or LINKS — a `Set` of the parameter, or the
+/// `OpCreateStack` a `&` bind and a `&` argument lower to.  Such a parameter is read and
+/// written through its struct field (`self.var_b`), as a persistent local is: a per-state copy
+/// loses every write at the next `yield`, and a `&` to the copy is a pointer into one advance's
+/// frame (loft#1899).  A parameter the body only reads keeps its per-state copy.  Any other
+/// node is searched through its children, because a write can sit anywhere a statement can.
+fn written_scalar_params(
+    def: &crate::data::Definition,
+    data: &crate::data::Data,
+) -> std::collections::HashSet<u16> {
+    fn walk(
+        v: &Value,
+        data: &crate::data::Data,
+        vars: &crate::variables::Function,
+        out: &mut std::collections::HashSet<u16>,
+    ) {
+        let hit = match v.unspan() {
+            Value::Set(p, _) => Some(*p),
+            Value::Call(d, args) if data.def(*d).name() == "OpCreateStack" => {
+                match args.first().map(Value::unspan) {
+                    Some(Value::Var(p)) => Some(*p),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(p) = hit
+            && vars.is_argument(p)
+            && crate::data::is_scalar(vars.tp(p))
+        {
+            out.insert(p);
+        }
+        v.for_each_child(&mut |c| walk(c, data, vars, out));
+    }
+    let mut out = std::collections::HashSet::new();
+    walk(def.code(), data, def.variables(), &mut out);
+    out
+}
+
+/// loft#1899 — the scalar LINK locals of a generator body (`c = &x`, a `&` to a scalar, a
+/// text, a fn-ref or a value enum: the `*mut T` a local link holds), each with its field's
+/// name and its Rust pointer type.  A compiler temp is left out: no author's `&` names one.
+/// The field name avoids every name already on the struct.
+fn link_locals(
+    vars: &crate::variables::Function,
+    taken: &std::collections::HashSet<String>,
+) -> Vec<(u16, String, String, String)> {
+    let mut used = taken.clone();
+    let mut out = Vec::new();
+    for v in 0..vars.next_var() {
+        if vars.is_argument(v) || vars.name(v).starts_with("__") {
+            continue;
+        }
+        let Type::RefVar(inner) = vars.tp(v).base() else {
+            continue;
+        };
+        if !matches!(
+            inner.base(),
+            Type::Integer(..)
+                | Type::Float
+                | Type::Single
+                | Type::Boolean
+                | Type::Character
+                | Type::Text(_)
+                | Type::Function(..)
+                | Type::Enum(_, false, _)
+        ) {
+            continue;
+        }
+        let local = sanitize(vars.name(v));
+        let mut field = local.clone();
+        let mut n = 2;
+        while !used.insert(field.clone()) {
+            field = format!("{local}__{n}");
+            n += 1;
+        }
+        out.push((
+            v,
+            local,
+            field,
+            format!("*mut {}", crate::generation::link_base_type(inner)),
+        ));
+    }
+    out
+}
+
 /// Bind every parameter under its local spelling at the top of a state arm — `var_x` for
 /// `self.var_x`, a `&str` view for a text slot — so a statement emitted in any state names a
 /// parameter the way the function body does.  Every state arm needs it, the TAIL included: the
@@ -1301,9 +1404,25 @@ fn persistent_field_names(
 fn write_param_shadows(
     w: &mut dyn Write,
     attrs: &[crate::data::Attribute],
+    fielded: &std::collections::HashMap<u16, String>,
+    links: &std::collections::HashMap<u16, (String, String)>,
     indent: &str,
 ) -> std::io::Result<()> {
-    for attr in attrs {
+    // loft#1899 — each link local re-reads the pointer its field holds (`coroutine_link_fields`).
+    let mut link_list: Vec<&(String, String)> = links.values().collect();
+    link_list.sort();
+    for (local, field) in link_list {
+        writeln!(
+            w,
+            "{indent}#[allow(unused_mut)] let mut var_{local} = self.var_{field};"
+        )?;
+    }
+    for (a_nr, attr) in attrs.iter().enumerate() {
+        // A parameter the body writes or links is read through its field instead
+        // (`written_scalar_params`): a copy here would hide the field's writes.
+        if u16::try_from(a_nr).is_ok_and(|a| fielded.contains_key(&a)) {
+            continue;
+        }
         let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
@@ -1446,6 +1565,8 @@ fn emit_struct_def(
     yield_tp: &Type,
     persistent: &[(u16, Type)],
     fields: &std::collections::HashMap<u16, String>,
+    types: &std::collections::HashMap<u16, String>,
+    links: &[(u16, String, String, String)],
 ) -> std::io::Result<()> {
     writeln!(w, "struct {struct_name} {{")?;
     writeln!(w, "    state: u32,")?;
@@ -1453,8 +1574,12 @@ fn emit_struct_def(
     // channels' end sentinel is also a value a generator may yield — `i64::MIN` is the
     // integer null, `"\0"` the text null — so the value alone cannot say which happened.
     writeln!(w, "    __done: bool,")?;
-    for attr in attrs {
-        let field_tp = if is_text_slot(&attr.typedef) {
+    for (a_nr, attr) in attrs.iter().enumerate() {
+        // `types` overrides a field's type where the emitter decided it (loft#1899): a LINKED
+        // narrow field stored at its width, a tuple with linked members.
+        let field_tp = if let Some(t) = u16::try_from(a_nr).ok().and_then(|a| types.get(&a)) {
+            t.clone()
+        } else if is_text_slot(&attr.typedef) {
             "String".to_string()
         } else {
             rust_type(&attr.typedef, &Context::Variable)
@@ -1464,12 +1589,18 @@ fn emit_struct_def(
     // P224: persistent function-locals as struct fields.
     for (v, tp) in persistent {
         let n = &fields[v];
-        let field_tp = if is_text_slot(tp) {
+        let field_tp = if let Some(t) = types.get(v) {
+            t.clone()
+        } else if is_text_slot(tp) {
             "String".to_string()
         } else {
             rust_type(tp, &Context::Variable)
         };
         writeln!(w, "    var_{n}: {field_tp},")?;
+    }
+    // loft#1899 — a link local's pointer, kept across resumes.
+    for (_, _, field, ptr_tp) in links {
+        writeln!(w, "    var_{field}: {ptr_tp},")?;
     }
     // N8b.3: one inline sub-generator field per yield-from segment, and ONLY where the
     // state machine drives that sub-generator — an eager generator's factory runs the whole
@@ -1523,6 +1654,8 @@ fn emit_factory_fn(
     segments: &[YieldSegment],
     persistent: &[(u16, Type)],
     fields: &std::collections::HashMap<u16, String>,
+    inits: &std::collections::HashMap<u16, String>,
+    links: &[(u16, String, String, String)],
 ) -> std::io::Result<()> {
     // ForLoopBody: the entire factory is emitted by Output::emit_for_body_factory.
     if is_eager(segments) {
@@ -1538,10 +1671,13 @@ fn emit_factory_fn(
     writeln!(w, "    Box::new({struct_name} {{")?;
     writeln!(w, "        state: 0,")?;
     writeln!(w, "        __done: false,")?;
-    for attr in attrs {
+    for (a_nr, attr) in attrs.iter().enumerate() {
         let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "        var_{aname}: var_{aname}.to_string(),")?;
+        } else if let Some(init) = u16::try_from(a_nr).ok().and_then(|a| inits.get(&a)) {
+            // The caller's value as the field holds it — a linked narrow one encoded once.
+            writeln!(w, "        var_{aname}: {init},")?;
         } else {
             writeln!(w, "        var_{aname},")?;
         }
@@ -1549,8 +1685,14 @@ fn emit_factory_fn(
     // P224: initialise persistent locals to default.
     for (v, tp) in persistent {
         let n = &fields[v];
-        let init = persistent_default(tp);
+        let init = inits
+            .get(v)
+            .cloned()
+            .unwrap_or_else(|| persistent_default(tp));
         writeln!(w, "        var_{n}: {init},")?;
+    }
+    for (_, _, field, _) in links {
+        writeln!(w, "        var_{field}: std::ptr::null_mut(),")?;
     }
     // N8b.3: initialise sub-generator fields to None.
     for (idx, seg) in segments.iter().enumerate() {
@@ -1590,6 +1732,8 @@ fn persistent_default(tp: &Type) -> String {
         // A fn-ref is the `(definition, closure record)` pair `rust_type` lowers it to; the
         // null closure is what a non-capturing lambda carries.
         Type::Function(..) => "(0_u32, DbRef::NULL)".to_string(),
+        // A tuple's zero is the one the emitter that spells tuples gives it (loft#1899).
+        Type::Tuple(_) => super::default_native_value_in(tp, &Context::Variable),
         // Every remaining field type lowers to a Rust NUMBER, so the zero of whatever
         // `rust_type` decided is a value of exactly that type.  Asking it, rather than
         // listing the types a second time here, is the point: the second list had drifted
@@ -2005,7 +2149,13 @@ impl Output<'_> {
         for (seg_idx, segment) in segments.iter().enumerate() {
             let state_idx = state_of[seg_idx];
             writeln!(w, "            {state_idx} => {{")?;
-            write_param_shadows(w, attrs, "                ")?;
+            write_param_shadows(
+                w,
+                attrs,
+                &self.coroutine_persistent_fields,
+                &self.coroutine_link_fields,
+                "                ",
+            )?;
             match segment {
                 YieldSegment::Simple { pre, val } => {
                     for stmt in pre {
@@ -2051,7 +2201,13 @@ impl Output<'_> {
                     // State 2 of 2 — pull one value per advance, staying in this state until
                     // the sub-generator is exhausted.
                     writeln!(w, "            {} => {{", state_idx + 1)?;
-                    write_param_shadows(w, attrs, "                ")?;
+                    write_param_shadows(
+                        w,
+                        attrs,
+                        &self.coroutine_persistent_fields,
+                        &self.coroutine_link_fields,
+                        "                ",
+                    )?;
                     writeln!(w, "                if self.sub_{sub}.is_none() {{")?;
                     let factory = self.gen_inner_factory(init)?;
                     writeln!(w, "                    self.sub_{sub} = Some({factory});")?;
@@ -2140,7 +2296,13 @@ impl Output<'_> {
                     } else {
                         writeln!(w, "            {} | {resume_state} => {{", state_idx + 1)?;
                     }
-                    write_param_shadows(w, attrs, "                ")?;
+                    write_param_shadows(
+                        w,
+                        attrs,
+                        &self.coroutine_persistent_fields,
+                        &self.coroutine_link_fields,
+                        "                ",
+                    )?;
                     writeln!(w, "                let mut __exhausted = true;")?;
                     writeln!(
                         w,
@@ -2205,7 +2367,13 @@ impl Output<'_> {
                     // last advance suspended at (`__resume_<seg>`, 0 on the first entry).
                     // Running off its end is the construct finishing: on to the next state.
                     writeln!(w, "            {} => {{", state_idx + 1)?;
-                    write_param_shadows(w, attrs, "                ")?;
+                    write_param_shadows(
+                        w,
+                        attrs,
+                        &self.coroutine_persistent_fields,
+                        &self.coroutine_link_fields,
+                        "                ",
+                    )?;
                     writeln!(
                         w,
                         "                let mut __seek: u32 = self.__resume_{seg_idx};"
@@ -2273,7 +2441,13 @@ impl Output<'_> {
         if !tail.is_empty() {
             let tail_state = after_segments;
             writeln!(w, "            {tail_state} => {{")?;
-            write_param_shadows(w, attrs, "                ")?;
+            write_param_shadows(
+                w,
+                attrs,
+                &self.coroutine_persistent_fields,
+                &self.coroutine_link_fields,
+                "                ",
+            )?;
             for op in tail {
                 write!(w, "                ")?;
                 self.output_code_inner(w, op)?;
@@ -2458,11 +2632,22 @@ impl Output<'_> {
                 .tkinds
                 .as_ref()
                 .expect("chan.is_tuple_into ⇒ tuple_kinds");
-            if let crate::data::Value::Tuple(elems) = val {
+            if let crate::data::Value::Tuple(elems) = val.unspan() {
                 let mut slot = 0usize;
                 for (elem, &kind) in elems.iter().zip(kinds.iter()) {
                     let code = self.generate_expr_buf(elem)?;
                     yield_slot_write(w, kind, slot, &code)?;
+                    slot += kind.width();
+                }
+            } else {
+                // Any other tuple-valued yield — a variable, a field, a call — is bound once
+                // and written member by member.  Matched on the literal alone, it wrote no slot
+                // and the consumer read zeros, with nothing reported.
+                let code = self.generate_expr_buf(val)?;
+                writeln!(w, "                let __yt = {code};")?;
+                let mut slot = 0usize;
+                for (i, &kind) in kinds.iter().enumerate() {
+                    yield_slot_write(w, kind, slot, &format!("__yt.{i}"))?;
                     slot += kind.width();
                 }
             }
@@ -2854,7 +3039,46 @@ impl Output<'_> {
         // loft#928: and their field names with them, so every emitter spells a field the
         // same way.  Derived here rather than at each site because a name is only unique
         // relative to the OTHER fields on the struct.
-        let fields = persistent_field_names(&attrs, &persistent, self.data.def(def_nr).variables());
+        let mut fields =
+            persistent_field_names(&attrs, &persistent, self.data.def(def_nr).variables());
+        // loft#1899 — a parameter the body writes or links is read and written through the
+        // field the struct already declares for it, under the parameter's own name.
+        for p in written_scalar_params(self.data.def(def_nr), self.data) {
+            if let Some(attr) = attrs.get(usize::from(p)) {
+                fields.insert(p, sanitize(&attr.name));
+            }
+        }
+        let links = {
+            let mut taken: std::collections::HashSet<String> =
+                attrs.iter().map(|a| sanitize(&a.name)).collect();
+            taken.extend(fields.values().cloned());
+            link_locals(self.data.def(def_nr).variables(), &taken)
+        };
+        // The field types and starting values the emitter decides, where `rust_type` alone
+        // would be wrong (loft#1899): a LINKED narrow field is stored at its width in its field
+        // encoding (@PLN167 decision 1) — the caller's argument encoded once, a local's zero
+        // encoded — and a TUPLE field takes its spelling and zero from the emitter that owns
+        // tuples, linked members included (`@FR-T-Record`).
+        let mut types: std::collections::HashMap<u16, String> = std::collections::HashMap::new();
+        let mut inits: std::collections::HashMap<u16, String> = std::collections::HashMap::new();
+        {
+            let vars = self.data.def(def_nr).variables();
+            for &v in fields.keys() {
+                let tp = vars.tp(v).clone();
+                let is_tuple = matches!(tp.base(), Type::Tuple(_));
+                if vars.linked_narrow_slot(v).is_none() && !is_tuple {
+                    continue;
+                }
+                types.insert(v, self.local_rust_type(v, &tp));
+                let (open, close) = self.narrow_local_enc(v);
+                let start = if vars.is_argument(v) {
+                    format!("var_{}", sanitize(vars.name(v)))
+                } else {
+                    crate::generation::default_native_value_in(&tp, &Context::Variable)
+                };
+                inits.insert(v, format!("{open}{start}{close}"));
+            }
+        }
 
         // The outer `loop {}` in `next_*` is what lets a state hand over to the next one
         // without returning a value.  A lazily-lowered loop needs it for the same reason a
@@ -2878,6 +3102,8 @@ impl Output<'_> {
             &yield_tp,
             &persistent,
             &fields,
+            &types,
+            &links,
         )?;
 
         // ── 2. impl LoftCoroutine ────────────────────────────────────────────
@@ -2895,10 +3121,21 @@ impl Output<'_> {
         let prev_persistent = std::mem::take(&mut self.coroutine_persistent_fields);
         let prev_allocated = std::mem::take(&mut self.coroutine_allocated_vars);
         self.coroutine_persistent_fields.clone_from(&fields);
-        let mut newly_declared = Vec::with_capacity(persistent.len());
-        for (v, _) in &persistent {
-            if self.declared.insert(*v) {
-                newly_declared.push(*v);
+        let prev_links = std::mem::replace(
+            &mut self.coroutine_link_fields,
+            links
+                .iter()
+                .map(|(v, l, f, _)| (*v, (l.clone(), f.clone())))
+                .collect(),
+        );
+        let mut newly_declared = Vec::with_capacity(persistent.len() + links.len());
+        for v in persistent
+            .iter()
+            .map(|(v, _)| *v)
+            .chain(links.iter().map(|l| l.0))
+        {
+            if self.declared.insert(v) {
+                newly_declared.push(v);
             }
         }
         writeln!(
@@ -2933,6 +3170,7 @@ impl Output<'_> {
         writeln!(w, "}}\n")?;
         self.in_coroutine_body = prev_in_coroutine;
         self.coroutine_persistent_fields = prev_persistent;
+        self.coroutine_link_fields = prev_links;
         self.coroutine_allocated_vars = prev_allocated;
         for v in newly_declared {
             self.declared.remove(&v);
@@ -2950,6 +3188,8 @@ impl Output<'_> {
             &segments,
             &persistent,
             &fields,
+            &inits,
+            &links,
         )?;
         if has_for_body {
             self.emit_for_body_factory(

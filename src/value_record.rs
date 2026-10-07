@@ -232,12 +232,23 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         cands: HashMap::default(),
         params: HashMap::default(),
     };
+    // `@FR-R-FnRefValue` admits a dispatch's arms on `--native` alone, where the dispatch
+    // answers and passes the tuple: the interpreter calls them through the fn-ref with
+    // records, so the IR keeps their signatures, result and parameters — and an arm whose IR result became a tuple would no longer
+    // match its own dispatch (`fnref::dispatch_arms` compares result types).
+    let arms = vr.fnref_arms();
     for (&d, &tp) in &vr.fns {
+        if arms.contains(&d) {
+            continue;
+        }
         if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, d, tp) {
             w.cands.insert(d, c);
         }
     }
     for (&d, ps) in &vr.params {
+        if arms.contains(&d) {
+            continue;
+        }
         for (&idx, &tp) in ps {
             if let Some(record) = param_shape(data, stores, &mut w.layouts, d, idx, tp) {
                 w.params.insert((d, idx), record);
@@ -363,7 +374,7 @@ fn add_twin(data: &mut Data, d: u32) -> u32 {
         n += 1;
         name = format!("{base}_tuple{n}");
     }
-    let position = data.def(d).position.clone();
+    let position = data.def(d).position;
     let t = data.add_def(&name, &position, DefType::Function);
     let mut def = data.def(d).clone();
     def.name = name;
@@ -835,6 +846,10 @@ struct Scan {
     binds: Vec<(u16, u32, Option<u16>)>,
     /// Field reads: `(variable, offset, kind)`.
     reads: Vec<(u16, i32, Kind)>,
+    /// Field writes: `(variable, offset, kind)` — a carrier LOCAL's become `TuplePut`.
+    writes: Vec<(u16, i32, Kind)>,
+    /// The variables written field-wise: a written parameter or buffer still declines.
+    written: HashSet<u16>,
     /// A variable handed whole to admitted parameter `(function, index)`.
     handed: Vec<(u16, u32, usize)>,
     /// Statement `OpFreeRef(variable)`.
@@ -911,6 +926,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         let layout = &w.layouts[&record];
         s.reads
             .iter()
+            .chain(&s.writes)
             .filter(|(l, _, _)| *l == x)
             .all(|(_, off, kind)| layout.kind_at(*off) == Some(*kind))
     };
@@ -931,6 +947,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         }
         let p = vars.var(&def.attributes[idx].name);
         let ok = !s.other.contains(&p)
+            && !s.written.contains(&p)
             && !s.returns.contains(&p)
             && !s.null_inits.contains(&p)
             && !s.frees.contains(&p)
@@ -979,6 +996,7 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
                     let forward = own == Some(r);
                     (buffer_uses[&r] == 1 || r == l)
                         && !s.other.contains(&r)
+                        && !s.written.contains(&r)
                         && (forward || !vars.is_argument(r))
                         && (forward
                             || (!s.guards.contains(&r) && !s.aliases.iter().any(|(_, b)| *b == r)))
@@ -1173,6 +1191,16 @@ fn scan(n: &Value, stmt: bool, w: &World, s: &mut Scan) {
                 s.reads.push((v, base + off, kind));
                 return;
             }
+            // A field write, the same way; the value is scanned like any operand.
+            if let Some(kind) = ops.set_kind(*op)
+                && let [target, Value::Int(off), value] = args.as_slice()
+                && let Some((v, base)) = place_of(target, ops)
+            {
+                s.writes.push((v, base + off, kind));
+                s.written.insert(v);
+                scan(value, false, w, s);
+                return;
+            }
             if stmt
                 && *op == ops.free_ref
                 && let [target] = args.as_slice()
@@ -1334,6 +1362,18 @@ impl Rewrite<'_> {
                     && let Some(i) = w.layouts[record].index_of(base + off)
                 {
                     *n = Value::TupleGet(v, i);
+                    return;
+                }
+                // Slice 2: a carrier local's field write is a `TuplePut` of the same field.
+                if ops.set_kind(*op).is_some()
+                    && let [target, Value::Int(off), _] = args.as_slice()
+                    && let Some((v, base)) = place_of(target, ops)
+                    && let Some(record) = plan.carriers.get(&v)
+                    && let Some(i) = w.layouts[record].index_of(base + off)
+                {
+                    let mut value = args.pop().unwrap_or(Value::Null);
+                    self.uses(&mut value);
+                    *n = Value::TuplePut(v, i, Box::new(value));
                     return;
                 }
                 let d = *op;

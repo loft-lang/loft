@@ -16,7 +16,7 @@
 //! restores the old silent accept, proving it is the fix); (2) narrow param hard-errors; (3) OK —
 //! a discharged arg, a `τ?` param, and a null-transparent fn stay silent; (4) both backends.
 
-use std::process::Command;
+use loft::file_access as fa;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -29,8 +29,8 @@ fn workspace_root() -> std::path::PathBuf {
 /// ON) vs the opt-out (`LOFT_NO_CALLARG_NSTORE=1`).
 fn run(body: &str, backend: &str, fix: bool, tag: &str) -> (bool, usize, String) {
     let script = std::env::temp_dir().join(format!("loft_ca_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&script, body).expect("write script");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&script, body).expect("write script");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -42,7 +42,7 @@ fn run(body: &str, backend: &str, fix: bool, tag: &str) -> (bool, usize, String)
         cmd.env("LOFT_NO_CALLARG_NSTORE", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let warns = stderr.matches("is stored into parameter").count();
     (
@@ -285,8 +285,8 @@ fn legal_forms_stay_silent() {
 /// `(compiled_and_ran_ok, every (N-Store) warning — any slot, stdout)`.
 fn run_any_slot(body: &str, backend: &str, tag: &str) -> (bool, usize, String) {
     let script = std::env::temp_dir().join(format!("loft_ca_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&script, body).expect("write script");
-    let out = Command::new(loft_bin())
+    fa::write(&script, body).expect("write script");
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -294,7 +294,7 @@ fn run_any_slot(body: &str, backend: &str, tag: &str) -> (bool, usize, String) {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     let stderr = String::from_utf8_lossy(&out.stderr);
     (
         out.status.success(),

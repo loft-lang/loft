@@ -1,7 +1,7 @@
 // Library for T1-2 wildcard and selective import tests.
 pub struct Point {
-  x: integer,
-  y: integer
+  pub x: integer,
+  pub y: integer
 }
 
 pub fn add(a: integer, b: integer) -> integer {

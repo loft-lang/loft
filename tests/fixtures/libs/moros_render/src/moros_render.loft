@@ -641,14 +641,14 @@ pub fn emit_grand_arc_stair(
 // separation between eye and target.  `fov_y`, `near`, `far` are
 // the usual perspective-projection knobs.  `up` is world up.
 pub struct RenderCamera {
-  target:    Vec3,
-  azimuth:   float not null,
-  elevation: float not null,
-  distance:  float not null,
-  fov_y:     float not null,
+  pub target:    Vec3,
+  pub azimuth:   float not null,
+  pub elevation: float not null,
+  pub distance:  float not null,
+  pub fov_y:     float not null,
   near:      float not null,
   far:       float not null,
-  up:        Vec3,
+  pub up:        Vec3,
 }
 
 // Sensible defaults: orbit at (0,0,0), 45° azimuth, 30° elevation,
@@ -1199,8 +1199,8 @@ pub fn avatar_add_to_scene(scene: Scene, pos: Vec3, radius: float) -> integer {
 // interpreter, native OpenGL, and WebGL.
 
 pub struct Aabb {
-  aabb_min: Vec3,
-  aabb_max: Vec3,
+  pub aabb_min: Vec3,
+  pub aabb_max: Vec3,
 }
 
 pub fn aabb_from_sphere(centre: Vec3, radius: float) -> Aabb {
@@ -1260,8 +1260,8 @@ pub OCCLUSION_FAR_MARGIN = 0.3;         // skip last 30% near target
 
 pub struct ViewCone {
   vc_apex:       Vec3,
-  vc_axis:       Vec3,              // unit vector
-  vc_length:     float not null,    // |eye → target|
+  pub vc_axis:       Vec3,              // unit vector
+  pub vc_length:     float not null,    // |eye → target|
   vc_tan_half:   float not null,    // tan(half-angle)
   vc_t_near:     float not null,    // normalised axis position [0, 1]
   vc_t_far:      float not null,

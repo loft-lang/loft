@@ -42,8 +42,9 @@ tables.
   because exhaustion and the scope end both call it. When testing one, note that a same-scope
   test proves little — the source dies last there anyway, so a mistake only shows once the
   container OUTLIVES it (a return).
-- **The fit test after a narrow store is ADJACENCY-SENSITIVE, and that is the trade
-  (`@FR-E-Uncomp-Seen`, @PLN152).**  `x += 10; if !x { … }` on a `u8` / `i8` / `u16` / `i16` /
+- **The `if !x` fit test after a narrow store is ADJACENCY-SENSITIVE, and that is the trade
+  (`@FR-E-Uncomp-Seen`, @PLN152); `x += 10 else { … }` (`@FR-H-Write-Else`) is the form
+  that carries no such boundary.**  `x += 10; if !x { … }` on a `u8` / `i8` / `u16` / `i16` /
   `u32` / `limit(lo, hi)` slot answers whether the store fit; put ONE statement between them
   and `!x` goes back to meaning *is this null*, which on such a type is always false.  The
   boundary is not stylistic: past the next statement the only thing that could carry the
@@ -220,8 +221,9 @@ retired that — a spare code is not a null — so `u8`, `i8`, `u16`, `i16`, `u3
 
 The default is a legal value of the type, so nothing holds a non-`τ` value, but it cannot be
 told from a computed one. Two spellings can tell: `τ?` always answers null, because a
-nullable narrow alias sacrifices an edge value to reserve one; and `if !x { … }` as the very
-next statement after the step reads the fit failure without storing anything
+nullable narrow alias sacrifices an edge value to reserve one; and `x += n else { … }` runs
+its arm exactly when the step did not fit, without storing anything (`@FR-H-Write-Else`) —
+`if !x { … }` as the very next statement is the older spelling of the same question
 (`@FR-E-Uncomp-Seen`). Since C127 the step also says so — `advice[narrow-fallback]` names the
 default it took.
 

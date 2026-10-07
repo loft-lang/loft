@@ -9,6 +9,7 @@
 
 extern crate loft;
 
+use loft::file_access as fa;
 use loft::logger::{Logger, RuntimeLogConfig, Severity};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -40,11 +41,11 @@ fn logger_with_tmpfile(level: Severity) -> (Logger, PathBuf) {
 }
 
 fn read_log(path: &PathBuf) -> String {
-    std::fs::read_to_string(path).unwrap_or_default()
+    fa::read_to_string(path).unwrap_or_default()
 }
 
 fn cleanup(path: &PathBuf) {
-    let _ = std::fs::remove_file(path);
+    let _ = fa::remove_file(path);
 }
 
 /// `log_warn` writes a line containing "WARN" when the level is Info (which accepts Warn+).
@@ -171,7 +172,7 @@ fn logger_production_mode_writes_no_file() {
 #[test]
 fn logger_from_missing_config_uses_defaults() {
     let fake = PathBuf::from("/definitely/does/not/exist/loft.log.conf");
-    let main = unique_tmp("logger_main").with_extension("loft");
+    let main = fa::with_extension(unique_tmp("logger_main"), "loft");
     let lg = Logger::from_config_file(&fake, main.to_str().unwrap());
     // Default level is Info — verify by logging a Warn and checking it gets through
     // to the default log path under the main file's parent.
@@ -210,17 +211,17 @@ fn logger_size_rotation_creates_backup() {
     lg.log(Severity::Info, "rot.loft", 2, "second-after-rotation");
     drop(lg);
 
-    let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
+    let stem = fa::file_stem(&path).unwrap();
+    let ext = fa::extension(&path)
         .map(|s| format!(".{s}"))
         .unwrap_or_default();
-    let backup = path.with_file_name(format!("{stem}.1{ext}"));
-    let backup_exists = backup.exists();
+    let backup = fa::parent(&path)
+        .unwrap_or_default()
+        .join(format!("{stem}.1{ext}"));
+    let backup_exists = fa::exists(&backup);
     let current = read_log(&path);
     cleanup(&path);
-    let _ = std::fs::remove_file(&backup);
+    let _ = fa::remove_file(&backup);
     assert!(
         backup_exists,
         "expected rotation backup {backup:?} after exceeding max_size_bytes"

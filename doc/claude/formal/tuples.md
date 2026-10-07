@@ -161,6 +161,29 @@ the same two cures. The gap between the rule and the model is
               and a tuple a program writes down exists.  D-tup-10 closed there.
 ```
 
+### Representation — a tuple IS a record (`T-Record`)
+
+```
+  (T-Record)  a tuple (τ₀, …, τₙ) IS a record whose fields are named 0 … n.  Each member is
+              what a field of its type is — a narrow integer is narrow, a `text` member is the
+              tuple's own text — and obeys every rule a record field obeys: a copy is a copy of
+              each member (binding.md B-Copy), a release releases each, and `&t.i` names member
+              i as `&r.f` names field f (binding.md B-Ref-Lvalue).  It may live on the stack,
+              and where it lives changes nothing about its members.  The record layout is the
+              DEFINITION (layout.md L-Tuple); any other representation — the interpreter's
+              stack form, a native Rust tuple of native types in rustc's field order — is
+              derived from that layout and kept only where no program can tell the difference,
+              a `&` link to a member included (@C139).  A tuple handed over by a native library
+              in its own representation is FOREIGN data (binding.md Const-Foreign).
+```
+
+**In words.** A tuple is a struct whose fields happen to be called `0`, `1`, … instead of having
+names. So everything a struct field does, a member does: a `u8` member holds a `u8`, a `text`
+member is the tuple's own text, copying a tuple copies its members, and a `&` link can name a
+member (`c = &t.0`) exactly as it names a field. The compiler may keep a tuple in a faster form — a
+plain Rust tuple on `--native`, a stack form in the interpreter — but only where nothing the
+program does can tell that form from the record.
+
 ### Reference tuples — `&(…)` writes the caller's elements in place
 
 ```

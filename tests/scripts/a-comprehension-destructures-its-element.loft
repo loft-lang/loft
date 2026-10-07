@@ -1,0 +1,26 @@
+// @FR-I-Comp — `[for x in src { e }]` is the `for` loop that appends `e`, so its header
+// destructures as the loop's does: `[for (a, b) in v { … }]`, with a filter, over a generator, and
+// beside a record member.  It was refused ("Expect variable after for").
+// @falsified-at: 16f39fb97 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-comprehension-destructures-its-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the exit — the control refuses the header.
+
+struct P { k: integer }
+
+fn g() -> iterator<(integer, text)> { yield (1, "x"); yield (2, "yy"); }
+
+fn main() {
+  v = [(1, "x"), (2, "y")];
+  r = [for (a, b) in v { "{b}{a}" }];
+  assert("{r}" == "[\"x1\",\"y2\"]", "a plain destructure: {r}");
+  f = [for (a, b) in v if a > 1 { a * 10 }];
+  assert("{f}" == "[20]", "with a filter on a member: {f}");
+  q = [for (a, b) in g() { len(b) + a }];
+  assert("{q}" == "[2,4]", "over a generator: {q}");
+  w: vector<(text, P)> = [("m", P { k: 3 }), ("nn", P { k: 4 })];
+  e = [for (t, p) in w { p.k * 10 + len(t) }];
+  assert("{e}" == "[31,42]", "beside a record member: {e}");
+  c = [for (a, b) in v if len(b) < 2 { "{a}{b}" }];
+  assert("{c}" == "[\"1x\",\"2y\"]", "a filter on a text member: {c}");
+}

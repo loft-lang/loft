@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-Handle` — a `File` record's death releases its lease on the OS handle wherever the
+// record lives, and the handle closes at the last release: a local's store, a field of a
+// record, an element of a collection, a value a generator yields, a buffer a rebind parks.
+//
+// The channel is the LEAK REPORT: a handle still open at program exit is an entry of it
+// (`open File handles×N`, `@FR-H-FreeAll`), on both backends, so the corpus's own leak gate
+// fails this file when any death below keeps its handle.  The asserts only check that every
+// write landed — they hold whether or not a handle leaks, so they never hide the report.
+//
+// Axes this file MOVES:  where the dying `File` lives (a plain local, a vector local, a record
+//                        field, a record's vector field, a field vector cleared in place, a
+//                        vector a callee returns and the caller replaces, a local moved into
+//                        a returned vector by literal and by append, a yielded value), how it
+//                        dies (scope end, a rebind that displaces it, a clear, a store
+//                        re-minted by the next call), and a copy beside its source.
+// Axes it HOLDS FIXED:   text files, one byte written per turn, three turns per cell.
+//
+// Expected values by hand: every turn writes `"a"` once to each file a cell names, so each
+// holds 3 bytes; the copy cell writes through both copies, 6.
+//
+// @falsified-by: tests/falsified/a-file-dying-anywhere-releases-its-handle.patch — interpret leaked open File handles×36 -> clean, native leaked open File handles×36 -> clean
+//   CHANNEL: the LEAK report.  The patch makes a record's release a no-op, so every handle the
+//   twelve cells open over three turns is still open at exit (12 × 3 = 36), on both backends.
+
+struct Holder { h: File, tag: integer }
+struct Bag { fs: vector<File>, n: integer }
+
+fn scratch(tag: text) -> text {
+  d = "{temp_dir() ?? "/tmp"}/loft_file_release_{tag}_{now()}_{ticks()}";
+  mkdir_all(d);
+  d
+}
+
+fn clean(d: text) {
+  for n in list_dir(d) ?? [] { delete("{d}/{n}"); }
+  rmdir(d);
+}
+
+fn size_of(p: text) -> integer { file(p).size }
+
+fn plain(p: text) { f = file(p); f += "a"; }
+fn copy_and_source(p: text) { f = file(p); f += "a"; g = f; g += "a"; }
+fn vector_local(p: text) { fs = [file(p)]; for g in fs { g += "a"; } }
+fn record_field(p: text) { r = Holder { h: file(p), tag: 1 }; x = r.h; x += "a"; }
+fn vector_field(p: text) { b = Bag { fs: [file(p)], n: 1 }; for g in b.fs { g += "a"; } }
+fn field_cleared(p: text) {
+  b = Bag { fs: [], n: 0 };
+  b.fs += [file(p)];
+  for g in b.fs { g += "a"; }
+  b.fs.clear();
+}
+fn rebind(p: text, q: text) { x = file(p); x += "a"; x = file(q); x += "a"; }
+fn mk_fresh(p: text) -> vector<File> { [file(p)] }
+fn mk_moved(p: text) -> vector<File> { f = file(p); f += "a"; [f] }
+fn mk_appended(p: text) -> vector<File> { fs: vector<File> = []; f = file(p); f += "a"; fs += [f]; fs }
+fn gen(p: text) -> iterator<File> { yield file(p); }
+
+fn test_each_death_releases_its_handle() {
+  d = scratch("deaths");
+  for _ in 0..3 {
+    plain("{d}/plain.txt");
+    copy_and_source("{d}/copy.txt");
+    vector_local("{d}/vector.txt");
+    record_field("{d}/field.txt");
+    vector_field("{d}/vfield.txt");
+    field_cleared("{d}/cleared.txt");
+    rebind("{d}/rebind_a.txt", "{d}/rebind_b.txt");
+    for g in mk_fresh("{d}/fresh.txt") { g += "a"; }
+    fs = mk_moved("{d}/moved.txt");
+    assert(len(fs) == 1, "moved: one element");
+    gs = mk_appended("{d}/appended.txt");
+    assert(len(gs) == 1, "appended: one element");
+    for g in gen("{d}/yielded.txt") { g += "a"; }
+  }
+  got = "";
+  for n in ["plain", "copy", "vector", "field", "vfield", "cleared", "rebind_a", "rebind_b",
+            "fresh", "moved", "appended", "yielded"] {
+    got += "{n}={size_of("{d}/{n}.txt")} ";
+  }
+  assert(got == "plain=3 copy=6 vector=3 field=3 vfield=3 cleared=3 rebind_a=3 rebind_b=3 fresh=3 moved=3 appended=3 yielded=3 ", "every write landed: {got}");
+  clean(d);
+}
+
+fn main() {
+  test_each_death_releases_its_handle();
+}

@@ -1,5 +1,5 @@
 diff --git b/src/generation/emit.rs a/src/generation/emit.rs
-index 8becd852f..481dc6016 100644
+index 2f6431c86..481dc6016 100644
 --- b/src/generation/emit.rs
 +++ a/src/generation/emit.rs
 @@ -2308,20 +2308,6 @@ impl Output<'_> {
@@ -86,11 +86,11 @@ index 8becd852f..481dc6016 100644
 -                                && !wrap_result
 -                                && narrow_cast.is_none()
 -                                && !is_tail_capture_call
--                                && matches!(bl.result, Type::Text(_)) =>
+-                                && matches!(bl.result.base(), Type::Text(_)) =>
 -                        {
 -                            let vars = self.data.def(self.def_nr).variables();
 -                            (vars.scope(*x) == bl.scope
--                                && matches!(vars.tp(*x), Type::Text(_))
+-                                && matches!(vars.tp(*x).base(), Type::Text(_))
 -                                && !self.text_borrowed(*x))
 -                            .then(|| sanitize(vars.name(*x)))
 -                        }
@@ -155,10 +155,10 @@ index dbd1ac99a..8516c2138 100644
              self.iter_op_count_or_first(code, name, t, false, index_var);
          } else if self.lexer.has_keyword("first") {
 diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 00ea9c481..31ea75cad 100644
+index 42d78bcbb..07f65a620 100644
 --- b/src/parser/control.rs
 +++ a/src/parser/control.rs
-@@ -18985,7 +18985,7 @@ impl Parser {
+@@ -19035,7 +19035,7 @@ impl Parser {
          // validate if there is a defined return value
          let mut v = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
@@ -168,7 +168,7 @@ index 00ea9c481..31ea75cad 100644
              // used to report `not null` violations at the tuple literal site.
              let expr_start = self.lexer.peek().clone();
 diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index abbcdb55f..c4949cecb 100644
+index 4164ddf4e..17c4d6ac3 100644
 --- b/src/parser/expressions.rs
 +++ a/src/parser/expressions.rs
 @@ -1192,19 +1192,6 @@ impl Parser {

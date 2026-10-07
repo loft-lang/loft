@@ -14,6 +14,7 @@
 //! 3. **The site is attributed to the right loft function**, which is the whole reason the
 //!    instrument exists beside `perf`: an optimised build inlines callees into their
 //!    caller, and a checkpoint is keyed to the function the operator was WRITTEN in.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -30,12 +31,12 @@ fn main() { print("t {work(1000)}") }
 
 fn write_src(dir: &std::path::Path) -> PathBuf {
     let p = dir.join("ckpt_probe.loft");
-    std::fs::write(&p, SRC).expect("write probe");
+    fa::write(&p, SRC).expect("write probe");
     p
 }
 
 fn loft() -> Command {
-    let mut c = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut c = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     c.env("LOFT_TIMEOUT", "180");
     c
 }
@@ -43,7 +44,7 @@ fn loft() -> Command {
 #[test]
 fn default_emission_carries_no_checkpoint() {
     let dir = std::env::temp_dir().join(format!("loft_probe_off_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let out = dir.join("off.rs");
     let o = loft()
@@ -52,8 +53,8 @@ fn default_emission_carries_no_checkpoint() {
         .arg(&src)
         .output()
         .expect("emit");
-    assert!(out.exists(), "no Rust emitted: {:?}", o.status);
-    let rust = std::fs::read_to_string(&out).expect("read");
+    assert!(fa::exists(&out), "no Rust emitted: {:?}", o.status);
+    let rust = fa::read_to_string(&out).expect("read");
     // Match the MACHINERY, not the bare token: the emitted `// loft:<path>` comments
     // carry the probe file's own directory, so a scratch path mentioning the instrument
     // would read as a hit.  (It did — that is why this looks for the macro call.)
@@ -70,13 +71,13 @@ fn default_emission_carries_no_checkpoint() {
         rust.len(),
         o.status
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
 fn count_mode_counts_the_loop_exactly() {
     let dir = std::env::temp_dir().join(format!("loft_probe_count_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let o = loft()
         .arg("--native")
@@ -106,13 +107,13 @@ fn count_mode_counts_the_loop_exactly() {
     assert_eq!(row("OpMulInt"), 1000, "the multiply is one per iteration");
     // The loop TEST runs once more than the body — the last one is what ends the loop.
     assert_eq!(row("OpLeInt"), 1001, "the loop test runs N+1 times");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
 fn sites_name_the_loft_function_the_operator_was_written_in() {
     let dir = std::env::temp_dir().join(format!("loft_probe_site_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let src = write_src(&dir);
     let o = loft()
         .arg("--native")
@@ -137,5 +138,5 @@ fn sites_name_the_loft_function_the_operator_was_written_in() {
         "wrong source line: {mul}"
     );
     assert!(all.contains("-- by function --"), "no rollup:\n{all}");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

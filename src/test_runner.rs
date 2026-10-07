@@ -15,6 +15,8 @@ use crate::native_utils;
 use crate::parser::Parser;
 use crate::scopes;
 use crate::state::State;
+use loft::file_access as fa;
+use loft::platform::process::{Program, Spawn};
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -34,7 +36,7 @@ struct CwdGuard(Option<std::path::PathBuf>);
 impl Drop for CwdGuard {
     fn drop(&mut self) {
         if let Some(prev) = self.0.take() {
-            let _ = std::env::set_current_dir(prev);
+            let _ = fa::set_current_dir(prev);
         }
     }
 }
@@ -49,7 +51,7 @@ impl Drop for CwdGuard {
 fn sandbox_policy_for(file: &str) -> Option<loft::sandbox::SandboxConfig> {
     let mut dir = std::path::Path::new(file).parent()?;
     for _ in 0..4 {
-        if let Ok(content) = std::fs::read_to_string(dir.join("loft.toml")) {
+        if let Ok(content) = fa::read_to_string(dir.join("loft.toml")) {
             let cfg = loft::sandbox::parse_sandbox_config(&content);
             if cfg.is_active() {
                 return Some(cfg);
@@ -67,7 +69,7 @@ fn sandbox_policy_for(file: &str) -> Option<loft::sandbox::SandboxConfig> {
 fn package_root_for(file: &str) -> Option<std::path::PathBuf> {
     let mut dir = std::path::Path::new(file).parent()?;
     for _ in 0..4 {
-        if dir.join("loft.toml").is_file() {
+        if fa::is_file(dir.join("loft.toml")) {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
@@ -304,7 +306,7 @@ fn enter_source_dir(source_dir: &str, program_relative: bool) -> CwdGuard {
     if program_relative
         && !source_dir.is_empty()
         && let Ok(prev) = std::env::current_dir()
-        && std::env::set_current_dir(source_dir).is_ok()
+        && fa::set_current_dir(source_dir).is_ok()
     {
         return CwdGuard(Some(prev));
     }
@@ -597,23 +599,20 @@ pub(crate) fn run_tests(
         dir: &std::path::Path,
         out: &mut BTreeMap<String, Vec<std::path::PathBuf>>,
     ) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
         let mut files = Vec::new();
         let mut subdirs = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
+        for entry in entries {
+            let path = entry.os_spelling();
+            if fa::is_dir(&path) {
                 // Skip hidden directories and .loft artifact dirs
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let name = fa::file_name(&path).unwrap_or_default();
                 if !name.starts_with('.') {
                     subdirs.push(path);
                 }
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            {
+            } else if fa::extension(&path).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
                 files.push(path);
             }
         }
@@ -647,12 +646,8 @@ pub(crate) fn run_tests(
         if let Some(code) = status.code() {
             return format!("native run failed (exit {code})");
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            if let Some(sig) = status.signal() {
-                return format!("native run killed by signal {sig}");
-            }
+        if let Some(sig) = crate::platform::exit_signal(status) {
+            return format!("native run killed by signal {sig}");
         }
         "native run failed".to_string()
     }
@@ -724,9 +719,7 @@ pub(crate) fn run_tests(
     /// The last path component of `path`, which is how a diagnostic's location names the file
     /// whatever directory the run started in.
     fn file_name_of(path: &str) -> String {
-        std::path::Path::new(path)
-            .file_name()
-            .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+        fa::file_name(path).unwrap_or_else(|| path.to_string())
     }
 
     /// Every `@EXPECT_…` claim of a file as `(owner, substring)`: the per-function ones under
@@ -785,13 +778,13 @@ pub(crate) fn run_tests(
 
     let root = std::path::Path::new(path_part);
     let mut dirs: BTreeMap<String, Vec<std::path::PathBuf>> = BTreeMap::new();
-    if root.is_file() {
+    if fa::is_file(root) {
         // Single file mode: run tests in just this file.
         let dir_key = root
             .parent()
             .map_or(".".to_string(), |p| p.to_string_lossy().to_string());
         dirs.insert(dir_key, vec![root.to_path_buf()]);
-    } else if root.is_dir() {
+    } else if fa::is_dir(root) {
         collect_loft_files(root, &mut dirs);
     } else {
         std::panic::set_hook(prev_hook);
@@ -925,7 +918,7 @@ pub(crate) fn run_tests(
             let display_name = crate::file_access::portable(file_path);
 
             // Read the raw source to extract annotations before parsing.
-            let source = match std::fs::read_to_string(file_path) {
+            let source = match fa::read_to_string(file_path) {
                 Ok(s) => s,
                 Err(e) => {
                     println!("  FAIL  {display_name}  (cannot read: {e})");
@@ -997,8 +990,9 @@ pub(crate) fn run_tests(
                     // one.  The group pays one ordinary parse plus one base.
                     std::collections::btree_map::Entry::Occupied(mut slot) => {
                         if matches!(slot.get(), BaseSlot::Once) {
-                            let base_file = std::path::Path::new(&abs_file)
-                                .with_file_name("__loft_test_base.loft")
+                            let base_file = fa::parent(std::path::Path::new(&abs_file))
+                                .unwrap_or_default()
+                                .join("__loft_test_base.loft")
                                 .to_string_lossy()
                                 .into_owned();
                             let (libs, region) = slot.key();
@@ -1040,7 +1034,7 @@ pub(crate) fn run_tests(
                         total_files += 1;
                         continue;
                     }
-                    if std::path::Path::new(&stdlib_dir).is_dir() {
+                    if fa::is_dir(std::path::Path::new(&stdlib_dir)) {
                         loft::startup_cache::save_stdlib_cache(&p, &stdlib_dir);
                     }
                 }
@@ -1444,7 +1438,7 @@ pub(crate) fn run_tests(
                     continue;
                 }
                 // Skip standard library / operators.
-                if crate::file_access::is_stdlib_source(&def.position.file) {
+                if crate::file_access::is_stdlib_source(def.position.file.as_str()) {
                     continue;
                 }
                 // skip library functions loaded via `use`. Only run
@@ -1693,10 +1687,8 @@ pub(crate) fn run_tests(
                         }
                     };
                     if !buf.is_empty() {
-                        let stem = std::path::Path::new(&abs_file)
-                            .file_stem()
+                        let stem = fa::file_stem(&abs_file)
                             .unwrap_or_default()
-                            .to_string_lossy()
                             .replace('-', "_");
                         // The scratch directory is shared by every process on the box —
                         // every test binary of a gate, and every checkout's gate — and one
@@ -1726,9 +1718,9 @@ pub(crate) fn run_tests(
                         let work = crate::platform::build_scratch_dir("test_native");
                         let tmp_rs = work.join(format!("loft_test_native_{stem}.rs"));
                         let tmp_bin = work.join(format!("loft_test_native_{stem}_bin"));
-                        let cached = binary.exists();
+                        let cached = fa::exists(&binary);
                         if !cached {
-                            let _ = std::fs::write(&tmp_rs, &buf);
+                            let _ = fa::write(&tmp_rs, &buf);
                         }
 
                         // Layer 2: never start a compile that could overflow a
@@ -1746,27 +1738,26 @@ pub(crate) fn run_tests(
                             true
                         } else {
                             // Compile with rustc.
-                            let mut cmd = std::process::Command::new("rustc");
-                            crate::platform::dies_with_driver(&mut cmd, false);
+                            let mut cmd = Spawn::new(Program::search("rustc"));
                             // Keep rustc's own intermediates in the loft
                             // scratch dir too, so the whole native compile
                             // stays off a small `/tmp` tmpfs.
-                            cmd.env("TMPDIR", &scratch)
-                                .arg("--edition=2024")
-                                .arg("-C")
-                                .arg("debuginfo=0")
-                                .arg("-C")
-                                .arg("opt-level=0")
-                                .arg("-o")
-                                .arg(&tmp_bin)
-                                .arg(&tmp_rs);
+                            cmd.push_env("TMPDIR", &scratch)
+                                .push_arg("--edition=2024")
+                                .push_arg("-C")
+                                .push_arg("debuginfo=0")
+                                .push_arg("-C")
+                                .push_arg("opt-level=0")
+                                .push_arg("-o")
+                                .push_arg(&tmp_bin)
+                                .push_arg(&tmp_rs);
                             crate::native_utils::add_main_stack_flags(&mut cmd);
                             // Layer 1: strip the linked binary (~36MB → ~1MB;
                             // the bulk is debug info from libloft.rlib + std,
                             // useless to a run-and-check test).  Opt out with
                             // LOFT_NATIVE_KEEP_SYMBOLS=1 when debugging a crash.
                             if crate::platform::native_strip_symbols() {
-                                cmd.arg("-C").arg("strip=symbols");
+                                cmd.push_arg("-C").push_arg("strip=symbols");
                             }
                             // @P389: each native package's rlib carries its own
                             // copy of `loft_register_v1` (synthesized by the
@@ -1789,15 +1780,14 @@ pub(crate) fn run_tests(
                             // and MSVC `link.exe` ignores it with a `LNK4044`
                             // per occurrence, so skip it on both (matching
                             // main.rs).
-                            #[cfg(not(any(target_os = "macos", windows)))]
                             if !native_data.native_packages.is_empty() {
-                                cmd.arg("-Clink-arg=-Wl,--allow-multiple-definition");
+                                cmd.push_args(crate::platform::allow_multiple_definition_arg());
                             }
                             if let Some(ref ld) = lib_dir {
-                                cmd.args(loft::native_lib::loft_extern_args(
+                                cmd.push_args(loft::native_lib::loft_extern_args(
                                     &ld.join("libloft.rlib"),
                                 ));
-                                cmd.arg("-L").arg(native_utils::deps_dir_of(ld));
+                                cmd.push_arg("-L").push_arg(native_utils::deps_dir_of(ld));
                                 // Propagate `-L native=` for every build-script
                                 // `OUT_DIR` that bundles a native lib — the G2
                                 // mitigation main.rs already has on the standalone
@@ -1811,7 +1801,8 @@ pub(crate) fn run_tests(
                                 // `[native] crate` package brings none — so the test
                                 // path needs loft's own OUT_DIRs too.
                                 for out_dir in native_utils::build_script_native_lib_dirs(ld) {
-                                    cmd.arg("-L").arg(format!("native={}", out_dir.display()));
+                                    cmd.push_arg("-L")
+                                        .push_arg(format!("native={}", out_dir.display()));
                                 }
                                 // The C-ABI native consumer names `loft_ffi` types
                                 // (LoftStore/LoftRef/LoftStr) in its `extern "C"`
@@ -1825,8 +1816,8 @@ pub(crate) fn run_tests(
                                     &ld.join("libloft.rlib"),
                                     &native_utils::deps_dir_of(ld),
                                 ) {
-                                    cmd.arg("--extern")
-                                        .arg(format!("loft_ffi={}", ffi.display()));
+                                    cmd.push_arg("--extern")
+                                        .push_arg(format!("loft_ffi={}", ffi.display()));
                                 }
                             }
                             // LibCI: link each package's `#native` crate so tests
@@ -1841,7 +1832,7 @@ pub(crate) fn run_tests(
                                 loft_deps.as_deref(),
                             );
                             let rustc_start = std::time::Instant::now();
-                            let compile_result = cmd.output();
+                            let compile_result = cmd.run(b"");
                             crate::platform::timing_record(
                                 "fixture",
                                 &stem,
@@ -1853,7 +1844,7 @@ pub(crate) fn run_tests(
                                 .map(|o| o.status.success())
                                 .unwrap_or(false);
                             let ok = ok
-                                && (std::fs::rename(&tmp_bin, &binary).is_ok() || binary.exists());
+                                && (fa::rename(&tmp_bin, &binary).is_ok() || fa::exists(&binary));
                             if !ok {
                                 let stderr_msg = compile_result.as_ref().ok().map_or_else(
                                     || "rustc not found".to_string(),
@@ -1903,7 +1894,7 @@ pub(crate) fn run_tests(
                                         }
                                     },
                                 );
-                                let _ = std::fs::remove_file(&tmp_bin);
+                                let _ = fa::remove_file(&tmp_bin);
                                 for (_, fn_name) in &native_fns {
                                     file_result.tests.push((
                                         fn_name.clone(),
@@ -1937,23 +1928,23 @@ pub(crate) fn run_tests(
                                 native_utils::stage_native_dlls(dir, &native_data);
                             }
                             let run_one = |only: Option<&str>| -> Result<(), String> {
-                                let mut run_cmd = std::process::Command::new(&binary);
+                                let mut run_cmd = Spawn::new(Program::os(&binary));
                                 if let Some(name) = only {
-                                    run_cmd.arg(name);
+                                    run_cmd.push_arg(name);
                                 }
                                 // The program's own path, which the binary does not hold
                                 // (`codegen_runtime::main_file_or`).
                                 let n_main = native_data.def_nr("n_main");
                                 if n_main != u32::MAX {
-                                    run_cmd.env(
+                                    run_cmd.push_env(
                                         "LOFT_NATIVE_MAIN_FILE",
-                                        native_data.def(n_main).position().file.to_string(),
+                                        native_data.def(n_main).position().file,
                                     );
                                 }
                                 if std::env::var("LOFT_SOURCE_DIR").is_err()
                                     && let Some(dir) = std::path::Path::new(&abs_file).parent()
                                 {
-                                    run_cmd.env("LOFT_SOURCE_DIR", dir);
+                                    run_cmd.push_env("LOFT_SOURCE_DIR", dir);
                                 }
                                 // Run the native test binary with cwd = source_dir so its
                                 // raw `std::fs` (e.g. imaging's load_png/save_png) anchors
@@ -1965,14 +1956,14 @@ pub(crate) fn run_tests(
                                 if clean_db.program_relative
                                     && let Some(dir) = std::path::Path::new(&abs_file).parent()
                                 {
-                                    run_cmd.current_dir(dir);
+                                    run_cmd = run_cmd.cwd(&fa::PathText::from_os(dir));
                                 }
                                 // The child's output is passed on as it was; its stderr is
                                 // also read for the first `error:` line, which names why
                                 // the test failed.
-                                run_cmd.stdout(std::process::Stdio::inherit());
+                                run_cmd = run_cmd.stdout(std::process::Stdio::inherit());
                                 let out = run_cmd
-                                    .output()
+                                    .run(b"")
                                     .map_err(|e| format!("native run failed: {e}"))?;
                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                 eprint!("{stderr}");
@@ -2020,7 +2011,7 @@ pub(crate) fn run_tests(
                         // build directory goes.  `LOFT_KEEP_NATIVE_RS=1` keeps it, source
                         // included, for inspection.
                         if std::env::var_os("LOFT_KEEP_NATIVE_RS").is_none() {
-                            let _ = std::fs::remove_dir_all(&work);
+                            let _ = fa::remove_dir_all(&work);
                         }
                     }
                 }
@@ -2319,7 +2310,8 @@ pub(crate) fn run_tests(
                 if !def.native.is_empty() {
                     continue;
                 }
-                let Some(src) = coverage_path(&def.position.file, &abs_file, pkg_root.as_deref())
+                let Some(src) =
+                    coverage_path(def.position.file.as_str(), &abs_file, pkg_root.as_deref())
                 else {
                     continue;
                 };

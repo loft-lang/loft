@@ -6,14 +6,14 @@
 //! pass on either form, so only this count sees the rule stop firing — on either backend, and
 //! not at all under the switch.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft";
 
 /// The exchanges one run of the cells makes, and its output.
 fn swaps(mode: &str, env: &[(&str, &str)]) -> (usize, String) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg(mode)
         .arg(&src)
         .env("LOFT_TIMEOUT", "240")

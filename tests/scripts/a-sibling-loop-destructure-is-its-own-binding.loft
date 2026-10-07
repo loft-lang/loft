@@ -1,0 +1,16 @@
+// @FR-B-Scope — a `for (a, b) in …` header binds its names for THIS loop, as `for a` does
+// (loft#915): a later loop over the same names at other types reads its own elements.
+// Keyed by name, the second loop reused the first one's `a` at the first one's type — a `text`
+// member read as an `integer` (`1|p` for `p|3`), and `--native` did not compile it.  The
+// shapes that were REFUSED on the old tree are in
+// a-loop-name-a-destructure-reuses-compiles.loft, so this file's wrong values stay scored.
+// @falsified-at: ec3f52c8c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-sibling-loop-destructure-is-its-own-binding.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+// CHANNEL: the interpreter's assertion (the wrong values); --native does not compile the control.
+
+fn main() {
+  s = ""; for (a, b) in [(1, "x"), (2, "yy")] { s += "{a}{b};" }
+  t = ""; for (a, b) in [("p", 3), ("qq", 4)] { t += "{a}|{b};" }
+  assert(s == "1x;2yy;" && t == "p|3;qq|4;", "sibling destructures at other types: {s} {t}");
+}

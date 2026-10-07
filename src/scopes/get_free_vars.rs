@@ -7,8 +7,8 @@
 
 use super::backings::{member_backing, outer_collection_backing};
 use super::capture_adoption::{
-    closure_records_of_source, link_written_closure_records, owning_record_locals,
-    record_store_leaves_frame,
+    closure_record_leaves_frame, closure_records_of_source, link_written_closure_records,
+    owning_record_locals,
 };
 use super::capture_builds::{
     adoption_build_is_conditional, capture_adoption_owns_free, escaping_record_holds,
@@ -372,6 +372,9 @@ impl Scopes<'_> {
                     None,
                 ));
                 ls.extend(self.tuple_handle_frees(v, function, data));
+                ls.extend(super::tuple_members::tuple_text_member_frees(
+                    &elems, v, data, function,
+                ));
                 continue;
             }
             if matches!(function.tp(v).base(), Type::Text(_)) {
@@ -463,13 +466,8 @@ impl Scopes<'_> {
                     // variable's own free; the record local's free was left reading the note.
                     // Gated on the local actually being a closure record so this stays a
                     // statement about `@FR-L-CapOwn` and not a new suppression for every
-                    // reference local.
-                    || (matches!(function.tp(v), Type::Reference(r, _)
-                            if data.def(*r).name.starts_with("__closure_"))
-                        && (record_store_leaves_frame(data, function, self.d_nr, v)
-                            || super::capture_adoption::record_held_by_a_leaving_record(
-                                data, function, self.d_nr, v,
-                            )));
+                    // reference local.  One predicate, asked by `check_ref_leaks` too.
+                    || closure_record_leaves_frame(data, function, self.d_nr, v);
                 // H2 step 5 (DEPS_INVENTORY): the BLOCK-RESULT type's deps were
                 // read here for years under the positional guess.  That read is
                 // RETIRED: the declared-return (`ret_borrows_v`, a TYPED decode),

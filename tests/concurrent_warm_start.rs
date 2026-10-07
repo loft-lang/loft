@@ -7,11 +7,12 @@
 //! that only prints crashed eight times out of eight (`fl_rebuild` out of bounds, or a
 //! segfault), and one start alone never did.  Each start here has its own script, so the
 //! program cache misses and the shared stdlib image is what they meet.
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 fn start(dir: &std::path::Path) -> std::process::Child {
-    Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(dir.join("p.loft"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -29,8 +30,8 @@ fn concurrent_warm_starts_leave_each_other_alone() {
     let base = std::env::temp_dir().join(format!("loft_warm_start_{}", std::process::id()));
     let dirs: Vec<PathBuf> = (0..8).map(|k| base.join(k.to_string())).collect();
     for d in &dirs {
-        std::fs::create_dir_all(d).expect("mkdir");
-        std::fs::write(
+        fa::create_dir_all(d).expect("mkdir");
+        fa::write(
             d.join("p.loft"),
             "fn main() {\n  println(\"started\");\n}\n",
         )
@@ -57,5 +58,5 @@ fn concurrent_warm_starts_leave_each_other_alone() {
             );
         }
     }
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 }

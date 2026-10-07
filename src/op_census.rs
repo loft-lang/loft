@@ -283,8 +283,9 @@ fn write_ngrams(data: &crate::data::Data) {
     for (n, row) in rows {
         let _ = writeln!(out, "{n}\t{row}");
     }
-    if let Err(e) = std::fs::write(path, out) {
-        crate::loft_eprintln!("loft: cannot write the op n-grams to '{path}': {e}");
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        crate::loft_eprintln!("loft: cannot write the op n-grams: {e}");
     }
 }
 
@@ -322,8 +323,9 @@ pub fn write(data: &crate::data::Data) {
             }
         }
     });
-    if let Err(e) = std::fs::write(path, out) {
-        crate::loft_eprintln!("loft: cannot write the op census to '{path}': {e}");
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        crate::loft_eprintln!("loft: cannot write the op census: {e}");
     }
     write_ngrams(data);
 }

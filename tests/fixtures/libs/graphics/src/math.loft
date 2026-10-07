@@ -7,8 +7,8 @@
 
 // A 2D vector / point.
 pub struct Vec2 {
-  x: float not null,
-  y: float not null
+  pub x: float not null,
+  pub y: float not null
 }
 
 pub fn vec2(vx: float, vy: float) -> Vec2 {
@@ -17,9 +17,9 @@ pub fn vec2(vx: float, vy: float) -> Vec2 {
 
 // A 3D vector / point.
 pub struct Vec3 {
-  x: float not null,
-  y: float not null,
-  z: float not null
+  pub x: float not null,
+  pub y: float not null,
+  pub z: float not null
 }
 
 pub fn vec3(vx: float, vy: float, vz: float) -> Vec3 {
@@ -80,7 +80,7 @@ pub fn normalize3(nv: const Vec3) -> Vec3 {
 // A 4x4 transformation matrix stored as 16 floats in column-major order.
 // m[0..3] = column 0, m[4..7] = column 1, m[8..11] = column 2, m[12..15] = column 3.
 pub struct Mat4 {
-  m: vector<float> not null
+  pub m: vector<float> not null
 }
 
 // Create an identity matrix.

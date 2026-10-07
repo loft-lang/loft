@@ -1,0 +1,84 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index fd2540402..1ce68cba0 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -8168,39 +8168,6 @@ use a separate collection or add after the loop"
+     /// passed with borrowed text elements however deeply they sit, so `((integer, text), …)`
+     /// needs the owning promotion exactly as `(integer, text)` does (loft#1278, and the same
+     /// one-level-in fact loft#1005 had to learn on the read side).
+-    /// loft#1278 — a by-value tuple PARAMETER carrying text whose member is written takes an
+-    /// owned shadow local (`__tp_<name>`, seeded at function entry), the first time any write
+-    /// names it: a plain `t.0 = …` and a compound `t.0 += …` alike.  The parameter itself is
+-    /// the caller's tuple passed borrowed (`&str` members on `--native`), so a write to it
+-    /// cannot land; the shadow is `(F-ParamScalar)`'s own copy.  First pass only — the name is
+-    /// remapped, so the second pass reads every mention as the shadow.  `None` when `root`
+-    /// needs no shadow.
+-    fn promote_written_tuple_param(&mut self, root: u16) -> Option<u16> {
+-        if !self.first_pass
+-            || root >= self.vars.count()
+-            || !self.vars.is_argument(root)
+-            || !Self::tuple_carries_text(self.vars.tp(root))
+-        {
+-            return None;
+-        }
+-        let name = self.vars.name(root).to_string();
+-        let tp = self.vars.tp(root).clone();
+-        let shadow = self
+-            .vars
+-            .add_variable(&format!("__tp_{name}"), &tp, &mut self.lexer);
+-        self.vars.set_promoted_from(shadow, root);
+-        // The promoted local inherits the const axis, so the const guard still
+-        // fires on it — the same pairing the text promotion keeps (@PLN40).
+-        if self.vars.is_value_const(root) {
+-            self.vars.set_value_const(shadow);
+-        }
+-        if self.vars.is_const_binding(root) {
+-            self.vars.set_const_binding(shadow);
+-        }
+-        self.vars.remap_name(&name, shadow);
+-        Some(shadow)
+-    }
+-
+     fn tuple_carries_text(tp: &Type) -> bool {
+         match tp.base() {
+             Type::Tuple(members) => members
+@@ -8880,7 +8847,25 @@ use a separate collection or add after the loop"
+             // value parameter its own copy, so writing the callee's copy is exactly right
+             // and the caller's tuple is untouched either way.
+             let mut lhs = lhs;
+-            if let Some(shadow) = self.promote_written_tuple_param(lhs.root) {
++            if self.first_pass
++                && self.vars.is_argument(lhs.root)
++                && Self::tuple_carries_text(self.vars.tp(lhs.root))
++            {
++                let name = self.vars.name(lhs.root).to_string();
++                let tp = self.vars.tp(lhs.root).clone();
++                let shadow = self
++                    .vars
++                    .add_variable(&format!("__tp_{name}"), &tp, &mut self.lexer);
++                self.vars.set_promoted_from(shadow, lhs.root);
++                // The promoted local inherits the const axis, so the const guard still
++                // fires on it — the same pairing the text promotion keeps (@PLN40).
++                if self.vars.is_value_const(lhs.root) {
++                    self.vars.set_value_const(shadow);
++                }
++                if self.vars.is_const_binding(lhs.root) {
++                    self.vars.set_const_binding(shadow);
++                }
++                self.vars.remap_name(&name, shadow);
+                 lhs.root = shadow;
+             }
+             // loft#1532 — a heap value written into a member is COPIED in: the tuple literal
+@@ -8939,12 +8924,6 @@ use a separate collection or add after the loop"
+         let mut to = code.clone();
+         for op in ["=", "+=", "-=", "*=", "%=", "/="] {
+             if self.lexer.has_token(op) {
+-                // loft#1278's promotion for the routes past the member-assignment branch above:
+-                // a compound write to a parameter tuple's member (`t.0 += "!"`) writes it too.
+-                // The second pass reads `t` as the shadow, so the answer is not needed here.
+-                if let Value::TupleGet(root, _) = to.unspan() {
+-                    let _ = self.promote_written_tuple_param(*root);
+-                }
+                 // @PLN167 C1 — `t = &…` BINDS the link: its target is the variable itself,
+                 // not the text field every other mention of a store-kind link is spelled as.
+                 if op == "="

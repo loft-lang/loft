@@ -210,19 +210,19 @@ pub fn slope_path_with_undo(s: &UndoStack, m: &Map, q1: integer, r1: integer, q2
 
 pub enum EditKind {
   HexEdit {
-    ek_q:    integer not null,
-    ek_r:    integer not null,
-    ek_cy:   integer not null,
-    ek_prev: Hex
+    pub ek_q:    integer not null,
+    pub ek_r:    integer not null,
+    pub ek_cy:   integer not null,
+    pub ek_prev: Hex
   },
   SpawnAdd {
-    ek_q:      integer not null,
-    ek_r:      integer not null,
-    ek_cy:     integer not null,
-    ek_npc_id: integer not null
+    pub ek_q:      integer not null,
+    pub ek_r:      integer not null,
+    pub ek_cy:     integer not null,
+    pub ek_npc_id: integer not null
   },
   SpawnRemove {
-    ek_sp: SpawnPoint
+    pub ek_sp: SpawnPoint
   }
 }
 
@@ -264,8 +264,8 @@ pub fn edit_kind_undo(e: EditKind, m: &Map) {
 pub struct StencilHex {
   sh_dq:            integer not null,
   sh_dr:            integer not null,
-  sh_height:        integer not null,
-  sh_material:      integer not null,
+  pub sh_height:        integer not null,
+  pub sh_material:      integer not null,
   sh_item:          integer not null,
   sh_item_rotation: integer not null,
   sh_wall_n:        integer not null,
@@ -275,11 +275,11 @@ pub struct StencilHex {
 
 // A named stamp template.
 pub struct StencilDef {
-  sd_name:     text,
+  pub sd_name:     text,
   sd_category: text,
   sd_origin_q: integer not null,
   sd_origin_r: integer not null,
-  sd_hexes:    vector<StencilHex>,
+  pub sd_hexes:    vector<StencilHex>,
 }
 
 // Merge modes for stencil_stamp.

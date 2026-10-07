@@ -7,7 +7,7 @@
 //! integer `/`) under `LOFT_NULLFLOW`; the `divisor_provably_nonzero` elision keeps
 //! `x / 2.0` non-null. Observed via the Phase-1 store warning (ON but not OFF).
 
-use std::process::Command;
+use loft::file_access as fa;
 
 mod common;
 
@@ -23,8 +23,8 @@ fn workspace_root() -> std::path::PathBuf {
 fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, usize, String) {
     let name = format!("loft_nf3_{}_{tag}.loft", std::process::id());
     let script = std::env::temp_dir().join(&name);
-    std::fs::write(&script, body).expect("write script");
-    let mut cmd = Command::new(loft_bin());
+    fa::write(&script, body).expect("write script");
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -36,7 +36,7 @@ fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, usize, St
         cmd.env("LOFT_NO_NULLFLOW", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let warns = common::loft_warnings(&stderr, &name);
     (

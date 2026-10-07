@@ -586,6 +586,22 @@ member, not the family.
 
 **0 open** (2026-08-31) — D-tup-1 closed 2026-08-20 (the reference tuple has a rule; `&(τ,…)`'s SCALAR-only restriction is now binding.md's D-bind-11, not an unspecified composition), and D-tup-4's keyed half closed 2026-08-31 (loft#1230: a keyed collection given to a tuple is COPIED like its vector twin, so `(T-Cons)`'s independence holds for every element type) — positional products (n≥2); `.i` a compile-time index; `(a,b) = …` destructuring; tuple returns. ⚠ its differential oracle is all-`(integer, integer)`: the doc read `0 open` through loft#1004 and loft#1005, both `text`-element deviations it could not see
 
+## Deviations carried by tuples.md until 2026-10-06
+
+Opened and closed in the same change; the chapter's `OPEN:` line never carried it.
+
+* **D-tup-20** *(opened 2026-10-06, CLOSED 2026-10-06; loft#1893)* — `(T-Absent)` for an
+  exhausted generator: a missed read of a tuple answers a present tuple whose every member is
+  null (`v[i]` past the end does, on both backends), but `next()` past a tuple generator's end
+  answered whatever the channel left — `""` and `0` on the interpreter, `null` and `0` natively —
+  and on the interpreter an `(integer, integer)` read a POINTER as its first member: the null an
+  exhausted advance pushes is chosen by byte size, and 16 bytes is a `Str`'s.  **Fix.**  The
+  parser lowers a tuple `next()` to bind the handle once, advance into a pass-through temporary
+  (skip-free: the tuple is handed to whoever binds it, `(G-Own)`), and answer each member's null
+  when that advance found the generator done.  A first version let the temporary own the
+  yielded record, and `LOFT_POISON` read it freed.  Guard
+  `tests/scripts/an-exhausted-tuple-generator-answers-null-members.loft`.
+
 ## Deviations carried by tuples.md until 2026-09-29
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.

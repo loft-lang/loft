@@ -32,6 +32,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C120](DESIGN_DECISIONS_VALUES.md#c120--integer-arithmetic-on-native-stays-sentinel-aware-after-a-fault-the-non-null-proof-does-not-close-over----) — Integer arithmetic on native stays sentinel-aware after a fault; the non-null proof does not close over `+`, `-`, `*`
 - [C127](DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so) — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
 - [C129](DESIGN_DECISIONS_VALUES.md#c129--no-opt-in-to-the-processors-arithmetic-no-machine-dependent-scope-or-type) — No opt-in to the processor's arithmetic (no machine-dependent scope or type)
+- [C139](DESIGN_DECISIONS_VALUES.md#c139--a-tuple-is-a-record-foreign-data-is-value-const-and-never-presented-as-writable) — A tuple IS a record; foreign data is value-const and never presented as writable
 
 ## Binding, ownership and closures — [DESIGN_DECISIONS_OWNERSHIP.md](DESIGN_DECISIONS_OWNERSHIP.md)
 
@@ -72,6 +73,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C112](DESIGN_DECISIONS_SYNTAX.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call) — a binding position mints a local whatever else carries that name; the function stays reachable as a call
 - [C123](DESIGN_DECISIONS_SYNTAX.md#c123--one-name-has-one-body-per-receiver-type-both-is-how-a-function-takes-both-spellings) — one name has one body per receiver type; `both` is how a function takes both spellings
 - [C126](DESIGN_DECISIONS_SYNTAX.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set) — a generic's type variables are unrestricted; a keyed collection stays a record set
+- [C140](DESIGN_DECISIONS_SYNTAX.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants) — private by default, `pub` is consent: fields, literals and variants
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 

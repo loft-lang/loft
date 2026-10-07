@@ -18,11 +18,11 @@
 //! `LOFT_NO_CACHE=1` is mandatory — the warm program cache keys on source, not on
 //! `LOFT_E2_SYNTH`, so a cached gate-off bundle would mask the rewrite.
 
+use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 fn run(args: &[&str], prog: &Path) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(args)
         .arg(prog)
         .env("LOFT_NO_CACHE", "1")
@@ -36,7 +36,10 @@ fn run(args: &[&str], prog: &Path) -> (bool, String) {
 }
 
 fn rustc_available() -> bool {
-    Command::new("rustc").arg("--version").output().is_ok()
+    loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 fn assert_both(prog: &Path, want: &str) {
@@ -55,9 +58,9 @@ fn assert_both(prog: &Path, want: &str) {
 
 fn probe(name: &str, body: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_e2_gap2_probe");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{name}.loft"));
-    std::fs::write(&path, body).expect("write probe");
+    fa::write(&path, body).expect("write probe");
     path
 }
 

@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-Move` — a `File` local this function bound to a fresh `file(…)` and placed into a new
+// structure (a vector literal, an append, a record field) MOVES there: the structure holds the
+// handle, and the local's end releases nothing the structure still uses.
+//
+// A `File` names its OS handle by a number inside the record, so placing the local copies that
+// number into the element, and the local's free at the function's exit closed the handle.  Every
+// later write through the element then went nowhere, silently, on both backends (loft#1896).
+// The handle now counts the records that name it (`@FR-H-Lease`) and closes at the last release.
+//
+// Axes this file MOVES:  the destination (a vector literal `[f]`, an append `fs += [f]`, a
+//                        record-literal field, a tuple member, a vector literal of a COPY
+//                        `g = f`), the literal chosen by an `if` arm, a local REASSIGNED in a
+//                        loop, where only the last turn's handle was closed, and a COPY of a
+//                        vector whose original is then replaced, which releases the original's
+//                        elements and must leave the copy's handles open.
+// Axes it HOLDS FIXED:   the File opened and written once (`"x"`) in the callee, written once
+//                        more (`"y"`) by the caller after the callee returned; text format.
+//                        A File copied while BOTH copies stay in use is not here: what that
+//                        copy means is an open question to the owner (loft#1896).
+//
+// Expected values by hand: every file holds `"x"` from the callee and `"y"` from the caller, so
+// each reads back `"xy"`; the record keeps its other field, `7`, and the tuple its `3`.
+//
+// @falsified-at: 436910d69 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-file-local-moved-into-a-structure-keeps-its-handle.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS.  Each cell alone under `--tests` on the control: the literal, the
+//   append, the if-arm and the copy then placed read `"x"`, the loop `"xy xy xy x"`.
+//   HOLDS: the record field, the tuple member and the copy that outlives its replaced original
+//   pass on the control too — they hold the shapes the lease count must not break.
+
+struct Holder { h: File, tag: integer }
+
+fn scratch(tag: text) -> text {
+  d = "{temp_dir() ?? "/tmp"}/loft_file_move_{tag}_{now()}_{ticks()}";
+  mkdir_all(d);
+  d
+}
+
+fn clean(d: text) {
+  for n in list_dir(d) ?? [] { delete("{d}/{n}"); }
+  rmdir(d);
+}
+
+fn holds(p: text) -> text { file(p).content() ?? "" }
+
+fn in_a_literal(d: text) -> vector<File> { f = file("{d}/lit.txt"); f += "x"; [f] }
+
+fn appended(d: text) -> vector<File> {
+  fs: vector<File> = [];
+  f = file("{d}/app.txt");
+  f += "x";
+  fs += [f];
+  fs
+}
+
+fn reassigned_in_a_loop(d: text) -> vector<File> {
+  fs: vector<File> = [];
+  for i in 0..4 {
+    f = file("{d}/loop{i}.txt");
+    f += "x";
+    fs += [f];
+  }
+  fs
+}
+
+fn in_a_field(d: text) -> Holder { f = file("{d}/field.txt"); f += "x"; Holder { h: f, tag: 7 } }
+
+fn in_a_tuple(d: text) -> (File, integer) { f = file("{d}/tuple.txt"); f += "x"; (f, 3) }
+
+fn in_an_arm(d: text, c: boolean) -> vector<File> {
+  f = file("{d}/arm.txt");
+  f += "x";
+  if c { [f] } else { [] }
+}
+
+fn a_copy_in_a_literal(d: text) -> vector<File> { f = file("{d}/copy.txt"); f += "x"; g = f; [g] }
+
+fn test_a_vector_literal() {
+  d = scratch("lit");
+  for g in in_a_literal(d) { g += "y"; }
+  got = holds("{d}/lit.txt");
+  assert(got == "xy", "[f]: {got}");
+  clean(d);
+}
+
+fn test_an_append() {
+  d = scratch("app");
+  for g in appended(d) { g += "y"; }
+  got = holds("{d}/app.txt");
+  assert(got == "xy", "fs += [f]: {got}");
+  clean(d);
+}
+
+fn test_a_local_reassigned_in_a_loop() {
+  d = scratch("loop");
+  for g in reassigned_in_a_loop(d) { g += "y"; }
+  got = "";
+  for i in 0..4 { got += "{holds("{d}/loop{i}.txt")} "; }
+  assert(got == "xy xy xy xy ", "four turns: {got}");
+  clean(d);
+}
+
+fn test_a_record_field() {
+  d = scratch("field");
+  r = in_a_field(d);
+  h = r.h;
+  h += "y";
+  got = holds("{d}/field.txt");
+  assert(got == "xy" && r.tag == 7, "Holder {{ h: f }}: {got}, tag {r.tag}");
+  clean(d);
+}
+
+fn test_a_tuple_member() {
+  d = scratch("tuple");
+  t = in_a_tuple(d);
+  h = t.0;
+  h += "y";
+  got = holds("{d}/tuple.txt");
+  assert(got == "xy" && t.1 == 3, "(f, 3): {got}, {t.1}");
+  clean(d);
+}
+
+fn test_a_literal_in_an_if_arm() {
+  d = scratch("arm");
+  for g in in_an_arm(d, true) { g += "y"; }
+  got = holds("{d}/arm.txt");
+  assert(got == "xy", "if c {{ [f] }}: {got}");
+  clean(d);
+}
+
+fn test_a_copy_placed_in_a_literal() {
+  d = scratch("copy");
+  for g in a_copy_in_a_literal(d) { g += "y"; }
+  got = holds("{d}/copy.txt");
+  assert(got == "xy", "g = f; [g]: {got}");
+  clean(d);
+}
+
+fn test_a_copy_outlives_the_replaced_original() {
+  d = scratch("replaced");
+  fs = [file("{d}/kept.txt")];
+  for g in fs { g += "x"; }
+  gs = fs;
+  fs = [file("{d}/other.txt")];
+  for g in gs { g += "y"; }
+  got = holds("{d}/kept.txt");
+  assert(got == "xy" && len(fs) == 1, "gs = fs; fs = [..]: {got}");
+  clean(d);
+}
+
+fn main() {
+  test_a_vector_literal();
+  test_an_append();
+  test_a_local_reassigned_in_a_loop();
+  test_a_record_field();
+  test_a_tuple_member();
+  test_a_literal_in_an_if_arm();
+  test_a_copy_placed_in_a_literal();
+  test_a_copy_outlives_the_replaced_original();
+}

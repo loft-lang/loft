@@ -44,10 +44,13 @@ permissions:
   contents: read
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
   discover:
+    # @windows-exempt: platform-free — lists libraries
     runs-on: ubuntu-latest
     outputs:
       repos: ${{ steps.list.outputs.repos }}
@@ -76,6 +79,7 @@ jobs:
   # library's main (or a new one nobody recorded) must turn this red, not leave the index
   # claiming a decision is held by a file that is gone.  A commit that moves no guard passes.
   guards:
+    # @windows-exempt: platform-free — fetches library guards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,6 +89,7 @@ jobs:
         run: python3 scripts/fetch-library-guards.py --check
 
   check:
+    # @windows-exempt: a library's platforms are its own CI's choice
     needs: discover
     runs-on: ubuntu-latest
     strategy:

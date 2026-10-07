@@ -4,8 +4,8 @@
 //! which bodies compute an effect-free call once, read off `LOFT_TRACE_PURE_REUSE`, and how
 //! many calls of it the request-check shape emits with the rule on and off.  An effect-free
 //! call cannot count itself, so only this pin sees a reuse that stops firing.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-pure-call-made-twice-is-computed-once.loft";
 
@@ -19,7 +19,8 @@ const TRACE: &[&str] = &[
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")
@@ -77,8 +78,8 @@ fn the_request_check_calls_its_parser_once() {
         ));
         let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], env);
         assert!(ok, "{env:?}: emit failed:\n{err}");
-        let src = std::fs::read_to_string(&rs).expect("emitted source");
-        let _ = std::fs::remove_file(&rs);
+        let src = fa::read_to_string(&rs).expect("emitted source");
+        let _ = fa::remove_file(&rs);
         let check = body(&src, "n_check");
         // With the rule `check` calls the parser itself, once; without it, it calls the two
         // wrappers and no parser of its own.

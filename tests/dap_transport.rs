@@ -13,8 +13,9 @@
 // The engine path underneath is already proven end-to-end by `tests/rpc.rs`; these
 // tests exercise only the DAP TRANSLATION (framing, envelope, drill-down synthesis).
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
 use loft::json::{self, Parsed};
 
@@ -28,7 +29,7 @@ struct Dap {
 
 impl Dap {
     fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_loft-dap"))
+        let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-dap"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -230,7 +231,7 @@ fn field_arr<'a>(v: &'a Parsed, key: &str) -> Option<&'a Vec<Parsed>> {
 /// A unique temp `.loft` path keyed by tag + pid (so parallel tests don't collide).
 fn tmp_program(tag: &str, src: &str) -> std::path::PathBuf {
     let p = std::env::temp_dir().join(format!("loft_dap_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&p, src).expect("write temp program");
+    fa::write(&p, src).expect("write temp program");
     p
 }
 
@@ -318,7 +319,7 @@ fn launch_runs_to_termination_and_streams_output() {
     let _ = d.recv_event("terminated");
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── D2 — stopOnEntry pauses before the first statement ───────────────────────────────
@@ -342,7 +343,7 @@ fn stop_on_entry_pauses_at_entry() {
     assert_eq!(field_i64(&stopped, "threadId"), Some(1));
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── D3 — breakpoints + stopped ───────────────────────────────────────────────────────
@@ -394,7 +395,7 @@ fn breakpoint_verifies_and_stops() {
     assert_eq!(field_i64(&frames[0], "line"), Some(2), "parked on line 2");
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── D4 — inspection drill-down + stale reference ─────────────────────────────────────
@@ -478,7 +479,7 @@ fn drilldown_reads_locals_and_invalidates_stale_reference() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── D5 — stepping + continue ─────────────────────────────────────────────────────────
@@ -527,7 +528,7 @@ fn step_over_advances_then_continue_terminates() {
     let _ = d.recv_event("terminated");
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── D6 — evaluate + setVariable ──────────────────────────────────────────────────────
@@ -599,7 +600,7 @@ fn evaluate_and_set_variable_at_a_stop() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── VE — structured variable expansion (DAP_ADVANCED.md § VE) ─────────────────────────
@@ -696,7 +697,7 @@ fn variable_expansion_walks_structs_vectors_and_nesting() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── SF — multi-frame stack trace (DAP_ADVANCED.md § SF) ──────────────────────────────
@@ -768,7 +769,7 @@ fn stack_trace_walks_all_frames_and_reads_caller_locals() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── DB — data breakpoints via watchpoints (DAP_ADVANCED.md § DB) ──────────────────────
@@ -849,7 +850,7 @@ fn data_breakpoint_on_local_fires_on_change() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// The top stack frame's current source line (via a fresh stackTrace).
@@ -925,7 +926,7 @@ fn step_back_reverses_a_step_over_dap() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // reverseContinue reverses to the ring floor: from deep in the program it walks all retained
@@ -975,7 +976,7 @@ fn reverse_continue_walks_back_to_the_floor() {
     );
 
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── pause — an interrupt reaches a RUNNING program ───────────────────────────────────────
@@ -1062,7 +1063,7 @@ fn pause_stops_a_running_program_and_continue_resumes_it() {
         "the resumed run finishes with its own answer: {out:?}"
     );
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 
     // 3. A pause while already stopped changes nothing.
     let mut d = Dap::start();
@@ -1093,5 +1094,5 @@ fn pause_stops_a_running_program_and_continue_resumes_it() {
     }
     assert!(out.contains(DONE), "{out:?}");
     d.disconnect();
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }

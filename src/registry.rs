@@ -66,7 +66,7 @@ pub enum PackageStatus<'a> {
 /// Parse a registry file.  Returns all entries (including yanked/deprecated)
 /// and the `source:` URL extracted from the header comment, if present.
 pub fn read_registry(path: &str) -> (Vec<RegistryEntry>, Option<String>) {
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Ok(content) = crate::file_access::read_to_string(path) else {
         return (Vec::new(), None);
     };
     parse_registry(&content)
@@ -111,7 +111,7 @@ pub fn parse_registry(content: &str) -> (Vec<RegistryEntry>, Option<String>) {
 pub fn registry_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("LOFT_REGISTRY") {
         let path = PathBuf::from(&p);
-        if path.exists() {
+        if crate::file_access::exists(&path) {
             return Some(path);
         }
     }
@@ -119,7 +119,11 @@ pub fn registry_path() -> Option<PathBuf> {
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
     let path = Path::new(&home).join(".loft").join("registry.txt");
-    if path.exists() { Some(path) } else { None }
+    if crate::file_access::exists(&path) {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 /// Determine the registry source URL for sync.
@@ -201,25 +205,21 @@ pub fn package_versions<'a>(entries: &'a [RegistryEntry], name: &str) -> Vec<&'a
 /// Returns `(name, version)` for each subdirectory containing a readable `loft.toml`.
 pub fn installed_packages(lib_dir: &Path) -> Vec<(String, String)> {
     let mut result = Vec::new();
-    let Ok(entries) = std::fs::read_dir(lib_dir) else {
+    let Ok(entries) = crate::file_access::read_dir(lib_dir) else {
         return result;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+    for entry in entries {
+        let path = entry.os_spelling();
+        if !crate::file_access::is_dir(&path) {
             continue;
         }
         let manifest_path = path.join("loft.toml");
-        if !manifest_path.exists() {
+        if !crate::file_access::exists(&manifest_path) {
             continue;
         }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let name = entry.file_name().unwrap_or_default().to_string();
         // Read version from loft.toml.
-        let version = match std::fs::read_to_string(&manifest_path) {
+        let version = match crate::file_access::read_to_string(&manifest_path) {
             Ok(content) => extract_version(&content),
             Err(_) => String::new(),
         };
@@ -304,8 +304,7 @@ pub fn download_file(url: &str, dst: &Path) -> Result<(), String> {
         .call()
         .map_err(|e| format!("download failed: {e}"))?;
     let mut reader = resp.into_reader();
-    let mut file =
-        std::fs::File::create(dst).map_err(|e| format!("cannot create {}: {e}", dst.display()))?;
+    let mut file = crate::file_access::create(dst).map_err(|e| format!("cannot create {e}"))?;
     std::io::copy(&mut reader, &mut file).map_err(|e| format!("write failed: {e}"))?;
     Ok(())
 }
@@ -326,9 +325,10 @@ pub fn download_and_extract(entry: &RegistryEntry, tmp_base: &Path) -> Result<Pa
 
     // Extract zip.
     let extract_dir = tmp_base.join(format!("{}-{}", entry.name, entry.version));
-    std::fs::create_dir_all(&extract_dir).map_err(|e| format!("cannot create temp dir: {e}"))?;
+    crate::file_access::create_dir_all(&extract_dir)
+        .map_err(|e| format!("cannot create temp dir: {e}"))?;
 
-    let file = std::fs::File::open(&zip_path).map_err(|e| format!("cannot open zip: {e}"))?;
+    let file = crate::file_access::open(&zip_path).map_err(|e| format!("cannot open zip: {e}"))?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| format!("invalid zip archive: {e}"))?;
     archive
@@ -347,20 +347,25 @@ pub fn download_and_extract(entry: &RegistryEntry, tmp_base: &Path) -> Result<Pa
 /// Falls back to a directory containing `src/` if no `loft.toml` is found.
 #[cfg(feature = "registry")]
 fn find_package_root(dir: &Path) -> Option<PathBuf> {
-    if dir.join("loft.toml").exists() {
+    if crate::file_access::exists(dir.join("loft.toml")) {
         return Some(dir.to_path_buf());
     }
-    // Check immediate children first.
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() && path.join("loft.toml").exists() {
+    // Check immediate children first, in name order.
+    if let Ok(entries) = crate::file_access::read_dir(dir) {
+        for entry in entries {
+            let Some(name) = entry.os_name() else {
+                continue;
+            };
+            let path = dir.join(name);
+            if crate::file_access::is_dir(&path)
+                && crate::file_access::exists(path.join("loft.toml"))
+            {
                 return Some(path);
             }
         }
     }
     // Fallback: check for src/ at root.
-    if dir.join("src").is_dir() {
+    if crate::file_access::is_dir(dir.join("src")) {
         return Some(dir.to_path_buf());
     }
     None
@@ -368,7 +373,7 @@ fn find_package_root(dir: &Path) -> Option<PathBuf> {
 
 /// Format the registry staleness warning if applicable.
 pub fn staleness_warning(registry_path: &Path) -> Option<String> {
-    let metadata = std::fs::metadata(registry_path).ok()?;
+    let metadata = crate::file_access::metadata(registry_path).ok()?;
     let modified = metadata.modified().ok()?;
     let age = std::time::SystemTime::now().duration_since(modified).ok()?;
     let days = age.as_secs() / 86400;

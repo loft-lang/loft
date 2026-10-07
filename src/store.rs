@@ -8,6 +8,8 @@
 // that the codebase has always tolerated as internal — fixing each one
 // is a project-wide doc sweep, out of scope here.  Allow them at the
 // module level so this PR stays focused on the durable-store API.
+// @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(
     clippy::missing_panics_doc,
     clippy::missing_errors_doc,
@@ -112,11 +114,9 @@ const MIN_FREE_TREE: i32 = 2;
 /// A hard-coded 4096 would mean [`Store::release_resident`] handing `madvise` a length
 /// that is not a whole number of pages, which it rounds DOWN — silently dropping less
 /// than the caller was told.
-#[cfg(all(feature = "mmap", unix))]
+#[cfg(feature = "mmap")]
 fn page_bytes() -> u64 {
-    static PAGE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    #[allow(clippy::cast_sign_loss)]
-    *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(4096) as u64 })
+    crate::platform::page_bytes()
 }
 
 /// Smallest size a FILE-BACKED arena is kept at, in words.  [`Store::open`]
@@ -343,8 +343,8 @@ pub struct Store {
     /// reaches an image, and a clone starts at zero because its pages are its own.
     ///
     /// Read only where [`Store::release_resident`] has a body to be — without `mmap`
-    /// there is no file to flush to, and off unix there is no `madvise`.
-    #[cfg_attr(not(all(feature = "mmap", unix)), allow(dead_code))]
+    /// there is no file to flush to.
+    #[cfg_attr(not(feature = "mmap"), allow(dead_code))]
     released_bytes: u64,
     /// @PLN126 — the word past the highest block ever claimed, carried forward by
     /// [`Store::claim_block`].
@@ -363,7 +363,7 @@ pub struct Store {
     /// Maintained on every target and read only where [`Store::release_resident`] has a
     /// body to be: the cost is one `max` per claim, and making the bookkeeping itself
     /// conditional would mean a store whose mark depends on how loft was compiled.
-    #[cfg_attr(not(all(feature = "mmap", unix)), allow(dead_code))]
+    #[cfg_attr(not(feature = "mmap"), allow(dead_code))]
     claimed_end: u32,
     pub(crate) free: bool,
     /// HARD lock: when `true`, the store is immutable.  All `addr_mut`,
@@ -3505,7 +3505,7 @@ impl Store {
     ///
     /// Clamped to the capacity, because the seed is the only place a stale value could
     /// come from and its one consumer hands the result to `madvise`.
-    #[cfg(all(feature = "mmap", unix))]
+    #[cfg(feature = "mmap")]
     fn write_frontier(&mut self) -> u32 {
         // Once per store, on the FIRST release only: a store bound to an existing
         // image holds claims this process never made, so `claimed_end` has seen none
@@ -3549,9 +3549,11 @@ impl Store {
     ///
     /// Only WHOLE pages strictly below the mark are dropped, so the page the next
     /// claim writes into is never among them.
-    #[cfg(all(feature = "mmap", unix))]
+    #[cfg(feature = "mmap")]
     pub fn release_resident(&mut self) -> u64 {
-        if self.file.is_none() || self.read_only {
+        // A host that cannot drop pages (`platform::releases_resident_pages`) answers 0
+        // before the frontier walk, as a no-op hint should.
+        if self.file.is_none() || self.read_only || !crate::platform::releases_resident_pages() {
             return 0;
         }
         let mark = self.write_frontier();
@@ -3592,10 +3594,8 @@ impl Store {
         // kernel to write back; the `msync` only asks for that writeback to START, so
         // the region becomes reclaimable sooner. This call is a residency hint and
         // makes no durability promise — `store_durable_seal` is what does.
-        let ok = unsafe {
-            libc::msync(at.cast(), len as usize, libc::MS_ASYNC) == 0
-                && libc::madvise(at.cast(), len as usize, libc::MADV_DONTNEED) == 0
-        };
+        // SAFETY: as above — a page-aligned range inside this store's live shared mapping.
+        let ok = unsafe { crate::platform::release_resident_pages(at, len as usize) };
         if ok {
             self.released_bytes = till;
             len
@@ -3604,10 +3604,10 @@ impl Store {
         }
     }
 
-    /// Not compiled without `mmap` (no file to flush to) or off unix (no `madvise`).
-    /// A no-op rather than an error: the call is a HINT about residency, and a program
+    /// Not compiled without `mmap` (no file to flush to); a host with no `madvise` takes
+    /// the same answer through `platform::releases_resident_pages`.  A no-op rather than an error: the call is a HINT about residency, and a program
     /// that runs on a target which cannot honour it is not a program that is wrong.
-    #[cfg(not(all(feature = "mmap", unix)))]
+    #[cfg(not(feature = "mmap"))]
     pub fn release_resident(&mut self) -> u64 {
         0
     }
@@ -3733,14 +3733,14 @@ impl Store {
 
     /// Read a field OUT of the store.  **The ordinary way to get a value.**
     ///
-    /// `@FR-L-Align` (@C138): a store's allocation is `Layout::from_size_align(size * 8, 8)`
-    /// and an address is `base + rec * 8 + fld`, so for any alignment up to eight the
-    /// address's alignment IS `fld`'s — and the layout places every field on its natural
-    /// boundary and pads every record to a multiple of its alignment, so every element of a
-    /// collection is aligned too.  The read is therefore an aligned `ptr::read` behind one
-    /// alignment test; a misaligned `fld` is a layout defect and panics, in a release build
-    /// too.  Two kinds of bytes the layout does not place are read unaligned: a FOREIGN
-    /// store's, which its producer's buffer supplies, and the interpreter's stack frames.
+    /// `@FR-L-Align` (@C138): the layout places every field on its natural boundary, and the
+    /// compiler checks that once (`Stores::validate_all_layouts`) — so the alignment is a fact
+    /// of the layout, never re-tested at run time.  The read itself states no alignment:
+    /// `read_unaligned` is the same single `mov` as an aligned read on x86-64 and is defined
+    /// at ANY offset, so a layout defect can answer a wrong value but never undefined
+    /// behaviour.  A per-access alignment test cost 11–13 % on store-heavy native routines
+    /// (it kept `read` from inlining into the keyed and vector paths).  The bytes the layout
+    /// does not place — a FOREIGN store's, the interpreter's stack frames — need no other path.
     #[inline]
     pub fn read<T: Copy>(&self, rec: u32, fld: u32) -> T {
         if Self::is_foreign_rec(rec) {
@@ -3748,37 +3748,8 @@ impl Store {
             return unsafe { at.cast::<T>().read_unaligned() };
         }
         let at = self.offset_in_bounds(rec, fld, std::mem::size_of::<T>());
-        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
-            return self.read_frame_slot::<T>(rec, fld, at);
-        }
-        // SAFETY: in bounds and aligned for `T`, both just tested.
-        unsafe { self.ptr.offset(at).cast::<T>().read() }
-    }
-
-    /// A misaligned [`Self::read`]: answered unaligned on the interpreter's STACK store, whose
-    /// frame slots the frame allocator lays out and `(L-Align)` does not cover (the bytecode's
-    /// rule: packed, read unaligned); a layout defect anywhere else.  Out of line, so the
-    /// aligned path stays a mask and a not-taken branch.
-    #[cold]
-    #[inline(never)]
-    fn read_frame_slot<T: Copy>(&self, rec: u32, fld: u32, at: isize) -> T {
-        if !self.stack_buffer {
-            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
-        }
-        // SAFETY: `at` was bounded by the caller; the read states the alignment it has.
+        // SAFETY: bounded by `offset_in_bounds`; the read claims no alignment.
         unsafe { self.ptr.offset(at).cast::<T>().read_unaligned() }
-    }
-
-    /// The refusal of a misaligned [`Self::read`] / [`Self::write`] (`@FR-R-Cold`).
-    #[cold]
-    #[inline(never)]
-    fn raise_misaligned(&self, rec: u32, fld: u32, align: usize) -> ! {
-        panic!(
-            "Store access misaligned: rec={rec} fld={fld} needs {align}-byte alignment, \
-             type={} — every field and element sits on its natural boundary (@C138), so \
-             the offset came from a layout that is not the store's",
-            self.known_type,
-        )
     }
 
     /// @PLN174 — the address of `width` bytes at field `fld` of the foreign record: the
@@ -4152,29 +4123,14 @@ impl Store {
     }
 
     /// Write a field INTO the store.  The mirror of [`Store::read`], and the ordinary way to
-    /// store a value: an aligned `ptr::write` behind the same alignment test
-    /// (`@FR-L-Align`, @C138).
+    /// store a value: like its twin it claims no alignment, which the layout already
+    /// guarantees (`@FR-L-Align`, @C138).
     #[inline]
     pub fn write<T: 'static + Copy>(&mut self, rec: u32, fld: u32, val: T) {
         let Some(at) = self.begin_write::<T>(rec, fld) else {
             return;
         };
-        if !(fld as usize).is_multiple_of(std::mem::align_of::<T>()) {
-            self.write_frame_slot(rec, fld, at, val);
-            return;
-        }
-        // SAFETY: `begin_write` bounded it; the test above aligned it.
-        unsafe { self.ptr.offset(at).cast::<T>().write(val) }
-    }
-
-    /// The write twin of [`Self::read_frame_slot`].
-    #[cold]
-    #[inline(never)]
-    fn write_frame_slot<T: Copy>(&mut self, rec: u32, fld: u32, at: isize, val: T) {
-        if !self.stack_buffer {
-            self.raise_misaligned(rec, fld, std::mem::align_of::<T>());
-        }
-        // SAFETY: `begin_write` bounded it; the write states the alignment it has.
+        // SAFETY: `begin_write` bounded it; the write claims no alignment.
         unsafe { self.ptr.offset(at).cast::<T>().write_unaligned(val) }
     }
 
@@ -5844,6 +5800,16 @@ mod tests {
         }
     }
 
+    /// A root record whose vector slot at offset 8 names the EMPTY vector — the shape a
+    /// vector local's store has once the parser's `OpSetInt4(__vdb, 0, 0)` writes it.
+    /// `make_foreign` reads that slot to release what it named; a bare claim promises no value
+    /// there (`@FR-H-Claim`), so the slot is written here.
+    fn empty_root(store: &mut Store) -> u32 {
+        let root = store.claim(4);
+        store.set_u32_raw(root, 8, 0);
+        root
+    }
+
     /// The two stores every foreign-store test reads beside each other: `data` copied into
     /// an ordinary vector store (its record), and the same bytes served by a foreign store
     /// (its root, whose slot at `+8` names `FOREIGN_REC`).
@@ -5856,7 +5822,7 @@ mod tests {
         let owned = data.to_vec();
         let base = owned.as_ptr();
         let mut foreign = Store::new(8);
-        let froot = foreign.claim(4);
+        let froot = empty_root(&mut foreign);
         foreign.make_foreign(
             froot,
             8,
@@ -6026,7 +5992,7 @@ mod tests {
         };
         drop(owner);
         let mut handle = Store::new(8);
-        let hroot = handle.claim(4);
+        let hroot = empty_root(&mut handle);
         handle.make_foreign(hroot, 8, span);
         for i in 0..40 {
             assert_eq!(
@@ -6038,7 +6004,7 @@ mod tests {
         assert_eq!(handle.get_u32_raw(FOREIGN_REC, 4), 40);
         // A view cut from the handle shares the block; the handle goes first.
         let mut view = Store::new(8);
-        let vroot = view.claim(4);
+        let vroot = empty_root(&mut view);
         view.make_foreign(vroot, 8, handle.foreign_span(10, 20).expect("span"));
         assert_eq!(view.bytes_of(FOREIGN_REC), &plain.bytes_of(rec)[10..20]);
         assert_eq!(handle.foreign_handle(), Some((hroot, 8)));
@@ -6069,7 +6035,7 @@ mod tests {
         // A VIEW (F4b): elements 5..12 served by a SECOND store — the local's own — from a
         // span of the first, read through the same accessors against the copied form.
         let mut view = Store::new(8);
-        let vroot = view.claim(4);
+        let vroot = empty_root(&mut view);
         let span = foreign.foreign_span(5, 12).expect("a span");
         assert_eq!((span.len, span.elem_size), (7, 1));
         view.make_foreign(vroot, 8, span);
@@ -6243,18 +6209,19 @@ mod tests {
         let _ = store.addr::<i64>(rec, 4);
     }
 
-    /// The other half, `@FR-L-Align` (@C138): every field the layout places is aligned, so
-    /// [`Store::read`] at an offset the type's alignment does not divide is a layout defect,
-    /// refused in every build — where `read_unaligned` used to answer it.
+    /// The other half, `@FR-L-Align` (@C138): [`Store::read`] / [`Store::write`] hand out a
+    /// VALUE, not a reference, so they claim no alignment and are defined at the same field
+    /// `addr` refuses.  The layout's alignment is checked at compile time
+    /// (`Stores::validate_all_layouts`), not re-tested per access.
     #[test]
-    #[should_panic(expected = "Store access misaligned")]
-    fn read_refuses_the_same_misaligned_field() {
+    fn read_and_write_claim_no_alignment() {
         let mut store = Store::new(8);
         store.free = false;
         let rec = store.claim(4);
-        store.write::<i32>(rec, 4, -7);
-        assert_eq!(store.read::<i32>(rec, 4), -7, "a 4-aligned i32 round-trips");
-        let _ = store.read::<i64>(rec, 4);
+        store.write::<i64>(rec, 4, -0x0123_4567_89ab_cdef);
+        assert_eq!(store.read::<i64>(rec, 4), -0x0123_4567_89ab_cdef);
+        store.write::<i32>(rec, 12, -7);
+        assert_eq!(store.read::<i32>(rec, 12), -7);
     }
 
     /// loft#760 — the call bracket's `free_protected` marker must NOT block a delete.

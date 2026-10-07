@@ -12,6 +12,8 @@
 // bridge already reads, pinned byte-for-byte against the @PLN97 layout dump — so
 // reflection cannot become a second, drifting description of the same layout.
 // Every expectation below is therefore also a statement about that descriptor.
+// @falsified-at: none — the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct Point { x: integer, y: integer, label: text }
 struct Nulls { a: text, b: text?, c: integer, d: integer?, e: i32, f: i32? }

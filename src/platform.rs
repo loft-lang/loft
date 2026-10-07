@@ -4,7 +4,14 @@
 
 //! Platform-specific helpers shared across the crate.
 
+use crate::file_access::{File, Metadata};
+#[cfg(unix)]
+use std::os::unix::prelude::{MetadataExt as _, PermissionsExt};
 use std::sync::OnceLock;
+
+/// One way to run a process (@PLN184 Track P).
+#[path = "platform_process.rs"]
+pub mod process;
 
 /// Process-scoped native-compile timing — a gated singleton.  The expensive
 /// native work (cdylib `cargo build`s, per-fixture `rustc`) runs across
@@ -80,17 +87,16 @@ impl Timing {
             None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
         }
         if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && std::fs::create_dir_all(&dir).is_ok()
+            && crate::file_access::create_dir_all(&dir).is_ok()
         {
             use std::io::Write;
             let path =
                 std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
             let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
                 let _ = writeln!(f, "{kind}\t{name}\t{cache}\t{secs_s}");
             }
         }
@@ -106,16 +112,15 @@ impl Timing {
     pub fn record_exec(&self, tool: &'static str, subject: &str, reason: &str, secs: f64) {
         eprintln!("[loft-build] {tool} {subject} secs={secs:.2} reason={reason}");
         if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && std::fs::create_dir_all(&dir).is_ok()
+            && crate::file_access::create_dir_all(&dir).is_ok()
         {
             use std::io::Write;
             let path =
                 std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
                 let _ = writeln!(f, "exec\t{tool}\t{subject}\t{reason}\t{secs:.2}");
             }
         }
@@ -189,43 +194,6 @@ pub fn timing_exec<T>(
     out
 }
 
-/// Make the child `cmd` will spawn die with this process, however this process ends (loft#1699).
-///
-/// A child loft starts is part of the run: a `LOFT_TIMEOUT` exit, the watchdog's abort, an OOM
-/// kill or a harness reaping `loft` must not leave it behind.  `rustc` for a program that never
-/// finishes compiling ran on at 100 % CPU for twenty minutes after its driver had timed out.
-/// `graceful` sends `SIGTERM` (a program with a handler gets to run it) rather than `SIGKILL`.
-/// The signal reaches the child when the thread that spawned it exits, so the spawn must wait on
-/// the child from that thread (every `status()` / `output()` does).  The child's own children
-/// are not covered: a killed `rustc` leaves its linker to finish, and a killed `cargo` its
-/// in-flight `rustc` workers — each bounded by one unit of work.  Linux only; elsewhere a no-op.
-#[allow(unused_variables)]
-pub fn dies_with_driver(cmd: &mut std::process::Command, graceful: bool) {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt as _;
-        let signal = if graceful {
-            libc::SIGTERM
-        } else {
-            libc::SIGKILL
-        };
-        let driver = std::process::id() as libc::pid_t;
-        // SAFETY: the closure runs in the forked child before `exec` and calls only
-        // async-signal-safe `prctl` / `getppid` / `_exit`; it touches no allocator or lock.
-        unsafe {
-            cmd.pre_exec(move || {
-                libc::prctl(libc::PR_SET_PDEATHSIG, signal);
-                // The driver may have died before `prctl` armed; a child already handed to
-                // another parent must not start.
-                if libc::getppid() != driver {
-                    libc::_exit(0);
-                }
-                Ok(())
-            });
-        }
-    }
-}
-
 /// Print the external-invocation breakdown for `phase` — a no-op when `LOFT_TIMING` is unset
 /// or nothing ran.
 pub fn timing_report(phase: &str) {
@@ -291,7 +259,7 @@ pub fn other_sep() -> &'static str {
 #[must_use]
 pub fn scratch_dir() -> std::path::PathBuf {
     let dir = scratch_from(std::env::var_os("LOFT_TMPDIR"), std::env::temp_dir());
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::file_access::create_dir_all(&dir);
     dir
 }
 
@@ -332,7 +300,7 @@ fn scratch_from(
 #[must_use]
 pub fn build_scratch_dir(tag: &str) -> std::path::PathBuf {
     let dir = scratch_dir().join(format!("loft_{tag}_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::file_access::create_dir_all(&dir);
     dir
 }
 
@@ -349,7 +317,7 @@ pub fn native_cache_dir(owner: &str) -> std::path::PathBuf {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     let dir = scratch_dir().join(format!("loft_native_cache_{h:016x}"));
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::file_access::create_dir_all(&dir);
     dir
 }
 
@@ -364,17 +332,23 @@ pub fn native_cache_dir(owner: &str) -> std::path::PathBuf {
 /// [`native_cache_dir`], never a shared directory.  Answers the bytes freed.
 pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
     let marker = dir.join(".build");
-    if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == stamp) {
+    if crate::file_access::read_to_string(&marker).is_ok_and(|s| s.trim() == stamp) {
         return 0;
     }
     let mut freed = 0u64;
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if !name.to_string_lossy().starts_with("loft_native_") {
+    if let Ok(entries) = crate::file_access::read_dir(dir) {
+        for entry in entries {
+            if !entry
+                .file_name()
+                .unwrap_or_default()
+                .starts_with("loft_native_")
+            {
                 continue;
             }
-            let Ok(meta) = entry.metadata() else { continue };
+            // The entry itself, as a listing reports it: a link is not followed.
+            let Ok(meta) = crate::file_access::symlink_metadata(&entry) else {
+                continue;
+            };
             let fresh = meta
                 .modified()
                 .ok()
@@ -383,15 +357,15 @@ pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
             if fresh || !meta.is_file() {
                 continue;
             }
-            if std::fs::remove_file(entry.path()).is_ok() {
+            if crate::file_access::remove_file(&entry).is_ok() {
                 freed += meta.len();
             }
         }
     }
     // Written last and atomically: a crash between the sweep and the marker only sweeps again.
     let tmp = dir.join(format!(".build.{}", std::process::id()));
-    if std::fs::write(&tmp, stamp).is_ok() {
-        let _ = std::fs::rename(&tmp, &marker);
+    if crate::file_access::write(&tmp, stamp).is_ok() {
+        let _ = crate::file_access::rename(&tmp, &marker);
     }
     freed
 }
@@ -406,7 +380,7 @@ pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
 /// [`native_cache_dir`].  Answers the bytes freed.
 pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
     use crate::file_access::{self as fa, PathText};
-    let Ok(entries) = fa::read_dir(&PathText::from_os(dir)) else {
+    let Ok(entries) = fa::read_dir(PathText::from_os(dir)) else {
         return 0;
     };
     let mut bins: Vec<(std::time::SystemTime, String, u64)> = entries
@@ -428,9 +402,9 @@ pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
         if fs_avail_bytes(dir).is_none_or(|a| a >= want_avail) {
             break;
         }
-        if fa::remove_file(&PathText::host(&bin)).is_ok() {
+        if fa::remove_file(PathText::host(&bin)).is_ok() {
             freed += len;
-            let _ = fa::remove_file(&PathText::host(&format!("{bin}.key")));
+            let _ = fa::remove_file(PathText::host(&format!("{bin}.key")));
         }
     }
     freed
@@ -445,11 +419,11 @@ pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
 /// to run.
 #[must_use]
 pub fn fs_avail_bytes(path: &std::path::Path) -> Option<u64> {
-    let out = std::process::Command::new("df")
+    let out = process::Spawn::new(process::Program::search("df"))
         .arg("-P")
         .arg("-k")
         .arg(path)
-        .output()
+        .run(b"")
         .ok()?;
     if !out.status.success() {
         return None;
@@ -621,7 +595,7 @@ fn pid_alive(pid: u32) -> Option<bool> {
         let mut code: u32 = 0;
         // SAFETY: `handle` is a live process handle from the call above and `code` is a
         // valid, initialised u32 this frame owns for the duration of the call.
-        let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
+        let ok = unsafe { GetExitCodeProcess(handle, &raw mut code) };
         // Read before the close, which would clobber the thread's last error.
         // SAFETY: as above — no arguments, no memory.
         let err = unsafe { GetLastError() };
@@ -631,7 +605,7 @@ fn pid_alive(pid: u32) -> Option<bool> {
             let _ = err;
             return None;
         }
-        return Some(code == STILL_ACTIVE);
+        Some(code == STILL_ACTIVE)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -677,23 +651,22 @@ pub fn reclaim_dead_native_scratch(dir: &std::path::Path) -> u64 {
 fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
     let own_pid = std::process::id();
     let mut freed = 0u64;
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::file_access::read_dir(dir) else {
         return 0;
     };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
+    for entry in entries {
+        let name = entry.file_name().unwrap_or_default();
         if !(name.starts_with("loft_native_") || name.starts_with("loft_test_native_")) {
             continue;
         }
         // Provably stale only through the strict shapes; the looser parse below serves the
         // age fallback's "is anyone alive behind this name" question and nothing else.
-        let proven_stale = match runtime_scratch_pid(&name) {
+        let proven_stale = match runtime_scratch_pid(name) {
             Some(p) if p == own_pid => false,
             Some(p) => pid_alive(p) == Some(false),
             None => false,
         };
-        let pid = scratch_owner_pid(&name);
+        let pid = scratch_owner_pid(name);
         if !proven_stale {
             if !aged_too {
                 continue;
@@ -704,8 +677,8 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
             if pid.is_some_and(|p| p == own_pid || pid_alive(p) == Some(true)) {
                 continue;
             }
-            let old_enough = entry
-                .metadata()
+            // The entry itself, as a listing reports it: a link is not followed.
+            let old_enough = crate::file_access::symlink_metadata(&entry)
                 .and_then(|m| m.modified())
                 .ok()
                 .and_then(|t| t.elapsed().ok())
@@ -714,8 +687,8 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
                 continue;
             }
         }
-        let len = entry.metadata().map_or(0, |m| m.len());
-        if std::fs::remove_file(entry.path()).is_ok() {
+        let len = crate::file_access::symlink_metadata(&entry).map_or(0, |m| m.len());
+        if crate::file_access::remove_file(&entry).is_ok() {
             freed = freed.saturating_add(len);
         }
     }
@@ -818,17 +791,15 @@ mod reclaim_tests {
     fn a_new_build_sweeps_only_the_old_entries_of_its_own_cache() {
         let dir =
             std::env::temp_dir().join(format!("loft_native_cache_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let old = |name: &str| {
             let p = dir.join(name);
-            std::fs::write(&p, b"x").unwrap();
+            crate::file_access::write(&p, b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write access
             // (Unix `futimens` works on a read-only fd), as `cache::touch_now` does.
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&p)
+            crate::file_access::open_with(&p, std::fs::OpenOptions::new().write(true))
                 .unwrap()
                 .set_modified(t)
                 .unwrap();
@@ -838,25 +809,25 @@ mod reclaim_tests {
         let stale_key = old("loft_native_a_bin.key");
         let foreign = old("other_tool_output");
         let fresh = dir.join("loft_native_b_bin");
-        std::fs::write(&fresh, b"y").unwrap();
-        std::fs::write(dir.join(".build"), "old-build").unwrap();
+        crate::file_access::write(&fresh, b"y").unwrap();
+        crate::file_access::write(dir.join(".build"), "old-build").unwrap();
 
         let freed = sweep_own_native_cache(&dir, "new-build");
         assert_eq!(freed, 2, "the two stale entries, one byte each");
         assert!(
-            !stale_bin.exists() && !stale_key.exists(),
+            !crate::file_access::exists(&stale_bin) && !crate::file_access::exists(&stale_key),
             "the older build's entries go"
         );
         assert!(
-            fresh.exists(),
+            crate::file_access::exists(&fresh),
             "a fresh entry is a concurrent shard's and stays"
         );
         assert!(
-            foreign.exists(),
+            crate::file_access::exists(&foreign),
             "a name that is not the harness's is never touched"
         );
         assert_eq!(
-            std::fs::read_to_string(dir.join(".build")).unwrap(),
+            crate::file_access::read_to_string(dir.join(".build")).unwrap(),
             "new-build"
         );
 
@@ -866,8 +837,8 @@ mod reclaim_tests {
             0,
             "the same build sweeps nothing"
         );
-        assert!(again.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(crate::file_access::exists(&again));
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// `evict_own_native_cache`: under pressure it takes the idle binaries with their keys,
@@ -879,23 +850,23 @@ mod reclaim_tests {
         let at = |p: &std::path::Path| PathText::from_os(p);
         let dir =
             std::env::temp_dir().join(format!("loft_native_evict_test_{}", std::process::id()));
-        let _ = fa::remove_dir_all(&at(&dir));
-        fa::create_dir_all(&at(&dir)).unwrap();
+        let _ = fa::remove_dir_all(at(&dir));
+        fa::create_dir_all(at(&dir)).unwrap();
         let old = |name: &str| {
             let p = dir.join(name);
-            fa::write(&at(&p), b"x").unwrap();
+            fa::write(at(&p), b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
             // `set_modified` takes the handle each platform needs (write on Windows).
-            fa::set_modified(&at(&p), t).unwrap();
+            fa::set_modified(at(&p), t).unwrap();
             p
         };
-        let there = |p: &std::path::Path| fa::exists(&at(p));
+        let there = |p: &std::path::Path| fa::exists(at(p));
         let idle_bin = old("loft_native_a_bin");
         let idle_key = old("loft_native_a_bin.key");
         let source = old("loft_native_a.rs");
         let foreign = old("other_tool_output");
         let recent = dir.join("loft_native_b_bin");
-        fa::write(&at(&recent), b"y").unwrap();
+        fa::write(at(&recent), b"y").unwrap();
 
         assert_eq!(
             evict_own_native_cache(&dir, 0),
@@ -918,7 +889,7 @@ mod reclaim_tests {
             there(&source) && there(&foreign),
             "sources and foreign names stay"
         );
-        let _ = fa::remove_dir_all(&at(&dir));
+        let _ = fa::remove_dir_all(at(&dir));
     }
 
     /// `pid_alive` answers the same three ways on every unix, which is what makes the
@@ -975,7 +946,7 @@ mod reclaim_tests {
     #[test]
     fn reclaim_spares_live_and_fresh_files() {
         let dir = std::env::temp_dir().join(format!("loft_reclaim_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::file_access::create_dir_all(&dir).unwrap();
         let own = dir.join(format!("loft_native_{}.rs", std::process::id()));
         // u32::MAX-1 — no real pid (Linux pid_max caps far below); provably dead.
         let dead = dir.join("loft_native_4294967294.rs");
@@ -983,10 +954,10 @@ mod reclaim_tests {
         // The native suite's stem-named source, whose stem happens to end in digits: not a
         // pid, and not the runtime's to sweep however dead "795" is.
         let stem_named = dir.join("loft_native_discard_slot_per_type_795.rs");
-        std::fs::write(&own, "live").unwrap();
-        std::fs::write(&dead, "stale").unwrap();
-        std::fs::write(&fresh_no_pid, "fresh").unwrap();
-        std::fs::write(&stem_named, "live source of a sibling worker").unwrap();
+        crate::file_access::write(&own, "live").unwrap();
+        crate::file_access::write(&dead, "stale").unwrap();
+        crate::file_access::write(&fresh_no_pid, "fresh").unwrap();
+        crate::file_access::write(&stem_named, "live source of a sibling worker").unwrap();
         // The dead-only sweep (every compile): the dead pid goes, the fresh no-pid entry
         // stays whatever its age — it is the test runner's cache, not a leftover.
         //
@@ -1007,11 +978,11 @@ mod reclaim_tests {
         // process-group id — so a macOS run that disagrees names its own cause instead of
         // leaving the next reader another hypothesis.
         let evidence = |freed: u64| {
-            let mut names: Vec<String> = std::fs::read_dir(&dir).map_or_else(
+            let mut names: Vec<String> = crate::file_access::read_dir(&dir).map_or_else(
                 |e| vec![format!("<read_dir failed: {e}>")],
                 |es| {
-                    es.flatten()
-                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                    es.iter()
+                        .map(|e| e.file_name().unwrap_or_default().to_string())
                         .collect()
                 },
             );
@@ -1026,16 +997,16 @@ mod reclaim_tests {
         };
         let dead_only = reclaim_dead_native_scratch(&dir);
         assert!(
-            !dead.exists(),
+            !crate::file_access::exists(&dead),
             "dead-pid file must go in the dead-only sweep ({})",
             evidence(dead_only)
         );
         assert!(
-            own.exists() && fresh_no_pid.exists(),
+            crate::file_access::exists(&own) && crate::file_access::exists(&fresh_no_pid),
             "own-pid and no-pid entries survive the dead-only sweep"
         );
         assert!(
-            stem_named.exists(),
+            crate::file_access::exists(&stem_named),
             "a stem-named suite file survives the dead-only sweep"
         );
         // The byte count is asserted where it is DETERMINATE, which is the same platform
@@ -1050,18 +1021,24 @@ mod reclaim_tests {
                 evidence(dead_only)
             );
         }
-        std::fs::write(&dead, "stale").unwrap();
+        crate::file_access::write(&dead, "stale").unwrap();
         let freed = reclaim_native_scratch(&dir);
-        assert!(own.exists(), "own-pid file must survive the reclaim");
         assert!(
-            fresh_no_pid.exists(),
+            crate::file_access::exists(&own),
+            "own-pid file must survive the reclaim"
+        );
+        assert!(
+            crate::file_access::exists(&fresh_no_pid),
             "a fresh file without a parseable pid must survive (age floor)"
         );
         if cfg!(target_os = "linux") {
-            assert!(!dead.exists(), "dead-pid file must be reclaimed");
+            assert!(
+                !crate::file_access::exists(&dead),
+                "dead-pid file must be reclaimed"
+            );
             assert_eq!(freed, 5);
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }
 
@@ -1128,7 +1105,7 @@ pub fn host_library_loadable(name: &str) -> bool {
         .iter()
         // SAFETY: loading a library runs its initialisers, which is exactly what
         // asking "can this be loaded" means. The handle drops immediately.
-        .any(|n| unsafe { libloading::Library::new(n) }.is_ok())
+        .any(|n| unsafe { crate::file_access::load_library(n) }.is_ok())
 }
 
 /// Which naming convention THIS host uses. The single `cfg!` read, so the
@@ -1157,7 +1134,7 @@ pub fn host_lib_os() -> LibOs {
 pub fn existing_lib_beside(dir: &std::path::Path, name: &str, os: LibOs) -> Option<String> {
     lib_variants(name, os)
         .into_iter()
-        .find(|cand| dir.join(cand).exists())
+        .find(|cand| crate::file_access::exists(dir.join(cand)))
 }
 
 /// Linker flags that pin a freshly built shared library's own name.
@@ -1343,51 +1320,1356 @@ mod shim_name_tests {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
-mod driver_death_tests {
-    use super::dies_with_driver;
-    use std::os::unix::process::ExitStatusExt as _;
+/// `@FR-Path-Utf8` — `{before}<x>{after}` where `<x>` is what this platform's names can hold
+/// and loft text cannot: the byte 0xFF on Unix, an unpaired UTF-16 half on Windows.  For the
+/// guards that make such a file; a loft program can never spell one.
+#[must_use]
+pub fn name_that_is_not_text(before: &str, after: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = before.as_bytes().to_vec();
+        bytes.push(0xFF);
+        bytes.extend_from_slice(after.as_bytes());
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = before.encode_utf16().collect();
+        wide.push(0xD800);
+        wide.extend(after.encode_utf16());
+        std::ffi::OsString::from_wide(&wide)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::ffi::OsString::from(format!("{before}\u{FFFD}{after}"))
+    }
+}
 
-    /// loft#1699 — a build child must not outlive the driver.  The death signal reaches the
-    /// child when the thread that spawned it ends, so a thread that spawns and returns without
-    /// waiting stands in for a driver that exits: the child must end by `SIGKILL` at once,
-    /// not run its five seconds.  Without the helper the child is untouched and this reads
-    /// `exit 0` after five seconds.
-    #[test]
-    fn a_build_child_dies_with_its_driver() {
-        let started = std::time::Instant::now();
-        let mut child = std::thread::spawn(|| {
-            let mut cmd = std::process::Command::new("sleep");
-            cmd.arg("5");
-            dies_with_driver(&mut cmd, false);
-            cmd.spawn().expect("spawn sleep")
-        })
-        .join()
-        .expect("spawning thread");
-        let status = child.wait().expect("wait");
-        assert_eq!(
-            status.signal(),
-            Some(libc::SIGKILL),
-            "the child outlived its driver: {status}"
-        );
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(4),
-            "{:?}",
-            started.elapsed()
+/// Like [`name_that_is_not_text`], with a second, different byte (0xFE / the other UTF-16
+/// half), so two such names can show alike.
+#[must_use]
+pub fn another_name_that_is_not_text(before: &str, after: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = before.as_bytes().to_vec();
+        bytes.push(0xFE);
+        bytes.extend_from_slice(after.as_bytes());
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = before.encode_utf16().collect();
+        wide.push(0xDC00);
+        wide.extend(after.encode_utf16());
+        std::ffi::OsString::from_wide(&wide)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::ffi::OsString::from(format!("{before}\u{FFFD}{after}"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// @PLN184 B2 — the platform differences that were `cfg` gates at their call sites.
+//
+// Each routine below has an answer on every platform and its caller calls it
+// unconditionally.  Where Windows has no implementation of its own, the routine gives
+// the answer Windows got before the move, and its doc comment says so in one line:
+// `Windows: <what it does>; approved exemption (owner, 2026-10-07): <why>`.
+// ---------------------------------------------------------------------------
+
+/// An executable's file name on this host: `<stem>.exe` on Windows, `<stem>` elsewhere.
+#[must_use]
+pub fn exe_file_name(stem: &str) -> String {
+    if cfg!(windows) {
+        format!("{stem}.exe")
+    } else {
+        stem.to_string()
+    }
+}
+
+/// A launcher SCRIPT's file name: `<stem>.bat` on Windows, `<stem>` elsewhere (the Android
+/// SDK ships `apksigner` as a shell script beside an `apksigner.bat`).
+#[must_use]
+pub fn launcher_script_name(stem: &str) -> String {
+    if cfg!(windows) {
+        format!("{stem}.bat")
+    } else {
+        stem.to_string()
+    }
+}
+
+/// The file names `tool` can have in a `PATH` directory, in the order to try them: `tool`
+/// itself, then on Windows `tool.exe` and `tool.cmd`.
+#[must_use]
+pub fn executable_candidates(tool: &str) -> Vec<String> {
+    let mut names = vec![tool.to_string()];
+    if cfg!(windows) {
+        names.push(format!("{tool}.exe"));
+        names.push(format!("{tool}.cmd"));
+    }
+    names
+}
+
+/// The platform shell's program and arguments for running the command line `line`:
+/// `sh -c <line>`, or `cmd /C <line>` on Windows.
+#[must_use]
+pub fn shell_invocation(line: &str) -> (&'static str, [&str; 2]) {
+    if cfg!(windows) {
+        ("cmd", ["/C", line])
+    } else {
+        ("sh", ["-c", line])
+    }
+}
+
+/// The host OS as a display name for a diagnostic: `Linux`, `macOS`, `Windows`, or `this OS`.
+#[must_use]
+pub fn host_os_name() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "Linux"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(target_os = "windows") {
+        "Windows"
+    } else {
+        "this OS"
+    }
+}
+
+/// The Android NDK's prebuilt-toolchain host tag for the machine loft runs on.  NDKs since
+/// r23 ship only x86_64 host toolchains, so every supported host maps to its `*-x86_64` tag.
+#[must_use]
+pub fn ndk_host_tag() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "darwin-x86_64"
+    } else if cfg!(target_os = "windows") {
+        "windows-x86_64"
+    } else {
+        "linux-x86_64"
+    }
+}
+
+/// Width of C `long` in bits on this host: 64 on LP64 (Linux, macOS), 32 on LLP64 (Windows).
+#[must_use]
+pub fn c_long_bits() -> u8 {
+    if cfg!(windows) { 32 } else { 64 }
+}
+
+/// Extra `cc` arguments for a `#c` shim so it does not depend on its compiler's runtime
+/// DLLs: `-static-libgcc` on Windows (a MinGW `cc` links `libgcc_s_seh-1.dll` by default,
+/// and a consumer's machine has no MinGW `bin` on `PATH`), nothing elsewhere.
+#[must_use]
+pub fn shim_cc_runtime_args() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["-static-libgcc"]
+    } else {
+        &[]
+    }
+}
+
+/// The extension of a shared library on this host, without the dot: `dll`, `dylib` or `so`.
+#[must_use]
+pub fn dll_extension() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "dll"
+    } else if cfg!(target_os = "macos") {
+        "dylib"
+    } else {
+        "so"
+    }
+}
+
+/// The file name a cdylib built from crate stem `stem` has on this host:
+/// `lib<stem>.so`, `lib<stem>.dylib`, or `<stem>.dll`.
+#[must_use]
+pub fn cdylib_file_name(stem: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("lib{stem}.dylib")
+    } else if cfg!(windows) {
+        format!("{stem}.dll")
+    } else {
+        format!("lib{stem}.so")
+    }
+}
+
+/// The platform part of how a package cdylib is linked, beyond the baked RUSTFLAGS — one
+/// home, read by the build ([`relocatable_dylib_flags`]) and folded into
+/// `cache::native_artifact_cache_key`, so a change to it rebuilds every cached cdylib
+/// instead of reusing one linked the old way.  On macOS the linker drops the debug symbols
+/// itself and the post-link `strip` is off ([`cdylib_build_env`]): that strip left a TLS
+/// package's string table misaligned, and the linker then refused it (`mis-aligned
+/// LINKEDIT string pool`).  Empty elsewhere.
+pub const NATIVE_LINK_RECIPE: &str = if cfg!(target_os = "macos") {
+    "-Clink-arg=-Wl,-S"
+} else {
+    ""
+};
+
+/// The link flags that make a built cdylib RELOCATABLE — empty on every platform but macOS.
+///
+/// A Mach-O dylib records its own path (`LC_ID_DYLIB`) and a program that links it copies
+/// THAT path in, so the loader follows the build-time location and nothing else.  Cargo's
+/// default is the absolute output path, `…/target/release/deps/lib<stem>.dylib` — and a
+/// package cdylib is CACHED and reused from a different directory than the one it was built
+/// in, so the recorded path names a directory that no longer exists (`dyld: Library not
+/// loaded: …/.loft_test_tmp_<pid>_0/native/target/release/deps/…` on a cache HIT).
+///
+/// ELF does not have the problem: a `.so` records only its SONAME and the consumer's
+/// `-rpath` resolves it.  `@rpath/<file>` makes Mach-O behave the same way, and the consumer
+/// already emits both the absolute `-rpath` of the resolved library and `$ORIGIN` /
+/// `@loader_path`.  [`NATIVE_LINK_RECIPE`] (`-Wl,-S`) makes the LINKER drop the debug
+/// symbols: Cargo's default post-link `strip` leaves a dylib holding `ring`'s objects with a
+/// 4-aligned string table, which the same linker then refuses to link a program against.
+#[must_use]
+pub fn relocatable_dylib_flags(lib_name: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("-Clink-arg=-Wl,-install_name,@rpath/{lib_name} {NATIVE_LINK_RECIPE}")
+    } else {
+        String::new()
+    }
+}
+
+/// Environment for the `cargo build` of a package cdylib: on macOS the post-link `strip` is
+/// switched off (see [`relocatable_dylib_flags`]); nothing elsewhere.
+#[must_use]
+pub fn cdylib_build_env() -> &'static [(&'static str, &'static str)] {
+    if cfg!(target_os = "macos") {
+        &[("CARGO_PROFILE_RELEASE_STRIP", "none")]
+    } else {
+        &[]
+    }
+}
+
+/// The `rustc` arguments that give a native PROGRAM's main thread the stack a Linux one has
+/// (8 MiB): Windows defaults to 1 MiB, and the same recursion must not overflow on one
+/// platform only.  Empty off Windows, where the main thread already has it.
+#[must_use]
+pub fn main_stack_link_args() -> Vec<String> {
+    if cfg!(all(windows, target_env = "msvc")) {
+        vec!["-C".to_string(), format!("link-arg=/STACK:{}", 8 << 20)]
+    } else if cfg!(all(windows, target_env = "gnu")) {
+        vec![
+            "-C".to_string(),
+            format!("link-arg=-Wl,--stack,{}", 8 << 20),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+/// The `rustc` argument that lets two native packages each define the same runtime symbol
+/// (the linker keeps the first), or `None` where the host linker has no such option: macOS
+/// `ld64` rejects `--allow-multiple-definition` and MSVC `link.exe` ignores it with one
+/// `LNK4044` warning per occurrence.
+#[must_use]
+pub fn allow_multiple_definition_arg() -> Option<&'static str> {
+    if cfg!(any(target_os = "macos", windows)) {
+        None
+    } else {
+        Some("-Clink-arg=-Wl,--allow-multiple-definition")
+    }
+}
+
+/// The `link-arg=` value that records `dir` as a run-time library search path (RPATH) in the
+/// binary, for `rustc -C`.  `None` on Windows, which has no RPATH: `link.exe` rejects
+/// `-Wl,-rpath`, and the loader finds a DLL beside the `.exe` or on `PATH` — so loft stages
+/// the DLLs beside the binary instead ([`stages_dlls_beside_binary`]).
+#[must_use]
+pub fn rpath_link_arg(dir: &std::path::Path) -> Option<String> {
+    if cfg!(windows) {
+        None
+    } else {
+        Some(format!("link-arg=-Wl,-rpath,{}", dir.display()))
+    }
+}
+
+/// macOS's spelling of "beside the binary" in an RPATH (`@loader_path`; ELF's `$ORIGIN`
+/// means nothing to dyld), as a `rustc` argument.  `None` elsewhere.
+#[must_use]
+pub fn loader_path_rpath_arg() -> Option<&'static str> {
+    if cfg!(target_os = "macos") {
+        Some("-Clink-arg=-Wl,-rpath,@loader_path")
+    } else {
+        None
+    }
+}
+
+/// Does a native binary find its package DLLs only because loft copies them beside it?
+/// True on Windows (no RPATH; the loader searches the `.exe`'s directory and `PATH`), so the
+/// staging step runs after every build — and anything that skips the build must not skip it.
+#[must_use]
+pub fn stages_dlls_beside_binary() -> bool {
+    cfg!(windows)
+}
+
+/// What [`bridge_import_lib`] found.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ImportLib {
+    /// This host links a shared library directly (ELF, Mach-O): no import library.
+    NotUsed,
+    /// The import library `-l dylib=<name>` asks for is in place.
+    Ready,
+    /// Neither `<name>.dll.lib` nor `<name>.lib` is there: the link would die on an opaque
+    /// `LNK1181`, so the caller names the cause.
+    Missing,
+}
+
+/// Windows links a DLL through its IMPORT LIBRARY.  A Rust cdylib's import library is
+/// `<libname>.dll.lib`, but `-l dylib=<libname>` makes MSVC `link.exe` open `<libname>.lib`
+/// (`LNK1181: cannot open input file 'loft_native_scalar.lib'`), so this copies the first to
+/// the second beside it — both are import libraries for the same DLL.  Off Windows nothing
+/// is touched and the answer is [`ImportLib::NotUsed`].
+#[must_use]
+pub fn bridge_import_lib(dir: &std::path::Path, libname: &str) -> ImportLib {
+    if !cfg!(windows) {
+        return ImportLib::NotUsed;
+    }
+    let dll_lib = dir.join(format!("{libname}.dll.lib"));
+    let plain_lib = dir.join(format!("{libname}.lib"));
+    if crate::file_access::exists(&dll_lib) && !crate::file_access::exists(&plain_lib) {
+        let _ = crate::file_access::copy(&dll_lib, &plain_lib);
+    }
+    if !crate::file_access::exists(&plain_lib) && !crate::file_access::exists(&dll_lib) {
+        ImportLib::Missing
+    } else {
+        ImportLib::Ready
+    }
+}
+
+/// The directories that hold the native import libraries a hand-driven `rustc` must be given
+/// as `-L` paths on Windows MSVC (`windows.0.48.5.lib` from `windows-sys`): cargo adds them
+/// through `cargo:rustc-link-search`, and a `rustc` loft drives itself does not, so a cdylib
+/// link fails `LNK1181`.  `rlib` is `target/<profile>/libloft.rlib` or
+/// `target/<profile>/deps/libloft-*.rlib`; the scan reads `build/<crate>-<hash>/` beside it.
+/// Empty off Windows, where no import library exists.
+#[must_use]
+pub fn import_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let Some(profile_dir) = rlib.parent().and_then(|p| {
+        if crate::file_access::file_name(p).is_some_and(|n| n == "deps") {
+            p.parent()
+        } else {
+            Some(p)
+        }
+    }) else {
+        return Vec::new();
+    };
+    let Ok(entries) = crate::file_access::read_dir(profile_dir.join("build")) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let build_entry = entry.os_spelling();
+        // `out/` and its immediate subdirs (some crates emit into `out/<target>/`).
+        let out = build_entry.join("out");
+        if crate::file_access::is_dir(&out) {
+            dirs.push(out.clone());
+            if let Ok(subs) = crate::file_access::read_dir(&out) {
+                dirs.extend(
+                    subs.iter()
+                        .map(crate::file_access::PathText::os_spelling)
+                        .filter(|p| crate::file_access::is_dir(p)),
+                );
+            }
+        }
+        // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
+        // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
+        if let Ok(content) = crate::file_access::read_to_string(build_entry.join("output")) {
+            for line in content.lines() {
+                if let Some(p) = line
+                    .strip_prefix("cargo:rustc-link-search=native=")
+                    .or_else(|| line.strip_prefix("cargo:rustc-link-search="))
+                {
+                    let p = std::path::PathBuf::from(p);
+                    if crate::file_access::is_dir(&p) && !dirs.contains(&p) {
+                        dirs.push(p);
+                    }
+                }
+            }
+        }
+    }
+    dirs
+}
+
+/// Did a process die before `main` because the loader could not resolve a DLL it imports
+/// (`STATUS_DLL_NOT_FOUND`, `0xC000_0135`)?  Only Windows reports a start-up failure as an
+/// exit code; elsewhere the answer is always `false`.
+#[must_use]
+pub fn is_dll_not_found(status: std::process::ExitStatus) -> bool {
+    cfg!(windows) && status.code() == Some(STATUS_DLL_NOT_FOUND)
+}
+
+/// Windows' `STATUS_DLL_NOT_FOUND`, as the exit code a process that could not start reports.
+pub const STATUS_DLL_NOT_FOUND: i32 = 0xC000_0135_u32 as i32;
+
+/// The signal that ended a process, or `None` when it exited (or the host has no signals).
+/// Windows: always `None` — a process there ends with an exit code, never a signal;
+/// approved exemption (owner, 2026-10-07): none needed, the exit code carries the cause.
+#[must_use]
+pub fn exit_signal(status: std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        status.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
+    }
+}
+
+/// Can a library declared `placement = "process"` run in a worker process on this host?
+/// Windows: `false` — the library runs in-process, and `LOFT_REQUIRE_PLACEMENT=1` refuses;
+/// approved exemption (owner, 2026-10-07): the transport's shared file mapping and the worker's parent-death
+/// watch (`lib_placement::wire`) are written for Unix only, the watch being Track P's.
+#[must_use]
+pub fn placement_transport_available() -> bool {
+    cfg!(unix)
+}
+
+// ── files: permission bits and identity ─────────────────────────────────────
+
+/// Does this host keep Unix permission bits on a file?  `false` on Windows, whose NTFS
+/// keeps ACLs instead.
+#[must_use]
+pub fn has_permission_bits() -> bool {
+    cfg!(unix)
+}
+
+/// Set a file's Unix permission bits to exactly `mode` (`0o600`, `0o700`, `0o755`).
+///
+/// # Errors
+/// The OS's error, naming the path.
+///
+/// Windows: a no-op answering `Ok` — a new file inherits its directory's ACL; exemption
+/// candidate: NTFS has no mode bits to set.
+pub fn set_permission_bits(path: &std::path::Path, mode: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        crate::file_access::set_permissions(path, PermissionsExt::from_mode(mode))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Ok(())
+    }
+}
+
+/// A file's Unix permission bits, or `None` where the host keeps none.
+/// Windows: `None`; approved exemption (owner, 2026-10-07): NTFS has no mode bits.
+#[must_use]
+pub fn permission_bits(md: &Metadata) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        Some(md.permissions().mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = md;
+        None
+    }
+}
+
+/// Is the file `md` describes this user's alone: owned by the effective user, with no
+/// group or other permission bits (and, with `no_setid`, no set-uid / set-gid bit)?  The
+/// test a cached binary and its directory pass before loft executes from them.
+///
+/// Windows: `true` — there is no owner uid or mode to read, and the cache directory's ACL is
+/// inherited from the user's profile; approved exemption (owner, 2026-10-07): the substitute is an ACL read
+/// (`GetNamedSecurityInfoW`), unwritten.
+#[must_use]
+pub fn is_private_to_owner(md: &Metadata, no_setid: bool) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: `geteuid` reads a process attribute and cannot fail.
+        if md.uid() != unsafe { libc::geteuid() } {
+            return false;
+        }
+        // Group/other bits: an attacker with group access could swap the file between the
+        // stat and the exec, and a group-readable file leaks compiled output.
+        if md.mode() & 0o077 != 0 {
+            return false;
+        }
+        // A cached binary must never carry a privilege-escalation bit.
+        !(no_setid && md.mode() & 0o6000 != 0)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (md, no_setid);
+        true
+    }
+}
+
+/// The identity of the file `md` describes — `(device, inode)` — which a rename-replace
+/// changes and an in-place rewrite keeps.  Windows: `None`; approved exemption (owner, 2026-10-07): std's
+/// `MetadataExt::file_index` / `volume_serial_number` are unstable, and the substitute is
+/// `GetFileInformationByHandle`, unwritten.
+#[must_use]
+pub fn file_identity(md: &Metadata) -> Option<(u64, u64)> {
+    #[cfg(unix)]
+    {
+        Some((md.dev(), md.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = md;
+        None
+    }
+}
+
+/// Fill `buf` from the operating system's entropy source (`/dev/urandom`).
+///
+/// # Errors
+/// The read's error; `Unsupported` where no source is implemented.
+///
+/// Windows: `Unsupported` ("needs /dev/urandom"); approved exemption (owner, 2026-10-07): the one caller is the
+/// registry key-generation bootstrap, documented to run on an air-gapped Unix machine — the
+/// substitute would be `BCryptGenRandom`.
+pub fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Read as _;
+        let mut f = crate::file_access::open("/dev/urandom")?;
+        f.read_exact(buf)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = buf;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "loft-keygen needs /dev/urandom (Unix-only).  Run on Linux/macOS instead.",
+        ))
+    }
+}
+
+// ── memory: pages and residency ────────────────────────────────────────────
+
+/// The kernel's page size in bytes — the granularity a residency hint drops at, asked of the
+/// host rather than assumed (16 KB on aarch64 macOS).  Windows: 4096; approved exemption (owner, 2026-10-07):
+/// nothing there drops pages ([`release_resident_pages`]), so nothing reads it.
+#[must_use]
+pub fn page_bytes() -> u64 {
+    #[cfg(unix)]
+    {
+        static PAGE: OnceLock<u64> = OnceLock::new();
+        #[allow(clippy::cast_sign_loss)]
+        *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(4096) as u64 })
+    }
+    #[cfg(not(unix))]
+    {
+        4096
+    }
+}
+
+/// Can [`release_resident_pages`] drop pages on this host?  Windows: `false`; see there.
+#[must_use]
+pub fn releases_resident_pages() -> bool {
+    cfg!(unix)
+}
+
+/// Start the write-back of `len` bytes of a SHARED file mapping at `at` and drop them from
+/// this process's resident set (`msync(MS_ASYNC)` then `madvise(MADV_DONTNEED)`).  The bytes
+/// stay in the page cache and the file, so an access afterwards re-faults the same content.
+/// Answers whether both calls succeeded.
+///
+/// # Safety
+/// `at` is page-aligned and `at..at + len` lies inside one live `MAP_SHARED` mapping.
+///
+/// Windows: does nothing and answers `false` — a residency hint not honoured; exemption
+/// candidate: the substitute is `FlushViewOfFile` + `OfferVirtualMemory`, unwritten.
+#[must_use]
+pub unsafe fn release_resident_pages(at: *mut u8, len: usize) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: the caller's contract — a page-aligned range inside a live shared mapping.
+        unsafe {
+            libc::msync(at.cast(), len, libc::MS_ASYNC) == 0
+                && libc::madvise(at.cast(), len, libc::MADV_DONTNEED) == 0
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (at, len);
+        false
+    }
+}
+
+/// This process's resident set in KB, or `None` where it cannot be read.  Linux reads field
+/// 2 of `/proc/self/statm` (resident pages, taken as 4 KB).  Elsewhere `None`; exemption
+/// candidate: a design measurement's instrument only (`database::spans`).
+#[must_use]
+pub fn resident_set_kb() -> Option<u64> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let statm = crate::file_access::read_to_string("/proc/self/statm").unwrap_or_default();
+    let pages: u64 = statm
+        .split_whitespace()
+        .nth(1)
+        .and_then(|f| f.parse().ok())
+        .unwrap_or(0);
+    Some(pages * 4)
+}
+
+/// Minor page faults this process has taken — field 10 of `/proc/self/stat` on Linux — or
+/// `None` where it cannot be read.  Elsewhere `None`; approved exemption (owner, 2026-10-07): a design
+/// measurement's instrument only (`database::spans`).
+#[must_use]
+pub fn minor_page_faults() -> Option<u64> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let stat = crate::file_access::read_to_string("/proc/self/stat").unwrap_or_default();
+    // The second field is the comm, parenthesised and free to contain spaces, so fields
+    // are counted from the closing paren rather than from the start.
+    let tail = stat.rsplit_once(')').map(|(_, t)| t).unwrap_or_default();
+    Some(
+        tail.split_whitespace()
+            .nth(7)
+            .and_then(|f| f.parse().ok())
+            .unwrap_or(0),
+    )
+}
+
+// ── signals: the crash report and the profiler's flush ──────────────────────
+
+/// What [`on_fatal_signal`] hands a fatal signal to.  Read inside the signal handler, where
+/// a `OnceLock::get` is one atomic load.
+#[cfg(unix)]
+static FATAL_HOOK: OnceLock<fn(&'static str)> = OnceLock::new();
+
+/// Can this host hand a fatal fault (`SIGSEGV`, `SIGABRT`, `SIGBUS`) to loft before the
+/// process dies?  Windows: `false`; see [`on_fatal_signal`].
+#[must_use]
+pub fn catches_fatal_signals() -> bool {
+    cfg!(unix)
+}
+
+/// Arm `report` for the fatal signals `SIGSEGV`, `SIGABRT` and `SIGBUS`: it is called with
+/// the signal's name, INSIDE the handler — so it may do only what is async-signal-safe — and
+/// the default action (the core dump, the exit) follows, because the handler is armed with
+/// `SA_RESETHAND`.  The first `report` armed is the one called.
+///
+/// Windows: nothing is armed, and a fatal fault ends with Rust's own abort report and the
+/// OS's; approved exemption (owner, 2026-10-07): Windows has structured exceptions rather than signals — the
+/// substitute is a vectored exception handler (`AddVectoredExceptionHandler`), unwritten.
+pub fn on_fatal_signal(report: fn(&'static str)) {
+    #[cfg(unix)]
+    {
+        let _ = FATAL_HOOK.set(report);
+        // SAFETY: `sigaction` with a handler that only reads an initialised `OnceLock`
+        // and calls the report, whose own contract is async-signal safety.
+        unsafe {
+            for &sig in &[libc::SIGSEGV, libc::SIGABRT, libc::SIGBUS] {
+                let mut act: libc::sigaction = std::mem::zeroed();
+                act.sa_sigaction = fatal_handler as *const () as libc::sighandler_t;
+                // SA_SIGINFO for the siginfo/ucontext args ignored here; SA_RESETHAND so
+                // the default handler runs after the report (produces the core dump).
+                act.sa_flags = libc::SA_SIGINFO | libc::SA_RESETHAND;
+                libc::sigemptyset(&raw mut act.sa_mask);
+                libc::sigaction(sig, &raw const act, std::ptr::null_mut());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = report;
+    }
+}
+
+#[cfg(unix)]
+extern "C" fn fatal_handler(
+    sig: libc::c_int,
+    _info: *mut libc::siginfo_t,
+    _ucontext: *mut libc::c_void,
+) {
+    let name = match sig {
+        libc::SIGSEGV => "SIGSEGV",
+        libc::SIGABRT => "SIGABRT",
+        libc::SIGBUS => "SIGBUS",
+        _ => "signal",
+    };
+    if let Some(report) = FATAL_HOOK.get() {
+        report(name);
+    }
+}
+
+/// Write `bytes` to standard error without allocating or locking — callable from a signal
+/// handler (`write(2)` is async-signal-safe).
+///
+/// Windows: through `std::io::stderr()`, which locks; approved exemption (owner, 2026-10-07): none needed —
+/// nothing calls it from a handler there, because [`on_fatal_signal`] arms none.
+pub fn signal_safe_stderr(bytes: &[u8]) {
+    #[cfg(unix)]
+    // SAFETY: `write` on the stderr descriptor with a valid buffer and its length.
+    unsafe {
+        let _ = libc::write(
+            libc::STDERR_FILENO,
+            bytes.as_ptr().cast::<libc::c_void>(),
+            bytes.len(),
         );
     }
+    #[cfg(not(unix))]
+    {
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(bytes);
+    }
+}
 
-    /// The program itself is asked to leave (`SIGTERM`) so a handler can run.
+/// Create (or truncate) the file at the NUL-terminated `c_path`, readable by its owner only,
+/// and write `bytes` to it — callable from a signal handler (`open`/`write`/`close` are
+/// async-signal-safe, and nothing here allocates).  Answers whether anything was written.
+///
+/// Windows: writes nothing and answers `false`; approved exemption (owner, 2026-10-07): none needed — nothing
+/// calls it there, because [`on_fatal_signal`] arms no handler.
+#[must_use]
+pub fn signal_safe_write_file(c_path: &[u8], bytes: &[u8]) -> bool {
+    #[cfg(unix)]
+    {
+        if c_path.last() != Some(&0) {
+            return false;
+        }
+        // SAFETY: `c_path` is NUL-terminated (checked above); `bytes` is a valid buffer.
+        // 0o600: a crash dump names internals, so it is readable by its owner only.
+        unsafe {
+            let fd = libc::open(
+                c_path.as_ptr().cast::<libc::c_char>(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
+                0o600 as libc::c_int,
+            );
+            if fd < 0 {
+                false
+            } else {
+                let n = libc::write(fd, bytes.as_ptr().cast::<libc::c_void>(), bytes.len());
+                libc::close(fd);
+                n > 0
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (c_path, bytes);
+        false
+    }
+}
+
+/// What [`on_profile_signals`] hands a signal to.
+#[cfg(unix)]
+static PROFILE_HOOK: OnceLock<fn(u8)> = OnceLock::new();
+
+/// Arm the profiler's flush signals.  `SIGUSR1` calls `flush(1)` (dump and keep running);
+/// `SIGINT` and `SIGTERM` call `flush(128 + signal)` (dump and leave with the shell's "died
+/// of this signal" code) once, after which the default action is back — so the SECOND
+/// signal is the ordinary kill rather than a hang.  No `SA_RESTART`: a blocking read returns
+/// `EINTR` and the program comes back to its loop to render.  `flush` runs inside the
+/// handler, so it may do only what is async-signal-safe.
+///
+/// Windows: nothing is armed — a profiled server is stopped without a report; exemption
+/// candidate: Windows has no `SIGUSR1`, and the substitute for the two terminating signals
+/// is a console control handler (`SetConsoleCtrlHandler`), unwritten.
+pub fn on_profile_signals(flush: fn(u8)) {
+    #[cfg(unix)]
+    {
+        let _ = PROFILE_HOOK.set(flush);
+        // SAFETY: `sigaction` with a handler that reads an initialised `OnceLock` and calls
+        // `flush`, whose own contract is async-signal safety.
+        unsafe {
+            for &(sig, reset) in &[
+                (libc::SIGUSR1, false),
+                (libc::SIGINT, true),
+                (libc::SIGTERM, true),
+            ] {
+                let mut act: libc::sigaction = std::mem::zeroed();
+                act.sa_sigaction = profile_handler as *const () as libc::sighandler_t;
+                act.sa_flags = if reset { libc::SA_RESETHAND } else { 0 };
+                libc::sigemptyset(&raw mut act.sa_mask);
+                libc::sigaction(sig, &raw const act, std::ptr::null_mut());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = flush;
+    }
+}
+
+#[cfg(unix)]
+extern "C" fn profile_handler(sig: libc::c_int) {
+    let want = if sig == libc::SIGUSR1 {
+        1
+    } else {
+        u8::try_from(128 + sig).unwrap_or(129)
+    };
+    if let Some(flush) = PROFILE_HOOK.get() {
+        flush(want);
+    }
+}
+
+// ── sockets: the hot-swap handover ───────────────────────────────────────────
+
+/// Bind a TCP listener on `0.0.0.0:port` for a server that may be HANDED OVER to its next
+/// build: `SO_REUSEADDR` (a restarted server rebinds through `TIME_WAIT`) and `SO_REUSEPORT`
+/// (the new build binds the same port while the old one still serves), close-on-exec so a
+/// spawned child never holds the listener.  `None` when the bind or listen fails.
+///
+/// Windows: a plain `TcpListener::bind`, so the new build binds only after the old listener
+/// has closed; approved exemption (owner, 2026-10-07): Windows has no `SO_REUSEPORT` load-balancing group, and
+/// its `SO_REUSEADDR` lets a second process steal a port rather than share it.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn bind_tcp_handover(port: u16) -> Option<std::net::TcpListener> {
+    // @PLN184 W1.3 — under the emulated Windows host the bind is Windows': no shared port.
+    #[cfg(unix)]
+    if !crate::file_access::Flavor::emulating() {
+        use std::os::fd::FromRawFd;
+        // SAFETY: plain socket calls on a descriptor this function owns until it is handed
+        // to `TcpListener`, or closed on failure.
+        unsafe {
+            // CLOEXEC: kernel sockets belong to ONE process.  Without it, every spawned
+            // child (the rebuild driver, the swap target) inherits this listening fd across
+            // exec — the zombie copy stays in the SO_REUSEPORT group and eats load-balanced
+            // SYNs into a backlog nobody accepts.
+            let fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
+            if fd < 0 {
+                return None;
+            }
+            // Portable CLOEXEC: macOS has no SOCK_CLOEXEC socket flag — set the fd flag
+            // right after creation (single-threaded; no exec in between).
+            let _ = libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            let one: libc::c_int = 1;
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_REUSEADDR,
+                std::ptr::addr_of!(one).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+            // During a build swap the NEW process binds the same port while the old one
+            // still serves; the overlap is what makes rollback trivial.
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_REUSEPORT,
+                std::ptr::addr_of!(one).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+            // Zero-init then set fields: BSD's sockaddr_in has an extra sin_len a struct
+            // literal would have to cfg around.
+            let mut addr: libc::sockaddr_in = std::mem::zeroed();
+            addr.sin_family = libc::AF_INET as libc::sa_family_t;
+            addr.sin_port = port.to_be(); // sin_addr stays 0.0.0.0
+            if libc::bind(
+                fd,
+                std::ptr::addr_of!(addr).cast(),
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            ) != 0
+                || libc::listen(fd, 128) != 0
+            {
+                libc::close(fd);
+                return None;
+            }
+            return Some(std::net::TcpListener::from_raw_fd(fd));
+        }
+    }
+    {
+        let t0 = std::time::Instant::now();
+        let r = std::net::TcpListener::bind(("0.0.0.0", port));
+        crate::net_profile::record(
+            "listener/bind",
+            t0.elapsed(),
+            if r.is_ok() {
+                crate::net_profile::Outcome::Ok
+            } else {
+                crate::net_profile::Outcome::Failed
+            },
+            None,
+        );
+        r.ok()
+    }
+}
+
+/// Bind a UDP socket on `0.0.0.0:port` with `SO_REUSEPORT` and close-on-exec, the datagram
+/// twin of [`bind_tcp_handover`]: during the brief dual-bind window datagrams load-balance
+/// between the old build and the new.
+///
+/// # Errors
+/// The OS's error from `socket` or `bind`.
+///
+/// Windows: a plain `UdpSocket::bind`; approved exemption (owner, 2026-10-07): as [`bind_tcp_handover`].
+#[cfg(not(target_arch = "wasm32"))]
+pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
+    // @PLN184 W1.3 — under the emulated Windows host the bind is Windows': no shared port.
+    #[cfg(unix)]
+    if !crate::file_access::Flavor::emulating() {
+        use std::os::fd::FromRawFd;
+        // SAFETY: as in `bind_tcp_handover`.
+        unsafe {
+            let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let _ = libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+            let one: libc::c_int = 1;
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_REUSEPORT,
+                std::ptr::addr_of!(one).cast(),
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+            let mut addr: libc::sockaddr_in = std::mem::zeroed();
+            addr.sin_family = libc::AF_INET as libc::sa_family_t;
+            addr.sin_port = port.to_be(); // sin_addr stays 0.0.0.0
+            if libc::bind(
+                fd,
+                std::ptr::addr_of!(addr).cast(),
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            ) != 0
+            {
+                let e = std::io::Error::last_os_error();
+                libc::close(fd);
+                return Err(e);
+            }
+            return Ok(std::net::UdpSocket::from_raw_fd(fd));
+        }
+    }
+    std::net::UdpSocket::bind(("0.0.0.0", port))
+}
+
+#[cfg(all(test, unix))]
+mod handover_tests {
+    use crate::file_access::{Flavor, with_program_host};
+
+    /// @PLN184 W1.3 — a second bind to a port that is listening: shared on Unix (the hot
+    /// swap's overlap), refused on Windows — and under the emulated Windows host.
     #[test]
-    fn a_graceful_child_is_asked_to_leave() {
-        let mut child = std::thread::spawn(|| {
-            let mut cmd = std::process::Command::new("sleep");
-            cmd.arg("5");
-            dies_with_driver(&mut cmd, true);
-            cmd.spawn().expect("spawn sleep")
+    fn a_second_bind_is_shared_on_unix_and_refused_on_windows() {
+        let first = super::bind_tcp_handover(0).expect("first bind");
+        let port = first.local_addr().unwrap().port();
+        assert!(
+            super::bind_tcp_handover(port).is_some(),
+            "Unix shares the port"
+        );
+        assert!(
+            with_program_host(Flavor::Windows, || super::bind_tcp_handover(port)).is_none(),
+            "the emulated Windows host refuses the second bind"
+        );
+        let udp = super::bind_udp_handover(0).expect("first udp bind");
+        let uport = udp.local_addr().unwrap().port();
+        assert!(
+            super::bind_udp_handover(uport).is_ok(),
+            "Unix shares the UDP port"
+        );
+        assert!(with_program_host(Flavor::Windows, || super::bind_udp_handover(uport)).is_err());
+    }
+}
+
+// ── symbols: what the process already has loaded ───────────────────────────
+
+/// Find `symbol` among what this process ALREADY has loaded, loading nothing new.
+///
+/// Unix asks the process handle (`dlsym` on the main program): symbols linked in (libc)
+/// and anything loaded with global visibility.  Windows has no process-wide symbol table —
+/// `GetProcAddress` answers per MODULE, and the C runtime is its own DLL — so it asks the
+/// modules the process already has open, in the order a C symbol is most likely to live:
+/// the executable itself, the UCRT, the legacy CRT shim, then the Win32 base DLLs.
+/// `open_already_loaded` is `GetModuleHandle`: it never loads anything.  Other hosts:
+/// `None`.
+#[cfg(feature = "native-extensions")]
+#[must_use]
+pub fn symbol_in_process(symbol: &str) -> Option<*const ()> {
+    #[cfg(unix)]
+    {
+        use libloading::os::unix::Library;
+        let this = Library::this();
+        let mut name = symbol.to_string();
+        name.push('\0');
+        // SAFETY: the symbol is only looked up here, never called; the caller checks its
+        // signature against the `#c` declaration before any call.
+        if let Ok(sym) = unsafe { this.get::<*const ()>(name.as_bytes()) } {
+            return Some(*sym);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use libloading::os::windows::Library;
+        // SAFETY: as above — a lookup, not a call.
+        if let Ok(this) = Library::this()
+            && let Ok(sym) = unsafe { this.get::<*const ()>(symbol.as_bytes()) }
+        {
+            return Some(*sym);
+        }
+        for module in [
+            "ucrtbase.dll",
+            "api-ms-win-crt-string-l1-1-0.dll",
+            "api-ms-win-crt-convert-l1-1-0.dll",
+            "api-ms-win-crt-stdio-l1-1-0.dll",
+            "api-ms-win-crt-heap-l1-1-0.dll",
+            "msvcrt.dll",
+            "kernel32.dll",
+        ] {
+            // SAFETY: as above.
+            if let Ok(lib) = Library::open_already_loaded(module)
+                && let Ok(sym) = unsafe { lib.get::<*const ()>(symbol.as_bytes()) }
+            {
+                return Some(*sym);
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = symbol;
+    }
+    None
+}
+
+/// The exported name of the function at `ptr`, asked of the dynamic loader — only an EXACT
+/// hit counts: the nearest preceding symbol (what `dladdr` reports for an address inside a
+/// function) would hand codegen a `#[link_name]` for a neighbouring function, so a near miss
+/// is `None`.
+///
+/// Unix: `dladdr` with `dli_saddr == ptr`.  Windows: there is no `dladdr`, so the module's
+/// own PE export table answers — `GetModuleHandleExW(FROM_ADDRESS)` names the module the
+/// pointer lives in (an `HMODULE` IS its mapped base), then the export directory is walked
+/// for the export whose address equals the pointer (loft#972).  `UNCHANGED_REFCOUNT`: this
+/// only reads the module, so it must not pin it loaded.  Other hosts: `None`.
+#[cfg(feature = "native-extensions")]
+#[must_use]
+pub fn exported_symbol_at(ptr: *const ()) -> Option<String> {
+    #[cfg(unix)]
+    {
+        // SAFETY: `dladdr` fills `info` for any address; a zero answer means "not found".
+        let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        if unsafe { libc::dladdr(ptr.cast(), &raw mut info) } == 0 {
+            return None;
+        }
+        if info.dli_sname.is_null() || !std::ptr::eq(info.dli_saddr.cast_const().cast::<()>(), ptr)
+        {
+            return None;
+        }
+        // SAFETY: `dli_sname` is a NUL-terminated name owned by the loader.
+        unsafe { std::ffi::CStr::from_ptr(info.dli_sname) }
+            .to_str()
+            .ok()
+            .map(str::to_string)
+    }
+    #[cfg(windows)]
+    {
+        exported_symbol_at_pe(ptr)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = ptr;
+        None
+    }
+}
+
+/// The Windows half of [`exported_symbol_at`]: the PE export-table walk.
+#[cfg(all(feature = "native-extensions", windows))]
+fn exported_symbol_at_pe(ptr: *const ()) -> Option<String> {
+    const FROM_ADDRESS: u32 = 0x0000_0004;
+    const UNCHANGED_REFCOUNT: u32 = 0x0000_0002;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetModuleHandleExW(
+            flags: u32,
+            module_name: *const u16,
+            module: *mut *mut core::ffi::c_void,
+        ) -> i32;
+    }
+
+    let mut handle: *mut core::ffi::c_void = std::ptr::null_mut();
+    if unsafe {
+        GetModuleHandleExW(
+            FROM_ADDRESS | UNCHANGED_REFCOUNT,
+            ptr.cast::<u16>(),
+            &raw mut handle,
+        )
+    } == 0
+    {
+        return None;
+    }
+    let base = handle.cast::<u8>();
+    if base.is_null() {
+        return None;
+    }
+    // Every read below is an offset from the mapped base, and each is bounded by the
+    // header field that precedes it — a module whose headers do not parse yields `None`
+    // rather than a guess, which is the same answer the pre-loft#907 path gave.
+    let rd32 = |off: usize| -> u32 { unsafe { base.add(off).cast::<u32>().read_unaligned() } };
+    let rd16 = |off: usize| -> u16 { unsafe { base.add(off).cast::<u16>().read_unaligned() } };
+    if rd16(0) != 0x5A4D {
+        return None; // not `MZ` — not a PE image
+    }
+    let pe = rd32(0x3C) as usize;
+    if rd32(pe) != 0x0000_4550 {
+        return None; // not the PE signature `P`,`E`,NUL,NUL
+    }
+    // The export directory's RVA sits at a different offset in PE32 vs PE32+, and the
+    // magic in the optional header is what tells them apart.
+    let opt = pe + 24;
+    let export_rva = match rd16(opt) {
+        0x20B => rd32(opt + 112) as usize, // PE32+
+        0x10B => rd32(opt + 96) as usize,  // PE32
+        _ => return None,
+    };
+    let export_size = match rd16(opt) {
+        0x20B => rd32(opt + 116) as usize,
+        _ => rd32(opt + 100) as usize,
+    };
+    if export_rva == 0 {
+        return None; // the module exports nothing
+    }
+    let names = rd32(export_rva + 32) as usize;
+    let name_count = rd32(export_rva + 24) as usize;
+    let functions = rd32(export_rva + 28) as usize;
+    let ordinals = rd32(export_rva + 36) as usize;
+    for i in 0..name_count {
+        let ordinal = rd16(ordinals + i * 2) as usize;
+        let func_rva = rd32(functions + ordinal * 4) as usize;
+        // An RVA inside the export directory is a FORWARDER string, not code — it names
+        // another module's export and has no address here.
+        if func_rva >= export_rva && func_rva < export_rva + export_size {
+            continue;
+        }
+        if !std::ptr::eq(unsafe { base.add(func_rva) }.cast::<()>().cast_const(), ptr) {
+            continue;
+        }
+        // Exact hit. Mirrors the `dli_saddr == ptr` requirement on unix.
+        let name_ptr = unsafe { base.add(rd32(names + i * 4) as usize) };
+        return unsafe { std::ffi::CStr::from_ptr(name_ptr.cast()) }
+            .to_str()
+            .ok()
+            .map(str::to_string);
+    }
+    None
+}
+
+// ── a file mapping two processes share ──────────────────────────────────────
+
+/// Map the first `len` bytes of `file` read-write and SHARED (`MAP_SHARED`), so a write from
+/// either process that maps the file is seen by the other.  Answers the page-aligned base.
+///
+/// # Errors
+/// The OS's error from `mmap`; `Unsupported` where no shared mapping is implemented.
+///
+/// Windows: `Unsupported`, so a placed library cannot get its transport; exemption
+/// candidate: the substitute is `CreateFileMappingW` + `MapViewOfFile`, unwritten (and the
+/// worker's parent-death watch, Track P, is the other half of placement on Windows).
+pub fn map_shared_file(file: &File, len: usize) -> std::io::Result<*mut u8> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: a fresh shared mapping of an open descriptor; the kernel picks the address.
+        let base = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                file.as_raw_fd(),
+                0,
+            )
+        };
+        if base == libc::MAP_FAILED {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(base.cast::<u8>())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (file, len);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "a shared file mapping is not implemented on this host",
+        ))
+    }
+}
+
+/// Undo [`map_shared_file`].
+///
+/// # Safety
+/// `base` and `len` are exactly what one [`map_shared_file`] call answered and was given,
+/// and nothing reads or writes the mapping afterwards.
+pub unsafe fn unmap_shared(base: *mut u8, len: usize) {
+    #[cfg(unix)]
+    // SAFETY: the caller's contract.
+    unsafe {
+        libc::munmap(base.cast::<libc::c_void>(), len);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (base, len);
+    }
+}
+
+// ── wait / wake on a word two processes share ──────────────────────────────
+//
+// One primitive per platform, one contract: `shared_word_wait` returns when the word may no
+// longer equal `expect`, when `limit` passes, or spuriously — every caller re-reads the word
+// in a loop — and `shared_word_wake` wakes one waiter.  The word lives in a file mapping
+// shared by two processes, so every form must be the SHARED one: a process-private wait
+// queues on a key the other side never wakes, and every wake is lost.
+
+/// Wait while the shared word `a` holds `expect`, at most `limit` (forever when `None`); may
+/// return spuriously.  Linux: the futex itself, shared (no `FUTEX_PRIVATE_FLAG`: the private
+/// variant hashes on the mm, so the two processes would queue on different keys).  macOS:
+/// `os_sync_wait_on_address` (macOS 14.4), looked up at run time so an older macOS still
+/// runs on the polling fallback.
+///
+/// Windows: the polling fallback — a 200 µs sleep, then return; approved exemption (owner, 2026-10-07):
+/// `WaitOnAddress` does not cross processes, and the substitute is a named event pair.
+pub fn shared_word_wait(
+    a: &std::sync::atomic::AtomicU32,
+    expect: u32,
+    limit: Option<std::time::Duration>,
+) {
+    #[cfg(target_os = "linux")]
+    {
+        let ts = limit.map(|d| libc::timespec {
+            tv_sec: d.as_secs() as libc::time_t,
+            tv_nsec: libc::c_long::from(d.subsec_nanos()),
+        });
+        // SAFETY: a futex wait on a live, aligned 32-bit word; the kernel only reads it.
+        unsafe {
+            libc::syscall(
+                libc::SYS_futex,
+                std::ptr::from_ref(a),
+                libc::FUTEX_WAIT,
+                expect,
+                ts.as_ref()
+                    .map_or(std::ptr::null(), std::ptr::from_ref::<libc::timespec>),
+            );
+        }
+    }
+    #[cfg(target_os = "macos")]
+    match darwin_wait::api() {
+        Some(api) => darwin_wait::wait(api, a, expect, limit),
+        None => poll_wait(a, expect, limit),
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    poll_wait(a, expect, limit);
+}
+
+/// Wake one waiter on the shared word `a`.  Linux: `FUTEX_WAKE`; macOS:
+/// `os_sync_wake_by_address_any` where it exists.
+///
+/// Windows: nothing — the waiter polls, so there is no one to wake; approved exemption (owner, 2026-10-07): as
+/// [`shared_word_wait`].
+pub fn shared_word_wake(a: &std::sync::atomic::AtomicU32) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: a futex wake on a live, aligned 32-bit word.
+    unsafe {
+        libc::syscall(
+            libc::SYS_futex,
+            std::ptr::from_ref(a),
+            libc::FUTEX_WAKE,
+            1i32,
+        );
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(api) = darwin_wait::api() {
+        darwin_wait::wake(api, a);
+    }
+    // Without the API the waiter polls, so there is no one to wake.
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = a;
+}
+
+/// The fallback wait: a short sleep, then return — the contract allows a spurious return,
+/// and the caller re-reads the word and waits again.  Correct everywhere; slower than a
+/// kernel wait only for an exchange that has already spun past its budget.
+#[cfg(not(target_os = "linux"))]
+fn poll_wait(a: &std::sync::atomic::AtomicU32, expect: u32, limit: Option<std::time::Duration>) {
+    let step = std::time::Duration::from_micros(200);
+    if a.load(std::sync::atomic::Ordering::SeqCst) == expect {
+        std::thread::sleep(limit.map_or(step, |l| l.min(step)));
+    }
+}
+
+/// macOS: the public cross-process wait-on-address (`os_sync_wait_on_address`, macOS 14.4),
+/// looked up at run time so an older macOS still runs — it falls back to [`poll_wait`].
+#[cfg(target_os = "macos")]
+mod darwin_wait {
+    use std::sync::OnceLock;
+
+    /// `OS_SYNC_WAIT_ON_ADDRESS_SHARED` / `OS_SYNC_WAKE_BY_ADDRESS_SHARED`.
+    const SHARED: u32 = 1;
+    /// `OS_CLOCK_MACH_ABSOLUTE_TIME`, the one clock the timed wait takes.
+    const CLOCK_MACH_ABSOLUTE: u32 = 32;
+
+    type WaitFn = unsafe extern "C" fn(*mut libc::c_void, u64, libc::size_t, u32) -> libc::c_int;
+    type WaitTimeoutFn =
+        unsafe extern "C" fn(*mut libc::c_void, u64, libc::size_t, u32, u32, u64) -> libc::c_int;
+    type WakeFn = unsafe extern "C" fn(*mut libc::c_void, libc::size_t, u32) -> libc::c_int;
+
+    pub(super) struct Api {
+        pub wait: WaitFn,
+        pub wait_timeout: WaitTimeoutFn,
+        pub wake_any: WakeFn,
+    }
+
+    fn sym(name: &std::ffi::CStr) -> *mut libc::c_void {
+        unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) }
+    }
+
+    /// The three functions, or `None` on a macOS that does not have them.
+    pub(super) fn api() -> Option<&'static Api> {
+        static API: OnceLock<Option<Api>> = OnceLock::new();
+        API.get_or_init(|| {
+            let (w, wt, k) = (
+                sym(c"os_sync_wait_on_address"),
+                sym(c"os_sync_wait_on_address_with_timeout"),
+                sym(c"os_sync_wake_by_address_any"),
+            );
+            if w.is_null() || wt.is_null() || k.is_null() {
+                return None;
+            }
+            // SAFETY: each pointer is the named libSystem function, whose signature the
+            // types above spell (os/os_sync_wait_on_address.h).
+            unsafe {
+                Some(Api {
+                    wait: std::mem::transmute::<*mut libc::c_void, WaitFn>(w),
+                    wait_timeout: std::mem::transmute::<*mut libc::c_void, WaitTimeoutFn>(wt),
+                    wake_any: std::mem::transmute::<*mut libc::c_void, WakeFn>(k),
+                })
+            }
         })
-        .join()
-        .expect("spawning thread");
-        assert_eq!(child.wait().expect("wait").signal(), Some(libc::SIGTERM));
+        .as_ref()
+    }
+
+    pub(super) fn wait(
+        api: &Api,
+        a: &std::sync::atomic::AtomicU32,
+        expect: u32,
+        limit: Option<std::time::Duration>,
+    ) {
+        let addr = std::ptr::from_ref(a).cast_mut().cast::<libc::c_void>();
+        unsafe {
+            match limit {
+                // The timed form's duration is in nanoseconds of the clock it names.
+                Some(d) => {
+                    let ns = u64::try_from(d.as_nanos()).unwrap_or(u64::MAX).max(1);
+                    (api.wait_timeout)(addr, u64::from(expect), 4, SHARED, CLOCK_MACH_ABSOLUTE, ns);
+                }
+                None => {
+                    (api.wait)(addr, u64::from(expect), 4, SHARED);
+                }
+            }
+        }
+    }
+
+    pub(super) fn wake(api: &Api, a: &std::sync::atomic::AtomicU32) {
+        let addr = std::ptr::from_ref(a).cast_mut().cast::<libc::c_void>();
+        unsafe {
+            (api.wake_any)(addr, 4, SHARED);
+        }
     }
 }

@@ -30,8 +30,8 @@
 //!
 //! [`harness_can_fail`] is the control for the harness itself.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -44,7 +44,7 @@ fn probe() -> PathBuf {
 
 /// Run `file` on `backend` with extra env; return `(ok, stdout, stderr)`.
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -102,13 +102,13 @@ fn main() {\n\
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_978_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
 fn var_table(tag: &str, src: &str) -> String {
     let path = write_temp(tag, src);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_VAR_TABLE", "y978_read")
@@ -116,7 +116,7 @@ fn var_table(tag: &str, src: &str) -> String {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -236,7 +236,7 @@ fn harness_can_fail() {
         "fn main() { assert(1 == 2, \"deliberate\"); print(\"978 branch join OK\\n\"); }\n",
     );
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "the harness must report a failing script as failing"
@@ -256,7 +256,7 @@ fn harness_can_fail() {
 /// `LOFT_VAR_TABLE` for function `func`, the table lines only.
 fn var_table_of(tag: &str, src: &str, func: &str) -> String {
     let path = write_temp(tag, src);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_VAR_TABLE", func)
@@ -264,7 +264,7 @@ fn var_table_of(tag: &str, src: &str, func: &str) -> String {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -312,7 +312,7 @@ fn a_vector_local_is_backed_by_its_own_element_type() {
     // (a smaller spelling promotes it into the return buffer, which has none to check).
     let arm_copy = var_table_of(
         "vdb_arm_copy",
-        &std::fs::read_to_string("tests/scripts/508-empty-arm-real-empty-vector.loft")
+        &fa::read_to_string("tests/scripts/508-empty-arm-real-empty-vector.loft")
             .expect("read the 508 corpus file"),
         "n_g1",
     );

@@ -680,7 +680,7 @@ pub fn show_ir_only(writer: &mut dyn Write, data: &Data, config: &LogConfig) -> 
         if is_op && !config.show_all_functions {
             continue;
         }
-        let from_default = is_default_file(&data.def(d_nr).position().file);
+        let from_default = is_default_file(data.def(d_nr).position().file.as_str());
         if from_default && !config.show_all_functions {
             continue;
         }
@@ -830,7 +830,7 @@ pub fn show_code(
         if is_op && !config.show_all_functions {
             continue;
         }
-        let from_default = is_default_file(&data.def(d_nr).position().file);
+        let from_default = is_default_file(data.def(d_nr).position().file.as_str());
         if from_default && !config.show_all_functions {
             continue;
         }

@@ -57,10 +57,13 @@ permissions:
   contents: write # `publish` attaches release assets to the caller's release
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
   build:
+    # @windows-leg: the include list names x86_64-pc-windows-msvc on windows-latest
     name: cdylib ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:

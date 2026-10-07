@@ -245,6 +245,7 @@ fn write_attribute(stores: &mut Stores, r: &Record, a: &Attribute) {
     r.set_field_bool(stores, ds::ATTR_CONST_FIELD, a.const_field);
     r.set_field_bool(stores, ds::ATTR_VALUE_CONST, a.value_const);
     r.set_field_bool(stores, ds::ATTR_WORK_BUFFER, a.work_buffer);
+    r.set_field_bool(stores, ds::ATTR_PUB_FIELD, a.pub_field);
     node_child(stores, r, ds::ATTR_VALUE, &a.value);
     node_child(stores, r, ds::ATTR_CHECK, &a.check);
     node_child(stores, r, ds::ATTR_CHECK_MESSAGE, &a.check_message);
@@ -257,6 +258,7 @@ fn write_attribute(stores: &mut Stores, r: &Record, a: &Attribute) {
     // @PLN86 F8b — the group#right member links, joined by spaces (tokens contain no
     // whitespace), so a warm-cached host type keeps its capability links.
     r.set_field_str(stores, ds::ATTR_LINKS, &a.links.join(" "));
+    r.set_field_str(stores, ds::ATTR_FACT, &a.fact.encode()); // @PLN187
 }
 
 /// Materialize a `Vec<Attribute>` into the `vector<Attribute>` field at `off`
@@ -416,7 +418,11 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
         ds::DEF_POSITION + ds::POS_POS,
         i64::from(d.position.pos),
     );
-    r.set_field_str(stores, ds::DEF_POSITION + ds::POS_FILE, &d.position.file);
+    r.set_field_str(
+        stores,
+        ds::DEF_POSITION + ds::POS_FILE,
+        d.position.file.as_str(),
+    );
     materialize_attributes(stores, r, ds::DEF_ATTRIBUTES, &d.attributes);
     node_child(stores, r, ds::DEF_CODE, &d.code);
     type_child(stores, r, ds::DEF_RETURNED, &d.returned);
@@ -434,6 +440,8 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2
     r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
     r.set_field_bool(stores, ds::DEF_OPERATOR_FORM, d.operator_form); // @PLN182
+    r.set_field_str(stores, ds::DEF_RETURNED_FACT, &d.returned_fact.encode()); // @PLN187
+    r.set_field_bool(stores, ds::DEF_RETURNED_CONST, d.returned_const); // @FR-Const-Foreign
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);
@@ -734,7 +742,7 @@ fn write_key_fields(stores: &mut Stores, parent: &Record, off: u32, keys: &[(u16
 /// store was not fresh) — a guard so `open_data` never reads from the wrong record.
 #[cfg(feature = "mmap")]
 pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
-    match std::fs::remove_file(path) {
+    match crate::file_access::remove_file(path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
@@ -795,7 +803,7 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
 #[cfg(feature = "mmap")]
 pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::Result<()> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
-    match std::fs::remove_file(&tmp) {
+    match crate::file_access::remove_file(&tmp) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
@@ -819,7 +827,7 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
         // Drop `stores` → the file-backed Store unmaps + flushes `tmp` fully
         // before the atomic rename publishes it at `path`.
     }
-    std::fs::rename(&tmp, path)
+    crate::file_access::rename(&tmp, path)
 }
 
 /// Write `v` into the already-allocated `slot` (its bytes are zeroed).
@@ -950,7 +958,7 @@ fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
             slot.set_discriminant(stores, ds::DISC_SPAN);
             slot.set_field_int(stores, ds::SPAN_POS_LINE, i64::from(position.line));
             slot.set_field_int(stores, ds::SPAN_POS_POS, i64::from(position.pos));
-            slot.set_field_str(stores, ds::SPAN_POS_FILE, &position.file);
+            slot.set_field_str(stores, ds::SPAN_POS_FILE, position.file.as_str());
             materialize_node(stores, slot.field_vec(ds::NDSPAN_INNER), inner);
         }
         // ── vector of a non-Node struct ───────────────────────────────────────
@@ -993,7 +1001,7 @@ mod tests {
     /// A standalone host record whose offset-0 field is the root
     /// `vector<Node>` the materializer writes into.
     fn root_vector(stores: &mut Stores) -> ValuesVector {
-        ValuesVector::new(stores.database(16))
+        ValuesVector::new(stores.vector_buffer(16))
     }
 
     #[test]
@@ -1403,7 +1411,7 @@ mod tests {
     /// A standalone host record whose offset-0 field is the root
     /// `vector<TypeT>` the type materializer writes into.
     fn root_type_vector(stores: &mut Stores) -> RecVector {
-        RecVector::new(stores.database(16), ds::TYPET_STRIDE)
+        RecVector::new(stores.vector_buffer(16), ds::TYPET_STRIDE)
     }
 
     #[test]
@@ -1561,17 +1569,19 @@ mod tests {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Int(7),
             check: Value::Null,
             check_message: Value::Text("bad".into()),
             alias_d_nr: 3,
+            fact: crate::data::AliasFact::Plain,
             assigned_lambda_d_nr: 99,
             links: vec!["fs#read".into()],
             lexeme: false,
         }];
 
         // Host record whose field 0 is the root vector<Attribute>.
-        let host = Record::new(stores.database(16));
+        let host = Record::new(stores.vector_buffer(16));
         materialize_attributes(&mut stores, &host, 0, &attrs);
 
         let v = host.field_recvec(0, ds::ATTRIBUTE_STRIDE);
@@ -1637,7 +1647,7 @@ mod tests {
             },
         ];
 
-        let host = Record::new(stores.database(16));
+        let host = Record::new(stores.vector_buffer(16));
         materialize_field_groups(&mut stores, &host, 0, &groups);
 
         let v = host.field_recvec(0, ds::LFG_STRIDE);
@@ -1732,7 +1742,7 @@ mod tests {
 
         let mut ir = Stores::new();
         let _ids = register_ir_schema(&mut ir);
-        let host = Record::new(ir.database(16));
+        let host = Record::new(ir.vector_buffer(16));
         materialize_schema(&mut ir, &host, 0, schema);
 
         let dst = host.field_recvec(0, ds::DBTYPE_STRIDE);

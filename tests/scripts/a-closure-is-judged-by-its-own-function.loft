@@ -15,14 +15,11 @@
 //
 // @falsified-at: 58acb001b — interpret exit 1 -> 0, native exit 1 -> 0; the control refused
 //   `second` (*"… not yet supported when the source closure may capture"*).
-// @falsified-by: tests/falsified/a-closure-is-judged-by-its-own-function.patch — the same channels.  Score it with
-//   `scripts/falsify.sh <this file> --patch <that patch>` once 58acb001b is out of reach.
-// CONTROL GONE since 3c4389804 (loft#1869): a closure's capture of a fn-ref no longer reads the
-//   may-capture judgement — it stores the fn-ref's runtime closure half beside its d_nr, null for
-//   a plain function — so the misjudgement the receipts plant is unobservable here and both
-//   trees answer alike on both backends (INERT on the receipts re-derivation).  The judgement's one
-//   remaining reader is the void fn-ref call's write-back (`closure_var_of` in
-//   `parser/control.rs`), which no cell here reaches.
+// @falsified-by: tests/falsified/a-closure-is-judged-by-its-own-function.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE, through `writes_back` alone — the planted parser-wide map makes the
+//   void call write a capture back over `c`.  `first`/`second` no longer separate the trees: a
+//   closure's capture of a fn-ref stores its runtime closure half and does not read the
+//   judgement, so misjudging `dbl` there changes nothing.
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn before_first() -> integer {
@@ -51,8 +48,36 @@ fn second() -> text {
   "{ft()} {fc()} {fd(6)}"
 }
 
+// A void call through a NON-capturing fn-ref writes no capture back.  `binds_late` puts its
+// capturing closure's record two slots past its fn-ref (`f` is bound before the padding and
+// reassigned after it); `writes_back`'s plain `dbl` sits in `f`'s slot and `fc`'s record in the
+// record's.  Judged by a map that outlived `binds_late`, `dbl(3)` wrote `fc`'s captured `c` (2)
+// back over `c` (7).  The two must stay adjacent and in this order.
+fn binds_late() -> integer {
+  n = 5;
+  t = 0;
+  f: fn(integer) = |a| { assert(a >= 0, "plain {a}"); };
+  f(0);
+  p1 = 0;
+  p2 = 0;
+  f = |a| { t += a + n + p1 + p2; };
+  f(1);
+  t
+}
+fn writes_back() -> integer {
+  c = 2;
+  x = 0;
+  dbl: fn(integer) = |a| { assert(a == 3, "dbl {a}"); };
+  q = x;
+  fc = || { c + q };
+  c = 7;
+  dbl(3);
+  c + fc()
+}
 fn main() {
   assert(before_first() == 10, "the control order: got {before_first()}");
   assert(first() == "10 5 abab", "the capturing function: got {first()}");
   assert(second() == "9 2 12", "a later function's non-capturing fn-ref: got {second()}");
+  assert(binds_late() == 6, "the capturing function: got {binds_late()}");
+  assert(writes_back() == 9, "a void call through a non-capturing fn-ref: got {writes_back()}");
 }

@@ -651,7 +651,7 @@ fn write_key_list(out: &mut String, keys: &[Key]) {
 
 fn write_position(out: &mut String, pos: &Position) {
     out.push_str("{\"file\":");
-    write_str(out, &pos.file);
+    write_str(out, pos.file.as_str());
     let _ = write!(out, ",\"line\":{},\"pos\":{}}}", pos.line, pos.pos);
 }
 
@@ -757,7 +757,7 @@ fn block_from_parsed(p: &Parsed) -> Result<Block, TypeDecodeError> {
 /// Decode a [`Position`] (V3 — carried by `Value::Span`).
 fn position_from_parsed(p: &Parsed) -> Result<Position, TypeDecodeError> {
     Ok(Position {
-        file: as_str(field(p, "file")?)?.into(),
+        file: crate::lexer::intern_file(&as_str(field(p, "file")?)?),
         line: as_u32(field(p, "line")?)?,
         pos: as_u32(field(p, "pos")?)?,
     })
@@ -847,7 +847,7 @@ fn write_attribute(out: &mut String, a: &Attribute) {
     write_type(out, &a.typedef);
     let _ = write!(
         out,
-        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{},\"work_buffer\":{}",
+        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{},\"work_buffer\":{},\"pub_field\":{}",
         a.mutable,
         a.constant,
         a.init,
@@ -856,7 +856,8 @@ fn write_attribute(out: &mut String, a: &Attribute) {
         a.hidden,
         a.const_field,
         a.value_const,
-        a.work_buffer
+        a.work_buffer,
+        a.pub_field
     );
     out.push_str(",\"value\":");
     write_value(out, &a.value);
@@ -871,6 +872,8 @@ fn write_attribute(out: &mut String, a: &Attribute) {
     );
     out.push_str(",\"links\":");
     write_str(out, &a.links.join(" "));
+    out.push_str(",\"fact\":");
+    write_str(out, &a.fact.encode());
     out.push('}');
 }
 
@@ -912,6 +915,11 @@ fn attribute_from_parsed(p: &Parsed) -> Result<Attribute, TypeDecodeError> {
             Ok(f) => as_bool(f)?,
             Err(_) => false,
         },
+        // @PLN187 — tolerant of older JSON without the field.
+        pub_field: match field(p, "pub_field") {
+            Ok(f) => as_bool(f)?,
+            Err(_) => false,
+        },
         value: value_from_parsed(field(p, "value")?)?,
         check: value_from_parsed(field(p, "check")?)?,
         check_message: value_from_parsed(field(p, "check_message")?)?,
@@ -921,6 +929,11 @@ fn attribute_from_parsed(p: &Parsed) -> Result<Attribute, TypeDecodeError> {
         links: match field(p, "links") {
             Ok(f) => as_str(f)?.split_whitespace().map(str::to_string).collect(),
             Err(_) => Vec::new(),
+        },
+        // @PLN187 — tolerant of older JSON without the field.
+        fact: match field(p, "fact") {
+            Ok(f) => crate::data::AliasFact::decode(&as_str(f)?),
+            Err(_) => crate::data::AliasFact::Plain,
         },
         // @PLN35 — `#lexeme` is a parse-time-only marker, not stored; defaults to false.
         lexeme: false,
@@ -1105,6 +1118,9 @@ fn write_definition(out: &mut String, d: &Definition) {
     let _ = write!(out, ",\"builtin\":{}", d.builtin);
     // @PLN182 — written `operator`.
     let _ = write!(out, ",\"operator_form\":{}", d.operator_form);
+    out.push_str(",\"returned_fact\":");
+    write_str(out, &d.returned_fact.encode());
+    let _ = write!(out, ",\"returned_const\":{}", d.returned_const);
     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
     out.push_str(",\"purity\":");
@@ -1355,7 +1371,7 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
     // variables (C4): the per-function debug-symbol table.  The function's
     // name/file equal this def's name/position.file (set at add_def), so they
     // are reconstructed here rather than stored.
-    let variables = variables_from_parsed(field(p, "variables")?, &name, &position.file)?;
+    let variables = variables_from_parsed(field(p, "variables")?, &name, position.file.as_str())?;
     Ok(Definition {
         bound_holder: false,
         variables,
@@ -1394,6 +1410,16 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         instance_args: type_list(field(p, "instance_args")?)?, // @PLN165 D3
         builtin: as_bool(field(p, "builtin")?)?,          // @PLN165 arc E
         operator_form: as_bool(field(p, "operator_form")?)?, // @PLN182
+        // @PLN187 — tolerant of older JSON without the field.
+        returned_fact: match field(p, "returned_fact") {
+            Ok(f) => crate::data::AliasFact::decode(&as_str(f)?),
+            Err(_) => crate::data::AliasFact::Plain,
+        },
+        // Tolerant of older JSON without the field, as `returned_fact` is.
+        returned_const: match field(p, "returned_const") {
+            Ok(f) => as_bool(f)?,
+            Err(_) => false,
+        }, // @FR-Const-Foreign
         forced_size: if forced == 0 { None } else { Some(forced) },
         purity: purity_from_parsed(field(p, "purity")?)?,
         field_groups: field_group_list(field(p, "field_groups")?)?,
@@ -1572,8 +1598,8 @@ pub fn data_from_json(src: &str) -> Result<Data, TypeDecodeError> {
 /// # Errors
 /// File read error, or any [`data_from_json`] decode error.
 pub fn load_snapshot(path: &str) -> Result<Data, TypeDecodeError> {
-    let src = std::fs::read_to_string(path)
-        .map_err(|e| TypeDecodeError::Shape(format!("read {path}: {e}")))?;
+    let src = crate::file_access::read_to_string(path)
+        .map_err(|e| TypeDecodeError::Shape(format!("read {e}")))?;
     data_from_json(&src)
 }
 
@@ -2186,10 +2212,12 @@ mod tests {
             primary: true,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Int(5),
             check: Value::Call(9, vec![Value::Var(0), Value::Int(100)]),
             check_message: Value::Text("too big".to_string()),
             alias_d_nr: 42,
+            fact: crate::data::AliasFact::Plain,
             assigned_lambda_d_nr: u32::MAX,
             links: vec!["stats#read".to_string(), "stats#update".to_string()],
             lexeme: false,
@@ -2223,10 +2251,12 @@ mod tests {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
             alias_d_nr: u32::MAX,
+            fact: crate::data::AliasFact::Plain,
             assigned_lambda_d_nr: u32::MAX,
             links: Vec::new(),
             lexeme: false,
@@ -2237,6 +2267,31 @@ mod tests {
     }
 
     /// Pin the exact emitted JSON — the on-disk format is a contract.
+    #[test]
+    fn alias_fact_codec_roundtrips_every_shape() {
+        use crate::data::AliasFact as F;
+        // @PLN187 — what a declaration records survives the IR text: an alias, a vector of
+        // one, a tuple with a plain member, and their nesting; plain is the empty string.
+        let shapes = [
+            F::Plain,
+            F::Alias(42),
+            F::vector(F::Alias(7)),
+            F::tuple(vec![F::Alias(3), F::Plain]),
+            F::vector(F::vector(F::Alias(9))),
+            F::vector(F::tuple(vec![F::Plain, F::Alias(11), F::Plain])),
+            F::tuple(vec![
+                F::vector(F::Alias(5)),
+                F::tuple(vec![F::Alias(6), F::Plain]),
+            ]),
+        ];
+        for f in shapes {
+            assert_eq!(F::decode(&f.encode()), f, "{f:?} as {:?}", f.encode());
+        }
+        assert_eq!(F::Plain.encode(), "");
+        assert_eq!(F::tuple(vec![F::Plain, F::Plain]), F::Plain);
+        assert_eq!(F::decode("garbage"), F::Plain);
+    }
+
     #[test]
     fn attribute_golden_format() {
         let a = Attribute {
@@ -2251,17 +2306,19 @@ mod tests {
             primary: false,
             hidden: false,
             work_buffer: false,
+            pub_field: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
             alias_d_nr: 0,
+            fact: crate::data::AliasFact::Plain,
             assigned_lambda_d_nr: 0,
             links: Vec::new(),
             lexeme: false,
         };
         assert_eq!(
             attribute_to_json(&a),
-            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"work_buffer":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
+            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"work_buffer":false,"pub_field":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":"","fact":""}"#
         );
     }
 
@@ -2279,6 +2336,10 @@ mod tests {
 
     /// A type-level `Definition` (a struct) with attributes + a field group,
     /// matching what `Data::add` / the parser produce for a type def.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one literal of every Definition field"
+    )]
     fn sample_struct_def() -> Definition {
         Definition {
             bound_holder: false,
@@ -2306,10 +2367,12 @@ mod tests {
                     primary: false,
                     hidden: false,
                     work_buffer: false,
+                    pub_field: false,
                     value: Value::Null,
                     check: Value::Null,
                     check_message: Value::Null,
                     alias_d_nr: u32::MAX,
+                    fact: crate::data::AliasFact::Plain,
                     assigned_lambda_d_nr: u32::MAX,
                     links: Vec::new(),
                     lexeme: false,
@@ -2326,10 +2389,12 @@ mod tests {
                     primary: false,
                     hidden: false,
                     work_buffer: false,
+                    pub_field: false,
                     value: Value::Int(0),
                     check: Value::Null,
                     check_message: Value::Null,
                     alias_d_nr: u32::MAX,
+                    fact: crate::data::AliasFact::Plain,
                     assigned_lambda_d_nr: u32::MAX,
                     links: Vec::new(),
                     lexeme: false,
@@ -2362,6 +2427,8 @@ mod tests {
             instance_args: vec![Type::Text(Deps::none()), Type::Reference(7, Deps::none())],
             builtin: true,
             operator_form: true,
+            returned_fact: crate::data::AliasFact::Alias(9),
+            returned_const: true,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: Some(4),
@@ -2446,6 +2513,8 @@ mod tests {
             instance_args: Vec::new(),
             builtin: false,
             operator_form: false,
+            returned_fact: crate::data::AliasFact::Plain,
+            returned_const: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,

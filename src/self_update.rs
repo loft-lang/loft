@@ -22,12 +22,13 @@
 //!   reported as such, not silently skipped, because "no update available" and "no
 //!   build for your platform" send a user to different places;
 //! * yanked and prerelease versions are excluded by reusing
-//!   [`registry_index::find_best_version`], not by a second rule that could drift;
+//!   [`registry_index::find_newest_release`], not by a second rule that could drift;
 //! * an update is only ever offered UPWARDS.  Everything else here is a report, but a
 //!   downgrade is the one outcome that could hand a user a known-vulnerable release,
 //!   so the direction is enforced in the planner rather than at the call site.
 
-use crate::registry_index::{Package, RegistryIndex, compare_semver, find_best_version};
+use crate::file_access;
+use crate::registry_index::{Package, RegistryIndex, compare_semver, find_newest_release};
 use std::path::{Path, PathBuf};
 
 /// The registry package name that carries the loft toolchain itself.
@@ -49,19 +50,19 @@ pub const TOOLCHAIN_PKG: &str = "loft";
 /// not a release bundle.
 #[cfg(feature = "registry")]
 pub fn fetch_bundle(url: &str, sha256: &str, tmp: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(tmp).map_err(|e| format!("cannot create {}: {e}", tmp.display()))?;
+    file_access::create_dir_all(tmp).map_err(|e| format!("cannot create {e}"))?;
     let zip_path = tmp.join("bundle.zip");
     let bytes = crate::registry_index::download_tarball(url, &zip_path)?;
     crate::integrity::verify_sha256(&bytes, sha256).map_err(|e| {
         // Leave nothing unpacked behind that failed its hash.
-        let _ = std::fs::remove_file(&zip_path);
+        let _ = file_access::remove_file(&zip_path);
         format!(
             "the downloaded bundle does not match the hash the signed index publishes \
              ({e}).  Nothing was installed."
         )
     })?;
     let extract = tmp.join("x");
-    let file = std::fs::File::open(&zip_path).map_err(|e| format!("cannot open bundle: {e}"))?;
+    let file = file_access::open(&zip_path).map_err(|e| format!("cannot open bundle: {e}"))?;
     zip::ZipArchive::new(file)
         .map_err(|e| format!("the bundle is not a readable zip: {e}"))?
         .extract(&extract)
@@ -76,13 +77,20 @@ pub fn fetch_bundle(url: &str, sha256: &str, tmp: &Path) -> Result<PathBuf, Stri
 /// bundle, so both layouts are accepted.
 #[cfg(feature = "registry")]
 fn staged_root(extract: &Path) -> Option<PathBuf> {
-    if extract.join("bin").join("loft").is_file() || extract.join("bin").join("loft.exe").is_file()
-    {
+    let holds_loft = |dir: &Path| {
+        file_access::is_file(dir.join("bin").join("loft"))
+            || file_access::is_file(dir.join("bin").join("loft.exe"))
+    };
+    if holds_loft(extract) {
         return Some(extract.to_path_buf());
     }
-    for entry in std::fs::read_dir(extract).ok()?.flatten() {
-        let p = entry.path();
-        if p.join("bin").join("loft").is_file() || p.join("bin").join("loft.exe").is_file() {
+    // The listing is sorted, so of several candidates the same one wins on every machine.
+    for entry in file_access::read_dir(extract).ok()? {
+        let Some(name) = entry.os_name() else {
+            continue;
+        };
+        let p = extract.join(name);
+        if holds_loft(&p) {
             return Some(p);
         }
     }
@@ -126,9 +134,10 @@ pub fn plan(index: &RegistryIndex, current: &str, triple: &str) -> Plan {
 }
 
 fn plan_for_package(pkg: &Package, current: &str, triple: &str) -> Plan {
-    // `"*"` = "any version"; `find_best_version` applies the yanked + prerelease rules,
-    // which is why they are not restated here.
-    let Some(best) = find_best_version(pkg, "*", false) else {
+    // `"*"` = "any version"; `find_newest_release` applies the yanked + prerelease rules,
+    // which is why they are not restated here — and no `loft` floor, which names the loft a
+    // release needs: the update is how this loft gets there.
+    let Some(best) = find_newest_release(pkg, "*", false) else {
         return Plan::NoEntry;
     };
     // Upwards only.  A registry that offered an older release — through a rollback, a
@@ -269,7 +278,7 @@ fn owned_files(staged: &Path) -> Result<(Vec<String>, bool), String> {
     // themselves, and they pointed at it deliberately.  Then the bundle's contents are
     // the set: everything in it is installed, and nothing outside it is touched or
     // removed.  Refusing here would wall off precisely the people `--from` exists for.
-    let Ok(text) = std::fs::read_to_string(&sums) else {
+    let Ok(text) = file_access::read_to_string(&sums) else {
         return walk_files(staged).map(|f| (f, false));
     };
     let (entries, _) = crate::verify_self::parse_manifest(&text);
@@ -298,14 +307,17 @@ fn owned_files(staged: &Path) -> Result<(Vec<String>, bool), String> {
 /// carries no manifest of its own.
 fn walk_files(staged: &Path) -> Result<Vec<String>, String> {
     fn walk(dir: &Path, base: &Path, out: &mut Vec<String>) -> Result<(), String> {
-        let entries =
-            std::fs::read_dir(dir).map_err(|e| format!("reading {}: {e}", dir.display()))?;
-        for e in entries.flatten() {
-            let path = e.path();
+        let entries = file_access::read_dir(dir).map_err(|e| format!("reading {e}"))?;
+        for e in entries {
+            let Some(name) = e.os_name() else {
+                continue;
+            };
+            // Spelled under `dir` as given, so `base` strips off it below.
+            let path = dir.join(name);
             // Never follow a symlink out of the bundle: the set must stay what the
             // directory actually contains.
-            let meta = std::fs::symlink_metadata(&path)
-                .map_err(|err| format!("reading {}: {err}", path.display()))?;
+            let meta =
+                file_access::symlink_metadata(&path).map_err(|err| format!("reading {err}"))?;
             if meta.is_dir() {
                 walk(&path, base, out)?;
             } else if meta.is_file()
@@ -361,20 +373,19 @@ pub fn apply_bundle(
 
     // 2. Replace each file, remembering how to put it back.
     let backup_dir = root.join(format!(".loft-update-backup-{}", std::process::id()));
-    std::fs::create_dir_all(&backup_dir)
-        .map_err(|e| format!("creating {}: {e}", backup_dir.display()))?;
+    file_access::create_dir_all(&backup_dir).map_err(|e| format!("creating {e}"))?;
     let mut restore: Vec<(PathBuf, PathBuf)> = Vec::new(); // (target, backup)
     let mut placed: Vec<PathBuf> = Vec::new();
     let mut result = Ok(());
     for rel in &files {
         let target = root.join(rel);
         let source = staged.join(rel);
-        if !source.is_file() {
+        if !file_access::is_file(&source) {
             result = Err(format!("staged bundle is missing {rel}"));
             break;
         }
         if let Some(parent) = target.parent()
-            && std::fs::create_dir_all(parent).is_err()
+            && file_access::create_dir_all(parent).is_err()
         {
             result = Err(format!("cannot create {}", parent.display()));
             break;
@@ -382,9 +393,9 @@ pub fn apply_bundle(
         // Move the existing file aside rather than overwriting it: on Windows the
         // running executable cannot be overwritten but CAN be renamed, and the
         // rename is what makes a restore possible on every platform.
-        if target.exists() {
+        if file_access::exists(&target) {
             let backup = backup_dir.join(rel.replace(['/', '\\'], "__"));
-            if let Err(e) = std::fs::rename(&target, &backup) {
+            if let Err(e) = file_access::rename(&target, &backup) {
                 result = Err(format!("cannot move {rel} aside: {e}"));
                 break;
             }
@@ -404,9 +415,9 @@ pub fn apply_bundle(
     //    up like everything else, so a rollback restores them.
     if result.is_ok() && !described {
         let target = root.join(crate::verify_self::MANIFEST);
-        if target.is_file() {
+        if file_access::is_file(&target) {
             let backup = backup_dir.join(crate::verify_self::MANIFEST);
-            if std::fs::rename(&target, &backup).is_ok() {
+            if file_access::rename(&target, &backup).is_ok() {
                 restore.push((target, backup));
             }
         }
@@ -432,31 +443,27 @@ pub fn apply_bundle(
 
     if let Err(e) = result {
         for p in &placed {
-            let _ = std::fs::remove_file(p);
+            let _ = file_access::remove_file(p);
         }
         for (target, backup) in restore.iter().rev() {
-            let _ = std::fs::rename(backup, target);
+            let _ = file_access::rename(backup, target);
         }
-        let _ = std::fs::remove_dir_all(&backup_dir);
+        let _ = file_access::remove_dir_all(&backup_dir);
         return Err(format!("{e} — the installation was restored"));
     }
-    let _ = std::fs::remove_dir_all(&backup_dir);
+    let _ = file_access::remove_dir_all(&backup_dir);
     Ok(files)
 }
 
 /// Copy preserving the executable bit, which a plain byte copy loses — and a loft that
 /// is not executable is not an installation.
 fn copy_file(source: &Path, target: &Path) -> Result<(), String> {
-    std::fs::copy(source, target).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
+    file_access::copy(source, target).map_err(|e| e.to_string())?;
+    if let Some(mode) = file_access::metadata(source)
+        .ok()
+        .and_then(|meta| crate::platform::permission_bits(&meta))
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(source) {
-            let _ = std::fs::set_permissions(
-                target,
-                std::fs::Permissions::from_mode(meta.permissions().mode()),
-            );
-        }
+        let _ = crate::platform::set_permission_bits(target, mode);
     }
     Ok(())
 }
@@ -485,7 +492,9 @@ mod tests {
             url: String::new(),
             sha256: String::new(),
             size: 0,
-            loft: "*".to_string(),
+            // a floor every loft meets, spelled as the registry spells one (`*` is not a
+            // floor: `floor_admits` reads it as malformed and the release is skipped)
+            loft: ">=0".to_string(),
             api_compatible_with: None,
             data_compatible_with: None,
             deps: BTreeMap::new(),
@@ -561,6 +570,21 @@ mod tests {
         assert_eq!(sha256, format!("hash-2026.8.0-{T}"));
     }
 
+    /// A loft release's `loft` floor names the loft it needs — usually itself — so it is
+    /// above the running loft by construction.  Library resolution skips such a release
+    /// (loft#1890); the self-updater must not, or the loft that needs the update never
+    /// sees it.
+    #[test]
+    fn a_release_floored_above_this_loft_is_still_offered() {
+        let mut newer = version("9999.1.0", &[T]);
+        newer.loft = ">=9999.1.0".to_string();
+        let idx = index(vec![version("2026.7.2", &[T]), newer], vec![]);
+        let Plan::Available { to, .. } = plan(&idx, "2026.7.2", T) else {
+            panic!("a newer loft must be offered whatever its own floor says");
+        };
+        assert_eq!(to, "9999.1.0");
+    }
+
     /// Calendar versions must order as versions, not as text — "2026.10.0" is newer
     /// than "2026.9.0" even though it sorts earlier as a string.
     #[test]
@@ -604,7 +628,7 @@ mod tests {
         );
     }
 
-    /// A yanked newest is skipped — and the rule is `find_best_version`'s, not a copy.
+    /// A yanked newest is skipped — and the rule is the resolver's, not a copy.
     #[test]
     fn a_yanked_newest_is_not_offered() {
         let idx = index(
@@ -666,8 +690,8 @@ mod tests {
     fn bundle(dir: &Path, files: &[(&str, &str)]) {
         for (rel, body) in files {
             let p = dir.join(rel);
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(&p, body).unwrap();
+            file_access::create_dir_all(p.parent().unwrap()).unwrap();
+            file_access::write(&p, body).unwrap();
         }
         use std::fmt::Write as _;
         let mut stdlib = String::new();
@@ -690,15 +714,15 @@ mod tests {
                 );
             }
         }
-        std::fs::write(dir.join("SHA256SUMS"), sums).unwrap();
+        file_access::write(dir.join("SHA256SUMS"), sums).unwrap();
     }
 
     fn dirs(name: &str) -> (PathBuf, PathBuf) {
         let base = std::env::temp_dir().join("loft-apply-tests").join(name);
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = file_access::remove_dir_all(&base);
         let (root, staged) = (base.join("root"), base.join("staged"));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::create_dir_all(&staged).unwrap();
+        file_access::create_dir_all(&root).unwrap();
+        file_access::create_dir_all(&staged).unwrap();
         (root, staged)
     }
 
@@ -719,11 +743,11 @@ mod tests {
             apply_bundle(&root, &staged, None, false).expect("a verified bundle must apply");
         assert!(placed.iter().any(|f| f == "bin/loft"), "{placed:?}");
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/loft")).unwrap(),
+            file_access::read_to_string(root.join("bin/loft")).unwrap(),
             "NEW BINARY"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("default/a.loft")).unwrap(),
+            file_access::read_to_string(root.join("default/a.loft")).unwrap(),
             "new\n"
         );
         assert!(
@@ -742,18 +766,18 @@ mod tests {
         let (root, staged) = dirs("foreign");
         bundle(&root, &[("bin/loft", "OLD"), ("default/a.loft", "old\n")]);
         // Somebody else's binary, sharing the prefix.
-        std::fs::write(root.join("bin/othertool"), "NOT OURS").unwrap();
-        std::fs::create_dir_all(root.join("share")).unwrap();
-        std::fs::write(root.join("share/unrelated.conf"), "keep me").unwrap();
+        file_access::write(root.join("bin/othertool"), "NOT OURS").unwrap();
+        file_access::create_dir_all(root.join("share")).unwrap();
+        file_access::write(root.join("share/unrelated.conf"), "keep me").unwrap();
         bundle(&staged, &[("bin/loft", "NEW"), ("default/a.loft", "new\n")]);
         apply_bundle(&root, &staged, None, false).expect("apply");
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/othertool")).unwrap(),
+            file_access::read_to_string(root.join("bin/othertool")).unwrap(),
             "NOT OURS",
             "an unrelated binary in the same prefix must survive an update"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("share/unrelated.conf")).unwrap(),
+            file_access::read_to_string(root.join("share/unrelated.conf")).unwrap(),
             "keep me"
         );
     }
@@ -766,7 +790,7 @@ mod tests {
         bundle(&root, &[("bin/loft", "OLD"), ("default/a.loft", "old\n")]);
         bundle(&staged, &[("bin/loft", "NEW"), ("default/a.loft", "new\n")]);
         // Corrupt the staged bundle after its manifest was written.
-        std::fs::write(staged.join("default/a.loft"), "tampered\n").unwrap();
+        file_access::write(staged.join("default/a.loft"), "tampered\n").unwrap();
         let err = apply_bundle(&root, &staged, None, false)
             .expect_err("a corrupt bundle must be refused");
         assert!(
@@ -774,7 +798,7 @@ mod tests {
             "{err}"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/loft")).unwrap(),
+            file_access::read_to_string(root.join("bin/loft")).unwrap(),
             "OLD",
             "nothing may move when the staged bundle is refused"
         );
@@ -790,16 +814,16 @@ mod tests {
         // The manifest still lists it; the file is gone. Verification of the staged
         // bundle reports it missing, so this is refused up front — and the
         // installation is untouched either way, which is what must hold.
-        std::fs::remove_file(staged.join("default/a.loft")).unwrap();
+        file_access::remove_file(staged.join("default/a.loft")).unwrap();
         let err =
             apply_bundle(&root, &staged, None, false).expect_err("a missing file must be refused");
         assert!(err.contains("missing"), "{err}");
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/loft")).unwrap(),
+            file_access::read_to_string(root.join("bin/loft")).unwrap(),
             "OLD"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("default/a.loft")).unwrap(),
+            file_access::read_to_string(root.join("default/a.loft")).unwrap(),
             "old\n"
         );
     }
@@ -810,9 +834,9 @@ mod tests {
         let (root, staged) = dirs("escape");
         bundle(&root, &[("bin/loft", "OLD")]);
         bundle(&staged, &[("bin/loft", "NEW")]);
-        let mut sums = std::fs::read_to_string(staged.join("SHA256SUMS")).unwrap();
+        let mut sums = file_access::read_to_string(staged.join("SHA256SUMS")).unwrap();
         sums.push_str("00  ../../etc/passwd\n");
-        std::fs::write(staged.join("SHA256SUMS"), sums).unwrap();
+        file_access::write(staged.join("SHA256SUMS"), sums).unwrap();
         let err = apply_bundle(&root, &staged, None, false)
             .expect_err("an escaping path must be refused");
         assert!(
@@ -832,18 +856,18 @@ mod tests {
         // Hand-assembled: files, no SHA256SUMS.
         for (rel, body) in [("bin/loft", "MINE"), ("default/a.loft", "mine\n")] {
             let p = staged.join(rel);
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(&p, body).unwrap();
+            file_access::create_dir_all(p.parent().unwrap()).unwrap();
+            file_access::write(&p, body).unwrap();
         }
         let placed = apply_bundle(&root, &staged, None, false)
             .expect("a manifest-less bundle must install, not be refused");
         assert_eq!(placed.len(), 2, "{placed:?}");
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/loft")).unwrap(),
+            file_access::read_to_string(root.join("bin/loft")).unwrap(),
             "MINE"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("default/a.loft")).unwrap(),
+            file_access::read_to_string(root.join("default/a.loft")).unwrap(),
             "mine\n"
         );
     }
@@ -854,13 +878,13 @@ mod tests {
     fn a_manifest_less_bundle_still_touches_only_its_own_files() {
         let (root, staged) = dirs("nomanifest_foreign");
         bundle(&root, &[("bin/loft", "OLD")]);
-        std::fs::write(root.join("bin/othertool"), "NOT OURS").unwrap();
+        file_access::write(root.join("bin/othertool"), "NOT OURS").unwrap();
         let p = staged.join("bin/loft");
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(&p, "MINE").unwrap();
+        file_access::create_dir_all(p.parent().unwrap()).unwrap();
+        file_access::write(&p, "MINE").unwrap();
         apply_bundle(&root, &staged, None, false).expect("apply");
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/othertool")).unwrap(),
+            file_access::read_to_string(root.join("bin/othertool")).unwrap(),
             "NOT OURS"
         );
     }
@@ -872,14 +896,14 @@ mod tests {
         let (root, staged) = dirs("forced");
         bundle(&root, &[("bin/loft", "OLD"), ("default/a.loft", "old\n")]);
         bundle(&staged, &[("bin/loft", "NEW"), ("default/a.loft", "new\n")]);
-        std::fs::write(staged.join("default/a.loft"), "tampered\n").unwrap();
+        file_access::write(staged.join("default/a.loft"), "tampered\n").unwrap();
         assert!(
             apply_bundle(&root, &staged, None, false).is_err(),
             "the default must refuse a bundle that contradicts itself"
         );
         apply_bundle(&root, &staged, None, true).expect("--force must honour the user's decision");
         assert_eq!(
-            std::fs::read_to_string(root.join("default/a.loft")).unwrap(),
+            file_access::read_to_string(root.join("default/a.loft")).unwrap(),
             "tampered\n"
         );
     }
@@ -955,18 +979,18 @@ mod tests {
     fn a_bundle_whose_hash_the_index_does_not_name_is_never_unpacked() {
         use std::io::Write;
         let base = std::env::temp_dir().join("loft-fetch-bundle-test");
-        let _ = std::fs::remove_dir_all(&base);
-        std::fs::create_dir_all(&base).unwrap();
+        let _ = file_access::remove_dir_all(&base);
+        file_access::create_dir_all(&base).unwrap();
 
         // A real release-shaped zip: bin/loft inside a `loft-<v>-<triple>/` wrapper.
         let zip_path = base.join("release.zip");
-        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let mut w = zip::ZipWriter::new(file_access::create(&zip_path).unwrap());
         let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
         w.start_file("loft-9.9.9-test/bin/loft", opts).unwrap();
         w.write_all(b"#!/bin/sh\n").unwrap();
         w.finish().unwrap();
 
-        let bytes = std::fs::read(&zip_path).unwrap();
+        let bytes = file_access::read(&zip_path).unwrap();
         let good = crate::integrity::sha256_hex(&bytes);
         let url = format!("file://{}", zip_path.display());
 
@@ -974,7 +998,7 @@ mod tests {
         let ok_dir = base.join("ok");
         let staged = fetch_bundle(&url, &good, &ok_dir).expect("a matching bundle unpacks");
         assert!(
-            staged.join("bin").join("loft").is_file(),
+            file_access::is_file(staged.join("bin").join("loft")),
             "{}",
             staged.display()
         );
@@ -985,11 +1009,11 @@ mod tests {
             .expect_err("a bundle the index does not vouch for must be refused");
         assert!(err.contains("signed index"), "{err}");
         assert!(
-            !bad_dir.join("x").exists(),
+            !file_access::exists(bad_dir.join("x")),
             "a refused bundle must leave nothing unpacked"
         );
 
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = file_access::remove_dir_all(&base);
     }
 
     // ── @PLN156 phase 4 — adversarial input: what a download or a bundle CLAIMS may
@@ -1008,16 +1032,16 @@ mod tests {
     fn a_zip_entry_that_escapes_the_staging_directory_lands_nowhere() {
         use std::io::Write;
         let base = std::env::temp_dir().join("loft-zip-traversal-test");
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = file_access::remove_dir_all(&base);
         // The canary lives BESIDE the staging dir: the place `../` reaches from inside.
         let staging = base.join("stage");
-        std::fs::create_dir_all(&staging).unwrap();
+        file_access::create_dir_all(&staging).unwrap();
         let escaped = base.join("escaped-by-dotdot.txt");
         let absolute = std::env::temp_dir().join("loft-zip-traversal-absolute.txt");
-        let _ = std::fs::remove_file(&absolute);
+        let _ = file_access::remove_file(&absolute);
 
         let zip_path = base.join("evil.zip");
-        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let mut w = zip::ZipWriter::new(file_access::create(&zip_path).unwrap());
         let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
         // A valid bundle shape around the hostile entries, so a refusal (fine) and a
         // sanitising extract (also fine) are both reachable outcomes.
@@ -1029,23 +1053,23 @@ mod tests {
         w.write_all(b"escaped").unwrap();
         w.finish().unwrap();
 
-        let bytes = std::fs::read(&zip_path).unwrap();
+        let bytes = file_access::read(&zip_path).unwrap();
         let hash = crate::integrity::sha256_hex(&bytes);
         let url = format!("file://{}", zip_path.display());
         // Refusing the archive and extracting it sanitised are BOTH acceptable
         // verdicts; writing outside `staging` is the only wrong one.
         let _ = fetch_bundle(&url, &hash, &staging);
         assert!(
-            !escaped.exists(),
+            !file_access::exists(&escaped),
             "a `../` zip entry escaped the staging directory: {}",
             escaped.display()
         );
         assert!(
-            !absolute.exists(),
+            !file_access::exists(&absolute),
             "an absolute zip entry landed at its own path: {}",
             absolute.display()
         );
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = file_access::remove_dir_all(&base);
     }
 
     /// The absolute-path sibling of the manifest `..` cell: `/etc/...` carries no `..`,
@@ -1056,9 +1080,9 @@ mod tests {
         let (root, staged) = dirs("absolute");
         bundle(&root, &[("bin/loft", "OLD")]);
         bundle(&staged, &[("bin/loft", "NEW")]);
-        let mut sums = std::fs::read_to_string(staged.join("SHA256SUMS")).unwrap();
+        let mut sums = file_access::read_to_string(staged.join("SHA256SUMS")).unwrap();
         sums.push_str("00  /etc/loft-evil\n");
-        std::fs::write(staged.join("SHA256SUMS"), sums).unwrap();
+        file_access::write(staged.join("SHA256SUMS"), sums).unwrap();
         let err = apply_bundle(&root, &staged, None, false)
             .expect_err("an absolute path must be refused");
         assert!(
@@ -1066,7 +1090,7 @@ mod tests {
             "{err}"
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("bin/loft")).unwrap(),
+            file_access::read_to_string(root.join("bin/loft")).unwrap(),
             "OLD",
             "nothing may move when the manifest lists an absolute path"
         );
@@ -1076,20 +1100,21 @@ mod tests {
     /// it as a link, a file, or not at all, nothing may land outside the staging
     /// directory — and nothing may be WRITTEN THROUGH it to the link's target.
     #[test]
+    // @PLN184 approved exemption (owner, 2026-10-07): a test of a Unix symlink inside a zip; Windows has none to test
     #[cfg(all(feature = "registry", unix))]
     fn a_symlink_entry_pointing_outside_writes_nothing_there() {
         use std::io::Write;
         let base = std::env::temp_dir().join("loft-zip-symlink-test");
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = file_access::remove_dir_all(&base);
         let staging = base.join("stage");
-        std::fs::create_dir_all(&staging).unwrap();
+        file_access::create_dir_all(&staging).unwrap();
         let target_dir = base.join("outside");
-        std::fs::create_dir_all(&target_dir).unwrap();
+        file_access::create_dir_all(&target_dir).unwrap();
         let canary = target_dir.join("canary.txt");
-        std::fs::write(&canary, "untouched").unwrap();
+        file_access::write(&canary, "untouched").unwrap();
 
         let zip_path = base.join("link.zip");
-        let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let mut w = zip::ZipWriter::new(file_access::create(&zip_path).unwrap());
         let plain: zip::write::FileOptions<()> = zip::write::FileOptions::default();
         // Entry 1: a symlink (unix mode 0o120777) whose body names the outside dir.
         let link_opts: zip::write::FileOptions<()> =
@@ -1103,20 +1128,20 @@ mod tests {
         w.write_all(b"#!/bin/sh\n").unwrap();
         w.finish().unwrap();
 
-        let bytes = std::fs::read(&zip_path).unwrap();
+        let bytes = file_access::read(&zip_path).unwrap();
         let hash = crate::integrity::sha256_hex(&bytes);
         let url = format!("file://{}", zip_path.display());
         let _ = fetch_bundle(&url, &hash, &staging);
         assert_eq!(
-            std::fs::read_to_string(&canary).unwrap(),
+            file_access::read_to_string(&canary).unwrap(),
             "untouched",
             "a write travelled through a symlink entry out of the staging directory"
         );
         assert!(
-            !target_dir.join("loft").exists(),
+            !file_access::exists(target_dir.join("loft")),
             "bin/loft was written through the symlink into {}",
             target_dir.display()
         );
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = file_access::remove_dir_all(&base);
     }
 }

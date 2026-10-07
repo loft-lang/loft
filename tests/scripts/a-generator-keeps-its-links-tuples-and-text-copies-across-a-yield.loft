@@ -1,0 +1,62 @@
+// @FR-G-Yield / @FR-B-Ref-Lvalue — a generator's frame survives a `yield` whole: a link local
+// (`c = &x`) still names its place on the next resume, a written text parameter keeps its
+// text, and a tuple local keeps every member.  `--native` kept none of the three as a field of
+// the generator struct, so each was declared in the state that bound it and was missing in the
+// next (E0425), and a tuple field could not be zeroed (E0605) (loft#1899).  Each value is
+// worked out by hand in the comment beside it.
+// @falsified-at: 594cceed8 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generator-keeps-its-links-tuples-and-text-copies-across-a-yield.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the native exit — rustc refuses the control (E0425 on a link, a tuple or the text
+//   parameter's copy declared in another state; E0605 on a tuple field's zero).
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends;
+//   the interpreter answers every cell on both, as measured by `make falsify` at 594cceed8.
+
+fn bump8(x: &u8) { x += 1; }
+fn run(g: iterator<integer>) -> text { s = ""; for v in g { s += "{v} "; } s }
+fn runt(g: iterator<text>) -> text { s = ""; for v in g { s += "{v} "; } s }
+
+// A link made before the yield, written after it: 200 + 7.
+fn link_across(n: integer) -> iterator<integer> { x = n; c = &x; yield 5; c += 7; yield x; }
+// A narrow local linked across the yield: 100 + 7, then + 1, plus 1000.
+fn narrow_link_across(n: integer) -> iterator<integer> { x: u8 = 100; c = &x; yield 5; c += 7; bump8(x); yield x + n; }
+// A link re-pointed after a yield: x 11, then y 25; x stays 11.
+fn repointed() -> iterator<integer> { x = 10; y = 20; c = &x; c += 1; yield x; c = &y; c += 5; yield y; yield x; }
+// A text link across the yield.
+fn text_link() -> iterator<text> { s = "a"; c = &s; yield s; c += "!"; yield s; }
+// A link written in a loop that yields: 1, 3, 6.
+fn link_in_loop() -> iterator<integer> { x = 0; c = &x; for i in 1..4 { c += i; yield x; } }
+// A text parameter written between yields.
+fn text_param(p: text) -> iterator<text> { p += "x"; yield p; p += "y"; yield p; }
+// A tuple local written across yields: 40 + 1, then 3 + 1.
+fn tuple_across(n: integer) -> iterator<integer> { t: (integer, integer) = (40, n); t.0 += 1; yield t.0; t.1 += 1; yield t.1; }
+// A text member appended across yields.
+fn tuple_text() -> iterator<text> { t = ("a", 1); yield t.0; t.0 += "x"; yield t.0; t.0 += "y"; yield t.0; }
+// A copy made after a yield is independent: "az", and the source stays "a".
+fn tuple_copy() -> iterator<text> { t = ("a", 1); yield t.0; u = t; u.0 += "z"; yield u.0; yield t.0; }
+// A destructure after a yield: 7 + 14.
+fn tuple_destructure(n: integer) -> iterator<integer> { t = (n, n * 2); yield 0; (a, b) = t; yield a + b; }
+// A narrow member linked across yields: 250, 252, then 253 * 10 + 3.
+fn tuple_narrow_link() -> iterator<integer> { t: (u8, integer) = (250, 3); c = &t.0; yield t.0; c += 2; yield t.0; bump8(t.0); yield t.0 * 10 + t.1; }
+// A member updated in a loop that yields: 0+100, 1+100, 3+100, then 3.
+fn tuple_in_loop() -> iterator<integer> { t = (0, 100); for i in 0..3 { t.0 += i; yield t.0 + t.1; } yield t.0; }
+// A tuple yielded whole after a yield.
+fn tuple_yielded() -> iterator<(integer, text)> { t = (1, "p"); yield t; t.0 += 1; t.1 += "q"; yield t; }
+
+fn main() {
+  assert(run(link_across(200)) == "5 207 ", "a link across a yield");
+  assert(run(narrow_link_across(1000)) == "5 1108 ", "a narrow link across a yield");
+  assert(run(repointed()) == "11 25 11 ", "a link re-pointed after a yield");
+  assert(runt(text_link()) == "a a! ", "a text link across a yield");
+  assert(run(link_in_loop()) == "1 3 6 ", "a link written in a loop that yields");
+  assert(runt(text_param("a")) == "ax axy ", "a text parameter written between yields");
+  assert(run(tuple_across(3)) == "41 4 ", "a tuple local across yields");
+  assert(runt(tuple_text()) == "a ax axy ", "a text member across yields");
+  assert(runt(tuple_copy()) == "a az a ", "a tuple copy after a yield");
+  assert(run(tuple_destructure(7)) == "0 21 ", "a destructure after a yield");
+  assert(run(tuple_narrow_link()) == "250 252 2533 ", "a narrow member linked across yields");
+  assert(run(tuple_in_loop()) == "100 101 103 3 ", "a member updated in a loop that yields");
+  s = ""; for (a, b) in tuple_yielded() { s += "{a}{b} "; }
+  assert(s == "1p 2pq ", "a tuple yielded whole after a yield: {s}");
+}

@@ -222,10 +222,11 @@ impl crate::parser::Parser {
         );
         self.lexer.fix_last(crate::diagnostics::Fix {
             kind: crate::diagnostics::FixKind::Conditional,
-            title: "read the failure: `if !<place> { … }` as the very next statement".to_string(),
+            title: "handle the failure: `<place> += n else { … }`".to_string(),
             condition: Some(
-                "the step can leave the range and the program must know — the pair is fused, \
-                 so nothing is stored beside the value"
+                "the step can leave the range and the program must know — the arm runs \
+                 exactly when the value did not fit (`@FR-H-Write-Else`), and nothing is \
+                 stored beside the value"
                     .to_string(),
             ),
             edit: None,

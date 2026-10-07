@@ -213,7 +213,10 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let path = self.database.resolve_path(&path);
-                path.map_or(0, |p| std::fs::metadata(&p).map_or(0, |m| m.len() as i64))
+                path.map_or(0, |p| {
+                    crate::file_access::metadata(crate::file_access::at(&p))
+                        .map_or(0, |m| m.len() as i64)
+                })
             }
         } else {
             raw_next
@@ -251,7 +254,6 @@ impl State {
                 };
                 // #255 / @PLN9: re-home against the program anchor.
                 let file_name = self.database.resolve_path(&file_name);
-                let shown = file_name.clone().unwrap_or_default();
                 // Open for read+write without truncating so that earlier
                 // bytes are preserved.  Create the file if it does not
                 // exist yet.  Explicit truncation happens via
@@ -260,12 +262,14 @@ impl State {
                     .as_deref()
                     .ok_or_else(crate::file_access::path_refused)
                     .and_then(|n| {
-                        OpenOptions::new()
-                            .read(true)
-                            .write(true)
-                            .create(true)
-                            .truncate(false)
-                            .open(n)
+                        crate::file_access::open_with(
+                            crate::file_access::at(n),
+                            OpenOptions::new()
+                                .read(true)
+                                .write(true)
+                                .create(true)
+                                .truncate(false),
+                        )
                     }) {
                     Ok(mut f) => {
                         // Seek to the stored write position (end of file
@@ -286,7 +290,7 @@ impl State {
                         f_nr
                     }
                     Err(e) => {
-                        eprintln!("file open error for {shown}: {e}");
+                        eprintln!("file open error: {e}");
                         return;
                     }
                 }
@@ -496,7 +500,7 @@ impl State {
                         // recoverable-fault posture), mirroring both the write
                         // path's create fix and the native runtime
                         // (`file_handle_read` → i32::MIN → return).
-                        eprintln!("file open error for {shown}: {e}");
+                        eprintln!("file open error: {e}");
                         return;
                     }
                 }
@@ -598,7 +602,8 @@ impl State {
             // #255 / @PLN9: re-home against the program anchor.
             let file_path = self.database.resolve_path(&file_path);
             let size = file_path.map_or(i64::MIN, |p| {
-                std::fs::metadata(&p).map_or(i64::MIN, |meta| meta.len() as i64)
+                crate::file_access::metadata(crate::file_access::at(&p))
+                    .map_or(i64::MIN, |meta| meta.len() as i64)
             });
             self.put_stack(size);
         }
@@ -690,7 +695,12 @@ impl State {
             let ok = path
                 .as_deref()
                 .ok_or_else(crate::file_access::path_refused)
-                .and_then(|p| OpenOptions::new().write(true).open(p))
+                .and_then(|p| {
+                    crate::file_access::open_with(
+                        crate::file_access::at(p),
+                        OpenOptions::new().write(true),
+                    )
+                })
                 .and_then(|f| f.set_len(size as u64))
                 .is_ok();
             self.put_stack(ok);
@@ -758,10 +768,7 @@ impl State {
             self.free_coroutine(&db);
             return;
         }
-        // Plan-57 Phase C: single-ownership (ref-count removed) — close the OS file
-        // handle whenever its File store is freed (free_named frees unconditionally).
-        #[cfg(not(host_fs))]
-        self.database.close_file_handle(&db);
+        // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
         self.database.free(&db);
     }
 
@@ -1698,12 +1705,32 @@ impl State {
         // process dies on a program the compiler accepted.  The source half above and this
         // one are one rule read from its two ends.
         if to.store_nr == u16::MAX {
+            if free_source {
+                self.database.release_copy_source(&data, &to);
+            }
+            if to.absence_unreported() {
+                self.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+            }
             return;
         }
         // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:
         // no copy runs, so none is reported below.
         if free_source && self.database.try_swap_in(&data, &to, tp) {
             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
+            return;
+        }
+        // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
+        // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
+        // its bytes lie outside the store's own blocks, where the record copy below would
+        // read a record that is not there.  An element append of mapped bytes
+        // (`v += [file_map(p) ?? []]`) panicked on a corrupt reference.
+        if let Some(crate::database::Parts::Vector(elem)) =
+            self.database.types.get(tp as usize).map(|t| &t.parts)
+            && (data.store_nr as usize) < self.database.allocations.len()
+            && self.database.allocations[data.store_nr as usize].is_foreign()
+        {
+            let elem = *elem;
+            self.database.vector_add(&to, &data, elem);
             return;
         }
         // @PLN90 phase 1 — make the copy visible. A real record deep-copy is about to
@@ -1880,14 +1907,8 @@ impl State {
         // Issue #120: free the source store after deep copy when the caller
         // knows the source is a temporary (callee's return store) that would
         // otherwise leak because is_ret_work_ref suppresses its OpFreeRef.
-        if free_source
-            && data.store_nr != to.store_nr
-            && !self.database.is_stack_store(data.store_nr)
-            && !self.database.allocations[data.store_nr as usize].free
-            && !self.database.allocations[data.store_nr as usize].read_only
-            && !self.database.allocations[data.store_nr as usize].is_free_protected()
-        {
-            self.database.free(&data);
+        if free_source {
+            self.database.release_copy_source(&data, &to);
         }
     }
 

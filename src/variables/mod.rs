@@ -5540,6 +5540,26 @@ impl Function {
         var.name.starts_with('_') && !var.user_named
     }
 
+    /// `@FR-T-Record` — does tuple variable `v`'s frame slot OWN its `text` members — each the
+    /// tuple's own `String`, as a text local is?  A tuple the AUTHOR named and that is not a
+    /// parameter does (`data::TUPLE_LOCAL_TEXT_OWNED`).  A by-value parameter borrows its
+    /// members, as a text argument does; a compiler temp carries a tuple value through a
+    /// lowering and keeps the borrowed layout that lowering was built for (a null-coalesce
+    /// temp yields its value past its own scope).  The one answer both halves ask: the
+    /// interpreter's slot layout and the scope pass's member frees.
+    #[must_use]
+    pub fn tuple_owns_text(&self, v: u16) -> bool {
+        crate::data::TUPLE_LOCAL_TEXT_OWNED
+            && (v as usize) < self.variables.len()
+            && !self.is_argument(v)
+            // A parameter's promoted copy (`__tp_<name>`) is the author's parameter, copied:
+            // it owns its text like any tuple local the author named.  Recognised by its
+            // NAME, which the IR store carries, not by `promoted_from`, which it does not —
+            // a decoded program has to lay the copy out as its parse did.
+            && (!self.is_compiler_generated(v) || self.name(v).starts_with("__tp_"))
+            && matches!(self.tp(v).base(), Type::Tuple(_))
+    }
+
     /// The parameters the signature of `d_nr` declares are named by the user (loft#1834) —
     /// including one the body never mentions.
     pub fn mark_declared_parameters(&mut self, data: &Data, d_nr: u32) {
@@ -5900,7 +5920,11 @@ pub fn size(tp: &Type, context: &Context) -> u16 {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Iterator(_, _) => size_of::<DbRef>() as u16,
-        Type::Tuple(elems) => crate::data::element_stack_size(&Type::Tuple(elems.clone())) as u16,
+        // A tuple LOCAL's slot holds its own text members (`data::TUPLE_LOCAL_TEXT_OWNED`).
+        Type::Tuple(elems) => crate::data::element_stack_size_in(
+            &Type::Tuple(elems.clone()),
+            crate::data::TUPLE_LOCAL_TEXT_OWNED && context == &Context::Variable,
+        ) as u16,
         _ => 0,
     }
 }
@@ -6125,7 +6149,7 @@ pub fn owns_literal_backing_store(name: &str) -> bool {
 /// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked
 /// representation is exercised by every program rather than by the few that write a `&` to
 /// one.  Read once per process.
-fn link_all_narrow() -> bool {
+pub(crate) fn link_all_narrow() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| {
         crate::env_once!(std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))

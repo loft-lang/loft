@@ -20,10 +20,12 @@
 // Protocol channel discipline: stdout carries ONLY framed JSON-RPC; anything
 // else (logging) must go to stderr, or the transport corrupts.
 
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use loft::diagnostics::{DiagEntry, Level};
 use loft::json::{self, Parsed};
@@ -89,6 +91,9 @@ fn main() {
     // overlaid at query time so unsaved edits are reflected.
     let mut workspace_index: Option<loft::lsp::WorkspaceIndex> = None;
     let mut workspace_index_tried = false;
+    // Ids of the requests the SERVER sends (`window/showDocument`); the client's replies
+    // carry them back and are ignored.
+    let mut server_request_id: i64 = 0;
 
     while let Some(body) = read_message(&mut stdin) {
         // A frame that isn't valid JSON is skipped, not fatal — a robust server
@@ -194,10 +199,11 @@ fn main() {
                 // else step C — members after `expr.`, or in-scope names + keywords.
                 // Clone the buffer out so the `documents` borrow drops before the
                 // mutable `tag_index` access.
-                let at = text_document_position(&msg)
-                    .and_then(|(uri, line, ch)| Some((documents.get(&uri)?.clone(), line, ch)));
+                let at = text_document_position(&msg).and_then(|(uri, line, ch)| {
+                    Some((documents.get(&uri)?.clone(), line, ch, uri))
+                });
                 let items = match at {
-                    Some((text, line, ch)) => {
+                    Some((text, line, ch, uri)) => {
                         if let Some(prefix) =
                             loft::lsp::tag_completion_prefix(&text, line + 1, ch + 1)
                         {
@@ -211,13 +217,17 @@ fn main() {
                         } else {
                             loft::lsp::complete(&text, "buf.loft", &stdlib_dir, line + 1, ch + 1)
                                 .iter()
-                                .map(completion_item)
+                                .map(|c| completion_item_in(c, &uri))
                                 .collect()
                         }
                     }
                     None => Vec::new(),
                 };
                 send(&stdout, &response(id, Parsed::Array(items)));
+            }
+            ("completionItem/resolve", Some(id)) => {
+                let item = resolve_completion(&msg, &documents, &stdlib_dir);
+                send(&stdout, &response(id, item));
             }
             ("textDocument/formatting", Some(id)) => {
                 // Run the same formatter the `loft fmt` CLI uses on the open buffer;
@@ -244,10 +254,11 @@ fn main() {
             ("textDocument/hover", Some(id)) => {
                 // Clone the buffer out so the `documents` borrow is dropped before
                 // the mutable `tag_index` access below.
-                let at = text_document_position(&msg)
-                    .and_then(|(uri, line, ch)| Some((documents.get(&uri)?.clone(), line, ch)));
+                let at = text_document_position(&msg).and_then(|(uri, line, ch)| {
+                    Some((documents.get(&uri)?.clone(), line, ch, uri_to_path(&uri)))
+                });
                 let hover = match at {
-                    Some((text, line, ch)) => {
+                    Some((text, line, ch, file)) => {
                         // T1: a tracker tag under the cursor wins over symbol hover.
                         let tag_hit = loft::lsp::tags_in(&text)
                             .into_iter()
@@ -262,7 +273,7 @@ fn main() {
                             ]))
                         });
                         tag_hover
-                            .or_else(|| hover_result(&text, &stdlib_dir, line, ch))
+                            .or_else(|| hover_with_construct(&text, &stdlib_dir, line, ch, &file))
                             .unwrap_or(Parsed::Null)
                     }
                     None => Parsed::Null,
@@ -397,6 +408,19 @@ fn main() {
                     .unwrap_or(Parsed::Null); // unresolved → null
                 send(&stdout, &response(id, location));
             }
+            ("workspace/executeCommand", Some(id)) => {
+                // @PLN183 P3 — `loft.overview`: write the overview site and ask the editor to
+                // open it (a type's own page when the action was invoked on a type name).
+                match execute_overview(&msg, &documents, &stdlib_dir) {
+                    Some(Ok(page)) => {
+                        send(&stdout, &response(id, Parsed::Null));
+                        server_request_id += 1;
+                        send(&stdout, &show_document(server_request_id, &page));
+                    }
+                    Some(Err(why)) => send(&stdout, &error_response(id, -32603, &why)),
+                    None => send(&stdout, &error_response(id, -32602, "unknown command")),
+                }
+            }
             ("shutdown", Some(id)) => {
                 shutdown_requested = true;
                 send(&stdout, &response(id, Parsed::Null));
@@ -404,6 +428,11 @@ fn main() {
             ("exit", _) => {
                 // LSP: exit 0 iff `shutdown` came first, else 1.
                 std::process::exit(i32::from(!shutdown_requested));
+            }
+            ("", Some(_)) => {
+                // A REPLY from the client to a request this server sent (`window/showDocument`,
+                // @PLN183): it has an `id` and no `method`, and it must not be answered — an
+                // error response to a response is a protocol violation.
             }
             (_, Some(id)) => {
                 // Unknown REQUEST → JSON-RPC MethodNotFound; a request must always
@@ -479,6 +508,10 @@ fn lsp_diagnostic(e: &DiagEntry, text: &str, uri: &str) -> Parsed {
                     let _ = write!(msg, " — only if {c}");
                 }
                 let _ = write!(msg, "  [{} · {}]", f.concept, f.concept_ref);
+                // @PLN183 P4 — the concept's catalogue entry, as an address the editor links.
+                if let Some(entry) = loft::doc_catalogue::by_tag(f.concept_ref) {
+                    let _ = write!(msg, " {}", entry.page());
+                }
                 obj(vec![
                     (
                         "location",
@@ -639,6 +672,46 @@ fn completion_item(c: &loft::lsp::Completion) -> Parsed {
     ])
 }
 
+/// The same item with the document it came from, so `completionItem/resolve` can answer its
+/// documentation (@PLN183 P4) without the list paying for every item's lookup.
+fn completion_item_in(c: &loft::lsp::Completion, uri: &str) -> Parsed {
+    let mut item = completion_item(c);
+    if let Parsed::Object(entries) = &mut item {
+        entries.push((
+            "data".to_string(),
+            0,
+            obj(vec![("uri", Parsed::Str(uri.to_string()))]),
+        ));
+    }
+    item
+}
+
+/// `completionItem/resolve`: the item back, with its `documentation` — a keyword's catalogue
+/// entry, or a name's signature and doc (`lsp::completion_documentation`).
+fn resolve_completion(
+    msg: &Parsed,
+    documents: &HashMap<String, String>,
+    stdlib_dir: &str,
+) -> Parsed {
+    let Some(item) = obj_get(msg, "params").cloned() else {
+        return Parsed::Null;
+    };
+    let label = obj_str(&item, "label").unwrap_or_default();
+    let keyword = obj_get(&item, "kind").and_then(Parsed::as_i64) == Some(14);
+    let text = obj_get(&item, "data")
+        .and_then(|d| obj_str(d, "uri"))
+        .and_then(|u| documents.get(&u).cloned())
+        .unwrap_or_default();
+    let doc = loft::lsp::completion_documentation(&text, stdlib_dir, &label, keyword);
+    match (item, doc) {
+        (Parsed::Object(mut entries), Some(doc)) => {
+            entries.push(("documentation".to_string(), 0, markup(&doc)));
+            Parsed::Object(entries)
+        }
+        (item, _) => item,
+    }
+}
+
 // ── codeAction (quick-fixes from diagnostic suggestions, step B) ─────────────
 /// For each diagnostic the editor sends back that carries a `data.suggestion`
 /// (round-tripped from step A), a `CodeAction` quick-fix whose `WorkspaceEdit`
@@ -695,7 +768,186 @@ fn code_actions(
     {
         actions.push(action);
     }
+    // @PLN183 P3 — "what can I use here?", at any position: a command, not an edit, so the
+    // client runs it through `workspace/executeCommand` and the server opens the overview.
+    if wants_kind(params, OVERVIEW_KIND) {
+        let start = obj_get(params, "range").and_then(|r| obj_get(r, "start"));
+        let at = |k: &str| {
+            start
+                .and_then(|p| obj_get(p, k))
+                .and_then(Parsed::as_i64)
+                .unwrap_or(0)
+        };
+        actions.push(obj(vec![
+            ("title", Parsed::Str(OVERVIEW_TITLE.into())),
+            ("kind", Parsed::Str(OVERVIEW_KIND.into())),
+            (
+                "command",
+                obj(vec![
+                    ("title", Parsed::Str(OVERVIEW_TITLE.into())),
+                    ("command", Parsed::Str(OVERVIEW_COMMAND.into())),
+                    (
+                        "arguments",
+                        Parsed::Array(vec![
+                            Parsed::Str(uri.clone()),
+                            Parsed::Int(at("line")),
+                            Parsed::Int(at("character")),
+                        ]),
+                    ),
+                ]),
+            ),
+        ]));
+    }
     actions
+}
+
+const OVERVIEW_KIND: &str = "source.loft.overview";
+const OVERVIEW_COMMAND: &str = "loft.overview";
+const OVERVIEW_TITLE: &str = "loft: what can I use here?";
+
+/// Whether a code-action request admits `kind`: no `context.only`, or an entry of it that is
+/// `kind` or a dotted prefix of it (`source` admits `source.loft.overview`).
+fn wants_kind(params: &Parsed, kind: &str) -> bool {
+    match obj_get(params, "context").and_then(|c| obj_get(c, "only")) {
+        Some(Parsed::Array(only)) => only.iter().any(|k| match k {
+            Parsed::Str(k) => kind == k || kind.starts_with(&format!("{k}.")),
+            _ => false,
+        }),
+        _ => true,
+    }
+}
+
+/// `workspace/executeCommand loft.overview [uri, line, character]`: write the overview site
+/// and answer the page to open — the type's own page when the word at the position names a
+/// type of the buffer's program, else the root.  `None` for any other command.
+fn execute_overview(
+    msg: &Parsed,
+    documents: &HashMap<String, String>,
+    stdlib_dir: &str,
+) -> Option<Result<PathBuf, String>> {
+    let params = obj_get(msg, "params")?;
+    if obj_str(params, "command").as_deref() != Some(OVERVIEW_COMMAND) {
+        return None;
+    }
+    let args = match obj_get(params, "arguments") {
+        Some(Parsed::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    let uri = args.first().and_then(|a| match a {
+        Parsed::Str(s) => Some(s.clone()),
+        _ => None,
+    });
+    let num = |i: usize| {
+        args.get(i)
+            .and_then(Parsed::as_i64)
+            .and_then(|n| u32::try_from(n).ok())
+    };
+    let dir = loft::doc_site::site_dir();
+    let project = uri.as_deref().map(uri_to_path);
+    let (pages, stamp) = overview_pages(project.as_deref());
+    if let Err(e) = loft::doc_site::write_site(&dir, &pages, &stamp) {
+        return Some(Err(format!(
+            "the overview could not be written to {}: {e}",
+            dir.display()
+        )));
+    }
+    if let (Some(uri), Some(line), Some(ch)) = (uri, num(1), num(2))
+        && let Some(text) = documents.get(&uri)
+        && let Some(caps) =
+            loft::lsp::type_capabilities_at(text, "buf.loft", stdlib_dir, line + 1, ch + 1)
+    {
+        let page = loft::doc_site::type_page(&caps);
+        let path = dir.join(&page.name);
+        return Some(
+            loft::file_access::write(loft::file_access::PathText::from_os(&path), &page.text)
+                .map(|()| path)
+                .map_err(|e| e.to_string()),
+        );
+    }
+    Some(Ok(dir.join(loft::doc_site::ROOT)))
+}
+
+/// Every page of the overview and the stamp that says what they depend on: the loft version
+/// (the embedded catalogue is fixed per build), the `loft.lock` of the project `file` sits in,
+/// and the registry index on this machine.
+fn overview_pages(file: Option<&str>) -> (Vec<loft::doc_site::Page>, String) {
+    let mut pages = loft::doc_site::feature_pages();
+    let lock_path = file.and_then(|f| {
+        Path::new(f)
+            .ancestors()
+            .skip(1)
+            .map(|d| d.join("loft.lock"))
+            .find(|p| loft::file_access::is_file(loft::file_access::PathText::from_os(p)))
+    });
+    let lock_text = lock_path
+        .as_ref()
+        .and_then(|p| {
+            loft::file_access::read_to_string(loft::file_access::PathText::from_os(p)).ok()
+        })
+        .unwrap_or_default();
+    let locked: Vec<(String, String)> = loft::lockfile::parse(&lock_text)
+        .map(|l| {
+            l.packages
+                .into_iter()
+                .map(|p| (p.name, p.version))
+                .collect()
+        })
+        .unwrap_or_default();
+    #[cfg(feature = "registry")]
+    let index_stamp = {
+        let (idx_path, _, _) = loft::registry_index::index_paths();
+        let index_stamp =
+            loft::file_access::metadata(loft::file_access::PathText::from_os(&idx_path))
+                .map(|m| format!("{} {:?}", m.len(), m.modified().ok()))
+                .unwrap_or_default();
+        let installed: Vec<(String, String)> = loft::registry_index::installed_packages()
+            .into_iter()
+            .map(|(n, v, _)| (n, v))
+            .collect();
+        let index = loft::install::cached_index();
+        pages.extend(loft::doc_site::library_pages(
+            index.as_ref().map_err(String::as_str),
+            &locked,
+            &installed,
+        ));
+        format!("{index_stamp}\n{installed:?}")
+    };
+    // Built without the registry, the libraries page says so rather than going missing.
+    #[cfg(not(feature = "registry"))]
+    let index_stamp = {
+        let _ = &locked;
+        pages.push(loft::doc_site::Page {
+            name: "libraries.md".to_string(),
+            text: "[← what you can use](index.md)\n\n# Libraries\n\nThis loft was built \
+                   without the package registry, so it lists no libraries.\n"
+                .to_string(),
+        });
+        String::new()
+    };
+    let stamp = format!(
+        "{}\n{}\n{lock_text}\n{index_stamp}",
+        loft::manifest::LOFT_RUNNING_VERSION,
+        lock_path
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    );
+    (pages, stamp)
+}
+
+/// The `window/showDocument` request (LSP 3.16) that opens `page` in the editor.
+fn show_document(id: i64, page: &Path) -> Parsed {
+    obj(vec![
+        ("jsonrpc", Parsed::Str("2.0".into())),
+        ("id", Parsed::Int(id)),
+        ("method", Parsed::Str("window/showDocument".into())),
+        (
+            "params",
+            obj(vec![
+                ("uri", Parsed::Str(file_uri(page))),
+                ("takeFocus", Parsed::Bool(true)),
+            ]),
+        ),
+    ])
 }
 
 /// One "Change to `X`" quick-fix from a diagnostic carrying `data.suggestion`.
@@ -973,27 +1225,104 @@ fn doc_end(text: &str) -> (u32, u32) {
     (line, col)
 }
 
-// ── hover (S5) ───────────────────────────────────────────────────────────────
-/// Resolve the symbol under the cursor and render it as an LSP `Hover`, or `None`
-/// when nothing resolves (the caller sends `null`).  LSP positions are 0-based;
-/// `symbol_at` is loft-native 1-based, so both bump by one at this boundary.
-fn hover_result(text: &str, stdlib_dir: &str, line0: u32, char0: u32) -> Option<Parsed> {
-    // @PLN115: the resolution index resolves LOCALS / METHODS / FIELDS position-
-    // precisely; fall back to the name-based lookup on a definition's own name.
-    let h = loft::lsp::resolve_at(text, stdlib_dir, line0 + 1, char0 + 1)
-        .or_else(|| loft::lsp::symbol_at(text, "buf.loft", stdlib_dir, line0 + 1, char0 + 1))?;
-    let contents = markup(&hover_markdown(&h));
-    Some(obj(vec![("contents", contents)]))
+/// The hover at a position: the symbol there (`hover_result`), and the language construct
+/// there from the feature catalogue (@PLN183 P4) — the construct alone where no symbol answers
+/// (`??`, `match`, `v[1]`), under the symbol's own card for a type keyword (`integer`, `hash`).
+fn hover_with_construct(
+    text: &str,
+    stdlib_dir: &str,
+    line0: u32,
+    char0: u32,
+    file: &str,
+) -> Option<Parsed> {
+    // @PLN183 P5 — on a `use` line, the library's card: the version this project uses, what it
+    // is, and where its guide and API pages are.
+    if let Some(card) = use_line_card(text, line0, char0, file) {
+        return Some(obj(vec![("contents", markup(&card))]));
+    }
+    let construct = loft::lsp::construct_hover(text, stdlib_dir, line0 + 1, char0 + 1);
+    // On punctuation (`[`, `??`, `..`) only the construct answers: the symbol resolution there
+    // reaches the neighbouring name, which is not what the cursor is on.
+    let on_word = text
+        .lines()
+        .nth(line0 as usize)
+        .and_then(|l| l.chars().nth(char0 as usize))
+        .is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let symbol = if construct.is_some() && !on_word {
+        None
+    } else {
+        loft::lsp::resolve_at(text, stdlib_dir, line0 + 1, char0 + 1)
+            .or_else(|| loft::lsp::symbol_at(text, "buf.loft", stdlib_dir, line0 + 1, char0 + 1))
+    };
+    let body = match (symbol, construct) {
+        (Some(h), Some(c)) => format!("{}\n\n---\n\n{c}", hover_markdown(&h)),
+        // @PLN183 P4 — a library's item adds the library's card beneath its own.
+        (Some(h), None) => match library_of(&h) {
+            Some(card) => format!("{}\n\n---\n\n{card}", hover_markdown(&h)),
+            None => hover_markdown(&h),
+        },
+        (None, Some(c)) => c,
+        (None, None) => return None,
+    };
+    Some(obj(vec![("contents", markup(&body))]))
+}
+
+/// The card of the library a resolved definition comes from, when it lives in an installed
+/// copy (`…/registry/<name>-<version>/…`).
+fn library_of(h: &loft::lsp::Hover) -> Option<String> {
+    #[cfg(feature = "registry")]
+    {
+        let dir = Path::new(&h.def_file)
+            .ancestors()
+            .find(|a| a.parent().is_some_and(|p| p.ends_with("registry")))?;
+        loft::doc_site::library_card(dir)
+    }
+    #[cfg(not(feature = "registry"))]
+    {
+        let _ = h;
+        None
+    }
+}
+
+/// On `use <library>` (the cursor on the name), the card of the installed copy this project
+/// resolves.
+fn use_line_card(text: &str, line0: u32, char0: u32, file: &str) -> Option<String> {
+    let line = text.lines().nth(line0 as usize)?;
+    let rest = line.trim_start().strip_prefix("use ")?;
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    let at = line.find(&name)?;
+    if (char0 as usize) < at || char0 as usize >= at + name.len() {
+        return None;
+    }
+    #[cfg(feature = "registry")]
+    {
+        loft::doc_site::library_card(&loft::doc_site::installed_library(
+            &name,
+            Some(Path::new(file)),
+        )?)
+    }
+    #[cfg(not(feature = "registry"))]
+    {
+        let _ = file;
+        None
+    }
 }
 
 /// The hover body: the signature in a `loft` code fence, then the `///` doc.
 fn hover_markdown(h: &loft::lsp::Hover) -> String {
-    let mut s = format!("```loft\n{}\n```", h.signature);
-    if !h.doc.is_empty() {
-        s.push_str("\n\n");
-        s.push_str(&h.doc.join("\n"));
-    }
-    s
+    // @PLN183 — the one renderer's Markdown back-end, so a hover says what the web page and the
+    // REPL say (a worked-example citation is bookkeeping, not prose).
+    let doc = h.doc.join("\n");
+    loft::doc_render::item_markdown(&loft::doc_render::Item {
+        sig: &h.signature,
+        doc: &doc,
+    })
+    .trim_end()
+    .to_string()
 }
 
 /// An LSP `MarkupContent` (markdown).
@@ -1226,7 +1555,8 @@ fn ensure_tag_index(
     mtime: &mut Option<std::time::SystemTime>,
 ) {
     let Some(r) = root else { return };
-    let current = std::fs::metadata(format!("{r}/index/tags.json"))
+    let tags = loft::file_access::PathText::host(r).join("index/tags.json");
+    let current = loft::file_access::metadata(&tags)
         .and_then(|m| m.modified())
         .ok();
     if current == *mtime {
@@ -1324,7 +1654,7 @@ fn resolve_stdlib_dir() -> String {
         exe_dir.join("../default"),    // release layout with default beside the binary dir
     ];
     for c in candidates {
-        if c.is_dir() {
+        if loft::file_access::is_dir(loft::file_access::PathText::from_os(&c)) {
             return c.to_string_lossy().into_owned();
         }
     }
@@ -1454,17 +1784,30 @@ fn initialize_result() -> Parsed {
                     // this to fix-on-save, so it runs unattended: exactly the lane a
                     // conditional fix is barred from.
                     Parsed::Str("source.fixAll".into()),
+                    // @PLN183 P3 — the overview ("loft: what can I use here?").
+                    Parsed::Str(OVERVIEW_KIND.into()),
                 ]),
+            )]),
+        ),
+        (
+            "executeCommandProvider",
+            obj(vec![(
+                "commands",
+                Parsed::Array(vec![Parsed::Str(OVERVIEW_COMMAND.into())]),
             )]),
         ),
         ("inlayHintProvider", Parsed::Bool(true)),
         (
             "completionProvider",
-            obj(vec![(
-                // `.` → member completion; `@` → tracker-tag completion (T4).
-                "triggerCharacters",
-                Parsed::Array(vec![Parsed::Str(".".into()), Parsed::Str("@".into())]),
-            )]),
+            obj(vec![
+                (
+                    // `.` → member completion; `@` → tracker-tag completion (T4).
+                    "triggerCharacters",
+                    Parsed::Array(vec![Parsed::Str(".".into()), Parsed::Str("@".into())]),
+                ),
+                // @PLN183 P4 — an item's documentation is asked for when it is shown.
+                ("resolveProvider", Parsed::Bool(true)),
+            ]),
         ),
         (
             "semanticTokensProvider",

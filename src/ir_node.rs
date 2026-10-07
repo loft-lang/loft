@@ -644,9 +644,9 @@ impl<'a> IrNode<'a> {
     #[must_use]
     pub fn span_pos(&self) -> Position {
         match *self {
-            IrNode::Native(Value::Span(b)) => b.0.clone(),
+            IrNode::Native(Value::Span(b)) => b.0,
             IrNode::Store(s, n) => Position {
-                file: n.field_str(s, ds::SPAN_POS_FILE).into(),
+                file: crate::lexer::intern_file(n.field_str(s, ds::SPAN_POS_FILE)),
                 line: n.field_int(s, ds::SPAN_POS_LINE) as u32,
                 pos: n.field_int(s, ds::SPAN_POS_POS) as u32,
             },
@@ -920,7 +920,7 @@ mod tests {
     fn both_backings(v: &Value) -> (Stores, ValuesVector) {
         let mut stores = Stores::new();
         let _ids = register_ir_schema(&mut stores);
-        let root = ValuesVector::new(stores.database(16));
+        let root = ValuesVector::new(stores.vector_buffer(16));
         materialize_node(&mut stores, root, v);
         (stores, root)
     }

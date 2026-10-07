@@ -17,10 +17,15 @@ use crate::variables::{Function, size as var_size};
 use crate::{manifest, scopes, typedef};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
-use std::fs::{File, metadata, read_dir};
 use std::io::Write;
 use std::string::ToString;
 use typedef::complete_definition;
+
+/// Does the file `path` names exist?  An empty name names nothing: `file_access` reads it
+/// as `.`, which every resolution probe here would take for a hit.
+fn file_exists(path: &str) -> bool {
+    !path.is_empty() && crate::file_access::exists(path)
+}
 
 /// The "you probably meant `pkg::name`" message for an unresolved bare call, or
 /// `None` when no published package exports such a free function (@PLN13 phase 6,
@@ -490,6 +495,54 @@ pub struct Parser {
     /// `param_locks` once the function's def_nr is known (parameters parse BEFORE the def
     /// is created).  Cleared at the start of each parameter list; consumed per function.
     pub(crate) pending_param_locks: Vec<(usize, String)>,
+    /// @PLN187 — each parameter's fact (where its declared type names an alias), in order,
+    /// ferried to `parse_function` like `pending_param_locks` and stored on the parameter's
+    /// attribute (`Attribute::fact`).
+    pub(crate) pending_param_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the fact of the type spelling parsed last (`parser::abstract_alias`).
+    pub(crate) type_fact: crate::data::AliasFact,
+    /// @PLN187 — the fact the CURRENT `parse_type` level produced (an alias, a vector of one);
+    /// a nested level takes its own before returning.
+    pub(crate) own_fact: Option<crate::data::AliasFact>,
+    /// @PLN187 — where the operand just parsed holds an abstract alias
+    /// (`parser::abstract_alias`, the protocol).
+    pub(crate) operand_fact: crate::data::AliasFact,
+    /// @PLN187 — the locals that hold an abstract alias, by `(function, variable)`: a lambda's
+    /// body numbers its variables afresh under its own `context`.
+    pub(crate) abstract_vars: std::collections::HashMap<(u32, u16), crate::data::AliasFact>,
+    /// @PLN187 — the locals declared with a PLAIN type annotation: an abstract value is not
+    /// one of those.
+    pub(crate) plain_declared: std::collections::HashSet<(u32, u16)>,
+    /// @PLN187 — the fact a producer that is not a variable or a call (a field read, a
+    /// literal, a branch's value) left for `settle_operand` to take.
+    pub(crate) produced: Option<crate::data::AliasFact>,
+    /// @PLN187 — the parameter facts the next lambda's body is seeded with: a generic's type
+    /// variable an earlier argument bound (`map(v, |x| …)`).
+    pub(crate) pending_lambda_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the fact the last lambda body yielded (`check_result` records it).
+    pub(crate) lambda_result: crate::data::AliasFact,
+    /// @PLN187 — the fact of the enclosing `match`'s subject, for its tuple patterns.
+    pub(crate) match_subject: crate::data::AliasFact,
+    /// @PLN187 — the facts the arms of the enclosing `match` yielded.
+    pub(crate) match_arm_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the receiver fact of the method step being parsed (`parse_part` sets it).
+    pub(crate) method_receiver: crate::data::AliasFact,
+    /// @PLN187 — the positional and named argument facts of the method call being parsed.
+    pub(crate) method_facts: (
+        Vec<crate::data::AliasFact>,
+        Vec<(String, crate::data::AliasFact)>,
+    ),
+    /// @PLN187 — the method step just parsed was checked as a call; `check_postfix` skips it.
+    pub(crate) method_checked: bool,
+    /// @PLN187 — the fact of the comprehension just parsed, for the literal that holds it.
+    pub(crate) comprehension_fact: Option<crate::data::AliasFact>,
+    /// @PLN187 — the facts a keyed lookup's key fields are declared with, for `parse_key`.
+    pub(crate) pending_key_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the definition the last `call_with_named` selected, or `u32::MAX`: a call
+    /// lowered to an operator (`sort` → `OpSortVector`) no longer names it.
+    pub(crate) last_called: u32,
+    /// @PLN187 — the member name the current postfix step read (`v.insert(…)`).
+    pub(crate) postfix_member: String,
     /// @PLN115 tail — a parameter's `(arg_index, name_pos, name_len)` captured while
     /// reading the signature (positions there, but the def_nr / var_nr are not yet
     /// established), ferried to `parse_function` to record each param's DECLARATION
@@ -755,7 +808,7 @@ pub struct Parser {
     program_scope: Option<crate::resolution_scope::ResolutionScope>,
     /// The entry file, as the lexer already holds it (a shared handle, no copy), for
     /// `program_scope`.  `None` before the entry file is loaded.
-    program_entry: Option<std::sync::Arc<str>>,
+    program_entry: Option<crate::lexer::FileName>,
     /// loft#1687 — per package a declared scope could not satisfy from the cache: the
     /// constraint and the versions the cache holds, so "library not found" can say which
     /// declaration was unmet instead of implying nothing is there.
@@ -1459,6 +1512,10 @@ pub struct Parser {
     /// unchanged; this record is only what the refusal SAYS, because the author never wrote
     /// `const` on the view.
     pub(crate) const_views: std::collections::HashMap<(u32, u16), String>,
+    /// `@FR-Const-Foreign` — the variables value-const because their first binding is a
+    /// `-> const T` producer's value (`bind_foreign_value`): the author wrote no `const`, so a
+    /// refused write names the copy as its cure instead.
+    pub(crate) foreign_bound: std::collections::HashSet<(u32, u16)>,
     /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
     /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
     ///
@@ -1637,6 +1694,7 @@ pub(crate) const OUTPUT_DEFAULT: OutputState = OutputState {
 };
 
 // Sub-modules
+pub(super) mod abstract_alias;
 pub(super) mod builtins;
 pub(super) mod collections;
 pub(super) mod control;
@@ -1647,6 +1705,7 @@ pub(super) mod fields;
 pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
+pub(super) mod store_else;
 pub(super) mod store_text;
 pub(super) mod vectors;
 pub(crate) mod work_buffer;
@@ -1778,6 +1837,24 @@ impl Parser {
             sandbox_param_overrides: HashMap::new(),
             len_bound_locals: HashMap::new(),
             pending_param_locks: Vec::new(),
+            pending_param_facts: Vec::new(),
+            type_fact: crate::data::AliasFact::Plain,
+            own_fact: None,
+            operand_fact: crate::data::AliasFact::Plain,
+            abstract_vars: std::collections::HashMap::new(),
+            plain_declared: std::collections::HashSet::new(),
+            produced: None,
+            pending_lambda_facts: Vec::new(),
+            lambda_result: crate::data::AliasFact::Plain,
+            match_subject: crate::data::AliasFact::Plain,
+            match_arm_facts: Vec::new(),
+            pending_key_facts: Vec::new(),
+            comprehension_fact: None,
+            method_receiver: crate::data::AliasFact::Plain,
+            method_facts: (Vec::new(), Vec::new()),
+            method_checked: false,
+            last_called: u32::MAX,
+            postfix_member: String::new(),
             pending_param_positions: Vec::new(),
             amp_pending: false,
             first_bind_targets: Vec::new(),
@@ -1956,6 +2033,7 @@ impl Parser {
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
             const_views: std::collections::HashMap::new(),
+            foreign_bound: std::collections::HashSet::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
             variant_proven: Vec::new(),
@@ -2410,7 +2488,7 @@ impl Parser {
         // drifted to the NEXT definition — the caret pointed at the following
         // `fn` while the prose named this one, which reads as a diagnostic about
         // a function that is fine.  Point at the definition's own position.
-        let at_pos = self.data.def(self.context).position.clone();
+        let at_pos = self.data.def(self.context).position;
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -2465,7 +2543,7 @@ impl Parser {
         let name = def.original_name().clone();
         let at = crate::keys::PARAM_ADVICE_AT;
         // Emitted after the body is parsed — see `warn_function_complexity`.
-        let at_pos = def.position.clone();
+        let at_pos = def.position;
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -2526,7 +2604,7 @@ impl Parser {
         }
         let name = def.original_name().clone();
         // Emitted after the body is parsed — see `warn_function_complexity`.
-        let at_pos = def.position.clone();
+        let at_pos = def.position;
         diagnostic_at!(
             self.lexer,
             &at_pos,
@@ -2663,16 +2741,15 @@ impl Parser {
                 .parent()
                 .and_then(std::path::Path::parent)
                 .map(|root| root.join("loft.toml"))
-                .filter(|m| m.exists())
+                .filter(|m| crate::file_access::exists(m))
                 .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
                 .and_then(|m| m.name);
-            self.own_lib = from_manifest
-                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()));
+            self.own_lib = from_manifest.or_else(|| crate::file_access::file_stem(path));
         }
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
         if !default && self.program_entry.is_none() {
-            self.program_entry = Some(self.lexer.pos().file.clone());
+            self.program_entry = Some(self.lexer.pos().file);
         }
         self.first_pass = true;
         crate::diagnostics::set_first_pass(true);
@@ -2968,7 +3045,7 @@ impl Parser {
                 continue;
             };
             let fname = self.data.def(d).name().trim_start_matches("n_").to_string();
-            let pos = self.data.def(d).position.clone();
+            let pos = self.data.def(d).position;
             self.lexer.pos_diagnostic(
                 Level::Error,
                 &pos,
@@ -3021,7 +3098,7 @@ impl Parser {
                 continue;
             };
             let fname = self.data.def(d).name().trim_start_matches("n_").to_string();
-            let pos = self.data.def(d).position.clone();
+            let pos = self.data.def(d).position;
             self.lexer.pos_diagnostic(
                 Level::Error,
                 &pos,
@@ -3681,7 +3758,7 @@ impl Parser {
             }
             let struct_name = self.data.def(d_nr).name().to_string();
             let field_name = attr.name.clone();
-            let pos = self.data.def(d_nr).position().clone();
+            let pos = *self.data.def(d_nr).position();
             self.lexer.pos_diagnostic(
                 Level::Warning,
                 &pos,
@@ -3872,14 +3949,14 @@ impl Parser {
                 continue;
             }
             let sym = sym.to_string();
-            let file = def.position().file.clone();
+            let file = def.position().file;
             // Owner = the registered native package whose dir is the longest
             // prefix of this def's source file.
             if let Some((crate_name, _)) = self
                 .data
                 .native_packages
                 .iter()
-                .filter(|(_, pkg_dir)| crate::file_access::is_under(&file, pkg_dir))
+                .filter(|(_, pkg_dir)| crate::file_access::is_under(file.as_str(), pkg_dir))
                 .max_by_key(|(_, pkg_dir)| pkg_dir.len())
             {
                 binds.push((sym, crate_name.replace('-', "_")));
@@ -3925,11 +4002,10 @@ impl Parser {
                 .parent()
                 .and_then(std::path::Path::parent)
                 .map(|root| root.join("loft.toml"))
-                .filter(|m| m.exists())
+                .filter(|m| crate::file_access::exists(m))
                 .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
                 .and_then(|m| m.name);
-            self.own_lib = from_manifest
-                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()));
+            self.own_lib = from_manifest.or_else(|| crate::file_access::file_stem(path));
         }
         self.default = default;
         self.vars.logging = false;
@@ -3950,7 +4026,7 @@ impl Parser {
         self.fn_lambdas.clear();
         self.lexer.parse_string(content, filename);
         if !default && self.program_entry.is_none() {
-            self.program_entry = Some(self.lexer.pos().file.clone());
+            self.program_entry = Some(self.lexer.pos().file);
         }
         self.parse_file();
         self.resolve_deferred_unknowns();
@@ -4059,7 +4135,8 @@ impl Parser {
     /// # Errors
     /// As [`Self::parse_dir`]; and `InvalidData` if the embedded stdlib does not parse.
     pub fn parse_stdlib(&mut self, dir: &str) -> std::io::Result<()> {
-        if std::path::Path::new(dir).is_dir() {
+        // An empty name names nothing (`file_access` would answer for `.`).
+        if !dir.is_empty() && crate::file_access::is_dir(dir) {
             return self.parse_dir(dir, true, false);
         }
         for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
@@ -4090,23 +4167,27 @@ impl Parser {
     }
 
     fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
-        let paths = read_dir(dir)?;
+        let paths = crate::file_access::read_dir(dir)?;
         let mut files: BTreeSet<String> = BTreeSet::new();
-        for path in paths {
-            let p = path?;
+        for p in &paths {
+            let name = p.file_name().unwrap_or_default();
             // A hidden entry is no part of the library: `.loft/` is the cache and log a run
             // writes beside its sources, `.git/` a checkout's history.  Walking one would make
             // what a load reads — and what it costs — depend on what earlier runs left in the
             // directory (loft#1761).
-            if p.file_name().to_string_lossy().starts_with('.') {
+            if name.starts_with('.') {
                 continue;
             }
             let own_file = p
-                .path()
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("loft"));
-            let file_name = p.path().to_string_lossy().to_string();
-            let data = metadata(&file_name)?;
+            // Spelled as `dir` was given (`./lib/x.loft` stays `./lib/x.loft`): it becomes the
+            // source position every diagnostic names.
+            let file_name = std::path::Path::new(dir)
+                .join(name)
+                .to_string_lossy()
+                .to_string();
+            let data = crate::file_access::metadata(&file_name)?;
             if own_file || data.is_dir() {
                 files.insert(file_name);
             }
@@ -4114,7 +4195,7 @@ impl Parser {
         for f in files {
             let types = self.database.types.len();
             let from = self.data.definitions();
-            let data = metadata(&f)?;
+            let data = crate::file_access::metadata(&f)?;
             if data.is_dir() {
                 self.parse_dir_inner(&f, default, debug)?;
             } else {
@@ -4150,8 +4231,8 @@ impl Parser {
         let f_norm = f.replace(other_sep(), sep_str());
         let file = f_norm.rsplit(sep()).next().unwrap_or(f);
         let to = format!("tests/dumps/{file}.txt");
-        let _ = std::fs::create_dir_all("tests/dumps");
-        if let Ok(mut w) = File::create(to.clone()) {
+        let _ = crate::file_access::create_dir_all("tests/dumps");
+        if let Ok(mut w) = crate::file_access::create(&to) {
             let to = self.database.types.len();
             for tp in types..to {
                 writeln!(w, "Type {tp}:{}", self.database.show_type(tp as u16, true))?;
@@ -5059,7 +5140,7 @@ impl Parser {
         // runtime range guard then answered a legal in-range DEFAULT that nothing reports in
         // an ordinary run, where the same store into `u8` is refused with the cure named;
         // and the checked cast `as integer limit(0, 7)?` was a no-op (loft#1593).
-        if d.forced_size.is_none() && (d.is_signed32_template() || d.is_wide_template()) {
+        if d.is_full_integer() {
             return false;
         }
         s.min < d.min || s.max > d.max
@@ -5102,7 +5183,7 @@ impl Parser {
         // `limit` range wider than 65 536 codes has no 4-byte width bucket
         // (`range_to_width` answers 8), so asking width of it refused `x & 2147483647`
         // into an `i32` — the mask the refusal itself offers as the cure (loft#1814).
-        let full = s.forced_size.is_none() && (s.is_signed32_template() || s.is_wide_template());
+        let full = s.is_full_integer();
         full && s.byte_width(false) > d_width
     }
 
@@ -5164,7 +5245,7 @@ impl Parser {
             return None;
         };
         // The full integer is no narrow slot; a width alias or a user range is.
-        if spec.forced_size.is_none() && (spec.is_wide_template() || spec.is_signed32_template()) {
+        if spec.is_full_integer() {
             return None;
         }
         let (lo, hi) = (i64::from(spec.usable_min(true)), spec.usable_max(true));
@@ -5760,7 +5841,7 @@ impl Parser {
     ) -> bool {
         let ctx = StoreCtx {
             what: what.to_string(),
-            at: at.cloned(),
+            at: at.copied(),
             never_error: false,
             dense: false,
         };
@@ -5801,7 +5882,7 @@ impl Parser {
     ) -> bool {
         let ctx = StoreCtx {
             what: what.to_string(),
-            at: at.cloned(),
+            at: at.copied(),
             never_error: true,
             dense: false,
         };
@@ -5869,7 +5950,7 @@ impl Parser {
     /// has classified yet can only warn).
     fn store_slot(&self) -> (String, Option<Position>, bool) {
         match self.store_ctx.last() {
-            Some(c) => (c.what.clone(), c.at.clone(), c.never_error),
+            Some(c) => (c.what.clone(), c.at, c.never_error),
             None => ("a slot".to_string(), None, true),
         }
     }
@@ -6304,7 +6385,7 @@ impl Parser {
             // u8?)` warned and stored null into the non-null `u8` (loft#1815).  Only a narrow
             // integer member is affected — a heap member never escalates either way.
             let (what, at, lenient, dense) = match self.store_ctx.last() {
-                Some(c) => (c.what.clone(), c.at.clone(), c.never_error, c.dense),
+                Some(c) => (c.what.clone(), c.at, c.never_error, c.dense),
                 None => ("this tuple".to_string(), None, false, false),
             };
             for (i, (s, d)) in src_elems.iter().zip(dst_elems.iter()).enumerate() {
@@ -6312,7 +6393,7 @@ impl Parser {
                 let elem = items.get_mut(i).unwrap_or(&mut placeholder);
                 self.store_ctx.push(StoreCtx {
                     what: format!("element {i} of {what}"),
-                    at: at.clone(),
+                    at,
                     never_error: lenient,
                     dense,
                 });
@@ -6622,6 +6703,20 @@ impl Parser {
                 let orig = std::mem::replace(code, Value::Null);
                 if let Value::Var(_) = &orig {
                     *code = self.cl("OpCreateStack", &[orig]);
+                } else if let Value::TupleGet(t, i) = orig.unspan() {
+                    // `@FR-T-Record` / `@FR-B-Ref-Lvalue` — a tuple's text member is a place: the
+                    // parameter links to it, as `&s` links to a text local, so the callee's write
+                    // reaches the tuple.  A member no link can honour is refused, never copied —
+                    // a work copy would take the write and drop it.
+                    let (t, i) = (*t, *i);
+                    if let Some(place) = self.scalar_place_ref(&orig) {
+                        *code = place;
+                    } else {
+                        if let Err(elem) = self.linkable_tuple_member(t, i) {
+                            self.refuse_tuple_member_link(&elem, i);
+                        }
+                        *code = orig;
+                    }
                 } else {
                     let wv = self.vars.work_text(&mut self.lexer);
                     let mut ls = Vec::new();
@@ -7182,12 +7277,8 @@ impl Parser {
 
     /// loft#1382 — an arm-agreement mismatch deferred until statement position is known.
     pub(crate) fn arm_mismatch_report(&mut self, m: &ArmMismatch) {
-        let (test, should, context, at) = (
-            m.test.clone(),
-            m.should.clone(),
-            m.context.clone(),
-            m.at.clone(),
-        );
+        let (test, should, context, at) =
+            (m.test.clone(), m.should.clone(), m.context.clone(), m.at);
         self.validate_convert(&context, &test, &should, &at);
     }
 
@@ -9074,7 +9165,7 @@ impl Parser {
             .map(|a| a.hidden)
             .collect();
         let tmpl_vars = self.data.definitions[g_nr as usize].variables.clone();
-        let tmpl_pos = self.data.definitions[g_nr as usize].position.clone();
+        let tmpl_pos = self.data.definitions[g_nr as usize].position;
         // The per-element iteration stride for vector<T=concrete> — from the
         // ONE home (`vector_elem_iter_stride`), threaded into the fixup so the
         // generic path can never drift from the direct-emission stride again.
@@ -9350,7 +9441,7 @@ impl Parser {
         let mut inst = self.data.def_nr(&name);
         let rec = self.data.def(d).closure_record();
         if inst == u32::MAX {
-            let pos = self.data.definitions[d as usize].position.clone();
+            let pos = self.data.definitions[d as usize].position;
             let attrs: Vec<(String, Type, Value, bool, bool)> = self.data.definitions[d as usize]
                 .attributes
                 .iter()
@@ -9497,7 +9588,7 @@ impl Parser {
         if existing != u32::MAX {
             return existing;
         }
-        let pos = self.data.definitions[rec as usize].position.clone();
+        let pos = self.data.definitions[rec as usize].position;
         let fields: Vec<(String, Type, bool)> = self.data.definitions[rec as usize]
             .attributes
             .iter()
@@ -10151,7 +10242,7 @@ impl Parser {
         let (out, clashes) = self.infer_associated(g_nr, var_bindings);
         for text in clashes {
             let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
-            let peek_pos = self.lexer.peek().position.clone();
+            let peek_pos = self.lexer.peek().position;
             self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
         }
         out
@@ -10642,7 +10733,7 @@ impl Parser {
         for message in &messages {
             let msg =
                 crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
-            let peek_pos = self.lexer.peek().position.clone();
+            let peek_pos = self.lexer.peek().position;
             self.lexer.pos_diagnostic(Level::Error, &peek_pos, &msg);
         }
         messages.is_empty()
@@ -13070,8 +13161,8 @@ impl Parser {
                 _ => {}
             }
         }
-        let pos = self.lexer.pos().clone();
-        let arg_pos = vec![pos.clone(); list.len()];
+        let pos = *self.lexer.pos();
+        let arg_pos = vec![pos; list.len()];
         let saved = self.data.source;
         self.data.source = home;
         let before_refs: std::collections::HashSet<u16> =
@@ -13929,6 +14020,27 @@ impl Parser {
         // The call NAME's position, forwarded to `call_nr` for the arc-C steer caret.
         name_pos: Option<&Position>,
     ) -> Type {
+        let tp = self.call_with_named_inner(
+            code, d_nr, positional, pos_types, named, is_method, arg_pos, name_pos,
+        );
+        // @PLN187 — recorded AFTER: a generic's instance parses its body in here, and the
+        // calls in that body are not this one.
+        self.last_called = d_nr;
+        tp
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_with_named_inner(
+        &mut self,
+        code: &mut Value,
+        d_nr: u32,
+        positional: &[Value],
+        pos_types: &[Type],
+        named: &[(String, Value, Type)],
+        is_method: bool,
+        arg_pos: &[Position],
+        name_pos: Option<&Position>,
+    ) -> Type {
         if named.is_empty() {
             return self.call_nr(
                 code, d_nr, positional, pos_types, is_method, arg_pos, name_pos,
@@ -14405,7 +14517,7 @@ impl Parser {
             ra
         } else {
             let name = format!("__closure_u_{}", self.data.def(ra).name);
-            let pos = self.data.def(ra).position().clone();
+            let pos = *self.data.def(ra).position();
             let u = self.data.add_def(&name, &pos, DefType::Struct);
             self.merge_closure_attrs(u, ra, a);
             u
@@ -16608,6 +16720,187 @@ impl Parser {
         tp
     }
 
+    /// One `[visibility]` census line for [`Self::check_visibility`]: the use, its kind and item,
+    /// and the declaration a rewrite starts from — the struct's or the variant's own for a field,
+    /// the owning type's for a literal or a variant.  Paths canonical, so a census run from any
+    /// directory names the same file.
+    fn print_census_site(&self, kind: &str, d_nr: u32, f_nr: usize) {
+        let def = self.data.def(d_nr);
+        let owner = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            self.data.def(def.parent)
+        } else {
+            def
+        };
+        let item = def
+            .attributes
+            .get(f_nr)
+            .map_or_else(|| def.name.clone(), |a| format!("{}.{}", def.name, a.name));
+        let at = if f_nr == usize::MAX {
+            &owner.position
+        } else {
+            &def.position
+        };
+        let canon = |f: &str| {
+            let path = crate::file_access::PathText::host(f);
+            crate::file_access::canonical(&path).map_or_else(|| f.to_string(), |p| p.native())
+        };
+        let here = self.lexer.pos();
+        eprintln!(
+            "[visibility] {}:{} {kind} {item} — declared in {}:{}",
+            canon(&here.file),
+            here.line,
+            canon(&owner.position.file),
+            at.line
+        );
+    }
+
+    /// The name a diagnostic gives the file `file` declares in — its last path part without the
+    /// `.loft`, which is what a program qualifies it by.
+    fn library_of(file: &str) -> String {
+        let path = crate::file_access::PathText::host(file);
+        let last = path.parts().last().map_or("", String::as_str);
+        last.rsplit_once('.')
+            .map_or(last, |(stem, _)| stem)
+            .to_string()
+    }
+
+    /// @PLN187 (@C140, @FR-F-Visible) — the one visibility check for a use, OUTSIDE its declaring file, of a
+    /// struct or variant field (`field`: a read or a write; `literal-field`, `pattern-field`,
+    /// `key`), of a struct literal (`literal`) and of an enum variant (`variant`, built or
+    /// matched).  `d_nr` is the struct or the variant; `f_nr` its field, or `usize::MAX` for the
+    /// type itself.  A use that lacks its `pub` is:
+    ///
+    /// * printed under `LOFT_TRACE_VISIBILITY=1` — the census (`scripts/pub_census.sh`), so the
+    ///   census lists exactly what is still missing and is empty once everything is migrated;
+    /// * refused under `LOFT_PUB_ENFORCE=1` — the rule, with the item, its file and the cure.
+    ///
+    /// Building a type that is not `pub` at all is [`Self::refuse_building_a_name_only_type`]'s.
+    pub(crate) fn check_visibility(&mut self, kind: &str, d_nr: u32, f_nr: usize) {
+        let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some());
+        let enforce = crate::env_once!(std::env::var_os("LOFT_PUB_ENFORCE").is_some());
+        if self.first_pass || !(trace || enforce) || d_nr >= self.data.definitions() {
+            return;
+        }
+        let def = self.data.def(d_nr);
+        // A variant's fields and name are its enum's: the enum's file is the one that decides.
+        let owner = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            self.data.def(def.parent)
+        } else {
+            def
+        };
+        // A generic INSTANCE carries the source it was minted in and its template's position:
+        // the file it was declared in is the position's.
+        if owner.source == self.data.source
+            || owner.position.file == self.lexer.pos().file
+            || owner.name.starts_with("__")
+        {
+            return;
+        }
+        let attr = def.attributes.get(f_nr);
+        // A METHOD is stored as a `Routine` member: its visibility is its function's `pub`.
+        if attr.is_some_and(|a| {
+            a.name.starts_with("__") || a.hidden || matches!(a.typedef.base(), Type::Routine(_))
+        }) {
+            return;
+        }
+        // An enum's members are its VALUES (`Format.NotExists`): using one is using a variant.
+        let kind = if matches!(def.def_type, DefType::Enum) && attr.is_some() {
+            "variant"
+        } else {
+            kind
+        };
+        let lib = Self::library_of(&owner.position.file);
+        let (why, fix) = match (kind, attr) {
+            ("field" | "literal-field" | "pattern-field" | "key", Some(a)) if !a.pub_field => (
+                format!(
+                    "field `{}` of `{}` is not `pub` in `{lib}`",
+                    a.name, def.name
+                ),
+                format!("`{lib}` declares it `pub {}`", a.name),
+            ),
+            ("literal", _) if !owner.pub_visible => {
+                if !trace {
+                    return; // `refuse_building_a_name_only_type` refuses it
+                }
+                (
+                    format!("`{}` is not `pub` in `{lib}`", owner.name),
+                    format!("`{lib}` declares it `pub`"),
+                )
+            }
+            ("literal", _) => {
+                let Some(private) = def.attributes.iter().find(|a| {
+                    !a.pub_field
+                        && !a.hidden
+                        && !a.name.starts_with("__")
+                        && a.name != "enum"
+                        && !matches!(a.typedef.base(), Type::Routine(_))
+                }) else {
+                    return;
+                };
+                (
+                    format!(
+                        "`{}` cannot be built outside `{lib}`: its field `{}` is not `pub`",
+                        def.name, private.name
+                    ),
+                    format!(
+                        "`{lib}` declares every field of `{}` `pub`, or the program builds it \
+                         with `{lib}`'s functions",
+                        def.name
+                    ),
+                )
+            }
+            ("variant", _) if !owner.pub_visible => (
+                format!(
+                    "`{}` is a variant of `{}`, which is not `pub` in `{lib}`",
+                    def.name, owner.name
+                ),
+                format!("`{lib}` declares `pub enum {}`", owner.name),
+            ),
+            _ => return,
+        };
+        if trace {
+            self.print_census_site(kind, d_nr, f_nr);
+        }
+        if enforce {
+            diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
+        }
+    }
+
+    /// @PLN187 (@C140, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
+    /// `pub` signature there) can be named, passed and stored there, never BUILT: a literal of it
+    /// outside its file is refused.  Building a non-`pub` type was refused before name-only
+    /// types existed, through the name itself; this keeps that refusal now the name is reachable.
+    /// The standard library's types are left to its migration (@PLN187 step 4).
+    pub(crate) fn refuse_building_a_name_only_type(&mut self, td_nr: u32) {
+        if self.first_pass || td_nr >= self.data.definitions() {
+            return;
+        }
+        let def = self.data.def(td_nr);
+        let owner_nr = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            def.parent
+        } else {
+            td_nr
+        };
+        let owner = self.data.def(owner_nr);
+        if owner.source == self.data.source
+            || owner.source == crate::data::STD_SOURCE
+            || owner.position.file == self.lexer.pos().file
+            || owner.pub_visible
+            || !self.data.is_name_only(owner_nr)
+        {
+            return;
+        }
+        let lib = Self::library_of(&owner.position.file);
+        let name = owner.name.clone();
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{name}` is not `pub` in `{lib}`, so it cannot be built outside that file: `{lib}` \
+             only lets its `pub` functions hand it out.\n  fix: build it with `{lib}`'s \
+             functions, or `{lib}` declares it `pub`"
+        );
+    }
+
     /// `LOFT_TRACE_EQ_IDENTITY=1` — the census of @C91's flip (`@FR-E-Eq`): one line per
     /// `==` / `!=` this parse lowered to IDENTITY (`OpEqRef` / `OpNeRef`), naming the site, both
     /// operand types and the kind whose answer the content `==` changes.  Silent on a test
@@ -17362,7 +17655,7 @@ impl Parser {
             if arg.unspan() == self.data.def(d_nr).attributes()[i].value.unspan() {
                 continue; // explicitly the default → not an override
             }
-            let pos = self.lexer.peek_pos().clone();
+            let pos = *self.lexer.peek_pos();
             self.sandbox_param_overrides
                 .entry(self.context)
                 .or_default()
@@ -17663,7 +17956,7 @@ impl Parser {
             // @FR-N-Store — the parameter is a slot when this binding is REPORTED and the callee
             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
-            let arg_at = actual_code.span_pos().cloned();
+            let arg_at = actual_code.span_pos().copied();
             // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
             // null there" does not describe it, and its cure (`?`) would turn the place into a
             // value.  What can go wrong is that the element is absent: a link to an absent place
@@ -17727,8 +18020,8 @@ impl Parser {
                     // fall back to the cursor.
                     let pos = arg_pos
                         .get(nr)
-                        .cloned()
-                        .unwrap_or_else(|| self.lexer.pos().clone());
+                        .copied()
+                        .unwrap_or_else(|| *self.lexer.pos());
                     // loft#1008 — a `both`/`self` METHOD is registered only as
                     // `t_<len><Type>_<name>`, so its bare name has no value to bind. In a
                     // fn-ref ARGUMENT position it survives as an untyped placeholder and this
@@ -18617,7 +18910,7 @@ impl Parser {
         // Tier-0 lazy auto-`use`: the file the lexer is on right now, captured
         // before the use-loop may switch away.  Scanned for `lib::` references
         // after the use-region (see the load loop below).
-        let auto_use_scan_file = self.lexer.pos().file.clone();
+        let auto_use_scan_file = self.lexer.pos().file;
         self.claim_declared_type_names(&auto_use_scan_file);
         // A file that writes any `use` — or the stdlib, parsed with
         // `self.default` — is in *explicit* mode: the author manages their
@@ -18761,7 +19054,7 @@ impl Parser {
                     let f = self.lib_path(&id);
                     let refused = self.lexer.diagnostics().level() == Level::Fatal
                         && level_before != Level::Fatal;
-                    let f_exists = std::path::Path::new(&f).exists() || {
+                    let f_exists = file_exists(&f) || {
                         #[cfg(feature = "wasm")]
                         {
                             crate::wasm::virt_fs_get(&f).is_some()
@@ -18822,7 +19115,7 @@ impl Parser {
             // meet, it surfaced deep inside a third, published, CI-gated library
             // as `Unknown variable` on a tuple destructure or `Expect token ;` on
             // a tuple field, with nothing naming resolution.
-            let here = self.lexer.pos().file.clone();
+            let here = self.lexer.pos().file;
             if let Some(pos) = self
                 .pending_pkg_deps
                 .iter()
@@ -18836,7 +19129,7 @@ impl Parser {
                 } else {
                     self.lib_path(&dep_id)
                 };
-                if std::path::Path::new(&f).exists() {
+                if file_exists(&f) {
                     let cur = &self.lexer.pos().file;
                     self.todo_files.push((cur.to_string(), self.data.source));
                     self.data.use_add(&dep_id);
@@ -18874,22 +19167,25 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&*auto_use_scan_file)
-            {
-                c.clone()
-            } else {
-                let src = self
-                    .lexer
-                    .source_text(&auto_use_scan_file)
-                    .map_or_else(|| Self::read_source(&auto_use_scan_file), str::to_string);
-                let pair = (
-                    crate::libscan::scan_qualified_lib_refs(&src),
-                    crate::libscan::scan_method_calls(&src),
-                );
-                self.auto_use_scan_cache
-                    .insert(auto_use_scan_file.to_string(), pair.clone());
-                pair
-            };
+            let (refs, calls) =
+                if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file.as_str()) {
+                    c.clone()
+                } else {
+                    let src = self
+                        .lexer
+                        .source_text(auto_use_scan_file.as_str())
+                        .map_or_else(
+                            || Self::read_source(auto_use_scan_file.as_str()),
+                            str::to_string,
+                        );
+                    let pair = (
+                        crate::libscan::scan_qualified_lib_refs(&src),
+                        crate::libscan::scan_method_calls(&src),
+                    );
+                    self.auto_use_scan_cache
+                        .insert(auto_use_scan_file.to_string(), pair.clone());
+                    pair
+                };
             // Tier-0: `lib::x` — the library is named directly.
             let mut to_load: Vec<String> = Vec::new();
             for name in refs {
@@ -18904,7 +19200,7 @@ impl Parser {
             // via the trigger surface of the current package (+ trigger-enabled
             // deps), derived once and cached.
             if !calls.is_empty() {
-                let map = self.trigger_map(&auto_use_scan_file);
+                let map = self.trigger_map(auto_use_scan_file.as_str());
                 // Catalog fallback is built lazily — only read index.json once a
                 // method misses the local (current package + deps) trigger map.
                 let mut catalog: Option<std::collections::HashMap<String, String>> = None;
@@ -18948,7 +19244,7 @@ impl Parser {
                     self.record_use_path(&n, &f);
                     continue;
                 }
-                if std::path::Path::new(&f).exists() {
+                if file_exists(&f) {
                     resolved.push((n, f));
                 }
             }
@@ -19099,8 +19395,8 @@ impl Parser {
         if !to_apply.is_empty() {
             // The file these imports serve: a definition written in it is never one of its
             // private imports (see `Data::note_source_file`).
-            let here_file = std::sync::Arc::clone(&self.lexer.pos().file);
-            self.data.note_source_file(cur, &here_file);
+            let here_file = self.lexer.pos().file;
+            self.data.note_source_file(cur, here_file);
         }
         for pi in to_apply {
             // retain a copy so `resolve_deferred_unknowns` can re-apply
@@ -19131,7 +19427,7 @@ impl Parser {
                                     name.clone(),
                                     bind.clone(),
                                     pi.public,
-                                    self.lexer.pos().clone(),
+                                    *self.lexer.pos(),
                                 ));
                             }
                         } else {
@@ -19155,7 +19451,7 @@ impl Parser {
         if let Some(c) = crate::wasm::virt_fs_get(filename) {
             return c;
         }
-        std::fs::read_to_string(filename).unwrap_or_default()
+        crate::file_access::read_to_string(filename).unwrap_or_default()
     }
 
     /// Tier-1: build (once, cached) the `method name -> providing package` map
@@ -19173,7 +19469,7 @@ impl Parser {
             .map(std::path::Path::to_path_buf);
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
-            if toml.exists() {
+            if crate::file_access::exists(&toml) {
                 Self::add_pkg_triggers(&toml, &d, &mut map);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
                     for (dep, _ver) in &man.dependencies {
@@ -19209,7 +19505,7 @@ impl Parser {
         }
         let Some(name) = man.name else { return };
         let entry = man.entry.unwrap_or_else(|| format!("src/{name}.loft"));
-        let src = std::fs::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
+        let src = crate::file_access::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
         for mt in crate::triggers::derive_triggers(&src).methods {
             map.entry(mt.name).or_insert_with(|| name.clone());
         }
@@ -19257,8 +19553,8 @@ impl Parser {
     /// probe directory — so `src/x.loft` and an absolute form must compare equal.
     fn is_current_source(&self, f: &str) -> bool {
         let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
-        let cur = self.lexer.pos().file.clone();
-        !cur.is_empty() && canon(&cur) == canon(f)
+        let cur = self.lexer.pos().file;
+        !cur.is_empty() && canon(cur.as_str()) == canon(f)
     }
 
     fn lib_path(&mut self, id: &str) -> String {
@@ -19342,15 +19638,15 @@ impl Parser {
         // declares, a `--lib` directory it was given, a sidecar lock it pinned.  What
         // follows resolves from the registry, which is a property of the BOX.  So this is
         // the one line where the two can be told apart.
-        let mut named_by_the_project = std::path::Path::new(&f).exists();
+        let mut named_by_the_project = file_exists(&f);
         // @PLN143 arc B — the scope is a property of the PROGRAM, so it is answered ONCE,
         // here, and handed to each probe that needs it.  Re-deriving it inside a probe
         // would put the old three-sites-must-agree brittleness back with one extra step
         // between it and the reader.
         if self.program_scope.is_none() {
-            let entry = self.program_entry.clone();
+            let entry = self.program_entry.map(crate::lexer::FileName::as_str);
             self.program_scope = Some(crate::resolution_scope::resolution_scope(
-                entry.as_deref().unwrap_or(&cur_script),
+                entry.unwrap_or(&cur_script),
             ));
         }
         let scope = self
@@ -19370,7 +19666,7 @@ impl Parser {
         }
         self.probe_auto_install(id, &mut f, &cur_script, &scope);
         self.probe_cache_newest(id, &mut f, &cur_script, &scope);
-        if !named_by_the_project && std::path::Path::new(&f).exists() {
+        if !named_by_the_project && file_exists(&f) {
             self.undeclared_registry_dep(id, &cur_script);
         }
         Self::probe_cur_dir_flat(id, cur_dir, &mut f);
@@ -19405,11 +19701,10 @@ impl Parser {
         if self.lib_dirs.is_empty() || std::env::var_os("LOFT_NO_LIB_OUTRANKED").is_some() {
             return;
         }
-        if !std::path::Path::new(resolved).exists() {
+        if !file_exists(resolved) {
             return;
         }
-        let canon =
-            |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| std::path::PathBuf::from(p));
+        let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
         let winner = canon(resolved);
         let lib_dirs = self.lib_dirs.clone();
         let Some((dir, provided)) = lib_dirs.iter().find_map(|l| {
@@ -19417,7 +19712,7 @@ impl Parser {
             let packaged = format!("{l}{0}{id}{0}src{0}{id}.loft", sep_str());
             let provided = [flat, packaged]
                 .into_iter()
-                .find(|c| std::path::Path::new(c).exists())?;
+                .find(|c| crate::file_access::exists(c))?;
             if winner.starts_with(canon(l)) {
                 return None;
             }
@@ -19747,8 +20042,8 @@ impl Parser {
     #[cfg(feature = "registry")]
     fn script_in_registry_cache(cur_script: &str) -> bool {
         crate::file_access::is_under_canonical(
-            &crate::file_access::PathText::host(cur_script),
-            &crate::file_access::PathText::from_os(&crate::registry_index::cache_dir()),
+            crate::file_access::PathText::host(cur_script),
+            crate::file_access::PathText::from_os(&crate::registry_index::cache_dir()),
         )
     }
 
@@ -19871,10 +20166,12 @@ impl Parser {
         };
         files
             .filter(|f| {
-                std::fs::metadata(f)
-                    .and_then(|m| m.modified())
-                    // A clock that cannot answer is not evidence of a change: say no.
-                    .is_ok_and(|m| m > started)
+                // An empty name names nothing (`file_access` would answer for `.`).
+                !f.is_empty()
+                    && crate::file_access::metadata(f)
+                        .and_then(|m| m.modified())
+                        // A clock that cannot answer is not evidence of a change: say no.
+                        .is_ok_and(|m| m > started)
             })
             .map(str::to_string)
             .collect()
@@ -19940,7 +20237,7 @@ impl Parser {
             format!("{cur_dir}{sep}lib{sep}{id}.loft"),
         ]
         .into_iter()
-        .find(|c| std::path::Path::new(c).exists())
+        .find(|c| crate::file_access::exists(c))
     }
 
     /// The `[package] name` of the package the current file belongs to (loft#949).
@@ -20178,11 +20475,11 @@ impl Parser {
     fn same_package(a: &str, b: &str) -> bool {
         let root = |p: &str| -> Option<std::path::PathBuf> {
             let mut dir = crate::file_access::try_plain_canonical(std::path::Path::new(p))?;
-            if dir.is_file() {
+            if crate::file_access::is_file(&dir) {
                 dir = dir.parent()?.to_path_buf();
             }
             loop {
-                if dir.join("loft.toml").exists() {
+                if crate::file_access::exists(dir.join("loft.toml")) {
                     return Some(dir);
                 }
                 dir = dir.parent()?.to_path_buf();
@@ -20209,7 +20506,7 @@ impl Parser {
         let mut search = crate::file_access::try_plain_canonical(std::path::Path::new(start));
         while let Some(dir) = search {
             let manifest_path = dir.join("loft.toml");
-            if manifest_path.exists() {
+            if crate::file_access::exists(&manifest_path) {
                 if let Some(manifest) =
                     crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                 {
@@ -20264,7 +20561,7 @@ impl Parser {
     /// `<id>.loft` in the current working directory.
     fn probe_project_lib(id: &str) -> String {
         let f = format!("lib{0}{id}.loft", sep_str());
-        if std::path::Path::new(&f).exists() {
+        if file_exists(&f) {
             f
         } else {
             format!("{id}.loft")
@@ -20275,7 +20572,7 @@ impl Parser {
     /// (called for the script's own dir, then for the base dir when the
     /// script lives inside a `/tests/` tree).
     fn probe_dir_lib(id: &str, dir: &str, f: &mut String) {
-        if !dir.is_empty() && !std::path::Path::new(f).exists() {
+        if !dir.is_empty() && !file_exists(f) {
             *f = format!("{dir}{0}lib{0}{id}.loft", sep_str());
         }
     }
@@ -20303,7 +20600,7 @@ impl Parser {
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
         loop {
             let manifest_path = search_dir.join("loft.toml");
-            if manifest_path.exists() {
+            if crate::file_access::exists(&manifest_path) {
                 let rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
@@ -20321,13 +20618,13 @@ impl Parser {
     }
 
     fn probe_manifest_path_dep(&mut self, id: &str, cur_dir: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() || cur_dir.is_empty() {
+        if file_exists(f) || cur_dir.is_empty() {
             return;
         }
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
         loop {
             let manifest_path = search_dir.join("loft.toml");
-            if manifest_path.exists() {
+            if crate::file_access::exists(&manifest_path) {
                 let dep_rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
@@ -20340,16 +20637,15 @@ impl Parser {
                 if let Some(rel) = dep_rel {
                     let pkg_root = search_dir.join(rel);
                     let dep_manifest = pkg_root.join("loft.toml");
-                    let entry = dep_manifest
-                        .exists()
+                    let entry = crate::file_access::exists(&dep_manifest)
                         .then(|| crate::manifest::read_manifest(&dep_manifest.to_string_lossy()))
                         .flatten()
                         .and_then(|m| m.entry)
                         .unwrap_or_else(|| format!("src{}{id}.loft", sep_str()));
                     let file = pkg_root.join(entry);
-                    if file.exists() {
+                    if crate::file_access::exists(&file) {
                         *f = file.to_string_lossy().to_string();
-                        if dep_manifest.exists() {
+                        if crate::file_access::exists(&dep_manifest) {
                             self.register_native_manifest(&dep_manifest, &pkg_root);
                         }
                     }
@@ -20378,7 +20674,7 @@ impl Parser {
     /// it does not, the two declarations disagree and the program is refused, naming both
     /// ([`Self::loaded_copy_meets_declaring_range`]).
     fn probe_root_path_dep(&mut self, id: &str, cur_script: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) else {
@@ -20386,7 +20682,7 @@ impl Parser {
         };
         let root_dir = root.to_string_lossy().to_string();
         self.probe_manifest_path_dep(id, &root_dir, f);
-        if std::path::Path::new(f).exists()
+        if file_exists(f)
             && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
         {
             self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
@@ -20446,19 +20742,19 @@ impl Parser {
     /// found directly (not via `lib_path_manifest`), the sibling's own
     /// `loft.toml` must be registered so its `#native` symbols resolve.
     fn probe_sibling_package(&mut self, id: &str, cur_dir: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() || cur_dir.is_empty() {
+        if file_exists(f) || cur_dir.is_empty() {
             return;
         }
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
         loop {
-            if search_dir.join("loft.toml").exists() {
+            if crate::file_access::exists(search_dir.join("loft.toml")) {
                 if let Some(parent) = search_dir.parent()
                     && let Some(path) = Self::find_sibling_file(parent, id)
                 {
                     *f = path.to_string_lossy().to_string();
                     let pkg_root = parent.join(id);
                     let manifest = pkg_root.join("loft.toml");
-                    if manifest.exists() {
+                    if crate::file_access::exists(&manifest) {
                         self.register_native_manifest(&manifest, &pkg_root);
                     }
                 }
@@ -20475,16 +20771,16 @@ impl Parser {
     /// flat `<parent>/<id>.loft`.
     fn find_sibling_file(parent: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
         let nested = parent.join(id).join("src").join(format!("{id}.loft"));
-        if nested.exists() {
+        if crate::file_access::exists(&nested) {
             return Some(nested);
         }
         let flat = parent.join(format!("{id}.loft"));
-        flat.exists().then_some(flat)
+        crate::file_access::exists(&flat).then_some(flat)
     }
 
     /// A directory named after the current script (minus the `.loft` suffix).
     fn probe_script_sibling_dir(id: &str, cur_script: &str, f: &mut String) {
-        if !std::path::Path::new(f).exists() && cur_script.len() >= 5 {
+        if !file_exists(f) && cur_script.len() >= 5 {
             *f = format!(
                 "{}{}{id}.loft",
                 &cur_script[0..cur_script.len() - 5],
@@ -20496,13 +20792,13 @@ impl Parser {
     /// `--lib` / `--project` command-line flag directories, flat layout.
     /// Registers any discovered `loft.toml` in the file's ancestry.
     fn probe_cmdline_lib_dirs(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let lib_dirs = self.lib_dirs.clone();
         for l in &lib_dirs {
             let candidate = format!("{l}{}{id}.loft", sep_str());
-            if std::path::Path::new(&candidate).exists() {
+            if crate::file_access::exists(&candidate) {
                 f.clone_from(&candidate);
                 self.register_manifest_in_ancestors(&candidate);
                 break;
@@ -20520,7 +20816,7 @@ impl Parser {
             .map(std::path::Path::to_path_buf);
         while let Some(dir) = search {
             let manifest = dir.join("loft.toml");
-            if manifest.exists() {
+            if crate::file_access::exists(&manifest) {
                 self.register_native_manifest(&manifest, &dir);
                 return;
             }
@@ -20531,7 +20827,7 @@ impl Parser {
     /// `--lib` / `--project` directories, packaged layout
     /// (`<dir>/<id>/src/<id>.loft`).
     fn probe_cmdline_lib_dirs_manifest(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let lib_dirs = self.lib_dirs.clone();
@@ -20545,7 +20841,7 @@ impl Parser {
 
     /// `LOFT_LIB` env var, flat layout (`<dir>/<id>.loft`).
     fn probe_loft_lib_flat(id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let Some(v) = env::var_os("LOFT_LIB") else {
@@ -20553,7 +20849,7 @@ impl Parser {
         };
         for l in env::split_paths(&v) {
             let candidate = l.join(format!("{id}.loft"));
-            if candidate.exists() {
+            if crate::file_access::exists(&candidate) {
                 *f = candidate.to_string_lossy().replace(other_sep(), sep_str());
                 return;
             }
@@ -20562,7 +20858,7 @@ impl Parser {
 
     /// `LOFT_LIB` env var, packaged layout (via `lib_path_manifest`).
     fn probe_loft_lib_manifest(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let Some(v) = env::var_os("LOFT_LIB") else {
@@ -20579,7 +20875,7 @@ impl Parser {
 
     /// `~/.loft/lib/<id>/src/<id>.loft` — packages installed via `loft install`.
     fn probe_user_installed(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let home = env::var("HOME")
@@ -20762,7 +21058,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) -> bool {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return false;
         }
         // `None` is `Bare` scope: nothing is declared, so nothing pins this run.  There
@@ -20773,7 +21069,7 @@ impl Parser {
             return false;
         };
         self.resolve_registry_installed(id, &version, f);
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             self.pin_behind_notice(id, &version, cur_script, scope);
             return true;
         }
@@ -20828,7 +21124,7 @@ impl Parser {
     /// would leave `use <dep>` unresolved even though the package is installed.
     #[cfg(feature = "registry")]
     fn resolve_registry_installed(&mut self, id: &str, version: &str, f: &mut String) {
-        if !f.is_empty() && std::path::Path::new(f).exists() {
+        if !f.is_empty() && file_exists(f) {
             return;
         }
         let install_dir = crate::registry_index::extract_dir(id, version);
@@ -20836,11 +21132,7 @@ impl Parser {
             return;
         };
         let parent = parent.to_string();
-        let Some(versioned_name) = install_dir
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .map(str::to_string)
-        else {
+        let Some(versioned_name) = crate::file_access::file_name(&install_dir) else {
             return;
         };
         if let Some(entry) = self.lib_path_manifest(&parent, &versioned_name) {
@@ -20876,7 +21168,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         // Off-switches.
@@ -21076,7 +21368,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if std::path::Path::new(f).exists() {
+        if file_exists(f) {
             return;
         }
         let mut constraints: Vec<String> =
@@ -21143,14 +21435,14 @@ impl Parser {
 
     /// Final fallback: beside the parsed file itself.
     fn probe_cur_dir_flat(id: &str, cur_dir: &str, f: &mut String) {
-        if !cur_dir.is_empty() && !std::path::Path::new(f).exists() {
+        if !cur_dir.is_empty() && !file_exists(f) {
             *f = format!("{cur_dir}{0}{id}.loft", sep_str());
         }
     }
 
     /// Final fallback for scripts inside a `/tests/` tree.
     fn probe_base_dir_flat(id: &str, base_dir: &str, f: &mut String) {
-        if !base_dir.is_empty() && !std::path::Path::new(f).exists() {
+        if !base_dir.is_empty() && !file_exists(f) {
             *f = format!("{base_dir}{0}{id}.loft", sep_str());
         }
     }
@@ -21229,12 +21521,10 @@ impl Parser {
         let Some(m) = manifest::read_manifest(manifest_path.to_str().unwrap_or("")) else {
             return;
         };
-        let id = m.name.clone().unwrap_or_else(|| {
-            pkg_dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        });
+        let id = m
+            .name
+            .clone()
+            .unwrap_or_else(|| crate::file_access::file_name(pkg_dir).unwrap_or_default());
         if !self.loft_floor_holds(&id, &m) {
             return;
         }
@@ -21305,7 +21595,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !crate::file_access::is_under(&def.position().file, &pkg_dir) {
+                    if !crate::file_access::is_under(def.position().file.as_str(), &pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21322,7 +21612,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !crate::file_access::is_under(&def.position().file, &pkg_dir) {
+                if !crate::file_access::is_under(def.position().file.as_str(), &pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -21409,14 +21699,14 @@ impl Parser {
         // the shadowing that made a local lib's `[wasm.bridge]` routes unreachable
         // in `--html`. Falls back to `<dir>/<id>` for the normal parent-dir search.
         let dir_pb = std::path::Path::new(dir);
-        let pkg_dir_pb = if dir_pb.file_name() == Some(std::ffi::OsStr::new(id))
-            && dir_pb.join("loft.toml").is_file()
+        let pkg_dir_pb = if crate::file_access::file_name(dir_pb).as_deref() == Some(id)
+            && crate::file_access::is_file(dir_pb.join("loft.toml"))
         {
             dir_pb.to_path_buf()
         } else {
             dir_pb.join(id)
         };
-        if !pkg_dir_pb.is_dir() {
+        if !crate::file_access::is_dir(&pkg_dir_pb) {
             return None;
         }
         let pkg_dir = pkg_dir_pb.to_string_lossy().into_owned();
@@ -21428,7 +21718,7 @@ impl Parser {
                 .to_string_lossy()
                 .into_owned()
         };
-        let (entry, manifest) = if manifest_pb.exists() {
+        let (entry, manifest) = if crate::file_access::exists(&manifest_pb) {
             let manifest_path = manifest_pb.to_string_lossy().into_owned();
             let m = manifest::read_manifest(&manifest_path)?;
             if !self.loft_floor_holds(id, &m) {
@@ -21492,7 +21782,7 @@ impl Parser {
         } else {
             (nested_entry(), None)
         };
-        if std::path::Path::new(&entry).exists() {
+        if file_exists(&entry) {
             Some(ResolvedPkg {
                 pkg_dir,
                 entry,
@@ -21667,7 +21957,7 @@ impl Parser {
                     if !candidates.iter().any(|c| c == def.name()) {
                         continue;
                     }
-                    if !crate::file_access::is_under(&def.position().file, pkg_dir) {
+                    if !crate::file_access::is_under(def.position().file.as_str(), pkg_dir) {
                         continue;
                     }
                     rust_symbol.clone_into(&mut self.data.definitions[d_nr as usize].native);
@@ -21691,7 +21981,7 @@ impl Parser {
                 if sym.is_empty() {
                     continue;
                 }
-                if !crate::file_access::is_under(&def.position().file, pkg_dir) {
+                if !crate::file_access::is_under(def.position().file.as_str(), pkg_dir) {
                     continue;
                 }
                 if self.data.native_symbol_crates.contains_key(sym) {
@@ -21982,10 +22272,7 @@ impl Parser {
         let d_nr = self.data.declared_by_importer(storage_name)?;
         let bare = storage_name.strip_prefix("n_").unwrap_or(storage_name);
         let pos = self.data.def(d_nr).position();
-        let file = std::path::Path::new(&*pos.file).file_name().map_or_else(
-            || pos.file.to_string(),
-            |f| f.to_string_lossy().into_owned(),
-        );
+        let file = crate::file_access::name_of(pos.file.as_str());
         // When this file ALSO has a bare `use` of that file, the two files already `use`
         // each other, and a mutual import resolves both ways (the p173 cycle): the cure is
         // to import the name, `use errand::*;` or `use errand::(Errand);`, with no file moved.
@@ -22547,15 +22834,32 @@ impl Parser {
         // The bind is a `Set` of the link too, so the writes are measured on the body with the
         // binds blanked: a link only READ leaves its target unwritten.
         // A link to a tuple MEMBER (`c = &t.0`, `OpCreateStack(TupleGet(t, i))`) names a place
-        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).
+        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).  A member of a
+        // `&(…)` tuple is the second spelling of the same link: that tuple is the caller's
+        // `__tuple<…>` record (`@FR-T-Ref-Rep`), so its member link is `OpGetField(p, i)`.
+        // Only a tuple record is followed: a struct's fields propagate without the `&`, so a
+        // field link on a `&S` parameter leaves the advice to drop the `&` standing.
+        let vars = &self.vars;
         let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
             if let Value::Set(v, rhs) = n.unspan()
                 && let Value::Call(op, args) = rhs.unspan()
-                && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
-                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
-                    args.first().map(Value::unspan)
             {
-                return Some((*v, *src));
+                let name = data.def(*op).name();
+                if matches!(name, "OpCreateStack" | "OpVarRef")
+                    && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
+                        args.first().map(Value::unspan)
+                {
+                    return Some((*v, *src));
+                }
+                if name == "OpGetField"
+                    && matches!(vars.tp(*v).base(), Type::RefVar(_))
+                    && let Some(Value::Var(src)) = args.first().map(Value::unspan)
+                    && matches!(vars.tp(*src).base(), Type::RefVar(inner)
+                        if matches!(inner.base(), Type::Reference(d, _)
+                            if data.def(*d).name().starts_with("__tuple<")))
+                {
+                    return Some((*v, *src));
+                }
             }
             None
         };
@@ -23944,7 +24248,7 @@ mod p269_native_backfill_tests {
             .map(|d| p.data.def(d))
             .filter(|def| {
                 !def.native().is_empty()
-                    && crate::file_access::is_under(&def.position().file, &imaging_dir)
+                    && crate::file_access::is_under(def.position().file.as_str(), &imaging_dir)
             })
             .map(|def| def.native().to_string())
             .collect();
@@ -24041,9 +24345,9 @@ mod plan86_sandbox_designation_tests {
         ));
         let dir = std::env::temp_dir();
         let path = dir.join(format!("plan86_designation_{}.loft", std::process::id()));
-        std::fs::write(&path, "fn scripted() { }\nfn host() { }\n").unwrap();
+        crate::file_access::write(&path, "fn scripted() { }\nfn host() { }\n").unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         assert!(
             p.diagnostics.level() < crate::diagnostics::Level::Error,
             "unexpected parse errors: {:?}",
@@ -24080,9 +24384,9 @@ mod plan86_nesting_guard_tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
     }
 
     #[test]
@@ -24225,9 +24529,9 @@ mod plan86_reachable_set_tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         p
     }
 
@@ -24387,9 +24691,9 @@ mod plan86_admission_tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         p
     }
 
@@ -24411,9 +24715,9 @@ mod plan86_admission_tests {
             &stem,
         )));
         p.parse_dir("default", true, true).unwrap();
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         p
     }
 
@@ -26195,7 +26499,7 @@ mod h5_changed_source_tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_nanos())
         ));
-        std::fs::write(&p, body).expect("write probe file");
+        crate::file_access::write(&p, body).expect("write probe file");
         p.to_string_lossy().into_owned()
     }
 
@@ -26207,13 +26511,13 @@ mod h5_changed_source_tests {
         // mtime resolution is finer than this everywhere loft builds, but a rewrite in the
         // same instant would make the cell vacuous rather than wrong — so step past it.
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(&f, "after").expect("rewrite probe file");
+        crate::file_access::write(&f, "after").expect("rewrite probe file");
         assert_eq!(
             p.sources_changed_during_parse(std::iter::once(f.as_str())),
             vec![f.clone()],
             "a source rewritten under the two passes must be named"
         );
-        let _ = std::fs::remove_file(&f);
+        let _ = crate::file_access::remove_file(&f);
     }
 
     #[test]
@@ -26228,7 +26532,7 @@ mod h5_changed_source_tests {
             "an untouched source must not be named — reporting it would point the reader at \
              a file nobody wrote"
         );
-        let _ = std::fs::remove_file(&f);
+        let _ = crate::file_access::remove_file(&f);
     }
 
     #[test]
@@ -26255,6 +26559,6 @@ mod h5_changed_source_tests {
                 .is_empty(),
             "with no instant to compare against there is no answer, and silence is the honest one"
         );
-        let _ = std::fs::remove_file(&f);
+        let _ = crate::file_access::remove_file(&f);
     }
 }

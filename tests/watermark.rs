@@ -16,6 +16,7 @@
 //! catches a re-pinning regression without being brittle.
 
 use loft::compile::byte_code;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use loft::scopes;
 use loft::state::State;
@@ -119,7 +120,6 @@ pub fn test() {
 /// Spawned as a subprocess so the env fault can never leak into sibling tests.
 #[test]
 fn phase4_goal_e_guard_is_falsifiable() {
-    use std::process::Command;
     let prog = "fn main() {\n\
         \x20 v = [0,1]; v = [1,2]; v = [2,3]; v = [3,4]; v = [4,5]; v = [5,6];\n\
         \x20 v = [6,7]; v = [7,8]; v = [8,9]; v = [9,10]; v = [10,11];\n\
@@ -127,10 +127,10 @@ fn phase4_goal_e_guard_is_falsifiable() {
         }\n";
     let pid = std::process::id();
     let path = std::env::temp_dir().join(format!("loft_phase4_pc_{pid}.loft"));
-    std::fs::write(&path, prog).unwrap();
+    fa::write(&path, prog).unwrap();
 
     let run = |inject: bool| {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--interpret")
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")
@@ -162,5 +162,5 @@ fn phase4_goal_e_guard_is_falsifiable() {
         "INJECT must panic with the Phase-4 Goal-E message, got:\n{err}"
     );
 
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }

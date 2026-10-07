@@ -234,15 +234,17 @@ pub(crate) const ATTR_VALUE: u32 = 24; // vector<Node> (box-of-one)
 pub(crate) const ATTR_CHECK: u32 = 28; // vector<Node> (box-of-one)
 pub(crate) const ATTR_CHECK_MESSAGE: u32 = 32; // vector<Node> (box-of-one)
 pub(crate) const ATTR_LINKS: u32 = 36; // @PLN86 F8b — text; "" = unlinked member
-pub(crate) const ATTR_MUTABLE: u32 = 40;
-pub(crate) const ATTR_CONSTANT: u32 = 41;
-pub(crate) const ATTR_INIT: u32 = 42;
-pub(crate) const ATTR_NULLABLE: u32 = 43;
-pub(crate) const ATTR_PRIMARY: u32 = 44;
-pub(crate) const ATTR_HIDDEN: u32 = 45;
-pub(crate) const ATTR_CONST_FIELD: u32 = 46; // @PLN40 — write-once struct field
-pub(crate) const ATTR_VALUE_CONST: u32 = 47; // C124 — a value-const field, or a `const` parameter
-pub(crate) const ATTR_WORK_BUFFER: u32 = 48; // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
+pub(crate) const ATTR_FACT: u32 = 40; // @PLN187 text: where the declared type names an alias
+pub(crate) const ATTR_MUTABLE: u32 = 44;
+pub(crate) const ATTR_CONSTANT: u32 = 45;
+pub(crate) const ATTR_INIT: u32 = 46;
+pub(crate) const ATTR_NULLABLE: u32 = 47;
+pub(crate) const ATTR_PRIMARY: u32 = 48;
+pub(crate) const ATTR_HIDDEN: u32 = 49;
+pub(crate) const ATTR_CONST_FIELD: u32 = 50; // @PLN40 — write-once struct field
+pub(crate) const ATTR_VALUE_CONST: u32 = 51; // C124 — a value-const field, or a `const` parameter
+pub(crate) const ATTR_WORK_BUFFER: u32 = 52; // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
+pub(crate) const ATTR_PUB_FIELD: u32 = 53; // @PLN187 — a field declared `pub`
 pub(crate) const ATTR_ALIAS_D_NR: u32 = 0;
 pub(crate) const ATTR_ASSIGNED_LAMBDA_D_NR: u32 = 8;
 
@@ -314,7 +316,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 192; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator
+pub(crate) const DEFINITION_STRIDE: u32 = 200; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -338,15 +340,17 @@ pub(crate) const DEF_FIELD_GROUPS: u32 = 152; // vector<LinkedFieldGroup>
 pub(crate) const DEF_SYNTHETIC: u32 = 156; // Option<&str>; "" = None
 pub(crate) const DEF_CAP: u32 = 160; // @PLN86 the group#right call-gate link; "" = unlinked
 pub(crate) const DEF_SUPERSEDED: u32 = 164; // @PLN102 arc C #superseded "Y"; "" = not superseded
-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 184;
-pub(crate) const DEF_PUB_VISIBLE: u32 = 185;
-pub(crate) const DEF_NULL_SAFE: u32 = 186; // @PLN46 W2 #null_safe; false = unannotated
-pub(crate) const DEF_BUILTIN: u32 = 187; // @PLN165 arc E #builtin; false = an ordinary body
-pub(crate) const DEF_OPERATOR_FORM: u32 = 188; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 188;
+pub(crate) const DEF_PUB_VISIBLE: u32 = 189;
+pub(crate) const DEF_NULL_SAFE: u32 = 190; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 191; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_OPERATOR_FORM: u32 = 192; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_RETURNED_CONST: u32 = 193; // @FR-Const-Foreign `-> const T`; false = writable
 pub(crate) const DEF_C_SYMBOL: u32 = 168; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 172; // @PLN24 the declared C signature; "" = none
 pub(crate) const DEF_TYPE_PARAMS: u32 = 176; // @PLN165 D2 vector<integer>, header order
 pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not an instance
+pub(crate) const DEF_RETURNED_FACT: u32 = 184; // @PLN187 text: where the declared result names an alias
 pub(crate) const DEF_INSTANCE_ARGS: u32 = 180; // @PLN165 D3 vector<TypeT>
 
 /// `Data` record (the root).
@@ -1146,12 +1150,15 @@ mod tests {
     use super::*;
     use crate::ir_schema_gen::register_ir_schema;
 
-    /// Claim a fresh `Node` record and write its discriminant.
+    /// Claim a fresh `Node` record and write it as [`ValuesVector::push`] does: zeroed (its
+    /// nested vector headers empty), then the discriminant.  The claim alone promises no
+    /// value (`@FR-H-Claim`), so a node that only had its discriminant written handed the
+    /// readers whatever bytes the block held.
     fn new_node(stores: &mut Stores, disc: u8) -> DbRef {
         let rec = stores.database(16);
-        stores
-            .store_mut(&rec)
-            .set_byte(rec.rec, rec.pos, 0, i32::from(disc));
+        let store = stores.store_mut(&rec);
+        store.zero_range(rec.rec, rec.pos, NODE_STRIDE);
+        store.set_byte(rec.rec, rec.pos, 0, i32::from(disc));
         rec
     }
 
@@ -1431,6 +1438,7 @@ mod tests {
         assert_eq!(pos(ids.attribute, "check"), ATTR_CHECK);
         assert_eq!(pos(ids.attribute, "check_message"), ATTR_CHECK_MESSAGE);
         assert_eq!(pos(ids.attribute, "links"), ATTR_LINKS);
+        assert_eq!(pos(ids.attribute, "fact"), ATTR_FACT);
         assert_eq!(pos(ids.attribute, "mutable"), ATTR_MUTABLE);
         assert_eq!(pos(ids.attribute, "constant"), ATTR_CONSTANT);
         assert_eq!(pos(ids.attribute, "init"), ATTR_INIT);
@@ -1440,6 +1448,7 @@ mod tests {
         assert_eq!(pos(ids.attribute, "const_field"), ATTR_CONST_FIELD);
         assert_eq!(pos(ids.attribute, "value_const"), ATTR_VALUE_CONST);
         assert_eq!(pos(ids.attribute, "work_buffer"), ATTR_WORK_BUFFER);
+        assert_eq!(pos(ids.attribute, "pub_field"), ATTR_PUB_FIELD);
         assert_eq!(pos(ids.attribute, "alias_d_nr"), ATTR_ALIAS_D_NR);
         assert_eq!(
             pos(ids.attribute, "assigned_lambda_d_nr"),
@@ -1545,6 +1554,8 @@ mod tests {
         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
         assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
         assert_eq!(pos(ids.definition, "operator_form"), DEF_OPERATOR_FORM);
+        assert_eq!(pos(ids.definition, "returned_fact"), DEF_RETURNED_FACT);
+        assert_eq!(pos(ids.definition, "returned_const"), DEF_RETURNED_CONST);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

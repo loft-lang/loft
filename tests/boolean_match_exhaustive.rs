@@ -8,7 +8,6 @@
 //! channel scores a diagnostic that must NOT fire, so this test reads the warning stream.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -20,7 +19,7 @@ fn script() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> (bool, String, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")

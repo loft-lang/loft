@@ -202,22 +202,22 @@ null to encode and uses the full range (256 / 65 536); `u32` keeps its top
 code out of range either way ([formal/types.md](formal/types.md) `(N-Reserve)`).  Typical `u32` use:
 RGBA pixels, large file offsets, bitmasks wider than i32.
 
-**A NON-nullable narrow slot has no code for a failure, so `!` reads it beside the
-store.**  `u8`, `i8`, `u16`, `i16`, `u32` and every `limit(lo, hi)` range use every code
-they have, so a value that does not fit takes the type's default and is
-indistinguishable from a computed one — `x: u8 = 250; x += 10` answers `0`, and so does
-`x: u8 = 250; x -= 250`.  An author who cares about that edge writes the test on the
-line after the store:
+**A NON-nullable narrow slot has no code for a failure, so the store says it.**  `u8`,
+`i8`, `u16`, `i16`, `u32` and every `limit(lo, hi)` range use every code they have, so a
+value that does not fit takes the type's default and is indistinguishable from a computed
+one — `x: u8 = 250; x += 10` answers `0`, and so does `x: u8 = 250; x -= 250`.  An author
+who cares about that edge gives the store an `else` (see *A store that did not take*
+below):
 
-<!-- from tests/reference/types-null-arithmetic.loft -->
+<!-- from tests/reference/store-else.loft -->
 ```loft
 health: u8 = 250;
-health += 10;
-if !health { seen = "the boost did not fit — health is {health}"; }
+health += 10 else { note += "the boost did not fit"; };
 ```
 
-The value is unchanged — the slot still takes `0`, exactly as it does with no test
-written — and `!health` answers whether the store fit.  Two rules bound it:
+The older spelling still works: `!health` on the `if` that is the very next statement
+answers whether the store fit.  The value is unchanged either way — the slot still takes
+`0`, exactly as it does with nothing written.  Two rules bound the `if !` form:
 
 - **The `if` must be the very next statement.** Past that there is nothing left to carry
   the status but the slot itself, and writing it there would cost every element of a
@@ -230,6 +230,28 @@ written — and `!health` answers whether the store fit.  Two rules bound it:
 
 `?? <value>` is the other half of the same edge and works in the same place: it names
 what the slot takes instead of the type's default (`health = (health + 10) ?? 255`).
+
+### A store that did not take
+
+A write lands nowhere when its place is not there — an index past the end, a key the
+collection does not hold, a field reached through a null — and the program continues
+(the spreadsheet model).  An assignment statement may end in `else { … }`, and that block
+runs exactly when the write did not land; the place is spelled once:
+
+<!-- from tests/reference/store-else.loft -->
+```loft
+scores[7] = 70 else { missed += 1 };
+board.by_name["ann"].points += 1 else { missed += 1 };
+board.by_name["bob"].points += 1 else { missed += 1 };
+```
+
+The same block runs when a narrow slot cannot hold the value (above) and when the store is
+locked (`#lock`), and never when the write landed — a stored `null` landed.  The block may
+`break`, `continue` or `return` like any other.  A dropped write with no `else` logs one
+warning line (`index_out_of_bounds` for an index, `write_dropped` for a key or a null view)
+and the program goes on; with an `else`, the block is the whole answer and nothing is
+logged.  A store is never a condition: `if v[1] = 2` is refused — write `==`, or put the
+store on its own line.
 
 ### Composite types
 

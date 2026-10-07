@@ -10,12 +10,11 @@
 //! release on and TRIPS the ceiling with `LOFT_NO_CLEAR_RELEASE=1` — so the test proves
 //! both that the leak is closed and that the guard can still see it.
 use std::path::PathBuf;
-use std::process::Command;
 
 const SHAPE: &str = "tests/scripts/157-clear-release.loft";
 
 fn run(release_off: bool) -> std::process::Output {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     // The interpreter lane: its store-heap ceiling is what SEES this leak (the native
     // `--tests` ceiling does not track the generated program's stores), and the fix is
     // one function both backends call, so the interpreter proves the contract for both.

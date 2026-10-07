@@ -29,8 +29,8 @@
 
 #![cfg(feature = "registry")]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[path = "common/mod.rs"]
 mod common;
@@ -40,8 +40,8 @@ fn loft_bin() -> PathBuf {
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A private `~/.loft` whose registry cache holds `index.json` for one package, with the
@@ -51,7 +51,7 @@ fn write(path: &Path, body: &str) {
 /// cached-index branch is the one under test, and it verifies like every other branch.
 fn fake_registry(tag: &str, sig: Option<&str>) -> PathBuf {
     let home = std::env::temp_dir().join(format!("loft_pln143_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     let cache = home.join(".loft/registry");
     write(
         &cache.join("index.json"),
@@ -74,7 +74,7 @@ fn run_in(home: &Path, dir: &Path, script: &str) -> String {
 /// [`run_in`] plus `env` — `LOFT_OFFLINE=1` for the cells that must resolve with no
 /// registry at all.
 fn run_env(home: &Path, dir: &Path, script: &str, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -126,7 +126,7 @@ fn arc_a_auto_install_refuses_an_unsigned_index() {
         "use probepkg::*;\nfn main() { println(\"resolved\"); }\n",
     );
     let all = run_in(&home, &dir, "s.loft");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("signature is malformed or missing"),
@@ -155,7 +155,7 @@ fn arc_a_a_signed_index_gets_past_the_signature_gate() {
         "use probepkg::*;\nfn main() { println(\"resolved\"); }\n",
     );
     let all = run_in(&home, &dir, "s.loft");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         !all.contains("resolved"),
@@ -170,8 +170,8 @@ fn arc_a_a_signed_index_gets_past_the_signature_gate() {
 /// reached.
 fn empty_home(tag: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("loft_pln143_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(home.join(".loft/registry")).expect("mkdir");
+    let _ = fa::remove_dir_all(&home);
+    fa::create_dir_all(home.join(".loft/registry")).expect("mkdir");
     home
 }
 
@@ -229,7 +229,7 @@ fn arc_c1_offline_resolves_the_newest_cached_version() {
     let dir = home.join("proj");
     probe_script(&dir);
     let all = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.2.0"),
@@ -251,7 +251,7 @@ fn arc_c1_newest_is_semver_and_skips_a_prerelease() {
     let dir = home.join("proj");
     probe_script(&dir);
     let all = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.10.0"),
@@ -274,7 +274,7 @@ fn arc_c1_a_version_this_loft_cannot_load_is_skipped() {
     let dir = home.join("proj");
     probe_script(&dir);
     let all = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.2.0"),
@@ -314,7 +314,7 @@ fn arc_c1_a_declared_scope_does_not_take_the_newest_cached() {
     let bare = home.join("bare");
     probe_script(&bare);
     let bare_out = run_env(&home, &bare, "s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         bare_out.contains("probepkg-0.2.0"),
@@ -359,7 +359,7 @@ fn a_lock_the_manifest_overrules_does_not_decide_the_load() {
     };
     let overruled = run("=0.2.0");
     let kept = run("^0.1");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         overruled.contains("probepkg-0.2.0") && !overruled.contains("probepkg-0.1.0"),
@@ -392,7 +392,7 @@ fn file_registry(home: &Path, name: &str, version: &str) -> String {
         &format!("pub fn probe_id() -> text {{ return \"{name}-{version}\"; }}\n"),
     );
     let served = home.join("served");
-    std::fs::create_dir_all(&served).expect("mkdir");
+    fa::create_dir_all(&served).expect("mkdir");
     let out = loft::package::package_create(&src, Some(&served)).expect("package_create");
     let index = served.join("index.json");
     write(
@@ -411,7 +411,7 @@ fn file_registry(home: &Path, name: &str, version: &str) -> String {
 
 /// Run the `loft` CLI in `dir` against the private home + `url` registry.
 fn cli(home: &Path, dir: &Path, url: &str, args: &[&str]) -> String {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(args)
         .env("LOFT_HOME", home)
         .env("HOME", home)
@@ -443,17 +443,17 @@ fn arc_d_install_outside_a_package_declares_one_and_the_pin_holds() {
     let home = empty_home("d_declare");
     let url = file_registry(&home, "probepkg", "0.1.0");
     let dir = home.join("scratch");
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
 
     let installed = cli(&home, &dir, &url, &["install", "probepkg@0.1.0"]);
-    let manifest = std::fs::read_to_string(dir.join("loft.toml")).unwrap_or_default();
-    let lock = std::fs::read_to_string(dir.join("loft.lock")).unwrap_or_default();
+    let manifest = fa::read_to_string(dir.join("loft.toml")).unwrap_or_default();
+    let lock = fa::read_to_string(dir.join("loft.lock")).unwrap_or_default();
 
     // A newer copy in the cache: the pin below has to beat something.
     cache_pkg(&home, "probepkg", "0.2.0", ">=0.8");
     probe_script(&dir);
     let ran = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         manifest.contains("[package]") && manifest.contains("probepkg = \"0.1.0\""),
@@ -499,7 +499,7 @@ fn arc_c2_a_cwd_lockfile_does_not_pin_a_bare_script() {
          source = \"registry\"\n",
     );
     let all = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.2.0"),
@@ -546,7 +546,7 @@ fn arc_c2_a_cwd_lockfile_does_not_pin_a_lockless_project() {
     // and no lock in it, which is exactly the state that used to fall through.
     probe_script(&proj.join("src"));
     let elsewhere = home.join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).expect("mkdir");
+    fa::create_dir_all(&elsewhere).expect("mkdir");
     write(&elsewhere.join("loft.lock"), &pin_lock("0.1.0"));
     let all = run_env(
         &home,
@@ -554,7 +554,7 @@ fn arc_c2_a_cwd_lockfile_does_not_pin_a_lockless_project() {
         proj.join("src/s.loft").to_str().expect("path"),
         &[("LOFT_OFFLINE", "1")],
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         !all.contains("probepkg-0.1.0"),
@@ -584,7 +584,7 @@ fn arc_c2_a_projects_own_lock_outranks_the_invoking_directorys() {
     probe_script(&proj.join("src"));
     write(&proj.join("loft.lock"), &pin_lock("0.2.0"));
     let elsewhere = home.join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).expect("mkdir");
+    fa::create_dir_all(&elsewhere).expect("mkdir");
     write(&elsewhere.join("loft.lock"), &pin_lock("0.1.0"));
     let all = run_env(
         &home,
@@ -592,7 +592,7 @@ fn arc_c2_a_projects_own_lock_outranks_the_invoking_directorys() {
         proj.join("src/s.loft").to_str().expect("path"),
         &[("LOFT_OFFLINE", "1")],
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.2.0"),
@@ -614,7 +614,7 @@ fn arc_c2_the_same_script_resolves_the_same_from_two_directories() {
     probe_script(&script_dir);
     let script = script_dir.join("s.loft");
     let elsewhere = home.join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).expect("mkdir");
+    fa::create_dir_all(&elsewhere).expect("mkdir");
     write(
         &elsewhere.join("loft.lock"),
         "schema_version = 1\n\n[[package]]\nname = \"probepkg\"\nversion = \"0.1.0\"\n\
@@ -638,11 +638,11 @@ fn arc_c2_the_same_script_resolves_the_same_from_two_directories() {
     // Nothing may appear in either directory as a result of running.
     let left_behind: Vec<String> = [&script_dir, &elsewhere]
         .iter()
-        .flat_map(|d| std::fs::read_dir(d).expect("read_dir"))
-        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .flat_map(|d| fa::read_dir(d).expect("read_dir"))
+        .map(|e| e.file_name().unwrap_or_default().to_string())
         .filter(|n| n == "loft.lock" || n == "loft.toml")
         .collect();
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         from_home.contains("probepkg-0.2.0") && from_elsewhere.contains("probepkg-0.2.0"),
@@ -704,7 +704,7 @@ fn arc_e_a_pin_behind_the_registry_says_so_once() {
     cached_index(&home, "probepkg", "0.2.0");
     let pkg = pinned_package(&home, "0.1.0");
     let all = run_env(&home, &pkg, "src/s.loft", &[]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.1.0"),
@@ -737,7 +737,7 @@ fn arc_e_is_silent_when_current_offline_or_unpinned() {
     cached_index(&home, "probepkg", "0.2.0");
     let pkg = pinned_package(&home, "0.2.0");
     let current = run_env(&home, &pkg, "src/s.loft", &[]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     // Offline: this run has opted out of the registry, so it is not asking what the
     // registry now holds.
@@ -746,7 +746,7 @@ fn arc_e_is_silent_when_current_offline_or_unpinned() {
     cached_index(&home, "probepkg", "0.2.0");
     let pkg = pinned_package(&home, "0.1.0");
     let offline = run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     // Unpinned: a bare script re-decides every run, so it cannot be behind.
     let home = empty_home("e_bare");
@@ -755,7 +755,7 @@ fn arc_e_is_silent_when_current_offline_or_unpinned() {
     let dir = home.join("bare");
     probe_script(&dir);
     let bare = run_env(&home, &dir, "s.loft", &[]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     for (label, out) in [
         ("a current pin", &current),
@@ -787,7 +787,7 @@ fn arc_e_the_off_switch_silences_it() {
         "src/s.loft",
         &[("LOFT_NO_UPGRADE_NOTICE", "1")],
     );
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         all.contains("probepkg-0.1.0") && !all.contains("is the newest release"),
@@ -813,7 +813,7 @@ fn arc_e_a_pinned_script_is_told_to_re_pin() {
          source = \"registry\"\n",
     );
     let all = run_env(&home, &dir, "s.loft", &[]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     // The path is the resolved one rather than the spelling typed, so the command works
     // from wherever the reader is standing when they run it.
@@ -887,7 +887,7 @@ fn offline_a_cached_librarys_dependency_resolves_under_its_declared_range() {
         let dir = home.join("proj");
         probe_script(&dir);
         let all = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
-        let _ = std::fs::remove_dir_all(&home);
+        let _ = fa::remove_dir_all(&home);
         match want {
             Some(v) => assert!(
                 all.contains(&format!("probepkg-0.1.0 via {v}")),
@@ -1007,7 +1007,7 @@ fn a_lock_pin_the_manifest_has_moved_away_from_does_not_load() {
         );
         got.push(run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]));
     }
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     for ((tag, deps, locked, want), out) in cells.iter().zip(&got) {
         assert!(
             out.lines().any(|l| l == *want),
@@ -1061,7 +1061,7 @@ fn a_dependency_resolves_its_use_through_the_consumer_lock() {
         );
         got.push(run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]));
     }
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     for ((tag, pins, want), out) in cells.iter().zip(&got) {
         assert!(
             out.lines().any(|l| l == *want),
@@ -1104,7 +1104,7 @@ fn install_binds_a_transitive_package_to_the_project_declaration() {
     let run = |tag: &str, deps: &str| {
         let pkg = project(&home, tag, deps, None, "chainpkg", "chainpkg::chain_id()");
         let url = "http://127.0.0.1:1/index.json";
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["install"])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)
@@ -1119,14 +1119,14 @@ fn install_binds_a_transitive_package_to_the_project_declaration() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let lock = std::fs::read_to_string(pkg.join("loft.lock")).unwrap_or_default();
+        let lock = fa::read_to_string(pkg.join("loft.lock")).unwrap_or_default();
         let ran = run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]);
         (said, lock, ran)
     };
     let pinned_first = run("first", "probepkg = \"=0.1.0\"\nchainpkg = \"=0.1.0\"");
     let pinned_last = run("last", "chainpkg = \"=0.1.0\"\nprobepkg = \"=0.1.0\"");
     let conflict = run("conflict", "chainpkg = \"=0.1.0\"\nprobepkg = \"=0.2.0\"");
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     let locked = |lock: &str| -> Vec<String> {
         let mut out = Vec::new();
@@ -1198,7 +1198,7 @@ fn a_named_install_keeps_the_declared_pin_and_an_explicit_version_moves_it() {
         "probepkg::probe_id()",
     );
     let install = |arg: &str| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["install", arg])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)
@@ -1213,14 +1213,14 @@ fn a_named_install_keeps_the_declared_pin_and_an_explicit_version_moves_it() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let lock = std::fs::read_to_string(pkg.join("loft.lock")).unwrap_or_default();
-        let manifest = std::fs::read_to_string(pkg.join("loft.toml")).unwrap_or_default();
+        let lock = fa::read_to_string(pkg.join("loft.lock")).unwrap_or_default();
+        let manifest = fa::read_to_string(pkg.join("loft.toml")).unwrap_or_default();
         (said, lock, manifest)
     };
     let (said_bare, lock_bare, manifest_bare) = install("probepkg");
     let (said_moved, lock_moved, manifest_moved) = install("probepkg@0.1.2");
     let ran = run_env(&home, &pkg, "src/s.loft", &[("LOFT_OFFLINE", "1")]);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 
     assert!(
         lock_bare.contains("version = \"0.1.0\"") && !lock_bare.contains("version = \"0.1.2\""),

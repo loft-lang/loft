@@ -6,6 +6,26 @@
 > what it cost, and what closed it.  The rules doc carries the CURRENT state (how many are open,
 > and which); everything below is the record behind it.
 
+## Deviations carried by matching.md until 2026-10-06
+
+Opened and closed in the same change, by the `(P-Cap-Ty)` walk; the chapter's `OPEN:` line
+never carried them.  Its status line already said `P-Cap` holds at "a tuple element … and the
+arm root's `name: pattern`" — true of an enum arm root only.
+
+* **D-match-23** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(P-Cap)` / `(P-Point)` at three
+  positions.  A capture in a TUPLE element (`(x: Num { n }, k)`, `(x: 7, k)`) was refused with
+  *"expected ',' between tuple pattern elements"*.  A capture at a SCALAR subject's arm root
+  (`x: 2..=5`, `x: 7`, `y: _`) was refused with *"Expect token =>"*: the scalar arm knew only
+  `name @ pattern`.  A plain struct as a SLICE element (`[Pt { x, y }, ..]`, the tail's
+  `[_, Pt { x, y }]`) was refused with *"Expect token }"* — `peek_is_variant_subpattern`
+  answered only for an enum element, though `parse_field_sub_pattern` already parses a plain
+  struct (loft#1870) — and `[p: Pt { x: 3, y }, ..]` was read as the type-annotated capture
+  `p: Pt` and stopped at the `{`.  **Fix.**  The tuple element reads `name:` and binds the
+  element as a bare name does; the scalar root takes `:` where it took `@`; the predicate names
+  a plain struct by its own name, so the slice and tuple elements both reach the field parser;
+  a type name followed by `{` is a pattern, not an annotation.  Guard
+  `tests/scripts/a-capture-and-a-plain-struct-stand-at-every-pattern-position.loft`.
+
 ## Deviations carried by matching.md until 2026-09-30
 
 The register's status line, as it read: OPEN: 0 — the 2026-09-29 rule-led walk of the pattern rules found `D-match-7` to `-13`,

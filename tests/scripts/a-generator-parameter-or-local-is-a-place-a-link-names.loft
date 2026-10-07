@@ -1,0 +1,32 @@
+// @FR-B-Ref-Lvalue / @FR-G-Yield — a generator's parameter and its body local are places a `&`
+// names, as in any function: `bump(b)` with `bump(x: &integer)`, and `c = &b`, write the
+// generator's own value, which every later resume reads.  `--native` did not compile any of
+// these: a parameter was an immutable per-state copy (E0596), a body local is a struct field
+// the link spelled as a plain local (E0425), and a narrow parameter's link read an encoding the
+// field did not hold (E0308) (loft#1899).  Each value is worked out by hand beside it.
+// @falsified-at: 58c7b3c80 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generator-parameter-or-local-is-a-place-a-link-names.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the native exit — rustc refuses the control (E0596, E0425, E0308).
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends;
+//   the interpreter answers every cell on both, as measured by `make falsify` at 58c7b3c80.
+
+fn bump(x: &integer) { x += 1; }
+fn bump8(x: &u8) { x += 1; }
+fn run(g: iterator<integer>) -> text { s = ""; for v in g { s += "{v} "; } s }
+// 200 -> 201 before the first yield, 202 after the second.
+fn param_argument(b: integer) -> iterator<integer> { bump(b); yield 5; yield b; bump(b); yield b; }
+// A local link to the parameter: 200 + 3.
+fn param_link(b: integer) -> iterator<integer> { c = &b; c += 3; yield 5; yield b; }
+// A body local handed to a `&` parameter: 200 + 1.
+fn local_argument(n: integer) -> iterator<integer> { x = n; bump(x); yield 5; yield x; }
+// A narrow parameter linked: 200 + 1 = 201, beside a wide 7.
+fn narrow_param(b: u8, a: integer) -> iterator<integer> { bump8(b); yield b; yield a; }
+
+fn main() {
+  assert(run(param_argument(200)) == "5 201 202 ", "a parameter as a & argument");
+  assert(run(param_link(200)) == "5 203 ", "a local link to a parameter");
+  assert(run(local_argument(200)) == "5 201 ", "a body local as a & argument");
+  assert(run(narrow_param(200, 7)) == "201 7 ", "a narrow parameter linked");
+}

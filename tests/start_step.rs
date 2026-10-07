@@ -6,7 +6,6 @@
 //! loop that stops being taken; and the cells run under every switch state, because the
 //! default run never reaches the two-counter path.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-computed-range-start-steps-one-counter.loft";
 
@@ -26,7 +25,8 @@ const TRACE: &[&str] = &[
 
 fn loft(env: &[(&str, &str)]) -> (String, String, bool) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

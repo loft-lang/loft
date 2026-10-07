@@ -11,6 +11,7 @@ mod testing;
 
 use loft::compile::byte_code;
 use loft::data::Value;
+use loft::file_access as fa;
 use loft::logger::{Logger, RuntimeLogConfig};
 use loft::parser::Parser;
 use loft::scopes;
@@ -909,7 +910,7 @@ fn test() {
 #[test]
 fn mkdir_and_mkdir_all() {
     // Clean up from any previous failed run
-    let _ = std::fs::remove_dir_all("tests/tmp_mkdir_test");
+    let _ = fa::remove_dir_all("tests/tmp_mkdir_test");
     code!(
         "fn test() {
     // mkdir_all creates nested path
@@ -921,7 +922,7 @@ fn mkdir_and_mkdir_all() {
 }"
     );
     // Clean up after test
-    let _ = std::fs::remove_dir_all("tests/tmp_mkdir_test");
+    let _ = fa::remove_dir_all("tests/tmp_mkdir_test");
 }
 
 // ── T0-11: Write to locked store must panic ───────────────────────────────────
@@ -974,9 +975,8 @@ fn n8_pre_eval_uses_underscore_separator() {
     code!("fn inc(v: integer) -> integer { v + 1 }")
         .expr("inc(inc(0))")
         .result(Value::Int(2));
-    let src =
-        std::fs::read_to_string("tests/generated/issues_n8_pre_eval_uses_underscore_separator.rs")
-            .expect("generated file not found");
+    let src = fa::read_to_string("tests/generated/issues_n8_pre_eval_uses_underscore_separator.rs")
+        .expect("generated file not found");
     // Every `let _pre…` line must use `_pre_N` (digit after underscore), not `_preN`.
     for line in src.lines() {
         let trimmed = line.trim_start();
@@ -1003,7 +1003,7 @@ fn add(r: &Data = null, val: integer) {
     )
     .expr("v = Data { num: 1 }; add(v, 2); add(v, 3); \"{v}\"")
     .result(Value::str("{num:6,values:[2,3]}"));
-    let src = std::fs::read_to_string("tests/generated/issues_n8_no_empty_pre_eval_binding.rs")
+    let src = fa::read_to_string("tests/generated/issues_n8_no_empty_pre_eval_binding.rs")
         .expect("generated file not found");
     for line in src.lines() {
         let trimmed = line.trim_start();
@@ -1026,10 +1026,9 @@ b.name += \" world\";
 a.name",
         )
         .result(Value::str("hello"));
-    let src = std::fs::read_to_string(
-        "tests/generated/issues_n3_reference_assignment_emits_copy_record.rs",
-    )
-    .expect("generated file not found");
+    let src =
+        fa::read_to_string("tests/generated/issues_n3_reference_assignment_emits_copy_record.rs")
+            .expect("generated file not found");
     assert!(
         src.contains("OpCopyRecord(cell,"),
         "generated code missing OpCopyRecord after reference assignment"
@@ -1050,7 +1049,7 @@ fn n5_null_dbref_clear_vector_guard() {
     )
     .expr("t = fill(); \"{t}\"")
     .result(Value::str("[\"aa\",\"bb\"]"));
-    let src = std::fs::read_to_string("tests/generated/issues_n5_null_dbref_clear_vector_guard.rs")
+    let src = fa::read_to_string("tests/generated/issues_n5_null_dbref_clear_vector_guard.rs")
         .expect("generated file not found");
     assert!(
         src.contains(".rec != 0"),
@@ -1071,10 +1070,9 @@ fn n4_format_struct_enum_variant_shows_fields() {
     )
     .expr("v = \"Add {{ left: 1, right: 2 }}\" as Op; \"{v}\"")
     .result(Value::str("Add {left:1,right:2}"));
-    let src = std::fs::read_to_string(
-        "tests/generated/issues_n4_format_struct_enum_variant_shows_fields.rs",
-    )
-    .expect("generated file not found");
+    let src =
+        fa::read_to_string("tests/generated/issues_n4_format_struct_enum_variant_shows_fields.rs")
+            .expect("generated file not found");
     // The generated init must register the Add variant with its actual struct type (not u16::MAX).
     assert!(
         !src.contains("db.value(e, \"Add\", u16::MAX)"),
@@ -1093,9 +1091,9 @@ fn n9a_generated_fill_has_ops_import() {
         "tests/generated/fill_n9a_{:?}.rs",
         std::thread::current().id()
     );
-    let _ = std::fs::create_dir_all("tests/generated");
+    let _ = fa::create_dir_all("tests/generated");
     let src = loft::create::generate_code_to(&p.data, &tmp).expect("generate_code_to failed");
-    let _ = std::fs::remove_file(&tmp);
+    let _ = fa::remove_file(&tmp);
     assert!(
         src.contains("use crate::ops;"),
         "generated fill.rs missing `use crate::ops;`"
@@ -1117,8 +1115,8 @@ fn n9_generated_fill_matches_src() {
         std::thread::current().id()
     );
     let generated = loft::create::generate_code_to(&p.data, &tmp).expect("generate_code_to failed");
-    let _ = std::fs::remove_file(&tmp);
-    let src = std::fs::read_to_string("src/fill.rs").expect("src/fill.rs not found");
+    let _ = fa::remove_file(&tmp);
+    let src = fa::read_to_string("src/fill.rs").expect("src/fill.rs not found");
     assert_eq!(
         generated, src,
         "generated fill.rs differs from src/fill.rs — \
@@ -1134,9 +1132,8 @@ fn n8_codegen_runtime_vector_ops_exist() {
     code!("fn sort_it() -> vector<integer> { v = [3, 1, 2]; sort(v); v }")
         .expr("\"{sort_it()}\"")
         .result(Value::str("[1,2,3]"));
-    let src =
-        std::fs::read_to_string("tests/generated/issues_n8_codegen_runtime_vector_ops_exist.rs")
-            .expect("generated file not found");
+    let src = fa::read_to_string("tests/generated/issues_n8_codegen_runtime_vector_ops_exist.rs")
+        .expect("generated file not found");
     assert!(
         src.contains("vector::sort_vector("),
         "generated code missing inlined vector::sort_vector call"
@@ -1158,7 +1155,7 @@ fn n10_char_cast_in_generated_code() {
     )
     .expr("count_alpha(\"a1!\")")
     .result(Value::Int(2));
-    let src = std::fs::read_to_string("tests/generated/issues_n10_char_cast_in_generated_code.rs")
+    let src = fa::read_to_string("tests/generated/issues_n10_char_cast_in_generated_code.rs")
         .expect("generated file not found");
     assert!(
         src.contains("as u32 as i32") || src.contains("ops::to_char("),
@@ -1178,7 +1175,7 @@ struct Container { data: sorted<Sort[nr]> }"
     )
     .expr("c = Container {}; \"{c}\"")
     .result(Value::str("{data:[]}"));
-    let src = std::fs::read_to_string(
+    let src = fa::read_to_string(
         "tests/generated/issues_n2_sorted_field_content_type_registered_first.rs",
     )
     .expect("generated file not found");
@@ -1261,13 +1258,13 @@ fn n1_native_pipeline_trivial_program() {
     let main_nr = p.data.def_nr("n_main");
     assert_ne!(main_nr, u32::MAX, "n_main not found");
     let tmp_rs = std::env::temp_dir().join("loft_n1_test.rs");
-    let mut f = std::fs::File::create(&tmp_rs).expect("tmp file");
+    let mut f = fa::create(&tmp_rs).expect("tmp file");
     let mut out = Output::new(&p.data, &state.database);
     out.output_native_reachable(&mut f, start_def, end_def, &[main_nr])
         .expect("output_native_reachable");
     drop(f);
     // Verify the generated source contains expected landmarks.
-    let generated = std::fs::read_to_string(&tmp_rs).expect("read generated source");
+    let generated = fa::read_to_string(&tmp_rs).expect("read generated source");
     assert!(
         generated.contains("fn n_main("),
         "generated source missing n_main"
@@ -1290,19 +1287,18 @@ fn n1_native_pipeline_trivial_program() {
     // fresh one, and a find-first pick then feeds rustc mismatched crate
     // metadata (a wall of misleading E0432 "unresolved import" noise in the
     // nightly toolchain-matrix logs).
-    let loft_rlib = std::fs::read_dir(&deps_dir).ok().and_then(|it| {
-        it.flatten()
+    let loft_rlib = fa::read_dir(&deps_dir).ok().and_then(|it| {
+        it.into_iter()
             .filter(|e| {
-                let n = e.file_name();
-                let s = n.to_string_lossy();
+                let s = e.file_name().unwrap_or_default();
                 s.starts_with("libloft") && s.ends_with(".rlib")
             })
             .max_by_key(|e| {
-                e.metadata()
+                fa::symlink_metadata(e)
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
             })
-            .map(|e| e.path())
+            .map(|e| e.os_spelling())
     });
     let binary = std::env::temp_dir().join("loft_n1_test_bin");
     let mut rustc_args = vec![
@@ -1318,9 +1314,9 @@ fn n1_native_pipeline_trivial_program() {
         // S31: pass --extern for every non-loft rlib in deps/ so that optional
         // feature dependencies (rand_core, rand_pcg, png, etc.) can be resolved.
         // Without this, rustc cannot find crates that loft was compiled with.
-        if let Ok(entries) = std::fs::read_dir(&deps_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
+        if let Ok(entries) = fa::read_dir(&deps_dir) {
+            for entry in entries {
+                let name = entry.file_name().unwrap_or_default().to_string();
                 if !name.starts_with("lib")
                     || !name.ends_with(".rlib")
                     || name.starts_with("libloft")
@@ -1335,18 +1331,18 @@ fn n1_native_pipeline_trivial_program() {
                     without_rlib.replace('-', "_")
                 };
                 rustc_args.push("--extern".to_string());
-                rustc_args.push(format!("{crate_name}={}", entry.path().display()));
+                rustc_args.push(format!("{crate_name}={}", entry.os_spelling().display()));
             }
         }
     }
     rustc_args.push(tmp_rs.to_str().unwrap().to_string());
-    match std::process::Command::new("rustc")
+    match loft::platform::process::harness_command("rustc")
         .args(&rustc_args)
         .status()
     {
         Ok(s) if s.success() => {
             // Binary compiled — run it to confirm correctness.
-            let run = std::process::Command::new(&binary).status();
+            let run = loft::platform::process::harness_command(&binary).status();
             match run {
                 Ok(rs) => assert!(rs.success(), "native binary exited non-zero"),
                 Err(e) => eprintln!("n1: could not run binary: {e}"),
@@ -1358,8 +1354,8 @@ fn n1_native_pipeline_trivial_program() {
         ),
         Err(e) => eprintln!("n1: skipping rustc step (not in PATH): {e}"),
     }
-    let _ = std::fs::remove_file(&tmp_rs);
-    let _ = std::fs::remove_file(&binary);
+    let _ = fa::remove_file(&tmp_rs);
+    let _ = fa::remove_file(&binary);
 }
 
 // ── P1.1: Lambda parser ───────────────────────────────────────────────────────
@@ -2229,9 +2225,8 @@ fn n7_format_ops_generate_correct_rust() {
     code!("struct Flt { v: float }")
         .expr("f = Flt { v: 3.14 }; \"{f.v}\"")
         .result(Value::str("3.14"));
-    let src =
-        std::fs::read_to_string("tests/generated/issues_n7_format_ops_generate_correct_rust.rs")
-            .expect("generated file not found");
+    let src = fa::read_to_string("tests/generated/issues_n7_format_ops_generate_correct_rust.rs")
+        .expect("generated file not found");
     assert!(
         !src.contains("OpFormatFloat("),
         "generated code still contains bare OpFormatFloat call"
@@ -2486,7 +2481,7 @@ fn fill_rs_up_to_date() {
     scopes::check(&mut p.data, &mut p.database);
     let generated = loft::create::generate_code_to(&p.data, "tests/generated/fill_check.rs")
         .expect("generate_code_to failed");
-    let current = std::fs::read_to_string("src/fill.rs").expect("cannot read src/fill.rs");
+    let current = fa::read_to_string("src/fill.rs").expect("cannot read src/fill.rs");
     assert_eq!(
         current, generated,
         "src/fill.rs is out of date — run: cargo test regen_fill_rs -- --ignored --nocapture"
@@ -2517,7 +2512,7 @@ fn native_rs_functions_up_to_date() {
     let mut p = Parser::new();
     p.parse_dir("default", true, false).unwrap();
     scopes::check(&mut p.data, &mut p.database);
-    let native_src = std::fs::read_to_string("src/native.rs").expect("cannot read src/native.rs");
+    let native_src = fa::read_to_string("src/native.rs").expect("cannot read src/native.rs");
     let mut missing = Vec::new();
     for d_nr in 0..p.data.definitions() {
         let d = p.data.def(d_nr);
@@ -3314,7 +3309,7 @@ fn o7_format_string_with_capacity() {
     code!("struct S { name: text, count: integer }")
         .expr("s = S { name: \"Alice\", count: 3 }; \"hello {s.name}, count {s.count}\"")
         .result(Value::str("hello Alice, count 3"));
-    let src = std::fs::read_to_string("tests/generated/issues_o7_format_string_with_capacity.rs")
+    let src = fa::read_to_string("tests/generated/issues_o7_format_string_with_capacity.rs")
         .expect("generated file not found");
     assert!(
         src.contains("with_capacity"),
@@ -3324,7 +3319,7 @@ fn o7_format_string_with_capacity() {
     code!("struct S2 { v: integer }")
         .expr("s = S2 { v: 7 }; \"{s.v}\"")
         .result(Value::str("7"));
-    let src2 = std::fs::read_to_string("tests/generated/issues_o7_format_string_with_capacity.rs")
+    let src2 = fa::read_to_string("tests/generated/issues_o7_format_string_with_capacity.rs")
         .expect("generated file not found");
     // The single-segment case must NOT get a with_capacity hint — only ≥2 segments qualify.
     // The generated file still contains with_capacity from the S struct test above (same file),
@@ -9945,7 +9940,7 @@ fn p144_ref_param_forward_native() {
     // Emit the native Rust source and verify it compiles.
     let rs_path = std::env::temp_dir().join("loft_p144_native.rs");
     {
-        let mut f = std::fs::File::create(&rs_path).unwrap();
+        let mut f = fa::create(&rs_path).unwrap();
         let start_def = 0;
         let end_def = p.data.definitions();
         let main_nr = p.data.def_nr("n_main");
@@ -9960,7 +9955,7 @@ fn p144_ref_param_forward_native() {
     }
 
     // Read and check the generated source contains the fix pattern.
-    let source = std::fs::read_to_string(&rs_path).unwrap();
+    let source = fa::read_to_string(&rs_path).unwrap();
     // The call to box_ensure should pass var_b directly, not *var_b.
     // P199 ABI change: native fns take `cell` (`&UnsafeCell<Stores>`),
     // not `stores` (`&mut Stores`).
@@ -9974,7 +9969,7 @@ fn p144_ref_param_forward_native() {
         "P144 regression: expected direct var_b pass-through for & param.\nGenerated: {}",
         rs_path.display()
     );
-    let _ = std::fs::remove_file(&rs_path);
+    let _ = fa::remove_file(&rs_path);
 }
 
 /// P145 regression: user fn name collision with native stdlib
@@ -10306,7 +10301,7 @@ fn p157_native_refvar_forwarding_with_preeval() {
     // Write the test program to a temp file; use the parser's file-
     // loading entry point rather than an inline string.
     let src_path = std::env::temp_dir().join("loft_p157_test.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "struct Inner { val: integer }\n\
          struct Outer { inner: Inner }\n\
@@ -10328,13 +10323,13 @@ fn p157_native_refvar_forwarding_with_preeval() {
     byte_code(&mut state, &mut p.data);
     let rs_path = std::env::temp_dir().join("loft_p157_native.rs");
     {
-        let mut f = std::fs::File::create(&rs_path).unwrap();
+        let mut f = fa::create(&rs_path).unwrap();
         let main_nr = p.data.def_nr("n_main");
         let mut out = loft::generation::Output::new(&p.data, &state.database);
         out.output_native_reachable(&mut f, 0, p.data.definitions(), &[main_nr])
             .unwrap();
     }
-    let source = std::fs::read_to_string(&rs_path).unwrap();
+    let source = fa::read_to_string(&rs_path).unwrap();
     // P199 ABI change: native fns take `cell` (`&UnsafeCell<Stores>`),
     // not `stores` (`&mut Stores`).
     assert!(
@@ -10349,8 +10344,8 @@ fn p157_native_refvar_forwarding_with_preeval() {
          Generated: {}",
         rs_path.display()
     );
-    let _ = std::fs::remove_file(&rs_path);
-    let _ = std::fs::remove_file(&src_path);
+    let _ = fa::remove_file(&rs_path);
+    let _ = fa::remove_file(&src_path);
 }
 
 // ── Language enhancements ────────────────────────────────────────────
@@ -10424,34 +10419,35 @@ at a_link_only_read_leaves_the_amp_parameter_unmodified:1:13",
     );
 }
 
-/// D-bind-70 (loft#1875) — a tuple member no link can honour yet is REFUSED by name, at a `&`
-/// bind and at a `&` argument alike, and never handed a copy that would drop the write
-/// (`@FR-B-Ref-Reshape`).  Before the wide members linked, these took the work-copy route and the
-/// callee's write vanished; the pins say they cannot reach it again.
+/// `@FR-T-Record` (loft#1875) — a narrow member of a by-value tuple is a field a link names: it
+/// holds its field encoding once a `&` names it, so a `&u8` argument and a `&u8` bind both write
+/// the member, and a whole read sees the written value.
 #[test]
-fn a_narrow_tuple_member_link_is_refused() {
+fn a_narrow_tuple_member_link_writes_the_member() {
     code!(
         "fn nb(p: &u8) { p += 1; }
-fn test() { n: (u8, integer) = (5, 1); nb(n.0); assert(n.0 == 5, \"n\"); }"
+fn run() -> integer { n: (u8, integer) = (5, 1); nb(n.0); c = &n.0; c += 10; m = n; m.0 * 1000 + n.0 * 10 + n.1 }"
     )
-    .error(
-        "a `&` link to a tuple member of type `u8` is not supported — a narrow member is stored \
-at full width, and a link reads at the member's own width.  Bind the member to a local first \
-(`m = t.0; c = &m;`) and write it back at a_narrow_tuple_member_link_is_refused:2:48",
-    );
+    .expr("run()")
+    .advice(
+        "a step past `0..255` takes this type's default, `0` — nothing here says which values \
+the step may produce at a_narrow_tuple_member_link_writes_the_member:2:77",
+    )
+    .result(Value::Long(16_161));
 }
 
+/// `@FR-T-Record` (loft#1875) — a TEXT member of a tuple local is the tuple's own text, so a
+/// `&text` argument and a `&` bind both write it, and a by-value parameter's member links to the
+/// callee's copy.
 #[test]
-fn a_text_tuple_member_link_is_refused() {
+fn a_text_tuple_member_link_writes_the_member() {
     code!(
         "fn tb(p: &text) { p += \"!\"; }
-fn test() { s = (\"a\", 1); tb(s.0); assert(s.0 == \"a\", \"s\"); }"
+fn own(t: (text, integer)) -> text { tb(t.0); t.0 }
+fn run() -> text { s = (\"a\", 1); tb(s.0); c = &s.0; c += \"?\"; \"{s.0}/{own(s)}/{s.0}\" }"
     )
-    .error(
-        "a `&` link to a tuple member of type `text` is not supported — a link to a member names \
-a scalar place, and this member is not a scalar.  Bind the member to a local first \
-(`m = t.0; c = &m;`) and write it back at a_text_tuple_member_link_is_refused:2:35",
-    );
+    .expr("run()")
+    .result(Value::str("a!?/a!?!/a!?"));
 }
 
 /// `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link is a place a link
@@ -16053,8 +16049,8 @@ fn a_private_scope_end_hook_in_a_library_runs() -> std::io::Result<()> {
             "loft_dropscope{}.tmp",
             backend.trim_start_matches('-')
         ));
-        let _ = std::fs::remove_file(&trace);
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let _ = fa::remove_file(&trace);
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -16078,7 +16074,7 @@ fn a_private_scope_end_hook_in_a_library_runs() -> std::io::Result<()> {
             !stdout.contains("BUG (#"),
             "{backend}: a drop must not provoke an internal fault:\n{stdout}"
         );
-        let _ = std::fs::remove_file(&trace);
+        let _ = fa::remove_file(&trace);
     }
     Ok(())
 }
@@ -16104,7 +16100,7 @@ fn a_private_scope_end_hook_in_a_library_runs() -> std::io::Result<()> {
 fn a_delegating_producer_binds_its_companion_cleanly() -> std::io::Result<()> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(root.join("tests/scripts/pln125-a2c-companion.loft"))
@@ -16720,7 +16716,7 @@ fn run() -> integer {
 fn plan59_par_worker_over_wrapper_promoted_callee() {
     let dir = std::env::temp_dir();
     let path = dir.join("plan59_landmine.loft");
-    std::fs::write(
+    fa::write(
         &path,
         r#"
 fn use_first() -> integer {
@@ -16757,14 +16753,14 @@ fn main() {
     .unwrap();
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let bin = root.join("target/release/loft");
-    if !bin.exists() {
+    if !fa::exists(&bin) {
         // Sanitizer CI jobs (ASan gate, stack_align sweep) run the test
         // binaries without building the release CLI — skip like the
         // engine_host_kernel spawning tests do instead of dying NotFound.
         eprintln!("skipping: release loft not built");
         return;
     }
-    let out = std::process::Command::new(bin)
+    let out = loft::platform::process::harness_command(bin)
         .args(["--interpret", "--no-warnings"])
         .arg(&path)
         .current_dir(&root)
@@ -17396,17 +17392,16 @@ fn pln102_boolean_integer_comparison_rejected() {
 /// `forced_size`) where storage needs database widths.
 #[test]
 fn pln114_tuple_stride_matches_record() {
-    // `@C138` — every member sits on its natural boundary.  A struct reorders its fields
-    // largest-first (u32, u16, u8: 7 bytes, padded to 8); a tuple keeps its order (u8, three
-    // bytes of padding, u32 at 4, u16 at 8: 10 bytes, padded to 12).  Each stride is a multiple
-    // of its 4-byte alignment, so element 1 of either vector is aligned.
+    // `@C138` / `@FR-L-Tuple` — every member sits on its natural boundary, and a stored tuple
+    // is a record (@C139): both reorder largest-first (u32, u16, u8: 7 bytes, padded to 8), so
+    // the two strides are equal and element 1 of either vector is aligned.
     code!(
         "struct M { a: u8, b: u32, c: u16 }
 fn test() {
     vs: vector<M> = [M{a:1,b:2,c:3}, M{a:4,b:5,c:6}];
     vt: vector<(u8, u32, u16)> = [(1,2,3), (4,5,6)];
     assert(sizeof(M) == 8, \"struct stride {sizeof(M)}\");
-    assert(sizeof((u8, u32, u16)) == 12, \"tuple stride {sizeof((u8, u32, u16))}\");
+    assert(sizeof((u8, u32, u16)) == 8, \"tuple stride {sizeof((u8, u32, u16))}\");
     assert(vs[1].b == 5 && vt[1].1 == 5 && vt[1].2 == 6, \"element 1 of each\");
 }"
     );
@@ -17724,12 +17719,12 @@ fn issue_655_ampersand_boolean_reads_and_writes() {
 #[test]
 fn issue_656_self_qualified_reference_does_not_reparse_the_file() {
     let dir = std::env::temp_dir().join(format!("loft_656_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).unwrap();
     // A METHOD plus a self-qualified call — both halves are needed: the method is
     // what makes the re-registration fatal rather than merely duplicated.
     let file = dir.join("dlib.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "pub fn shout(self: text) -> text { return self; }\n\
          pub fn go(x: text) -> text { return dlib::shout(x); }\n",
@@ -17746,7 +17741,7 @@ fn issue_656_self_qualified_reference_does_not_reparse_the_file() {
     p.parse(&file.to_string_lossy(), false);
     let level = p.diagnostics.level();
     let report = format!("{}", p.diagnostics);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 
     assert!(
         level < loft::diagnostics::Level::Error,
@@ -17772,22 +17767,22 @@ fn issue_656_self_qualified_reference_does_not_reparse_the_file() {
 #[test]
 fn issue_656_package_can_name_itself_while_another_library_is_loaded() {
     let dir = std::env::temp_dir().join(format!("loft_656b_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(dir.join("src")).unwrap();
     // The other library — its presence is the whole point, so `use` must resolve.
-    std::fs::write(
+    fa::write(
         dir.join("src").join("gdep.loft"),
         "pub fn helper(x: integer) -> integer { return x * 2; }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dir.join("loft.toml"),
         "[package]\nname = \"glib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
          [library]\nentry = \"src/glib.loft\"\n",
     )
     .unwrap();
     let file = dir.join("src").join("glib.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "use gdep;\n\
          pub fn base(x: integer) -> integer { return x + 1; }\n\
@@ -17806,7 +17801,7 @@ fn issue_656_package_can_name_itself_while_another_library_is_loaded() {
     p.parse(&file.to_string_lossy(), false);
     let level = p.diagnostics.level();
     let report = format!("{}", p.diagnostics);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 
     assert!(
         level < loft::diagnostics::Level::Error,
@@ -17835,9 +17830,9 @@ fn issue_656_package_can_name_itself_while_another_library_is_loaded() {
 fn compat_full_window_budget_overrun_fails_the_release() {
     let loft = env!("CARGO_BIN_EXE_loft");
     let root = std::env::temp_dir().join(format!("loft_s7_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("pkg");
-    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    fa::create_dir_all(pkg.join("src")).unwrap();
 
     let manifest = |v: &str| {
         format!(
@@ -17847,20 +17842,20 @@ fn compat_full_window_budget_overrun_fails_the_release() {
         )
     };
     let source = "pub fn one(x: integer) -> integer { return x + 1; }\n";
-    std::fs::write(pkg.join("loft.toml"), manifest("0.4.0")).unwrap();
-    std::fs::write(pkg.join("src").join("s7pkg.loft"), source).unwrap();
+    fa::write(pkg.join("loft.toml"), manifest("0.4.0")).unwrap();
+    fa::write(pkg.join("src").join("s7pkg.loft"), source).unwrap();
 
     // Three earlier releases in an isolated install cache — a real window to walk, so
     // "budget exhausted" is reachable and "verified everything" means something.
     for v in ["0.1.0", "0.2.0", "0.3.0"] {
         let d = root.join(".loft/registry").join(format!("s7pkg-{v}"));
-        std::fs::create_dir_all(d.join("src")).unwrap();
-        std::fs::write(d.join("loft.toml"), manifest(v)).unwrap();
-        std::fs::write(d.join("src").join("s7pkg.loft"), source).unwrap();
+        fa::create_dir_all(d.join("src")).unwrap();
+        fa::write(d.join("loft.toml"), manifest(v)).unwrap();
+        fa::write(d.join("src").join("s7pkg.loft"), source).unwrap();
     }
 
     let run = |budget: &str| {
-        std::process::Command::new(loft)
+        loft::platform::process::harness_command(loft)
             .args(["compat", "check", "--full"])
             .current_dir(&pkg)
             .env("LOFT_HOME", &root)
@@ -17882,7 +17877,7 @@ fn compat_full_window_budget_overrun_fails_the_release() {
     // Zero budget: nothing can be proved, so it must not report success.
     let over = run("0");
     let over_txt = text(&over);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         ok.status.success(),
@@ -18107,7 +18102,7 @@ fn issue_675_cross_library_heap_return_reserves_its_buffer() {
 #[test]
 fn issue_677_returned_mutated_param_keeps_its_borrow() {
     let src_path = std::env::temp_dir().join("loft_i677_ret_borrow.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "struct I677 { x: float }\n\
          struct S677 { name: text, tags: vector<integer>, items: vector<I677> }\n\
@@ -18177,7 +18172,7 @@ fn issue_677_returned_mutated_param_keeps_its_borrow() {
 #[test]
 fn issue_682_closure_capture_ownership_marker() {
     let src_path = std::env::temp_dir().join("loft_i682_capture_marker.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "struct P682C { v: float }\n\
          struct P682W { cells: vector<P682C>, tick: integer }\n\
@@ -18264,7 +18259,7 @@ fn issue_682_closure_capture_ownership_marker() {
 #[test]
 fn issue_685_mutated_scalar_param_is_boxed_like_a_local() {
     let src_path = std::env::temp_dir().join("loft_i685_param_box.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "fn p685_arg(n: integer) -> integer { b = fn(k: integer) { n = n + k; }; b(1); n }\n\
          fn p685_loc(s: integer) -> integer { n = s; b = fn(k: integer) { n = n + k; }; b(1); n }\n\
@@ -18357,7 +18352,7 @@ fn issue_685_mutated_scalar_param_is_boxed_like_a_local() {
 #[test]
 fn issue_687_mutated_text_capture_storage_is_per_binding() {
     let src_path = std::env::temp_dir().join("loft_i687_text_storage.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "fn ret687(seed: text) -> text { keep = seed; b = fn(k: text) { keep = keep + k; }; b(\"x\"); keep }\n\
          fn side687(seed: text) -> text { side = seed; b = fn(k: text) { side = side + k; }; b(\"x\"); \"p\" + side }\n\
@@ -18420,7 +18415,7 @@ fn issue_687_mutated_text_capture_storage_is_per_binding() {
 #[test]
 fn issue_685_const_scalar_param_mutated_by_closure_is_rejected() {
     let src_path = std::env::temp_dir().join("loft_i685_const_param.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "fn c685(n: const integer) -> integer { b = fn(k: integer) { n = n + k; }; b(1); n }\n\
          fn main() { c685(1); }\n",
@@ -18458,7 +18453,7 @@ fn issue_685_const_scalar_param_mutated_by_closure_is_rejected() {
 #[test]
 fn issue_686_forward_declared_capture_is_typed_and_positioned() {
     let src_path = std::env::temp_dir().join("loft_i686_forward_capture.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "fn q686(w: W686) -> float { ch = w.inner; f = fn(x: float) -> float { ch.q * x }; f(2.0) }\n\
          struct I686 { q: float }\n\
@@ -18530,7 +18525,7 @@ fn issue_686_forward_declared_capture_is_typed_and_positioned() {
 #[test]
 fn issue_686_nameless_unknown_is_not_resolved_against_def_zero() {
     let src_path = std::env::temp_dir().join("loft_i686_sentinel.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         "fn s686(w: S686W) -> float { p = w.inner; f = fn(x: float) -> float { p.q * x }; f(1.0) }\n\
          struct S686I { q: float }\n\
@@ -18592,7 +18587,7 @@ fn issue_683_wrong_index_key_is_still_rejected_in_both_orders() {
     ];
     for (label, src) in cases {
         let src_path = std::env::temp_dir().join("loft_i683_wrong_key.loft");
-        std::fs::write(&src_path, src).unwrap();
+        fa::write(&src_path, src).unwrap();
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         p.parse(src_path.to_str().unwrap(), false);
@@ -18606,7 +18601,7 @@ fn issue_683_wrong_index_key_is_still_rejected_in_both_orders() {
             lines.contains("Invalid index key"),
             "#683 ({label}): the rejection must still be the index-key diagnostic, got: {lines}"
         );
-        let _ = std::fs::remove_file(&src_path);
+        let _ = fa::remove_file(&src_path);
     }
 }
 
@@ -18644,7 +18639,7 @@ fn issue_689_range_is_refused_on_an_unordered_collection() {
     ];
     for (label, src, needle) in refused {
         let src_path = std::env::temp_dir().join("loft_i689_refused.loft");
-        std::fs::write(&src_path, src).unwrap();
+        fa::write(&src_path, src).unwrap();
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         p.parse(src_path.to_str().unwrap(), false);
@@ -18659,7 +18654,7 @@ fn issue_689_range_is_refused_on_an_unordered_collection() {
             "#689 ({label}): the refusal must say WHY and what to use instead \
              (expected {needle:?}), got: {lines}"
         );
-        let _ = std::fs::remove_file(&src_path);
+        let _ = fa::remove_file(&src_path);
     }
 
     // The forms a hash / spatial collection CAN answer must still compile.
@@ -18683,7 +18678,7 @@ fn issue_689_range_is_refused_on_an_unordered_collection() {
     ];
     for (label, src) in allowed {
         let src_path = std::env::temp_dir().join("loft_i689_allowed.loft");
-        std::fs::write(&src_path, src).unwrap();
+        fa::write(&src_path, src).unwrap();
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         p.parse(src_path.to_str().unwrap(), false);
@@ -18693,7 +18688,7 @@ fn issue_689_range_is_refused_on_an_unordered_collection() {
             "#689 ({label}): this form is what the refusal tells users to write — \
              it must still compile.  Diagnostics: {lines}"
         );
-        let _ = std::fs::remove_file(&src_path);
+        let _ = fa::remove_file(&src_path);
     }
 }
 
@@ -18752,7 +18747,7 @@ fn issue_690_loop_variable_binds_its_own_type() {
     ];
     for (label, src) in per_loop_binding {
         let src_path = std::env::temp_dir().join("loft_i690_per_loop.loft");
-        std::fs::write(&src_path, src).unwrap();
+        fa::write(&src_path, src).unwrap();
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         p.parse(src_path.to_str().unwrap(), false);
@@ -18763,7 +18758,7 @@ fn issue_690_loop_variable_binds_its_own_type() {
              read resolves against the SECOND type and this must compile.  Diagnostics: \
              {lines}"
         );
-        let _ = std::fs::remove_file(&src_path);
+        let _ = fa::remove_file(&src_path);
     }
 
     // The tolerances are load-bearing: loft has FLAT variable scoping, so reusing one
@@ -18803,7 +18798,7 @@ fn issue_690_loop_variable_binds_its_own_type() {
     ];
     for (label, src) in accepted {
         let src_path = std::env::temp_dir().join("loft_i690_accepted.loft");
-        std::fs::write(&src_path, src).unwrap();
+        fa::write(&src_path, src).unwrap();
         let mut p = Parser::new();
         p.parse_dir("default", true, false).unwrap();
         p.parse(src_path.to_str().unwrap(), false);
@@ -18813,7 +18808,7 @@ fn issue_690_loop_variable_binds_its_own_type() {
             "#690 ({label}): this reuse is idiomatic under loft's flat scoping and must \
              still compile.  Diagnostics: {lines}"
         );
-        let _ = std::fs::remove_file(&src_path);
+        let _ = fa::remove_file(&src_path);
     }
 }
 
@@ -18832,12 +18827,12 @@ fn issue_690_loop_variable_binds_its_own_type() {
 /// Parse `src` against the real stdlib and hand back the populated `Data`.
 fn parse_for_reachability(tag: &str, src: &str) -> loft::data::Data {
     let path = std::env::temp_dir().join(format!("loft_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).unwrap();
+    fa::write(&path, src).unwrap();
     let mut p = Parser::new();
     p.parse_dir("default", true, false).unwrap();
     p.parse(path.to_str().unwrap(), false);
     scopes::check(&mut p.data, &mut p.database);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     p.data
 }
 
@@ -19159,4 +19154,64 @@ fn a_for_over_a_literal_of_an_undefined_struct_reports_the_name() {
     .error("unknown type 'Hexz' — did you mean 'text'? at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:11")
     .error("unknown type 'Hexz' — did you mean 'text'? at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:26")
     .fatal("cannot build this record — its type never resolved at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:40");
+}
+
+/// `@FR-Const-Foreign` (loft#1897, @C139) — a binding of a `-> const T` producer's value is
+/// value-const, so a write through it is refused before the program runs, with the copy cure.
+#[test]
+fn a_const_returning_function_makes_its_binding_read_only() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn test() { v = mk(); v[0] = 7; }"
+    )
+    .error(
+        "Cannot modify 'v': it holds read-only data the program does not own (a mapped file or a \
+library's buffer) — copy it first (`w = v`, a bind copies) and write the copy at \
+a_const_returning_function_makes_its_binding_read_only:2:32",
+    );
+}
+
+/// `@FR-Const-Foreign` — foreign data bound into a WRITABLE variable would present it as
+/// writable; refused, with the cure of a name of its own.
+#[test]
+fn a_foreign_value_bound_into_a_writable_variable_is_refused() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn test() { v: vector<u8> = [3]; v[0] = 4; v = mk(); }"
+    )
+    .error(
+        "'v' is writable, and this value is read-only data the program does not own (a mapped \
+file or a library's buffer) — bind it to a name of its own (`m = file_map(p)`), and copy that \
+where a writable value is needed (`v = m`) at \
+a_foreign_value_bound_into_a_writable_variable_is_refused:2:53",
+    );
+}
+
+/// `@FR-Const-Foreign` — a function returning foreign data declares it `-> const T`.
+#[test]
+fn a_function_returning_foreign_data_must_say_const() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn wrap() -> vector<u8> { mk() }
+fn test() { w = wrap(); }"
+    )
+    .error(
+        "'wrap' returns read-only data the program does not own (a mapped file or a library's \
+buffer) as a writable `vector<u8>` — declare it `-> const vector<u8>`, or return a copy at \
+a_function_returning_foreign_data_must_say_const:2:33",
+    )
+    .warning("Variable w is never read at a_function_returning_foreign_data_must_say_const:3:16");
+}
+
+/// `@FR-Const-Foreign` — the cure: a bind copies (`w = v`) into a writable value, and a `const`
+/// parameter reads the original; the original is untouched.
+#[test]
+fn a_copy_of_foreign_data_is_writable() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn rd(p: const vector<u8>) -> integer { p[1] }
+fn run() -> integer { v = mk(); w = v; w[0] = 9; w += [5]; v[0] * 1000 + w[0] * 100 + len(w) * 10 + rd(v) }"
+    )
+    .expr("run()")
+    .result(Value::Long(1932));
 }

@@ -25,8 +25,8 @@
 //! Binary-invoked like `tests/group_apart_lint.rs`: these are end-to-end compile diagnostics on
 //! stderr. `LOFT_NO_CACHE` because the warm program cache skips the re-parse that produces them.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const CODE: &str = "advice[function-complexity]";
 
@@ -41,12 +41,13 @@ const KNOTTY: &str = "pub fn knotty(n: integer) -> integer {\n\
 
 fn probe_dir() -> PathBuf {
     let dir = std::env::temp_dir().join("loft_complexity_lint_ownership");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     dir
 }
 
 fn run(path: &PathBuf, extra: &[&str]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret");
     for a in extra {
         cmd.arg(a);
@@ -65,7 +66,7 @@ fn the_author_of_the_code_is_told() {
     // pins that the fix did not simply switch the diagnostic off.
     let dir = probe_dir();
     let path = dir.join("author_view.loft");
-    std::fs::write(
+    fa::write(
         &path,
         format!("{KNOTTY}fn main() {{ print(\"{{knotty(2)}}\"); }}\n"),
     )
@@ -82,11 +83,11 @@ fn a_consumer_importing_it_is_not() {
     // The same function, reached through `use`. Nothing the consumer can write changes it.
     let dir = probe_dir();
     let libdir = dir.join("lib");
-    std::fs::create_dir_all(&libdir).expect("lib dir");
-    std::fs::write(libdir.join("knotlib.loft"), KNOTTY).expect("write lib");
+    fa::create_dir_all(&libdir).expect("lib dir");
+    fa::write(libdir.join("knotlib.loft"), KNOTTY).expect("write lib");
 
     let path = dir.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "use knotlib;\nfn main() { print(\"{knotlib::knotty(2)}\"); }\n",
     )
@@ -107,11 +108,11 @@ fn the_consumers_own_complexity_still_reaches_them() {
     // tests above and fails this one.
     let dir = probe_dir();
     let libdir = dir.join("lib");
-    std::fs::create_dir_all(&libdir).expect("lib dir");
-    std::fs::write(libdir.join("knotlib.loft"), KNOTTY).expect("write lib");
+    fa::create_dir_all(&libdir).expect("lib dir");
+    fa::write(libdir.join("knotlib.loft"), KNOTTY).expect("write lib");
 
     let path = dir.join("consumer_own.loft");
-    std::fs::write(
+    fa::write(
         &path,
         format!(
             "use knotlib;\n\

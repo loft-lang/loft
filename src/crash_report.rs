@@ -129,13 +129,8 @@ pub fn set_op_names(build: impl FnOnce() -> Vec<&'static str>) {
     let _ = OP_NAMES.get_or_init(build);
 }
 
-/// The name of opcode `op`, or `""` when no table was published.
-///
-/// Gated to match its only caller, the `cfg(unix)` signal handler.  The table is still
-/// PUBLISHED on every target — `set_op_names` runs from `execute_argv` unconditionally —
-/// but nothing reads it where there is no handler to read it from, so an ungated
-/// definition is dead code on Windows and warns there while building clean on Linux.
-#[cfg(unix)]
+/// The name of opcode `op`, or `""` when no table was published.  Read by the fatal-signal
+/// report ([`report_fatal`]), so it must stay async-signal-safe: one `OnceLock` read.
 fn op_name_of(op: u16) -> &'static str {
     OP_NAMES
         .get()
@@ -253,14 +248,12 @@ static PROGRAM: OnceLock<&'static str> = OnceLock::new();
 /// allocates; the handler itself only calls `open`/`write`/`close`, which POSIX
 /// lists as async-signal-safe.  Nothing is created unless a crash actually fires.
 ///
-/// Unix only, like the signal handler that fills it: a target with no fatal
-/// signals to catch has no report to lose.
-#[cfg(unix)]
+/// Set only where the host catches fatal signals (`platform::catches_fatal_signals`), like
+/// the handler that fills it: a target with no fatal signals to catch has no report to lose.
 static CRASH_FILE: OnceLock<CrashFile> = OnceLock::new();
 
 /// A crash-report destination: the same path twice, once NUL-terminated for
-/// `libc::open` and once printable for the stderr line that names it.
-#[cfg(unix)]
+/// `open(2)` and once printable for the stderr line that names it.
 struct CrashFile {
     /// NUL-terminated, ready to hand to `open(2)` without formatting.
     c_path: Vec<u8>,
@@ -279,7 +272,6 @@ struct CrashFile {
 /// async-signal-safe, and a run that does not crash should leave no trace.
 ///
 /// The pid keeps concurrent packages in one sweep from overwriting each other.
-#[cfg(unix)]
 fn choose_crash_file() -> Option<CrashFile> {
     crash_file_from(std::env::var("LOFT_CRASH_FILE").ok())
 }
@@ -288,7 +280,6 @@ fn choose_crash_file() -> Option<CrashFile> {
 /// [`choose_crash_file`], separated from reading the environment so it can be
 /// tested without mutating process-wide state (which races every other test in
 /// the binary, and is `unsafe` besides).
-#[cfg(unix)]
 fn crash_file_from(setting: Option<String>) -> Option<CrashFile> {
     let path = match setting {
         // Explicitly emptied — the caller wants stderr only.
@@ -297,7 +288,7 @@ fn crash_file_from(setting: Option<String>) -> Option<CrashFile> {
         None => {
             let name = format!("loft-crash-{}.txt", std::process::id());
             let dot_loft = std::path::Path::new(".loft");
-            if dot_loft.is_dir() {
+            if crate::file_access::is_dir(dot_loft) {
                 dot_loft.join(name)
             } else {
                 std::env::temp_dir().join(name)
@@ -317,17 +308,10 @@ fn crash_file_from(setting: Option<String>) -> Option<CrashFile> {
 
 /// The resolved crash-report path, once [`install`] has run.  `None` when no
 /// file is configured — the diagnostic then goes to stderr alone, as before,
-/// which is also every non-unix target (there is no signal handler to feed it).
+/// which is also every host that catches no fatal signal (there is no handler to feed it).
 #[must_use]
 pub fn crash_file_path() -> Option<String> {
-    #[cfg(unix)]
-    {
-        CRASH_FILE.get().map(|c| c.display.clone())
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
+    CRASH_FILE.get().map(|c| c.display.clone())
 }
 
 /// Update the per-thread context just before an opcode dispatches.
@@ -413,7 +397,7 @@ pub fn source_loc_for_pc(pc: u32) -> Option<crate::lexer::Position> {
             m.range(..=pc)
                 .rev()
                 .find(|(_, (_, end))| *end > pc)
-                .map(|(_, (p, _))| p.clone())
+                .map(|(_, (p, _))| *p)
         })
     })
 }
@@ -428,11 +412,9 @@ pub fn source_loc_for_pc(pc: u32) -> Option<crate::lexer::Position> {
 pub fn nearest_source_loc_for_pc(pc: u32) -> Option<(u32, crate::lexer::Position)> {
     SOURCE_SPANS.with(|s| {
         let borrow = s.borrow();
-        borrow.as_ref().and_then(|m| {
-            m.range(..=pc)
-                .next_back()
-                .map(|(at, (p, _))| (*at, p.clone()))
-        })
+        borrow
+            .as_ref()
+            .and_then(|m| m.range(..=pc).next_back().map(|(at, (p, _))| (*at, *p)))
     })
 }
 
@@ -456,7 +438,7 @@ thread_local! {
 pub fn note_compile_pos(pos: &crate::lexer::Position) {
     COMPILE_POS.with(|p| {
         if let Ok(mut slot) = p.try_borrow_mut() {
-            *slot = Some(pos.clone());
+            *slot = Some(*pos);
         }
     });
 }
@@ -473,7 +455,7 @@ pub fn clear_compile_pos() {
 
 #[must_use]
 pub fn compile_pos() -> Option<crate::lexer::Position> {
-    COMPILE_POS.with(|p| p.try_borrow().ok().and_then(|b| b.clone()))
+    COMPILE_POS.with(|p| p.try_borrow().ok().and_then(|b| *b))
 }
 
 /// Render an internal compiler panic as a loft diagnostic pointing at the user's
@@ -518,7 +500,7 @@ pub fn install_panic_hook() {
             diags.add_at(
                 crate::diagnostics::Level::Fatal,
                 &msg,
-                &pos.file,
+                pos.file.as_str(),
                 pos.line,
                 pos.pos,
             );
@@ -543,42 +525,30 @@ pub fn install_panic_hook() {
     }));
 }
 
-/// Install signal handlers for SIGSEGV / SIGABRT / SIGBUS.
+/// Install the fatal-signal report for SIGSEGV / SIGABRT / SIGBUS
+/// (`platform::on_fatal_signal`).
 ///
-/// No-op on non-Unix platforms and when called more than once.
+/// No-op where the host catches no fatal signal (Windows: `platform::catches_fatal_signals`)
+/// and when called more than once.
 pub fn install(program: &'static str) {
     if INSTALLED.swap(true, Ordering::SeqCst) {
         return;
     }
     let _ = PROGRAM.set(program);
+    if !crate::platform::catches_fatal_signals() {
+        return;
+    }
     // Resolve the report path BEFORE the handlers are armed, so a crash the
     // instant after this call still has somewhere to write.
-    #[cfg(unix)]
     if let Some(f) = choose_crash_file() {
         let _ = CRASH_FILE.set(f);
     }
-    #[cfg(unix)]
-    unsafe {
-        for &sig in &[libc::SIGSEGV, libc::SIGABRT, libc::SIGBUS] {
-            let mut act: libc::sigaction = std::mem::zeroed();
-            act.sa_sigaction = handler as *const () as libc::sighandler_t;
-            // SA_SIGINFO for the siginfo/ucontext args we ignore here; SA_RESETHAND so
-            // the default handler runs after we print (produces the core dump).
-            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESETHAND;
-            libc::sigemptyset(&raw mut act.sa_mask);
-            libc::sigaction(sig, &raw const act, std::ptr::null_mut());
-        }
-    }
+    crate::platform::on_fatal_signal(report_fatal);
 }
 
-/// Async-signal-safe handler.  Reads the thread-local context and
-/// writes a one-line diagnostic to stderr; the default handler
-/// then takes over (which produces a core dump if `ulimit -c` is
-/// set).
 /// The op and function labels a crash report prints: the opcode's own name when the table
 /// reached us, else the dispatch loop's label — never just the number, which names nothing —
 /// and the function's label, or `(?)`.
-#[cfg(unix)]
 fn context_labels(op_code: u16) -> (&'static str, &'static str) {
     let labels = LAST_NAMES.with(Cell::get);
     let named = op_name_of(op_code);
@@ -595,8 +565,11 @@ fn context_labels(op_code: u16) -> (&'static str, &'static str) {
     (op, func)
 }
 
-#[cfg(unix)]
-extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: *mut libc::c_void) {
+/// The fatal-signal report, called INSIDE the signal handler (`platform::on_fatal_signal`)
+/// with the signal's name.  Async-signal-safe: reads the thread-local context and writes a
+/// diagnostic to stderr (and the crash file) from a fixed buffer; the default handler then
+/// takes over (which produces a core dump if `ulimit -c` is set).
+fn report_fatal(sig_name: &'static str) {
     // Read the context.  If the interpreter wasn't running, EMPTY
     // fields produce a "no context" message — still useful to
     // confirm the signal fired.
@@ -624,15 +597,9 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
             borrow
                 .as_ref()
                 .and_then(|m| m.range(..=ctx.pc).next_back())
-                .map(|(at, (p, _))| (*at, p.clone()))
+                .map(|(at, (p, _))| (*at, *p))
         })
     });
-    let sig_name = match sig {
-        libc::SIGSEGV => "SIGSEGV",
-        libc::SIGABRT => "SIGABRT",
-        libc::SIGBUS => "SIGBUS",
-        _ => "signal",
-    };
     let program = PROGRAM.get().copied().unwrap_or("loft");
     // Build message into a fixed-size buffer, async-signal-safe.
     let mut buf = [0u8; 768];
@@ -665,7 +632,7 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
         // user can still grep for it.
         if let Some((span_pc, pos)) = source_loc.as_ref() {
             let _ = w.str("  at:      ");
-            let _ = w.str(&pos.file);
+            let _ = w.str(pos.file.as_str());
             let _ = w.str(":");
             let _ = w.u32(pos.line);
             let _ = w.str(":");
@@ -687,60 +654,28 @@ extern "C" fn handler(sig: libc::c_int, _info: *mut libc::siginfo_t, _ucontext: 
     }
     let _ = w.str("===\n");
     let bytes = w.as_bytes();
-    unsafe {
-        let _ = libc::write(
-            libc::STDERR_FILENO,
-            bytes.as_ptr().cast::<libc::c_void>(),
-            bytes.len(),
-        );
-    }
+    crate::platform::signal_safe_stderr(bytes);
     // loft#717 — the same bytes to a FILE, so a pipeline that filters stderr
     // cannot swallow the one diagnostic that can never be regenerated.  Write
     // it BEFORE announcing the path, so the line below is only printed when
-    // there is really something at the other end of it.
-    if let Some(target) = CRASH_FILE.get() {
-        let wrote = unsafe {
-            // `open`/`write`/`close` are all on POSIX's async-signal-safe list,
-            // and `c_path` was NUL-terminated at install time, so nothing here
-            // allocates or formats.  0o600: a crash dump names internals, so it
-            // is readable by its owner only.
-            let fd = libc::open(
-                target.c_path.as_ptr().cast::<libc::c_char>(),
-                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC,
-                0o600 as libc::c_int,
-            );
-            if fd < 0 {
-                false
-            } else {
-                let n = libc::write(fd, bytes.as_ptr().cast::<libc::c_void>(), bytes.len());
-                libc::close(fd);
-                n > 0
-            }
-        };
-        if wrote {
-            let mut note = [0u8; 1024];
-            let mut nw = Writer::new(&mut note);
-            let _ = nw.str("  report also written to: ");
-            let _ = nw.str(&target.display);
-            let _ = nw.str("\n");
-            let note_bytes = nw.as_bytes();
-            unsafe {
-                let _ = libc::write(
-                    libc::STDERR_FILENO,
-                    note_bytes.as_ptr().cast::<libc::c_void>(),
-                    note_bytes.len(),
-                );
-            }
-        }
+    // there is really something at the other end of it.  `c_path` was
+    // NUL-terminated at install time, so nothing here allocates or formats.
+    if let Some(target) = CRASH_FILE.get()
+        && crate::platform::signal_safe_write_file(&target.c_path, bytes)
+    {
+        let mut note = [0u8; 1024];
+        let mut nw = Writer::new(&mut note);
+        let _ = nw.str("  report also written to: ");
+        let _ = nw.str(&target.display);
+        let _ = nw.str("\n");
+        crate::platform::signal_safe_stderr(nw.as_bytes());
     }
     // SA_RESETHAND → the default handler fires next, producing the
     // core dump and terminating the process.
 }
 
-// `Writer` and its methods are pure Rust — available on every
-// platform so the `#[cfg(test)]` unit tests compile uniformly.
-// Only the signal-handler path that invokes it is `#[cfg(unix)]`,
-// so on non-unix non-test builds (e.g. WASM release) it looks dead.
+// `Writer` and its methods are pure Rust, so the fatal-signal report can format without
+// allocating; on a target that never arms the report (e.g. WASM release) it looks dead.
 #[allow(dead_code)]
 struct Writer<'a> {
     buf: &'a mut [u8],
@@ -846,7 +781,6 @@ mod tests {
     /// signal, stderr discarded, a readable file afterwards) is
     /// `tests/crash_report_file.rs`; this pins the choice itself, which has three
     /// outcomes and only one of them is exercised by that test.
-    #[cfg(unix)]
     #[test]
     fn crash_file_choice() {
         // An explicit setting is taken verbatim, and NUL-terminated for `open`.
@@ -968,7 +902,7 @@ mod tests {
         };
         note_compile_pos(&pos);
         let got = compile_pos().expect("published position is readable");
-        assert_eq!((&*got.file, got.line, got.pos), ("prog.loft", 12, 5));
+        assert_eq!((got.file.as_str(), got.line, got.pos), ("prog.loft", 12, 5));
 
         // A later position replaces the earlier one — the report wants where the
         // compiler IS, not where it started.

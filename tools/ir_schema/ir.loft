@@ -166,12 +166,14 @@ struct Attribute {
   const_field: boolean, // @PLN40 — write-once struct field; last bool keeps prior offsets stable
   value_const: boolean, // C124 — a value-const field, or a `const` parameter read at every call
   work_buffer: boolean, // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
+  pub_field: boolean, // @PLN187 — a field declared `pub`
   value: vector<Node>,
   check: vector<Node>,
   check_message: vector<Node>,
   alias_d_nr: integer,
   assigned_lambda_d_nr: integer,
   links: text, // @PLN86 F8b — group#right member links; "" = unlinked
+  fact: text, // @PLN187 where the declared type names a `type` alias; "" = nowhere
 }
 
 struct Variable {
@@ -274,6 +276,8 @@ struct Definition {
   instance_args: vector<TypeT>, // @PLN165 D3 that instance's type arguments, header order
   builtin: boolean, // @PLN165 arc E #builtin: a call selecting it lowers through the special form of its name
   operator_form: boolean, // @PLN182 written `operator`: what an operator form on its `self` type reaches
+  returned_fact: text, // @PLN187 where the declared result names a `type` alias; "" = nowhere
+  returned_const: boolean, // @FR-Const-Foreign `-> const T`: the producer's data is value-const
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

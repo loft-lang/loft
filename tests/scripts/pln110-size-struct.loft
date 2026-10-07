@@ -11,6 +11,8 @@
 // (verified: `size(make())` runs `make()` on both backends).
 //
 // Values verified against both backends (interpret + native) during Phase 1.
+// @falsified-at: none — the planted defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct Point {
   x: integer,

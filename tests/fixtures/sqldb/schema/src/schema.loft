@@ -896,14 +896,14 @@ pub fn index_columns(self: IndexDef) -> text {
 /// Which backend a connection string names, and what to hand it.
 pub struct Conn {
   /// The driver's name — `sqlite`, `postgres`, `maria` or `duckdb`.
-  const backend: text,
+  pub const backend: text,
   /// Everything after `scheme:`. What a driver that takes a path or a DSN wants.
-  const target: text,
+  pub const target: text,
   /// The string exactly as given. What a driver that parses its own URI wants —
   /// libpq reads the whole `postgresql://…`, scheme included.
-  const full: text,
+  pub const full: text,
   /// Why this string names no backend; `""` when it names one.
-  refusal: text = "",
+  pub refusal: text = "",
 }
 
 pub fn conn_ok(self: Conn) -> boolean { return self.refusal == ""; }

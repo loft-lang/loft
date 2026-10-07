@@ -10,8 +10,8 @@
 //! on zeros rather than paying a memset on every claim.  The number only moves DOWN — a
 //! new dependence is a regression, and the remaining ones are named in
 //! `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § Zero-on-claim.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -22,12 +22,13 @@ const KNOWN_DEPENDENT: &[&str] = &[];
 
 fn scripts() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts");
-    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+    let mut out: Vec<PathBuf> = fa::read_dir(dir)
         .expect("tests/scripts")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .filter(|p| {
-            let src = std::fs::read_to_string(p).unwrap_or_default();
+            let src = fa::read_to_string(p).unwrap_or_default();
             !src.contains("@EXPECT_ERROR") && !src.contains("@IGNORE")
         })
         .collect();
@@ -38,7 +39,7 @@ fn scripts() -> Vec<PathBuf> {
 /// Does `script` fail the way a read of un-initialised words fails, with claims `poisoned`
 /// or not?
 fn fails(script: &Path, poisoned: bool) -> bool {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("--interpret").arg(script).env("LOFT_TIMEOUT", "60");
     if poisoned {
         cmd.env("LOFT_POISON_CLAIM", "1");
@@ -92,7 +93,7 @@ fn census(scripts: &[PathBuf]) -> Vec<String> {
         .iter()
         .zip(hits)
         .filter(|(_, hit)| *hit)
-        .map(|(p, _)| p.file_stem().unwrap().to_string_lossy().to_string())
+        .map(|(p, _)| fa::file_stem(p).unwrap())
         .collect()
 }
 

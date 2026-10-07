@@ -9,9 +9,9 @@
 //! fill, which keep the per-element form, that every fill carries its fallback and its counter
 //! tail, and the switch (`LOFT_NO_FILL_HOIST=1`), which is what makes it red on the build
 //! before the unit and on one that lost it.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ae-fill-cells.loft";
@@ -37,7 +37,8 @@ const FILLS: &[(&str, usize)] = &[
 
 fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(&src)
@@ -47,12 +48,12 @@ fn emit(out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(fills, fallback guards, counter tails)`.
@@ -91,7 +92,7 @@ fn each_filling_loop_takes_the_fill_with_its_fallback_and_tail() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(*got, (*n, *n, *n), "{name}: (fills, guards, tails)");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -102,5 +103,5 @@ fn the_switch_emits_no_fill() {
         !rust.contains("fill_hoisted"),
         "LOFT_NO_FILL_HOIST=1 must emit no fill"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

@@ -25,8 +25,8 @@
 //! probing six sources reads the first cell's fault under every later answer — correctly
 //! — and separate processes are what make each cell a measurement of its own source.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -36,14 +36,14 @@ fn loft_bin() -> PathBuf {
 /// tree when it is done, so one shared path is one cell deleting another's fixture.
 fn dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("loft_994_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).expect("mkdir");
+    let _ = fa::remove_dir_all(&d);
+    fa::create_dir_all(&d).expect("mkdir");
     d
 }
 
 /// Writes a real store image holding ids 7 and 91, and the one-cell probe beside it.
 fn fixture(d: &Path) {
-    std::fs::write(
+    fa::write(
         d.join("mk.loft"),
         "struct Part { const id: integer, name: text }\n\
          fn main() {\n\
@@ -54,19 +54,19 @@ fn fixture(d: &Path) {
          }\n",
     )
     .expect("write mk");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "mk.loft"])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(d)
         .output()
         .expect("spawn loft");
     assert!(
-        out.status.success() && d.join("good.store").exists(),
+        out.status.success() && fa::exists(d.join("good.store")),
         "the fixture image must be written — every cell below compares against it\n{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    std::fs::write(
+    fa::write(
         d.join("one.loft"),
         "struct Part { const id: integer, name: text }\n\
          fn main() {\n\
@@ -82,7 +82,7 @@ fn fixture(d: &Path) {
 }
 
 fn probe(d: &Path, path: &str) -> String {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "one.loft", path])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(d)
@@ -105,9 +105,9 @@ fn probe(d: &Path, path: &str) -> String {
 fn a_source_that_is_not_an_image_reports_a_fault() {
     let d = dir("silent");
     fixture(&d);
-    std::fs::write(d.join("empty.store"), b"").expect("write");
-    std::fs::write(d.join("junk.store"), b"not-a-store").expect("write");
-    std::fs::write(d.join("rand.store"), vec![0xABu8; 8192]).expect("write");
+    fa::write(d.join("empty.store"), b"").expect("write");
+    fa::write(d.join("junk.store"), b"not-a-store").expect("write");
+    fa::write(d.join("rand.store"), vec![0xABu8; 8192]).expect("write");
 
     for (label, path) in [
         ("a missing file", "no_such.store"),
@@ -127,7 +127,7 @@ fn a_source_that_is_not_an_image_reports_a_fault() {
             "{label} must carry a reason, not an empty error (loft#994): {line}"
         );
     }
-    let _ = std::fs::remove_dir_all(&d);
+    let _ = fa::remove_dir_all(&d);
 }
 
 /// The control, and the reason the cells above are a comparison rather than an assertion
@@ -137,7 +137,7 @@ fn a_real_image_still_answers_its_key() {
     let d = dir("control");
     fixture(&d);
     let line = probe(&d, "good.store");
-    let _ = std::fs::remove_dir_all(&d);
+    let _ = fa::remove_dir_all(&d);
     assert!(
         line.contains("null=false") && line.contains("faults=0") && line.contains("err=[]"),
         "a valid image must answer key 7 with a quiet channel: {line}"
@@ -155,10 +155,10 @@ fn a_real_image_still_answers_its_key() {
 fn truncation_still_reads_and_a_broken_signature_does_not() {
     let d = dir("edges");
     fixture(&d);
-    let good = std::fs::read(d.join("good.store")).expect("read image");
+    let good = fa::read(d.join("good.store")).expect("read image");
 
     let half = d.join("half.store");
-    std::fs::write(&half, &good[..good.len() / 2]).expect("write half");
+    fa::write(&half, &good[..good.len() / 2]).expect("write half");
     let line = probe(&d, "half.store");
     assert!(
         line.contains("null=false"),
@@ -167,9 +167,9 @@ fn truncation_still_reads_and_a_broken_signature_does_not() {
 
     let mut broken = good;
     broken[..4].fill(0);
-    std::fs::write(d.join("nosig.store"), &broken).expect("write nosig");
+    fa::write(d.join("nosig.store"), &broken).expect("write nosig");
     let line = probe(&d, "nosig.store");
-    let _ = std::fs::remove_dir_all(&d);
+    let _ = fa::remove_dir_all(&d);
     assert!(
         line.contains("faults=1") && !line.contains("err=[]"),
         "a file whose store signature is gone is not an image, whatever the rest of it \

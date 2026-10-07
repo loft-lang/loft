@@ -2,6 +2,6 @@
 // See p173_a.loft for context.
 use p173_a::*;
 
-pub struct TypeB { y: integer }
+pub struct TypeB { pub y: integer }
 
 pub fn consumes_a(a: TypeA) -> integer { a.x }

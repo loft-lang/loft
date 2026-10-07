@@ -150,6 +150,18 @@ impl Parser {
             );
             return;
         }
+        // `@FR-Const-Foreign` — a binding of foreign data: the author wrote no `const`.
+        if self.foreign_bound.contains(&(self.context, nr)) {
+            let name = self.vars.name(nr).to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{name}': it holds read-only data the program does not own (a \
+                 mapped file or a library's buffer) — copy it first (`w = {name}`, a bind copies) \
+                 and write the copy"
+            );
+            return;
+        }
         // `const_report_var` — see loft#1250: a const text argument is promoted to a
         // `__tp_` local, and the promoted local is not marked an argument, so reporting
         // against it demotes "const parameter" to "const variable".
@@ -1921,7 +1933,7 @@ impl Parser {
         // Start of the left operand — `known_var_or_type` below must point an
         // "Unknown variable" caret here, not at the cursor that has drifted to
         // the operator / statement terminator while the operand was parsed.
-        let operand_pos = self.lexer.peek_pos().clone();
+        let operand_pos = *self.lexer.peek_pos();
         let mut current_type = self.parse_operators(var_tp, code, parent_tp, precedence + 1);
         // @PLN102 pre-freeze — comparison operators are NON-ASSOCIATIVE.  A chain like
         // `a == b == c` (or `a < b < c`) parses as `(a == b) == c`, silently comparing a
@@ -1942,7 +1954,7 @@ impl Parser {
             // and three errors after it, and never that `f(v)` has no value.  Name it, and
             // read the right-hand side so the parse stays aligned.
             if matches!(current_type, Type::Void) {
-                let at = self.lexer.peek_pos().clone();
+                let at = *self.lexer.peek_pos();
                 let Some(op) = OPERATORS[precedence]
                     .iter()
                     .copied()
@@ -1975,7 +1987,7 @@ impl Parser {
             // threaded into `handle_operator` so the resulting Value::Span
             // points at the operator token (e.g. the `/`), not at whatever
             // the lexer drifted to while parsing the RHS.
-            let op_pos = self.lexer.pos().clone();
+            let op_pos = *self.lexer.pos();
             let op_start = {
                 let p = self.lexer.peek_pos();
                 (p.line, p.pos)
@@ -2154,6 +2166,8 @@ impl Parser {
                 }
                 return current_type;
             }
+            // @PLN187 — the left operand's abstract alias; checked against the right's below.
+            let left_fact = std::mem::take(&mut self.operand_fact);
             // `@FR-E-Eq` — a recorded `&<operand>` is the LEFT side of `&a == &b` only when it
             // spans this whole operand, from `operand_pos` to the operator.
             if let Some(amp) = self.amp_identity.take() {
@@ -2212,16 +2226,23 @@ impl Parser {
                 let mut second_code = Value::Null;
                 let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
                 ls.push((second_code, tp));
-            } else if let Some(value) = self.handle_operator(
-                var_tp,
-                code,
-                parent_tp,
-                precedence,
-                &mut current_type,
-                operator,
-                &op_pos,
-            ) {
-                return value;
+                let right_fact = std::mem::take(&mut self.operand_fact);
+                self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
+            } else {
+                let handled = self.handle_operator(
+                    var_tp,
+                    code,
+                    parent_tp,
+                    precedence,
+                    &mut current_type,
+                    operator,
+                    &op_pos,
+                );
+                let right_fact = std::mem::take(&mut self.operand_fact);
+                self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
+                if let Some(value) = handled {
+                    return value;
+                }
             }
         }
     }
@@ -2233,7 +2254,12 @@ impl Parser {
         code: &mut Value,
         parent_tp: &mut Type,
     ) -> Type {
+        // @PLN187 — the operand's abstract alias, settled after its primary and each postfix
+        // step (`parser::abstract_alias`).
+        self.operand_fact = crate::data::AliasFact::Plain;
+        self.produced = None;
         let mut t = self.parse_single(var_tp, code, parent_tp);
+        self.settle_operand(code);
         // --show-types --trace: log the type after the initial
         // `parse_single` (variable, literal, parenthesised expr).
         self.record_type_trace(&t);
@@ -2253,6 +2279,39 @@ impl Parser {
             || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
         {
+            let recv = std::mem::take(&mut self.operand_fact);
+            self.produced = None;
+            self.postfix_member.clear();
+            self.method_checked = false;
+            if self.abstract_on() {
+                self.method_receiver = recv.clone();
+            }
+            // a slice answers the receiver's own type; an element of `vector<vector<…>>` does not
+            let recv_tp = if self.abstract_on() {
+                t.without_deps()
+            } else {
+                Type::Null
+            };
+            let step = if self.lexer.peek_token("[") {
+                crate::parser::abstract_alias::Step::Index
+            } else if self.lexer.peek_token("?") {
+                crate::parser::abstract_alias::Step::Fallback
+            } else {
+                crate::parser::abstract_alias::Step::Member
+            };
+            // @PLN187 — the member a `.` step names, read ahead: `.0` picks a tuple member's fact.
+            if self.abstract_on() && self.lexer.peek_token(".") {
+                let saved = self.lexer.link();
+                self.lexer.cont();
+                self.postfix_member = match &self.lexer.peek().has {
+                    crate::lexer::LexItem::Integer(i, _) => i.to_string(),
+                    crate::lexer::LexItem::Long(i) => i.to_string(),
+                    crate::lexer::LexItem::Identifier(n) => n.clone(),
+                    _ => String::new(),
+                };
+                self.lexer.revert(saved);
+            }
+            self.last_called = u32::MAX;
             // @PLN116 — postfix default-fallback `x?`.  Handled first (a default-
             // fallback never faults, so it skips the `.`/`[]` span-wrapping below),
             // then re-enter the loop so a following `.`/`[]` chains onto the
@@ -2260,6 +2319,7 @@ impl Parser {
             // two-char match means `??` never reaches here as two `?` tokens.
             if self.lexer.has_token("?") {
                 self.handle_default_fallback(var_tp, code, parent_tp, &mut t);
+                self.check_postfix(&recv, step, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
             }
@@ -2269,7 +2329,7 @@ impl Parser {
             // (`.` field/method or `[` index — both can deref null or
             // out-of-bounds at runtime).  The `(` chained-call branch
             // is wrapped under step 1.13.
-            let chain_pos = self.lexer.pos().clone();
+            let chain_pos = *self.lexer.pos();
             let mut wrap_chain = false;
             if !self.first_pass
                 && t.is_unknown()
@@ -2763,6 +2823,9 @@ impl Parser {
                 let inner = std::mem::replace(code, Value::Null);
                 *code = Value::with_span(chain_pos, inner);
             }
+            self.settle_operand(code);
+            let is_slice = self.abstract_on() && t.without_deps() == recv_tp;
+            self.check_postfix(&recv, step, is_slice, code);
             // --show-types --trace: log the resulting type after
             // each chaining step (`.field`, `.tuple_idx`, `[idx]`,
             // `(args)`).  Combined with the post-`parse_single`
@@ -3778,7 +3841,7 @@ impl Parser {
         let mut ret_val = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
         if self.control_value_follows() {
-            let ret_pos = self.lexer.peek_pos().clone();
+            let ret_pos = *self.lexer.peek_pos();
             let t = self.expression(&mut ret_val);
             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
             // slot — the store face asks; a bare `null` return takes the sentinel path below
@@ -3933,7 +3996,7 @@ impl Parser {
         lhs_type: &Type,
     ) {
         let mut rhs = Value::Null;
-        let rhs_pos = self.lexer.peek_pos().clone();
+        let rhs_pos = *self.lexer.peek_pos();
         // Thread the LHS BASE type as the default's hint when the context gives
         // none (`var_tp` unknown/null — e.g. a RETURN-TAIL `v[i] ?? []`, where
         // parse_return's `[`-led vector hint cannot fire).  Without it an EMPTY
@@ -5623,7 +5686,7 @@ impl Parser {
                 Type::Vector(elem, _) => Type::Vector(elem.clone(), crate::data::Deps::none()),
                 _ => ctp.clone(),
             };
-            let second_pos = self.lexer.peek_pos().clone();
+            let second_pos = *self.lexer.peek_pos();
             let is_eq = operator == "==" || operator == "!=";
             let left_amp = self.eq_amp_left.take();
             let outer_rhs = std::mem::replace(
@@ -5954,7 +6017,7 @@ impl Parser {
         } else {
             self.expr_not_null = false;
             let mut second_code = Value::Null;
-            let second_pos = self.lexer.peek_pos().clone();
+            let second_pos = *self.lexer.peek_pos();
             // Enforces @FR-G-Assoc — this is the ONE place associativity is decided, since
             // the level table (`parser/mod.rs::OPERATORS`) carries precedence only.
             //
@@ -6172,7 +6235,7 @@ impl Parser {
             }
             if !self.first_pass && matches!(operator, "+" | "-" | "*" | "/" | "%" | "<<" | ">>") {
                 let inner = std::mem::replace(code, Value::Null);
-                *code = Value::with_span(op_pos.clone(), inner);
+                *code = Value::with_span(*op_pos, inner);
             }
             // The result of a binary arithmetic op is a *computed value*, not
             // a `not null` field read — `/` and `%` can yield null on
@@ -6427,9 +6490,7 @@ impl Parser {
         // legitimate fallback) instead of leaking to the lexer's
         // current cursor — which is *past* the just-parsed body and
         // would otherwise point at the next function's start.
-        let fn_pos = self.data.definitions[self.context as usize]
-            .position
-            .clone();
+        let fn_pos = self.data.definitions[self.context as usize].position;
         ctx.last_pos = Some(fn_pos);
         let body = &self.data.definitions[self.context as usize].code;
         Self::walk_for_warnings(&self.data, &mut self.lexer, body, &mut ctx);
@@ -6559,8 +6620,8 @@ impl Parser {
     ) {
         match code {
             Value::Span(boxed) => {
-                let saved = ctx.last_pos.clone();
-                ctx.last_pos = Some(boxed.0.clone());
+                let saved = ctx.last_pos;
+                ctx.last_pos = Some(boxed.0);
                 Self::walk_for_warnings(data, lexer, &boxed.1, ctx);
                 ctx.last_pos = saved;
             }

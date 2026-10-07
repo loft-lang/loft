@@ -36,10 +36,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:
   receipts:
+    # @windows-exempt: receipts are scored on one platform by design (GUARDS.md)
     name: Refresh and score stale patch receipts
     runs-on: ubuntu-latest
     timeout-minutes: 90

@@ -79,7 +79,10 @@ path's copies (10 %).
 | +C | the split table slices the borrowed `h`; the value returned once | (R-SplitTable) with A; F14 | S | 2.52 M | 3.6× |
 
 A and B are both needed: A alone is 10.3×, and B needs A or the fold re-reads a copied
-`String`.  After A+B+D what remains is twin-shaped.  `(R-FoldCompare)` reaches every
+`String`.  **A and B built** on 157-native-4x: 5.97 → 3.12 ms in the lane (7.4× → 3.87× on
+x86-64, `bench/stats.py`, hash unchanged).  B first measured only −12 %: `pre_eval` lifted the
+fold's block into a `let _pre_N` the new emitter never read, so the fold was still built —
+both sides now ask one predicate.  D (the `prefix` operand) is next.  After A+B+D what remains is twin-shaped.  `(R-FoldCompare)` reaches every
 case-insensitive lookup in the text-scan class (header names, keys, extensions, commands).
 
 ## cbor `decode` — 11.2× → 4.8×
@@ -136,6 +139,17 @@ F is load-bearing, and it is the mechanism `msg_ping`, `decode` and `check_reque
 priced against too: build it first, then B (reaches every fn-ref API), then A, C, D.  The
 hand price of F used `Store::delete` on a text block for the replace path; the built form
 uses the release walk's own text free, under the leak census and `LOFT_POISON=1`.
+
+**B built** as `(R-FnRefValue)` with its parameter half, re-priced first on the emission after
+`(R-RefillText)`'s collection clause: −33 % priced (`price_fnref_value.py` with the arm numbers
+of that emission, 864 / 863), −34.5 % built — 22.2 → 14.5 ms on the flow-only driver, three
+interleaved runs on one core, hash `eb888d85` unchanged; in its lane (`bench/stats.py`, 7
+samples) 22.17 → 14.41 ms, 11.9× → 7.82× its Rust twin.  The result half alone bought nothing:
+`token_width`'s `measure(r.str, resolve(r.style))` hands the resolved record to a second
+dispatch whose arms kept their record parameters, which consumed it as a record and declined
+the group.  And the dispatch carried an arm no value could select — the driver's own
+`bench_flow(n) -> Row` matched `fn(integer) -> Style` by Rust ABI — which would have declined it
+on the bench too; arms now match the declared record.
 
 ## graphics `draw_bezier` — 9.8× → 3.7×
 

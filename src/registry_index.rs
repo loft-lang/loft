@@ -35,6 +35,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use crate::file_access;
 use crate::json::{Parsed, parse as parse_json};
 
 // ── Schema ────────────────────────────────────────────────────────
@@ -496,11 +497,44 @@ pub fn is_exact_pin(constraint: &str) -> bool {
 /// it on an EXACT pin broke that promise — `loft install glb@0.1.1` refused a version the
 /// index plainly carries, which is the same retention failure `web 0.2.2` suffered one layer
 /// down. A range or `*` still skips yanked, so nothing new ever picks one up by accident.
+/// Does `ver`'s `loft` floor admit the running loft?  The same test the loader makes
+/// (`manifest::check_version`, as `loft_floor_holds` and [`newest_cached_loadable_satisfying`]
+/// do), so resolution never picks a release the load would then refuse (loft#1890).  A
+/// version with no floor, or one whose floor cannot be read, is judged by the loader as it
+/// always was: an unreadable floor is not satisfied, so it is skipped here too.
+fn floor_admits(ver: &Version) -> bool {
+    ver.loft.is_empty()
+        || crate::manifest::check_version(&ver.loft, crate::manifest::LOFT_RUNNING_VERSION)
+            == crate::manifest::VersionCheck::Satisfied
+}
+
 #[must_use]
 pub fn find_best_version<'a>(
     pkg: &'a Package,
     constraint: &str,
     allow_prerelease: bool,
+) -> Option<&'a Version> {
+    best_version(pkg, constraint, allow_prerelease, true)
+}
+
+/// The newest release of the TOOLCHAIN package, by the same yanked and prerelease rules as
+/// [`find_best_version`] but with no `loft` floor: a loft release's floor names the loft IT
+/// needs, and the self-updater exists to fetch exactly a release the running loft is older
+/// than — a floor filter there would hide every update from the loft that needs it.
+#[must_use]
+pub fn find_newest_release<'a>(
+    pkg: &'a Package,
+    constraint: &str,
+    allow_prerelease: bool,
+) -> Option<&'a Version> {
+    best_version(pkg, constraint, allow_prerelease, false)
+}
+
+fn best_version<'a>(
+    pkg: &'a Package,
+    constraint: &str,
+    allow_prerelease: bool,
+    floors: bool,
 ) -> Option<&'a Version> {
     let yanked: std::collections::HashSet<&str> = pkg.yanked.iter().map(String::as_str).collect();
     // An exact pin names one release and is what a lockfile records; anything else is the
@@ -515,6 +549,12 @@ pub fn find_best_version<'a>(
             continue;
         }
         if !satisfies(&ver.semver, constraint) {
+            continue;
+        }
+        // A release this loft cannot load is not a candidate — the newest one it CAN load is
+        // (PACKAGES.md § The `loft` floor).  An exact pin still names its release: the load then
+        // says why it refuses, as it does for a yanked pin's retention.
+        if floors && !exact_pin && !floor_admits(ver) {
             continue;
         }
         if best
@@ -588,6 +628,7 @@ pub fn find_compatible_version<'a>(
         if yanked.contains(ver.semver.as_str())
             || (ver.prerelease && !allow_prerelease)
             || !satisfies(&ver.semver, constraint)
+            || !floor_admits(ver)
         {
             continue;
         }
@@ -744,7 +785,7 @@ fn packages_exporting(name: &str, declares: fn(&str, &str) -> bool) -> Vec<Strin
         return Vec::new();
     }
     let (index_path, _, _) = index_paths();
-    let Ok(content) = std::fs::read_to_string(index_path) else {
+    let Ok(content) = file_access::read_to_string(index_path) else {
         return Vec::new();
     };
     let Ok(index) = parse_index(&content) else {
@@ -870,9 +911,9 @@ pub fn replace_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Resu
     let mut tmp = path.as_os_str().to_os_string();
     tmp.push(format!(".tmp{}-{n}", std::process::id()));
     let tmp = std::path::PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
+    file_access::write(&tmp, bytes)?;
+    if let Err(e) = file_access::rename(&tmp, path) {
+        let _ = file_access::remove_file(&tmp);
         return Err(e);
     }
     Ok(())
@@ -896,8 +937,11 @@ pub fn write_signed_pair(
     content: &[u8],
     signature: &[u8],
 ) -> std::io::Result<()> {
-    if let Some(parent) = content_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    // A bare file name has the empty parent, which names no directory to create.
+    if let Some(parent) = content_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        file_access::create_dir_all(parent)?;
     }
     replace_atomically(content_path, content)?;
     if !signature.is_empty() {
@@ -946,8 +990,8 @@ pub fn read_signed_pair_settling(
     accept: &mut dyn FnMut(&[u8], &[u8]) -> bool,
 ) -> std::io::Result<SettledPair> {
     for attempt in 0..SETTLE_ATTEMPTS {
-        let content = std::fs::read(content_path)?;
-        let signature = std::fs::read(sig_path).unwrap_or_default();
+        let content = file_access::read(content_path)?;
+        let signature = file_access::read(sig_path).unwrap_or_default();
         if accept(&content, &signature) {
             return Ok(SettledPair {
                 content,
@@ -988,17 +1032,21 @@ pub fn extract_dir(pkg: &str, version: &str) -> PathBuf {
 #[must_use]
 pub fn installed_packages() -> Vec<(String, String, PathBuf)> {
     let mut entries = Vec::new();
-    let Ok(read) = std::fs::read_dir(cache_dir()) else {
+    let cache = cache_dir();
+    let Ok(read) = file_access::read_dir(&cache) else {
         return entries;
     };
-    for ent in read.filter_map(Result::ok) {
-        let path = ent.path();
-        if !path.is_dir() {
+    for ent in read {
+        if ent.last_is_unspellable() {
             continue;
         }
-        let Some(dirname) = path.file_name().and_then(|s| s.to_str()) else {
+        let Some(dirname) = ent.file_name() else {
             continue;
         };
+        let path = cache.join(dirname);
+        if !file_access::is_dir(&path) {
+            continue;
+        }
         let bytes = dirname.as_bytes();
         let split = (1..bytes.len()).find(|&i| bytes[i - 1] == b'-' && bytes[i].is_ascii_digit());
         let Some(at) = split else { continue };
@@ -1159,7 +1207,7 @@ pub fn triggers_sidecar_path() -> PathBuf {
 /// miss: two writes inside one second share an mtime, and a replacement of the
 /// same byte count shares a length.
 fn index_stamp(index: &std::path::Path) -> Option<(u64, u64)> {
-    let meta = std::fs::metadata(index).ok()?;
+    let meta = file_access::metadata(index).ok()?;
     let mtime = meta
         .modified()
         .ok()?
@@ -1176,7 +1224,7 @@ fn read_trigger_sidecar_at(
     index: &std::path::Path,
 ) -> Option<BTreeMap<String, String>> {
     let (len, mtime) = index_stamp(index)?;
-    let text = std::fs::read_to_string(sidecar).ok()?;
+    let text = file_access::read_to_string(sidecar).ok()?;
     let Parsed::Object(root) = parse_json(&text).ok()? else {
         return None;
     };
@@ -1232,13 +1280,13 @@ fn write_trigger_sidecar_at(
         ("triggers".to_string(), 0, Parsed::Object(entries)),
     ]);
     if let Some(parent) = sidecar.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = file_access::create_dir_all(parent);
     }
-    let tmp = sidecar.with_extension(format!("tmp{}", std::process::id()));
-    if std::fs::write(&tmp, crate::json::to_json_string(&doc)).is_ok()
-        && std::fs::rename(&tmp, sidecar).is_err()
+    let tmp = file_access::with_extension(sidecar, &format!("tmp{}", std::process::id()));
+    if file_access::write(&tmp, crate::json::to_json_string(&doc)).is_ok()
+        && file_access::rename(&tmp, sidecar).is_err()
     {
-        let _ = std::fs::remove_file(&tmp);
+        let _ = file_access::remove_file(&tmp);
     }
 }
 
@@ -1250,7 +1298,8 @@ fn catalog_trigger_map_at(
     if let Some(map) = read_trigger_sidecar_at(sidecar, index) {
         return map;
     }
-    let (Some(stamp), Ok(content)) = (index_stamp(index), std::fs::read_to_string(index)) else {
+    let (Some(stamp), Ok(content)) = (index_stamp(index), file_access::read_to_string(index))
+    else {
         return BTreeMap::new();
     };
     let Ok(parsed) = parse_index(&content) else {
@@ -1362,9 +1411,11 @@ pub fn fetch_index(url: &str) -> Result<FetchedIndex, String> {
 /// Returns a `String` error on HTTP / IO failure.
 pub fn download_tarball(url: &str, dest: &std::path::Path) -> Result<Vec<u8>, String> {
     let bytes = fetch_bytes(url)?;
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    // A bare file name has the empty parent, which names no directory to create.
+    if let Some(parent) = dest.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        file_access::create_dir_all(parent).map_err(|e| format!("creating {e}"))?;
     }
     // Atomically: a prebuilt cdylib lands here, and another process may load it the moment
     // the name exists — a plain write would hand that process a short file.
@@ -1449,7 +1500,7 @@ pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
     // mirrors + bundle-import-served indexes.  Same contract as the
     // HTTP path: return the raw bytes at the URL.
     if let Some(path) = url.strip_prefix("file://") {
-        return std::fs::read(path).map_err(|e| format!("file:// read error for {path}: {e}"));
+        return file_access::read(path).map_err(|e| format!("file:// read error for {e}"));
     }
     let agent = crate::tls::agent_builder()
         .timeout_connect(std::time::Duration::from_secs(15))
@@ -1480,10 +1531,8 @@ pub fn extract_tarball(
     tarball_path: &std::path::Path,
     dest_parent: &std::path::Path,
 ) -> Result<(), String> {
-    std::fs::create_dir_all(dest_parent)
-        .map_err(|e| format!("create {}: {e}", dest_parent.display()))?;
-    let f = std::fs::File::open(tarball_path)
-        .map_err(|e| format!("open {}: {e}", tarball_path.display()))?;
+    file_access::create_dir_all(dest_parent).map_err(|e| format!("create {e}"))?;
+    let f = file_access::open(tarball_path).map_err(|e| format!("open {e}"))?;
     let dec = flate2::read::GzDecoder::new(f);
     let mut ar = tar::Archive::new(dec);
     ar.unpack(dest_parent)
@@ -1497,8 +1546,7 @@ pub fn extract_tarball(
 /// # Errors
 /// IO errors propagate as `String`.
 pub fn unpack_tarball_bytes(bytes: &[u8], dest_parent: &std::path::Path) -> Result<(), String> {
-    std::fs::create_dir_all(dest_parent)
-        .map_err(|e| format!("create {}: {e}", dest_parent.display()))?;
+    file_access::create_dir_all(dest_parent).map_err(|e| format!("create {e}"))?;
     let dec = flate2::read::GzDecoder::new(bytes);
     tar::Archive::new(dec)
         .unpack(dest_parent)
@@ -1534,16 +1582,16 @@ pub fn place_package(bytes: &[u8], pkg: &str, version: &str) -> Result<bool, Str
     ));
     let placed = unpack_tarball_bytes(bytes, &staging).and_then(|()| {
         let top = staging.join(format!("{pkg}-{version}"));
-        if !top.join("loft.toml").exists() {
+        if !file_access::exists(top.join("loft.toml")) {
             return unpack_tarball_bytes(bytes, &cache).map(|()| true);
         }
-        match std::fs::rename(&top, &dest) {
+        match file_access::rename(&top, &dest) {
             Ok(()) => Ok(true),
-            Err(_) if dest.join("loft.toml").exists() => Ok(false),
+            Err(_) if file_access::exists(dest.join("loft.toml")) => Ok(false),
             Err(_) => unpack_tarball_bytes(bytes, &cache).map(|()| true),
         }
     });
-    let _ = std::fs::remove_dir_all(&staging);
+    let _ = file_access::remove_dir_all(&staging);
     placed
 }
 
@@ -2299,6 +2347,59 @@ mod tests {
         assert_eq!(best.semver, "0.1.1");
     }
 
+    /// loft#1890 — a release whose `loft` floor the running loft does not meet is not a
+    /// candidate: resolution answers the newest release this loft CAN load, as PACKAGES.md
+    /// promises, instead of one the load then refuses.  The floor here (`>=9999.1`) is above
+    /// every loft, the other (`>=0.8`) below every loft; an exact pin still names its release
+    /// (the load says why it refuses), and a version with no floor stays a candidate.
+    #[test]
+    fn resolution_skips_a_release_this_loft_cannot_load() {
+        let idx = parse_index(
+            r#"{ "schema_version": 1, "updated": "2026-10-06T00:00:00Z", "packages": {
+                "assets": { "description": "packs", "categories": ["io"], "yanked": [],
+                  "versions": {
+                    "0.3.1": { "url": "u", "sha256": "a", "size": 1, "loft": ">=0.8", "published": "2026-09-01T00:00:00Z" },
+                    "0.4.1": { "url": "u", "sha256": "b", "size": 1, "loft": ">=9999.1", "published": "2026-10-06T00:00:00Z" }
+                  } },
+                "plain": { "description": "no floor", "categories": ["io"], "yanked": [],
+                  "versions": {
+                    "1.0.0": { "url": "u", "sha256": "c", "size": 1, "loft": "", "published": "2026-10-06T00:00:00Z" }
+                  } }
+            } }"#,
+        )
+        .expect("parse");
+        let assets = idx.packages.get("assets").expect("assets");
+        for c in ["*", ">=0.3", "^0.3"] {
+            assert_eq!(
+                find_best_version(assets, c, false).map(|v| v.semver.as_str()),
+                Some("0.3.1"),
+                "constraint `{c}` must pass over the release this loft cannot load"
+            );
+        }
+        assert_eq!(
+            find_best_version(assets, "^0.4", false).map(|v| v.semver.as_str()),
+            None,
+            "no loadable release in the range answers none, not the unloadable one"
+        );
+        assert_eq!(
+            find_best_version(assets, "0.4.1", false).map(|v| v.semver.as_str()),
+            Some("0.4.1"),
+            "an exact pin still names its release; the load explains the refusal"
+        );
+        let held = find_compatible_version(assets, ">=0.3", false, Some("0.3.1"));
+        assert_eq!(
+            held.best.map(|v| v.semver.as_str()),
+            Some("0.3.1"),
+            "the held-version path agrees"
+        );
+        let plain = idx.packages.get("plain").expect("plain");
+        assert_eq!(
+            find_best_version(plain, "*", false).map(|v| v.semver.as_str()),
+            Some("1.0.0"),
+            "a version with no floor stays a candidate"
+        );
+    }
+
     /// A yanked version stays INSTALLABLE by exact pin — that is the whole reason
     /// `PKG_REGISTRY.md` keeps it listed. Skipping it here refused a version the index
     /// plainly carries (`loft install glb@0.1.1`), breaking every `loft.lock` pinned across a
@@ -2677,8 +2778,8 @@ mod tests {
 
     fn scratch_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("loft-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let _ = file_access::remove_dir_all(&dir);
+        file_access::create_dir_all(&dir).expect("scratch dir");
         dir
     }
 
@@ -2708,21 +2809,21 @@ mod tests {
         let dir = scratch_dir("sidecar-build");
         let index = dir.join("index.json");
         let sidecar = dir.join("triggers.json");
-        std::fs::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
+        file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
 
         // First ask: no sidecar yet, so the index is parsed and the sidecar written.
         let first = catalog_trigger_map_at(&sidecar, &index);
         assert_eq!(first.get("matches").map(String::as_str), Some("regex"));
         assert!(
-            sidecar.exists(),
+            file_access::exists(&sidecar),
             "the first ask must leave a sidecar behind"
         );
 
         // Prove the second ask reads the SIDECAR and not the index: rewrite the
         // sidecar's answer, keeping its stamp, and watch that answer come back.
         // A reader that re-parsed the index would still say `regex`.
-        let text = std::fs::read_to_string(&sidecar).unwrap();
-        std::fs::write(&sidecar, text.replace("\"regex\"", "\"impostor\"")).unwrap();
+        let text = file_access::read_to_string(&sidecar).unwrap();
+        file_access::write(&sidecar, text.replace("\"regex\"", "\"impostor\"")).unwrap();
         let second = catalog_trigger_map_at(&sidecar, &index);
         assert_eq!(
             second.get("matches").map(String::as_str),
@@ -2730,7 +2831,7 @@ mod tests {
             "the sidecar is the fast path; this ask must not have touched the index"
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2738,12 +2839,12 @@ mod tests {
         let dir = scratch_dir("sidecar-stale");
         let index = dir.join("index.json");
         let sidecar = dir.join("triggers.json");
-        std::fs::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
+        file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
         catalog_trigger_map_at(&sidecar, &index);
 
         // The index moves on — a different package, and a different length, so the
         // stamp mismatches even for two writes inside one second.
-        std::fs::write(&index, index_with_trigger("globbing", "matches", "   ")).unwrap();
+        file_access::write(&index, index_with_trigger("globbing", "matches", "   ")).unwrap();
         let rebuilt = catalog_trigger_map_at(&sidecar, &index);
         assert_eq!(
             rebuilt.get("matches").map(String::as_str),
@@ -2751,10 +2852,10 @@ mod tests {
             "a stale stamp must send the reader back to the index"
         );
         // And the rebuild is persisted, not recomputed on every ask.
-        let text = std::fs::read_to_string(&sidecar).unwrap();
+        let text = file_access::read_to_string(&sidecar).unwrap();
         assert!(text.contains("globbing"), "sidecar not rewritten: {text}");
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2764,10 +2865,10 @@ mod tests {
         let sidecar = dir.join("triggers.json");
         assert!(catalog_trigger_map_at(&sidecar, &index).is_empty());
         assert!(
-            !sidecar.exists(),
+            !file_access::exists(&sidecar),
             "nothing was derived, so there is nothing to cache"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     // ── loft#1045 — the cached index and its signature must swap as one ───────────
@@ -2795,7 +2896,7 @@ mod tests {
         const SIZE: usize = 512 * 1024;
         let dir = scratch_dir("1045-atomic-write");
         let path = dir.join("index.json");
-        std::fs::write(&path, vec![b'A'; SIZE]).expect("seed");
+        file_access::write(&path, vec![b'A'; SIZE]).expect("seed");
 
         let stop = Arc::new(AtomicBool::new(false));
         let writer = {
@@ -2814,7 +2915,7 @@ mod tests {
         let (mut seen_a, mut seen_b, mut torn, mut reads) = (false, false, 0usize, 0usize);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while std::time::Instant::now() < deadline && !(seen_a && seen_b && reads >= 200) {
-            let got = std::fs::read(&path).expect("read");
+            let got = file_access::read(&path).expect("read");
             reads += 1;
             if got.len() != SIZE || got.iter().any(|&b| b != got[0]) {
                 torn += 1;
@@ -2846,8 +2947,8 @@ mod tests {
     fn a_matched_pair_is_accepted_on_the_first_look() {
         let dir = scratch_dir("1045-matched");
         let (content, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
-        std::fs::write(&content, b"gen2").expect("content");
-        std::fs::write(&sig, b"gen2").expect("sig");
+        file_access::write(&content, b"gen2").expect("content");
+        file_access::write(&sig, b"gen2").expect("sig");
 
         let started = std::time::Instant::now();
         let settled =
@@ -2886,8 +2987,8 @@ mod tests {
     fn a_pair_torn_by_a_refresh_settles_into_the_new_generation() {
         let dir = scratch_dir("1045-torn");
         let (content, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
-        std::fs::write(&content, b"gen2").expect("content");
-        std::fs::write(&sig, b"gen1").expect("stale sig");
+        file_access::write(&content, b"gen2").expect("content");
+        file_access::write(&sig, b"gen1").expect("stale sig");
 
         let mut attempts = 0;
         let mut finish_the_refresh_after_the_first_read = |c: &[u8], s: &[u8]| {
@@ -2925,8 +3026,8 @@ mod tests {
     fn a_signature_that_never_matches_is_still_refused() {
         let dir = scratch_dir("1045-refused");
         let (content, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
-        std::fs::write(&content, b"gen2").expect("content");
-        std::fs::write(&sig, b"forged").expect("sig");
+        file_access::write(&content, b"gen2").expect("content");
+        file_access::write(&sig, b"forged").expect("sig");
 
         let settled =
             read_signed_pair_settling(&content, &sig, &mut |c, s| c == s).expect("read pair");
@@ -2944,21 +3045,21 @@ mod tests {
         let (content, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
 
         write_signed_pair(&content, &sig, b"gen1", b"sig1").expect("first");
-        assert_eq!(std::fs::read(&content).expect("content"), b"gen1");
-        assert_eq!(std::fs::read(&sig).expect("sig"), b"sig1");
+        assert_eq!(file_access::read(&content).expect("content"), b"gen1");
+        assert_eq!(file_access::read(&sig).expect("sig"), b"sig1");
 
         write_signed_pair(&content, &sig, b"gen2", b"").expect("second");
-        assert_eq!(std::fs::read(&content).expect("content"), b"gen2");
+        assert_eq!(file_access::read(&content).expect("content"), b"gen2");
         assert_eq!(
-            std::fs::read(&sig).expect("sig"),
+            file_access::read(&sig).expect("sig"),
             b"sig1",
             "an empty signature must not erase the cached one"
         );
 
-        let strays: Vec<_> = std::fs::read_dir(&dir)
+        let strays: Vec<_> = file_access::read_dir(&dir)
             .expect("dir")
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .iter()
+            .filter_map(|e| e.file_name().map(str::to_string))
             .filter(|n| n.contains(".tmp"))
             .collect();
         assert!(

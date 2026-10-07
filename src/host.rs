@@ -221,7 +221,7 @@ impl Program {
             ))
         })?;
         let src = pkg_dir.join("src");
-        let dir = if src.is_dir() {
+        let dir = if crate::file_access::is_dir(&src) {
             src
         } else {
             pkg_dir.to_path_buf()
@@ -271,6 +271,7 @@ impl Program {
 
     /// The program's stores — where @PLN119's worker binds the call arena so a
     /// compound argument is addressable from inside the call.
+    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn stores(&mut self) -> &mut crate::database::Stores {
         &mut self.state.database
@@ -284,6 +285,7 @@ impl Program {
     /// directory is what `file("x")` means. Without this a placed library reads a
     /// different file from the same library in-process — silently, because both
     /// paths are perfectly valid, just not the same one.
+    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn anchor_paths_at(&mut self, dir: &std::path::Path) {
         self.state.database.source_dir = dir.to_string_lossy().into_owned();
@@ -298,6 +300,7 @@ impl Program {
     /// rather than assumed. A worker built from other sources, or from the same
     /// sources compiled differently, would otherwise read the caller's bytes as
     /// whatever its own type happens to lay out at those offsets.
+    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn layout_of(&mut self, ty: &Type) -> (u16, u64) {
         let tp = self.state.database.db_type(ty, &self.data);
@@ -306,6 +309,7 @@ impl Program {
 
     /// Who frees the storage `func`'s heap return names — @PLN103's delivery
     /// lens, asked of the worker's own copy of the library.
+    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn return_delivery(&self, func: &str) -> crate::use_analysis::HeapDelivery {
         let d_nr = self.data.def_nr(&format!("n_{func}"));
@@ -317,6 +321,7 @@ impl Program {
 
     /// The declared type of `func`'s parameters (hidden ones excluded) and of its
     /// return — the signature the placement layer hashes for the layout gate.
+    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn signature(&self, func: &str) -> Option<(Vec<Type>, Type)> {
         let d_nr = self.data.def_nr(&format!("n_{func}"));
@@ -592,7 +597,7 @@ fn default_stdlib_dir() -> String {
         && let Some(dir) = exe.parent()
     {
         let cand = dir.join("../default");
-        if cand.exists() {
+        if crate::file_access::exists(&cand) {
             return cand.to_string_lossy().into_owned();
         }
     }
