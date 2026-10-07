@@ -246,11 +246,12 @@ all shared by both backends and by every `T.parse` of JSON:
 
 | lever | what it removes | priced |
 |---|---|--:|
-| J1 | `JParser.path` — pushed and popped per array element (`idx.to_string()`) and per key (`name.clone()`), never read; and four token tests that build a `String` to compare (`LexItem::Token("}".to_string())`) where `Lexer::peek_token` compares in place | 15.0 → 13.7 ms (−9 %) |
+| J1 | `JParser.path` — pushed and popped per array element (`idx.to_string()`) and per key (`name.clone()`), read only when an error names its path — so it is built while the error unwinds instead; and four token tests that build a `String` to compare (`LexItem::Token("}".to_string())`) where `Lexer::peek_token` compares in place | 15.0 → 13.7 ms (−9 %) |
 | J2 | the lexer's two `HashSet<String>` lookups per punctuation character: an ASCII table for one-character tokens, the two-character lookup only where a two-character token starts with this character (the price form skipped the formatting-mode `}` resume — the real change must keep it) | → 12.7 ms (−8.5 %) |
 | J3 | `walk_parsed_into`'s per-object `HashSet<&str>` of found fields under SipHash; `FxHashSet` (a bitset over field indices would be cheaper still) | → 11.8 ms (−7 %) |
 
-Together −21 % (≈ 7.7×).  What is left: the lexer's core loop (`cont` / `string` / `next`,
+Together −21 % (≈ 7.7×).  **Built** (6534ee4a9): 15.3 → 12.0 ms alone on one core; the walker's
+path is built on unwind the same way.  What is left: the lexer's core loop (`cont` / `string` / `next`,
 ≈ 23 %), one `String` allocated per token (`LexItem::Token(String)` — the representation the
 compiler's parser shares, so an interned `&'static str` token is a front-end change with its
 own compile-time win), `walk_parsed_into` cloning the type's `Parts` (the field list with its
@@ -267,7 +268,7 @@ result 15 %, the palette scan 12 %.
 | lever | what it removes | priced |
 |---|---|--:|
 | P1 | `paint`'s `w.painted[q, r] = PaintedHex { … }` mints a STORE per call, writes the record, copies it into the hash (`set_keyed` → `insert_keyed_copy_at`) and frees the store.  Priced with the scratch store minted once (the copy kept): | 2.26 → 1.84 ms (−18 %) |
-| P2 | the same insert built IN its hash slot (`(R-Place)` for a keyed destination): the copy goes too, and the find-then-insert pair of probes becomes one | unpriced; P1 is its floor |
+| P2 | the same insert built IN its hash slot (`(R-InPlaceLiteral)`'s keyed clause): the store and the copy go; the find-then-insert pair of probes stays (the removal and the link) | **built**: 2.26 → 1.69 ms (−25 %) |
 | P3 | the palette scan reads each name through the generic `store.get_str` and `op_eq_text`; through the record address (`(R-RecPtr)`'s text read) it is a slice compare | unpriced, ≤ 12 % |
 | P4 | the row's `for ph in pw.painted` sorts the hash into a scratch first — loft's iteration order is by key, the twin's `HashMap` order is arbitrary.  A walk whose body only accumulates is order-free and need not sort, but integer overflow makes `+` order-sensitive, so the rewrite needs a range proof | unpriced, ≤ 15 % |
 
