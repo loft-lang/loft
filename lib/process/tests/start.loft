@@ -72,7 +72,8 @@ fn test_path_holes() {
   got_p = p.run().stdout;
   assert(p.refused == "" && (got_p == "a/b" || got_p == "a\\b"), "a path hole: {p.argv} {p.refused} [{got_p}]");
   inside: Command = "x --out={path("dir/f.txt")}";
-  assert("{inside.argv}" == "[\"x\",\"--out=dir/f.txt\"]", "a path hole inside a word: {inside.argv}");
+  word = "{inside.argv}";
+  assert(word == "[\"x\",\"--out=dir/f.txt\"]" || word == "[\"x\",\"--out=dir\\f.txt\"]", "a path hole inside a word: {word}");
   bad: Command = "cat {path("a/b:c")}";
   assert(bad.refused != "" && "{bad.argv}" == "[\"cat\"]", "a name no platform holds refuses: {bad.argv} {bad.refused}");
   // A path hole reaches its file as an argument.
