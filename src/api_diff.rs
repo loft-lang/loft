@@ -448,12 +448,12 @@ mod tests {
         assert_eq!(diff(&one, &both), Verdict::Superset);
         match diff(&both, &one) {
             Verdict::Break(why) => assert!(why[0].contains("`y` is no longer `pub`"), "{why:?}"),
-            v => panic!("losing `pub` must break: {v:?}"),
+            v @ Verdict::Superset => panic!("losing `pub` must break: {v:?}"),
         }
         let gone = vec![pubm("P", "struct", "{ pub x: integer }")];
         match diff(&both, &gone) {
             Verdict::Break(why) => assert_eq!(why.len(), 1, "removed, not also un-`pub`: {why:?}"),
-            v => panic!("removing a field must break: {v:?}"),
+            v @ Verdict::Superset => panic!("removing a field must break: {v:?}"),
         }
         let sealed_old = vec![
             sealed("Q", "struct", "{ n: integer }"),
