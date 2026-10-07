@@ -1,0 +1,57 @@
+// `@FR-R-InPlace`'s link clause — handing `&rows[i]` to a callee, where the element is a
+// record that owns NO heap (`(integer, integer)`), writes nothing by itself: the callee can
+// write the record's scalars in place, which its own summary judges, and nothing else.  So
+// the loop around it keeps `rows`' header and the link local `q` its record address.  A
+// record that owns a text stays a writer: a callee writing the text through the link
+// re-claims in the store.  Every value is hand-computed; LOFT_HOIST_VERIFY=1 re-derives each
+// held address at every use and panics where it disagrees with the store.
+
+fn link_step(p: &(integer, integer), k: integer) { p.0 += k; p.1 += p.0 % 7; }
+
+/// Writes the whole record through the link; the caller's address must read it after.
+fn reset(p: &(integer, integer), k: integer) { p.0 = k; p.1 = k * 2; }
+
+fn tag(p: &(integer, text), k: integer) { p.1 = "{p.1}{k}"; p.0 += 1; }
+
+fn main() {
+  // c1 — the routine's shape: two passes over four elements, a member update through the
+  // local link and one through the callee's.
+  rows: vector<(integer, integer)> = [for i in 0..4 { (i, 10) }];
+  for pass in 0..2 {
+    for i in 0..4 {
+      q = &rows[i];
+      q.0 += pass;
+      q.1 += q.0 % 5;
+      link_step(rows[i], 1);
+    }
+  }
+  // by hand: (3,16) (4,20) (5,24) (6,23)
+  assert(rows[0].0 == 3 && rows[0].1 == 16 && rows[1].0 == 4 && rows[1].1 == 20, "c1 head");
+  assert(rows[2].0 == 5 && rows[2].1 == 24 && rows[3].0 == 6 && rows[3].1 == 23, "c1 tail");
+
+  // c2 — the callee rewrites the record the local link names; reading through the link
+  // after the call sees what the callee wrote.
+  r2: vector<(integer, integer)> = [for i in 0..3 { (i, 0) }];
+  s2 = 0;
+  for i in 0..3 {
+    q = &r2[i];
+    q.0 += 5;
+    reset(r2[i], q.0 + 1);
+    s2 += q.0 * 100 + q.1;
+  }
+  // i=0: q.0=5, reset to (6,12) -> 612; i=1: 6 -> (7,14) -> 714; i=2: 7 -> (8,16) -> 816
+  assert(s2 == 612 + 714 + 816 && r2[2].0 == 8 && r2[2].1 == 16, "c2 {s2}");
+
+  // c3 — a record that owns a text: the callee appends to it through the link.
+  r3: vector<(integer, text)> = [for i in 0..3 { (i, "t") }];
+  s3 = 0;
+  for i in 0..3 {
+    q = &r3[i];
+    q.0 += 10;
+    tag(r3[i], i);
+    s3 += q.0 + len(q.1);
+  }
+  // each: q.0 = i + 10 + 1, text "t{i}" of length 2 -> (11+2) + (12+2) + (13+2)
+  assert(s3 == 42 && r3[1].1 == "t1" && r3[2].0 == 13, "c3 {s3}");
+  println("ok");
+}

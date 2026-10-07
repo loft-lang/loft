@@ -217,6 +217,26 @@ fn scalar_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Fu
             if vars.is_some_and(|v| is_scalar(v.tp(*t))))
 }
 
+/// `@FR-R-InPlace`'s link clause — the address of a local naming a record that owns NO heap
+/// (`&rows[i]` handed to `fn f(p: &(integer, integer))`) writes nothing either: through it a
+/// callee can only write the record's scalars in place or rebind the local, and neither claims,
+/// grows or frees.  What the callee writes is judged by its own summary.  A record that owns a
+/// text or a collection stays a writer — a callee writing it through the link re-claims.
+fn record_stack_ref(
+    stores: Option<&Stores>,
+    data: &Data,
+    op: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+        if vars.zip(stores).is_some_and(|(v, st)| {
+            plain_record_type(data, v.tp(*t))
+                .is_some_and(|tp| st.is_struct(tp) && !st.owns_heap(tp))
+        }))
+}
+
 /// `LOFT_NO_COPY_IN_PLACE=1` — a no-heap record copy is a store writer again
 /// (`@FR-R-Switch`).  Read at generation time.
 fn in_place_copy_enabled() -> bool {
@@ -6912,7 +6932,8 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
-                    || scalar_stack_ref(data.def(*d).name(), args, vars));
+                    || scalar_stack_ref(data.def(*d).name(), args, vars)
+                    || record_stack_ref(stores, data, data.def(*d).name(), args, vars));
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
