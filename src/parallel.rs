@@ -63,6 +63,11 @@ pub struct WorkerProgram {
     /// `&Data` held by the spawning frame, which outlives `thread::scope`.
     pub data_ptr: crate::data_ref::DataRef,
     pub fn_positions: Arc<Vec<u32>>,
+    /// The parent's constant table (`State::const_refs`): a worker runs the same bytecode, and
+    /// `OpConstRef` indexes this table — empty, a worker that read a top-level vector constant
+    /// panicked (loft#1917).  The DbRefs stay valid because a worker borrows the parent's
+    /// stores read-only.
+    pub const_refs: Arc<Vec<crate::keys::DbRef>>,
     /// `@FR-R-FrameHeadroom` — the parent's per-function frame heights: a worker pushes
     /// frames of the same functions, through the same direct-path operators.
     pub frame_headroom: Arc<Vec<u32>>,
@@ -106,6 +111,7 @@ impl WorkerProgram {
         state.fn_positions.clone_from(&*self.fn_positions);
         state.frame_headroom = Arc::clone(&self.frame_headroom);
         state.line_numbers = (*self.line_numbers).clone();
+        state.const_refs.clone_from(&*self.const_refs);
         state
     }
 }

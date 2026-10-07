@@ -1939,6 +1939,7 @@ pub(super) fn execute_log_impl(
         library: &raw const state.library,
         stack_trace_lib_nr: stk_lib_nr,
         frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
+        const_refs: std::sync::Arc::new(state.const_refs.clone()),
     }));
     // `LOFT_LOG=poison_free`: wire the runtime flag into the Stores so
     // every `free_named` overwrites the freed buffer with 0xDEADBEEF.
