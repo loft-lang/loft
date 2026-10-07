@@ -25,6 +25,12 @@
 //!   (the engine host's hot-swap target); the grandchild must still beat after the driver is
 //!   killed.
 //!
+//! - **a grandchild started at once**: the child is this binary as `spawner_role`, an
+//!   ordinary program that starts the grandchild the moment it runs; the test starts it
+//!   owned and stops it, five times.  On Windows this is the question P4 decided without
+//!   `CREATE_SUSPENDED`: a child is assigned to its job just after it starts, and a
+//!   grandchild started before that would escape the job.
+//!
 //! The killing is done from outside, with a plain process handle: the test stands in for
 //! what ends a driver without asking it (a timeout, the OOM killer, a harness reaping it).
 
@@ -221,6 +227,48 @@ fn driver_role() {
         .start()
         .expect("spawn the grandchild");
     let _ = grandchild.finish();
+}
+
+/// An ordinary program that starts the grandchild as the first thing it does, with the
+/// plain standard library — no `platform::process` — and waits for it.
+#[test]
+fn spawner_role() {
+    if std::env::var(ROLE).as_deref() != Ok("spawner") {
+        return;
+    }
+    let mut grandchild = Command::new(exe())
+        .args(role_args("beat_role"))
+        .env(ROLE, "beat")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn the grandchild");
+    let _ = grandchild.wait();
+}
+
+#[test]
+fn a_grandchild_started_at_once_is_in_the_tree() {
+    for round in 0..5 {
+        let dir = scratch(&format!("at_once_{round}"));
+        let mut child = Spawn::new(Program::os(exe()))
+            .args(role_args("spawner_role"))
+            .env(ROLE, "spawner")
+            .env(DIR, &dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .start()
+            .expect("spawn the spawner");
+        wait_for_beat(&dir, || child.alive());
+        let _ = child.stop_tree();
+        let gone = stopped(&dir);
+        release(&dir);
+        assert!(
+            gone,
+            "round {round}: a grandchild started at once escaped the tree"
+        );
+    }
 }
 
 #[test]

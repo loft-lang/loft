@@ -23,6 +23,8 @@
 //!   started ([`Running::stop_tree`] signals the group), and `PR_SET_PDEATHSIG` sends it
 //!   `SIGTERM` when loft ends, however loft ends.  A child that is loft passes that on to its
 //!   own owned groups, so the guarantee reaches down a tree of loft processes.
+//! - **Windows:** a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (see the Windows
+//!   half below): a stop terminates the job, and loft's end closes it.
 //! - **macOS and the other unixes:** the process group, and the stop through it.  Driver
 //!   death is @PLN184's open question 5: macOS has no `PR_SET_PDEATHSIG`, so an owned tree is
 //!   stopped by loft's own ends that run code (a normal exit, `SIGINT`/`SIGTERM`, which are
@@ -682,32 +684,185 @@ mod os {
 
 #[cfg(windows)]
 mod os {
-    //! Windows has no process group: until the Job Object (P4), a stop walks the tree by
-    //! parent link, as the repl's game stop did.
+    //! The Job Object (@PLN184 P4).  An owned child is assigned to a job of its own, created
+    //! with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`: everything the child starts joins the job,
+    //! [`Tree::stop`] ends the whole job, and when loft ends — however it ends — the OS closes
+    //! the job's last handle and ends what is left.  The five Win32 calls are declared by hand:
+    //! the dependency rule takes them over a crate.
+    //!
+    //! **Spawned, then assigned — not `CREATE_SUSPENDED`.**  Between `CreateProcess` returning
+    //! and the assignment, the child runs, and a grandchild it started in that window would
+    //! not be in the job.  Starting it suspended closes the window, but resuming it needs the
+    //! primary thread's handle, which `std::process::Child` does not expose, so it would cost an
+    //! undocumented `NtResumeProcess` from `ntdll` — a sixth call.  The window is the
+    //! assignment's few microseconds against the child's own start-up (the loader, its DLLs,
+    //! the runtime, `main`) before it can start anything, which is far longer for every child
+    //! loft starts (rustc, cargo, a game, loft itself).  The windows-latest cell
+    //! `a_grandchild_started_at_once_is_in_the_tree` measures it.
+    //!
+    //! A job's grandchild started `Tree::Detached` breaks away (`CREATE_BREAKAWAY_FROM_JOB`,
+    //! which every job here allows), as a detached child leaves its parent's group on unix.
     use super::Tree as Kind;
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle as _;
+    use std::os::windows::process::CommandExt as _;
     use std::process::{Child, Command};
 
-    pub(super) fn spawn(cmd: &mut Command, _kind: Kind) -> std::io::Result<Child> {
-        cmd.spawn()
+    type Handle = *mut c_void;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> Handle;
+        fn SetInformationJobObject(job: Handle, class: i32, info: *const c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+        fn TerminateJobObject(job: Handle, exit_code: u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
     }
 
-    pub(super) struct Tree;
+    /// `JOBOBJECT_BASIC_LIMIT_INFORMATION`.
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicLimits {
+        per_process_user_time: i64,
+        per_job_user_time: i64,
+        limit_flags: u32,
+        min_working_set: usize,
+        max_working_set: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
 
-    #[allow(clippy::unused_self, reason = "until P4 holds a job here")]
-    impl Tree {
-        pub(super) fn adopt(_child: &Child, _kind: Kind) -> Tree {
-            Tree
+    /// `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`.
+    #[repr(C)]
+    #[derive(Default)]
+    struct ExtendedLimits {
+        basic: BasicLimits,
+        io_counters: [u64; 6],
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    /// `JobObjectExtendedLimitInformation`.
+    const EXTENDED_LIMIT_INFORMATION: i32 = 9;
+    const KILL_ON_JOB_CLOSE: u32 = 0x2000;
+    const BREAKAWAY_OK: u32 = 0x0800;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    /// The exit code a stopped tree reports: `128 + SIGTERM`, what a stop reads as on unix.
+    const STOPPED: u32 = 143;
+
+    /// A job handle.  Closing it ends whatever the job still holds.
+    struct Job(Handle);
+
+    // SAFETY: a kernel handle is a process-wide value; every call on it is thread-safe.
+    unsafe impl Send for Job {}
+    // SAFETY: as above.
+    unsafe impl Sync for Job {}
+
+    impl Job {
+        /// A job that ends its processes when its last handle closes, and lets a detached
+        /// grandchild break away.
+        fn new() -> Option<Job> {
+            // SAFETY: the calls take a null name and attributes, and a limits struct this
+            // frame owns, of the size passed.
+            unsafe {
+                let h = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+                if h.is_null() {
+                    return None;
+                }
+                let job = Job(h);
+                let mut limits = ExtendedLimits::default();
+                limits.basic.limit_flags = KILL_ON_JOB_CLOSE | BREAKAWAY_OK;
+                let size = u32::try_from(std::mem::size_of::<ExtendedLimits>()).ok()?;
+                let ok = SetInformationJobObject(
+                    job.0,
+                    EXTENDED_LIMIT_INFORMATION,
+                    (&raw const limits).cast(),
+                    size,
+                );
+                (ok != 0).then_some(job)
+            }
         }
-        /// `taskkill /T` needs the child ALIVE to walk from, so it runs before the kill.
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: the handle is this job's own, closed once.
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+
+    pub(super) fn spawn(cmd: &mut Command, kind: Kind) -> std::io::Result<Child> {
+        if kind == Kind::Owned {
+            return cmd.spawn();
+        }
+        // Detached: out of loft's job, and out of the console's Ctrl-C group.
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB);
+        match cmd.spawn() {
+            // loft itself runs in a job that forbids breaking away (a CI runner's): the
+            // target stays in that job, as it stays in a session on unix.
+            Err(e) if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) => {
+                cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+                cmd.spawn()
+            }
+            r => r,
+        }
+    }
+
+    /// The job an owned child was assigned to; `None` for a detached child, or when the OS
+    /// refused a job (the stop then walks the tree by parent link instead).
+    pub(super) struct Tree {
+        job: Option<Job>,
+    }
+
+    impl Tree {
+        pub(super) fn adopt(child: &Child, kind: Kind) -> Tree {
+            let job = (kind == Kind::Owned)
+                .then(Job::new)
+                .flatten()
+                .filter(|job| {
+                    // SAFETY: both handles are live: the job's own, and the child's, which
+                    // `Child` holds until it is dropped.
+                    unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle()) != 0 }
+                });
+            Tree { job }
+        }
+
         pub(super) fn stop(&self, child: &mut Child) {
+            if let Some(job) = &self.job {
+                // SAFETY: the job's own handle.
+                unsafe {
+                    TerminateJobObject(job.0, STOPPED);
+                }
+                return;
+            }
+            // No job: walk the tree by parent link.  `taskkill /T` needs the child ALIVE to
+            // walk from, so it runs before the kill.
             let _ = Command::new("taskkill")
                 .args(["/T", "/F", "/PID", &child.id().to_string()])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         }
+
+        /// The job outlives the reap: it is what still reaches the child's stragglers.
+        #[allow(clippy::unused_self, reason = "one signature across platforms")]
         pub(super) fn release(&mut self, _child: &Child) {}
-        pub(super) fn keep(&mut self) {}
+
+        /// The handle goes away: the job stays open until loft ends, so what the child
+        /// started still ends with loft, and not before.
+        pub(super) fn keep(&mut self) {
+            if let Some(job) = self.job.take() {
+                std::mem::forget(job);
+            }
+        }
     }
 
     pub(super) fn exited(child: &mut Child, block: bool) -> bool {
