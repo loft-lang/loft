@@ -31,6 +31,7 @@
 1 tests/placement_parity.rs
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs
+3 tests/process_tree.rs
 3 tests/registry_publish_categories.rs
 1 tests/self_update_swap.rs
 1 tests/store_persist_loft.rs

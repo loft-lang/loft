@@ -93,7 +93,7 @@ subject_patterns() {
     (host)      echo '~engine_host ~host_ ~multiplayer ~serve ~rpc ~mock ~audio ~crystal ~live_world' ;;
     # @PLN184 Track W — the platform-sensitive set: `windows_rules` runs the file scripts under
     # the emulated Windows host itself; the rest are the file, directory and process families.
-    (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =windows_probe' ;;
+    (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe' ;;
     (*)        return 1 ;;
   esac
 }
