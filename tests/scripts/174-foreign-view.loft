@@ -19,7 +19,6 @@
 
 struct Chunk { bytes: vector<u8>, tag: integer }
 
-fn fv_path() -> text { return "loft_174_view.tmp"; }
 
 // The same 64 bytes as 174-foreign-file: "hello, foreign!" then 32 + (i * 7) % 90
 fn fv_bytes() -> vector<u8> {
@@ -43,9 +42,12 @@ fn fv_head(p: text) -> vector<u8> { m = file_map(p) ?? []; s = m[0..5]; s }
 fn fv_word(p: text) -> text { m = file_map(p) ?? []; s = m[7..14]; text_from_bytes(s) }
 
 fn main() {
-  assert(write_bytes(fv_path(), fv_bytes()), "write");
-  r = read_bytes(fv_path()) ?? [];
-  m = file_map(fv_path()) ?? [];
+  // A name of this run's own: the wrap, native and foreign_store suites run this file at
+  // once, and a fixed name let one run's write land on another's mapping.
+  fp = "loft_174_view_{now()}_{ticks()}.tmp";
+  assert(write_bytes(fp, fv_bytes()), "write");
+  r = read_bytes(fp) ?? [];
+  m = file_map(fp) ?? [];
   assert(len(m) == 64 && fv_same(m, r), "the mapping");
 
   // v1: a view of a view of a view — each adds its offset: m[10..30], then [5..9] of
@@ -60,13 +62,13 @@ fn main() {
   // view), so it is writable there and survives the handle's rebind
   w = m[7..14];
   c = Chunk { bytes: w, tag: 1 };
-  m = file_map(fv_path()) ?? [];
+  m = file_map(fp) ?? [];
   c.bytes[0] = 70;
   println("v2 {text_from_bytes(c.bytes)} {text_from_bytes(w)} {c.tag}");
 
   // v3: a view returned from the function that mapped the file, after that handle is gone
-  h = fv_head(fv_path());
-  println("v3 {text_from_bytes(h)} {fv_word(fv_path())} {len(h)}");
+  h = fv_head(fp);
+  println("v3 {text_from_bytes(h)} {fv_word(fp)} {len(h)}");
 
   // v4: negative, clamped, reversed and empty bounds answer what the copy answers; an empty
   // slice is read-only like any view of the mapping, and its copy grows
@@ -107,10 +109,10 @@ fn main() {
   // views still read — the bytes are the views' for as long as they are bound
   a8 = m[0..5];
   b8 = m[7..14];
-  m = file_map(fv_path()) ?? [];
+  m = file_map(fp) ?? [];
   m = [];
   println("v8 {text_from_bytes(a8)} {text_from_bytes(b8)} {len(m)}");
-  m = file_map(fv_path()) ?? [];
+  m = file_map(fp) ?? [];
 
   // v9: a view handed to const parameters, bound and inline — a plain parameter could write it
   // and is refused for foreign data (`(Const-Foreign)`)
@@ -147,6 +149,6 @@ fn main() {
   for y13 in s13 par(r14 = fv_dbl(y13), 2) { q13 += r14; }
   println("v13 {p13} {q13}");
 
-  assert(delete(fv_path()), "cleanup");
+  assert(delete(fp), "cleanup");
   println("foreign view ok");
 }
