@@ -64,7 +64,7 @@ fn run_until(argv: &[String], input: &[u8], limit: Option<Duration>) -> Finished
             stderr: b"an empty command: there is no program to run".to_vec(),
         };
     };
-    let spawn = Spawn::new(Program::search(program)).args(rest);
+    let mut spawn = Spawn::new(Program::search(program)).args(rest);
     let ran = match limit {
         Some(limit) => spawn.run_for(input, limit),
         None => spawn.run(input),

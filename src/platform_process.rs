@@ -36,7 +36,15 @@
 //! signals (`SIGINT`, `SIGQUIT`, `SIGHUP`) and `SIGTERM` to every owned group it holds, then
 //! lets the signal do to loft what it would have done.  An owned child must not read the
 //! terminal: a background group that does is stopped by `SIGTTIN`.  A run to completion never
-//! hands it the terminal (its input is a pipe or nothing).
+//! hands it the terminal (its input is a pipe or nothing).  A child that IS handed the
+//! terminal — the program a `loft` run is, a script that may prompt, a `loft` that runs a
+//! user's tests — is started [`Tree::Foreground`]: owned in every other respect, but kept in
+//! loft's own group, so it reads the terminal as loft would and a `Ctrl-C` reaches it there.
+//!
+//! **Only here.**  `std::process::Command::new` is refused by Clippy everywhere else
+//! (`clippy.toml`); a test harness that must hold the raw process it inspects takes
+//! [`harness_command`], which nothing in `src/` may call.  The guard is
+//! `src/platform_process_guard.rs`.
 //!
 //! A run to completion follows the rule the `process` library states for loft scripts: **a
 //! stream is never left without a reader.**  The moment the child exists, one thread drains
@@ -105,6 +113,13 @@ pub enum Tree {
     /// does loft's end.
     #[default]
     Owned,
+    /// [`Tree::Owned`] for a child handed loft's terminal: it stays in loft's own process
+    /// group (the terminal's foreground group when loft is), so it can read the terminal and
+    /// a `Ctrl-C` reaches it directly, where an owned group of its own would be stopped by
+    /// `SIGTTIN`.  Driver death is as owned (Linux `PR_SET_PDEATHSIG`, the Windows job).  A
+    /// stop ends the child, and on Windows its job; on unix it does not reach what the child
+    /// started, because the group it would signal is loft's own.
+    Foreground,
     /// The child is started to outlive loft (the engine host's hot-swap target): no stop
     /// aimed at loft's own tree, and not loft's end, reaches it.  Its own stop still reaches
     /// what it started.
@@ -118,6 +133,9 @@ pub struct Spawn {
     cmd: Command,
     tree: Tree,
     error: Option<io::Error>,
+    /// The streams the caller chose (stdin, stdout, stderr): a run to completion leaves
+    /// them as chosen, as `std`'s `output()` does.
+    chosen: [bool; 3],
 }
 
 /// A finished run: the child's status and both streams as they arrived.  `timed_out` says the
@@ -131,6 +149,10 @@ pub struct Ran {
 
 impl Spawn {
     #[must_use]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "platform::process is the one home of Command::new (@PLN184 P6)"
+    )]
     pub fn new(program: Program) -> Spawn {
         let (cmd, error) = match program.0 {
             Ok(p) => (Command::new(p), None),
@@ -140,6 +162,7 @@ impl Spawn {
             cmd,
             tree: Tree::Owned,
             error,
+            chosen: [false; 3],
         }
     }
 
@@ -167,6 +190,28 @@ impl Spawn {
         S: AsRef<OsStr>,
     {
         self.cmd.args(args);
+        self
+    }
+
+    /// [`Spawn::arg`] in place, for a command assembled across branches and helpers.
+    pub fn push_arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Spawn {
+        self.cmd.arg(arg);
+        self
+    }
+
+    /// [`Spawn::args`] in place.
+    pub fn push_args<I, S>(&mut self, args: I) -> &mut Spawn
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.cmd.args(args);
+        self
+    }
+
+    /// [`Spawn::env`] in place.
+    pub fn push_env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Spawn {
+        self.cmd.env(key, value);
         self
     }
 
@@ -200,24 +245,29 @@ impl Spawn {
         self
     }
 
-    /// The child's input for [`Spawn::start`]; a run to completion feeds its own.
+    /// The child's input.  Unset, [`Spawn::start`] hands it loft's own and a run to
+    /// completion an empty one; a run given input feeds it whatever is set here.
     #[must_use]
     pub fn stdin(mut self, s: Stdio) -> Spawn {
         self.cmd.stdin(s);
+        self.chosen[0] = true;
         self
     }
 
-    /// The child's output for [`Spawn::start`]; a run to completion collects its own.
+    /// The child's output.  Unset, [`Spawn::start`] hands it loft's own and a run to
+    /// completion collects it; set, a run leaves it as set and answers it empty.
     #[must_use]
     pub fn stdout(mut self, s: Stdio) -> Spawn {
         self.cmd.stdout(s);
+        self.chosen[1] = true;
         self
     }
 
-    /// The child's error stream for [`Spawn::start`]; a run to completion collects its own.
+    /// The child's error stream, as [`Spawn::stdout`].
     #[must_use]
     pub fn stderr(mut self, s: Stdio) -> Spawn {
         self.cmd.stderr(s);
+        self.chosen[2] = true;
         self
     }
 
@@ -227,24 +277,35 @@ impl Spawn {
         self
     }
 
-    /// Start the child and hand back its handle.
+    /// Start the child and hand back its handle.  The spawn stays as it was, so it can be
+    /// started again (a retry after a rebuild).
     ///
     /// # Errors
     /// The OS's error when the program cannot be started, or why a path could not be handed
     /// over.
-    pub fn start(mut self) -> io::Result<Running> {
-        if let Some(e) = self.error.take() {
-            return Err(e);
+    pub fn start(&mut self) -> io::Result<Running> {
+        if let Some(e) = &self.error {
+            return Err(io::Error::new(e.kind(), e.to_string()));
         }
         let child = os::spawn(&mut self.cmd, self.tree)?;
         Ok(Running::new(child, self.tree))
     }
 
-    /// Run to completion with `input` on stdin, both streams collected.
+    /// Run to completion on the streams as set — loft's own where unset — and answer the
+    /// status, as `std`'s `status()` does.
     ///
     /// # Errors
     /// The OS's error when the program cannot be started or waited on.
-    pub fn run(self, input: &[u8]) -> io::Result<Ran> {
+    pub fn status(&mut self) -> io::Result<ExitStatus> {
+        self.start()?.finish()
+    }
+
+    /// Run to completion with `input` on stdin, collecting each output stream the spawn did
+    /// not set ([`Spawn::stdout`]), as `std`'s `output()` does.
+    ///
+    /// # Errors
+    /// The OS's error when the program cannot be started or waited on.
+    pub fn run(&mut self, input: &[u8]) -> io::Result<Ran> {
         self.run_limited(input, None)
     }
 
@@ -253,20 +314,24 @@ impl Spawn {
     ///
     /// # Errors
     /// The OS's error when the program cannot be started or waited on.
-    pub fn run_for(self, input: &[u8], limit: Duration) -> io::Result<Ran> {
+    pub fn run_for(&mut self, input: &[u8], limit: Duration) -> io::Result<Ran> {
         self.run_limited(input, Some(limit))
     }
 
-    fn run_limited(mut self, input: &[u8], limit: Option<Duration>) -> io::Result<Ran> {
-        // No input is an empty stdin: the child reads EOF at once, with no pipe to feed.
-        self.cmd
-            .stdin(if input.is_empty() {
-                Stdio::null()
-            } else {
-                Stdio::piped()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    fn run_limited(&mut self, input: &[u8], limit: Option<Duration>) -> io::Result<Ran> {
+        // Input is a pipe to feed.  No input is an empty stdin unless one was set: the child
+        // reads EOF at once.
+        if !input.is_empty() {
+            self.cmd.stdin(Stdio::piped());
+        } else if !self.chosen[0] {
+            self.cmd.stdin(Stdio::null());
+        }
+        if !self.chosen[1] {
+            self.cmd.stdout(Stdio::piped());
+        }
+        if !self.chosen[2] {
+            self.cmd.stderr(Stdio::piped());
+        }
         let mut running = self.start()?;
         // Every reader exists before a byte is written, so a child that answers while it is
         // still being fed never blocks on a full pipe.
@@ -443,6 +508,20 @@ impl Drop for Running {
     }
 }
 
+/// A raw `std::process::Command` for a TEST HARNESS (`tests/`): the process a test drives
+/// loft through and inspects — its exit code, its streams, its process group — rather than
+/// one loft starts.  Nothing in `src/` calls it (`src/platform_process_guard.rs` counts), so
+/// every process loft itself starts still goes through [`Spawn`].
+#[doc(hidden)]
+#[must_use]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "platform::process is the one home of Command::new (@PLN184 P6)"
+)]
+pub fn harness_command(program: impl AsRef<OsStr>) -> Command {
+    Command::new(program)
+}
+
 /// The code a loft script reads for `status`: the program's own, or `128 + n` for signal `n`.
 pub fn exit_code(status: ExitStatus) -> i64 {
     status
@@ -599,51 +678,89 @@ mod os {
     const GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
     pub(super) fn spawn(cmd: &mut Command, kind: Kind) -> std::io::Result<Child> {
-        std::os::unix::process::CommandExt::process_group(cmd, 0);
+        // A foreground child stays in loft's group: it is handed the terminal.
+        if kind != Kind::Foreground {
+            std::os::unix::process::CommandExt::process_group(cmd, 0);
+        }
         #[cfg(target_os = "linux")]
-        if kind == Kind::Owned {
-            // `SIGTERM` rather than `SIGKILL`, so a child that is loft passes it on to its own
-            // owned groups — reaching its children that are not loft — before it ends.
-            crate::platform::dies_with_driver(cmd, true);
+        if kind != Kind::Detached {
+            dies_with_driver(cmd);
             return spawn_on_keeper(cmd);
         }
-        let _ = kind;
         cmd.spawn()
     }
 
-    /// The group a child leads, and whether loft forwards signals to it.
+    /// Arm the child `cmd` will start to end when loft does, however loft ends (loft#1699):
+    /// `PR_SET_PDEATHSIG` with `SIGTERM` rather than `SIGKILL`, so a child that is loft passes
+    /// it on to its own owned groups — reaching its children that are not loft — before it
+    /// ends.  The signal comes when the THREAD that spawned the child ends, which is why every
+    /// such child is spawned by [`spawn_on_keeper`].
+    #[cfg(target_os = "linux")]
+    fn dies_with_driver(cmd: &mut Command) {
+        use std::os::unix::process::CommandExt as _;
+        let driver = std::process::id() as libc::pid_t;
+        // SAFETY: the closure runs in the forked child before `exec` and calls only
+        // async-signal-safe `prctl` / `getppid` / `_exit`; it touches no allocator or lock.
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                // The driver may have died before `prctl` armed; a child already handed to
+                // another parent must not start.
+                if libc::getppid() != driver {
+                    libc::_exit(0);
+                }
+                Ok(())
+            });
+        }
+    }
+
+    /// The group a child leads (none for a foreground child, which is in loft's), its id, and
+    /// whether loft forwards signals to the group.
     pub(super) struct Tree {
         group: i32,
+        pid: i32,
         forwarded: bool,
     }
 
     impl Tree {
         pub(super) fn adopt(child: &Child, kind: Kind) -> Tree {
-            let group = i32::try_from(child.id()).unwrap_or(0);
+            let pid = i32::try_from(child.id()).unwrap_or(0);
+            let group = if kind == Kind::Foreground { 0 } else { pid };
             let forwarded = kind == Kind::Owned && group > 0 && forward_to(group);
-            Tree { group, forwarded }
+            Tree {
+                group,
+                pid,
+                forwarded,
+            }
         }
 
         /// End everything in the group: `SIGTERM` first, so a child that is loft passes it on
         /// to the groups IT owns (a group of its own, which this signal does not reach), then
         /// `SIGKILL` for whatever is left once the child has ended or [`GRACE`] has passed.
         /// Only while the child is unreaped: its id names the group until then, and nothing
-        /// else.
+        /// else.  A foreground child has no group of its own: the signals reach it alone.
         pub(super) fn stop(&self, child: &mut Child) {
-            if self.group <= 0 {
+            if self.group <= 0 && self.pid <= 0 {
                 return;
             }
-            // SAFETY: `killpg` delivers a signal and touches no memory.
+            // SAFETY: `killpg` and `kill` deliver a signal and touch no memory; the child is
+            // unreaped, so its id (and its group's) is still its own.
             unsafe {
-                libc::killpg(self.group, libc::SIGTERM);
+                if self.group > 0 {
+                    libc::killpg(self.group, libc::SIGTERM);
+                } else {
+                    libc::kill(self.pid, libc::SIGTERM);
+                }
             }
             let until = std::time::Instant::now() + GRACE;
             while std::time::Instant::now() < until && !exited(child, false) {
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            // SAFETY: as above; the child is still unreaped, so the group is still its own.
-            unsafe {
-                libc::killpg(self.group, libc::SIGKILL);
+            if self.group > 0 {
+                // SAFETY: as above; the child is still unreaped, so the group is still its own.
+                unsafe {
+                    libc::killpg(self.group, libc::SIGKILL);
+                }
             }
         }
 
@@ -775,9 +892,14 @@ mod os {
     /// process.  A child started from a worker thread that then finished would be ended with
     /// it, so every owned child is spawned by one thread that lives as long as loft.
     #[cfg(target_os = "linux")]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "platform::process is the one home of Command::new (@PLN184 P6)"
+    )]
     fn spawn_on_keeper(cmd: &mut Command) -> std::io::Result<Child> {
         use std::sync::mpsc;
-        type Job = (Command, mpsc::Sender<std::io::Result<Child>>);
+        type Spawned = (Command, std::io::Result<Child>);
+        type Job = (Command, mpsc::Sender<Spawned>);
         static KEEPER: std::sync::OnceLock<Option<std::sync::Mutex<mpsc::Sender<Job>>>> =
             std::sync::OnceLock::new();
         let keeper = KEEPER.get_or_init(|| {
@@ -786,7 +908,8 @@ mod os {
                 .name("loft-spawner".into())
                 .spawn(move || {
                     for (mut cmd, back) in rx {
-                        let _ = back.send(cmd.spawn());
+                        let child = cmd.spawn();
+                        let _ = back.send((cmd, child));
                     }
                 })
                 .ok()
@@ -795,7 +918,8 @@ mod os {
         let Some(keeper) = keeper else {
             return cmd.spawn();
         };
-        // The command moves to the keeper and back; `Command` cannot be cloned.
+        // The command moves to the keeper and back, so the spawn can be started again;
+        // `Command` cannot be cloned.
         let moved = std::mem::replace(cmd, Command::new(""));
         let (back, answer) = mpsc::channel();
         let sent = keeper
@@ -803,11 +927,51 @@ mod os {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .send((moved, back));
         if let Err(mpsc::SendError((mut moved, _))) = sent {
-            return moved.spawn();
+            let child = moved.spawn();
+            *cmd = moved;
+            return child;
         }
-        answer
-            .recv()
-            .unwrap_or_else(|_| Err(std::io::Error::other("the spawning thread ended")))
+        match answer.recv() {
+            Ok((returned, child)) => {
+                *cmd = returned;
+                child
+            }
+            Err(_) => Err(std::io::Error::other("the spawning thread ended")),
+        }
+    }
+
+    /// loft#1699 — a child armed by [`dies_with_driver`] must not outlive the thread that
+    /// spawned it: here a thread that spawns and returns without waiting stands in for a
+    /// driver that ends.  The child must end by `SIGTERM` at once, not run its five seconds;
+    /// without the arming it is untouched and reads `exit 0` after five seconds.
+    #[cfg(all(test, target_os = "linux"))]
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the arming itself is under test, below Spawn"
+    )]
+    fn a_child_dies_with_its_driver() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let started = std::time::Instant::now();
+        let mut child = std::thread::spawn(|| {
+            let mut cmd = Command::new("sleep");
+            cmd.arg("5");
+            dies_with_driver(&mut cmd);
+            cmd.spawn().expect("spawn sleep")
+        })
+        .join()
+        .expect("spawning thread");
+        let status = child.wait().expect("wait");
+        assert_eq!(
+            status.signal(),
+            Some(libc::SIGTERM),
+            "the child outlived its driver: {status}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(4),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[cfg(test)]
@@ -823,7 +987,7 @@ mod os {
         fn an_interrupt_reaches_an_owned_child() {
             if std::env::var_os(PROBE).is_none() {
                 let exe = std::env::current_exe().expect("the test binary");
-                let out = std::process::Command::new(exe)
+                let out = super::super::harness_command(exe)
                     .args([
                         "--exact",
                         "platform::process::os::tests::an_interrupt_reaches_an_owned_child",
@@ -998,7 +1162,8 @@ mod os {
     }
 
     pub(super) fn spawn(cmd: &mut Command, kind: Kind) -> std::io::Result<Child> {
-        if kind == Kind::Owned {
+        // Owned and foreground alike stay in the console: the job is what owns them.
+        if kind != Kind::Detached {
             return cmd.spawn();
         }
         // Detached: out of loft's job, and out of the console's Ctrl-C group.
@@ -1022,7 +1187,7 @@ mod os {
 
     impl Tree {
         pub(super) fn adopt(child: &Child, kind: Kind) -> Tree {
-            let job = (kind == Kind::Owned)
+            let job = (kind != Kind::Detached)
                 .then(Job::new)
                 .flatten()
                 .filter(|job| {
@@ -1033,6 +1198,10 @@ mod os {
             Tree { job }
         }
 
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "platform::process is the one home of Command::new (@PLN184 P6)"
+        )]
         pub(super) fn stop(&self, child: &mut Child) {
             if let Some(job) = &self.job {
                 // SAFETY: the job's own handle.
