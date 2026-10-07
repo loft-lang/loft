@@ -7,8 +7,6 @@
 //! Distinct from `log_config.rs` (the compile/test trace framework):
 //! this module handles structured, file-based output from running loft code.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -131,7 +129,9 @@ impl Logger {
         };
         // Record mtime of config file if we have one.
         if let Some(ref p) = logger.config_path.clone() {
-            logger.config_mtime = std::fs::metadata(p).ok().and_then(|m| m.modified().ok());
+            logger.config_mtime = crate::file_access::metadata(p)
+                .ok()
+                .and_then(|m| m.modified().ok());
         }
         logger.open_file();
         logger
@@ -179,7 +179,7 @@ impl Logger {
             .parent()
             .unwrap_or_else(|| Path::new("."));
         let loft_conf = dir.join(".loft").join("log.conf");
-        if loft_conf.exists() {
+        if crate::file_access::exists(&loft_conf) {
             loft_conf
         } else {
             dir.join("log.conf")
@@ -197,8 +197,8 @@ impl Logger {
             .to_path_buf();
         let default_log_path = default_log_dir.join(".loft").join("log.txt");
 
-        let config = if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
+        let config = if crate::file_access::exists(path) {
+            if let Ok(content) = crate::file_access::read_to_string(path) {
                 let conf_dir = path.parent().unwrap_or(Path::new("."));
                 parse_config_str(&content, conf_dir)
             } else {
@@ -214,7 +214,7 @@ impl Logger {
             }
         };
 
-        let config_path = if path.exists() {
+        let config_path = if crate::file_access::exists(path) {
             Some(path.to_path_buf())
         } else {
             None
@@ -392,7 +392,7 @@ impl Logger {
         let Some(config_path) = self.config_path.clone() else {
             return;
         };
-        let new_mtime = std::fs::metadata(&config_path)
+        let new_mtime = crate::file_access::metadata(&config_path)
             .ok()
             .and_then(|m| m.modified().ok());
         if new_mtime == self.config_mtime {
@@ -401,7 +401,7 @@ impl Logger {
         // Config changed — reload
         self.config_mtime = new_mtime;
         let old_path = self.config.log_path.clone();
-        if let Ok(content) = std::fs::read_to_string(&config_path) {
+        if let Ok(content) = crate::file_access::read_to_string(&config_path) {
             let conf_dir = config_path.parent().unwrap_or(Path::new("."));
             let new_config = parse_config_str(&content, conf_dir);
             let path_changed = new_config.log_path != old_path;
@@ -420,10 +420,8 @@ impl Logger {
 
     fn effective_level(&self, loft_file: &str) -> Severity {
         // Check per-file overrides: exact basename match or path prefix
-        let basename = Path::new(loft_file)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(loft_file);
+        let name = crate::file_access::file_name(loft_file);
+        let basename = name.as_deref().unwrap_or(loft_file);
 
         if let Some(&sev) = self.config.file_levels.get(basename) {
             return sev;
@@ -455,9 +453,9 @@ impl Logger {
     fn open_file(&mut self) {
         let path = &self.config.log_path;
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            let _ = crate::file_access::create_dir_all(parent);
         }
-        match OpenOptions::new().create(true).append(true).open(path) {
+        match crate::file_access::open_with(path, OpenOptions::new().create(true).append(true)) {
             Ok(f) => {
                 let size = f.metadata().map_or(0, |m| m.len());
                 self.current_size = size;
@@ -478,14 +476,8 @@ impl Logger {
         self.file = None;
 
         let path = &self.config.log_path;
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("log")
-            .to_string();
-        let ext = path
-            .extension()
-            .and_then(|s| s.to_str())
+        let stem = crate::file_access::file_stem(path).unwrap_or_else(|| "log".to_string());
+        let ext = crate::file_access::extension(path)
             .map(|s| format!(".{s}"))
             .unwrap_or_default();
         let dir = path.parent().unwrap_or(Path::new("."));
@@ -499,7 +491,7 @@ impl Logger {
                 max - 1,
                 ext.trim_start_matches('.')
             ));
-            let _ = std::fs::remove_file(&oldest);
+            let _ = crate::file_access::remove_file(&oldest);
         }
 
         // Shift: log.(N-2).ext → log.(N-1).ext, …, log.1.ext → log.2.ext
@@ -507,13 +499,13 @@ impl Logger {
             for i in (1..max - 1).rev() {
                 let src = dir.join(format!("{stem}.{i}{ext}"));
                 let dst = dir.join(format!("{stem}.{}{ext}", i + 1));
-                let _ = std::fs::rename(&src, &dst);
+                let _ = crate::file_access::rename(&src, &dst);
             }
         }
 
         // log.ext → log.1.ext
         let archive = dir.join(format!("{stem}.1{ext}"));
-        let _ = std::fs::rename(path, &archive);
+        let _ = crate::file_access::rename(path, &archive);
 
         // Open fresh log file
         self.current_size = 0;
@@ -781,13 +773,13 @@ mod tests {
     }
 
     fn read_log(logger: &Logger) -> String {
-        std::fs::read_to_string(&logger.config.log_path).unwrap_or_default()
+        crate::file_access::read_to_string(&logger.config.log_path).unwrap_or_default()
     }
 
     fn drop_log(logger: Logger) {
         let path = logger.config.log_path.clone();
         drop(logger);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
     }
 
     #[test]
