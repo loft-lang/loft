@@ -178,7 +178,7 @@ fn dn1_null_local_message_names_optional_not_as() {
         (
             "pln25_null_local_msg_u8.loft",
             "a: u8 = null;",
-            "declare it `integer(0, 255)?`",
+            "declare it `u8?`",
             true,
         ),
     ] {

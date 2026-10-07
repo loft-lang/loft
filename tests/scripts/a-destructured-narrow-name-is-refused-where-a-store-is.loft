@@ -32,7 +32,7 @@ fn maybe(m: integer?) -> (integer?, integer) {
   (m, 1)
 }
 
-// @EXPECT_ERROR: a nullable `integer?` cannot be stored into the local `a` of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: a nullable `integer?` cannot be stored into the local `a` of the non-null type `u8`
 fn nullable_member(m: integer?) -> integer {
   a: u8 = 1;
   b = 0;
