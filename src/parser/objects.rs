@@ -2698,7 +2698,17 @@ impl Parser {
                     // will be deep-copied at the call site — the caller's
                     // gen_set_first_ref_call_copy handles the CopyRecord.
                     *code = self.cl("OpConstRef", &[Value::Int(d_nr as i32)]);
-                    return const_tp;
+                    // The declaration's deps name variables of the context that BUILT the
+                    // constant; read here they point at an unrelated local of this function,
+                    // or past its table — the ownership oracle then indexed the table with
+                    // them and the compiler panicked (loft#1936, loft#666's class).  The read
+                    // is a BORROW of the constant store, which nothing in this frame owns: it
+                    // depends on a skip-free anchor of this function's own, never assigned,
+                    // so every reader of the dep finds a real variable and no free follows.
+                    let anchor =
+                        self.vars.unique("const_view", &const_tp.without_deps(), &mut self.lexer);
+                    self.vars.set_skip_free(anchor);
+                    return const_tp.without_deps().depending(anchor);
                 }
                 // A text constant builds its value in a buffer whose NUMBER is only
                 // valid where the constant was parsed — re-point it at one this
