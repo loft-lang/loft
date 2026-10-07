@@ -991,13 +991,19 @@ pub struct Parser {
     /// destination without naming it.
     amp_vector_link_partners: std::collections::HashMap<(u32, String), Vec<String>>,
     /// loft#945 — every `(function, variable)` whose vector LITERAL turned out to be the
-    /// RECEIVER of a `.map`/`.filter`/`.reduce` chain (`d = [1, 2, 3].map(…)`).
+    /// RECEIVER of a `.map`/`.filter`/`.reduce` chain (`d = [1, 2, 3].map(…)`) or of a
+    /// subscript (`a = [10, 20][1]`, `s = [1, 2, 3][1..]`, loft#1923).
     ///
     /// Deliberately NOT cleared between the passes: by the end of such a statement the
     /// variable holds the CHAIN's type, and the variable table outlives the pass, so pass 2
     /// would otherwise build the literal against a type it is not — a `vector<text>` for an
     /// integer literal, or an integer for a vector one.
-    literal_chain_lhs: std::collections::HashSet<(u32, u16)>,
+    ///
+    /// Keyed by the literal's own SOURCE POSITION as well (`line`, `pos` of its `[`): one
+    /// variable takes several literals, and only the one that IS a receiver may decline the
+    /// destination.  Keyed by the variable alone, `b: vector<integer> = []` lost its
+    /// declared type on pass 2 because a LATER `b = [1, 2][0..1]` was a receiver (loft#1923).
+    literal_chain_lhs: std::collections::HashSet<(u32, u16, u32, u32)>,
     /// @PLN125 — every bound-method stub built on pass 1, as
     /// `(stub, the interface method it stands in for, the holder that replaced `Self`)`.
     /// Consumed by `refresh_bound_method_stubs` between the passes, where a forward-

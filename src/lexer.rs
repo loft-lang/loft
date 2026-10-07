@@ -48,6 +48,19 @@ pub enum LexItem {
     None,
 }
 
+/// What follows a vector literal's closing `]` ([`Lexer::peek_literal_subscript`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LiteralSubscript {
+    /// Not subscripted.
+    None,
+    /// An element: `[…][i]`.
+    Index,
+    /// A slice: `[…][a..b]`.
+    Slice,
+    /// Subscripted, of a kind the scan could not read.
+    Unknown,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub struct Position {
     /// The file name where this construct is found — an INTERNED name ([`FileName`]).
@@ -2825,6 +2838,81 @@ impl Lexer {
         }
         self.revert(saved);
         found
+    }
+
+    /// Is the vector literal whose `[` was just consumed SUBSCRIPTED — is its matching `]`
+    /// followed by a `[` — and is that subscript a slice (a `..` at its own depth)?  `None`
+    /// when the scan stopped before the literal's `]`.  The lexer is restored either way.
+    ///
+    /// A subscripted literal is not the value an assignment's destination receives, so it
+    /// must not be built INTO that destination (loft#1923): `s = [1][1..1]` sliced the
+    /// destination into itself.  Asked before the literal is parsed, so both passes make
+    /// the same decision.
+    ///
+    /// A string element is stepped over when it closed without a hole — the scanner is then
+    /// back in code, as before it — and the scan stops at a string that OPENED a hole, whose
+    /// scanner state a revert does not restore ([`peek_literal_receiver`](Self::peek_literal_receiver)
+    /// stops at every string).
+    pub fn peek_literal_subscript(&mut self) -> Option<LiteralSubscript> {
+        let saved = self.link();
+        let mut depth: i32 = 0;
+        let mut found = None;
+        loop {
+            if matches!(self.peek.has, LexItem::None)
+                || (matches!(self.peek.has, LexItem::CString(_)) && self.mode != Mode::Code)
+            {
+                break;
+            }
+            if depth == 0 && self.peek_token(";") {
+                break;
+            }
+            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+                depth += 1;
+            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+                if depth == 0 {
+                    if self.peek_token("]") {
+                        self.cont();
+                        found = Some(if self.peek_token("[") {
+                            self.cont();
+                            self.subscript_kind()
+                        } else {
+                            LiteralSubscript::None
+                        });
+                    }
+                    break;
+                }
+                depth -= 1;
+            }
+            self.cont();
+        }
+        self.revert(saved);
+        found
+    }
+
+    /// The kind of the subscript whose `[` was just consumed, by a `..` at its own depth; a
+    /// scan stopped first (a hole-opening string) cannot say.  Part of
+    /// [`peek_literal_subscript`](Self::peek_literal_subscript), which restores the lexer.
+    fn subscript_kind(&mut self) -> LiteralSubscript {
+        let mut depth: i32 = 0;
+        loop {
+            if matches!(self.peek.has, LexItem::None)
+                || (matches!(self.peek.has, LexItem::CString(_)) && self.mode != Mode::Code)
+            {
+                return LiteralSubscript::Unknown;
+            }
+            if depth == 0 && self.peek_token("..") {
+                return LiteralSubscript::Slice;
+            }
+            if self.peek_token("(") || self.peek_token("[") || self.peek_token("{") {
+                depth += 1;
+            } else if self.peek_token(")") || self.peek_token("]") || self.peek_token("}") {
+                if depth == 0 {
+                    return LiteralSubscript::Index;
+                }
+                depth -= 1;
+            }
+            self.cont();
+        }
     }
 
     /// Shorthand test if the current element is a specific token and skip it if found.

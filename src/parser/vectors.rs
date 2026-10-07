@@ -924,6 +924,11 @@ impl Parser {
         } else if self.lexer.peek_token("{") {
             self.parse_block("block", val, &Type::Unknown(0))
         } else if self.lexer.has_token("[") {
+            // The literal's own position: the key `literal_chain_lhs` records it under.
+            let lit_at = {
+                let p = self.lexer.pos();
+                (p.line, p.pos)
+            };
             // #432 — a bare vector literal in call-argument position arrives with
             // `var_tp` unknown (the parameter type is dropped by `expression`).
             // Build it at the parameter's element width via `vector_hint`, so a
@@ -982,8 +987,52 @@ impl Parser {
             // is where the chain is recognised and recorded; here is where the next pass
             // acts on it.  Building into a fresh accumulator is what the chain case does
             // anyway, so this only brings pass 2 forward to the same decision.
-            let known_receiver =
-                orig_lhs.is_some_and(|n| self.literal_chain_lhs.contains(&(self.context, n)));
+            let known_receiver = orig_lhs.is_some_and(|n| {
+                self.literal_chain_lhs
+                    .contains(&(self.context, n, lit_at.0, lit_at.1))
+            });
+            // loft#1923 — a SUBSCRIPTED literal (`s = [1, 2][0..1]`, `h.v = [1, 2][1..]`,
+            // `a = [10, 20][1]`) is not the value its destination receives: built into that
+            // destination — a variable or a FIELD — the subscript then read it back while
+            // writing it.  Asked by a scan BEFORE the literal is parsed, so both passes
+            // decide alike.  A scan that cannot see past the literal (a string element that
+            // opens a hole) leaves a VARIABLE to the post-parse rename below, which catches
+            // it; a FIELD has no such rename, so it builds in a temporary of its own — the
+            // value written is the same either way.
+            //
+            // A DECLARED destination still says what the literal is: a slice of it has the
+            // destination's own type, and an element of it is one of the literal's elements,
+            // so `b: vector<u8> = [1, 2, 3][1..]` builds a `vector<u8>` — unseeded, the literal
+            // inferred `vector<integer>` and the store was refused as a retype.
+            use crate::lexer::LiteralSubscript as Ls;
+            let is_field = orig_lhs.is_none() && self.is_field(val);
+            let follow = if orig_lhs.is_some() || is_field {
+                self.lexer.peek_literal_subscript()
+            } else {
+                None
+            };
+            // A FIELD has no post-parse rename, so a literal the scan cannot see past is
+            // recognised after it is parsed, on pass 1, and recorded under the field marker
+            // `u16::MAX`; pass 2 then declines up front (see `field_unknown` below).
+            let field_recorded = is_field
+                && follow.is_none()
+                && self
+                    .literal_chain_lhs
+                    .contains(&(self.context, u16::MAX, lit_at.0, lit_at.1));
+            let subscripted =
+                matches!(follow, Some(Ls::Index | Ls::Slice | Ls::Unknown)) || field_recorded;
+            let field_unknown = is_field && follow.is_none() && !field_recorded;
+            let declared_dest = (is_field || orig_lhs.is_some_and(|n| self.author_declared(n)))
+                && !var_tp.is_unknown();
+            let subscript_seed = match follow {
+                Some(Ls::Slice) if subscripted && declared_dest => Some(var_tp.clone()),
+                Some(Ls::Index) if subscripted && declared_dest => Some(Type::Vector(
+                    Box::new(var_tp.clone()),
+                    crate::data::Deps::none(),
+                )),
+                _ => None,
+            };
+            let known_receiver = known_receiver || subscripted;
             if known_receiver {
                 *val = Value::Null;
             }
@@ -1005,7 +1054,10 @@ impl Parser {
             let seeded;
             let unseeded = Type::Unknown(0);
             let link_tp;
-            let elem_tp = if known_receiver {
+            let elem_tp = if let Some(seed) = &subscript_seed {
+                seeded = seed.without_deps();
+                &seeded
+            } else if known_receiver {
                 &unseeded
             } else if link_keyed {
                 link_tp = var_tp.peel_link().without_deps();
@@ -1016,28 +1068,47 @@ impl Parser {
             } else {
                 var_tp
             };
-            let t = self.parse_vector(elem_tp, val, parent_tp);
+            // A subscripted literal's temp belongs to no field owner: the destination's
+            // parent is the FIELD's holder, and a temp minted against it is a borrow of that
+            // holder that no scope ever declares.
+            let unowned = Type::Unknown(0);
+            let lit_parent = if subscripted { &unowned } else { &*parent_tp };
+            let t = self.parse_vector(elem_tp, val, lit_parent);
+            // The field half of the post-parse recognition: record it for pass 2, and mint
+            // the accumulator pass 2 will build in, so both passes number their temps alike.
+            if field_unknown && self.first_pass && self.lexer.peek_token("[") {
+                self.literal_chain_lhs
+                    .insert((self.context, u16::MAX, lit_at.0, lit_at.1));
+                let built = t.unrewritten();
+                let acc_tp = if let Type::Vector(e, _) = built.base() {
+                    Type::Vector(e.clone(), crate::data::Deps::none())
+                } else {
+                    Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none())
+                };
+                self.create_unique("vec", &acc_tp);
+            }
             // The literal is now fully parsed (a safe point to peek — no lexer
             // backtrack).  If it reused the LHS var AND a `.method(..)` chain follows
             // (`[1,2,3].map(..)`), rename the accumulator to a fresh synthetic local so
             // the LHS is free to receive the chain's result, and wrap the (now void,
             // in-place) build so it YIELDS that local — making a literal receiver behave
-            // exactly like a variable one.  Scoped to a `.` method chain: `.map` /
-            // `.filter` / `.reduce` route the receiver through their `#builtin` method,
-            // and the map/filter cases keep the vector's element type so the LHS's
-            // parsed type stays valid across passes.  (A trailing `[i]` index yields a
-            // SCALAR, so the LHS's parsed vector type would clash with the index result
-            // on the second pass — that rarer form keeps its existing clean "cannot
-            // change type" diagnostic.)  Runs in both passes so `create_unique`
+            // exactly like a variable one.  A `.` method chain and a `[` SUBSCRIPT both
+            // make the literal a receiver: built into the LHS, `s = [1][1..1]` sliced the
+            // LHS into itself (an internal compiler error, or `[]` for a longer literal)
+            // and `a = [10, 20][1]` was refused as a retype (loft#1923).  The pass-2 clash
+            // of an index's SCALAR with the literal's vector type is what `known_receiver`
+            // settles: pass 2 builds the receiver in an accumulator of its own and never
+            // types the LHS as the literal.  Runs in both passes so `create_unique`
             // numbering stays aligned.
             if let Some(lhs) = orig_lhs
-                && self.lexer.peek_token(".")
+                && (self.lexer.peek_token(".") || self.lexer.peek_token("["))
             {
                 // loft#945 — record it, so the NEXT pass knows this literal is a receiver
                 // before it starts building (see `known_receiver` above).  By the end of
                 // this statement the LHS holds the CHAIN's type, which is not a type the
                 // literal can be built against.
-                self.literal_chain_lhs.insert((self.context, lhs));
+                self.literal_chain_lhs
+                    .insert((self.context, lhs, lit_at.0, lit_at.1));
                 // Inherit the LHS's parsed vector type — it carries the `["__vdb_N"]`
                 // borrow dep on the literal's backing store, so the chain BORROWS the
                 // receiver and the backing is freed once at scope exit (matching a
@@ -1052,8 +1123,13 @@ impl Parser {
                 crate::parser::collections::rename_var(val, lhs, recv);
                 // The literal poisoned the LHS's inferred type (it typed it as the
                 // vector); clear it so the outer assignment re-infers from the CHAIN
-                // result.
-                self.vars.set_type(lhs, Type::Unknown(0));
+                // result.  A DECLARED LHS keeps the type its author wrote — `@FR-N-Decl` —
+                // and the assignment converts into it: cleared, it was re-inferred from
+                // nothing, and `b: vector<integer> = []; b = [1, 2][0..1]` reached the
+                // scopes pass with the slice unmaterialised (loft#1923).
+                if !self.author_declared(lhs) {
+                    self.vars.set_type(lhs, Type::Unknown(0));
+                }
                 let build = std::mem::replace(val, Value::Null);
                 *val = v_block(vec![build, Value::Var(recv)], recv_tp.clone(), "Vector");
                 recv_tp
