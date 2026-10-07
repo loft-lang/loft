@@ -21,8 +21,6 @@
 //!    extract to `~/.loft/registry/<pkg>-<version>/`.
 //! 6. Write `loft.lock` reflecting the install graph.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 
 use std::path::{Path, PathBuf};
@@ -109,7 +107,7 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
         return false;
     };
     let dir = pkg_dir.join("prebuilt").join(&triple);
-    if std::fs::create_dir_all(&dir).is_err() {
+    if crate::file_access::create_dir_all(&dir).is_err() {
         return false;
     }
     let filename = if cfg!(target_os = "macos") {
@@ -124,7 +122,7 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
         return false;
     };
     if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
-        let _ = std::fs::remove_file(&dest);
+        let _ = crate::file_access::remove_file(&dest);
         return false;
     }
     // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
@@ -209,7 +207,7 @@ pub fn install_one(
 
     for r in &graph {
         let dir = registry_index::extract_dir(&r.name, &r.version.semver);
-        if dir.join("loft.toml").exists() {
+        if crate::file_access::exists(dir.join("loft.toml")) {
             report
                 .skipped_cached
                 .push((r.name.clone(), r.version.semver.clone()));
@@ -280,7 +278,8 @@ pub fn install_one(
                 match crate::c_shim::build(&dir.to_string_lossy(), &m.c_shim) {
                     Ok(so) => report.surface.push(format!(
                         "  C shim built: {}",
-                        so.file_name().unwrap_or(so.as_os_str()).to_string_lossy()
+                        crate::file_access::file_name(&so)
+                            .unwrap_or_else(|| so.to_string_lossy().into_owned())
                     )),
                     Err(why) => report.surface.push(format!(
                         "  C shim NOT built — {why}; `use {}` will report it again",
@@ -408,7 +407,7 @@ static INDEX_MEMO: std::sync::Mutex<Option<(IndexMemoKey, RegistryIndex)>> =
     std::sync::Mutex::new(None);
 
 fn file_stamp(p: &Path) -> Option<(u64, u128)> {
-    let meta = std::fs::metadata(p).ok()?;
+    let meta = crate::file_access::metadata(p).ok()?;
     let mtime = meta
         .modified()
         .ok()?
@@ -482,7 +481,7 @@ fn load_index_inner(
                 // when there is no `.sig` beside the index) — but the verdict is
                 // still reached before anything is written.
                 let sig_bytes = if fetched.signature.is_empty() {
-                    std::fs::read(&sig_path).unwrap_or_default()
+                    crate::file_access::read(&sig_path).unwrap_or_default()
                 } else {
                     fetched.signature.clone()
                 };
@@ -651,7 +650,7 @@ fn read_cached_index_verified(
 }
 
 fn index_stale(idx_path: &Path) -> bool {
-    let Ok(meta) = std::fs::metadata(idx_path) else {
+    let Ok(meta) = crate::file_access::metadata(idx_path) else {
         return true;
     };
     let Ok(modified) = meta.modified() else {
@@ -1653,8 +1652,8 @@ mod tests {
             }
         }
         let dir = std::env::temp_dir().join("loft-lockfile-pin-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let lock_path = dir.join("loft.lock");
         let opts = InstallOptions {
             lock_path: Some(lock_path.clone()),
@@ -1697,7 +1696,7 @@ mod tests {
             check_against_lockfile(&same("bbbb", "0.2.0"), &opts).is_ok(),
             "an upgrade must not be mistaken for tampering"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// @PLN143 — which lockfile a resolution is BOUND by, which is not always the one it
