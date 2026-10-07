@@ -4319,6 +4319,29 @@ use a separate collection or add after the loop"
         } else {
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
+        // `@FR-Cap-Own` — note whether this assignment to a sandboxed local is a struct literal
+        // built into it (`Parser::sandbox_built`); one other assignment anywhere in the body
+        // makes the local's provenance unknown.
+        if self.in_sandbox
+            && self.first_pass
+            && op == "="
+            && let Value::Var(v) = to.unspan()
+        {
+            // A literal built INTO the local: `Set(v, null); OpDatabase(v, …); field sets…`.
+            let op_database = self.data.def_nr("OpDatabase");
+            let literal = match code.unspan() {
+                Value::Insert(ops) => matches!(
+                    (ops.first().map(Value::unspan), ops.get(1).map(Value::unspan)),
+                    (Some(Value::Set(s, init)), Some(Value::Call(d, args)))
+                        if *s == *v && matches!(init.unspan(), Value::Null)
+                            && *d == op_database
+                            && matches!(args.first().map(Value::unspan), Some(Value::Var(a)) if *a == *v)
+                ),
+                Value::Block(b) => b.name == "Object",
+                _ => false,
+            };
+            *self.sandbox_built.entry((self.context, *v)).or_insert(true) &= literal;
+        }
         // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
         // into it that nothing reads is a lost write.  A text has no copy lowering of its own
         // (the bind is the `Set`), so the verdict is recorded here, from the same place test
@@ -7773,9 +7796,16 @@ use a separate collection or add after the loop"
             return true;
         }
         match self.vars.tp(root) {
-            // A script-defined struct LOCAL is the mod's own (mutable); a host-library struct
-            // local (or one the profile does not include) is host — the TYPE catches aliasing
-            // like `x = player; x.health = …`.
+            // `@FR-Cap-Own` is a PROVENANCE fact (`owned(e)`, formal/capabilities.md): a struct
+            // local that VIEWS a parameter — a `for` variable over one of its collections, an
+            // element or field bound to a local, a `&` alias — is the caller's data whatever its
+            // type, and a write through it is a host write (loft#1930).  Asked first, as the
+            // Vector arm below asks it.
+            Type::Reference(_, _) if self.root_aliases_argument(root, &args) => true,
+            // Otherwise the TYPE decides: a struct of a library the profile allows may have come
+            // from a host call (`x = player(); x.health = …`), so it is host; a struct of the
+            // script's own, or of a library the profile cannot reach, can only have been built
+            // here, and building is free (Cap-Own, § Construction is unrestricted).
             Type::Reference(struct_def, _) => {
                 let Some(lib) = crate::sandbox::def_library(&self.data, *struct_def) else {
                     return true;
@@ -9177,6 +9207,31 @@ use a separate collection or add after the loop"
                 {
                     self.vars.defined(*v_nr);
                 }
+                // `@FR-Cap-Write` — an APPEND to a collection the caller owns, spelled on a
+                // bare variable: the parameter itself (`v += […]`) or a `&` alias of one of its
+                // fields (`r = &w.xs; r += […]`).  Neither reaches the field/index check below,
+                // which keys on a non-`Var` place, so both grew host data with no grant
+                // (loft#1930).  No field is named here to look a grant up on, so it is the raw
+                // write the field path falls back to — append to the field itself, where its
+                // `#append` link is read.
+                if self.in_sandbox
+                    && !self.first_pass
+                    && op == "+="
+                    && let Value::Var(v) = code.unspan()
+                    && matches!(
+                        self.vars.tp(*v).base(),
+                        Type::Vector(..)
+                            | Type::Hash(..)
+                            | Type::Sorted(..)
+                            | Type::Index(..)
+                            | Type::Radix(..)
+                            | Type::Trie(..)
+                    )
+                    && self.root_aliases_argument(*v, &self.vars.arguments())
+                {
+                    let pos = *self.lexer.peek_pos();
+                    self.sandbox_raw_writes.entry(self.context).or_insert(pos);
+                }
                 // @PLN86 2.4 — a NON-`Var` LHS here is a field/index target
                 // (`e.health = v` / `v[i] = v`).  Ownership-aware: a write to the
                 // script's OWN data (a local of a script-defined struct type) is
@@ -9222,7 +9277,23 @@ use a separate collection or add after the loop"
                         // @PLN86 F6 — a `+=` to an `#append`-linked field is an APPEND
                         // (grow the collection); otherwise an `#update`-linked write is
                         // an UPDATE (F5).  Neither → the coarse 2.4 reject.
-                        if op == "+=" && has("#append") {
+                        // `@FR-Cap-Write`: `r = append ⟹ m : collection` — a scalar `+=`
+                        // changes the value in place, an UPDATE, whatever link it carries
+                        // (loft#1930: `m.sc += 1` passed on `bag#append`).
+                        let collection = {
+                            let a = self.data.attr(sd, &field);
+                            a != usize::MAX
+                                && matches!(
+                                    self.data.attr_type(sd, a).base(),
+                                    Type::Vector(..)
+                                        | Type::Hash(..)
+                                        | Type::Sorted(..)
+                                        | Type::Index(..)
+                                        | Type::Radix(..)
+                                        | Type::Trie(..)
+                                )
+                        };
+                        if op == "+=" && collection && has("#append") {
                             Some((sd, field, read_count, true))
                         } else if has("#update") {
                             Some((sd, field, read_count, false))

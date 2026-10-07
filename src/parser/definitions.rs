@@ -5703,8 +5703,36 @@ impl Parser {
     /// struct field's type (`health: int stats#read stats#update`), recording each
     /// on `(struct, field)` for the admission walk.  Consumed every pass, recorded
     /// once (first pass) so the per-field link list does not double on re-parse.
-    pub(crate) fn parse_field_links(&mut self, d_nr: u32, a_name: &str) {
+    pub(crate) fn parse_field_links(&mut self, d_nr: u32, a_name: &str, a_type: &Type) {
         while let Some(token) = self.try_cap_link() {
+            // `@FR-Cap-Write`: `r = append ⟹ m : collection`.  An `#append` link on a scalar
+            // field names a right that cannot exist — a scalar `+=` is an update — and it was
+            // accepted, then admitted that update under the append grant (loft#1930).
+            if token.ends_with("#append")
+                && !matches!(
+                    a_type.base(),
+                    Type::Vector(..)
+                        | Type::Hash(..)
+                        | Type::Sorted(..)
+                        | Type::Index(..)
+                        | Type::Radix(..)
+                        | Type::Trie(..)
+                        | Type::Unknown(_)
+                )
+            {
+                if self.first_pass {
+                    continue;
+                }
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{token}` on `{a_name}`: an append grows a collection, and `{a_name}` is `{}` \
+                     — a `+=` on it changes the value in place, which is an update; link it \
+                     `…#update`",
+                    a_type.source_name(&self.data)
+                );
+                continue;
+            }
             if self.first_pass {
                 self.record_member_link(d_nr, a_name, token);
             }
@@ -7051,7 +7079,7 @@ impl Parser {
                     // '= expr' shorthand for a field default value
                     self.parse_stored_default(d_nr, a_name, &mut a_type, &mut value);
                     // @PLN86 P6.4 — links after a scalar/named field type.
-                    self.parse_field_links(d_nr, a_name);
+                    self.parse_field_links(d_nr, a_name, &a_type.clone());
                 }
             } else if let Some(tp) = {
                 self.type_fact = AliasFact::Plain;
@@ -7075,7 +7103,7 @@ impl Parser {
                 // both, so the two spellings of a field type stay in step.
                 self.parse_stored_default(d_nr, a_name, &mut a_type, &mut value);
                 // @PLN86 P6.4 — links after a vector/generic/tuple field type.
-                self.parse_field_links(d_nr, a_name);
+                self.parse_field_links(d_nr, a_name, &a_type.clone());
                 self.parse_field_assert(&mut check, &mut check_message);
                 break;
             } else {

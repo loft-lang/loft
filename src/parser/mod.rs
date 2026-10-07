@@ -460,6 +460,12 @@ pub struct Parser {
     /// token the profile does not grant.  Reads are default-allow, so only a field
     /// the host marked with a `#read` link is ever recorded here.
     pub(crate) sandbox_field_reads: HashMap<u32, Vec<(String, crate::lexer::Position)>>,
+    /// `@FR-Cap-Own` — in a sandboxed def, the locals every assignment of which is a struct
+    /// LITERAL, keyed `(def, var)` → still literal-only.  Filled on pass 1, which sees the whole
+    /// body, and read on pass 2: such a local is data the script BUILT, so reading a `#read`
+    /// field of it reveals only what the script put there.  A parameter, a loop variable, a
+    /// copy or a call result never enters as `true` — a copy of host data is still host data.
+    pub(crate) sandbox_built: HashMap<(u32, u16), bool>,
     /// @PLN86 P6.4 (F5) — sandboxed UPDATES (raw writes) of a host field that carries an
     /// `#update` capability link, keyed by the writing def → each `(struct def_nr, field,
     /// position)`.  A field write WITH an update link is diverted here (admission admits
@@ -1837,6 +1843,7 @@ impl Parser {
             declared_capabilities: HashSet::new(),
             member_access: HashMap::new(),
             sandbox_field_reads: HashMap::new(),
+            sandbox_built: HashMap::new(),
             sandbox_field_updates: HashMap::new(),
             sandbox_field_appends: HashMap::new(),
             last_field_target: None,
@@ -25883,6 +25890,92 @@ mod plan86_admission_tests {
                     ),
                 ),
             ),
+            // loft#1930 — `owned(e)` is PROVENANCE: a view of a parameter is the caller's data
+            // whatever its type.  The types here are the program's own and `prog` is not an
+            // allowed library, which is the case the type rule read as script-owned.
+            (
+                "raw-write: a loop variable over a parameter's collection (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct Ent { hp: integer }\nstruct W { ents: vector<Ent> }\nfn evil(w: W) { for e in w.ents { e.hp = 0 } }\n",
+                ),
+            ),
+            (
+                "raw-write: a parameter's element bound to a local (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct Ent { hp: integer }\nstruct W { ents: vector<Ent> }\nfn evil(w: W) -> integer { x = w.ents[1]; x.hp = 7; x.hp }\n",
+                ),
+            ),
+            (
+                "raw-write: a `&` to a parameter's element (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct Ent { hp: integer }\nstruct W { ents: vector<Ent> }\nfn evil(w: W) { r = &w.ents[0]; r.hp = 5 }\n",
+                ),
+            ),
+            (
+                "append: a vector parameter (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "fn evil(v: vector<integer>) { v += [9] }\n",
+                ),
+            ),
+            (
+                "append: a `&` alias of a parameter's field (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct W { xs: vector<integer> }\nfn evil(w: W) { q = &w.xs; q += [8] }\n",
+                ),
+            ),
+            // loft#1929 — a whole-value read reads every field: rendering the value, as text
+            // or JSON, and a `match` binding a `#read` field are reads of it.
+            (
+                "read: a `#read` field rendered with its struct (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { \"{p}\" }\n",
+                ),
+            ),
+            (
+                "read: a `#read` field rendered as JSON (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { \"{p:j}\" }\n",
+                ),
+            ),
+            (
+                "read: a `#read` field bound by a match (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { match p { P { hidden } => hidden } }\n",
+                ),
+            ),
+            (
+                "read: a copy of a parameter is still the host's (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { c = P { hidden: \"x\", name: \"\" }; c = p; c.hidden }\n",
+                ),
+            ),
         ];
         for (name, e) in &escapes {
             assert!(!e.is_empty(), "ESCAPE NOT REJECTED — {name}");
@@ -25961,10 +26054,74 @@ mod plan86_admission_tests {
                     "fn ok() -> integer { v = [1, 2, 3]; v[0] = 9; v[0] }\n",
                 ),
             ),
+            // loft#1929 — `Cap-Own`: a value the function BUILT reveals only what the script
+            // put in it, so its `#read` field is free to read, field by field or whole.
+            (
+                "read: a `#read` field of a value built here (loft#1929)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn ok() -> text { x = P { hidden: \"mine\", name: \"\" }; x.hidden }\n",
+                ),
+            ),
+            (
+                "read: a value built here rendered and matched (loft#1929)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn ok() -> text { x = P { hidden: \"mine\", name: \"n\" }; \"{x} {match x { P { hidden } => hidden }}\" }\n",
+                ),
+            ),
+            (
+                "write: a local vector appended to (loft#1930's control)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "fn ok() -> integer { v = [1]; v += [2]; len(v) }\n",
+                ),
+            ),
         ];
         for (name, e) in &controls {
             assert!(e.is_empty(), "CLEAN SCRIPT REJECTED — {name}: {e:?}");
         }
+    }
+
+    /// loft#1930, `@FR-Cap-Write` — `r = append ⟹ m : collection`.  An `#append` link on a scalar
+    /// field is refused where it is declared, and a scalar `+=` is an UPDATE: it needs the
+    /// field's `#update` grant and no `#append` grant stands in for one.
+    #[test]
+    fn a_scalar_field_has_no_append_right() {
+        let declared = parse_admit_libs(
+            &["fn:f"],
+            &["code"],
+            &["bag#append"],
+            "capability bag\nstruct M { sc: integer bag#append }\nfn f(m: M) { m.sc += 1 }\n",
+        );
+        assert!(
+            declared
+                .diagnostics
+                .lines()
+                .iter()
+                .any(|l| l.contains("`bag#append` on `sc`: an append grows a collection")),
+            "the scalar `#append` link is refused: {:?}",
+            declared.diagnostics.lines()
+        );
+        let src = "capability bag\nstruct M { sc: integer bag#update }\nfn f(m: M) { m.sc += 1 }\n";
+        let granted = parse_admit_libs(&["fn:f"], &["code"], &["bag#update"], src);
+        assert!(
+            granted.diagnostics.level() < crate::diagnostics::Level::Error
+                && granted.sandbox_admission_errors().is_empty(),
+            "a scalar `+=` under its update grant is admitted: {:?}",
+            granted.sandbox_admission_errors()
+        );
+        let ungranted = parse_admit_libs(&["fn:f"], &["code"], &[], src);
+        assert!(
+            !ungranted.sandbox_admission_errors().is_empty(),
+            "a scalar `+=` without its update grant is refused"
+        );
     }
 
     /// @PLN86 P8.2 (F13) — the RED/GREEN ACCESS corpus: the committed battery over the
