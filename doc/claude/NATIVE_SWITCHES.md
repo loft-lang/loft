@@ -662,6 +662,18 @@ delivery copies — with it on, a shape-A result local ADOPTS the hidden return 
 (built where it must end up; the exits deliver nothing; the buffer's backing reused across
 calls) — and is the bisect step for a wrong vector return, a leak at a vector-returning
 call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
+**`LOFT_NO_KEYED_IN_PLACE=1`** (`@FR-R-InPlaceLiteral`'s keyed clause) makes `h[k] = R { … }`
+build its literal in a store of its own and copy it in again — with it on, the values are
+staged, the record under the key is removed, a fresh one is claimed in the collection's store
+and written, and the subscript's key links it — and is the first bisect step for a wrong value,
+key or count after a keyed literal assignment on native.
+**`LOFT_NO_DESTINATION=1`** (`@FR-R-Destination`) makes a call whose result is moved whole into
+a fresh element return its record again, instead of the callee's twin building it in the
+element — the bisect step for a wrong or leaked element filled from a call;
+`LOFT_TRACE_DESTINATION=1` names each admission and decline.
+**`LOFT_NO_BYTE_RESOLVE=1`** (`@FR-R-Base`'s resolve clause) makes a byte read through a held
+header take the base from the header again rather than from the store at the read — the bisect
+step for a byte read that answers a stale value after its vector grew.
 The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-…`);
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live
