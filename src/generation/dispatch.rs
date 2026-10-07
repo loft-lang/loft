@@ -18,8 +18,24 @@ impl Output<'_> {
     /// init + ≥1 ncc-borrow reassign; see [`Output::witness_vars`]) is routed
     /// through the owned-store-tracker path so neither free-site whole-store-frees
     /// a borrowed view.  Every other var goes straight to [`Self::output_set_body`].
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn output_set(
+        &mut self,
+        w: &mut dyn Write,
+        var: u16,
+        to: &Value,
+    ) -> std::io::Result<()> {
+        self.output_set_statement(w, var, to)?;
+        // loft#1899 — a generator's link local is stored back into its field after every bind,
+        // so a later state re-reads the pointer this one made.  A write THROUGH the link
+        // leaves the pointer as it was, so storing it again is harmless.
+        if let Some((local, field)) = self.coroutine_link_fields.get(&var) {
+            write!(w, "; self.var_{field} = var_{local}")?;
+        }
+        Ok(())
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn output_set_statement(
         &mut self,
         w: &mut dyn Write,
         var: u16,
@@ -644,7 +660,11 @@ impl Output<'_> {
         // field directly so the value survives across `next_*` calls.
         // The same Var/Set pair would otherwise produce a state-arm-scoped
         // `let mut var_X = …` shadow that arm 1+ cannot see.
-        if let Some(field) = self.coroutine_persistent_fields.get(&var) {
+        // A TUPLE field takes the normal path below, whose destination is its place
+        // (`var_place`): that path is what converts each member to its slot (text, fn-ref).
+        if let Some(field) = self.coroutine_persistent_fields.get(&var)
+            && !matches!(variables.tp(var).base(), Type::Tuple(_))
+        {
             // The struct's own spelling for this field, not the variable's name — two
             // `for i in …` loops in one generator put two `i`s on the struct (loft#928).
             let name = field.clone();
@@ -2104,7 +2124,9 @@ impl Output<'_> {
             self.narrow_local_enc(var)
         };
         if self.declared.contains(&var) && !discard_loop_var {
-            write!(w, "var_{name} = {narrow_open}")?;
+            // Its place: a generator's tuple local is the struct field (loft#1899).
+            let place = self.var_place(var);
+            write!(w, "{place} = {narrow_open}")?;
         } else {
             self.declared.insert(var);
             let var_tp = if discard_loop_var && let Value::Block(bl) = to.unspan() {
@@ -2371,18 +2393,18 @@ impl Output<'_> {
                 } else if tuple_text_elem_clone {
                     // P228: read through the same unspan as the detection above.
                     if let Value::TupleGet(v, idx) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.{idx}.clone()")?;
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.{idx}.clone()")?;
                     }
                 } else if nested_tuple_clone {
                     if let Value::TupleGet(v, idx) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.{idx}.clone()")?;
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.{idx}.clone()")?;
                     }
                 } else if whole_tuple_clone {
                     if let Value::Var(v) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.clone()")?;
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.clone()")?;
                     }
                 } else {
                     self.output_code_inner(w, to)?;

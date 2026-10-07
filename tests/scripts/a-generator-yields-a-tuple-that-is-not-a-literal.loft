@@ -1,0 +1,28 @@
+// @FR-G-Yield — a yield hands over its VALUE, however it is spelled: a tuple variable or a
+// call's tuple result reaches the consumer exactly as a tuple literal does.  `--native` wrote
+// the transport slots only for a literal, so any other tuple-valued yield handed over zeros
+// (`0,0` for `(4, 8)`), with nothing reported — in a straight-line generator and in one whose
+// loop is collected eagerly alike (loft#1899).  Each value is worked out by hand beside it.
+// @falsified-at: 594cceed8 — measured below by `make falsify`
+
+fn mk(n: integer) -> (integer, integer) { (n, n * 2) }
+fn mk10(n: integer) -> (integer, integer) { (n, n + 10) }
+fn pairs(g: iterator<(integer, integer)>) -> text { s = ""; for (a, b) in g { s += "{a},{b} "; } s }
+// A tuple variable, one state.
+fn variable() -> iterator<(integer, integer)> { t = (1, 7); yield t; }
+// A call's result.
+fn call_result() -> iterator<(integer, integer)> { yield mk(4); }
+// A variable in a loop (the eager collector): (0,0) (1,2) (2,4).
+fn loop_variable() -> iterator<(integer, integer)> { for i in 0..3 { t = (i, i * 2); yield t; } }
+// A call in a loop: (0,10) (1,11) (2,12).
+fn loop_call() -> iterator<(integer, integer)> { for i in 0..3 { yield mk10(i); } }
+// Control: a literal already reached the consumer.
+fn literal() -> iterator<(integer, integer)> { yield (3, 9); }
+
+fn main() {
+  assert(pairs(variable()) == "1,7 ", "a tuple variable");
+  assert(pairs(call_result()) == "4,8 ", "a call's tuple result");
+  assert(pairs(loop_variable()) == "0,0 1,2 2,4 ", "a tuple variable in a loop");
+  assert(pairs(loop_call()) == "0,10 1,11 2,12 ", "a call in a loop");
+  assert(pairs(literal()) == "3,9 ", "a literal");
+}
