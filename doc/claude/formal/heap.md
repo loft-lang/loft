@@ -741,6 +741,19 @@ of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed
 P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
 result is a view of the call's record.
 
+**The built-in `File`.**  A `File` declares no `OpDrop`: its resource is the OS handle the runtime
+opened, and the runtime releases it under the same rules.  The handle counts the `File` records
+that name it (`(H-Lease)`): a deep copy takes a lease (`Stores::copy_claims`), a record's death
+returns one, and the handle closes at the last.  A record dies at its store's free
+(`Stores::free_named`, walked from the root through the owned-child keystone), inside a store that
+lives on (`remove_claims`), and at an in-place reset of its store (`OpClearVector`'s root path,
+`Stores::clear` re-minting a live buffer) — so a `File` moved into a vector, a field or a yielded
+value keeps its handle (`(H-Move)`) and releases it with that structure (`(H-Drop)`).  Guards:
+`a-file-local-moved-into-a-structure-keeps-its-handle.loft` and `tests/file_handle_release.rs`
+(each death, under a handle limit, both backends).  `(H-Copy-Refuse)` and `(H-Spent)` reach
+declared droppables only, so a `File` copy whose two structures both stay in use compiles, and
+the two share one handle and one position; whether that copy is refused is with the owner.
+
 ### The soundness bridge — a well-typed program never faults a free
 
 ```

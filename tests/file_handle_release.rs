@@ -16,8 +16,13 @@
 //! generator's value stayed open until the process ended (loft#1896).
 //!
 //! Expected values by hand: every turn writes one byte `"a"` to each file the cell names, so
-//! each file holds 1000 bytes; the copy cell writes two per turn, 2000.  The plain-local cell
-//! is the control: it released before the fix and must still release after it.
+//! each file holds 1000 bytes; the copy cell writes two per turn, 2000.
+//!
+//! Falsified on 3c4707cb8 (the lease count without these releases): seven cells fail, each
+//! after 252 of its 1000 writes (`Too many open files`).  Three pass there — the plain local,
+//! the copy with its source, the yielded `File` — because their handle always closed; they
+//! guard the other direction, a release that closes a handle a live record still uses, which
+//! would lose writes instead of handles.
 
 use loft::file_access as fa;
 use std::path::PathBuf;

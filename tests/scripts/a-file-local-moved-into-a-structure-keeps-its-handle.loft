@@ -22,8 +22,14 @@
 //                        copy means is an open question to the owner (loft#1896).
 //
 // Expected values by hand: every file holds `"x"` from the callee and `"y"` from the caller, so
-// each reads back `"xy"`; the record keeps its other field, `7`, and the tuple its `3`.  On the
-// defect each cell reads `"x"`, and the loop cell `"xy xy xy x"`.
+// each reads back `"xy"`; the record keeps its other field, `7`, and the tuple its `3`.
+//
+// @falsified-at: 436910d69 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-file-local-moved-into-a-structure-keeps-its-handle.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS.  Each cell alone under `--tests` on the control: the literal, the
+//   append, the if-arm and the copy then placed read `"x"`, the loop `"xy xy xy x"`.
+//   HOLDS: the record field, the tuple member and the copy that outlives its replaced original
+//   pass on the control too — they hold the shapes the lease count must not break.
 
 struct Holder { h: File, tag: integer }
 
