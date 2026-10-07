@@ -75,8 +75,8 @@ pub enum ColumnSource {
 
 /// One column.
 pub struct ColumnDef {
-  const nm: text,
-  kind: ColumnType,
+  pub const nm: text,
+  pub kind: ColumnType,
   /// The ENGINE's own spelling, for a definition read back from a database;
   /// `""` for one derived from a loft type, where the dialect chooses the
   /// spelling at render time.
@@ -84,20 +84,20 @@ pub struct ColumnDef {
   /// This is the asymmetry the whole design turns on: where loft DEFINES the
   /// table it picks the cleanest column type and pays nothing; where it FOLLOWS
   /// one it accepts what is there and converts.
-  db_type: text = "",
+  pub db_type: text = "",
   /// May this column be SQL NULL?
-  nullable: boolean = false,
+  pub nullable: boolean = false,
   /// Byte offset of the loft field this column fills — the number
   /// `FieldInfo.position` and `KeyInfo.position` both carry, so a key joins to
   /// a column by value. `-1` for a column that is in the table and not in the
   /// type.
-  position: integer = -1,
+  pub position: integer = -1,
   /// WHICH record `position` is an offset into — see `ColumnSource`.
   ///
   /// One number and one meaning: `position` is always a byte offset in the
   /// record `src` names. Everything but a child table answers `SrcField`, which
   /// is why it defaults to that.
-  src: ColumnSource = SrcField,
+  pub src: ColumnSource = SrcField,
   /// The chain of byte offsets that reaches this column's field, ending at
   /// `position` — @PLN23 S7b.
   ///
@@ -109,7 +109,7 @@ pub struct ColumnDef {
   ///
   /// Empty on a definition read back from a database, which has no loft field
   /// behind it at all.
-  path: vector<integer> = [],
+  pub path: vector<integer> = [],
   /// How far down the collection path the record this column reads from sits:
   /// `0` is the owner the whole graph hangs from, `1` an element of one of its
   /// collections, `2` an element of one of THOSE.
@@ -118,17 +118,17 @@ pub struct ColumnDef {
   /// ord_2)` has two `SrcOrdinal` columns, and a writer that told them apart by
   /// their ORDER would be counting again — the thing `src` exists to stop one
   /// level up. With it the write path is `ords[c.depth]` at any depth.
-  depth: integer = 0,
+  pub depth: integer = 0,
   /// Would an `INSERT` that omits this column succeed?
   ///
   /// Only a column read back from a database can answer no, and it is the one
   /// fact that makes a table readable but not writable. A derived definition
   /// answers `true`: loft writes every column it named.
-  has_default: boolean = true,
+  pub has_default: boolean = true,
 }
 
 /// One column of an index, in key order.
-pub struct IndexColumn { const nm: text, ascending: boolean = true }
+pub struct IndexColumn { pub const nm: text, pub ascending: boolean = true }
 
 /// An index. Ordinary, never unique.
 ///
@@ -136,25 +136,25 @@ pub struct IndexColumn { const nm: text, ascending: boolean = true }
 /// key — and this derivation has no evidence for it. Getting it wrong rejects
 /// rows the program meant to store, while an ordinary index serves the lookup
 /// either way, which is all @PLN129's bind requires.
-pub struct IndexDef { const nm: text, const columns: vector<IndexColumn> }
+pub struct IndexDef { pub const nm: text, pub const columns: vector<IndexColumn> }
 
 /// One table.
 pub struct TableDef {
-  const nm: text,
-  const columns: vector<ColumnDef>,
+  pub const nm: text,
+  pub const columns: vector<ColumnDef>,
   /// The indexes this definition names.
   ///
   /// For a DERIVED definition, the one index the collection kind implies:
   /// @PLN129 refuses a bind whose lookup no index serves, so a writer that
   /// omits it produces a database its own reader cannot bind to. For one read
   /// back from a database, whatever is actually there — none, one or several.
-  const indexes: vector<IndexDef>,
+  pub const indexes: vector<IndexDef>,
   /// Why there is no definition here; `""` when there is one.
   ///
   /// Carried rather than returned apart, the way `SqlText` and `SqlProc` carry
   /// theirs: ONE refusal idiom in this package, and a value a caller can pass
   /// on without discharging it at every hop.
-  refusal: text = "",
+  pub refusal: text = "",
 }
 
 /// Is there a definition here at all?
@@ -422,7 +422,7 @@ pub fn has_column(self: TableDef, nm: text) -> boolean {
 pub struct Dialect {
   const nm: text,
   /// The identifier quote character — `"` everywhere but mariadb.
-  const quote: text,
+  pub const quote: text,
   const int_type: text,
   const float_type: text,
   const text_type: text,
@@ -439,10 +439,10 @@ pub struct Dialect {
   /// session setting, so the value a float reads back at is decided by whoever
   /// connected, not by the schema. A driver that does not set it inherits
   /// whatever the server was configured with.
-  const setup: vector<text>,
+  pub const setup: vector<text>,
   /// How this engine spells a bound parameter — `SQL_QMARK` or `SQL_DOLLAR`
   /// from the `sql` package.
-  style: integer = 0,
+  pub style: integer = 0,
   /// The expression naming the schema an `information_schema` query must be
   /// scoped to — `current_schema()` on PostgreSQL and duckdb, `DATABASE()` on
   /// mariadb. Empty for sqlite, whose catalogue is `PRAGMA` instead, and empty
@@ -726,11 +726,11 @@ pub enum Conversion {
 /// One column of a binding: which column fills which loft field, and what
 /// happens to the value on the way.
 pub struct ColumnBinding {
-  const column: text,
+  pub const column: text,
   /// The loft field's byte offset — the number `KeyInfo` and `FieldInfo` both
   /// carry, so nothing downstream matches on a name.
-  position: integer,
-  conversion: Conversion,
+  pub position: integer,
+  pub conversion: Conversion,
 }
 
 /// A table matched to a type.
@@ -741,11 +741,11 @@ pub struct ColumnBinding {
 /// `INSERT` into.
 pub struct Binding {
   const table: text,
-  const columns: vector<ColumnBinding>,
+  pub const columns: vector<ColumnBinding>,
   /// Why this table cannot serve this type at all; `""` when it can.
-  refusal: text = "",
+  pub refusal: text = "",
   /// Why a row cannot be WRITTEN through this binding; `""` when it can.
-  write_refusal: text = "",
+  pub write_refusal: text = "",
 }
 
 pub fn binding_ok(self: Binding) -> boolean { return self.refusal == ""; }
@@ -2038,7 +2038,7 @@ pub fn select_rows(self: TableDef, d: Dialect) -> SqlText {
 /// and positions, and a rename changes both — so a renamed field is
 /// indistinguishable from one dropped and one added, by construction. This is
 /// the same missing piece the declared column mapping under § S4 names.
-pub struct Renamed { const was: text, const now: text }
+pub struct Renamed { pub const was: text, pub const now: text }
 
 /// One step of a migration.
 ///
@@ -2047,19 +2047,19 @@ pub struct Renamed { const was: text, const now: text }
 /// non-empty `sql` cannot accidentally run a refused one.
 pub struct MigrationStep {
   /// The column or index this step is about.
-  const subject: text,
+  pub const subject: text,
   /// The statement to run; `""` for a step loft will not perform.
-  const sql: text,
+  pub const sql: text,
   /// Why loft will not perform it; `""` when there is a statement.
-  refusal: text = "",
+  pub refusal: text = "",
 }
 
 /// What a table must become for the type it no longer matches.
 pub struct Migration {
   const table: text,
-  const steps: vector<MigrationStep>,
+  pub const steps: vector<MigrationStep>,
   /// Why there is no plan at all; `""` when there is one.
-  refusal: text = "",
+  pub refusal: text = "",
 }
 
 /// Is there a plan here, and can every step of it be run?

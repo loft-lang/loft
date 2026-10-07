@@ -95,6 +95,8 @@ done
 
 tr '\t' '\n' <"$list" | xargs -P "$JOBS" -d '\n' -n 2 bash -c 'check_one "$0" "$1"'
 
-cat "$WORK"/raw/*.sites 2>/dev/null | sed "s|$WORK/[a-z]*/||g; s|$ROOT/||g" | sort -u >"$WORK/sites.tsv"
+# Paths are shortened to the tree they live in; a `dir` tree keeps them absolute, so a project
+# inside this checkout still resolves against its own root.
+cat "$WORK"/raw/*.sites 2>/dev/null | sed "s|$WORK/[a-z]*/||g; /^dir	/!s|$ROOT/||g" | sort -u >"$WORK/sites.tsv"
 cat "$WORK"/raw/*.failed 2>/dev/null >"$WORK/failed.tsv"
 echo "$WORK"
