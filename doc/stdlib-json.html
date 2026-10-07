@@ -29,8 +29,8 @@
   <span class="en">JBool</span> { value: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
   <span class="en">JNumber</span> { value: <span class="ty"><a href="stdlib-types.html">float</a></span> },
   <span class="en">JString</span> { value: <span class="ty"><a href="stdlib-types.html">text</a></span> },
-  <span class="en">JArray</span> { items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonValue</a></span>&gt; },
-  <span class="en">JObject</span> { fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt; },
+  <span class="en">JArray</span> { <span class="kw">pub</span> items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonValue</a></span>&gt; },
+  <span class="en">JObject</span> { <span class="kw">pub</span> fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-json.html">JsonField</a></span>&gt; },
   <span class="en">JInteger</span> { value: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
 }</code></pre>
 <p>Typed union of JSON values.  The discriminant (1..7) picks the active variant; variant data lives in the variant's fields. Matches the RFC 8259 kinds, plus <code>JInteger</code> for an integer-shaped number preserved to an exact <code>integer</code> (i64).</p>
@@ -38,8 +38,8 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-json.html">JsonField</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  value: <span class="en"><a href="stdlib-json.html">JsonValue</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> value: <span class="en"><a href="stdlib-json.html">JsonValue</a></span>,
 }</code></pre>
 <p>One field of a <code>JObject</code>.  A <code>JObject</code> keeps its fields as a <code>vector&lt;JsonField&gt;</code> in source order, so a lookup by name is a linear scan — fine for the object sizes typical in configuration / API responses.</p>
 </div>

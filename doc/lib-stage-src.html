@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>stage source</h1>
 <article>
-<p><a href="lib-stage.html">← stage</a> · <a href="lib-stage-api.html">API reference</a> · version 0.18.9</p>
+<p><a href="lib-stage.html">← stage</a> · <a href="lib-stage-api.html">API reference</a> · version 0.18.10</p>
 <p class="lib-legend">20 file(s), 6286 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -267,7 +267,7 @@
 <span id="src-stage-loft-L81">    nd_oy: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L82">    nd_w: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L83">    nd_h: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L84">    nd_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L84">    <span class="kw">pub</span> nd_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-stage-loft-L85">    nd_visible: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
 <span id="src-stage-loft-L86">    nd_atlas: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-stage-loft-L87">    nd_u0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
@@ -277,11 +277,11 @@
 <span id="src-stage-loft-L91">    nd_alpha: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L92">    nd_mask: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// index into `st_masks`, or -1 for solid</span></span>
 <span id="src-stage-loft-L93">    nd_clips: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,       <span class="cm">// does this node clip its own subtree?</span></span>
-<span id="src-stage-loft-L94">    nd_clipped: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,     <span class="cm">// derived: is anything clipping it?</span></span>
-<span id="src-stage-loft-L95">    nd_cx0: <span class="ty"><a href="stdlib-types.html">float</a></span>,           <span class="cm">// derived: the effective clip, world axis-aligned</span></span>
-<span id="src-stage-loft-L96">    nd_cy0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L97">    nd_cx1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L98">    nd_cy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L94">    <span class="kw">pub</span> nd_clipped: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,     <span class="cm">// derived: is anything clipping it?</span></span>
+<span id="src-stage-loft-L95">    <span class="kw">pub</span> nd_cx0: <span class="ty"><a href="stdlib-types.html">float</a></span>,           <span class="cm">// derived: the effective clip, world axis-aligned</span></span>
+<span id="src-stage-loft-L96">    <span class="kw">pub</span> nd_cy0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L97">    <span class="kw">pub</span> nd_cx1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L98">    <span class="kw">pub</span> nd_cy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L99">    nd_key: <span class="ty"><a href="stdlib-types.html">text</a></span>,            <span class="cm">// the mob kind, e.g. "orc" — resolution starts here</span></span>
 <span id="src-stage-loft-L100">    nd_action: <span class="ty"><a href="stdlib-types.html">text</a></span>,         <span class="cm">// what it is doing, e.g. "walk"</span></span>
 <span id="src-stage-loft-L101">    nd_facing: <span class="ty"><a href="stdlib-types.html">float</a></span>,        <span class="cm">// where it points, in radians; kept in BOTH models</span></span>
@@ -291,8 +291,8 @@
 <span id="src-stage-loft-L105">    nd_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// the atlas grid this node's cells live in</span></span>
 <span id="src-stage-loft-L106">    nd_rows: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-stage-loft-L107">    nd_sway: <span class="ty"><a href="stdlib-types.html">float</a></span>,          <span class="cm">// ambient sway amplitude in pixels; 0 is still</span></span>
-<span id="src-stage-loft-L108">    nd_phase: <span class="ty"><a href="stdlib-types.html">float</a></span>,         <span class="cm">// derived from POSITION, so neighbours are out of step</span></span>
-<span id="src-stage-loft-L109">    nd_cue: <span class="ty"><a href="stdlib-types.html">float</a></span>,           <span class="cm">// derived: 0 at the near plane, 1 at the far one</span></span>
+<span id="src-stage-loft-L108">    <span class="kw">pub</span> nd_phase: <span class="ty"><a href="stdlib-types.html">float</a></span>,         <span class="cm">// derived from POSITION, so neighbours are out of step</span></span>
+<span id="src-stage-loft-L109">    <span class="kw">pub</span> nd_cue: <span class="ty"><a href="stdlib-types.html">float</a></span>,           <span class="cm">// derived: 0 at the near plane, 1 at the far one</span></span>
 <span id="src-stage-loft-L110">    nd_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>,       <span class="cm">// ordering BAND — outranks depth entirely</span></span>
 <span id="src-stage-loft-L111">    nd_depth: <span class="ty"><a href="stdlib-types.html">float</a></span>,         <span class="cm">// distance INTO the screen; larger draws first</span></span>
 <span id="src-stage-loft-L112">    nd_disabled: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,    <span class="cm">// D1: refuses to fire, and reads `Disabled`</span></span>
@@ -306,12 +306,12 @@
 <span id="src-stage-loft-L120">    <span class="cm">// `nd_parent &lt; 0` branch two lines up already applies to a root.  With the</span></span>
 <span id="src-stage-loft-L121">    <span class="cm">// zero record it would be the transform that collapses every child to a</span></span>
 <span id="src-stage-loft-L122">    <span class="cm">// point: silent, geometric, and visible only as a picture that is not there.</span></span>
-<span id="src-stage-loft-L123">    nd_a: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L124">    nd_b: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L125">    nd_c: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L126">    nd_d: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L127">    nd_tx: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L128">    nd_ty: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L123">    <span class="kw">pub</span> nd_a: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L124">    <span class="kw">pub</span> nd_b: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L125">    <span class="kw">pub</span> nd_c: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L126">    <span class="kw">pub</span> nd_d: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L127">    <span class="kw">pub</span> nd_tx: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L128">    <span class="kw">pub</span> nd_ty: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-stage-loft-L129">}</span>
 <span id="src-stage-loft-L130"></span>
 <span id="src-stage-loft-L131"><span class="cm">// Everything one ordering band carries: how much of the camera it feels, what</span></span>
@@ -355,21 +355,21 @@
 <span id="src-stage-loft-L169"><span class="cm">// The compiler refusing is the good outcome; after publishing, this rename is one</span></span>
 <span id="src-stage-loft-L170"><span class="cm">// nobody can make.  Same reason the node is `StageNode`.</span></span>
 <span id="src-stage-loft-L171"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">StageLight</span> {</span>
-<span id="src-stage-loft-L172">    lt_x: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L173">    lt_y: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L174">    lt_r: <span class="ty"><a href="stdlib-types.html">float</a></span>,             <span class="cm">// radius; the reach is 0 at exactly this distance</span></span>
-<span id="src-stage-loft-L175">    lt_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>,      <span class="cm">// packed 0xRRGGBB</span></span>
-<span id="src-stage-loft-L176">    lt_power: <span class="ty"><a href="stdlib-types.html">float</a></span>,         <span class="cm">// intensity multiplier; 1.0 is full at the centre</span></span>
+<span id="src-stage-loft-L172">    <span class="kw">pub</span> lt_x: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L173">    <span class="kw">pub</span> lt_y: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L174">    <span class="kw">pub</span> lt_r: <span class="ty"><a href="stdlib-types.html">float</a></span>,             <span class="cm">// radius; the reach is 0 at exactly this distance</span></span>
+<span id="src-stage-loft-L175">    <span class="kw">pub</span> lt_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>,      <span class="cm">// packed 0xRRGGBB</span></span>
+<span id="src-stage-loft-L176">    <span class="kw">pub</span> lt_power: <span class="ty"><a href="stdlib-types.html">float</a></span>,         <span class="cm">// intensity multiplier; 1.0 is full at the centre</span></span>
 <span id="src-stage-loft-L177">}</span>
 <span id="src-stage-loft-L178"></span>
 <span id="src-stage-loft-L179"><span class="cm">// A 2D scene and everything that drives it: its nodes and masks, the draw order</span></span>
 <span id="src-stage-loft-L180"><span class="cm">// `compose` derives, the views, lights and depth cue it paints with, and its pointer,</span></span>
 <span id="src-stage-loft-L181"><span class="cm">// focus and tween state.  `stage_new` makes an empty one; every other call changes it.</span></span>
 <span id="src-stage-loft-L182"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Stage</span> {</span>
-<span id="src-stage-loft-L183">    st_nodes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">StageNode</span>&gt;,</span>
+<span id="src-stage-loft-L183">    <span class="kw">pub</span> st_nodes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">StageNode</span>&gt;,</span>
 <span id="src-stage-loft-L184">    st_masks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Mask</span>&gt;,</span>
 <span id="src-stage-loft-L185">    st_capture: <span class="ty"><a href="stdlib-types.html">integer</a></span>,      <span class="cm">// the node holding the press, or -1</span></span>
-<span id="src-stage-loft-L186">    st_order: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// draw order, derived by `compose`</span></span>
+<span id="src-stage-loft-L186">    <span class="kw">pub</span> st_order: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,   <span class="cm">// draw order, derived by `compose`</span></span>
 <span id="src-stage-loft-L187">    st_cue: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,             <span class="cm">// is the depth cue on?</span></span>
 <span id="src-stage-loft-L188">    st_cue_near: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L189">    st_cue_far: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
@@ -442,51 +442,51 @@
 <span id="src-stage-loft-L256"><span class="cm">// been handed a legal answer to a question they did not ask.  That is exactly the</span></span>
 <span id="src-stage-loft-L257"><span class="cm">// case `omitted-field-zero` exists to warn about, answered here at the declaration.</span></span>
 <span id="src-stage-loft-L258"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Place</span> {</span>
-<span id="src-stage-loft-L259">    pl_w: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,       <span class="cm">// size in the node's own units; 0 x 0 draws nothing</span></span>
-<span id="src-stage-loft-L260">    pl_h: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L261">    pl_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,  <span class="cm">// packed 0xRRGGBB, as `DrawRect` carries</span></span>
-<span id="src-stage-loft-L262">    pl_visible: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>,</span>
-<span id="src-stage-loft-L263">    pl_atlas: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,   <span class="cm">// which texture page; a run may only merge within one</span></span>
-<span id="src-stage-loft-L264">    pl_u0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// the sprite's rect within that page</span></span>
-<span id="src-stage-loft-L265">    pl_v0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L266">    pl_u1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L267">    pl_v1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L268">    pl_alpha: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L269">    pl_mask: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,   <span class="cm">// index from `add_mask`, or -1 for solid</span></span>
-<span id="src-stage-loft-L270">    pl_clips: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,  <span class="cm">// clip this node's subtree to its own bounds</span></span>
-<span id="src-stage-loft-L271">    pl_key: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,          <span class="cm">// the mob kind; "" opts out of by-name resolution</span></span>
-<span id="src-stage-loft-L272">    pl_seq: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,       <span class="cm">// from `add_sequence`; -1 is a still sprite</span></span>
-<span id="src-stage-loft-L273">    pl_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,       <span class="cm">// the atlas grid the cells are packed in</span></span>
-<span id="src-stage-loft-L274">    pl_rows: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
-<span id="src-stage-loft-L275">    pl_sway: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,       <span class="cm">// ambient sway amplitude, in pixels</span></span>
-<span id="src-stage-loft-L276">    pl_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,      <span class="cm">// background / world / UI are BANDS, not numbers</span></span>
-<span id="src-stage-loft-L277">    pl_depth: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// distance INTO the screen: LARGER draws first, so</span></span>
+<span id="src-stage-loft-L259">    <span class="kw">pub</span> pl_w: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,       <span class="cm">// size in the node's own units; 0 x 0 draws nothing</span></span>
+<span id="src-stage-loft-L260">    <span class="kw">pub</span> pl_h: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L261">    <span class="kw">pub</span> pl_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,  <span class="cm">// packed 0xRRGGBB, as `DrawRect` carries</span></span>
+<span id="src-stage-loft-L262">    <span class="kw">pub</span> pl_visible: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">true</span>,</span>
+<span id="src-stage-loft-L263">    <span class="kw">pub</span> pl_atlas: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,   <span class="cm">// which texture page; a run may only merge within one</span></span>
+<span id="src-stage-loft-L264">    <span class="kw">pub</span> pl_u0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// the sprite's rect within that page</span></span>
+<span id="src-stage-loft-L265">    <span class="kw">pub</span> pl_v0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L266">    <span class="kw">pub</span> pl_u1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L267">    <span class="kw">pub</span> pl_v1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L268">    <span class="kw">pub</span> pl_alpha: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L269">    <span class="kw">pub</span> pl_mask: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,   <span class="cm">// index from `add_mask`, or -1 for solid</span></span>
+<span id="src-stage-loft-L270">    <span class="kw">pub</span> pl_clips: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,  <span class="cm">// clip this node's subtree to its own bounds</span></span>
+<span id="src-stage-loft-L271">    <span class="kw">pub</span> pl_key: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,          <span class="cm">// the mob kind; "" opts out of by-name resolution</span></span>
+<span id="src-stage-loft-L272">    <span class="kw">pub</span> pl_seq: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,       <span class="cm">// from `add_sequence`; -1 is a still sprite</span></span>
+<span id="src-stage-loft-L273">    <span class="kw">pub</span> pl_cols: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,       <span class="cm">// the atlas grid the cells are packed in</span></span>
+<span id="src-stage-loft-L274">    <span class="kw">pub</span> pl_rows: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
+<span id="src-stage-loft-L275">    <span class="kw">pub</span> pl_sway: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,       <span class="cm">// ambient sway amplitude, in pixels</span></span>
+<span id="src-stage-loft-L276">    <span class="kw">pub</span> pl_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,      <span class="cm">// background / world / UI are BANDS, not numbers</span></span>
+<span id="src-stage-loft-L277">    <span class="kw">pub</span> pl_depth: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// distance INTO the screen: LARGER draws first, so</span></span>
 <span id="src-stage-loft-L278">                                <span class="cm">// `depth = -y` puts a lower sprite in front. A 2.5-D</span></span>
 <span id="src-stage-loft-L279">                                <span class="cm">// scene sets it from the footprint — a hex row, or a</span></span>
 <span id="src-stage-loft-L280">                                <span class="cm">// projected height — never from the artwork</span></span>
-<span id="src-stage-loft-L281">    pl_x: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L282">    pl_y: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-stage-loft-L283">    pl_rot: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,     <span class="cm">// radians; +ve turns +x toward +y</span></span>
-<span id="src-stage-loft-L284">    pl_sx: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L285">    pl_sy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-stage-loft-L286">    pl_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// the origin, in the node's own units</span></span>
-<span id="src-stage-loft-L287">    pl_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L281">    <span class="kw">pub</span> pl_x: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L282">    <span class="kw">pub</span> pl_y: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-stage-loft-L283">    <span class="kw">pub</span> pl_rot: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,     <span class="cm">// radians; +ve turns +x toward +y</span></span>
+<span id="src-stage-loft-L284">    <span class="kw">pub</span> pl_sx: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L285">    <span class="kw">pub</span> pl_sy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-stage-loft-L286">    <span class="kw">pub</span> pl_ox: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,      <span class="cm">// the origin, in the node's own units</span></span>
+<span id="src-stage-loft-L287">    <span class="kw">pub</span> pl_oy: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-stage-loft-L288">}</span>
 <span id="src-stage-loft-L289"></span>
 <span id="src-stage-loft-L290"><span class="cm">// A point, so a caller can ask where something ended up without unpacking six</span></span>
 <span id="src-stage-loft-L291"><span class="cm">// floats.  `world_point` is the only honest way to check a transform: a matrix</span></span>
 <span id="src-stage-loft-L292"><span class="cm">// means nothing except through what it does to a point.</span></span>
 <span id="src-stage-loft-L293"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Bounds</span> {</span>
-<span id="src-stage-loft-L294">    b_x0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L295">    b_y0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L296">    b_x1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L297">    b_y1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L294">    <span class="kw">pub</span> b_x0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L295">    <span class="kw">pub</span> b_y0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L296">    <span class="kw">pub</span> b_x1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L297">    <span class="kw">pub</span> b_y1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L298">}</span>
 <span id="src-stage-loft-L299"></span>
 <span id="src-stage-loft-L300"><span class="cm">// A point in world coordinates, as `world_point` and `world_origin` answer it.</span></span>
 <span id="src-stage-loft-L301"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">P2</span> {</span>
-<span id="src-stage-loft-L302">    p_x: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L303">    p_y: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L302">    <span class="kw">pub</span> p_x: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L303">    <span class="kw">pub</span> p_y: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L304">}</span>
 <span id="src-stage-loft-L305"></span>
 <span id="src-stage-loft-L306"><span class="cm">// An empty stage: no nodes, one view, the camera at the origin and ambient</span></span>
@@ -796,16 +796,16 @@
 <span id="src-stage-loft-L610"><span class="cm">// shape.  Until it is published (@PLN145 `D0`) the types cannot literally be</span></span>
 <span id="src-stage-loft-L611"><span class="cm">// shared, and one of the two must eventually give — see the plan.</span></span>
 <span id="src-stage-loft-L612"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">UiRect</span> {</span>
-<span id="src-stage-loft-L613">    r_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-stage-loft-L614">    r_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-stage-loft-L615">    r_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-stage-loft-L616">    r_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L613">    <span class="kw">pub</span> r_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L614">    <span class="kw">pub</span> r_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L615">    <span class="kw">pub</span> r_w: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L616">    <span class="kw">pub</span> r_h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-stage-loft-L617">}</span>
 <span id="src-stage-loft-L618"></span>
 <span id="src-stage-loft-L619"><span class="cm">// A packed 0xRRGGBB colour, as `lavition_ui` carries it.</span></span>
 <span id="src-stage-loft-L620"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">DrawRect</span> {</span>
-<span id="src-stage-loft-L621">    dr_rect: <span class="en">UiRect</span>,</span>
-<span id="src-stage-loft-L622">    dr_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L621">    <span class="kw">pub</span> dr_rect: <span class="en">UiRect</span>,</span>
+<span id="src-stage-loft-L622">    <span class="kw">pub</span> dr_colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-stage-loft-L623">}</span>
 <span id="src-stage-loft-L624"></span>
 <span id="src-stage-loft-L625"><span class="cm">// One line of text to draw, in the command shape `lavition_ui` takes: the text, its left</span></span>
@@ -888,15 +888,15 @@
 <span id="src-stage-loft-L702"></span>
 <span id="src-stage-loft-L703"><span class="cm">// One run of consecutive instances that share an atlas.</span></span>
 <span id="src-stage-loft-L704"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Batch</span> {</span>
-<span id="src-stage-loft-L705">    b_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// one run, one layer — so one camera offset</span></span>
-<span id="src-stage-loft-L706">    b_atlas: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-stage-loft-L707">    b_first: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// index of the first instance in the packed buffer</span></span>
-<span id="src-stage-loft-L708">    b_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-stage-loft-L709">    b_clipped: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,      <span class="cm">// the scissor this run needs, if any</span></span>
-<span id="src-stage-loft-L710">    b_cx0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L711">    b_cy0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L712">    b_cx1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-stage-loft-L713">    b_cy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L705">    <span class="kw">pub</span> b_layer: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// one run, one layer — so one camera offset</span></span>
+<span id="src-stage-loft-L706">    <span class="kw">pub</span> b_atlas: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L707">    <span class="kw">pub</span> b_first: <span class="ty"><a href="stdlib-types.html">integer</a></span>,        <span class="cm">// index of the first instance in the packed buffer</span></span>
+<span id="src-stage-loft-L708">    <span class="kw">pub</span> b_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-stage-loft-L709">    <span class="kw">pub</span> b_clipped: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,      <span class="cm">// the scissor this run needs, if any</span></span>
+<span id="src-stage-loft-L710">    <span class="kw">pub</span> b_cx0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L711">    <span class="kw">pub</span> b_cy0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L712">    <span class="kw">pub</span> b_cx1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-stage-loft-L713">    <span class="kw">pub</span> b_cy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-stage-loft-L714">}</span>
 <span id="src-stage-loft-L715"></span>
 <span id="src-stage-loft-L716"><span class="cm">// Floats per instance in the packed buffer: a 2x3 affine, the sprite's uv rect,</span></span>

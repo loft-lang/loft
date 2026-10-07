@@ -5912,7 +5912,7 @@ impl Parser {
         }
         *code = v_if(test, true_code, false_code);
         // @PLN187 — an `if` that yields a value carries what its branches yield.
-        if had_else && !matches!(result_tp, Type::Void | Type::Never) {
+        if had_else && !matches!(result_tp.base(), Type::Void | Type::Never) {
             self.settle_join(&[true_fact, false_fact]);
         } else if self.abstract_on() {
             self.produced = Some(crate::data::AliasFact::Plain);
@@ -6022,7 +6022,7 @@ impl Parser {
         let r = self.parse_match_inner(code);
         let arm_facts = std::mem::replace(&mut self.match_arm_facts, outer_arm_facts);
         self.match_subject = outer_subject;
-        if !matches!(r, Type::Void | Type::Null | Type::Never) {
+        if !matches!(r.base(), Type::Void | Type::Null | Type::Never) {
             self.settle_join(&arm_facts);
         } else if self.abstract_on() {
             self.produced = Some(crate::data::AliasFact::Plain);

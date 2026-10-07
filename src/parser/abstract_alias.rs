@@ -371,7 +371,7 @@ impl Parser {
         let unbounded = def.bounds.is_empty();
         match (attr.typedef.base(), got) {
             (Type::Vector(elem, _), AliasFact::Vector(inner)) => {
-                if matches!(**elem, Type::Unknown(_)) {
+                if matches!(elem.base(), Type::Unknown(_)) {
                     return true;
                 }
                 if unbounded && let Some(v) = self.type_var(elem) {

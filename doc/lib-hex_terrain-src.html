@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_terrain source</h1>
 <article>
-<p><a href="lib-hex_terrain.html">← hex_terrain</a> · <a href="lib-hex_terrain-api.html">API reference</a> · version 0.1.7</p>
+<p><a href="lib-hex_terrain.html">← hex_terrain</a> · <a href="lib-hex_terrain-api.html">API reference</a> · version 0.1.8</p>
 <p class="lib-legend">3 file(s), 1613 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -115,10 +115,10 @@
 <span id="src-hex-terrain-loft-L56"><span class="cm">// tt_rise and tt_steep are INDEPENDENT; tt_wet marks water bodies (sea/lake):</span></span>
 <span id="src-hex-terrain-loft-L57"><span class="cm">// they take no relief and no boundary contest.</span></span>
 <span id="src-hex-terrain-loft-L58"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainType</span> {</span>
-<span id="src-hex-terrain-loft-L59">  tt_key:   <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
-<span id="src-hex-terrain-loft-L60">  tt_rise:  <span class="ty"><a href="stdlib-types.html">float</a></span>,   <span class="cm">// m of ridge lift at the 100 m reference relief</span></span>
-<span id="src-hex-terrain-loft-L61">  tt_steep: <span class="ty"><a href="stdlib-types.html">float</a></span>,   <span class="cm">// m of detail amplitude; sqrt(steep) wins boundaries</span></span>
-<span id="src-hex-terrain-loft-L62">  tt_wet:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-hex-terrain-loft-L59">  <span class="kw">pub</span> tt_key:   <span class="ty"><a href="stdlib-types.html">text</a></span>,</span>
+<span id="src-hex-terrain-loft-L60">  <span class="kw">pub</span> tt_rise:  <span class="ty"><a href="stdlib-types.html">float</a></span>,   <span class="cm">// m of ridge lift at the 100 m reference relief</span></span>
+<span id="src-hex-terrain-loft-L61">  <span class="kw">pub</span> tt_steep: <span class="ty"><a href="stdlib-types.html">float</a></span>,   <span class="cm">// m of detail amplitude; sqrt(steep) wins boundaries</span></span>
+<span id="src-hex-terrain-loft-L62">  <span class="kw">pub</span> tt_wet:   <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
 <span id="src-hex-terrain-loft-L63">}</span>
 <span id="src-hex-terrain-loft-L64"></span>
 <span id="src-hex-terrain-loft-L65"><span class="cm">// Algorithm parameters (engine side).  terrain_params() gives the blueprint's</span></span>
@@ -126,14 +126,14 @@
 <span id="src-hex-terrain-loft-L67"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainParams</span> {</span>
 <span id="src-hex-terrain-loft-L68">  tp_seed:        <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-hex-terrain-loft-L69">  tp_tile:        <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// overland hex pitch</span></span>
-<span id="src-hex-terrain-loft-L70">  tp_sea:         <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// sea level</span></span>
+<span id="src-hex-terrain-loft-L70">  <span class="kw">pub</span> tp_sea:         <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// sea level</span></span>
 <span id="src-hex-terrain-loft-L71">  tp_lake_fill:   <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// flood-fill raise that makes a cell a lake</span></span>
-<span id="src-hex-terrain-loft-L72">  tp_acc_min:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// accumulation (tiles) before a stream is a river</span></span>
+<span id="src-hex-terrain-loft-L72">  <span class="kw">pub</span> tp_acc_min:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// accumulation (tiles) before a stream is a river</span></span>
 <span id="src-hex-terrain-loft-L73">  tp_meander:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// fractal displacement strength K</span></span>
 <span id="src-hex-terrain-loft-L74">  tp_seg_min:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// stop subdividing below this segment length</span></span>
-<span id="src-hex-terrain-loft-L75">  tp_nb_base:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// relief multiplier with zero steep neighbors</span></span>
-<span id="src-hex-terrain-loft-L76">  tp_nb_boost:    <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// ADDED per steep neighbor (compounding)</span></span>
-<span id="src-hex-terrain-loft-L77">  tp_steep_delta: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// neighbor height delta that counts as steep</span></span>
+<span id="src-hex-terrain-loft-L75">  <span class="kw">pub</span> tp_nb_base:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// relief multiplier with zero steep neighbors</span></span>
+<span id="src-hex-terrain-loft-L76">  <span class="kw">pub</span> tp_nb_boost:    <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// ADDED per steep neighbor (compounding)</span></span>
+<span id="src-hex-terrain-loft-L77">  <span class="kw">pub</span> tp_steep_delta: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// neighbor height delta that counts as steep</span></span>
 <span id="src-hex-terrain-loft-L78">  tp_carve_max:   <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// max single-course valley depth</span></span>
 <span id="src-hex-terrain-loft-L79">  tp_valley_w:    <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// smallest valley falloff width</span></span>
 <span id="src-hex-terrain-loft-L80">  tp_valley_max:  <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// biggest river's falloff width</span></span>
@@ -156,15 +156,15 @@
 <span id="src-hex-terrain-loft-L97"></span>
 <span id="src-hex-terrain-loft-L98"><span class="cm">// Parallel per-cell vectors, index = r * tr_nx + c (odd-r offset coords).</span></span>
 <span id="src-hex-terrain-loft-L99"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Terrain</span> {</span>
-<span id="src-hex-terrain-loft-L100">  tr_nx:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-terrain-loft-L101">  tr_ny:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-hex-terrain-loft-L102">  tr_h:      <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,   <span class="cm">// height (m); after hydrology = the FILLED surface</span></span>
-<span id="src-hex-terrain-loft-L103">  tr_mat:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, <span class="cm">// index into the caller's TerrainType vector</span></span>
-<span id="src-hex-terrain-loft-L104">  tr_moist:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-hex-terrain-loft-L105">  tr_flow:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, <span class="cm">// steepest-descent neighbor dir 0..5, -1 = none</span></span>
-<span id="src-hex-terrain-loft-L106">  tr_acc:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,   <span class="cm">// flow accumulation (tiles)</span></span>
-<span id="src-hex-terrain-loft-L107">  tr_relief: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,   <span class="cm">// compounded neighbor relief (0 on wet cells)</span></span>
-<span id="src-hex-terrain-loft-L108">  tr_wet:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, <span class="cm">// water-flow cell: wet material OR river acc</span></span>
+<span id="src-hex-terrain-loft-L100">  <span class="kw">pub</span> tr_nx:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-terrain-loft-L101">  <span class="kw">pub</span> tr_ny:     <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-terrain-loft-L102">  <span class="kw">pub</span> tr_h:      <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,   <span class="cm">// height (m); after hydrology = the FILLED surface</span></span>
+<span id="src-hex-terrain-loft-L103">  <span class="kw">pub</span> tr_mat:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, <span class="cm">// index into the caller's TerrainType vector</span></span>
+<span id="src-hex-terrain-loft-L104">  <span class="kw">pub</span> tr_moist:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-terrain-loft-L105">  <span class="kw">pub</span> tr_flow:   <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, <span class="cm">// steepest-descent neighbor dir 0..5, -1 = none</span></span>
+<span id="src-hex-terrain-loft-L106">  <span class="kw">pub</span> tr_acc:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,   <span class="cm">// flow accumulation (tiles)</span></span>
+<span id="src-hex-terrain-loft-L107">  <span class="kw">pub</span> tr_relief: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,   <span class="cm">// compounded neighbor relief (0 on wet cells)</span></span>
+<span id="src-hex-terrain-loft-L108">  <span class="kw">pub</span> tr_wet:    <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt;, <span class="cm">// water-flow cell: wet material OR river acc</span></span>
 <span id="src-hex-terrain-loft-L109">}</span>
 <span id="src-hex-terrain-loft-L110"></span>
 <span id="src-hex-terrain-loft-L111"><span class="cm">// An empty nx-by-ny terrain: height, material and moisture per cell, all parallel, so a</span></span>
@@ -482,14 +482,14 @@
 <span id="src-hex-terrain-loft-L423"></span>
 <span id="src-hex-terrain-loft-L424"><span class="cm">// One blended surface record at a fine point.</span></span>
 <span id="src-hex-terrain-loft-L425"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainSurf</span> {</span>
-<span id="src-hex-terrain-loft-L426">  sf_h:      <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// fine height BEFORE river carving</span></span>
-<span id="src-hex-terrain-loft-L427">  sf_blend:  <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// the coarse blended height alone</span></span>
-<span id="src-hex-terrain-loft-L428">  sf_mat:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// winning land material (the boundary contest)</span></span>
-<span id="src-hex-terrain-loft-L429">  sf_mix:    <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// 0.5..1: how decisively it wins (edge softness)</span></span>
-<span id="src-hex-terrain-loft-L430">  sf_relief: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-hex-terrain-loft-L431">  sf_moist:  <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-hex-terrain-loft-L432">  sf_watery: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// blended weight of wet-material cells</span></span>
-<span id="src-hex-terrain-loft-L433">  sf_lakey:  <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// blended weight of wet cells ABOVE sea level</span></span>
+<span id="src-hex-terrain-loft-L426">  <span class="kw">pub</span> sf_h:      <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// fine height BEFORE river carving</span></span>
+<span id="src-hex-terrain-loft-L427">  <span class="kw">pub</span> sf_blend:  <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// the coarse blended height alone</span></span>
+<span id="src-hex-terrain-loft-L428">  <span class="kw">pub</span> sf_mat:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// winning land material (the boundary contest)</span></span>
+<span id="src-hex-terrain-loft-L429">  <span class="kw">pub</span> sf_mix:    <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// 0.5..1: how decisively it wins (edge softness)</span></span>
+<span id="src-hex-terrain-loft-L430">  <span class="kw">pub</span> sf_relief: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-terrain-loft-L431">  <span class="kw">pub</span> sf_moist:  <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-terrain-loft-L432">  <span class="kw">pub</span> sf_watery: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// blended weight of wet-material cells</span></span>
+<span id="src-hex-terrain-loft-L433">  <span class="kw">pub</span> sf_lakey:  <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// blended weight of wet cells ABOVE sea level</span></span>
 <span id="src-hex-terrain-loft-L434">}</span>
 <span id="src-hex-terrain-loft-L435"></span>
 <span id="src-hex-terrain-loft-L436"><span class="cm">// Smooth kernel blend of the overland cells around (x, y) + the boundary-line</span></span>
@@ -660,8 +660,8 @@
 <span id="src-hex-terrain-loft-L601"><span class="cm">// One river course PIECE: fine polyline (ends ON the shorelines) with</span></span>
 <span id="src-hex-terrain-loft-L602"><span class="cm">// per-vertex water width, carve depth and valley falloff width.</span></span>
 <span id="src-hex-terrain-loft-L603"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainRiver</span> {</span>
-<span id="src-hex-terrain-loft-L604">  rv_x:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-hex-terrain-loft-L605">  rv_y:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-terrain-loft-L604">  <span class="kw">pub</span> rv_x:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-hex-terrain-loft-L605">  <span class="kw">pub</span> rv_y:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
 <span id="src-hex-terrain-loft-L606">  rv_w:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,    <span class="cm">// water half-width test: dist &lt; rv_w/2</span></span>
 <span id="src-hex-terrain-loft-L607">  rv_d:  <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,    <span class="cm">// carve depth</span></span>
 <span id="src-hex-terrain-loft-L608">  rv_vw: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,    <span class="cm">// carve falloff width</span></span>
@@ -1001,9 +1001,9 @@
 <span id="src-hex-terrain-loft-L942"><span class="cm">// material, the water there (0 dry, 1 river, 2 sea, 3 lake) and the distance to the nearest</span></span>
 <span id="src-hex-terrain-loft-L943"><span class="cm">// river.</span></span>
 <span id="src-hex-terrain-loft-L944"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">TerrainSample</span> {</span>
-<span id="src-hex-terrain-loft-L945">  ts_h:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// carved fine height</span></span>
-<span id="src-hex-terrain-loft-L946">  ts_mat:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// winning land material</span></span>
-<span id="src-hex-terrain-loft-L947">  ts_water: <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// 0 dry, 1 river, 2 sea, 3 lake</span></span>
+<span id="src-hex-terrain-loft-L945">  <span class="kw">pub</span> ts_h:     <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// carved fine height</span></span>
+<span id="src-hex-terrain-loft-L946">  <span class="kw">pub</span> ts_mat:   <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// winning land material</span></span>
+<span id="src-hex-terrain-loft-L947">  <span class="kw">pub</span> ts_water: <span class="ty"><a href="stdlib-types.html">integer</a></span>,  <span class="cm">// 0 dry, 1 river, 2 sea, 3 lake</span></span>
 <span id="src-hex-terrain-loft-L948">  ts_rdist: <span class="ty"><a href="stdlib-types.html">float</a></span>,    <span class="cm">// distance to the nearest river course (1e9 = none)</span></span>
 <span id="src-hex-terrain-loft-L949">}</span>
 <span id="src-hex-terrain-loft-L950"></span>

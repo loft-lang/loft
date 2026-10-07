@@ -55,19 +55,19 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">FieldInfo</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   <span class="cm">/// The field type's name, as the store records it.</span>
-  type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   <span class="cm">/// Byte offset of the field within its record.</span>
-  position: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
-  kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
+  <span class="kw">pub</span> position: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
   <span class="cm">/// Was the field DECLARED nullable (`text?` rather than `text`)?</span>
   <span class="cm">///</span>
   <span class="cm">/// Not a layout fact — a nullable field occupies the same bytes and spells an</span>
   <span class="cm">/// absent value with a sentinel — so nothing in the stored bytes implies it,</span>
   <span class="cm">/// and it reaches you only because the compiler records it. It is what a</span>
   <span class="cm">/// generated `CREATE TABLE` needs for `NOT NULL`.</span>
-  nullable: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
+  <span class="kw">pub</span> nullable: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
 }</code></pre>
 <p>One field of a record or of a struct-enum variant.</p>
 </div>
@@ -88,42 +88,42 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">KeyInfo</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   <span class="cm">/// Byte offset of this field within the ELEMENT record — the same number the</span>
   <span class="cm">/// element type's `FieldInfo.position` carries, so a caller joins the two by</span>
   <span class="cm">/// VALUE rather than by matching names. A name is a display fact; the</span>
   <span class="cm">/// position is what the collection actually keys on.</span>
-  position: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> position: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
   <span class="cm">/// Does the collection order this key ascending?</span>
   <span class="cm">///</span>
   <span class="cm">/// `true` for a kind that has no order of its own (`hash`, `radix`), and for a</span>
   <span class="cm">/// `trie`, whose single key IS ordered ascending by byte. Only a kind that can</span>
   <span class="cm">/// be declared descending ever answers `false`. Match `collection` first where the</span>
   <span class="cm">/// difference between "ascending" and "unordered" matters.</span>
-  ascending: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
+  <span class="kw">pub</span> ascending: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
 }</code></pre>
 <p>One key field of a keyed collection.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">VariantInfo</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   <span class="cm">/// The discriminant this variant is stored as. Never 0 — 0 means absent.</span>
-  tag: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> tag: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
 }</code></pre>
 <p>One variant of an enum.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">TypeInfo</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
   <span class="cm">/// Bytes one record of this type occupies; 0 for a type with no record.</span>
-  size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
-  const fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">FieldInfo</a></span>&gt;,
-  const variants: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">VariantInfo</a></span>&gt;,
+  <span class="kw">pub</span> size: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> const fields: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">FieldInfo</a></span>&gt;,
+  <span class="kw">pub</span> const variants: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">VariantInfo</a></span>&gt;,
   <span class="cm">/// For a vector or a keyed collection, the element type's name.</span>
-  element: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> element: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   <span class="cm">/// For a keyed collection, which of the six it is; `NotKeyed` otherwise.</span>
-  collection: <span class="en"><a href="stdlib-type-reflection.html">CollectionKind</a></span>,
+  <span class="kw">pub</span> collection: <span class="en"><a href="stdlib-type-reflection.html">CollectionKind</a></span>,
   <span class="cm">/// The key fields of a keyed collection, in KEY ORDER — the order a composite</span>
   <span class="cm">/// lookup binds them in, which is why it is a vector and not a set.</span>
   <span class="cm">///</span>
@@ -132,7 +132,7 @@
   <span class="cm">/// keys through its `Some` payload. Empty rather than partial is deliberate —</span>
   <span class="cm">/// a query built from half a composite key is a WRONG query, not a narrower</span>
   <span class="cm">/// one, so a key list is delivered whole or not at all.</span>
-  const keys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">KeyInfo</a></span>&gt;,
+  <span class="kw">pub</span> const keys: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-type-reflection.html">KeyInfo</a></span>&gt;,
 }</code></pre>
 <p>The declared shape of one type.</p>
 <p><code>fields</code> is empty for everything but a record and a struct-enum variant; <code>variants</code> for everything but an enum; <code>element</code> is <code>&quot;&quot;</code> unless the type holds one. Empty is the honest answer for a kind that has no such thing — a caller matches <code>kind</code> first.</p>
@@ -158,7 +158,7 @@
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-type-reflection.html">ValueInfo</a></span> {
   <span class="cm">/// What the type's own descriptor says lives at that position — never what</span>
   <span class="cm">/// the caller expected to find there.</span>
-  kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
+  <span class="kw">pub</span> kind: <span class="en"><a href="stdlib-type-reflection.html">TypeKind</a></span>,
   <span class="cm">/// The SCALAR at that position holds loft's NULL.</span>
   <span class="cm">///</span>
   <span class="cm">/// Separate from the payload because a null is not a value a payload can</span>
@@ -169,10 +169,10 @@
   <span class="cm">/// `false` for a `kind` that has no scalar reading and for `OtherKind` — a</span>
   <span class="cm">/// field that was never read is not a field that read as null, and those are</span>
   <span class="cm">/// three answers rather than two.</span>
-  is_null: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
-  i: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
-  f: <span class="ty"><a href="stdlib-types.html">float</a></span>,
-  t: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> is_null: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
+  <span class="kw">pub</span> i: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> f: <span class="ty"><a href="stdlib-types.html">float</a></span>,
+  <span class="kw">pub</span> t: <span class="ty"><a href="stdlib-types.html">text</a></span>,
 }</code></pre>
 <p>One field's VALUE, read out of a record at the position reflection reported.</p>
 <p><code>kind</code> says which payload carries the answer, so a caller matches it once rather than asking a different question per type:</p>

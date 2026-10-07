@@ -856,7 +856,7 @@ impl Parser {
         self.check_visibility("field", dnr, fnr);
         // a field read produces the field's fact; a METHOD's slot is a routine, and its call
         // already left the call's answer (`parse_method_selecting`)
-        if !matches!(self.data.attr_type(dnr, fnr), Type::Routine(_)) {
+        if !matches!(self.data.attr_type(dnr, fnr).base(), Type::Routine(_)) {
             self.produced = Some(self.attr_fact_of(dnr, fnr));
         }
         // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.

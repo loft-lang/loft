@@ -27,12 +27,12 @@
 <pre><code><span class="kw">pub</span> <span class="kw">enum</span> <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span> {
   <span class="en">NullVal</span>,
   <span class="en">BoolVal</span> { b: <span class="ty"><a href="stdlib-types.html">boolean</a></span> },
-  <span class="en">IntVal</span> { n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
-  <span class="en">LongVal</span> { n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">IntVal</span> { <span class="kw">pub</span> n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
+  <span class="en">LongVal</span> { <span class="kw">pub</span> n: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
   <span class="en">FloatVal</span> { f: <span class="ty"><a href="stdlib-types.html">float</a></span> },
   <span class="en">SingleVal</span> { f: <span class="ty"><a href="stdlib-types.html">single</a></span> },
   <span class="en">CharVal</span> { c: <span class="ty"><a href="stdlib-types.html">character</a></span> },
-  <span class="en">TextVal</span> { t: <span class="ty"><a href="stdlib-types.html">text</a></span> },
+  <span class="en">TextVal</span> { <span class="kw">pub</span> t: <span class="ty"><a href="stdlib-types.html">text</a></span> },
   <span class="en">RefVal</span> { store: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rec: <span class="ty"><a href="stdlib-types.html">integer</a></span>, pos: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
   <span class="en">FnVal</span> { d_nr: <span class="ty"><a href="stdlib-types.html">integer</a></span> },
   <span class="en">OtherVal</span> { description: <span class="ty"><a href="stdlib-types.html">text</a></span> },
@@ -41,27 +41,27 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-stack-traces.html">ArgInfo</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  value: <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> value: <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span>,
 }</code></pre>
 <p>One function argument in a stack frame.</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-stack-traces.html">VarInfo</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   type_name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  value: <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span>,
+  <span class="kw">pub</span> value: <span class="en"><a href="stdlib-stack-traces.html">ArgValue</a></span>,
 }</code></pre>
 <p>One local variable or parameter in a stack frame (see <code>stack_trace</code>).</p>
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-stack-traces.html">StackFrame</a></span> {
-  function: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> function: <span class="ty"><a href="stdlib-types.html">text</a></span>,
   <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  line: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
-  arguments: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">ArgInfo</a></span>&gt;,
-  variables: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">VarInfo</a></span>&gt;,
+  <span class="kw">pub</span> line: <span class="ty"><a href="stdlib-types.html">integer</a></span>,
+  <span class="kw">pub</span> arguments: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">ArgInfo</a></span>&gt;,
+  <span class="kw">pub</span> variables: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en"><a href="stdlib-stack-traces.html">VarInfo</a></span>&gt;,
 }</code></pre>
 <p>One call frame in the stack trace.</p>
 </div>

@@ -37,8 +37,8 @@
 </div>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en"><a href="stdlib-field-iteration-support-types.html">StructField</a></span> {
-  name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
-  value: <span class="en"><a href="stdlib-field-iteration-support-types.html">FieldValue</a></span>,
+  <span class="kw">pub</span> name: <span class="ty"><a href="stdlib-types.html">text</a></span>,
+  <span class="kw">pub</span> value: <span class="en"><a href="stdlib-field-iteration-support-types.html">FieldValue</a></span>,
   <span class="cm">// Was the field DECLARED nullable (`text?` rather than `text`)?</span>
   <span class="cm">//</span>
   <span class="cm">// The payload variants above are typed non-null, and `τ?` shares `τ`'s</span>
@@ -49,7 +49,7 @@
   <span class="cm">//</span>
   <span class="cm">// Mirrors `FieldInfo.nullable` from `type_of` (07_reflect.loft) on purpose:</span>
   <span class="cm">// the two field lists describe the same declaration and must agree.</span>
-  nullable: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
+  <span class="kw">pub</span> nullable: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,
 }</code></pre>
 <p>Represents a single struct field during compile-time iteration.</p>
 </div>

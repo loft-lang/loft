@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>drawing source</h1>
 <article>
-<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.4.2</p>
+<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.4.3</p>
 <p class="lib-legend">11 file(s), 3717 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -140,36 +140,36 @@
 <span id="src-brush-loft-L41"><span class="cm">/// 0xAARRGGBB, tiled every `period` canvas px along the stroke.  Column 0 lands on</span></span>
 <span id="src-brush-loft-L42"><span class="cm">/// the stroke's RIGHT side walking root→tip (`flip` mirrors it).</span></span>
 <span id="src-brush-loft-L43"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Brush</span> {</span>
-<span id="src-brush-loft-L44">  bname: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
-<span id="src-brush-loft-L45">  bw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L46">  bh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L47">  period: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-brush-loft-L48">  img: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-brush-loft-L44">  <span class="kw">pub</span> bname: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
+<span id="src-brush-loft-L45">  <span class="kw">pub</span> bw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L46">  <span class="kw">pub</span> bh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L47">  <span class="kw">pub</span> period: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-brush-loft-L48">  <span class="kw">pub</span> img: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
 <span id="src-brush-loft-L49">}</span>
 <span id="src-brush-loft-L50"></span>
 <span id="src-brush-loft-L51"><span class="cm">/// Everything a `Lock` line says past its points.  Widths and `period` are in</span></span>
 <span id="src-brush-loft-L52"><span class="cm">/// canvas px here and scaled to the supersampled canvas by `scaled` at the raster</span></span>
 <span id="src-brush-loft-L53"><span class="cm">/// call, like every other mark.</span></span>
 <span id="src-brush-loft-L54"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">LockStyle</span> {</span>
-<span id="src-brush-loft-L55">  w0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">2.0</span>,</span>
-<span id="src-brush-loft-L56">  w: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">10.0</span>,</span>
-<span id="src-brush-loft-L57">  swell: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.3</span>,</span>
-<span id="src-brush-loft-L58">  body: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.8</span>,</span>
-<span id="src-brush-loft-L59">  tips: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">3</span>,</span>
-<span id="src-brush-loft-L60">  tipvar: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.35</span>,</span>
-<span id="src-brush-loft-L61">  spread: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">8.0</span>,</span>
-<span id="src-brush-loft-L62">  seed: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
-<span id="src-brush-loft-L63">  period: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">48.0</span>,</span>
+<span id="src-brush-loft-L55">  <span class="kw">pub</span> w0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">2.0</span>,</span>
+<span id="src-brush-loft-L56">  <span class="kw">pub</span> w: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">10.0</span>,</span>
+<span id="src-brush-loft-L57">  <span class="kw">pub</span> swell: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.3</span>,</span>
+<span id="src-brush-loft-L58">  <span class="kw">pub</span> body: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.8</span>,</span>
+<span id="src-brush-loft-L59">  <span class="kw">pub</span> tips: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">3</span>,</span>
+<span id="src-brush-loft-L60">  <span class="kw">pub</span> tipvar: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.35</span>,</span>
+<span id="src-brush-loft-L61">  <span class="kw">pub</span> spread: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">8.0</span>,</span>
+<span id="src-brush-loft-L62">  <span class="kw">pub</span> seed: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
+<span id="src-brush-loft-L63">  <span class="kw">pub</span> period: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">48.0</span>,</span>
 <span id="src-brush-loft-L64">  <span class="cm">/// The transverse colour ramp, packed: underside, crest, lit flank.</span></span>
-<span id="src-brush-loft-L65">  dark: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L66">  base: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L67">  lit: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L65">  <span class="kw">pub</span> dark: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L66">  <span class="kw">pub</span> base: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L67">  <span class="kw">pub</span> lit: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L68">  <span class="cm">/// The light's direction; `lz` points out of the paper.</span></span>
-<span id="src-brush-loft-L69">  lx: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">0.5</span>,</span>
-<span id="src-brush-loft-L70">  ly: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">0.8</span>,</span>
-<span id="src-brush-loft-L71">  lz: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.6</span>,</span>
-<span id="src-brush-loft-L72">  alpha: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
-<span id="src-brush-loft-L73">  flip: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-brush-loft-L69">  <span class="kw">pub</span> lx: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">0.5</span>,</span>
+<span id="src-brush-loft-L70">  <span class="kw">pub</span> ly: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">0.8</span>,</span>
+<span id="src-brush-loft-L71">  <span class="kw">pub</span> lz: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.6</span>,</span>
+<span id="src-brush-loft-L72">  <span class="kw">pub</span> alpha: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">1.0</span>,</span>
+<span id="src-brush-loft-L73">  <span class="kw">pub</span> flip: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
 <span id="src-brush-loft-L74">}</span>
 <span id="src-brush-loft-L75"></span>
 <span id="src-brush-loft-L76"><span class="cm">/// A stroke as a layer over the canvas: `px` is `lw × lh` packed 0xAARRGGBB placed</span></span>
@@ -177,9 +177,9 @@
 <span id="src-brush-loft-L78"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Layer</span> {</span>
 <span id="src-brush-loft-L79">  x0: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L80">  y0: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L81">  lw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L82">  lh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L83">  px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-brush-loft-L81">  <span class="kw">pub</span> lw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L82">  <span class="kw">pub</span> lh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L83">  <span class="kw">pub</span> px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
 <span id="src-brush-loft-L84">}</span>
 <span id="src-brush-loft-L85"></span>
 <span id="src-brush-loft-L86"><span class="cm">/// The style with its canvas-px lengths scaled by `k` — the supersample factor.</span></span>
@@ -704,21 +704,21 @@
 <span id="src-drawing-loft-L72"><span class="cm">/// `clump`, `fray` and `bow`, all drawn from `seed`.  `mirror` repeats each stroke on the</span></span>
 <span id="src-drawing-loft-L73"><span class="cm">/// other side of the spine; `depth` and `sub` grow smaller fronds off each one.</span></span>
 <span id="src-drawing-loft-L74"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">FrondSpec</span> {</span>
-<span id="src-drawing-loft-L75">  count: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">8</span>,</span>
-<span id="src-drawing-loft-L76">  len1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.1</span>,</span>
-<span id="src-drawing-loft-L77">  len2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.1</span>,</span>
-<span id="src-drawing-loft-L78">  wid1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">3.0</span>,</span>
-<span id="src-drawing-loft-L79">  wid2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">3.0</span>,</span>
-<span id="src-drawing-loft-L80">  ang1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">30.0</span>,</span>
-<span id="src-drawing-loft-L81">  ang2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">30.0</span>,</span>
-<span id="src-drawing-loft-L82">  mirror: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-drawing-loft-L83">  jitter: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.5</span>,</span>
-<span id="src-drawing-loft-L84">  clump: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.6</span>,</span>
-<span id="src-drawing-loft-L85">  fray: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.4</span>,</span>
-<span id="src-drawing-loft-L86">  bow: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-drawing-loft-L87">  seed: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
-<span id="src-drawing-loft-L88">  depth: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
-<span id="src-drawing-loft-L89">  sub: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.32</span>,</span>
+<span id="src-drawing-loft-L75">  <span class="kw">pub</span> count: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">8</span>,</span>
+<span id="src-drawing-loft-L76">  <span class="kw">pub</span> len1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.1</span>,</span>
+<span id="src-drawing-loft-L77">  <span class="kw">pub</span> len2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.1</span>,</span>
+<span id="src-drawing-loft-L78">  <span class="kw">pub</span> wid1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">3.0</span>,</span>
+<span id="src-drawing-loft-L79">  <span class="kw">pub</span> wid2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">3.0</span>,</span>
+<span id="src-drawing-loft-L80">  <span class="kw">pub</span> ang1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">30.0</span>,</span>
+<span id="src-drawing-loft-L81">  <span class="kw">pub</span> ang2: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">30.0</span>,</span>
+<span id="src-drawing-loft-L82">  <span class="kw">pub</span> mirror: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-drawing-loft-L83">  <span class="kw">pub</span> jitter: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.5</span>,</span>
+<span id="src-drawing-loft-L84">  <span class="kw">pub</span> clump: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.6</span>,</span>
+<span id="src-drawing-loft-L85">  <span class="kw">pub</span> fray: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.4</span>,</span>
+<span id="src-drawing-loft-L86">  <span class="kw">pub</span> bow: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L87">  <span class="kw">pub</span> seed: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
+<span id="src-drawing-loft-L88">  <span class="kw">pub</span> depth: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
+<span id="src-drawing-loft-L89">  <span class="kw">pub</span> sub: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.32</span>,</span>
 <span id="src-drawing-loft-L90">}</span>
 <span id="src-drawing-loft-L91"></span>
 <span id="src-drawing-loft-L92"><span class="cm">/// A mark's fill descriptor.</span></span>
@@ -728,13 +728,13 @@
 <span id="src-drawing-loft-L96"><span class="cm">/// completely different pictures from the same points.  `c1` is the fill colour, and</span></span>
 <span id="src-drawing-loft-L97"><span class="cm">/// `c2` the second colour of a `Linear` or `Radial` gradient.</span></span>
 <span id="src-drawing-loft-L98"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Paint</span> {</span>
-<span id="src-drawing-loft-L99">  pk: <span class="en">PaintKind</span> = <span class="en">Stroked</span>,</span>
-<span id="src-drawing-loft-L100">  c1: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-drawing-loft-L101">  c2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L99">  <span class="kw">pub</span> pk: <span class="en">PaintKind</span> = <span class="en">Stroked</span>,</span>
+<span id="src-drawing-loft-L100">  <span class="kw">pub</span> c1: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L101">  <span class="kw">pub</span> c2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L102">  <span class="cm">/// `Linear`: `ax,ay,bx,by`.  `Radial`: `cx,cy,r`.  Empty means "derive it from</span></span>
 <span id="src-drawing-loft-L103">  <span class="cm">/// the shape's own bounding box", which is what a fill with no `dir=` / `at=`</span></span>
 <span id="src-drawing-loft-L104">  <span class="cm">/// asks for.</span></span>
-<span id="src-drawing-loft-L105">  spec: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-drawing-loft-L105">  <span class="kw">pub</span> spec: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
 <span id="src-drawing-loft-L106">}</span>
 <span id="src-drawing-loft-L107"></span>
 <span id="src-drawing-loft-L108"><span class="cm">/// What an op does.  `Lock` is the brush stroke — see [brush.loft](brush.loft).</span></span>
@@ -747,43 +747,43 @@
 <span id="src-drawing-loft-L115"><span class="cm">/// paper size is a property of the scene and the supersample factor is a</span></span>
 <span id="src-drawing-loft-L116"><span class="cm">/// property of the renderer — neither belongs in a parsed mark.  @FR-Scene-Fraction</span></span>
 <span id="src-drawing-loft-L117"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Op</span> {</span>
-<span id="src-drawing-loft-L118">  kind: <span class="en">OpKind</span> = <span class="en">Sky</span>,</span>
-<span id="src-drawing-loft-L119">  pts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;,</span>
-<span id="src-drawing-loft-L120">  paint: <span class="en">Paint</span>,</span>
+<span id="src-drawing-loft-L118">  <span class="kw">pub</span> kind: <span class="en">OpKind</span> = <span class="en">Sky</span>,</span>
+<span id="src-drawing-loft-L119">  <span class="kw">pub</span> pts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;,</span>
+<span id="src-drawing-loft-L120">  <span class="kw">pub</span> paint: <span class="en">Paint</span>,</span>
 <span id="src-drawing-loft-L121">  <span class="cm">/// Stroke: one width per point (a taper).  Empty means the uniform `w`.</span></span>
-<span id="src-drawing-loft-L122">  widths: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-drawing-loft-L123">  w: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">3</span>,</span>
+<span id="src-drawing-loft-L122">  <span class="kw">pub</span> widths: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-drawing-loft-L123">  <span class="kw">pub</span> w: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">3</span>,</span>
 <span id="src-drawing-loft-L124">  <span class="cm">/// Stroke ink, or `Sky`'s top colour.</span></span>
-<span id="src-drawing-loft-L125">  color: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L125">  <span class="kw">pub</span> color: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L126">  <span class="cm">/// `Sky`'s bottom colour.</span></span>
-<span id="src-drawing-loft-L127">  color2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L127">  <span class="kw">pub</span> color2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L128">  <span class="cm">/// `Lock`: the stroke's style, and the index of its brush in `Sketch.brushes`</span></span>
 <span id="src-drawing-loft-L129">  <span class="cm">/// (`-1` for every other kind).</span></span>
-<span id="src-drawing-loft-L130">  style: brush::<span class="en">LockStyle</span>,</span>
-<span id="src-drawing-loft-L131">  brush: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,</span>
+<span id="src-drawing-loft-L130">  <span class="kw">pub</span> style: brush::<span class="en">LockStyle</span>,</span>
+<span id="src-drawing-loft-L131">  <span class="kw">pub</span> brush: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,</span>
 <span id="src-drawing-loft-L132">}</span>
 <span id="src-drawing-loft-L133"></span>
 <span id="src-drawing-loft-L134"><span class="cm">/// A named group of marks and the box they cover, in paper fractions.</span></span>
 <span id="src-drawing-loft-L135"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Elem</span> {</span>
-<span id="src-drawing-loft-L136">  ename: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
+<span id="src-drawing-loft-L136">  <span class="kw">pub</span> ename: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
 <span id="src-drawing-loft-L137">  <span class="cm">/// False until a mark has actually contributed a point: an element that is</span></span>
 <span id="src-drawing-loft-L138">  <span class="cm">/// named and never drawn has no box, and answering `0,0,0,0` for it would be a</span></span>
 <span id="src-drawing-loft-L139">  <span class="cm">/// measurement rather than an absence.</span></span>
-<span id="src-drawing-loft-L140">  seen: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-drawing-loft-L141">  bx0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-drawing-loft-L142">  by0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-drawing-loft-L143">  bx1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-drawing-loft-L144">  by1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L140">  <span class="kw">pub</span> seen: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-drawing-loft-L141">  <span class="kw">pub</span> bx0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L142">  <span class="kw">pub</span> by0: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L143">  <span class="kw">pub</span> bx1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L144">  <span class="kw">pub</span> by1: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-drawing-loft-L145">  <span class="cm">/// How many marks the scene had drawn when this element first took ink, or</span></span>
 <span id="src-drawing-loft-L146">  <span class="cm">/// `-1` for one that never did.  It orders the metric report the way the</span></span>
 <span id="src-drawing-loft-L147">  <span class="cm">/// oracle's does — by first ink, not by where the `name` line sits.</span></span>
-<span id="src-drawing-loft-L148">  first_at: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,</span>
+<span id="src-drawing-loft-L148">  <span class="kw">pub</span> first_at: <span class="ty"><a href="stdlib-types.html">integer</a></span> = -<span class="nm">1</span>,</span>
 <span id="src-drawing-loft-L149">}</span>
 <span id="src-drawing-loft-L150"></span>
 <span id="src-drawing-loft-L151"><span class="cm">/// A `landmark &lt;name&gt; = &lt;value&gt;` line.</span></span>
 <span id="src-drawing-loft-L152"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Landmark</span> {</span>
-<span id="src-drawing-loft-L153">  lname: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
-<span id="src-drawing-loft-L154">  lvalue: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L153">  <span class="kw">pub</span> lname: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
+<span id="src-drawing-loft-L154">  <span class="kw">pub</span> lvalue: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-drawing-loft-L155">}</span>
 <span id="src-drawing-loft-L156"></span>
 <span id="src-drawing-loft-L157"><span class="cm">/// A parsed scene: the paper, the ordered draw program, and everything the</span></span>
@@ -795,21 +795,21 @@
 <span id="src-drawing-loft-L163"><span class="cm">/// where they belong.</span></span>
 <span id="src-drawing-loft-L164"><span class="cm">// Example: @DRW-002</span></span>
 <span id="src-drawing-loft-L165"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Sketch</span> {</span>
-<span id="src-drawing-loft-L166">  sw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">800</span>,</span>
-<span id="src-drawing-loft-L167">  sh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">800</span>,</span>
-<span id="src-drawing-loft-L168">  transparent: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-drawing-loft-L169">  ops: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Op</span>&gt;,</span>
-<span id="src-drawing-loft-L170">  elems: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Elem</span>&gt;,</span>
-<span id="src-drawing-loft-L171">  landmarks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Landmark</span>&gt;,</span>
+<span id="src-drawing-loft-L166">  <span class="kw">pub</span> sw: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">800</span>,</span>
+<span id="src-drawing-loft-L167">  <span class="kw">pub</span> sh: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">800</span>,</span>
+<span id="src-drawing-loft-L168">  <span class="kw">pub</span> transparent: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-drawing-loft-L169">  <span class="kw">pub</span> ops: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Op</span>&gt;,</span>
+<span id="src-drawing-loft-L170">  <span class="kw">pub</span> elems: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Elem</span>&gt;,</span>
+<span id="src-drawing-loft-L171">  <span class="kw">pub</span> landmarks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Landmark</span>&gt;,</span>
 <span id="src-drawing-loft-L172">  checks: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
 <span id="src-drawing-loft-L173">  <span class="cm">/// `line N: &lt;text&gt;` for every line no command accepted.  @FR-Scene-Unparsed</span></span>
-<span id="src-drawing-loft-L174">  unparsed: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
+<span id="src-drawing-loft-L174">  <span class="kw">pub</span> unparsed: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
 <span id="src-drawing-loft-L175">  <span class="cm">/// `line N: &lt;what&gt;` for every mark this build recognises but does not draw.</span></span>
 <span id="src-drawing-loft-L176">  <span class="cm">/// @FR-Scene-Deferred</span></span>
-<span id="src-drawing-loft-L177">  deferred: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
+<span id="src-drawing-loft-L177">  <span class="kw">pub</span> deferred: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;,</span>
 <span id="src-drawing-loft-L178">  <span class="cm">/// The footprints the scene's `Brush` lines defined, plus the default `hair`</span></span>
 <span id="src-drawing-loft-L179">  <span class="cm">/// once a `Lock` asked for it.</span></span>
-<span id="src-drawing-loft-L180">  brushes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;brush::<span class="en">Brush</span>&gt;,</span>
+<span id="src-drawing-loft-L180">  <span class="kw">pub</span> brushes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;brush::<span class="en">Brush</span>&gt;,</span>
 <span id="src-drawing-loft-L181">  <span class="cm">/// The directory a `Brush … file=` path is relative to — the scene's own,</span></span>
 <span id="src-drawing-loft-L182">  <span class="cm">/// which `render_file` knows and a caller holding source text may not.</span></span>
 <span id="src-drawing-loft-L183">  base_dir: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
@@ -1698,22 +1698,22 @@
 <span id="src-drawing-loft-L1066"><span class="cm">/// One evaluated `check` line.</span></span>
 <span id="src-drawing-loft-L1067"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Check</span> {</span>
 <span id="src-drawing-loft-L1068">  <span class="cm">/// The check as written, with any `tol` clause removed — what the report echoes.</span></span>
-<span id="src-drawing-loft-L1069">  claim: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
-<span id="src-drawing-loft-L1070">  ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
+<span id="src-drawing-loft-L1069">  <span class="kw">pub</span> claim: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
+<span id="src-drawing-loft-L1070">  <span class="kw">pub</span> ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
 <span id="src-drawing-loft-L1071">  <span class="cm">/// The two sides, as measured.  Both `0.0` when a name did not resolve.</span></span>
-<span id="src-drawing-loft-L1072">  lhs: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
-<span id="src-drawing-loft-L1073">  rhs: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L1072">  <span class="kw">pub</span> lhs: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
+<span id="src-drawing-loft-L1073">  <span class="kw">pub</span> rhs: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-drawing-loft-L1074">  <span class="cm">/// The tolerance `~` was judged at; the other operators ignore it.</span></span>
 <span id="src-drawing-loft-L1075">  <span class="cm">///</span></span>
 <span id="src-drawing-loft-L1076">  <span class="cm">/// ⚠ Spelled `0.02` and not `DEFAULT_TOL`: a field default that names a</span></span>
 <span id="src-drawing-loft-L1077">  <span class="cm">/// file-scope constant is an internal compiler error today</span></span>
 <span id="src-drawing-loft-L1078">  <span class="cm">/// ([loft#1086](https://github.com/loft-lang/loft/issues/1086)).</span></span>
-<span id="src-drawing-loft-L1079">  tol: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.02</span>,</span>
+<span id="src-drawing-loft-L1079">  <span class="kw">pub</span> tol: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.02</span>,</span>
 <span id="src-drawing-loft-L1080">  <span class="cm">/// Empty when the check was measured, whatever its verdict.  Otherwise the</span></span>
 <span id="src-drawing-loft-L1081">  <span class="cm">/// unresolved name (`head.middle?`) or `(unparsed)` for a line with no operator.</span></span>
-<span id="src-drawing-loft-L1082">  err: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
+<span id="src-drawing-loft-L1082">  <span class="kw">pub</span> err: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
 <span id="src-drawing-loft-L1083">  <span class="cm">/// The one-line report, in `draw.py`'s spelling.</span></span>
-<span id="src-drawing-loft-L1084">  report: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
+<span id="src-drawing-loft-L1084">  <span class="kw">pub</span> report: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">""</span>,</span>
 <span id="src-drawing-loft-L1085">}</span>
 <span id="src-drawing-loft-L1086"></span>
 <span id="src-drawing-loft-L1087"><span class="cm">/// What `~` means without a `tol` clause: a fraction of the paper.</span></span>
@@ -2213,8 +2213,8 @@
 <span id="src-drawing-loft-L1581"></span>
 <span id="src-drawing-loft-L1582"><span class="cm">/// One frond: a centreline in paper fractions and a width per point.</span></span>
 <span id="src-drawing-loft-L1583"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Frond</span> {</span>
-<span id="src-drawing-loft-L1584">  fpts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;,</span>
-<span id="src-drawing-loft-L1585">  fwid: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
+<span id="src-drawing-loft-L1584">  <span class="kw">pub</span> fpts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;,</span>
+<span id="src-drawing-loft-L1585">  <span class="kw">pub</span> fwid: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
 <span id="src-drawing-loft-L1586">}</span>
 <span id="src-drawing-loft-L1587"></span>
 <span id="src-drawing-loft-L1588"><span class="cm">/// Everything a `Fronds` line says about the array, past its two endpoints.</span></span>
@@ -2411,8 +2411,8 @@
 <span id="src-raster-loft-L39"><span class="cm">/// and not on -1.  Keep coordinates fractional right up to the rasteriser and</span></span>
 <span id="src-raster-loft-L40"><span class="cm">/// the port and the oracle round the same way.</span></span>
 <span id="src-raster-loft-L41"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Pt</span> {</span>
-<span id="src-raster-loft-L42">  ptx: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-raster-loft-L43">  pty: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-raster-loft-L42">  <span class="kw">pub</span> ptx: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-raster-loft-L43">  <span class="kw">pub</span> pty: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-raster-loft-L44">}</span>
 <span id="src-raster-loft-L45"></span>
 <span id="src-raster-loft-L46"><span class="cm">/// Build a point without spelling the field names.</span></span>
@@ -2788,9 +2788,9 @@
 <span id="src-scan-loft-L21"><span class="cm">/// A scan either lands (`ok`) or does not, and the caller needs BOTH the value</span></span>
 <span id="src-scan-loft-L22"><span class="cm">/// and where to carry on from, so every reader answers all three at once.</span></span>
 <span id="src-scan-loft-L23"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Scan</span> {</span>
-<span id="src-scan-loft-L24">  ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
-<span id="src-scan-loft-L25">  at: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-scan-loft-L26">  value: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-scan-loft-L24">  <span class="kw">pub</span> ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-scan-loft-L25">  <span class="kw">pub</span> at: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-scan-loft-L26">  <span class="kw">pub</span> value: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
 <span id="src-scan-loft-L27">}</span>
 <span id="src-scan-loft-L28"></span>
 <span id="src-scan-loft-L29"><span class="cm">/// The did-not-land answer, which every reader below returns when it cannot</span></span>
