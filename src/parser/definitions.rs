@@ -1165,6 +1165,10 @@ impl Parser {
         if !self.parse_enum_values(d_nr) {
             return false;
         }
+        // `@FR-G-Regular` — an enum template names itself only regularly, as a struct does.
+        if !conflict && self.data.def_type(d_nr) == DefType::TypeTemplate {
+            self.template_is_regular(d_nr, &[]);
+        }
         // Skip type-completion when this enum conflicts with a builtin of the
         // same name (e.g. `enum hash`): `d_nr` is then the existing builtin, and
         // `complete_definition` would re-`set_returned` an already-typed def and
@@ -7233,7 +7237,7 @@ impl Parser {
     /// One home for both field-type branches of `parse_field`.  Answers whether a check
     /// was consumed, so the identifier branch can keep using it as the head of its
     /// if-chain while the tuple branch, which ends the field itself, calls it directly.
-    /// @PLN165 D7 — `D-Regular` (@FR-G-Regular): a generic struct may name itself in its fields only at its
+    /// @PLN165 D7 — `D-Regular` (@FR-G-Regular): a generic struct or enum may name itself in its fields only at its
     /// own type variables, unchanged (`kids: vector<Tree<T>>`), for then every instance is a
     /// finite type.  At other arguments (`Bad<vector<T>>` inside `Bad<T>`) it has no finite
     /// set of instances: refused here, on the pass that parses it first, and marked so no
@@ -7246,15 +7250,26 @@ impl Parser {
         field_at: &[(String, crate::lexer::Position)],
     ) -> bool {
         let own: Vec<u32> = self.data.def(d_nr).type_params.clone();
-        let fields: Vec<(String, Type)> = self
-            .data
-            .def(d_nr)
-            .attributes()
-            .iter()
-            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
-            .map(|a| (a.name.clone(), a.typedef.clone()))
-            .collect();
-        for (name, tp) in fields {
+        // An enum's fields are its variants' (loft#1928): `Cons { t: vector<Lst<vector<T>>> }`
+        // names `Lst` irregularly as surely as a struct field would.
+        let is_enum = matches!(self.data.def(d_nr).returned().base(), Type::Enum(..));
+        let mut owners = vec![d_nr];
+        if is_enum {
+            owners.extend(
+                self.data
+                    .children_of(d_nr)
+                    .filter(|&c| self.data.def_type(c) == DefType::EnumValue),
+            );
+        }
+        let mut fields: Vec<(u32, String, Type)> = Vec::new();
+        for &owner in &owners {
+            for a in self.data.def(owner).attributes() {
+                if !matches!(a.typedef.base(), Type::Routine(_)) {
+                    fields.push((owner, a.name.clone(), a.typedef.clone()));
+                }
+            }
+        }
+        for (owner, name, tp) in fields {
             let mut irregular: Option<u32> = None;
             tp.any_node(&mut |t| {
                 if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
@@ -7284,15 +7299,20 @@ impl Parser {
                 .collect();
             let regular = format!("{tname}<{}>", vars.join(", "));
             let shown = Type::Reference(r, crate::data::Deps::none()).source_name(&self.data);
-            let at = field_at
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map_or_else(|| *self.lexer.pos(), |(_, p)| *p);
+            let at = if owner == d_nr {
+                field_at
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map_or_else(|| *self.lexer.pos(), |(_, p)| *p)
+            } else {
+                *self.data.def(owner).position()
+            };
+            let kind = if is_enum { "an enum" } else { "a struct" };
             diagnostic_at!(
                 self.lexer,
                 &at,
                 Level::Error,
-                "`{shown}` inside `{regular}` has no finite set of instances — a struct may \
+                "`{shown}` inside `{regular}` has no finite set of instances — {kind} may \
                  name itself only at its own type variables, unchanged: `{regular}`"
             );
             return false;
