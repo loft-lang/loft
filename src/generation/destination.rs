@@ -262,29 +262,47 @@ fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Sha
     Some(shape)
 }
 
-/// A caller window the twin replaces.
-pub struct Site<'a> {
-    /// The statements the window consumes, as indices into the block: the buffer's refill
-    /// (when present) through the free of the result.
-    pub first: usize,
-    pub last: usize,
+/// One call of a destination chain: the call, its twin's shape, where it builds, and the
+/// statements of its `ok` arm around the next level (or, at the last level, the arm's rest).
+pub struct Level<'a> {
     pub callee: u32,
-    pub call_args: &'a [Value],
+    pub call_args: Vec<Value>,
     pub at: usize,
     pub shape: Shape,
     /// The `ok` field's tuple index.
     pub ok: usize,
-    /// The element's mint: the optional reservation and the `Set(e, OpNewRecord(…))`.
-    pub mint: Vec<&'a Value>,
-    /// Where the twin writes: `e`, or a field of it.
+    /// Where the twin writes: the element, or a field of it.
     pub dest: Value,
-    /// The `ok` arm with the mint, the move and any zero of the destination removed, and the
-    /// scalar reads of the result replaced by `__dsN.k`, where `N` is filled in by the emitter.
-    pub then_ops: Vec<Value>,
-    pub then_block: &'a crate::data::Block,
+    /// The `ok` arm's statements before the next level (all of them at the last level), with
+    /// the chain's scalar reads named `__ds#m#.k` for level `m`'s tuple.
+    pub pre: Vec<Value>,
+    pub inner: Option<Box<Level<'a>>>,
+    /// The `ok` arm's statements after the next level.
+    pub post: Vec<Value>,
     pub else_v: &'a Value,
-    /// The result variable, whose scalar reads `then_ops` names by tuple index.
-    pub r: u16,
+}
+
+/// A caller window the twins replace: the statements it consumes, the element's mint (hoisted
+/// above the first call) and the chain of calls.
+pub struct Site<'a> {
+    pub first: usize,
+    pub last: usize,
+    pub mint: Vec<&'a Value>,
+    pub top: Level<'a>,
+}
+
+impl Site<'_> {
+    /// Every callee of the chain, outermost first.
+    #[must_use]
+    pub fn callees(&self) -> Vec<u32> {
+        let mut out = Vec::new();
+        let mut l = Some(&self.top);
+        while let Some(level) = l {
+            out.push(level.callee);
+            l = level.inner.as_deref();
+        }
+        out
+    }
 }
 
 fn skip_lines(ops: &[Value], mut i: usize) -> usize {
@@ -305,32 +323,34 @@ fn mentions(v: &Value, x: u16) -> usize {
     n
 }
 
-/// The window starting at statement `i` of `ops`, in function `d_nr`, when it has the shape
-/// [`Site`] describes and its callee a twin.
-#[allow(clippy::too_many_lines)]
-pub fn site<'a>(
-    ops: &'a [Value],
-    i: usize,
-    data: &Data,
-    stores: &Stores,
-    d_nr: u32,
-    memo: &mut HashMap<(u32, i64), Option<Shape>>,
-) -> Option<Site<'a>> {
-    // The buffer's refill, when the pooled buffer has one: `if null { place } else { clear }`.
+/// One window: the optional refill of the pooled buffer, `r = f(…, B)`, `if r.ok { … } else
+/// { … }` and the free of `r` against `B`.
+struct Window<'a> {
+    first: usize,
+    last: usize,
+    r: u16,
+    callee: u32,
+    call_args: &'a [Value],
+    at: usize,
+    ok_off: i64,
+    then_ops: &'a [Value],
+    else_v: &'a Value,
+}
+
+fn window<'a>(ops: &'a [Value], i: usize, data: &Data) -> Option<Window<'a>> {
     let mut k = i;
-    let mut buf_refill: Option<u16> = None;
+    let mut refill: Option<u16> = None;
     if let Value::If(test, _, _) = ops.get(k)?.unspan()
         && let Value::Call(d, a) = test.unspan()
         && name(data, *d) == "OpRefIsNull"
         && let Some(Value::Var(b)) = a.first().map(Value::unspan)
     {
-        buf_refill = Some(*b);
+        refill = Some(*b);
         k = skip_lines(ops, k + 1);
     }
     let Value::Set(r, call) = ops.get(k)?.unspan() else {
         return None;
     };
-    let r = *r;
     let Value::Call(callee, call_args) = call.unspan() else {
         return None;
     };
@@ -338,10 +358,9 @@ pub fn site<'a>(
     let Some(Value::Var(b)) = call_args.get(at).map(Value::unspan) else {
         return None;
     };
-    if buf_refill.is_some_and(|x| x != *b) {
+    if refill.is_some_and(|x| x != *b) {
         return None;
     }
-    let b = *b;
     let ki = skip_lines(ops, k + 1);
     let Value::If(test, then_v, else_v) = ops.get(ki)?.unspan() else {
         return None;
@@ -351,162 +370,264 @@ pub fn site<'a>(
         return None;
     };
     if name(data, *fd) != "OpFreeRefIfDistinct"
-        || !fa.first().is_some_and(|a| is_var(a, r))
-        || !fa.get(1).is_some_and(|a| is_var(a, b))
+        || !fa.first().is_some_and(|a| is_var(a, *r))
+        || !fa.get(1).is_some_and(|a| is_var(a, *b))
     {
         return None;
     }
     let Value::Call(td, ta) = test.unspan() else {
         return None;
     };
-    if name(data, *td) != "OpGetBoolean" || !ta.first().is_some_and(|a| is_var(a, r)) {
+    if name(data, *td) != "OpGetBoolean" || !ta.first().is_some_and(|a| is_var(a, *r)) {
         return None;
     }
-    let ok_off = ta.get(1).and_then(int)?;
     let Value::Block(tb) = then_v.unspan() else {
         return None;
     };
-    // The mint first: an optional reservation, then `Set(e, OpNewRecord(C, …))`.
-    let t_ops = &tb.operators;
-    let mut j = skip_lines(t_ops, 0);
-    let mut mint: Vec<&Value> = Vec::new();
-    if let Value::Call(d, _) = t_ops.get(j)?.unspan()
-        && name(data, *d) == "OpPreAllocVector"
-    {
-        mint.push(&t_ops[j]);
-        j = skip_lines(t_ops, j + 1);
-    }
-    let Value::Set(e, nr) = t_ops.get(j)?.unspan() else {
-        return None;
-    };
-    let e = *e;
-    let Value::Call(nd, na) = nr.unspan() else {
-        return None;
-    };
-    if name(data, *nd) != "OpNewRecord" {
-        return None;
-    }
-    let Some(Value::Var(container)) = na.first().map(Value::unspan) else {
-        return None;
-    };
-    let container = *container;
-    mint.push(&t_ops[j]);
-    let mint_end = j;
-    // The one move of the result's heap field into the element or a field of it.
-    let mut moved: Option<(usize, i64, Value)> = None;
-    for (idx, op) in t_ops.iter().enumerate().skip(mint_end + 1) {
-        if let Value::Call(d, a) = op.unspan()
-            && name(data, *d) == "OpMoveField"
-            && let [src, dst, _] = &a[..]
-            && let Value::Call(g, ga) = src.unspan()
-            && name(data, *g) == "OpGetField"
-            && ga.first().is_some_and(|x| is_var(x, r))
-        {
-            if moved.is_some() {
-                return None;
-            }
-            let vo = ga.get(1).and_then(int)?;
-            let dest_ok = is_var(dst, e)
-                || matches!(dst.unspan(), Value::Call(g2, ga2)
-                    if name(data, *g2) == "OpGetField" && ga2.first().is_some_and(|x| is_var(x, e)));
-            if !dest_ok {
-                return None;
-            }
-            moved = Some((idx, vo, dst.clone()));
-        }
-    }
-    let (move_idx, vo, dest) = moved?;
-    let shape = shape(data, stores, *callee, vo, memo)?;
-    let ok = shape.scalar_at(ok_off)?;
-    if shape.scalars[ok].rust != "u8" {
-        return None;
-    }
-    // The destination's own byte range inside `e`, for the zero-inits the twin's writes replace.
-    let (d_lo, d_hi) = match dest.unspan() {
-        Value::Call(_, ga) => {
-            let off = ga.get(1).and_then(int)?;
-            (off, off + (shape.vend - shape.vo))
-        }
-        _ => (0, shape.vend - shape.vo),
-    };
-    // The `ok` arm, rewritten: the mint and the move gone, a zero of the destination gone, the
-    // result's scalar reads named by tuple index.  Any other mention of the result declines,
-    // as does a mention of the element before the move that is not such a zero.
-    let mut then_ops: Vec<Value> = Vec::new();
-    for (idx, op) in t_ops.iter().enumerate() {
-        if idx <= mint_end && !matches!(op, Value::Line(_)) {
-            continue;
-        }
-        if idx == move_idx {
-            continue;
-        }
-        if idx < move_idx
-            && let Value::Call(d, a) = op.unspan()
-            && name(data, *d) == "OpSetInt4"
-            && a.first().is_some_and(|x| is_var(x, e))
-            && let (Some(off), Some(0)) = (a.get(1).and_then(int), a.get(2).and_then(int))
-            && off >= d_lo
-            && off < d_hi
-        {
-            continue;
-        }
-        if idx < move_idx && mentions(op, e) > 0 {
-            return None;
-        }
-        let mut rewritten = op.clone();
-        let mut bad = false;
-        rewrite_reads(&mut rewritten, r, &shape, data, &mut bad);
-        if bad || mentions(&rewritten, r) > 0 {
-            return None;
-        }
-        then_ops.push(rewritten);
-    }
-    if mentions(else_v, r) > 0 || mentions(else_v, e) > 0 {
-        return None;
-    }
-    // No argument reaches the container: the element waits unfinished across the call.
-    let reach = super::append_twin::views(data.def(d_nr).variables(), container);
-    for (idx, a) in call_args.iter().enumerate() {
-        if idx == at {
-            continue;
-        }
-        if reach.iter().any(|v| mentions(a, *v) > 0) || mentions(a, r) > 0 {
-            return None;
-        }
-    }
-    // The result is the window's alone: every mention of it in the function lies inside.
-    let window: usize = ops[i..=fi].iter().map(|op| mentions(op, r)).sum();
-    if mentions(data.def(d_nr).code(), r) != window {
-        return None;
-    }
-    if trace() {
-        eprintln!(
-            "destination: {} builds {}(…) in its element",
-            data.def(d_nr).name(),
-            data.def(*callee).name()
-        );
-    }
-    Some(Site {
+    Some(Window {
         first: i,
         last: fi,
+        r: *r,
         callee: *callee,
         call_args,
         at,
-        shape,
-        ok,
-        mint,
-        dest,
-        then_ops,
-        then_block: tb,
+        ok_off: ta.get(1).and_then(int)?,
+        then_ops: &tb.operators,
         else_v,
-        r,
     })
 }
 
-/// Replace every scalar read of result `r` in `v` by the placeholder `__ds#.k` (the emitter
-/// substitutes the tuple's name for `#`).  A read of `r` that is not a scalar getter at a
+/// The window chain from statement `i` of `ops`, in function `d_nr`, when every call in it
+/// has a twin, the last `ok` arm mints one element and moves each call's result into it once,
+/// and the results are read otherwise only as scalars.
+pub fn site<'a>(
+    ops: &'a [Value],
+    i: usize,
+    data: &Data,
+    stores: &Stores,
+    d_nr: u32,
+    memo: &mut HashMap<(u32, i64), Option<Shape>>,
+) -> Option<Site<'a>> {
+    // The chain: each level's window, the next one found inside its `ok` arm.
+    let mut wins: Vec<Window<'a>> = vec![window(ops, i, data)?];
+    let mut cuts: Vec<(usize, usize)> = Vec::new();
+    loop {
+        let t = wins.last()?.then_ops;
+        let found = (0..t.len()).find_map(|j| window(t, j, data).map(|w| (j, w)));
+        match found {
+            Some((j, w)) if wins.len() < 8 => {
+                cuts.push((j, w.last));
+                wins.push(w);
+            }
+            Some(_) => return None,
+            None => break,
+        }
+    }
+    let rs: Vec<u16> = wins.iter().map(|w| w.r).collect();
+    // The last arm: the mint, then one move per result, through an alias or not.
+    let t_ops = wins.last()?.then_ops;
+    let mut mint: Vec<&'a Value> = Vec::new();
+    let mut mint_at: Option<(usize, u16, u16)> = None; // (index of the Set, element, container)
+    for (j, op) in t_ops.iter().enumerate() {
+        if let Value::Set(e, nr) = op.unspan()
+            && let Value::Call(nd, na) = nr.unspan()
+            && name(data, *nd) == "OpNewRecord"
+            && let Some(Value::Var(c)) = na.first().map(Value::unspan)
+        {
+            if mint_at.is_some() {
+                return None;
+            }
+            let prev = (0..j).rev().find(|&q| !matches!(t_ops[q], Value::Line(_)));
+            if let Some(q) = prev
+                && let Value::Call(d, a) = t_ops[q].unspan()
+                && name(data, *d) == "OpPreAllocVector"
+                && a.first().is_some_and(|x| is_var(x, *c))
+            {
+                mint.push(&t_ops[q]);
+            }
+            mint.push(op);
+            mint_at = Some((j, *e, *c));
+        }
+    }
+    let (mint_j, e, container) = mint_at?;
+    let mut aliases: HashMap<u16, usize> = HashMap::new(); // alias var -> chain level
+    let mut dests: Vec<Option<Value>> = vec![None; wins.len()];
+    let mut drop: Vec<usize> = Vec::new();
+    for (j, op) in t_ops.iter().enumerate() {
+        if let Value::Set(a, g) = op.unspan()
+            && let Value::Call(gd, ga) = g.unspan()
+            && name(data, *gd) == "OpGetField"
+            && ga.get(1).and_then(int) == Some(0)
+            && let Some(m) = rs.iter().position(|r| ga.first().is_some_and(|x| is_var(x, *r)))
+        {
+            aliases.insert(*a, m);
+            drop.push(j);
+            continue;
+        }
+        if let Value::Call(d, a) = op.unspan()
+            && name(data, *d) == "OpMoveField"
+            && let [src, dst, _] = &a[..]
+        {
+            let m = match src.unspan() {
+                Value::Var(x) => aliases.get(x).copied(),
+                Value::Call(g, ga) if name(data, *g) == "OpGetField" && ga.get(1).and_then(int) == Some(0) => {
+                    rs.iter().position(|r| ga.first().is_some_and(|x| is_var(x, *r)))
+                }
+                _ => None,
+            };
+            let Some(m) = m else { continue };
+            let dest_ok = is_var(dst, e)
+                || matches!(dst.unspan(), Value::Call(g2, ga2)
+                    if name(data, *g2) == "OpGetField" && ga2.first().is_some_and(|x| is_var(x, e)));
+            if !dest_ok || dests[m].is_some() || j < mint_j {
+                return None;
+            }
+            dests[m] = Some(dst.clone());
+            drop.push(j);
+        }
+    }
+    let dests: Vec<Value> = dests.into_iter().collect::<Option<Vec<_>>>()?;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for w in &wins {
+        shapes.push(shape(data, stores, w.callee, 0, memo)?);
+    }
+    // The byte ranges the twins fill, for the zero-inits their writes replace.
+    let ranges: Vec<(i64, i64)> = dests
+        .iter()
+        .zip(&shapes)
+        .map(|(d, sh)| {
+            let lo = match d.unspan() {
+                Value::Call(_, ga) => ga.get(1).and_then(int).unwrap_or(0),
+                _ => 0,
+            };
+            (lo, lo + (sh.vend - sh.vo))
+        })
+        .collect();
+    for (j, op) in t_ops.iter().enumerate() {
+        if let Value::Call(d, a) = op.unspan()
+            && name(data, *d) == "OpSetInt4"
+            && a.first().is_some_and(|x| is_var(x, e))
+            && let (Some(off), Some(0)) = (a.get(1).and_then(int), a.get(2).and_then(int))
+            && ranges.iter().any(|(lo, hi)| off >= *lo && off < *hi)
+        {
+            drop.push(j);
+        }
+    }
+    drop.extend(mint.iter().map(|m| t_ops.iter().position(|o| std::ptr::eq(o, *m)).unwrap_or(usize::MAX)));
+    // Rewrite one statement: the chain's scalar reads named, any other use of a result, an
+    // alias or (before the mint) the element declines.
+    let rewrite = |op: &Value, before_mint: bool| -> Option<Value> {
+        if before_mint && mentions(op, e) > 0 {
+            return None;
+        }
+        let mut v = op.clone();
+        let mut bad = false;
+        for (m, r) in rs.iter().enumerate() {
+            rewrite_reads(&mut v, *r, m, &shapes[m], data, &mut bad);
+        }
+        if bad
+            || rs.iter().any(|r| mentions(&v, *r) > 0)
+            || aliases.keys().any(|a| mentions(&v, *a) > 0)
+        {
+            return None;
+        }
+        Some(v)
+    };
+    // Each level's arm, around the next level's window.
+    let mut levels: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
+    for (m, w) in wins.iter().enumerate() {
+        let (pre_src, post_src): (Vec<(usize, &Value)>, Vec<(usize, &Value)>) = if m + 1 < wins.len() {
+            let (c0, c1) = cuts[m];
+            (
+                w.then_ops.iter().enumerate().take(c0).collect(),
+                w.then_ops.iter().enumerate().skip(c1 + 1).collect(),
+            )
+        } else {
+            (w.then_ops.iter().enumerate().collect(), Vec::new())
+        };
+        let last = m + 1 == wins.len();
+        let mut pre = Vec::new();
+        for (j, op) in pre_src {
+            if last && drop.contains(&j) {
+                continue;
+            }
+            pre.push(rewrite(op, last && j < mint_j)?);
+        }
+        let mut post = Vec::new();
+        for (_, op) in post_src {
+            post.push(rewrite(op, false)?);
+        }
+        levels.push((pre, post));
+        if rs.iter().any(|r| mentions(w.else_v, *r) > 0) || mentions(w.else_v, e) > 0 {
+            return None;
+        }
+    }
+    // The calls' arguments: no reach into the container; a scalar of an earlier result named.
+    let reach = super::append_twin::views(data.def(d_nr).variables(), container);
+    let mut args_rw: Vec<Vec<Value>> = Vec::new();
+    for w in &wins {
+        let mut out = Vec::new();
+        for (idx, a) in w.call_args.iter().enumerate() {
+            if idx == w.at {
+                out.push(a.clone());
+                continue;
+            }
+            if reach.iter().any(|v| mentions(a, *v) > 0) {
+                return None;
+            }
+            out.push(rewrite(a, false)?);
+        }
+        args_rw.push(out);
+    }
+    // The results belong to the window: every mention of them lies inside it.
+    let w0 = &wins[0];
+    for r in &rs {
+        let inside: usize = ops[w0.first..=w0.last].iter().map(|op| mentions(op, *r)).sum();
+        if mentions(data.def(d_nr).code(), *r) != inside {
+            return None;
+        }
+    }
+    let mut top: Option<Level<'a>> = None;
+    for (m, w) in wins.iter().enumerate().rev() {
+        let sh = shapes[m].clone();
+        let ok = sh.scalar_at(w.ok_off)?;
+        if sh.scalars[ok].rust != "u8" {
+            return None;
+        }
+        let (pre, post) = levels[m].clone();
+        top = Some(Level {
+            callee: w.callee,
+            call_args: args_rw[m].clone(),
+            at: w.at,
+            shape: sh,
+            ok,
+            dest: dests[m].clone(),
+            pre,
+            inner: top.map(Box::new),
+            post,
+            else_v: w.else_v,
+        });
+    }
+    if trace() {
+        eprintln!(
+            "destination: {} builds {} call(s) of {}(…) in one element",
+            data.def(d_nr).name(),
+            wins.len(),
+            data.def(wins[0].callee).name()
+        );
+    }
+    Some(Site {
+        first: w0.first,
+        last: w0.last,
+        mint,
+        top: top?,
+    })
+}
+
+/// Replace every scalar read of result `r` (chain level `m`) in `v` by `__ds#m#.k`, which the
+/// emitter resolves to that level's tuple.  A read of `r` that is not a scalar getter at a
 /// scalar offset sets `bad`.
-fn rewrite_reads(v: &mut Value, r: u16, shape: &Shape, data: &Data, bad: &mut bool) {
+fn rewrite_reads(v: &mut Value, r: u16, m: usize, shape: &Shape, data: &Data, bad: &mut bool) {
     if let Value::Call(d, a) = v
         && a.first().is_some_and(|x| is_var(x, r))
     {
@@ -515,11 +636,11 @@ fn rewrite_reads(v: &mut Value, r: u16, shape: &Shape, data: &Data, bad: &mut bo
             && let Some(k) = shape.scalar_at(off)
             && shape.scalars[k].getter == op
         {
-            *v = Value::RawExpr(format!("__ds#.{k}"));
+            *v = Value::RawExpr(format!("__ds#{m}#.{k}"));
             return;
         }
         *bad = true;
         return;
     }
-    v.for_each_child_mut(&mut |c| rewrite_reads(c, r, shape, data, bad));
+    v.for_each_child_mut(&mut |c| rewrite_reads(c, r, m, shape, data, bad));
 }
