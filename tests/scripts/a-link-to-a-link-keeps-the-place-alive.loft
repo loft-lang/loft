@@ -20,7 +20,8 @@
 //   divergence: a native link is a raw pointer to a live Rust local.
 // @falsified-by: tests/falsified/a-link-to-a-link-keeps-the-place-alive.patch — the same
 //   channels.  Score it with `scripts/falsify.sh <this file> --patch <that patch>` once
-//   3c979e3a1 is out of reach.
+//   3c979e3a1 is out of reach.  Re-derived at 653383a5a (the `record_amp_link` line alone),
+//   the first cell holds and the three-deep one fails: `got 7 9 9`.
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn main() {

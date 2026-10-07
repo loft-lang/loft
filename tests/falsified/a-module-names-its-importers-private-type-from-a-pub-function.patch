@@ -1,64 +1,21 @@
-diff --git b/src/data.rs a/src/data.rs
-index cbf8a3ba9..6e5bfc743 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -10106,19 +10106,6 @@ impl Data {
-         }
+diff --git a/src/data.rs b/src/data.rs
+index 132a6e970..0a3b1af65 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -12937,7 +12937,7 @@
+     /// above its declaration was refused where a `pub` one compiled (loft#1856).
+     fn passes_on(&self, d_nr: u32) -> bool {
+         let d = &self.definitions[d_nr as usize];
+-        d.pub_visible || matches!(d.def_type, DefType::Unknown) || self.is_name_only(d_nr)
++        d.pub_visible || self.is_name_only(d_nr)
      }
  
--    /// How many stubs have been adopted this pass: taken before a declaration, it lets
--    /// [`Data::adopted_since`] name the stubs that one declaration adopted.
--    #[must_use]
--    pub fn adopted_stub_count(&self) -> usize {
--        self.adopted_stubs.len()
--    }
--
--    /// The stubs adopted since `adopted_stub_count` answered `from`.
--    #[must_use]
--    pub fn adopted_since(&self, from: usize) -> &[u32] {
--        self.adopted_stubs.get(from..).unwrap_or(&[])
--    }
--
-     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
-         // Not a stub a GENERIC struct adopted: its target would be the bare template, where
-         // each use names an instance whose arguments the paths that read them resolve
-@@ -12380,7 +12367,7 @@ impl Data {
-             .iter()
-             .filter(|&(name, src, def_nr)| {
-                 src == lib_source
--                    && self.passes_on(def_nr)
-+                    && self.definitions[def_nr as usize].pub_visible
-                     && !self.is_private_import(lib_source, name, def_nr)
-             })
-             .map(|(name, _, def_nr)| (name.to_string(), def_nr))
-@@ -12389,19 +12376,9 @@ impl Data {
- 
-     /// The definition `lib_source` passes on under `key`, if any (see [`Self::exported_names`]).
-     fn exported(&self, key: &str, lib_source: u16) -> Option<u32> {
--        self.def_names
--            .get(key, lib_source)
--            .filter(|&d| self.passes_on(d) && !self.is_private_import(lib_source, key, d))
--    }
--
--    /// @FR-F-Surface — a `pub` item, or a forward-reference stub.  A stub is not an item and
--    /// has no `pub` of its own: it travels with the import so the importer's declaration can
--    /// adopt it (loft#801), and that declaration decides whether it is `pub`.  Its USER's
--    /// `pub` decided the trip before, so a private function naming the importer's type
--    /// above its declaration was refused where a `pub` one compiled (loft#1856).
--    fn passes_on(&self, d_nr: u32) -> bool {
--        let d = &self.definitions[d_nr as usize];
--        d.pub_visible || matches!(d.def_type, DefType::Unknown)
-+        self.def_names.get(key, lib_source).filter(|&d| {
-+            self.definitions[d as usize].pub_visible && !self.is_private_import(lib_source, key, d)
-+        })
-     }
- 
-     /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 79ef55fa7..ec282691f 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -18376,7 +18376,6 @@ impl Parser {
+     /// @PLN187 (@C140, @FR-F-Visible) — is `d_nr` a NAME-ONLY type: not `pub`, but named by a `pub` signature
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9f0a3619b..8e8ac9eca 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -19268,7 +19268,6 @@
          loop {
              let is_pub = std::mem::take(&mut self.pub_taken) || self.lexer.has_token("pub");
              let before = self.data.definitions();
@@ -66,7 +23,7 @@ index 79ef55fa7..ec282691f 100644
              if self.lexer.diagnostics().level() == Level::Fatal
                  || (!self.parse_capability()
                      && !self.parse_enum()
-@@ -18388,22 +18387,12 @@ impl Parser {
+@@ -19280,21 +19279,11 @@
              {
                  break;
              }
@@ -84,10 +41,9 @@ index 79ef55fa7..ec282691f 100644
 -                    }
 +                    self.data.def_mut(d_nr).pub_visible = true;
                  }
-             }
+-            }
 -            for d_nr in self.data.adopted_since(adopted_before).to_vec() {
 -                self.data.def_mut(d_nr).pub_visible = is_pub;
--            }
+             }
          }
          let res = self.lexer.peek().clone();
-         if res.has != LexItem::None && self.lexer.diagnostics().level() != Level::Fatal {

@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index b62b4dbb1..42d78bcbb 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -8216,13 +8216,6 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 0fbf8978a..961cba019 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -8275,13 +8275,6 @@
      /// patterns after the rest and `(P-Point)` makes a variant one of them, so the tail
      /// takes the forms the head does — it just reads at a negative index (loft#1419).
      fn peek_is_variant_subpattern(&mut self, elm_tp: &Type) -> bool {
@@ -16,7 +16,7 @@ index b62b4dbb1..42d78bcbb 100644
          let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
              return false;
          };
-@@ -8928,11 +8921,7 @@ impl Parser {
+@@ -8987,11 +8980,7 @@
              // the `name:pat` path.  A real type name identifies the scalar capture.
              if matches!(&self.lexer.peek().has, LexItem::Identifier(id) if id != "_") {
                  self.lexer.cont(); // Type
@@ -29,7 +29,7 @@ index b62b4dbb1..42d78bcbb 100644
              }
          }
          self.lexer.revert(save);
-@@ -10610,30 +10599,6 @@ impl Parser {
+@@ -10670,30 +10659,6 @@
              self.expression(&mut hi);
              return (Value::Boolean(false), Type::Boolean);
          }
@@ -57,10 +57,10 @@ index b62b4dbb1..42d78bcbb 100644
 -                Type::Boolean,
 -            );
 -        }
-         let pat_pos = self.lexer.pos().clone();
+         let pat_pos = *self.lexer.pos();
          let mut lit = Value::Null;
          let negate = self.lexer.has_token("-");
-@@ -10790,21 +10755,15 @@ impl Parser {
+@@ -10850,21 +10815,15 @@
              } else if let Some(id) = self.lexer.has_identifier() {
                  if id == "_" {
                      is_wildcard = true;
@@ -88,7 +88,7 @@ index b62b4dbb1..42d78bcbb 100644
                  } else {
                      // Bare identifier without `@` — wildcard binding (binds subject to name).
                      let bind_nr = self.pattern_binding(&id, subject_type);
-@@ -12228,17 +12187,6 @@ impl Parser {
+@@ -12288,18 +12247,6 @@
              }
              let elem_type = elem_type.clone();
              let elem_get = Value::TupleGet(tmp, i as u16);
@@ -101,8 +101,9 @@ index b62b4dbb1..42d78bcbb 100644
 -                self.lexer.token(":");
 -                let bind_nr = self.pattern_binding(&name, &elem_type);
 -                self.vars.defined(bind_nr);
+-                self.tuple_pattern_element(i, Some(bind_nr)); // @PLN187
 -                bindings.push(v_set(bind_nr, elem_get.clone()));
 -            }
              if self.peek_is_variant_subpattern(&elem_type) {
+                 self.tuple_pattern_element(i, None); // @PLN187 — a tag test reads the member
                  // @FR-P-Point — a unit or struct variant is a point pattern over ONE
-                 // value, and a tuple element is one value, so an enum element takes

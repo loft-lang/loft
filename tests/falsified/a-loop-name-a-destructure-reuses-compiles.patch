@@ -1,7 +1,7 @@
-diff --git b/src/coroutine_layout.rs a/src/coroutine_layout.rs
+diff --git a/src/coroutine_layout.rs b/src/coroutine_layout.rs
 index e8d9fa654..51c127bf2 100644
---- b/src/coroutine_layout.rs
-+++ a/src/coroutine_layout.rs
+--- a/src/coroutine_layout.rs
++++ b/src/coroutine_layout.rs
 @@ -17,13 +17,15 @@
  //! the *same* `T`, the two ends agree by construction — no runtime shape tag,
  //! no per-shape codec template.
@@ -25,7 +25,7 @@ index e8d9fa654..51c127bf2 100644
  
  use crate::data::{Data, Type, Value};
  
-@@ -47,10 +49,6 @@ pub enum YieldSlot {
+@@ -47,10 +49,6 @@
      /// Any `DbRef`-repr type (reference / vector / sorted / hash / index /
      /// boxed-enum / iterator).  Two slots: the full absolute `DbRef`.
      Ref,
@@ -36,7 +36,7 @@ index e8d9fa654..51c127bf2 100644
  }
  
  impl YieldSlot {
-@@ -67,7 +65,6 @@ impl YieldSlot {
+@@ -67,7 +65,6 @@
              Type::Float => Some(YieldSlot::F64),
              Type::Single => Some(YieldSlot::F32),
              Type::Routine(_) => Some(YieldSlot::Routine),
@@ -44,7 +44,7 @@ index e8d9fa654..51c127bf2 100644
              // An iterator handle is not in the DbRef set — it is a coroutine state handle,
              // not a store handle — but it travels the same slot, so it stays named here.
              Type::Iterator(_, _) => Some(YieldSlot::Ref),
-@@ -91,8 +88,9 @@ impl YieldSlot {
+@@ -91,8 +88,9 @@
              // short-list bug was fixed, and `classify` is the residual that fix recorded and
              // left behind.
              _ if crate::data::is_dbref(tp) => Some(YieldSlot::Ref),
@@ -56,7 +56,7 @@ index e8d9fa654..51c127bf2 100644
              _ => None,
          }
      }
-@@ -117,7 +115,6 @@ impl YieldSlot {
+@@ -117,7 +115,6 @@
              YieldSlot::F32 => 4,
              YieldSlot::Routine => 5,
              YieldSlot::Ref => 6,
@@ -64,7 +64,7 @@ index e8d9fa654..51c127bf2 100644
          }
      }
  
-@@ -134,7 +131,6 @@ impl YieldSlot {
+@@ -134,7 +131,6 @@
              4 => YieldSlot::F32,
              5 => YieldSlot::Routine,
              6 => YieldSlot::Ref,
@@ -72,7 +72,7 @@ index e8d9fa654..51c127bf2 100644
              _ => YieldSlot::Int,
          }
      }
-@@ -250,12 +246,10 @@ pub fn eager_tuple_kinds(tp: &Type) -> Option<Vec<YieldSlot>> {
+@@ -250,12 +246,10 @@
      if matches!(tp.base(), Type::Function(..)) {
          return Some(vec![YieldSlot::Int, YieldSlot::Int]);
      }
@@ -86,11 +86,11 @@ index e8d9fa654..51c127bf2 100644
          .then_some(kinds)
  }
  
-diff --git b/src/generation/coroutine.rs a/src/generation/coroutine.rs
-index 01171c311..73998e81c 100644
---- b/src/generation/coroutine.rs
-+++ a/src/generation/coroutine.rs
-@@ -63,10 +63,6 @@ pub(crate) fn yield_slot_i64(kind: YieldSlot, expr: &str) -> Option<String> {
+diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
+index d393d9364..91ae8cf7e 100644
+--- a/src/generation/coroutine.rs
++++ b/src/generation/coroutine.rs
+@@ -63,10 +63,6 @@
          YieldSlot::Bool => Some(format!("(({expr}) as u8) as i64")),
          // f64::to_bits → u64 / f32::to_bits → u32, both zero-extend to i64.
          YieldSlot::F64 | YieldSlot::F32 => Some(format!("(({expr}).to_bits()) as i64")),
@@ -101,7 +101,7 @@ index 01171c311..73998e81c 100644
          YieldSlot::Ref => None,
      }
  }
-@@ -107,11 +103,6 @@ pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
+@@ -107,11 +103,6 @@
          YieldSlot::F64 => format!("f64::from_bits(_loft_yield_buf[{slot}] as u64)"),
          YieldSlot::F32 => format!("f32::from_bits(_loft_yield_buf[{slot}] as u32)"),
          YieldSlot::Routine => format!("(_loft_yield_buf[{slot}] as u32)"),
@@ -113,7 +113,7 @@ index 01171c311..73998e81c 100644
          YieldSlot::Ref => format!(
              "DbRef {{ store_nr: (_loft_yield_buf[{slot}] as u16), \
               rec: (_loft_yield_buf[{s1}] as u64 as u32), \
-@@ -810,13 +801,13 @@ fn escape_for_rust_literal(s: &str) -> String {
+@@ -810,13 +801,13 @@
  
  /// Why a yield type is refused on the straight-line channel ladder.
  const NO_CHANNEL: &str = "has no native transport channel — every element of a yielded \
@@ -130,31 +130,31 @@ index 01171c311..73998e81c 100644
                                 runs eagerly because a `yield` sits inside an expression; \
                                 as a statement of its own it is handed over lazily.";
  
-diff --git b/src/parser/collections.rs a/src/parser/collections.rs
-index 418c5ca5c..dbd1ac99a 100644
---- b/src/parser/collections.rs
-+++ a/src/parser/collections.rs
-@@ -4186,22 +4186,7 @@ use #count instead"
-                                 } else {
-                                     elem_tp.clone()
-                                 };
--                                // A binder is a LOOP binding, keyed by this loop as the loop
--                                // variable is (loft#915): by name, a second `for (a, b)` reused
--                                // the first one's `a` at the first one's type, and read a `text`
--                                // member as an `integer` (`1|p` for `p|3`), or did not compile.
--                                let id = self.vars.loop_binding(name);
--                                let var = if id == "_" {
--                                    self.create_unique("_", &bind_tp)
--                                } else {
--                                    self.create_loop_var(&id, &bind_tp)
--                                };
--                                if id != *name {
--                                    self.vars.set_name(name, var);
--                                }
--                                // A later `for a` over the same name is a sequential loop, not
--                                // a shadow of a local (the guard asks `was_loop_var`).
--                                self.vars.served_as_loop_var(var);
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index a33ee1a80..1caa54655 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3824,22 +3824,7 @@
+                         } else {
+                             elem_tp.clone()
+                         };
+-                        // A binder is a LOOP binding, keyed by this loop as the loop
+-                        // variable is (loft#915): by name, a second `for (a, b)` reused
+-                        // the first one's `a` at the first one's type, and read a `text`
+-                        // member as an `integer` (`1|p` for `p|3`), or did not compile.
+-                        let id = self.vars.loop_binding(name);
+-                        let var = if id == "_" {
+-                            self.create_unique("_", &bind_tp)
+-                        } else {
+-                            self.create_loop_var(&id, &bind_tp)
+-                        };
+-                        if id != *name {
+-                            self.vars.set_name(name, var);
+-                        }
+-                        // A later `for a` over the same name is a sequential loop, not
+-                        // a shadow of a local (the guard asks `was_loop_var`).
+-                        self.vars.served_as_loop_var(var);
 +                                let var = self.create_var(name, &bind_tp);
-                                 self.vars.defined(var);
-                                 self.vars.in_use(var, true);
-                                 // Bound by the header, scoped to the body (`@FR-B-Scope`).
+                         self.vars.defined(var);
+                         self.vars.in_use(var, true);
+                         // Bound by the header, scoped to the body (`@FR-B-Scope`).
