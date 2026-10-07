@@ -13,6 +13,8 @@
 // @falsified-at: 9751f5a79 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1915-an-index-answers-len-in-both-spellings.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: the EXIT — the control refuses `h.len()` at compile time.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
