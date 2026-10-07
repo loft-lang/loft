@@ -6,9 +6,8 @@
 // can never become syntax), `run.loft` the drain gate (a stream is never left without a
 // reader) and the contract of a finished run.  Each must print `ok` on the interpreter AND
 // the compiled backend: the native is one body behind two calling conventions, and this is
-// what keeps the second one honest.
-
-#![cfg(unix)]
+// what keeps the second one honest.  The composition matrix spawns nothing and runs on every
+// host; the drain gate spawns `sh`, `cat` and `printf`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -44,12 +43,18 @@ fn the_composition_matrix_holds_compiled() {
     run("--native", "command.loft");
 }
 
-#[test]
-fn no_stream_is_left_without_a_reader_interpreted() {
-    run("--interpret", "run.loft");
-}
+// @PLN184 C2 exemption candidate: `run.loft` drives `sh -c`, `cat`, `printf` and `/dev/zero`, which have no Windows equivalent; Windows substitute: the composition matrix above
+#[cfg(unix)]
+mod drain {
+    use super::run;
 
-#[test]
-fn no_stream_is_left_without_a_reader_compiled() {
-    run("--native", "run.loft");
+    #[test]
+    fn no_stream_is_left_without_a_reader_interpreted() {
+        run("--interpret", "run.loft");
+    }
+
+    #[test]
+    fn no_stream_is_left_without_a_reader_compiled() {
+        run("--native", "run.loft");
+    }
 }

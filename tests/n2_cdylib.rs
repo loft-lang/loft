@@ -73,13 +73,7 @@ fn extra_externs(deps: &Path) -> Vec<(String, PathBuf)> {
 
 /// Platform cdylib filename for `stem`.
 fn cdylib_name(stem: &str) -> String {
-    if cfg!(target_os = "windows") {
-        format!("{stem}.dll")
-    } else if cfg!(target_os = "macos") {
-        format!("lib{stem}.dylib")
-    } else {
-        format!("lib{stem}.so")
-    }
+    loft::native_lib::platform_cdylib_name(stem)
 }
 
 /// Compile `src` as a cdylib against `libloft.rlib`, mirroring the `--native`

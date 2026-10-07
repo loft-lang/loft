@@ -68,13 +68,10 @@ fn copy_pkg(from: &std::path::Path, to: &std::path::Path) {
 /// indices. The test therefore matches the prefix + extension rather than a
 /// fixed name; the fingerprint is not knowable from here.
 fn cdylib_present(dir: &std::path::Path) -> bool {
-    let (prefix, ext) = if cfg!(target_os = "windows") {
-        ("loft_auto_mathnative", "dll")
-    } else if cfg!(target_os = "macos") {
-        ("libloft_auto_mathnative", "dylib")
-    } else {
-        ("libloft_auto_mathnative", "so")
-    };
+    let named = loft::native_lib::platform_cdylib_name("loft_auto_mathnative");
+    let (prefix, ext) = named
+        .rsplit_once('.')
+        .expect("a cdylib name has an extension");
     fa::read_dir(dir).is_ok_and(|rd| {
         rd.iter().any(|e| {
             let n = e.file_name().unwrap_or_default();
@@ -320,10 +317,10 @@ fn native_build_failure_hard_fails_default_and_under_require() {
 /// Guards the **main-program** chokepoint of `LOFT_REQUIRE_NATIVE`.  Forces a native
 /// fallback by hiding `rustc` (empty `PATH`) on a cache-bypassed `--native` run; under
 /// the env var that must be a hard error naming the missing toolchain, not a silent
-/// degrade to the interpreter.  Skipped on Windows where the `PATH` model + binary
-/// resolution differ enough that an empty `PATH` is not a clean way to hide `rustc`.
+/// degrade to the interpreter.  On Windows an empty `PATH` hides `rustc` too: a bare name
+/// is searched in the parent's `PATH`, the application directory and the system
+/// directories, and the toolchain proxy lives in none of the last two.
 #[test]
-#[cfg(not(target_os = "windows"))]
 fn require_native_errors_when_rustc_is_absent() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_norustc_{pid}"));
@@ -788,6 +785,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     fa::open_with(&other, std::fs::OpenOptions::new().write(true))
         .and_then(|f| f.set_modified(std::time::SystemTime::now()))
         .expect("give the copy its own modification time");
+    // @PLN184 C2 exemption candidate: the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
     #[cfg(unix)]
     {
         fa::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
@@ -797,6 +795,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
         )
         .unwrap();
     }
+    // @PLN184 C2 exemption candidate: the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
     #[cfg(not(unix))]
     {
         eprintln!("skip: the second-executable layout needs symlinks");
@@ -1104,19 +1103,9 @@ fn a_packages_artifact_directory_stays_bounded() {
     // the twelve rustc builds below are the whole cost, and running them twice put ~12s
     // on the PR's critical path — `n3_use_native` sits in nextest's single-slot
     // `heavy-serial` group, so that is 12s nothing else can overlap with.
-    let ext = if cfg!(target_os = "windows") {
-        "dll"
-    } else if cfg!(target_os = "macos") {
-        "dylib"
-    } else {
-        "so"
-    };
-    let prefix = if cfg!(target_os = "windows") {
-        ""
-    } else {
-        "lib"
-    };
-    let shim = native_auto.join(format!("{prefix}mathnative_shim_00000000deadbeef.{ext}"));
+    let shim = native_auto.join(loft::native_lib::platform_cdylib_name(
+        "mathnative_shim_00000000deadbeef",
+    ));
     assert!(
         write_decoy_cdylib(&shim, &[], &tmp),
         "rustc could not build the stand-in shim"
@@ -1180,7 +1169,7 @@ fn a_packages_artifact_directory_stays_bounded() {
                 .filter(|e| {
                     // The LIBRARIES only: each artifact also leaves the generated `.rs`
                     // and `.args` it was built from, and counting those reads as 3x.
-                    fa::has_extension(*e, ext)
+                    fa::has_extension(*e, std::env::consts::DLL_EXTENSION)
                         && e.file_name().is_some_and(|n| n.contains("loft_auto_"))
                 })
                 .count()
@@ -1258,13 +1247,7 @@ fn write_decoy_cdylib(at: &std::path::Path, exports: &[&str], scratch: &std::pat
 
 /// The one auto-built artifact under `dir`.
 fn sole_artifact(dir: &std::path::Path) -> std::path::PathBuf {
-    let ext = if cfg!(target_os = "windows") {
-        "dll"
-    } else if cfg!(target_os = "macos") {
-        "dylib"
-    } else {
-        "so"
-    };
+    let ext = std::env::consts::DLL_EXTENSION;
     let mut found: Vec<std::path::PathBuf> = fa::read_dir(dir)
         .expect("read native-auto")
         .into_iter()

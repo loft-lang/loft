@@ -918,13 +918,7 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
     // The artifact `solo`'s cdylib was published as, and when.
     let auto = pkg.join("native-auto");
     let artifact_mtime = || -> std::time::SystemTime {
-        let ext = if cfg!(target_os = "windows") {
-            "dll"
-        } else if cfg!(target_os = "macos") {
-            "dylib"
-        } else {
-            "so"
-        };
+        let ext = std::env::consts::DLL_EXTENSION;
         let mut newest: Option<std::time::SystemTime> = None;
         for e in fa::read_dir(&auto).expect("native-auto must exist") {
             let p = e.os_spelling();

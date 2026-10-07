@@ -83,7 +83,6 @@ fn file_url_fetches_local_index() {
 /// Build a directory of stand-in release artifacts and run the generator over it.
 /// The bytes are arbitrary; what is under test is the entry's shape, and a real
 /// 18 MB source zip would only make the test slow.
-#[cfg(unix)]
 fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     fa::create_dir_all(dir).unwrap();
@@ -128,7 +127,6 @@ fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
 }
 
 #[test]
-#[cfg(unix)]
 fn generated_toolchain_entry_parses_and_drives_self_update() {
     let dir = std::env::temp_dir().join("loft-toolchain-entry-parse");
     let _ = fa::remove_dir_all(&dir);
@@ -216,7 +214,6 @@ fn generated_toolchain_entry_parses_and_drives_self_update() {
 /// this could only ever be caught by a reader of the diff; it was, on the first real
 /// submission, which is one submission later than a test costs.
 #[test]
-#[cfg(unix)]
 fn splicing_the_toolchain_entry_never_moves_updated_backwards() {
     let dir = std::env::temp_dir().join("loft_splice_updated_test");
     let _ = fa::remove_dir_all(&dir);

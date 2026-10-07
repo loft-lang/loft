@@ -78,14 +78,11 @@ fn parser_native_pkg_parses_without_error() {
 /// stride swap) silently masquerades as a vector-marshalling
 /// regression.  On stale detection we panic with the rebuild command.
 fn fixture_lib_path() -> Option<String> {
-    let path = if cfg!(target_os = "macos") {
-        "tests/lib/native_pkg/native/target/release/libloft_native_test.dylib"
-    } else if cfg!(windows) {
-        "tests/lib/native_pkg/native/target/release/loft_native_test.dll"
-    } else {
-        "tests/lib/native_pkg/native/target/release/libloft_native_test.so"
-    };
-    let p = std::path::Path::new(path);
+    let path = format!(
+        "tests/lib/native_pkg/native/target/release/{}",
+        loft::native_lib::platform_cdylib_name("loft_native_test")
+    );
+    let p = std::path::Path::new(&path);
     if !fa::exists(p) {
         return None;
     }
@@ -106,7 +103,7 @@ fn fixture_lib_path() -> Option<String> {
             art_mtime,
         );
     }
-    Some(path.to_string())
+    Some(path)
 }
 
 /// A7.2.3: `extensions::load_one` loads a cdylib and registers its functions.

@@ -19,8 +19,8 @@
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
-fn exe_name() -> &'static str {
-    if cfg!(windows) { "loft.exe" } else { "loft" }
+fn exe_name() -> String {
+    format!("loft{}", std::env::consts::EXE_SUFFIX)
 }
 
 fn write(path: &Path, body: &[u8]) {
@@ -205,6 +205,7 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
 /// A `file://` base URL keeps the run local: `curl` serves the fixture zip the way the
 /// release CDN would.  Linux x86_64 only: the script derives the artifact name from
 /// `uname`, and that is the one such host CI runs the tests on.
+// @PLN184 C2 exemption candidate: `scripts/install.sh` (a POSIX `sh` + `curl` + `uname` installer for the Linux bundle) has no Windows equivalent; Windows substitute: `apply_bundle`'s cells above
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[test]
 fn install_sh_installs_the_whole_bundle_and_it_verifies() {

@@ -946,7 +946,8 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     // Preopening the literal `/tmp` mount AND the temp dir AND the CWD covers
     // /tmp-literal, temp-default, and CWD-relative file paths alike, so a lib
     // test no longer has to know how the harness configured TMPDIR.  Each dir
-    // is mapped host==guest; duplicates and missing dirs are skipped.
+    // is mapped host==guest; duplicates and missing dirs are skipped (a host with no
+    // `/tmp`, such as Windows, skips that one).
     let mut preopens: Vec<std::path::PathBuf> = Vec::new();
     let mut add = |d: std::path::PathBuf| {
         if fa::is_dir(&d) && !preopens.contains(&d) {
@@ -954,7 +955,6 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
         }
     };
     add(tmp.clone());
-    #[cfg(unix)]
     add(std::path::PathBuf::from("/tmp"));
     if let Ok(cwd) = std::env::current_dir() {
         add(cwd);

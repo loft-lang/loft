@@ -13,12 +13,9 @@
 //! measured >10 s loop freezes from one Nominatim call, which is what
 //! this feature retires).
 
-#![cfg(not(target_os = "windows"))]
-
 use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -30,24 +27,19 @@ fn test_tmp() -> PathBuf {
 }
 
 fn loft_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft")
+    PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
-/// Kill the whole process group on drop (same rationale as
-/// `engine_host_kernel.rs::Guard`).
+/// Kill the kernel on drop.  An `--interpret` run spawns no grandchild, so the child is the
+/// whole of what can leak.
 struct Guard(Option<Child>);
 impl Drop for Guard {
     fn drop(&mut self) {
         if let Some(mut c) = self.0.take() {
-            libc_kill(-(c.id() as i32));
+            let _ = c.kill();
             let _ = c.wait();
         }
     }
-}
-fn libc_kill(pgid: i32) {
-    let _ = Command::new("kill")
-        .args(["-9", "--", &pgid.to_string()])
-        .status();
 }
 
 /// One-shot slow HTTP responder: accept one connection, read the request
@@ -103,7 +95,6 @@ fn run_fixture(name: &str, ws_port: u16, url: &str) -> String {
     fa::write(&prog, fixture(ws_port, url)).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = Command::new(loft_bin());
-    cmd.process_group(0);
     let child = cmd
         .arg("--interpret")
         .arg("--no-warnings")
@@ -131,7 +122,7 @@ fn run_fixture(name: &str, ws_port: u16, url: &str) -> String {
 #[test]
 fn http_fetch_completes_as_event_without_stalling_ticks() {
     if !fa::exists(loft_bin()) {
-        eprintln!("skipping: release loft not built");
+        eprintln!("skipping: loft not built");
         return;
     }
     let http_port = slow_http_server(Duration::from_millis(400), "hello-engine");
@@ -165,7 +156,7 @@ fn http_fetch_completes_as_event_without_stalling_ticks() {
 #[test]
 fn http_fetch_error_is_a_negative_status_event() {
     if !fa::exists(loft_bin()) {
-        eprintln!("skipping: release loft not built");
+        eprintln!("skipping: loft not built");
         return;
     }
     // A port with nothing behind it: bind-then-drop.

@@ -34,13 +34,7 @@ fn fake_home(name: &str) -> PathBuf {
     fa::write(pkg.join("loft.toml"), "[package]\nname=\"demo\"\n").unwrap();
     let auto = pkg.join("native-auto");
     fa::create_dir_all(&auto).unwrap();
-    let ext = if cfg!(target_os = "windows") {
-        "dll"
-    } else if cfg!(target_os = "macos") {
-        "dylib"
-    } else {
-        "so"
-    };
+    let ext = std::env::consts::DLL_EXTENSION;
     fa::write(
         auto.join(format!("libloft_auto_demo_1_0_0_{:016x}.{ext}", 1u64)),
         vec![0u8; 8192],

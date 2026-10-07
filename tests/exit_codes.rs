@@ -10,7 +10,6 @@
 
 use loft::file_access as fa;
 use std::process::Command;
-#[cfg(unix)]
 use std::process::Stdio;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -1390,10 +1389,8 @@ const EPIPE_MANY: &str = "fn main() { for i in 0..20000 { println(\"line {i} pad
 ///
 /// The child's stdout handle is dropped after the third line, which closes the read end —
 /// the same thing `| head -3` does, without needing a shell.
-#[cfg(unix)]
 fn run_until_reader_leaves(script: &std::path::Path, dir: &std::path::Path, mode: &str) -> String {
     use std::io::{BufRead, BufReader};
-    use std::process::Stdio;
     let mut child = Command::new(loft_bin())
         .arg(mode)
         .arg(script)
@@ -1429,7 +1426,6 @@ fn run_until_reader_leaves(script: &std::path::Path, dir: &std::path::Path, mode
 }
 
 #[test]
-#[cfg(unix)]
 fn a_reader_that_stops_reading_does_not_fault_the_interpreter() {
     let (dir, script) = epipe_fixture("many-interp", EPIPE_MANY);
     run_until_reader_leaves(&script, &dir, "--interpret");
@@ -1437,7 +1433,6 @@ fn a_reader_that_stops_reading_does_not_fault_the_interpreter() {
 }
 
 #[test]
-#[cfg(unix)]
 fn a_reader_that_stops_reading_does_not_fault_the_native_backend() {
     let (dir, script) = epipe_fixture("many-native", EPIPE_MANY);
     run_until_reader_leaves(&script, &dir, "--native");
@@ -1447,34 +1442,22 @@ fn a_reader_that_stops_reading_does_not_fault_the_native_backend() {
 /// Run `script` with stdout AND stderr on ONE pipe, read `keep` lines, then close the read
 /// end — `prog 2>&1 | head -N` without a shell.
 ///
-/// Built from `libc::pipe` rather than `sh -c … PIPESTATUS`: `PIPESTATUS` is a bash array
-/// and `/bin/sh` here is dash, where it expands to nothing — the first version of this test
-/// compared that empty string against "134" and passed while measuring nothing.
-#[cfg(unix)]
+/// Built from `std::io::pipe` rather than `sh -c … PIPESTATUS`: `PIPESTATUS` is a bash
+/// array and `/bin/sh` here is dash, where it expands to nothing — the first version of this
+/// test compared that empty string against "134" and passed while measuring nothing.
+///
+/// Both ends must stay out of the child: `Command` DUPS the write end onto its 1/2, and an
+/// inherited original READ end means the pipe never reports a closed reader, so once the
+/// buffer fills the child blocks forever.  Measured: an early version of this helper hung
+/// for twenty minutes in `anon_pipe_write` with `fd 3 -> pipe` in its own `/proc/<pid>/fd`.
+/// `std::io::pipe` creates both ends close-on-exec (non-inheritable on Windows).
 fn run_with_merged_pipe(
     script: &std::path::Path,
     dir: &std::path::Path,
     keep: usize,
 ) -> std::process::ExitStatus {
     use std::io::{BufRead, BufReader};
-    use std::os::fd::{FromRawFd, OwnedFd};
-    let mut fds = [0 as libc::c_int; 2];
-    assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe");
-    // CLOSE-ON-EXEC on BOTH originals.  `Command` DUPS them onto the child's 0/1/2, and
-    // without this the originals are inherited too — so the child holds its own READ end,
-    // the pipe never reports a closed reader, and once the buffer fills the child blocks
-    // forever.  Measured: the first version of this helper hung for twenty minutes in
-    // `anon_pipe_write` with `fd 3 -> pipe` in its own `/proc/<pid>/fd`.
-    for fd in fds {
-        assert_ne!(
-            unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
-            -1,
-            "FD_CLOEXEC"
-        );
-    }
-    // SAFETY: both ends come from a successful `pipe` and are owned from here on.
-    let (read_end, write_end) =
-        unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+    let (read_end, write_end) = std::io::pipe().expect("pipe");
     let write_dup = write_end.try_clone().expect("dup the write end");
     let mut child = Command::new(loft_bin())
         .arg("--interpret")
@@ -1485,7 +1468,7 @@ fn run_with_merged_pipe(
         .spawn()
         .expect("failed to invoke loft binary");
     {
-        let mut reader = BufReader::new(std::fs::File::from(read_end));
+        let mut reader = BufReader::new(read_end);
         let mut line = String::new();
         for _ in 0..keep {
             line.clear();
@@ -1502,9 +1485,7 @@ fn run_with_merged_pipe(
 /// Verified to FIRE by injection (the `BrokenPipe` arm disabled): `status=ExitStatus(
 /// unix_wait_status(134))`, signal 6, which is the filed symptom exactly.
 #[test]
-#[cfg(unix)]
 fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
-    use std::os::unix::process::ExitStatusExt;
     // A `never-read` warning goes to stderr BEFORE the program runs, so one line is
     // satisfied by the diagnostic and every later write — diagnostic or program output —
     // meets the closed pipe.
@@ -1520,9 +1501,10 @@ fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
     // for the wrong reason.
     fa::create_dir_all(dir.join(".loft")).expect("cache dir");
     let status = run_with_merged_pipe(&script, &dir, 1);
-    assert_eq!(
-        status.signal(),
-        None,
+    // No exit code is how a death by signal reads (SIGABRT was 6); on Windows an abort is
+    // an exit code, which the `success` check below refuses.
+    assert!(
+        status.code().is_some(),
         "`prog 2>&1 | head` must not die by signal (SIGABRT was 6); status={status:?}"
     );
     assert!(
@@ -1546,6 +1528,7 @@ fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
 /// The CONTROL that keeps the cure honest: a write error that is NOT a broken pipe is a real
 /// fault and stays loud.  Exiting 0 on every failed write would pass every test above.
 #[test]
+// @PLN184 C2 exemption candidate: `/dev/full` has no Windows equivalent; Windows substitute: none
 #[cfg(unix)]
 fn a_full_disk_is_still_a_failure() {
     if !fa::exists(std::path::Path::new("/dev/full")) {
@@ -1571,7 +1554,6 @@ fn a_full_disk_is_still_a_failure() {
 /// The second CONTROL: a program that FAILS still reports its failure through a pipe the
 /// reader left early.  The broken-pipe exit must not mask a compile error.
 #[test]
-#[cfg(unix)]
 fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
     let (dir, script) = epipe_fixture("bad", "fn main() { qqq(); }\n");
     let status = run_with_merged_pipe(&script, &dir, 1);
