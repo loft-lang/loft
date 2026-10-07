@@ -4491,9 +4491,12 @@ child built where it will live.  The ok-false path is the ownership question, an
 answer is the one `(R-PushRec)` already gives a minted element: an element minted but not
 finished is NOT a member of the container (`vector_finish` is the one visibility step), its
 slot is capacity the next append reuses, and whatever heap the failed child placed is
-released by the CALLEE on its failing path exactly as it releases its own buffer today — the
-caller frees nothing.  A callee that answers `ok=false` after placing heap into r.v without
-releasing it is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
+released by the CALLER: where the plain form drops the failed result, the twin's caller runs
+the record's release walk over e — the same walk, over the same record shape, that freeing
+the discarded result runs — so the callee changes nothing but where it writes.  A failure is
+then identical to the plain form's in every value, member and live record; only spare
+capacity differs, which is representation (C122).  A caller that leaves e unfinished
+without releasing it, or finishes it on a failing path, is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
 D5 and D6 it takes the row 12.04 → 6.49 M ns/op, and it is the one step without which that
 ladder stops at 8.3×.  Sites: `(R-Callee)`'s admission (a second emission like
 `(R-Inputs)`' `__inv`), `Output::user_fn_call_body` for the tuple answer, the append
