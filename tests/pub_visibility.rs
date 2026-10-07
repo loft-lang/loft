@@ -53,8 +53,8 @@ pub fn flag() -> Flag { true }
 
 fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_pub_vis_{tag}_{}", std::process::id()));
-    std::fs::create_dir_all(dir.join("lib")).expect("scratch");
-    std::fs::write(dir.join("lib/units.loft"), UNITS).expect("units");
+    loft::file_access::create_dir_all(dir.join("lib")).expect("scratch");
+    loft::file_access::write(dir.join("lib/units.loft"), UNITS).expect("units");
     dir
 }
 
@@ -62,7 +62,7 @@ fn scratch(tag: &str) -> PathBuf {
 fn run(tag: &str, program: &str, enforce: bool) -> (String, String, bool) {
     let dir = scratch(tag);
     let src = dir.join("main.loft");
-    std::fs::write(&src, program).expect("program");
+    loft::file_access::write(&src, program).expect("program");
     let mut c = Command::new(env!("CARGO_BIN_EXE_loft"));
     c.arg("--interpret")
         .arg("--lib")
@@ -74,7 +74,7 @@ fn run(tag: &str, program: &str, enforce: bool) -> (String, String, bool) {
         c.env("LOFT_PUB_ENFORCE", "1");
     }
     let out = c.output().expect("run loft");
-    let _ = std::fs::remove_dir_all(Path::new(&dir));
+    let _ = loft::file_access::remove_dir_all(Path::new(&dir));
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
