@@ -144,7 +144,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 | float-kernel (5) | `ease`, `terrain_fbm`, `terrain_surface_at`, `roof_match`, `roof_cone` | @PLN185 D2; `ease` is over the bar on arm64 macOS only — it counts as over until both agree |
 | record-field (5) | `fill_polygon`, `stencil_rotate`, `locate`, `terrain_relief_pass`, cbor `encode` | a class with a median over the bar; `terrain_relief_pass` reads a type through a nullable record per cell |
 | text-scan (4) | `arguments/parse`, `mapfile_to_painted`, `seg`, `time/parse` | — |
-| record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | — |
+| record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | `slope_path_with_undo` PRICED and BUILT: each copy of the seven-field `Hex` tuple into or out of a store record resolved the store per field (`(R-RecPtr)`'s tuple clause, −32 %), and `s.us_redo = []` searched the record's fields at run time for a no-heap element type (−7 %): 440 → 267 µs, same hash.  What is left: the chunk walks the twin shares (~37 %), `length_vector` / `get_vector` out of line for `k.items[idx]` in a matched chunk (~23 %, both already `#[inline]`), the undo entry's append (~10 %) |
 | vector-write (2) | `canvas`, `fill_rect` | the lock-test fix moved `fill_rect` 9 % |
 | alloc-temp (3) | `draft_fit_p`, `catalog_churn`, `slugify` | `draft_fit_p` hands its temporary to callees in another library (apart.md triage) |
 | vector-build (2) | `emit_segment`, `field_union` | nine parallel narrow appends per segment |
