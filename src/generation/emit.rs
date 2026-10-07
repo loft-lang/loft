@@ -1852,10 +1852,14 @@ impl Output<'_> {
         // `generate_call_ref` does; the program continues (C80).
         write!(w, " _ => ")?;
         if let Some(fields) = &value_fields {
-            write!(w, "{}", super::hoist::tuple_reads(fields, "DbRef::NULL", "stores"))?;
+            write!(
+                w,
+                "{}",
+                super::hoist::tuple_reads(fields, "DbRef::NULL", "stores")
+            )?;
         } else {
             match ret_type.base() {
-            Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
+                Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
                 Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
                 _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
             }
