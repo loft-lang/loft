@@ -744,7 +744,11 @@ impl Parser {
             // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
             // has at this receiver, else under the slot's routine; the definition the call
             // reaches is selected once the argument types exist (`parse_method_selecting`).
+            // A set in which several members take this receiver offers no hint at all: the
+            // slot's routine is its FIRST member, and hinting with it typed an untyped `|x|`
+            // by declaration order (loft#1926).
             let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
+                _ if self.data.receiver_shared_in_set(&field, &dispatch) => u32::MAX,
                 [one] if self.data.def(*one).name.starts_with("t_") => *one,
                 _ => r_nr,
             };

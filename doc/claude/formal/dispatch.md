@@ -72,7 +72,10 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
   (Disp-Hint)       a name with several definitions offers no parse hint: its arguments are typed
                     from their own spelling, and one that cannot be (an untyped `|x|` lambda, a
                     literal needing a width) is refused at the call, naming the definitions and the
-                    typed spelling that cures it.  A name with one definition keeps its hint.
+                    typed spelling that cures it.  A name with one definition keeps its hint, and
+                    so does a `self` set whose members take different receivers: in either
+                    spelling the receiver is typed before the arguments (F-Recv), and it names
+                    one member.
 
   (Disp-Closed)     selection for a call whose argument types are statically concrete runs at
                     compile time and lowers to a direct call to the selected definition — no
@@ -124,6 +127,7 @@ value-shaped decision, and value clauses would make coverage undecidable.
 |---|---|---|
 | Disp-Key | `Parser` key building (`f_` / `t_…#…` keys) | `tests/scripts/a-library-exports-an-overload-set.loft` |
 | Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `converts_implicitly`, `rank_no_worse`, `select_overload`) | `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, `1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`, `1925b-two-converting-members-are-ambiguous-in-either-order.loft`, the refusals in `tests/parse_errors.rs` |
+| Disp-Hint | `Data::receiver_shared_in_set` (the method and free hints), `Parser::unhinted_set_names` (the refusal) | `tests/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`, `1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft` |
 | Disp-Exhaustive | `Parser::refuse_uncovered_variants`, the call refusal | `tests/parse_errors.rs` |
 | Disp-Closed | selection at parse time | `tests/introspect_dispatch.rs` |
 | Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `tests/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `tests/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |
@@ -132,5 +136,6 @@ value-shaped decision, and value clauses would make coverage undecidable.
 
 ## Deviations
 
-**OPEN: 0.**  D-disp-1 (the `self` set over variants) and D-disp-2 (a nullable enum position)
-are closed; the record is in [dispatch-history.md](dispatch-history.md).
+**OPEN: 0.**  D-disp-1 (the `self` set over variants), D-disp-2 (a nullable enum position),
+D-disp-3 (a converting member, loft#1925) and D-disp-4 (a `self` set's hint, loft#1926) are
+closed; the record is in [dispatch-history.md](dispatch-history.md).

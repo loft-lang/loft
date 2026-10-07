@@ -8981,6 +8981,40 @@ impl Data {
     }
 
     /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
+    /// `@FR-Disp-Hint` — does the call `name(receiver, …)` (either spelling) reach an overload set
+    /// in which SEVERAL members take `receiver`?  Then no single definition may steer how the
+    /// arguments parse: an untyped `|x|` lambda, or a literal needing a width, would be typed by
+    /// whichever member is asked — the first declared — and the call would then select that
+    /// member because of the type the hint gave it.  A set whose members take DIFFERENT receivers
+    /// keeps the receiver's own member as its hint: the receiver is typed before the arguments
+    /// are read (`F-Recv`), so it already names one definition.
+    #[must_use]
+    pub fn receiver_shared_in_set(&self, name: &str, receiver: &Type) -> bool {
+        let source = self.receiver_overload_source(name, receiver);
+        let main = self.source_nr(source, name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return false;
+        }
+        let receiver = match receiver.base() {
+            Type::RefVar(inner) => inner.base().clone(),
+            other => other.clone(),
+        };
+        self.def(main)
+            .attributes
+            .iter()
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
+            })
+            .filter(|&r| {
+                self.visible_params(r)
+                    .first()
+                    .is_some_and(|p| self.param_fits(&receiver, p))
+            })
+            .count()
+            > 1
+    }
+
     pub(crate) fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
         self.def(d_nr)
             .attributes

@@ -1194,6 +1194,13 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a
+    /// hint, the set's definitions as a refusal names them; a short lambda whose parameter
+    /// thereby has no type takes it and says so, naming them (`parse_lambda_short`).
+    pub(crate) unhinted_set: Option<String>,
+    /// That refusal was made: the call it belongs to ends there, so the definitions are not
+    /// reported a second time against an argument typed `fn(unknown)`.
+    pub(crate) unhinted_set_refused: bool,
     /// A call refused because two parameters bind one type variable to two types (@PLN165
     /// C1, F9): the refusal names both, and `call` answers nothing further for it.
     pub(crate) reported_binding_clash: bool,
@@ -1967,6 +1974,8 @@ impl Parser {
             lambda_counter: 0,
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            unhinted_set: None,
+            unhinted_set_refused: false,
             reported_binding_clash: false,
             declared_fn_names: HashMap::new(),
             positionless_loops: HashSet::new(),

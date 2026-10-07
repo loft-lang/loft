@@ -20130,7 +20130,18 @@ impl Parser {
                             if self.data.def(*t).name().starts_with("__tuple<")))
             });
             self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
+            // `@FR-Disp-Hint` — an argument a set's definitions do not hint is parsed knowing
+            // which set it is for, so an untyped lambda in it is refused naming them.
+            self.unhinted_set = if self.first_pass
+                || fn_def_nr.is_some()
+                || self.free_call_hint(name, &types) != u32::MAX
+            {
+                None
+            } else {
+                self.unhinted_set_names(name, types.first())
+            };
             let mut t = self.expression(&mut p);
+            self.unhinted_set = None;
             self.tuple_place_wanted = prev_place;
             // A member of a call result handed on as an argument is read where it lives
             // (`call_member_view`): the argument binds without copying, so the copy the terminal
@@ -20179,6 +20190,10 @@ impl Parser {
             }
         }
         self.last_called = u32::MAX;
+        // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
+        if std::mem::take(&mut self.unhinted_set_refused) {
+            return Type::Never;
+        }
         let ret = self.dispatch_call(
             val,
             source,
@@ -21566,6 +21581,9 @@ impl Parser {
         let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
             return u32::MAX;
         };
+        if self.data.receiver_shared_in_set(name, receiver) {
+            return u32::MAX;
+        }
         match self.data.candidates(u16::MAX, name, receiver).as_slice() {
             [one] if self.data.def(*one).name().starts_with("t_") => *one,
             _ => u32::MAX,
@@ -21690,8 +21708,11 @@ impl Parser {
                         // The slot holds the SET itself (a `self` set that dispatches past its
                         // receiver, with no enum-level definition): there is no routine to
                         // fall back to, and the answer is the bare spelling's refusal.
+                        // Nor is there one when several members take this receiver: the
+                        // slot's routine is only the FIRST of them (`@FR-Disp-Exhaustive`).
                         if !self.reported_dynamic_refusal
-                            && self.data.def(*fallback).def_type == DefType::Dynamic
+                            && (self.data.def(*fallback).def_type == DefType::Dynamic
+                                || self.data.receiver_shared_in_set(name, dispatch))
                         {
                             if !self.first_pass {
                                 self.report_selection(name, &routed, &sel, None);
@@ -21940,7 +21961,17 @@ impl Parser {
             arg_pos.push(*self.lexer.peek_pos());
             let before = self.method_facts.0.clone();
             self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
+            // `@FR-Disp-Hint` — as the bare spelling does (`parse_call`).
+            self.unhinted_set = match select {
+                MethodSelect::ByName { name, dispatch, .. }
+                    if !self.first_pass && hint_nr == u32::MAX =>
+                {
+                    self.unhinted_set_names(name, Some(dispatch))
+                }
+                _ => None,
+            };
             let t = self.expression(&mut p);
+            self.unhinted_set = None;
             self.expected = Type::Unknown(0);
             let fact = std::mem::take(&mut self.operand_fact);
             self.method_facts.0.push(fact);
@@ -21953,6 +21984,10 @@ impl Parser {
         self.lexer.token(")");
         // @PLN187 — what the arguments called is not this call (a special form records none)
         self.last_called = u32::MAX;
+        // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
+        if std::mem::take(&mut self.unhinted_set_refused) {
+            return Type::Never;
+        }
         let selected = self.select_method_def(select, &types);
         // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
         // the whole answer, as `Parser::call` makes it for the bare spelling.

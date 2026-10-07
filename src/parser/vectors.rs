@@ -1784,7 +1784,10 @@ or build a local and use that."
         self.lambda_counter += 1;
         let stored_name = format!("n_{lambda_name}");
 
-        // Capture hint types before entering the new context.
+        // Capture hint types before entering the new context.  The overload set this lambda is
+        // a direct argument of (`Self::unhinted_set`) is taken here, so a lambda in its body
+        // does not read it as its own call's.
+        let unhinted_set = self.unhinted_set.take();
         let hint_params_ret = self.lambda_hint();
         let (hint_params, hint_consts): (Vec<Type>, crate::data::ConstParams) =
             if let Type::Function(pts, _, _, consts) = &hint_params_ret {
@@ -1849,7 +1852,35 @@ or build a local and use that."
         // Error on second pass for any parameter whose type is still Unknown.
         if !self.first_pass {
             for a in &arguments {
-                if a.typedef.is_unknown() {
+                if a.typedef.is_unknown()
+                    && let Some(set) = unhinted_set.as_ref()
+                {
+                    // `@FR-Disp-Hint` — the call is to a name with several definitions, so none
+                    // of them types the lambda; the refusal names them, as a free set's does.
+                    self.unhinted_set_refused = true;
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        code = "untyped-lambda-at-overload-set",
+                        "cannot infer the type of lambda parameter '{}': {set}, so no single \
+                         definition types the lambda — write its types, `fn({}: <type>) -> <ret> {{ … }}`",
+                        a.name,
+                        a.name
+                    );
+                    self.lexer.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: format!(
+                            "spell the lambda `fn({}: <type>) -> <ret> {{ … }}` with the types the intended definition takes",
+                            a.name
+                        ),
+                        condition: Some(
+                            "the type picks the definition the call is meant to reach".to_string(),
+                        ),
+                        edit: None,
+                        concept: "multiple dispatch",
+                        concept_ref: "@F122",
+                    });
+                } else if a.typedef.is_unknown() {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
