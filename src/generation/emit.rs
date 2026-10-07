@@ -1999,10 +1999,50 @@ impl Output<'_> {
             .get(&tp)
             .map(|t| t.fields.clone())
             .unwrap_or_default();
+        // `@FR-R-RecPtr`'s tuple clause, the read half: `src` evaluated once and its
+        // address taken once, every field of a kind the address serves one load through it
+        // (the null record's address is null, so each answers its getter's sentinel).
+        // Field by field, each getter resolved the store and bounded the read again — the
+        // seven reads of `map_get_hex`'s `return chunk.hexes[idx]?`.  Nothing between the
+        // address and its last use runs but loads.  A view whose block holds an address
+        // already reads through that one.
+        let kinds: Vec<Option<(&str, &str)>> = fields
+            .iter()
+            .map(|(_, rt)| {
+                if super::hoist::is_view_part(rt) {
+                    None
+                } else {
+                    super::hoist::scalar_kind(super::hoist::value_getter(rt))
+                }
+            })
+            .collect();
+        let through = !self.record_ptr_disabled
+            && kinds.iter().any(Option::is_some)
+            && !matches!(src.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some());
+        let src = if through {
+            write!(w, "{{ let __rt: DbRef = ")?;
+            self.output_code_inner(w, src)?;
+            write!(
+                w,
+                "; let __rp = vector::rec_ptr(&__rt, &stores.allocations); "
+            )?;
+            Value::RawExpr("__rt".to_string())
+        } else {
+            src.clone()
+        };
+        let src = &src;
+        let verify = self.hoist_verify;
         write!(w, "(")?;
         for (i, (off, rt)) in fields.iter().enumerate() {
             if i > 0 {
                 write!(w, ", ")?;
+            }
+            if through && let Some((ty, absent)) = kinds[i] {
+                write!(
+                    w,
+                    "unsafe {{ vector::rec_get::<{ty}>(__rp, &__rt, ({off}_i64) as u32, {absent}, &stores.allocations, {verify}) }}"
+                )?;
+                continue;
             }
             // @PLN164 C5 — a VIEW-LEAF field of a viewed record is its own field SLOT:
             // `OpGetField` answers exactly the reference the leaf delivers, so the view's
@@ -2024,7 +2064,11 @@ impl Output<'_> {
         if fields.len() == 1 {
             write!(w, ",")?;
         }
-        write!(w, ")")
+        write!(w, ")")?;
+        if through {
+            write!(w, " }}")?;
+        }
+        Ok(())
     }
 
     pub(super) fn write_typed_null(w: &mut dyn Write, tp: &Type) -> std::io::Result<()> {

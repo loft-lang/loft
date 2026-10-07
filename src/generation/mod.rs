@@ -5651,6 +5651,9 @@ impl Output<'_> {
         let Some(fields) = self.value_records.types.get(&tp).map(|t| t.fields.clone()) else {
             return Ok(());
         };
+        if self.write_tuple_through_address(w, &fields, dst, tuple)? {
+            return Ok(());
+        }
         for (i, (off, rt)) in fields.iter().enumerate() {
             let part = Value::RawExpr(format!("{tuple}.{i}"));
             let off_v = Value::Int(i32::try_from(*off).unwrap_or(i32::MAX));
@@ -5684,6 +5687,71 @@ impl Output<'_> {
             write!(w, "; ")?;
         }
         Ok(())
+    }
+
+    /// `@FR-R-RecPtr`'s tuple clause, the write half — the tuple `tuple` written into the
+    /// record `dst` through ONE address: `dst` evaluated once, its address and lock state
+    /// taken once, then one store per scalar field.  Field by field through the setters,
+    /// each write resolved the store and asked its bounds and lock again — seven times
+    /// for one seven-field record (`map_set_hex`, `undo_push`).  Sound without a block
+    /// proof: the parts are tuple elements already computed, so nothing between the
+    /// address and its last use can grow, move or free a store.  Declines (answers
+    /// `false`, nothing written) when a field is a view part — its append may grow the
+    /// store — when no field is a kind the address serves, when the destination is a
+    /// view whose block already holds an address (its setters use that one), and under
+    /// `LOFT_NO_RECORD_PTR`.  A field of another kind keeps its setter, to the same bytes.
+    fn write_tuple_through_address(
+        &mut self,
+        w: &mut dyn Write,
+        fields: &[(i64, &'static str)],
+        dst: &Value,
+        tuple: &str,
+    ) -> std::io::Result<bool> {
+        let kinds: Vec<Option<&str>> = fields
+            .iter()
+            .map(|(_, rt)| hoist::setter_kind(hoist::value_setter(rt)))
+            .collect();
+        if self.record_ptr_disabled
+            || fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
+            || kinds.iter().all(Option::is_none)
+            || matches!(dst.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
+        {
+            return Ok(false);
+        }
+        let verify = self.hoist_verify;
+        write!(w, "{{ ")?;
+        // A caller that derived the destination once already named it `__cd`.
+        if !matches!(dst.unspan(), Value::RawExpr(e) if e == "__cd") {
+            write!(w, "let __cd: DbRef = ")?;
+            self.output_code_inner(w, dst)?;
+            write!(w, "; ")?;
+        }
+        write!(
+            w,
+            "let __cp = vector::rec_ptr(&__cd, &stores.allocations); \
+             let __cl = vector::rec_locked(&__cd, &stores.allocations); "
+        )?;
+        for (i, ((off, rt), kind)) in fields.iter().zip(&kinds).enumerate() {
+            if let Some(ty) = kind {
+                write!(
+                    w,
+                    "unsafe {{ vector::rec_set::<{ty}>(__cp, __cl, &__cd, ({off}_i64) as u32, {tuple}.{i}, &stores.allocations, {verify}) }}; "
+                )?;
+            } else {
+                let setter = Value::Call(
+                    self.data.def_nr(hoist::value_setter(rt)),
+                    vec![
+                        Value::RawExpr("__cd".to_string()),
+                        Value::Int(i32::try_from(*off).unwrap_or(i32::MAX)),
+                        Value::RawExpr(format!("{tuple}.{i}")),
+                    ],
+                );
+                self.output_code_inner(w, &setter)?;
+                write!(w, "; ")?;
+            }
+        }
+        write!(w, "}}; ")?;
+        Ok(true)
     }
 
     /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
