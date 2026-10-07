@@ -279,7 +279,7 @@ the routine's total 62.6 → 53.7 ms alone on one core (−14 %, against −10 %
 left before it is the § above: `pa_get` answered a deep copy of the entry it found, its key
 compares copy each key, `pa_text` copies the value twice more, and `decode` still claims,
 fills and frees four texts and two byte strings per frame the twin never materialises —
-`(R-DecodeView)` (@C139), whose ceiling was measured at 3.95 → 2.54 ms (−36 %).
+`(R-DecodeView)` (@C141), whose ceiling was measured at 3.95 → 2.54 ms (−36 %).
 
 ### Order
 

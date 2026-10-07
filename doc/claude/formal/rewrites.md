@@ -4726,7 +4726,7 @@ compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN
 ### A decoded text or byte string is a view into the frame
 
 ```
-  (R-DecodeView) (@C139) a `text` or `vector<u8>` FIELD f of a record R whose value
+  (R-DecodeView) (@C141) a `text` or `vector<u8>` FIELD f of a record R whose value
                  at R's construction is a span B[a..b] of a byte vector B — read by
                  (R-TextRun), copied by (R-ByteCopy)'s vector clause, or a slice —
                  holds the SPAN (B's
