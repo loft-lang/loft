@@ -98,7 +98,7 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     data.definitions[d_nr as usize].code = code;
 }
 
-fn own_return_buffer(data: &Data, d_nr: u32) -> Option<u16> {
+pub(crate) fn own_return_buffer(data: &Data, d_nr: u32) -> Option<u16> {
     let def = data.def(d_nr);
     let idx = def.hidden_return_buffer_attr()?;
     let name = &def.attributes().get(idx)?.name;
@@ -312,6 +312,11 @@ fn wrapper_name(data: &Data, function: &Function, vdb: u16) -> String {
 /// The exit's own "ensure the buffer" statement — the first statement of the first exit
 /// block, which names the buffer and mints it when absent — cloned to stand before the
 /// wrapper's placement.
+/// The exit's "ensure the buffer" statement, for the record clause (`crate::exit_record`).
+pub(crate) fn exit_guard(code: &Value, rb: u16, data: &Data) -> Option<Value> {
+    guard_template(code, rb, &Ops::lookup(data)?)
+}
+
 fn guard_template(code: &Value, rb: u16, ops: &Ops) -> Option<Value> {
     let mut found = None;
     code.walk(&mut |n| {
@@ -345,7 +350,7 @@ fn mints_buffer(node: &Value, rb: u16, ops: &Ops) -> bool {
 
 /// An `Object` block building into the buffer that ends by returning it (or, the tail
 /// spelling, by yielding it).
-fn is_exit_block(bl: &Block, rb: u16) -> bool {
+pub(crate) fn is_exit_block(bl: &Block, rb: u16) -> bool {
     bl.name == "Object"
         && bl.result.depend() == [rb]
         && match bl.operators.last().map(Value::unspan) {

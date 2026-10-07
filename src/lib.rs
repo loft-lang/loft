@@ -341,6 +341,7 @@ pub mod const_fn;
 pub mod copy_view;
 pub mod discharge_into;
 pub mod exit_vector;
+pub mod exit_record;
 pub mod file_access;
 pub mod forward_result;
 pub mod forward_walk;
