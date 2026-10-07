@@ -35,7 +35,7 @@ pub fn calculate_positions(
     let mut gaps = BTreeMap::new();
     // Calculated position for each field on number.
     let mut positions = BTreeMap::new();
-    let mut pos = 0;
+    let mut pos: u16 = 0;
     // Keep space for the type for an EnumValue.
     if sub {
         // Start on the first 8 byte alignment position.
@@ -84,6 +84,17 @@ pub fn calculate_positions(
                         }
                     }
                     Ordering::Less => {
+                        // `@FR-L-Align` — the end of what is placed so far is not always a
+                        // multiple of `al`: a linked group (an index's 9-byte link triple)
+                        // ends where its size does.  Skip to the boundary and keep the bytes
+                        // skipped as a gap a smaller field can still use; a 2-byte field
+                        // after the triple sat at an odd offset, and the layout was refused
+                        // (loft#1911).
+                        let aligned = pos.div_ceil(u16::from(al)) * u16::from(al);
+                        if aligned > pos {
+                            gaps.insert(pos, aligned - pos);
+                            pos = aligned;
+                        }
                         positions.insert(nr, pos);
                         pos += field_size;
                         *size = pos;
