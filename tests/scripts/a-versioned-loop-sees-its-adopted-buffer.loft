@@ -1,0 +1,70 @@
+// `@FR-R-Alias`'s versioned clause, the adopted-buffer case — a loop that reads a PARAMETER's
+// elements through record views while it pushes into the local that ADOPTED the return
+// buffer runs a copy whose views read through record addresses, under a run-time test that
+// the buffer's store is not the parameter's.  Where the caller hands the parameter's own
+// record as the buffer (`v = twice(v)`, `@FR-R-Rebind`), the test fails and the plain loop
+// runs: a push there reallocates the very store the views point into.  Every value is
+// hand-computed; LOFT_POISON=1 poisons a reallocated block, so a stale address reads 0xA5
+// bytes instead of the old values.
+//
+// @ARMED: LOFT_POISON=1
+
+struct P { x: integer, y: integer }
+struct Tri { a: integer, b: integer, c: integer }
+struct M { pts: vector<P>, tris: vector<Tri> }
+
+/// The mesh shape: per triangle three lookups, a null test, two pushes per vertex.
+fn flatten(m: const M) -> vector<integer> {
+  out: vector<integer> = [];
+  for t in m.tris {
+    for i in [t.a, t.b, t.c] {
+      p = m.pts[i];
+      if p != null {
+        out += [p.x, p.y];
+      }
+    }
+  }
+  out
+}
+
+/// The aliased shape: each element read through a view and appended twice.
+fn twice(v: vector<P>) -> vector<P> {
+  out: vector<P> = [];
+  for e in v {
+    if e != null {
+      out += [P { x: e.x, y: e.y }];
+      out += [P { x: e.x + 1000, y: e.y }];
+    }
+  }
+  out
+}
+
+fn main() {
+  // c1 — four points, three triangles, one corner out of range (index 9: skipped).
+  m = M { pts: [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 5, y: 6 }, P { x: 7, y: 8 }],
+          tris: [Tri { a: 0, b: 1, c: 2 }, Tri { a: 2, b: 3, c: 9 }, Tri { a: 3, b: 0, c: 1 }] };
+  f = flatten(m);
+  // corners: 0,1,2 | 2,3 | 3,0,1  -> 8 points, 16 integers
+  assert(len(f) == 16, "c1 len {len(f)}");
+  s = 0;
+  for k in f { s = s * 3 + k; s = s % 1000003; }
+  // the sequence 1,2,3,4,5,6, 5,6,7,8, 7,8,1,2,3,4 folded by s = (3s + k) mod 1000003
+  e = 0;
+  for k in [1, 2, 3, 4, 5, 6, 5, 6, 7, 8, 7, 8, 1, 2, 3, 4] { e = e * 3 + k; e = e % 1000003; }
+  assert(s == e && f[0] == 1 && f[15] == 4 && f[8] == 7, "c1 values {s} vs {e}");
+
+  // c2 — the buffer IS the parameter's record: three rounds double the vector each time,
+  // every element keeping its pair, the x of each second copy 1000 higher.
+  v = [P { x: 1, y: 10 }, P { x: 2, y: 20 }];
+  v = twice(v);
+  v = twice(v);
+  v = twice(v);
+  assert(len(v) == 16, "c2 len {len(v)}");
+  // round 3's input: [1,1001,1001,2001, 2,1002,1002,2002]; its output pairs each with +1000
+  assert(v[0].x == 1 && v[1].x == 1001 && v[2].x == 1001 && v[3].x == 2001, "c2 head {v[0].x} {v[1].x} {v[2].x} {v[3].x}");
+  assert(v[15].x == 3002 && v[15].y == 20 && v[8].x == 2 && v[8].y == 20, "c2 tail {v[15].x} {v[8].x}");
+  sy = 0;
+  for q in v { sy += q.y; }
+  assert(sy == 8 * 10 + 8 * 20, "c2 ys {sy}");
+  println("ok");
+}

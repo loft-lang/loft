@@ -2871,8 +2871,13 @@ fn view_extent_verdict(
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
                     // `OpCopyRecord(r, dst, tp)` has the view as its SOURCE: a read of r.
+                    // A comparison or a null test of the view (`e != null` is `OpNeRef`) only
+                    // reads its handle.
+                    let tests =
+                        ["OpEqRef", "OpNeRef", "OpConvBoolFromRef", "OpRefIsNull"].contains(&name);
                     if on_r
                         && native
+                        && !tests
                         && !name.starts_with("OpGet")
                         && !IN_PLACE_SET_OPS.contains(&name)
                         && name != "OpCopyRecord"

@@ -4350,8 +4350,9 @@ impl Output<'_> {
         // Every block inside the loop, with each statement that binds a view of a parameter.
         let mut sites: Vec<(Vec<Value>, usize, u16)> = Vec::new();
         let body = Value::Loop(Box::new(lp.clone()));
+        // A loop's own statement list binds its `for` variable, a view of the walked vector.
         body.any_node(&mut |n| {
-            if let Value::Block(bl) = n {
+            if let Value::Block(bl) | Value::Loop(bl) = n {
                 for (i, st) in bl.operators.iter().enumerate() {
                     if let Value::Set(r, _) = st.unspan()
                         && let Some(p) = root(*r)
