@@ -149,8 +149,10 @@ fn overview_at(s: &mut Session, id: i64, uri: &str, line: i64, ch: i64) -> Strin
     opened
 }
 
+/// The file a `file://` URI names, by the server's own rule (`file:///C:/x` is `C:/x` on
+/// Windows, where stripping the scheme alone left `/C:/x`).
 fn path_of(uri: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(uri.strip_prefix("file://").unwrap_or(uri))
+    std::path::PathBuf::from(loft::lsp::uri_to_path(uri))
 }
 
 #[test]
