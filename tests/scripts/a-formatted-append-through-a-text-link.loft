@@ -4,7 +4,14 @@
 // `&mut String`, and the format ops spelled their destination for the parameter alone, so a
 // formatted append through a LOCAL link did not compile (E0308) (loft#1905).  Each value is
 // worked out by hand beside it.
-// @falsified-at: fbee3ae5e — measured below by `make falsify`
+// @falsified-at: fbee3ae5e — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-formatted-append-through-a-text-link.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the native exit — rustc refuses the control (E0308, `*mut String` where a
+//   `&mut String` is due).
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends;
+//   the interpreter answers every cell on both, as measured by `make falsify` at fbee3ae5e.
 
 fn through_param(p: &text, n: integer) { p += "<{n}>"; }
 // "s" + "0" + "1" + "2".
