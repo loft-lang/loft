@@ -40,8 +40,11 @@
 //! **The baseline** (`tests/ownership_drop_gate.baseline`) lists every cell that is not clean,
 //! with the kinds of finding it has.  It is a record of the tree it was measured on: the test
 //! fails when a cell gains or changes a finding, and it also fails when a finding is GONE, so
-//! that a fix retires its line in the same commit.  A line in it is an open defect, not an
-//! accepted behaviour — the register for each one is `doc/claude/formal/heap.md`.
+//! that a fix retires its line in the same commit.  The cells run with the lease refusals off
+//! (`gate_command`), so a line is a shape `(H-Copy-Refuse)` or `(H-Spent)` refuses by default
+//! — `a_refused_cell_is_a_compile_error_and_a_once_cell_is_not` holds the compiler to that —
+//! and a cell the rules permit that releases wrongly must name its open `heap.md` deviation in
+//! `LEASE_DEVIATIONS`.
 //!
 //!   run:    cargo test --release --test ownership_drop_gate      (both backends)
 //!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
@@ -1122,7 +1125,8 @@ fn workers(cap: usize) -> usize {
 fn render(verdicts: &[Verdict], backend: &str) -> String {
     let mut s = format!(
         "# ownership_drop_gate — the {backend} cells that are NOT clean, measured on the tree that\n\
-         # committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.\n\
+         # committed this file, with the lease refusals off: `cell KIND,KIND`.  Every line is a cell the\n\
+         # lease rules REFUSE at compile time; a cell they permit is never listed.\n\
          # Regenerate only after reading the diff: {BLESS}=1 cargo test --release --test ownership_drop_gate\n"
     );
     let mut lines: Vec<String> = verdicts
