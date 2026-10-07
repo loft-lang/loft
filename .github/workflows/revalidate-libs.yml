@@ -104,23 +104,22 @@ jobs:
           done
           exit $red
 
-  revalidate:
-    # @windows-exempt: a library's platforms are its own CI's choice
+  # loft is built ONCE and every library leg downloads it.  Each leg used to build it
+  # itself — the same 2¼ minutes, 42 times — after an `apt-get update` for `mold` that a
+  # stalled package mirror could hold for the job's whole limit (eight legs sat 40+
+  # minutes in that step on one PR).  No `mold` here: `scripts/cc-mold` links with plain
+  # `cc` where mold is absent, and nothing downstream links loft again.
+  build:
+    # @windows-exempt: builds the Linux loft the library legs run
     needs: discover
     if: needs.discover.outputs.count != '0'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false            # one broken lib must not hide the others
-      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
-    name: ${{ matrix.name }} ${{ matrix.version }}
+    timeout-minutes: 30
     steps:
       - name: Checkout loft (the version under validation)
         uses: actions/checkout@v4
         with:
           path: loft-src
-
-      - name: Install mold (loft's pinned linker)
-        run: sudo apt-get update -y && sudo apt-get install -y mold
 
       - name: Cache cargo + loft build
         id: cargo-cache
@@ -135,9 +134,60 @@ jobs:
 
       - name: Build loft
         working-directory: loft-src
+        run: cargo build --release --lib --bin loft
+
+      # What a library leg runs: the binary, and the rlibs `--native` links a test program
+      # against (`native_utils` finds them beside the binary or in `deps/`).
+      - name: Upload the loft build
+        uses: actions/upload-artifact@v4
+        with:
+          name: revalidate-loft-build
+          path: |
+            loft-src/target/release/loft
+            loft-src/target/release/libloft.rlib
+            loft-src/target/release/deps/*.rlib
+            loft-src/target/release/deps/*.so
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            loft-src/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  revalidate:
+    # @windows-exempt: a library's platforms are its own CI's choice
+    needs: [discover, build]
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    # A leg's own work is a few minutes; this bounds one that is stuck (a hung test, a
+    # stalled download) so it fails as itself instead of holding the run for hours.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false            # one broken lib must not hide the others
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    name: ${{ matrix.name }} ${{ matrix.version }}
+    steps:
+      - name: Checkout loft (the version under validation)
+        uses: actions/checkout@v4
+        with:
+          path: loft-src
+
+      - name: Download the loft build
+        uses: actions/download-artifact@v4
+        with:
+          name: revalidate-loft-build
+          path: loft-src/target/release
+
+      - name: Put loft on the path
         run: |
-          cargo build --release --lib --bin loft
-          echo "$PWD/target/release" >> "$GITHUB_PATH"
+          chmod +x loft-src/target/release/loft
+          echo "$GITHUB_WORKSPACE/loft-src/target/release" >> "$GITHUB_PATH"
 
       - name: Checkout ${{ matrix.name }} @ ${{ matrix.tag }}
         uses: actions/checkout@v4
@@ -163,7 +213,11 @@ jobs:
                   } | tr ',' '\n' | tr -d ' ' | sed '/^$/d' | sort -u | tr '\n' ' ') || true
           if [ -n "$deps" ]; then
             echo "installing build-deps: $deps"
-            sudo apt-get install -y $deps
+            # Bounded: a stalled mirror fails this step in minutes and says so.
+            apt="-o Acquire::Retries=3 -o Acquire::http::Timeout=30"
+            timeout 300 sudo apt-get $apt update -y \
+              && timeout 300 sudo apt-get $apt install -y $deps \
+              || { echo "::error::installing build-deps ($deps) failed or timed out — the runner's package mirror, not the library"; exit 1; }
           else
             echo "no build-deps declared by this lib or its deps"
           fi
@@ -320,21 +374,12 @@ jobs:
           path: warn/
           if-no-files-found: ignore
           retention-days: 14
-      - name: Save cargo cache (main only)
-        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            loft-src/target
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   # Fail the workflow if any published library broke — that is a language change
   # retro-breaking a shipped lib, which the freeze forbids.
   gate:
     # @windows-exempt: platform-free — aggregates the revalidation
-    needs: [revalidate, unreleased]
+    needs: [build, revalidate, unreleased]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -362,6 +407,15 @@ jobs:
           if [ "$u" != "success" ]; then
             echo "::error::a library repo carries work that never shipped (a stale PR or an orphan branch) — the \`unreleased\` job names each one and its cure: merge or close the PR, open a PR for the branch or delete it."
             echo "unreleased work: $u" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # A failed build SKIPS every library leg, and a skipped revalidation reads as
+          # green below — so the build answers first.  It is itself skipped only when the
+          # registry lists no library.
+          b='${{ needs.build.result }}'
+          if [ "$b" != "success" ] && [ "$b" != "skipped" ]; then
+            echo "::error::building loft for the library legs failed ($b) — no library was checked."
+            echo "loft build: $b" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
           fi
           r='${{ needs.revalidate.result }}'
           echo "revalidation: $r" >> "$GITHUB_STEP_SUMMARY"
