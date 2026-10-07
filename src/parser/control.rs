@@ -18335,6 +18335,19 @@ impl Parser {
             return RetPromotion::SkipDelivered;
         }
         let n = self.vars.name(v);
+        // loft#1936 — a CONSTANT's anchor (`_const_view_N`, minted at the constant's use site):
+        // the value is a view of the write-locked constant store, never assigned to the
+        // anchor, so the return must deliver a COPY into the buffer.  Renamed into the buffer
+        // it would hand the constant itself to the caller, whose first write reaches the lock.
+        if n.starts_with("_const_view_")
+            && let Some((buf_attr, buf_var)) = self.return_buffer()
+        {
+            return RetPromotion::Bind {
+                buf_attr,
+                buf_var,
+                substitute: false,
+            };
+        }
         let is_work_ref = n.starts_with("__ref_") || n.starts_with("__rref_");
         // A1b (@PLN90 W1, gated) — the tail borrows a temporary subject the fn
         // constructs. For the SITE-VALUE work-ref (g's buffer) suppress the Rename
