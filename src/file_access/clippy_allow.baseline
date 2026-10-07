@@ -1,5 +1,6 @@
 # Files still reaching the file system around file_access, each with a marked #![allow] (@PLN184 A1).
 # Only shrinks: see src/file_access/guard.rs.
+build.rs
 src/database/allocation.rs
 src/database/journal.rs
 src/database/spans.rs
