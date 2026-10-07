@@ -2092,7 +2092,7 @@ enum SwapPhase {
     Idle,
     Requested(String),
     Waiting {
-        child: std::process::Child,
+        child: crate::platform::process::Running,
         ready: std::path::PathBuf,
         snap: std::path::PathBuf,
         deadline: Instant,
@@ -2182,21 +2182,21 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     *sw = SwapPhase::Idle;
                     return 0;
                 }
-                let mut cmd = std::process::Command::new(&artifact);
-                cmd.env("LOFT_RESUME", &snap)
+                use crate::platform::process::{Program, Spawn, Tree};
+                let spawned = Spawn::new(Program::os(&artifact))
+                    .env("LOFT_RESUME", &snap)
                     .env("LOFT_SWAP_READY", &ready)
                     // Dispatch reset: the new build has the edits COMPILED —
                     // startup flips must not resurrect the interpreter tier.
                     .env_remove("LOFT_FLIP_FNS")
-                    .stdin(std::process::Stdio::null());
-                // The new build is a HANDOVER TARGET, not part of this
-                // process tree: it must survive the old chain's exit and any
-                // group-scoped kill aimed at the retiring driver hierarchy
-                // (probe-caught: a group signal reaped the new server after
-                // a clean handover).  Its own group makes the cut explicit.
-                #[cfg(unix)]
-                std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-                match cmd.spawn() {
+                    .stdin(std::process::Stdio::null())
+                    // The new build is a HANDOVER TARGET, not part of this
+                    // process tree: it must survive the old chain's exit and any
+                    // stop aimed at the retiring driver hierarchy (probe-caught: a
+                    // group signal reaped the new server after a clean handover).
+                    .tree(Tree::Detached)
+                    .start();
+                match spawned {
                     Ok(child) => {
                         eprintln!("loft-swap: booting {artifact} (meaning frozen)");
                         *sw = SwapPhase::Waiting {
@@ -2232,7 +2232,10 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     KERNEL.with(|k| *k.borrow_mut() = None);
                     return 2;
                 }
-                if let Ok(Some(status)) = child.try_wait() {
+                if !child.alive() {
+                    let status = child
+                        .finish()
+                        .map_or_else(|e| e.to_string(), |s| s.to_string());
                     eprintln!("loft-swap: rolled back (new build exited {status} before serving)");
                     let _ = crate::file_access::remove_file(&*snap);
                     let _ = crate::file_access::remove_file(&*ready);
@@ -2241,8 +2244,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 }
                 if Instant::now() > *deadline {
                     eprintln!("loft-swap: rolled back (new build never became ready)");
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    let _ = child.stop_tree();
                     let _ = crate::file_access::remove_file(&*snap);
                     let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Idle;
