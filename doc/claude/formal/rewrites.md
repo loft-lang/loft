@@ -316,6 +316,18 @@ versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` deci
                  — and a chain that forks or leaves the table answers nothing.
                  `LOFT_NO_DISTINCT_GROWTH` keeps every base off under any growth; the
                  verify form re-derives the base at every use as before.
+                 THE RESOLVE CLAUSE: a byte, boolean or character element read of a
+                 path whose header is held WITHOUT a base — the function clause of
+                 (R-Header), a loop that grows a store not proven apart — is the same
+                 range test and one load, the base taken from the store AT THE READ
+                 (`elem_base` of the header's record).  The header alone proves the
+                 vector's record and length, and the read takes the store's buffer as
+                 it is now, so a store that grew since answers its new buffer.  No
+                 condition beyond the header's.  `LOFT_NO_BYTE_RESOLVE` keeps the
+                 template where no base is held; the falsifier is `LOFT_POISON=1`,
+                 under which a store's growth moves its bytes and poisons the block it
+                 leaves, so an address held across a growth reads the poison where a
+                 `realloc` left the old bytes readable and equal.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
