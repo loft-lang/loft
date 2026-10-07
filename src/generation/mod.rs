@@ -8,6 +8,7 @@ use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
+pub mod append_twin;
 mod calls;
 mod coroutine;
 mod dispatch;
@@ -884,6 +885,18 @@ pub struct Output<'a> {
     /// The refill twins calls have asked for, and the ones already emitted.
     pub rt_requests: Vec<u32>,
     pub rt_emitted: HashSet<u32>,
+    /// `@FR-R-AppendTwin` — the buffer of the append twin being emitted, and every local
+    /// that views it; `None` outside a twin.
+    pub append_twin_buf: Option<u16>,
+    pub append_twin_views: HashSet<u16>,
+    /// The append twins calls have asked for, the ones already emitted, and the eligibility
+    /// answers ([`append_twin::eligible`]).
+    pub ap_requests: Vec<u32>,
+    pub ap_emitted: HashSet<u32>,
+    pub ap_memo: HashMap<u32, bool>,
+    /// The caller-side rewrite's call, `(callee, argument slice)`, waiting for its name: a
+    /// call left unnamed here would hand X to the plain callee, which clears it.
+    pub ap_site_next: Option<(u32, usize)>,
     /// Set while a refill twin's body is emitted: its return buffer, whose literal text sets
     /// refill their slots; its name takes `__rt`.
     pub refill_twin_buf: Option<u16>,
@@ -2375,6 +2388,12 @@ impl<'a> Output<'a> {
             refill_text_pending: None,
             rt_requests: Vec::new(),
             rt_emitted: HashSet::new(),
+            append_twin_buf: None,
+            append_twin_views: HashSet::new(),
+            ap_requests: Vec::new(),
+            ap_emitted: HashSet::new(),
+            ap_memo: HashMap::new(),
+            ap_site_next: None,
             refill_twin_buf: None,
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
@@ -2807,9 +2826,11 @@ impl Output<'_> {
         if let Some(b) = self.refill_twin_buf {
             self.complete_writes.db_vars.remove(&b);
         }
-        self.refill = if crate::keys::refill_buffer_enabled() {
+        self.refill = if crate::keys::refill_buffer_enabled() && self.append_twin_buf.is_none() {
             hoist::refill_buffers(self.data, self.stores, def_nr)
         } else {
+            // `@FR-R-AppendTwin` — a twin's buffer is never cleared or refilled: it holds the
+            // caller's elements, and a refill's keep or release would reach them.
             hoist::RefillBuffers::default()
         };
         // `@FR-R-RefillText`'s collection clause needs the append's no-prefill mint: a
@@ -2935,7 +2956,10 @@ impl Output<'_> {
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
-        self.ret_adopt = if self.retbuf_adopt_disabled {
+        // `@FR-R-AppendTwin` — a twin never adopts: adoption makes the result local BE the
+        // buffer at emission time, which the IR the twin's eligibility read does not say, and
+        // its bind clears that buffer — the caller's elements.
+        self.ret_adopt = if self.retbuf_adopt_disabled || self.append_twin_buf.is_some() {
             None
         } else {
             hoist::ret_adopt(self.data, def_nr)
@@ -9241,7 +9265,38 @@ extern crate loft;"
             }
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
-        self.output_refill_twins(w, program_store.as_ref())
+        self.output_refill_twins(w, program_store.as_ref())?;
+        self.output_append_twins(w, program_store.as_ref())
+    }
+
+    /// `@FR-R-AppendTwin` — the append twins calls asked for: each callee's body with its
+    /// buffer as the caller's destination and none of its clears.  A twin's calls may ask
+    /// for more twins of any kind, so until none is left.
+    fn output_append_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        while let Some(at) = self
+            .ap_requests
+            .iter()
+            .position(|r| !self.ap_emitted.contains(r))
+        {
+            let dnr = self.ap_requests[at];
+            self.ap_emitted.insert(dnr);
+            let Some(b) = append_twin::buffer(self.data, dnr) else {
+                continue;
+            };
+            self.append_twin_buf = Some(b);
+            self.append_twin_views = append_twin::views(self.data.def(dnr).variables(), b);
+            let r = self.output_function(w, dnr, program_store);
+            self.append_twin_buf = None;
+            self.append_twin_views.clear();
+            r?;
+            self.output_ranged_variants(w, program_store)?;
+            self.output_refill_twins(w, program_store)?;
+        }
+        Ok(())
     }
 
     /// `@FR-R-RangedCall` — the ranged variants the calls asked for, each emitted under its
@@ -10046,6 +10101,8 @@ extern crate loft;"
             if self.emitting_ranged { "__rg" } else { "" },
             if self.refill_twin_buf.is_some() {
                 "__rt"
+            } else if self.append_twin_buf.is_some() {
+                "__ap"
             } else {
                 ""
             }
