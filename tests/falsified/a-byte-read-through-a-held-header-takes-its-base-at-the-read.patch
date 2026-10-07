@@ -1,0 +1,31 @@
+diff --git a/src/generation/mod.rs b/src/generation/mod.rs
+index c7b33c868..5dd89ce1e 100644
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -4685,6 +4685,7 @@ impl Output<'_> {
+         paths: Vec<(hoist::PathKey, Value)>,
+     ) -> std::io::Result<bool> {
+         let mut frame: HashMap<hoist::PathKey, String> = HashMap::new();
++        let mut entry_bases: HashMap<hoist::PathKey, String> = HashMap::new();
+         let mut lines: Vec<String> = Vec::new();
+         for (path, expr) in paths {
+             if self.coroutine_persistent_fields.contains_key(&path.0) {
+@@ -4696,6 +4697,9 @@ impl Output<'_> {
+             lines.push(format!(
+                 "let {name} = vector::vec_header(&({operand}), &stores.allocations); //@FR-R-Header function clause"
+             ));
++            let base = format!("__vbf_{}", self.hoist_counter);
++            lines.push(format!("let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations);"));
++            entry_bases.insert(path.clone(), base);
+             frame.insert(path, name);
+         }
+         if frame.is_empty() {
+@@ -4708,7 +4712,7 @@ impl Output<'_> {
+         }
+         crate::rewrite_census::fired("R-FnHeader", frame.len());
+         self.vec_headers.push(frame);
+-        self.vec_bases.push(HashMap::new());
++        self.vec_bases.push(entry_bases);
+         self.vec_bounds.push(HashMap::new());
+         self.scalar_hoists.push(HashMap::new());
+         self.invariant_hoists.push(HashMap::new());

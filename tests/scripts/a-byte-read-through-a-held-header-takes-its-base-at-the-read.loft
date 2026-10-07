@@ -6,6 +6,15 @@
 // buffer the store left behind.  The interpreter takes no base and is the oracle; every
 // value is hand-computed.
 //
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below: the function clause binding a base at ENTRY, which `c1`'s
+//   growth of the same store leaves stale.  A realloc keeps the old bytes readable and equal,
+//   so the stale read answers right unless the vacated block is poisoned.
+// @falsified-by: tests/falsified/a-byte-read-through-a-held-header-takes-its-base-at-the-read.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   ARMED: `LOFT_POISON=1`.  Unarmed, the control answers `ok`: the stale base reads the
+//   vacated block's old bytes.
+//
 // rb.data is [10, 20, 30, 40, 50, 60, 70, 80] (10 (i + 1)); rb.out starts empty.
 
 struct Rb { data: vector<u8>, out: vector<integer>, tag: integer }
