@@ -104,7 +104,17 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
         let Ok(tp) = u16::try_from(*tp) else {
             continue;
         };
-        match admit(data, database, &ops, def.code(), &body.operators, i, *v, tp, rb) {
+        match admit(
+            data,
+            database,
+            &ops,
+            def.code(),
+            &body.operators,
+            i,
+            *v,
+            tp,
+            rb,
+        ) {
             Ok((off, ftp)) => {
                 if crate::keys::trace_place() {
                     eprintln!(
@@ -157,6 +167,13 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
         drop_sites(&mut code, plan.v, &ops);
     }
     data.definitions[d_nr as usize].code = code;
+    // Each local is now a VIEW of the buffer's field, never an owner: typed so, a bind of
+    // the place is no copy (B-View-Base) and no exit releases it.
+    for plan in &plans {
+        let vars = &mut data.definitions[d_nr as usize].variables;
+        let tp = vars.tp(plan.v).depending(rb);
+        vars.set_type(plan.v, tp);
+    }
 }
 
 fn is_var(n: &Value, w: u16) -> bool {
@@ -211,32 +228,30 @@ fn admit(
     let mut exit_frees = 0usize;
     let mut frees = 0usize;
     let mut mints = 0usize;
-    code.walk(&mut |n| {
-        match n.unspan() {
-            Value::Return(_) => returns += 1,
-            Value::Block(bl) if crate::exit_vector::is_exit_block(bl, rb) => {
-                for s in &bl.operators {
-                    if let Some(at) = exit_copy(s, v, rb, tp, ops) {
-                        copies.push(at);
-                    }
-                    if let Value::Call(d, a) = s.unspan()
-                        && (*d == ops.free_ref || *d == ops.free_if_distinct)
-                        && a.first().is_some_and(|x| is_var(x, v))
-                    {
-                        exit_frees += 1;
-                    }
+    code.walk(&mut |n| match n.unspan() {
+        Value::Return(_) => returns += 1,
+        Value::Block(bl) if crate::exit_vector::is_exit_block(bl, rb) => {
+            for s in &bl.operators {
+                if let Some(at) = exit_copy(s, v, rb, tp, ops) {
+                    copies.push(at);
+                }
+                if let Value::Call(d, a) = s.unspan()
+                    && (*d == ops.free_ref || *d == ops.free_if_distinct)
+                    && a.first().is_some_and(|x| is_var(x, v))
+                {
+                    exit_frees += 1;
                 }
             }
-            Value::Call(d, a) if a.first().is_some_and(|x| is_var(x, v)) => {
-                if *d == ops.free_ref || *d == ops.free_if_distinct {
-                    frees += 1;
-                }
-                if *d == ops.database {
-                    mints += 1;
-                }
-            }
-            _ => {}
         }
+        Value::Call(d, a) if a.first().is_some_and(|x| is_var(x, v)) => {
+            if *d == ops.free_ref || *d == ops.free_if_distinct {
+                frees += 1;
+            }
+            if *d == ops.database {
+                mints += 1;
+            }
+        }
+        _ => {}
     });
     if returns != 1 {
         return Err("the function has more than its one exit");
@@ -280,9 +295,8 @@ fn admit(
         if leaves.iter().all(|l| written.contains(l)) {
             break;
         }
-        match group_write(s, v, ops, data) {
-            Some(Some(at)) => written.push(at),
-            Some(None) => {}
+        match group_write(s, v, ops, data, database) {
+            Some(at) => written.extend(at),
             None if on_written_field(s, v, ops, &written) => {}
             None => break,
         }
@@ -328,29 +342,11 @@ fn leaf_offsets(
     Ok(())
 }
 
-/// One statement of the construction: `Some(Some(at))` a setter writing leaf `at` of the
-/// local, `Some(None)` a statement that neither reads nor writes it, `None` anything else —
+/// One statement of the construction: `Some(at)` the leaf offsets a write of the local
+/// covers (empty for a statement that neither reads nor writes it), `None` anything else —
 /// the end of the scan.
-fn group_write(s: &Value, v: u16, ops: &Ops, data: &Data) -> Option<Option<i32>> {
-    let mut named = false;
-    s.walk(&mut |n| {
-        if is_var(n, v) {
-            named = true;
-        }
-    });
-    if !named {
-        return Some(None);
-    }
-    let Value::Call(d, a) = s.unspan() else {
-        return None;
-    };
-    let name = data.def(*d).name();
-    if !name.starts_with("OpSet") {
-        // An op on a field the construction already wrote — an append into its vector.
-        return None;
-    }
-    // The value itself must not read the local.
-    if a.iter().skip(1).any(|x| {
+fn group_write(s: &Value, v: u16, ops: &Ops, data: &Data, database: &Stores) -> Option<Vec<i32>> {
+    let names = |x: &Value| {
         let mut hit = false;
         x.walk(&mut |n| {
             if is_var(n, v) {
@@ -358,14 +354,35 @@ fn group_write(s: &Value, v: u16, ops: &Ops, data: &Data) -> Option<Option<i32>>
             }
         });
         hit
-    }) {
+    };
+    if !names(s) {
+        return Some(Vec::new());
+    }
+    let Value::Call(d, a) = s.unspan() else {
+        return None;
+    };
+    // A sub-record written whole by a copy into it.
+    if *d == ops.copy {
+        let Some(Value::Call(g, ga)) = a.get(1).map(Value::unspan) else {
+            return None;
+        };
+        if *g != ops.get_field || !ga.first().is_some_and(|x| is_var(x, v)) || names(&a[0]) {
+            return None;
+        }
+        let base = int(ga.get(1))?;
+        let sub = u16::try_from(int(ga.get(2))?).ok()?;
+        let mut out = Vec::new();
+        leaf_offsets(database, sub, base, &mut out, 1).ok()?;
+        return Some(out);
+    }
+    if !data.def(*d).name().starts_with("OpSet") || a.iter().skip(1).any(|x| names(x)) {
         return None;
     }
     let pos = int(a.get(1))?;
     match a.first().map(Value::unspan)? {
-        Value::Var(x) if *x == v => Some(Some(pos)),
+        Value::Var(x) if *x == v => Some(vec![pos]),
         Value::Call(g, ga) if *g == ops.get_field && ga.first().is_some_and(|x| is_var(x, v)) => {
-            Some(Some(int(ga.get(1))? + pos))
+            Some(vec![int(ga.get(1))? + pos])
         }
         _ => None,
     }
@@ -429,6 +446,14 @@ fn receivers_only(code: &Value, v: u16, ops: &Ops, data: &Data) -> Result<(), &'
         {
             fields_received += 1;
         }
+        // A sub-record of the local written whole: `OpCopyRecord(src, OpGetField(v, …), tp)`.
+        if *d == ops.copy
+            && let Some(Value::Call(g, ga)) = a.get(1).map(Value::unspan)
+            && *g == ops.get_field
+            && ga.first().is_some_and(|x| is_var(x, v))
+        {
+            fields_received += 1;
+        }
     });
     if direct == total && fields == fields_received {
         Ok(())
@@ -442,15 +467,7 @@ fn native(data: &Data, d: u32) -> bool {
 }
 
 /// Does any statement other than the local's own copy write into `rb`'s bytes `lo..hi`?
-fn writes_region(
-    code: &Value,
-    rb: u16,
-    lo: i32,
-    hi: i32,
-    v: u16,
-    ops: &Ops,
-    data: &Data,
-) -> bool {
+fn writes_region(code: &Value, rb: u16, lo: i32, hi: i32, v: u16, ops: &Ops, data: &Data) -> bool {
     let mut hit = false;
     code.walk(&mut |n| {
         let Value::Call(d, a) = n.unspan() else {
@@ -464,9 +481,21 @@ fn writes_region(
         }
         // Ops that only read, compare or release a handle write no field's bytes.
         let name = data.def(*d).name();
-        if ["OpGet", "OpFree", "OpDistinct", "OpRefIsNull", "OpConv", "OpEq", "OpNe", "OpLength", "OpSize"]
-            .iter()
-            .any(|p| name.starts_with(p))
+        // `OpPlaceRecord(rb, tp)` claims a NEW record in the buffer's store.
+        if [
+            "OpGet",
+            "OpFree",
+            "OpDistinct",
+            "OpRefIsNull",
+            "OpConv",
+            "OpEq",
+            "OpNe",
+            "OpLength",
+            "OpSize",
+            "OpPlaceRecord",
+        ]
+        .iter()
+        .any(|p| name.starts_with(p))
         {
             return;
         }
@@ -475,6 +504,7 @@ fn writes_region(
                 // The buffer itself: as the receiver, its write position is the next argument.
                 Value::Var(w) if *w == rb => {
                     if i == 0
+                        && name.starts_with("OpSet")
                         && let Some(pos) = int(a.get(1))
                         && (pos < lo || pos >= hi)
                     {
@@ -483,7 +513,9 @@ fn writes_region(
                     hit = true;
                 }
                 // A field of the buffer: outside the region it is another field's.
-                Value::Call(g, ga) if *g == ops.get_field && ga.first().is_some_and(|y| is_var(y, rb)) => {
+                Value::Call(g, ga)
+                    if *g == ops.get_field && ga.first().is_some_and(|y| is_var(y, rb)) =>
+                {
                     match int(ga.get(1)) {
                         Some(off) if off < lo || off >= hi => {}
                         _ => hit = true,
