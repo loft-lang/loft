@@ -21,9 +21,6 @@
 //!
 //! `cc`, never rustc. That is the whole point.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
-
 /// Where a built shim lands, beside the package that declared it.
 ///
 /// The same directory the auto-built Rust cdylibs use, so one `.gitignore` and
@@ -53,7 +50,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     let mut hasher = Sha256::new();
     for s in sources {
         let p = dir.join(s);
-        let bytes = std::fs::read(&p).map_err(|e| {
+        let bytes = crate::file_access::read(&p).map_err(|e| {
             format!(
                 "names `{s}`, which cannot be read ({e}) — the path resolves against \
                  the package directory"
@@ -73,11 +70,10 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     let key = u64::from_le_bytes(digest[..8].try_into().unwrap_or([0; 8]));
     let stem = format!("{}_shim_{key:016x}", stem_of(pkg_dir));
     let so = out_dir.join(crate::native_lib::platform_cdylib_name(&stem));
-    if so.exists() {
+    if crate::file_access::exists(&so) {
         return Ok(so);
     }
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("cannot create `{}`: {e}", out_dir.display()))?;
+    crate::file_access::create_dir_all(&out_dir).map_err(|e| format!("cannot create {e}"))?;
 
     // Build in a unique temporary DIRECTORY and rename over: the publish is
     // atomic, so a concurrent reader sees either no file or a complete one,
@@ -97,12 +93,9 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     // leak into it), and the rename still lands in the same directory, so it is
     // still atomic. `-Wl,--soname` does NOT fix this: PE ignores it, verified
     // side by side with this shape.
-    let final_name = so
-        .file_name()
-        .map_or_else(|| stem.clone(), |f| f.to_string_lossy().into_owned());
+    let final_name = crate::file_access::file_name(&so).unwrap_or_else(|| stem.clone());
     let stage = out_dir.join(format!(".stage.{}", std::process::id()));
-    std::fs::create_dir_all(&stage)
-        .map_err(|e| format!("cannot create `{}`: {e}", stage.display()))?;
+    crate::file_access::create_dir_all(&stage).map_err(|e| format!("cannot create {e}"))?;
     let tmp = stage.join(&final_name);
     let mut cmd = std::process::Command::new(cc_program());
     cmd.arg("-O2").arg("-fPIC").arg("-shared");
@@ -163,7 +156,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
         )
     })?;
     if !out.status.success() {
-        let _ = std::fs::remove_dir_all(&stage);
+        let _ = crate::file_access::remove_dir_all(&stage);
         // The caller already names the package; repeating it here only pushed
         // cc's own diagnostics further down the line, and those are what the
         // author needs to read first.
@@ -176,8 +169,8 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     // to the cache check at the top, so anything that must accompany it has to
     // already be in place when that happens.
     if let Some((tmp_lib, final_lib)) = &implib {
-        std::fs::rename(tmp_lib, final_lib).map_err(|e| {
-            let _ = std::fs::remove_dir_all(&stage);
+        crate::file_access::rename(tmp_lib, final_lib).map_err(|e| {
+            let _ = crate::file_access::remove_dir_all(&stage);
             format!(
                 "the shim built but its import library `{}` could not be published: {e}",
                 final_lib.display()
@@ -186,12 +179,12 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     }
     // A rename onto an existing file is fine — same content-addressed name means
     // the same bytes, so whoever wins publishes an identical library.
-    let published = std::fs::rename(&tmp, &so)
+    let published = crate::file_access::rename(&tmp, &so)
         .map_err(|e| format!("cannot publish the shim to `{}`: {e}", so.display()));
     // The staging directory goes whatever happened: it is named for this process,
     // so nothing else will ever reuse it, and a leftover would accumulate one
     // empty directory per build.
-    let _ = std::fs::remove_dir_all(&stage);
+    let _ = crate::file_access::remove_dir_all(&stage);
     published?;
     Ok(so)
 }
@@ -221,9 +214,7 @@ fn cc_identity() -> String {
 /// A filesystem-safe stem for the package directory, so the artifact names the
 /// library it belongs to rather than a bare hash.
 fn stem_of(pkg_dir: &str) -> String {
-    let raw = std::path::Path::new(pkg_dir)
-        .file_name()
-        .map_or_else(|| "shim".to_string(), |s| s.to_string_lossy().into_owned());
+    let raw = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| "shim".to_string());
     let cleaned: String = raw
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })

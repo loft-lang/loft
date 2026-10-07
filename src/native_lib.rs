@@ -30,8 +30,6 @@
 //! args are already valid in it).  Args/return are passed through the uniform
 //! [`LibArg`] slot.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
@@ -153,7 +151,7 @@ const RMETA_STUB_FLOOR: u64 = 4096;
 /// beside a fresh rlib is exactly the case that must NOT be mistaken for a split pair.
 /// Unreadable or unparseable answers `false` — the pre-existing behaviour, one `--extern`.
 fn rlib_metadata_is_stub(rlib: &std::path::Path) -> bool {
-    let Ok(bytes) = std::fs::read(rlib) else {
+    let Ok(bytes) = crate::file_access::read(rlib) else {
         return false;
     };
     metadata_member_size(&bytes).is_some_and(|n| n < RMETA_STUB_FLOOR)
@@ -208,32 +206,31 @@ fn metadata_member_size(bytes: &[u8]) -> Option<u64> {
 /// beside that.  Nothing unpaired is accepted — passing an unpaired one is how this went
 /// wrong.
 fn loft_rmeta_beside(rlib: &std::path::Path) -> Option<std::path::PathBuf> {
-    let sibling = rlib.with_extension("rmeta");
-    if sibling.exists() {
+    let sibling = crate::file_access::with_extension(rlib, "rmeta");
+    if crate::file_access::exists(&sibling) {
         return Some(sibling);
     }
     let dir = rlib.parent()?;
     let mut search: Vec<std::path::PathBuf> = vec![dir.join("deps")];
-    if let Ok(units) = std::fs::read_dir(dir.join("build").join("loft")) {
-        search.extend(units.flatten().map(|u| u.path().join("out")));
+    if let Ok(units) = crate::file_access::read_dir(dir.join("build").join("loft")) {
+        search.extend(units.iter().map(|u| u.os_spelling().join("out")));
     }
     for candidate_dir in search {
-        let Ok(entries) = std::fs::read_dir(&candidate_dir) else {
+        let Ok(entries) = crate::file_access::read_dir(&candidate_dir) else {
             continue;
         };
-        for e in entries.flatten() {
-            let path = e.path();
-            if path.extension().is_none_or(|x| x != "rlib") {
+        for e in entries {
+            let path = e.os_spelling();
+            if !crate::file_access::has_extension(&path, "rlib") {
                 continue;
             }
-            let is_loft = path
-                .file_stem()
-                .is_some_and(|st| st == "libloft" || st.to_string_lossy().starts_with("libloft-"));
+            let is_loft = crate::file_access::file_stem(&path)
+                .is_some_and(|st| st == "libloft" || st.starts_with("libloft-"));
             if !is_loft || !same_file(&path, rlib) {
                 continue;
             }
-            let paired = path.with_extension("rmeta");
-            if paired.exists() {
+            let paired = crate::file_access::with_extension(&path, "rmeta");
+            if crate::file_access::exists(&paired) {
                 return Some(paired);
             }
         }
@@ -245,7 +242,10 @@ fn loft_rmeta_beside(rlib: &std::path::Path) -> Option<std::path::PathBuf> {
 /// produces, and is free), then content — a copy is as good as a link for this question,
 /// and answering `false` only costs the caller the metadata it was looking for.
 fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
-    let (Ok(ma), Ok(mb)) = (a.metadata(), b.metadata()) else {
+    let (Ok(ma), Ok(mb)) = (
+        crate::file_access::metadata(a),
+        crate::file_access::metadata(b),
+    ) else {
         return false;
     };
     #[cfg(unix)]
@@ -258,7 +258,7 @@ fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     if ma.len() != mb.len() {
         return false;
     }
-    match (std::fs::read(a), std::fs::read(b)) {
+    match (crate::file_access::read(a), crate::file_access::read(b)) {
         (Ok(x), Ok(y)) => x == y,
         _ => false,
     }
@@ -1067,7 +1067,7 @@ fn rlib_search_dirs(exe_dir: &std::path::Path) -> Vec<(std::path::PathBuf, std::
     // Dependency rlibs live in `<profile>/deps/`.  Real binary run: `exe_dir` is
     // `<profile>`, so `deps/` is its child.  Integration test: `exe_dir` already IS
     // `.../deps`.  Either way the returned link-search dir is that `deps/`.
-    let dev_deps = if exe_dir.file_name().is_some_and(|n| n == "deps") {
+    let dev_deps = if crate::file_access::file_name(exe_dir).is_some_and(|n| n == "deps") {
         exe_dir.to_path_buf()
     } else {
         exe_dir.join("deps")
@@ -1076,7 +1076,7 @@ fn rlib_search_dirs(exe_dir: &std::path::Path) -> Vec<(std::path::PathBuf, std::
         (dev_deps.clone(), dev_deps.clone()),
         (exe_dir.to_path_buf(), dev_deps.clone()),
     ];
-    if exe_dir.file_name().is_some_and(|n| n == "bin")
+    if crate::file_access::file_name(exe_dir).is_some_and(|n| n == "bin")
         && let Some(prefix) = exe_dir.parent()
     {
         let share = prefix.join("share").join("loft");
@@ -1105,24 +1105,27 @@ pub fn find_loft_rlib() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     // Find `libloft.rlib` (unhashed) or the newest hashed `libloft-<hash>.rlib`,
     // returning the matching `deps/` dir as the link-search path.
     for (dir, deps_dir) in &rlib_search_dirs(&exe_dir) {
-        if !dir.is_dir() {
+        if !crate::file_access::is_dir(dir) {
             continue;
         }
         let exact = dir.join("libloft.rlib");
-        if exact.exists() {
+        if crate::file_access::exists(&exact) {
             return Some((exact, deps_dir.clone()));
         }
-        let hashed = std::fs::read_dir(dir)
+        let hashed = crate::file_access::read_dir(dir)
             .ok()
             .into_iter()
             .flatten()
-            .flatten()
             .filter(|e| {
-                let n = e.file_name().to_string_lossy().into_owned();
-                n.starts_with("libloft-") && has_rlib_ext(&n)
+                let n = e.file_name().unwrap_or_default();
+                n.starts_with("libloft-") && has_rlib_ext(n)
             })
-            .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
-            .map(|e| e.path());
+            .max_by_key(|e| {
+                crate::file_access::symlink_metadata(e)
+                    .and_then(|m| m.modified())
+                    .ok()
+            })
+            .map(|e| e.os_spelling());
         if let Some(rlib) = hashed {
             return Some((rlib, deps_dir.clone()));
         }
@@ -1132,9 +1135,7 @@ pub fn find_loft_rlib() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
 
 /// Does filename `n` have a (case-insensitive) `.rlib` extension?
 fn has_rlib_ext(n: &str) -> bool {
-    std::path::Path::new(n)
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("rlib"))
+    crate::file_access::extension(n).is_some_and(|e| e.eq_ignore_ascii_case("rlib"))
 }
 
 /// `--extern name=path` flags for the optional feature-dep rlibs (random/png/…) in
@@ -1142,12 +1143,12 @@ fn has_rlib_ext(n: &str) -> bool {
 /// except `libloft*` (which is passed explicitly as `--extern loft=`).
 fn extra_externs(deps: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(deps) else {
+    let Ok(entries) = crate::file_access::read_dir(deps) else {
         return out;
     };
-    for e in entries.flatten() {
-        let n = e.file_name().to_string_lossy().into_owned();
-        if !n.starts_with("lib") || !has_rlib_ext(&n) || n.starts_with("libloft") {
+    for e in entries {
+        let n = e.file_name().unwrap_or_default();
+        if !n.starts_with("lib") || !has_rlib_ext(n) || n.starts_with("libloft") {
             continue;
         }
         if let Some(stem) = n
@@ -1155,7 +1156,7 @@ fn extra_externs(deps: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
             .and_then(|s| s.rsplit_once('-'))
             .map(|x| x.0)
         {
-            out.push((stem.to_string(), e.path()));
+            out.push((stem.to_string(), e.os_spelling()));
         }
     }
     out
@@ -1190,23 +1191,28 @@ pub fn loft_ffi_for_libloft(
     libloft: &std::path::Path,
     deps: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
-    let anchor = libloft.metadata().and_then(|m| m.modified()).ok();
+    let anchor = crate::file_access::metadata(libloft)
+        .and_then(|m| m.modified())
+        .ok();
     let mut candidates: Vec<(std::path::PathBuf, std::time::Duration)> = Vec::new();
-    for e in std::fs::read_dir(deps).ok()?.flatten() {
-        let n = e.file_name().to_string_lossy().into_owned();
-        if !n.starts_with("libloft_ffi-") || !has_rlib_ext(&n) {
+    for e in crate::file_access::read_dir(deps).ok()? {
+        let n = e.file_name().unwrap_or_default();
+        if !n.starts_with("libloft_ffi-") || !has_rlib_ext(n) {
             continue;
         }
         // Symmetric gap to `libloft`'s mtime (clock direction ignored); a missing
         // mtime on either side sorts the candidate last via `Duration::MAX`.
-        let gap = match (anchor, e.metadata().and_then(|m| m.modified()).ok()) {
+        let modified = crate::file_access::symlink_metadata(&e)
+            .and_then(|m| m.modified())
+            .ok();
+        let gap = match (anchor, modified) {
             (Some(a), Some(m)) => m
                 .duration_since(a)
                 .or_else(|_| a.duration_since(m))
                 .unwrap_or_default(),
             _ => std::time::Duration::MAX,
         };
-        candidates.push((e.path(), gap));
+        candidates.push((e.os_spelling(), gap));
     }
     // Closest-mtime first: the best guess, and the order the probe walks.
     candidates.sort_by_key(|(_, gap)| *gap);
@@ -1240,15 +1246,16 @@ fn loft_ffi_candidate_links(
     cand: &std::path::Path,
     deps: &std::path::Path,
 ) -> bool {
-    let Some(stem) = cand.file_stem().and_then(|s| s.to_str()) else {
+    let Some(stem) = crate::file_access::file_stem(cand) else {
         return false;
     };
     let dir = std::env::temp_dir().join(format!("loft_ffi_probe_{}_{stem}", std::process::id()));
-    if std::fs::create_dir_all(&dir).is_err() {
+    if crate::file_access::create_dir_all(&dir).is_err() {
         return false;
     }
     let src = dir.join("probe.rs");
-    let ok = std::fs::write(&src, "extern crate loft;\nextern crate loft_ffi;\n").is_ok()
+    let ok = crate::file_access::write(&src, "extern crate loft;\nextern crate loft_ffi;\n")
+        .is_ok()
         && std::process::Command::new("rustc")
             .arg("--edition=2024")
             .arg("--crate-type")
@@ -1264,7 +1271,7 @@ fn loft_ffi_candidate_links(
             .arg(&src)
             .output()
             .is_ok_and(|o| o.status.success());
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = crate::file_access::remove_dir_all(&dir);
     ok
 }
 
@@ -1283,7 +1290,7 @@ fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
     // `rlib` is `target/<profile>/libloft.rlib` or `target/<profile>/deps/libloft-*.rlib`;
     // walk up to the profile dir, then scan `build/<crate>-<hash>/`.
     let Some(profile_dir) = rlib.parent().and_then(|p| {
-        if p.file_name().is_some_and(|n| n == "deps") {
+        if crate::file_access::file_name(p).is_some_and(|n| n == "deps") {
             p.parent()
         } else {
             Some(p)
@@ -1291,34 +1298,34 @@ fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
     }) else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) else {
+    let Ok(entries) = crate::file_access::read_dir(profile_dir.join("build")) else {
         return Vec::new();
     };
     let mut dirs = Vec::new();
-    for entry in entries.filter_map(|e| e.ok()) {
-        let build_entry = entry.path();
+    for entry in entries {
+        let build_entry = entry.os_spelling();
         // `out/` and its immediate subdirs (some crates emit into `out/<target>/`).
         let out = build_entry.join("out");
-        if out.is_dir() {
+        if crate::file_access::is_dir(&out) {
             dirs.push(out.clone());
-            if let Ok(subs) = std::fs::read_dir(&out) {
+            if let Ok(subs) = crate::file_access::read_dir(&out) {
                 dirs.extend(
-                    subs.filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| p.is_dir()),
+                    subs.iter()
+                        .map(crate::file_access::PathText::os_spelling)
+                        .filter(|p| crate::file_access::is_dir(p)),
                 );
             }
         }
         // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
         // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
-        if let Ok(content) = std::fs::read_to_string(build_entry.join("output")) {
+        if let Ok(content) = crate::file_access::read_to_string(build_entry.join("output")) {
             for line in content.lines() {
                 if let Some(p) = line
                     .strip_prefix("cargo:rustc-link-search=native=")
                     .or_else(|| line.strip_prefix("cargo:rustc-link-search="))
                 {
                     let p = std::path::PathBuf::from(p);
-                    if p.is_dir() && !dirs.contains(&p) {
+                    if crate::file_access::is_dir(&p) && !dirs.contains(&p) {
                         dirs.push(p);
                     }
                 }
@@ -1383,9 +1390,9 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
     };
     // `-l dylib=<name>` derived from the RESOLVED file (strip `lib` prefix +
     // extension) so a prebuilt or non-`lib<stem>` cdylib links.
-    let libname = so_path
-        .file_stem()
-        .and_then(|s| s.to_str())
+    let file_stem = crate::file_access::file_stem(&so_path);
+    let libname = file_stem
+        .as_deref()
         .map_or(stem.as_str(), |s| s.strip_prefix("lib").unwrap_or(s));
     let mut args = vec![
         "-L".to_string(),
@@ -1400,12 +1407,12 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
         // `-l dylib=` resolves.
         let dll_lib = so_dir.join(format!("{libname}.dll.lib"));
         let plain_lib = so_dir.join(format!("{libname}.lib"));
-        if dll_lib.exists() && !plain_lib.exists() {
-            let _ = std::fs::copy(&dll_lib, &plain_lib);
+        if crate::file_access::exists(&dll_lib) && !crate::file_access::exists(&plain_lib) {
+            let _ = crate::file_access::copy(&dll_lib, &plain_lib);
         }
         // Disallow-the-unverifiable-loudly: with NEITHER import-lib name present
         // the link dies on an opaque `LNK1181`, so name it rather than mis-link.
-        if !plain_lib.exists() && !dll_lib.exists() {
+        if !crate::file_access::exists(&plain_lib) && !crate::file_access::exists(&dll_lib) {
             eprintln!(
                 "loft: native package `{crate_name}` cdylib at {} has no import \
                  library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
@@ -1462,9 +1469,9 @@ pub fn build_shared_cdylib(
          refreshes the binary but not the library rlib the native path links",
     )?;
     let src = generate_shared_cdylib_lib_rs(data, stores, export_set);
-    std::fs::create_dir_all(out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+    crate::file_access::create_dir_all(out_dir).map_err(|e| format!("create {e}"))?;
     let rs = out_dir.join(format!("{stem}.rs"));
-    std::fs::write(&rs, &src).map_err(|e| format!("write {}: {e}", rs.display()))?;
+    crate::file_access::write(&rs, &src).map_err(|e| format!("write {e}"))?;
     let so = out_dir.join(platform_cdylib_name(stem));
     // Compile to a temp name, rename into place on success: a concurrent
     // reader (fast path of `cached_or_build_shared_cdylib`) then always sees
@@ -1501,9 +1508,7 @@ pub fn build_shared_cdylib(
     // as long as every consumer `dlopen`s it BY PATH (a path load ignores the
     // recorded name); it breaks the moment one is resolved through `@rpath` or the
     // package is moved. Same flag, same reason, as the `cc`-built shim.
-    let final_name = so
-        .file_name()
-        .map_or_else(|| stem.to_string(), |f| f.to_string_lossy().into_owned());
+    let final_name = crate::file_access::file_name(&so).unwrap_or_else(|| stem.to_string());
     for flag in crate::platform::install_name_args(&final_name, crate::platform::host_lib_os()) {
         args.push("-C".to_string());
         args.push(format!("link-arg={flag}"));
@@ -1591,7 +1596,7 @@ pub fn build_shared_cdylib(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&argfile, contents).map_err(|e| format!("write {}: {e}", argfile.display()))?;
+    crate::file_access::write(&argfile, contents).map_err(|e| format!("write {e}"))?;
     let mut rustc = std::process::Command::new("rustc");
     crate::platform::dies_with_driver(&mut rustc, false);
     rustc.arg(format!("@{}", argfile.display()));
@@ -1618,8 +1623,8 @@ pub fn build_shared_cdylib(
             rs.display()
         ));
     }
-    std::fs::rename(&tmp_so, &so)
-        .map_err(|e| format!("install {} -> {}: {e}", tmp_so.display(), so.display()))?;
+    crate::file_access::rename(&tmp_so, &so)
+        .map_err(|e| format!("install as {}: {e}", so.display()))?;
     Ok(so)
 }
 
@@ -1730,10 +1735,7 @@ pub fn toolchain_failure_hint(stderr: &str) -> Option<String> {
 /// character is alphabetic (a crate name may not start with a digit).  (#294)
 #[must_use]
 pub fn auto_cdylib_stem(pkg_dir: &str) -> String {
-    let raw = std::path::Path::new(pkg_dir)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("lib");
+    let raw = crate::file_access::file_name(pkg_dir).unwrap_or_else(|| "lib".to_string());
     format!(
         "loft_auto_{}",
         raw.replace(|c: char| !(c.is_ascii_alphanumeric() || c == '_'), "_")
@@ -1775,7 +1777,7 @@ fn mix_fp(a: u64, b: u64) -> u64 {
 #[cfg(feature = "native-extensions")]
 fn layout_fp_of_relocated(so: &std::path::Path) -> LayoutProbe {
     unsafe {
-        let Ok(lib) = libloading::Library::new(so) else {
+        let Ok(lib) = crate::file_access::load_library(so) else {
             return LayoutProbe::Unopenable;
         };
         let sym = format!("{LAYOUT_FP_SYMBOL}\0");
@@ -1865,16 +1867,19 @@ fn prune_artifacts(dir: &std::path::Path, family: &str) {
     } else {
         "so"
     };
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::file_access::read_dir(dir) else {
         return;
     };
     let mut built: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == ext))
-        .filter(|e| artifact_stem(&e.path()).is_some_and(|s| s.starts_with(family)))
+        .into_iter()
+        .filter(|e| crate::file_access::extension(e).is_some_and(|x| x == ext))
+        .filter(|e| artifact_stem(e).is_some_and(|s| s.starts_with(family)))
         .filter_map(|e| {
-            let m = e.metadata().ok()?.modified().ok()?;
-            Some((m, e.path()))
+            let m = crate::file_access::symlink_metadata(&e)
+                .ok()?
+                .modified()
+                .ok()?;
+            Some((m, e.os_spelling()))
         })
         .collect();
     if built.len() <= KEEP_ARTIFACTS {
@@ -1886,10 +1891,9 @@ fn prune_artifacts(dir: &std::path::Path, family: &str) {
         let Some(stem) = artifact_stem(&so) else {
             continue;
         };
-        let stem = stem.to_string();
-        let _ = std::fs::remove_file(&so);
-        let _ = std::fs::remove_file(dir.join(format!("{stem}.rs")));
-        let _ = std::fs::remove_file(dir.join(format!("{stem}.args")));
+        let _ = crate::file_access::remove_file(&so);
+        let _ = crate::file_access::remove_file(dir.join(format!("{stem}.rs")));
+        let _ = crate::file_access::remove_file(dir.join(format!("{stem}.args")));
     }
 }
 
@@ -1897,9 +1901,12 @@ fn prune_artifacts(dir: &std::path::Path, family: &str) {
 /// named after.  Only the platform prefix differs, and stripping it is what lets
 /// one loop delete a library and its generated companions together — and what
 /// lets the sweep tell one family of artifacts from another.
-fn artifact_stem(so: &std::path::Path) -> Option<&str> {
-    let name = so.file_stem().and_then(|s| s.to_str())?;
-    Some(name.strip_prefix("lib").unwrap_or(name))
+fn artifact_stem(so: impl crate::file_access::HostPath) -> Option<String> {
+    let name = crate::file_access::file_stem(so)?;
+    Some(
+        name.strip_prefix("lib")
+            .map_or_else(|| name.clone(), str::to_string),
+    )
 }
 
 /// May the artifact at `so` be adopted by a context whose type layout is
@@ -1968,7 +1975,7 @@ fn layout_fp_off_path(so: &std::path::Path) -> LayoutProbe {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
-    let (Some(dir), Some(name)) = (so.parent(), so.file_name()) else {
+    let (Some(dir), Some(name)) = (so.parent(), crate::file_access::file_name(so)) else {
         return LayoutProbe::Unopenable;
     };
     // A SUBDIRECTORY rather than a sibling file, and the relocated artifact keeps
@@ -1982,8 +1989,8 @@ fn layout_fp_off_path(so: &std::path::Path) -> LayoutProbe {
         std::process::id(),
         SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    if let Err(e) = std::fs::create_dir_all(&probe_dir) {
-        report_unprobeable(so, &format!("create {}: {e}", probe_dir.display()));
+    if let Err(e) = crate::file_access::create_dir_all(&probe_dir) {
+        report_unprobeable(so, &format!("create {e}"));
         return LayoutProbe::Unopenable;
     }
     let probe = probe_dir.join(name);
@@ -1996,7 +2003,7 @@ fn layout_fp_off_path(so: &std::path::Path) -> LayoutProbe {
     };
     // The probe has been read; the process may keep the image mapped (dlclose is a
     // no-op on macOS), and unlinking a mapped file is fine on both unixes.
-    let _ = std::fs::remove_dir_all(&probe_dir);
+    let _ = crate::file_access::remove_dir_all(&probe_dir);
     fp
 }
 
@@ -2010,10 +2017,10 @@ fn relocate_for_probe(so: &std::path::Path, probe: &std::path::Path) -> Result<(
     if std::env::var_os("LOFT_FORCE_PROBE_RELOCATE_FAIL").is_some() {
         return Err("LOFT_FORCE_PROBE_RELOCATE_FAIL".to_string());
     }
-    if std::fs::hard_link(so, probe).is_ok() {
+    if crate::file_access::hard_link(so, probe).is_ok() {
         return Ok(());
     }
-    std::fs::copy(so, probe)
+    crate::file_access::copy(so, probe)
         .map(|_| ())
         .map_err(|e| format!("link and copy both failed: {e}"))
 }
@@ -2163,7 +2170,7 @@ pub fn cached_or_build_shared_cdylib(
     // is worth more than the argument.  A mismatch falls through to REBUILD,
     // which is the same thing a name miss already does — and REBUILD is why this
     // probe, too, must not load `so` itself (loft#999).
-    if so.exists()
+    if crate::file_access::exists(&so)
         && !source_newer_than(contributing, &so)
         && artifact_matches_layout(&so, layout_fp)
     {
@@ -2177,13 +2184,12 @@ pub fn cached_or_build_shared_cdylib(
     // load).  Take an exclusive advisory lock for the check+build, then
     // RE-CHECK freshness: the waiter adopts the winner's artifact instead of
     // rebuilding over it.  Released when `lock` drops, on every return path.
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
+    crate::file_access::create_dir_all(&out_dir).map_err(|e| format!("create {e}"))?;
     let lock_path = out_dir.join(".build.lock");
-    let lock = std::fs::File::create(&lock_path)
-        .map_err(|e| format!("create {}: {e}", lock_path.display()))?;
+    let lock = crate::file_access::create(&lock_path).map_err(|e| format!("create {e}"))?;
     lock.lock()
         .map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
-    if so.exists()
+    if crate::file_access::exists(&so)
         && !source_newer_than(contributing, &so)
         && artifact_matches_layout(&so, layout_fp)
     {
@@ -2214,7 +2220,7 @@ pub fn cached_or_build_shared_cdylib(
     // loaded image by PATH for the process, so probing here and rebuilding at the
     // same path made the later load return the stale image (loft#777, and loft#999
     // for the one-unlucky-`copy` route back into it).
-    if !so.exists() || !artifact_matches_layout(&so, layout_fp) {
+    if !crate::file_access::exists(&so) || !artifact_matches_layout(&so, layout_fp) {
         crate::cache::write_run_source_hash(&out_dir, source_content_hash(contributing));
         return build(&out_dir);
     }
@@ -2244,22 +2250,23 @@ fn source_content_hash(pkg_dirs: &[String]) -> u64 {
     let mut stack: Vec<std::path::PathBuf> =
         pkg_dirs.iter().map(std::path::PathBuf::from).collect();
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = crate::file_access::read_dir(&dir) else {
             continue;
         };
-        for e in entries.flatten() {
-            let name = e.file_name();
+        for e in entries {
+            let name = e.file_name().unwrap_or_default();
             if name == "native-auto" || name == "native" || name == "target" {
                 continue;
             }
-            let Ok(ft) = e.file_type() else { continue };
-            let p = e.path();
+            let Ok(ft) = crate::file_access::symlink_metadata(&e).map(|m| m.file_type()) else {
+                continue;
+            };
+            let p = e.os_spelling();
             if ft.is_dir() {
                 stack.push(p);
                 continue;
             }
-            let is_src = p
-                .extension()
+            let is_src = crate::file_access::extension(&p)
                 .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
                 || name == "loft.toml";
             if is_src {
@@ -2277,7 +2284,7 @@ fn source_content_hash(pkg_dirs: &[String]) -> u64 {
             .find_map(|d| f.strip_prefix(d).ok())
             .unwrap_or(f);
         h.update(rel.to_string_lossy().as_bytes());
-        if let Ok(bytes) = std::fs::read(f) {
+        if let Ok(bytes) = crate::file_access::read(f) {
             h.update(&bytes);
         }
     }
@@ -2310,33 +2317,34 @@ fn source_content_hash(pkg_dirs: &[String]) -> u64 {
 /// the dependent really does contain the edited code.  `dev-interpret-on-edit` still
 /// keeps `rustc` out of the loop until editing settles.
 fn source_newer_than(pkg_dirs: &[String], artifact: &std::path::Path) -> bool {
-    let Ok(art_mtime) = artifact.metadata().and_then(|m| m.modified()) else {
+    let Ok(art_mtime) = crate::file_access::metadata(artifact).and_then(|m| m.modified()) else {
         return true;
     };
     let mut newest: Option<std::time::SystemTime> = None;
     let mut stack: Vec<std::path::PathBuf> =
         pkg_dirs.iter().map(std::path::PathBuf::from).collect();
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = crate::file_access::read_dir(&dir) else {
             continue;
         };
-        for e in entries.flatten() {
-            let name = e.file_name();
+        for e in entries {
+            let name = e.file_name().unwrap_or_default();
             if name == "native-auto" || name == "native" || name == "target" {
                 continue; // build/artifact dirs
             }
-            let Ok(ft) = e.file_type() else { continue };
-            let p = e.path();
+            let Ok(ft) = crate::file_access::symlink_metadata(&e).map(|m| m.file_type()) else {
+                continue;
+            };
+            let p = e.os_spelling();
             if ft.is_dir() {
                 stack.push(p);
                 continue;
             }
-            let is_src = p
-                .extension()
+            let is_src = crate::file_access::extension(&p)
                 .is_some_and(|x| x.eq_ignore_ascii_case("loft"))
                 || name == "loft.toml";
             if is_src
-                && let Ok(mt) = e.metadata().and_then(|m| m.modified())
+                && let Ok(mt) = crate::file_access::symlink_metadata(&e).and_then(|m| m.modified())
                 && newest.is_none_or(|n| mt > n)
             {
                 newest = Some(mt);
@@ -2493,19 +2501,19 @@ mod rmeta_pairing_tests {
     /// link.  That link is what makes the pairing findable without guessing.
     fn layout(root: &std::path::Path, uplift_links_to_hash: bool) -> std::path::PathBuf {
         let deps = root.join("deps");
-        std::fs::create_dir_all(&deps).unwrap();
+        crate::file_access::create_dir_all(&deps).unwrap();
         let hashed = deps.join("libloft-1111111111111111.rlib");
-        std::fs::write(&hashed, b"rlib-bytes").unwrap();
-        std::fs::write(
+        crate::file_access::write(&hashed, b"rlib-bytes").unwrap();
+        crate::file_access::write(
             deps.join("libloft-1111111111111111.rmeta"),
             b"the-paired-one",
         )
         .unwrap();
         let uplifted = root.join("libloft.rlib");
         if uplift_links_to_hash {
-            std::fs::hard_link(&hashed, &uplifted).unwrap();
+            crate::file_access::hard_link(&hashed, &uplifted).unwrap();
         } else {
-            std::fs::write(&uplifted, b"a-different-rlib-entirely").unwrap();
+            crate::file_access::write(&uplifted, b"a-different-rlib-entirely").unwrap();
         }
         uplifted
     }
@@ -2513,12 +2521,12 @@ mod rmeta_pairing_tests {
     #[test]
     fn the_rmeta_paired_with_our_rlib_is_the_one_chosen() {
         let root = std::env::temp_dir().join(format!("loft_pair_ok_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&root).unwrap();
         let rlib = layout(&root, true);
         let found = loft_rmeta_beside(&rlib).expect("the paired rmeta");
-        assert_eq!(std::fs::read(&found).unwrap(), b"the-paired-one");
-        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(crate::file_access::read(&found).unwrap(), b"the-paired-one");
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// The reported failure: debris from an older build, NEWER than the pair, sitting in
@@ -2526,22 +2534,22 @@ mod rmeta_pairing_tests {
     #[test]
     fn newer_unpaired_debris_is_not_chosen() {
         let root = std::env::temp_dir().join(format!("loft_pair_debris_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&root).unwrap();
         let rlib = layout(&root, true);
         // Debris: an rmeta with no rlib of its own, written last so it is the newest file.
-        std::fs::write(
+        crate::file_access::write(
             root.join("deps").join("libloft-9999999999999999.rmeta"),
             b"stale-debris",
         )
         .unwrap();
         let found = loft_rmeta_beside(&rlib).expect("still the paired rmeta");
         assert_eq!(
-            std::fs::read(&found).unwrap(),
+            crate::file_access::read(&found).unwrap(),
             b"the-paired-one",
             "recency must not decide this"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// When nothing can be shown to belong to the rlib, answer None: one `--extern`, and
@@ -2551,28 +2559,28 @@ mod rmeta_pairing_tests {
     #[test]
     fn an_unpaired_rmeta_alone_answers_none() {
         let root = std::env::temp_dir().join(format!("loft_pair_none_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&root).unwrap();
         let rlib = layout(&root, false); // uplifted rlib is NOT our deps rlib
         assert!(
             loft_rmeta_beside(&rlib).is_none(),
             "an rmeta that belongs to a different rlib must not be offered"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// The layout where nothing was uplifted: the rmeta sits directly beside the rlib.
     #[test]
     fn a_sibling_rmeta_is_taken_directly() {
         let root = std::env::temp_dir().join(format!("loft_pair_sib_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&root).unwrap();
         let rlib = root.join("libloft.rlib");
-        std::fs::write(&rlib, b"rlib").unwrap();
-        std::fs::write(root.join("libloft.rmeta"), b"sibling").unwrap();
+        crate::file_access::write(&rlib, b"rlib").unwrap();
+        crate::file_access::write(root.join("libloft.rmeta"), b"sibling").unwrap();
         let found = loft_rmeta_beside(&rlib).expect("the sibling");
-        assert_eq!(std::fs::read(&found).unwrap(), b"sibling");
-        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(crate::file_access::read(&found).unwrap(), b"sibling");
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 }
 

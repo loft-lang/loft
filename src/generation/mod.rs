@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust code generator (--native)
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
@@ -11051,10 +11049,7 @@ extern crate loft;"
                 self.data
                     .c_owner_pkg(&def.position().file)
                     .map_or_else(String::new, |pkg| {
-                        let stem = std::path::Path::new(pkg)
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or(pkg);
+                        let stem = crate::file_access::name_of(pkg);
                         format!(" (package `{stem}`)")
                     });
             writeln!(
@@ -11897,12 +11892,11 @@ mod scrub_tests {
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default");
         let mut seen: Vec<String> = Vec::new();
-        for entry in std::fs::read_dir(&root).expect("default/ is readable") {
-            let path = entry.expect("a readable entry").path();
-            if path.extension().is_none_or(|e| e != "loft") {
+        for path in crate::file_access::read_dir(&root).expect("default/ is readable") {
+            if !crate::file_access::has_extension(&path, "loft") {
                 continue;
             }
-            let text = std::fs::read_to_string(&path).expect("a readable .loft file");
+            let text = crate::file_access::read_to_string(&path).expect("a readable .loft file");
             for (i, _) in text.match_indices("crate::") {
                 let rest = &text[i + "crate::".len()..];
                 let name: String = rest
@@ -11921,7 +11915,7 @@ mod scrub_tests {
                      imported by the generated preamble, rewritten to `loft::{name}::`, nor \
                      an item of the generated crate — a native program reaching that \
                      template will fail with `cannot find {name} in crate`",
-                    path.display()
+                    path.native()
                 );
                 seen.push(name);
             }

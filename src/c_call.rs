@@ -39,8 +39,6 @@
 //! unifying by RAISING rather than narrowing, so nothing that compiled stopped
 //! compiling. See `c_signature::MAX_C_ARITY` and DESIGN_DECISIONS.md § C106.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "native-extensions")]
 
 use crate::c_signature::{CSignature, CType};
@@ -1037,7 +1035,7 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/c_abi/liblc_types.so"
         );
-        if !std::path::Path::new(so).exists() {
+        if !crate::file_access::exists(so) {
             // The fixture is built by `make` in that directory; without it this
             // test has nothing to measure and must not read as a pass.
             eprintln!("SKIP: {so} not built");
