@@ -11,6 +11,15 @@
 // `ends_with` (c9); `==` and `!=` (c10); a final sigma, whose fold depends on its neighbours
 // (c11); and a fold bound to a local and read twice, which keeps the written form (c12).
 // Every value by hand; `LOFT_NO_FOLD_COMPARE=1` answers the same.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-text-predicate-over-a-case-fold-builds-no-fold.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   The `starts_with` fast path tests only the prefix for ASCII, not the line's span.
+//   CHANNEL: an assertion, on native.
+//   WITNESS: c3 — the KELVIN SIGN line compared byte-wise does not start with `key:`.
+//   HOLDS: LOFT_NO_FOLD_COMPARE=1 green (the written form).
 
 fn sw_l(t: text, p: text) -> boolean { return t.to_lowercase().starts_with(p); }
 fn sw_u(t: text, p: text) -> boolean { return t.to_uppercase().starts_with(p); }
