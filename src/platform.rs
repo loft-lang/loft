@@ -408,7 +408,7 @@ pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
 /// [`native_cache_dir`].  Answers the bytes freed.
 pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
     use crate::file_access::{self as fa, PathText};
-    let Ok(entries) = fa::read_dir(&PathText::from_os(dir)) else {
+    let Ok(entries) = fa::read_dir(PathText::from_os(dir)) else {
         return 0;
     };
     let mut bins: Vec<(std::time::SystemTime, String, u64)> = entries
@@ -430,9 +430,9 @@ pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
         if fs_avail_bytes(dir).is_none_or(|a| a >= want_avail) {
             break;
         }
-        if fa::remove_file(&PathText::host(&bin)).is_ok() {
+        if fa::remove_file(PathText::host(&bin)).is_ok() {
             freed += len;
-            let _ = fa::remove_file(&PathText::host(&format!("{bin}.key")));
+            let _ = fa::remove_file(PathText::host(&format!("{bin}.key")));
         }
     }
     freed
@@ -881,23 +881,23 @@ mod reclaim_tests {
         let at = |p: &std::path::Path| PathText::from_os(p);
         let dir =
             std::env::temp_dir().join(format!("loft_native_evict_test_{}", std::process::id()));
-        let _ = fa::remove_dir_all(&at(&dir));
-        fa::create_dir_all(&at(&dir)).unwrap();
+        let _ = fa::remove_dir_all(at(&dir));
+        fa::create_dir_all(at(&dir)).unwrap();
         let old = |name: &str| {
             let p = dir.join(name);
-            fa::write(&at(&p), b"x").unwrap();
+            fa::write(at(&p), b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
             // `set_modified` takes the handle each platform needs (write on Windows).
-            fa::set_modified(&at(&p), t).unwrap();
+            fa::set_modified(at(&p), t).unwrap();
             p
         };
-        let there = |p: &std::path::Path| fa::exists(&at(p));
+        let there = |p: &std::path::Path| fa::exists(at(p));
         let idle_bin = old("loft_native_a_bin");
         let idle_key = old("loft_native_a_bin.key");
         let source = old("loft_native_a.rs");
         let foreign = old("other_tool_output");
         let recent = dir.join("loft_native_b_bin");
-        fa::write(&at(&recent), b"y").unwrap();
+        fa::write(at(&recent), b"y").unwrap();
 
         assert_eq!(
             evict_own_native_cache(&dir, 0),
@@ -920,7 +920,7 @@ mod reclaim_tests {
             there(&source) && there(&foreign),
             "sources and foreign names stay"
         );
-        let _ = fa::remove_dir_all(&at(&dir));
+        let _ = fa::remove_dir_all(at(&dir));
     }
 
     /// `pid_alive` answers the same three ways on every unix, which is what makes the

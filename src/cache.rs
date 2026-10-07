@@ -1008,7 +1008,7 @@ fn cache_ttl() -> std::time::Duration {
 /// The per-platform handle rule is `file_access::set_modified`'s.
 pub fn touch_now(path: &std::path::Path) {
     let _ = crate::file_access::set_modified(
-        &crate::file_access::PathText::from_os(path),
+        crate::file_access::PathText::from_os(path),
         std::time::SystemTime::now(),
     );
 }
@@ -1108,7 +1108,7 @@ pub fn prune_stdlib_images() {
 /// `stdlib-<64 hex>.store` name is considered.
 fn prune_stdlib_dir(base: &std::path::Path, keep: usize) {
     use crate::file_access as fa;
-    let Ok(entries) = fa::read_dir(&fa::PathText::from_os(base)) else {
+    let Ok(entries) = fa::read_dir(fa::PathText::from_os(base)) else {
         return;
     };
     let mut images: Vec<(std::time::SystemTime, fa::PathText)> = entries
@@ -1645,21 +1645,21 @@ mod tests {
             let when = SystemTime::now() - Duration::from_secs(1000 - u64::from(i) * 100);
             fa::open_read_write(&p).unwrap().set_modified(when).unwrap();
         }
-        fa::write(&root.join("stdlib-zzz.store"), b"keepme").unwrap();
-        fa::write(&root.join("program-aaa.store"), b"keepme").unwrap();
+        fa::write(root.join("stdlib-zzz.store"), b"keepme").unwrap();
+        fa::write(root.join("program-aaa.store"), b"keepme").unwrap();
         prune_stdlib_dir(&dir, 2);
         for i in 0..3u8 {
-            assert!(!fa::exists(&root.join(&name(i))), "older image {i} removed");
+            assert!(!fa::exists(root.join(&name(i))), "older image {i} removed");
         }
         for i in 3..5u8 {
-            assert!(fa::exists(&root.join(&name(i))), "newest image {i} kept");
+            assert!(fa::exists(root.join(&name(i))), "newest image {i} kept");
         }
         assert!(
-            fa::exists(&root.join("stdlib-zzz.store")),
+            fa::exists(root.join("stdlib-zzz.store")),
             "a foreign name is left alone"
         );
         assert!(
-            fa::exists(&root.join("program-aaa.store")),
+            fa::exists(root.join("program-aaa.store")),
             "a program bundle is left alone"
         );
         let _ = fa::remove_dir_all(&root);

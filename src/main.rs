@@ -9074,7 +9074,7 @@ fn main() {
                         // Add parent directory so sibling packages (deps) are found.
                         if !manifest.dependencies.is_empty() {
                             if let Some(parent) =
-                                file_access::try_plain_canonical(&search.join(".."))
+                                file_access::try_plain_canonical(search.join(".."))
                             {
                                 let ps = parent.to_string_lossy().to_string();
                                 if !lib_dirs.contains(&ps) {

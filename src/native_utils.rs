@@ -1658,7 +1658,7 @@ pub(crate) fn sweep_cached_binaries(
 ) {
     let is_key = |s: &str| s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit());
     use crate::file_access::{self as fa, PathText};
-    let Ok(entries) = fa::read_dir(&PathText::from_os(cache_dir)) else {
+    let Ok(entries) = fa::read_dir(PathText::from_os(cache_dir)) else {
         return;
     };
     let current = PathText::from_os(current);
@@ -3037,11 +3037,11 @@ mod publish_cached_binary_tests {
 
     /// The cache fixtures write and probe through `file_access`, as the code under test does.
     fn put(p: &std::path::Path, bytes: &[u8]) {
-        crate::file_access::write(&crate::file_access::PathText::from_os(p), bytes).unwrap();
+        crate::file_access::write(crate::file_access::PathText::from_os(p), bytes).unwrap();
     }
 
     fn there(p: &std::path::Path) -> bool {
-        crate::file_access::exists(&crate::file_access::PathText::from_os(p))
+        crate::file_access::exists(crate::file_access::PathText::from_os(p))
     }
 
     /// The directory keeps the most recently USED entries: a reuse (`touch_cached_binary`)
@@ -3055,7 +3055,7 @@ mod publish_cached_binary_tests {
             let p = dir.join(keyed(n));
             put(&p, &[n]);
             crate::file_access::set_modified(
-                &crate::file_access::PathText::from_os(&p),
+                crate::file_access::PathText::from_os(&p),
                 base + std::time::Duration::from_secs(u64::from(n) * 60),
             )
             .unwrap();

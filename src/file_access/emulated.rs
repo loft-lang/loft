@@ -171,7 +171,7 @@ mod tests {
         with_program_host(Flavor::Windows, || {
             let d = scratch("chars");
             for bad in ["q?.txt", "a<b", "p|q", "x*", "say\"hi\""] {
-                let e = write(&d.join(bad), "x").unwrap_err();
+                let e = write(d.join(bad), "x").unwrap_err();
                 assert_eq!(e.kind(), io::ErrorKind::InvalidFilename, "{bad}: {e}");
             }
             assert_eq!(names(&d), Vec::<String>::new());
@@ -183,10 +183,10 @@ mod tests {
     fn a_trailing_dot_or_space_is_stripped() {
         with_program_host(Flavor::Windows, || {
             let d = scratch("trail");
-            write(&d.join("trail."), "t").unwrap();
-            write(&d.join("space "), "s").unwrap();
+            write(d.join("trail."), "t").unwrap();
+            write(d.join("space "), "s").unwrap();
             assert_eq!(names(&d), ["space", "trail"]);
-            assert_eq!(read_to_string(&d.join("trail")).unwrap(), "t");
+            assert_eq!(read_to_string(d.join("trail")).unwrap(), "t");
             remove_dir_all(&d).unwrap();
         });
     }
@@ -199,10 +199,10 @@ mod tests {
             }
             let d = scratch("device");
             for bad in ["aux.txt", "CON", "nul.tar.gz", "com1", "LPT9.log", "prn .x"] {
-                assert!(write(&d.join(bad), "x").is_err(), "{bad}");
+                assert!(write(d.join(bad), "x").is_err(), "{bad}");
             }
             for good in ["com0", "console.txt", "auxiliary"] {
-                write(&d.join(good), "x").unwrap();
+                write(d.join(good), "x").unwrap();
             }
             assert_eq!(names(&d), ["auxiliary", "com0", "console.txt"]);
             remove_dir_all(&d).unwrap();
@@ -217,16 +217,16 @@ mod tests {
             // `join` here as to `std` on Windows.
             let inside =
                 |rel: &str| PathText::parse(&format!("{}/{rel}", d.native()), Flavor::Windows);
-            write(&inside("a:b.txt"), "data").unwrap();
+            write(inside("a:b.txt"), "data").unwrap();
             assert_eq!(names(&d), ["a"], "the stream is not listed");
             assert_eq!(
-                read_to_string(&d.join("a")).unwrap(),
+                read_to_string(d.join("a")).unwrap(),
                 "",
                 "the file is empty"
             );
-            assert_eq!(read_to_string(&inside("a:b.txt")).unwrap(), "data");
+            assert_eq!(read_to_string(inside("a:b.txt")).unwrap(), "data");
             assert!(
-                write(&inside("x:y/z"), "x").is_err(),
+                write(inside("x:y/z"), "x").is_err(),
                 "a stream is a last name"
             );
             remove_dir_all(&d).unwrap();
@@ -237,13 +237,13 @@ mod tests {
     fn a_name_matches_ignoring_case() {
         with_program_host(Flavor::Windows, || {
             let d = scratch("case");
-            write(&d.join("b.txt"), "lower").unwrap();
-            assert!(exists(&d.join("B.TXT")));
-            write(&d.join("B.txt"), "upper").unwrap();
+            write(d.join("b.txt"), "lower").unwrap();
+            assert!(exists(d.join("B.TXT")));
+            write(d.join("B.txt"), "upper").unwrap();
             assert_eq!(names(&d), ["b.txt"], "one file");
-            assert_eq!(read_to_string(&d.join("b.txt")).unwrap(), "upper");
-            create_dir_all(&d.join("Sub")).unwrap();
-            write(&d.join("SUB/x.txt"), "x").unwrap();
+            assert_eq!(read_to_string(d.join("b.txt")).unwrap(), "upper");
+            create_dir_all(d.join("Sub")).unwrap();
+            write(d.join("SUB/x.txt"), "x").unwrap();
             assert_eq!(names(&d.join("Sub")), ["x.txt"], "a directory matches too");
             remove_dir_all(&d).unwrap();
         });
@@ -257,7 +257,7 @@ mod tests {
         }
         let d = scratch("off");
         for n in ["q?.txt", "trail.", "aux.txt", "a:b.txt", "b.txt", "B.txt"] {
-            write(&d.join(n), n).unwrap();
+            write(d.join(n), n).unwrap();
         }
         assert_eq!(names(&d).len(), 6);
         remove_dir_all(&d).unwrap();

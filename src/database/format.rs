@@ -891,7 +891,7 @@ impl Stores {
     /// YYYY-MM-DD for the lexicographic compare.
     #[must_use]
     pub fn os_mtime_native(path: &str) -> i64 {
-        crate::file_access::metadata(&crate::file_access::at(path))
+        crate::file_access::metadata(crate::file_access::at(path))
             .ok()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())

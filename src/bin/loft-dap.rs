@@ -1018,7 +1018,7 @@ fn resolve_stdlib_dir() -> String {
         exe_dir.join("../default"),    // default beside the binary dir
     ];
     for c in candidates {
-        if loft::file_access::is_dir(&loft::file_access::PathText::from_os(&c)) {
+        if loft::file_access::is_dir(loft::file_access::PathText::from_os(&c)) {
             return c.to_string_lossy().into_owned();
         }
     }

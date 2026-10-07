@@ -214,7 +214,7 @@ impl State {
                 // #255 / @PLN9: re-home against the program anchor.
                 let path = self.database.resolve_path(&path);
                 path.map_or(0, |p| {
-                    crate::file_access::metadata(&crate::file_access::at(&p))
+                    crate::file_access::metadata(crate::file_access::at(&p))
                         .map_or(0, |m| m.len() as i64)
                 })
             }
@@ -263,7 +263,7 @@ impl State {
                     .ok_or_else(crate::file_access::path_refused)
                     .and_then(|n| {
                         crate::file_access::open_with(
-                            &crate::file_access::at(n),
+                            crate::file_access::at(n),
                             OpenOptions::new()
                                 .read(true)
                                 .write(true)
@@ -602,7 +602,7 @@ impl State {
             // #255 / @PLN9: re-home against the program anchor.
             let file_path = self.database.resolve_path(&file_path);
             let size = file_path.map_or(i64::MIN, |p| {
-                crate::file_access::metadata(&crate::file_access::at(&p))
+                crate::file_access::metadata(crate::file_access::at(&p))
                     .map_or(i64::MIN, |meta| meta.len() as i64)
             });
             self.put_stack(size);
@@ -697,7 +697,7 @@ impl State {
                 .ok_or_else(crate::file_access::path_refused)
                 .and_then(|p| {
                     crate::file_access::open_with(
-                        &crate::file_access::at(p),
+                        crate::file_access::at(p),
                         OpenOptions::new().write(true),
                     )
                 })

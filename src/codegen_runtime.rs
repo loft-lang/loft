@@ -1880,7 +1880,7 @@ pub fn OpSizeFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef) -> i64 {
     let Some(file_path) = stores.resolve_path(&file_path) else {
         return i64::MIN;
     };
-    if let Ok(meta) = crate::file_access::metadata(&crate::file_access::at(&file_path)) {
+    if let Ok(meta) = crate::file_access::metadata(crate::file_access::at(&file_path)) {
         meta.len().cast_signed()
     } else {
         i64::MIN
@@ -1936,7 +1936,7 @@ pub fn OpTruncateFile(cell: &std::cell::UnsafeCell<Stores>, file: DbRef, size: i
             .set_long(file.rec, file.pos + 16, i64::MIN);
     }
     crate::file_access::open_with(
-        &crate::file_access::at(&file_path),
+        crate::file_access::at(&file_path),
         OpenOptions::new().write(true),
     )
     .and_then(|f| f.set_len(size as u64))
@@ -2021,7 +2021,7 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
         return i32::MIN;
     };
     match crate::file_access::open_with(
-        &crate::file_access::at(&file_name),
+        crate::file_access::at(&file_name),
         OpenOptions::new()
             .read(true)
             .write(true)
@@ -2069,7 +2069,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
     let Some(file_name) = stores.resolve_path(&file_name) else {
         return i32::MIN;
     };
-    match crate::file_access::open(&crate::file_access::at(&file_name)) {
+    match crate::file_access::open(crate::file_access::at(&file_name)) {
         Ok(mut f) => {
             if initial_pos > 0 {
                 let _ = f.seek(SeekFrom::Start(initial_pos as u64));
@@ -5507,7 +5507,7 @@ pub fn fs_delete(path: &str) -> i64 {
     #[cfg(not(host_fs))]
     {
         fs_classify(
-            crate::file_access::remove_file(&crate::file_access::at(path)),
+            crate::file_access::remove_file(crate::file_access::at(path)),
             path,
             true,
         )
@@ -5528,7 +5528,7 @@ pub fn fs_move(from: &str, to: &str) -> i64 {
     #[cfg(not(host_fs))]
     {
         fs_classify(
-            crate::file_access::rename(&crate::file_access::at(from), &crate::file_access::at(to)),
+            crate::file_access::rename(crate::file_access::at(from), crate::file_access::at(to)),
             from,
             false,
         )
@@ -5549,7 +5549,7 @@ pub fn fs_mkdir(path: &str) -> i64 {
     #[cfg(not(host_fs))]
     {
         fs_classify(
-            crate::file_access::create_dir(&crate::file_access::at(path)),
+            crate::file_access::create_dir(crate::file_access::at(path)),
             path,
             false,
         )
@@ -5570,7 +5570,7 @@ pub fn fs_mkdir_all(path: &str) -> i64 {
     #[cfg(not(host_fs))]
     {
         fs_classify(
-            crate::file_access::create_dir_all(&crate::file_access::at(path)),
+            crate::file_access::create_dir_all(crate::file_access::at(path)),
             path,
             false,
         )
@@ -5586,7 +5586,7 @@ pub fn fs_is_dir(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        crate::file_access::is_dir(&crate::file_access::at(path))
+        crate::file_access::is_dir(crate::file_access::at(path))
     }
 }
 
@@ -5602,7 +5602,7 @@ pub fn fs_is_symlink(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        crate::file_access::is_symlink(&crate::file_access::at(path))
+        crate::file_access::is_symlink(crate::file_access::at(path))
     }
 }
 
@@ -5615,7 +5615,7 @@ pub fn fs_is_file(path: &str) -> bool {
     }
     #[cfg(not(host_fs))]
     {
-        crate::file_access::is_file(&crate::file_access::at(path))
+        crate::file_access::is_file(crate::file_access::at(path))
     }
 }
 

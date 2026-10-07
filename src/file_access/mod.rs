@@ -522,7 +522,7 @@ fn log_once(key: &str, line: &str) {
 /// # Errors
 /// The OS's error, or the refusal.
 pub fn open_resolved(path: Option<&str>) -> std::io::Result<std::fs::File> {
-    path.ok_or_else(path_refused).and_then(|p| open(&at(p)))
+    path.ok_or_else(path_refused).and_then(|p| open(at(p)))
 }
 
 /// `@FR-Path-Refuse` — the error a refused path opens with, so an open site's existing error
@@ -801,7 +801,7 @@ mod tests {
         assert!(exists(&f) && is_file(&f) && !is_dir(&f) && is_dir(&dir));
         let g = dir.join("b.txt");
         copy(&f, &g).unwrap();
-        rename(&g, &dir.join("c.txt")).unwrap();
+        rename(&g, dir.join("c.txt")).unwrap();
         let names: Vec<String> = read_dir(&dir)
             .unwrap()
             .iter()
@@ -839,7 +839,7 @@ mod tests {
         assert!(c.is_absolute());
         assert!(!c.native().starts_with(r"\\?\"), "{}", c.native());
         assert!(same_file(&dir, &c));
-        assert_eq!(canonical(&dir.join("missing")), None);
+        assert_eq!(canonical(dir.join("missing")), None);
         assert!(is_under_canonical(&dir, &dir));
     }
 
@@ -892,8 +892,8 @@ mod tests {
     #[test]
     fn a_name_that_differs_only_in_case_clashes() {
         let dir = scratch("case");
-        write(&dir.join("b.txt"), "b").unwrap();
-        create_dir_all(&dir.join("sub")).unwrap();
+        write(dir.join("b.txt"), "b").unwrap();
+        create_dir_all(dir.join("sub")).unwrap();
         let at = |rel: &str| dir.join(rel).native();
         assert!(case_clash(&at("b.txt")).is_ok(), "the exact spelling");
         assert!(case_clash(&at("c.txt")).is_ok(), "a new name");
@@ -1013,7 +1013,7 @@ mod tests {
                 assert!(same_file(&verbatim, &f), "{}", verbatim.native());
             }
         });
-        assert_eq!(read_to_string(&dir.join("a.txt")).unwrap(), "x");
+        assert_eq!(read_to_string(dir.join("a.txt")).unwrap(), "x");
         remove_dir_all(&dir).unwrap();
     }
 
@@ -1034,7 +1034,7 @@ mod tests {
         let f = p.join("x.txt");
         write(&f, "inside").unwrap();
         assert_eq!(read_to_string(&f).unwrap(), "inside");
-        assert!(same_file(&f.parent().unwrap(), &p));
+        assert!(same_file(f.parent().unwrap(), &p));
         let listed = read_dir(&dir).unwrap();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].last_is_unspellable() && listed[0] == p);

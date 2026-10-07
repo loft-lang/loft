@@ -293,7 +293,7 @@ fn library_page(
 #[cfg(feature = "registry")]
 fn has_guide(dir: &Path) -> bool {
     use crate::file_access::{PathText, read_dir};
-    read_dir(&PathText::from_os(&dir.join("docs"))).is_ok_and(|d| {
+    read_dir(PathText::from_os(&dir.join("docs"))).is_ok_and(|d| {
         d.iter()
             .any(|e| crate::file_access::has_extension(Path::new(&e.native_or_empty()), "loft"))
     })
@@ -334,7 +334,7 @@ pub fn locked_version(name: &str, project: &Path) -> Option<String> {
     let lock = project
         .ancestors()
         .map(|d| d.join("loft.lock"))
-        .find(|l| crate::file_access::is_file(&crate::file_access::PathText::from_os(l)))?;
+        .find(|l| crate::file_access::is_file(crate::file_access::PathText::from_os(l)))?;
     crate::lockfile::read_lockfile(&lock)
         .ok()
         .flatten()?
@@ -529,13 +529,13 @@ pub fn write_site(dir: &Path, pages: &[Page], stamp: &str) -> std::io::Result<bo
     let stamp_path = dir.join(".stamp");
     use crate::file_access::{PathText, create_dir_all, is_file, read_to_string, write};
     let at = |p: &Path| PathText::from_os(p);
-    if is_file(&at(&dir.join(ROOT))) && read_to_string(&at(&stamp_path)).is_ok_and(|s| s == stamp) {
+    if is_file(at(&dir.join(ROOT))) && read_to_string(at(&stamp_path)).is_ok_and(|s| s == stamp) {
         return Ok(false);
     }
-    create_dir_all(&at(dir))?;
+    create_dir_all(at(dir))?;
     for p in pages {
-        write(&at(&dir.join(&p.name)), &p.text)?;
+        write(at(&dir.join(&p.name)), &p.text)?;
     }
-    write(&at(&stamp_path), stamp)?;
+    write(at(&stamp_path), stamp)?;
     Ok(true)
 }

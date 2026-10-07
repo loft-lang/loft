@@ -130,7 +130,7 @@ fn without_utf8_python(root: &PathText) -> Vec<String> {
             missing.push(p.parts().last().cloned().unwrap_or_default());
         }
     }
-    let make = file_access::read_to_string(&root.join("Makefile")).unwrap_or_default();
+    let make = file_access::read_to_string(root.join("Makefile")).unwrap_or_default();
     if !make.lines().any(|l| l == "export PYTHONUTF8 := 1") {
         missing.push("Makefile".to_string());
     }

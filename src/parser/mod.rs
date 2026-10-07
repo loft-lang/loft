@@ -19750,8 +19750,8 @@ impl Parser {
     #[cfg(feature = "registry")]
     fn script_in_registry_cache(cur_script: &str) -> bool {
         crate::file_access::is_under_canonical(
-            &crate::file_access::PathText::host(cur_script),
-            &crate::file_access::PathText::from_os(&crate::registry_index::cache_dir()),
+            crate::file_access::PathText::host(cur_script),
+            crate::file_access::PathText::from_os(&crate::registry_index::cache_dir()),
         )
     }
 

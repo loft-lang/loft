@@ -606,7 +606,7 @@ impl Stores {
         let Some(resolved) = self.resolve_path(file_path) else {
             return false;
         };
-        if let Ok(entries) = crate::file_access::read_dir(&crate::file_access::at(&resolved)) {
+        if let Ok(entries) = crate::file_access::read_dir(crate::file_access::at(&resolved)) {
             let vector = DbRef {
                 store_nr: result.store_nr,
                 rec: result.rec,
@@ -755,7 +755,7 @@ impl Stores {
                 // written (loft#1861: `File::create` opened it write-only, and the read
                 // answered nothing on both backends).
                 match crate::file_access::open_with(
-                    &crate::file_access::at(&resolved_name),
+                    crate::file_access::at(&resolved_name),
                     std::fs::OpenOptions::new()
                         .read(true)
                         .write(true)
@@ -831,7 +831,7 @@ impl Stores {
         // Only the final path component; `@FR-Path-Utf8` — a name that is not text is listed
         // with U+FFFD in its place.
         let names: Option<Vec<String>> =
-            crate::file_access::read_dir(&crate::file_access::at(&resolved))
+            crate::file_access::read_dir(crate::file_access::at(&resolved))
                 .ok()
                 .map(|entries| {
                     entries
@@ -872,7 +872,7 @@ impl Stores {
         let data: Option<Vec<u8>> = crate::wasm::host_fs_read_binary(&resolved);
         #[cfg(not(host_fs))]
         let data: Option<Vec<u8>> =
-            crate::file_access::read(&crate::file_access::at(&resolved)).ok();
+            crate::file_access::read(crate::file_access::at(&resolved)).ok();
         let Some(data) = data else { return DbRef::NULL };
         // Owning field is a 4-byte vector pointer; the inner record holds the
         // bytes one-per-element (length at offset 4, payload at offset 8).
@@ -961,7 +961,7 @@ impl Stores {
         }
         #[cfg(not(host_fs))]
         {
-            crate::file_access::write(&crate::file_access::at(&resolved), &data).is_ok()
+            crate::file_access::write(crate::file_access::at(&resolved), &data).is_ok()
         }
     }
 }
