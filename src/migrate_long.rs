@@ -20,9 +20,6 @@
 //! Usage: `loft --migrate-long <path-or-dir>` (or `--dry-run` to print
 //! diffs without writing).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
-use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -128,22 +125,21 @@ fn is_word_continuation(c: char) -> bool {
 pub fn migrate_path(path: &Path, dry_run: bool) -> io::Result<(usize, usize)> {
     let mut scanned = 0usize;
     let mut modified = 0usize;
-    let meta = fs::metadata(path)?;
+    let meta = crate::file_access::metadata(path)?;
     if meta.is_file() {
-        if path.extension().and_then(|e| e.to_str()) == Some("loft") {
+        if crate::file_access::extension(path).as_deref() == Some("loft") {
             let (s, m) = migrate_file(path, dry_run)?;
             scanned += s;
             modified += m;
         }
     } else if meta.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let p = entry.path();
-            if p.is_dir() {
+        for entry in crate::file_access::read_dir(path)? {
+            let p = entry.os_spelling();
+            if crate::file_access::is_dir(&p) {
                 let (s, m) = migrate_path(&p, dry_run)?;
                 scanned += s;
                 modified += m;
-            } else if p.extension().and_then(|e| e.to_str()) == Some("loft") {
+            } else if crate::file_access::extension(&p).as_deref() == Some("loft") {
                 let (s, m) = migrate_file(&p, dry_run)?;
                 scanned += s;
                 modified += m;
@@ -154,7 +150,7 @@ pub fn migrate_path(path: &Path, dry_run: bool) -> io::Result<(usize, usize)> {
 }
 
 fn migrate_file(path: &Path, dry_run: bool) -> io::Result<(usize, usize)> {
-    let src = fs::read_to_string(path)?;
+    let src = crate::file_access::read_to_string(path)?;
     let out = rewrite_source(&src);
     if out == src {
         return Ok((1, 0));
@@ -170,7 +166,7 @@ fn migrate_file(path: &Path, dry_run: bool) -> io::Result<(usize, usize)> {
             }
         }
     } else {
-        fs::write(path, &out)?;
+        crate::file_access::write(path, &out)?;
     }
     Ok((1, 1))
 }
