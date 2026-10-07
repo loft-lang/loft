@@ -37,6 +37,25 @@ use common::cached_default;
 /// (e.g. two `cargo test` invocations at once) is the caller's responsibility.
 static WRAP_LOCK: Mutex<()> = Mutex::new(());
 
+/// The `rustc` the toolchain proxy would run from this directory, resolved ONCE.  A rustup
+/// proxy pays its own start per call — 0.16 s of a 0.2 s attempt on a dev box — and
+/// `wasm_dir` spawns one per docs file, so the proxy alone was most of the test's time and
+/// the speed gate read it as a regression.  Without rustup the plain name is the answer.
+fn rustc_path() -> &'static str {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        std::process::Command::new("rustup")
+            .args(["which", "rustc"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "rustc".to_string())
+    })
+}
+
 /// Files in `tests/docs/` that `dir` must not run.
 ///
 /// Empty, and staying empty is the point: every page the site publishes is a
@@ -137,7 +156,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
 
     // Compile for wasm32-wasip2
     let tmp_wasm = std::env::temp_dir().join(format!("loft_wasm_{stem}.wasm"));
-    let mut cmd = std::process::Command::new("rustc");
+    let mut cmd = std::process::Command::new(rustc_path());
     cmd.arg("--edition=2024")
         .arg("--target")
         .arg("wasm32-wasip2")
