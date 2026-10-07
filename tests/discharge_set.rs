@@ -29,7 +29,10 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)
-        .env("LOFT_TIMEOUT", "120");
+        .env("LOFT_TIMEOUT", "120")
+        // The pins count ONE copy of each loop: `@FR-R-Alias`'s versioned clause emits a
+        // second, holding a parameter's headers, which is that rule's to pin.
+        .env("LOFT_NO_DISTINCT_VERSION", "1");
     for (k, v) in env {
         cmd.env(k, v);
     }

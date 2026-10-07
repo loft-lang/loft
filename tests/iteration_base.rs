@@ -53,7 +53,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     // `e = v[i]?` binds by explicit index.  In `for i in 0..len(v)` the `?` is dropped
     // (`@FR-R-InRange`), so the binding is the plain element read and takes its address from
     // the held base (`hoist::element_binding`); `LOFT_NO_IN_RANGE=1` gives `rec_ptr` again.
-    ("n_w15", 1, 0, 0, 0),
+    // The second walk's `e = v[i]` past the end is tested `e != null`: a null test re-seats
+    // nothing (`hoist::VIEW_TESTS`), so that view takes its address from the base too.
+    ("n_w15", 2, 0, 0, 0),
 ];
 
 const SWITCHES: [&str; 5] = [
