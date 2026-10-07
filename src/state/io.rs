@@ -1709,6 +1709,20 @@ impl State {
             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
             return;
         }
+        // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
+        // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
+        // its bytes lie outside the store's own blocks, where the record copy below would
+        // read a record that is not there.  An element append of mapped bytes
+        // (`v += [file_map(p) ?? []]`) panicked on a corrupt reference.
+        if let Some(crate::database::Parts::Vector(elem)) =
+            self.database.types.get(tp as usize).map(|t| &t.parts)
+            && (data.store_nr as usize) < self.database.allocations.len()
+            && self.database.allocations[data.store_nr as usize].is_foreign()
+        {
+            let elem = *elem;
+            self.database.vector_add(&to, &data, elem);
+            return;
+        }
         // @PLN90 phase 1 — make the copy visible. A real record deep-copy is about to
         // run (the no-op-alias and null cases returned above). LOFT_COPY_DUMP prints one
         // line per executed structure copy so we can inventory every copy + map it to its
