@@ -4432,7 +4432,91 @@ emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` 
 predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
 fold's block is neither lifted nor built; guard
 `tests/scripts/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
-the operand clause — a local bound to `fold + literal` and read only as a predicate operand.
+the operand clause below.
+
+```
+  (R-FoldCompare) OPERAND CLAUSE — an operand of an admitted P may be a text LOCAL x
+                 that is never built, when ALL of:
+                 (1) x has exactly ONE binding, `x = F'(s) + l` or `x = F'(s)`, F' a
+                     fold, l a text LITERAL, s a text PARAMETER or LOCAL;
+                 (2) every other mention of x is an operand of an admitted P, or x's
+                     own release;
+                 (3) s holds at every such P the value it held at the binding: no
+                     path from the binding to a P writes s — no assignment, no
+                     append, no `&s` hand-off, no call handed s's work buffer;
+                 (4) the binding and every P that reads x lie in one activation
+                     of one function, and that function is not a generator.
+                 Then each P reads x as the PAIR (F'(s), l), F'(s) followed by l:
+                 on the fast path the ASCII test spans the inspected bytes of
+                 s and of l as well as the fold's own operand.  The written form,
+                 taken from the first non-ASCII byte, builds F'(s) + l at most
+                 ONCE per binding of x (a frame slot filled on first use), so no
+                 run builds it more often than the program as written.
+                 Declines, keeping x built: a second binding; any other mention —
+                 a return, a format, a store, an append, `len`/`size`, an index, a
+                 call argument, a capture, a link `&x`; an s that is a field or an
+                 element (a store write between binding and P could change it); a
+                 non-literal l; a generator.
+```
+
+**In words.**  `prefix = name.to_lowercase() + ":"` exists only to be compared, like the fold
+the rule already removes; reading it as the pair it was built from removes the text and
+both of its allocations.  (3) is what makes deferring the fold sound: F' is pure, so F'(s)
+at the P equals F'(s) at the binding exactly when s did not change in between, and a local
+or parameter can be checked for that by its writes, where a field cannot.  The once-per-
+binding slot keeps a non-ASCII run from rebuilding x on every P.  Priced on server
+`header` (`bench/portal/analysis/over-9x.md`, lever D): −14 %.  Switch and trace are the
+rule's own.  Falsifier: hand-computed cells on both backends — the `header` shape; s written
+between binding and P (declines); x formatted once besides the compare (declines); x bound
+on two branches (declines); s non-ASCII with the P in a loop (the written form, built
+once — `LOFT_ALLOC_SITES` counts one build).
+
+### A text local built in its work buffer is a view of it
+
+```
+  (R-WorkView)   a text LOCAL x whose every binding is the value of a text BUILD
+                 into one work buffer w — the parser's `Add text` or `Formatted
+                 string` block, which clears w, appends to it and answers w — is a
+                 VIEW of w (`&str` into w), not a copy of it, when ALL of:
+                 (1) every binding of x builds into the SAME w, and w is a
+                     `__work_*` text local of this function (not a parameter, not
+                     a text-return buffer, not a `par` worker's buffer);
+                 (2) on every path from a binding of x to a read of x, w is not
+                     written: no other build into w, no clear, append, assignment
+                     or format into it, no call handed w as a work buffer, no
+                     release of w;
+                 (3) x is read only as a text VALUE — an operand of an op or a
+                     call at a `text` position, the source of a bind or a format
+                     into ANOTHER slot — and never written (`x += …` would write
+                     w), linked (`&x`), returned, stored, captured or yielded;
+                 (4) a binding inside a loop reaches only reads in the same
+                     iteration: a read that a later iteration's build into w can
+                     reach declines;
+                 (5) the function is not a generator.
+                 w keeps its capacity across calls and iterations ((R-WorkBuffer)'s
+                 text clause), so after the first build no binding of x allocates.
+                 Declines, keeping the copy: any of (1)-(5) unproved.  The analysis
+                 is a path question over the body; a branch or a loop it cannot
+                 resolve declines.
+```
+
+**In words.**  Today the build fills w and then copies w into x (`.to_string()`), which is
+one allocation for w and one for x on every binding.  A view drops the second, and the pooled
+w drops the first after the first call.  The rule rests on ONE invariant, condition (2):
+nothing writes w while x is live.  That is what separates it from `(R-FoldCompare)`'s
+operand clause, whose condition is local to x's own mentions.  Here the condition ranges over
+every site that can write w, and the parser shares one work buffer between expressions of a
+function, so a missed writer leaves x reading another expression's text with no diagnostic.
+Native only; the interpreter's text locals own their bytes and are the reference.  Reach:
+every text local built by `+` or a format string (the text-build class: `map_json`,
+`render_inline`, `format_iso`), unpriced.  Switch `LOFT_NO_WORK_VIEW`; trace
+`LOFT_TRACE_WORK_VIEW` names each admitted local and the condition each decline failed.
+Falsifier: `LOFT_HOIST_VERIFY=1` re-reads x as an owned copy at every read and compares;
+cells on both backends — two locals built into one w with the first read after the second
+build (declines, both values right); a build into w inside a callee handed w; x read in the
+next iteration of a loop that rebuilds w; `x += "!"` after the binding (declines); and a
+planted defect that admits a local with a later build into w must read the wrong text under
+the verify switch.
 
 ### A call result appended to a vector is built in it
 
