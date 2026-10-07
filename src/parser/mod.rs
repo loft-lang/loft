@@ -21,6 +21,12 @@ use std::io::Write;
 use std::string::ToString;
 use typedef::complete_definition;
 
+/// Does the file `path` names exist?  An empty name names nothing: `file_access` reads it
+/// as `.`, which every resolution probe here would take for a hit.
+fn file_exists(path: &str) -> bool {
+    !path.is_empty() && crate::file_access::exists(path)
+}
+
 /// The "you probably meant `pkg::name`" message for an unresolved bare call, or
 /// `None` when no published package exports such a free function (@PLN13 phase 6,
 /// diagnostics slice).
@@ -4057,7 +4063,8 @@ impl Parser {
     /// # Errors
     /// As [`Self::parse_dir`]; and `InvalidData` if the embedded stdlib does not parse.
     pub fn parse_stdlib(&mut self, dir: &str) -> std::io::Result<()> {
-        if crate::file_access::is_dir(dir) {
+        // An empty name names nothing (`file_access` would answer for `.`).
+        if !dir.is_empty() && crate::file_access::is_dir(dir) {
             return self.parse_dir(dir, true, false);
         }
         for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
@@ -18763,7 +18770,7 @@ impl Parser {
                     let f = self.lib_path(&id);
                     let refused = self.lexer.diagnostics().level() == Level::Fatal
                         && level_before != Level::Fatal;
-                    let f_exists = crate::file_access::exists(&f) || {
+                    let f_exists = file_exists(&f) || {
                         #[cfg(feature = "wasm")]
                         {
                             crate::wasm::virt_fs_get(&f).is_some()
@@ -18838,7 +18845,7 @@ impl Parser {
                 } else {
                     self.lib_path(&dep_id)
                 };
-                if crate::file_access::exists(&f) {
+                if file_exists(&f) {
                     let cur = &self.lexer.pos().file;
                     self.todo_files.push((cur.to_string(), self.data.source));
                     self.data.use_add(&dep_id);
@@ -18950,7 +18957,7 @@ impl Parser {
                     self.record_use_path(&n, &f);
                     continue;
                 }
-                if crate::file_access::exists(&f) {
+                if file_exists(&f) {
                     resolved.push((n, f));
                 }
             }
@@ -19344,7 +19351,7 @@ impl Parser {
         // declares, a `--lib` directory it was given, a sidecar lock it pinned.  What
         // follows resolves from the registry, which is a property of the BOX.  So this is
         // the one line where the two can be told apart.
-        let mut named_by_the_project = crate::file_access::exists(&f);
+        let mut named_by_the_project = file_exists(&f);
         // @PLN143 arc B — the scope is a property of the PROGRAM, so it is answered ONCE,
         // here, and handed to each probe that needs it.  Re-deriving it inside a probe
         // would put the old three-sites-must-agree brittleness back with one extra step
@@ -19372,7 +19379,7 @@ impl Parser {
         }
         self.probe_auto_install(id, &mut f, &cur_script, &scope);
         self.probe_cache_newest(id, &mut f, &cur_script, &scope);
-        if !named_by_the_project && crate::file_access::exists(&f) {
+        if !named_by_the_project && file_exists(&f) {
             self.undeclared_registry_dep(id, &cur_script);
         }
         Self::probe_cur_dir_flat(id, cur_dir, &mut f);
@@ -19407,7 +19414,7 @@ impl Parser {
         if self.lib_dirs.is_empty() || std::env::var_os("LOFT_NO_LIB_OUTRANKED").is_some() {
             return;
         }
-        if !crate::file_access::exists(resolved) {
+        if !file_exists(resolved) {
             return;
         }
         let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
@@ -19872,10 +19879,12 @@ impl Parser {
         };
         files
             .filter(|f| {
-                crate::file_access::metadata(f)
-                    .and_then(|m| m.modified())
-                    // A clock that cannot answer is not evidence of a change: say no.
-                    .is_ok_and(|m| m > started)
+                // An empty name names nothing (`file_access` would answer for `.`).
+                !f.is_empty()
+                    && crate::file_access::metadata(f)
+                        .and_then(|m| m.modified())
+                        // A clock that cannot answer is not evidence of a change: say no.
+                        .is_ok_and(|m| m > started)
             })
             .map(str::to_string)
             .collect()
@@ -20265,7 +20274,7 @@ impl Parser {
     /// `<id>.loft` in the current working directory.
     fn probe_project_lib(id: &str) -> String {
         let f = format!("lib{0}{id}.loft", sep_str());
-        if crate::file_access::exists(&f) {
+        if file_exists(&f) {
             f
         } else {
             format!("{id}.loft")
@@ -20276,7 +20285,7 @@ impl Parser {
     /// (called for the script's own dir, then for the base dir when the
     /// script lives inside a `/tests/` tree).
     fn probe_dir_lib(id: &str, dir: &str, f: &mut String) {
-        if !dir.is_empty() && !crate::file_access::exists(f.as_str()) {
+        if !dir.is_empty() && !file_exists(f) {
             *f = format!("{dir}{0}lib{0}{id}.loft", sep_str());
         }
     }
@@ -20322,7 +20331,7 @@ impl Parser {
     }
 
     fn probe_manifest_path_dep(&mut self, id: &str, cur_dir: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) || cur_dir.is_empty() {
+        if file_exists(f) || cur_dir.is_empty() {
             return;
         }
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
@@ -20378,7 +20387,7 @@ impl Parser {
     /// it does not, the two declarations disagree and the program is refused, naming both
     /// ([`Self::loaded_copy_meets_declaring_range`]).
     fn probe_root_path_dep(&mut self, id: &str, cur_script: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) else {
@@ -20386,7 +20395,7 @@ impl Parser {
         };
         let root_dir = root.to_string_lossy().to_string();
         self.probe_manifest_path_dep(id, &root_dir, f);
-        if crate::file_access::exists(f.as_str())
+        if file_exists(f)
             && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
         {
             self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
@@ -20446,7 +20455,7 @@ impl Parser {
     /// found directly (not via `lib_path_manifest`), the sibling's own
     /// `loft.toml` must be registered so its `#native` symbols resolve.
     fn probe_sibling_package(&mut self, id: &str, cur_dir: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) || cur_dir.is_empty() {
+        if file_exists(f) || cur_dir.is_empty() {
             return;
         }
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
@@ -20484,7 +20493,7 @@ impl Parser {
 
     /// A directory named after the current script (minus the `.loft` suffix).
     fn probe_script_sibling_dir(id: &str, cur_script: &str, f: &mut String) {
-        if !crate::file_access::exists(f.as_str()) && cur_script.len() >= 5 {
+        if !file_exists(f) && cur_script.len() >= 5 {
             *f = format!(
                 "{}{}{id}.loft",
                 &cur_script[0..cur_script.len() - 5],
@@ -20496,7 +20505,7 @@ impl Parser {
     /// `--lib` / `--project` command-line flag directories, flat layout.
     /// Registers any discovered `loft.toml` in the file's ancestry.
     fn probe_cmdline_lib_dirs(&mut self, id: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let lib_dirs = self.lib_dirs.clone();
@@ -20531,7 +20540,7 @@ impl Parser {
     /// `--lib` / `--project` directories, packaged layout
     /// (`<dir>/<id>/src/<id>.loft`).
     fn probe_cmdline_lib_dirs_manifest(&mut self, id: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let lib_dirs = self.lib_dirs.clone();
@@ -20545,7 +20554,7 @@ impl Parser {
 
     /// `LOFT_LIB` env var, flat layout (`<dir>/<id>.loft`).
     fn probe_loft_lib_flat(id: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let Some(v) = env::var_os("LOFT_LIB") else {
@@ -20562,7 +20571,7 @@ impl Parser {
 
     /// `LOFT_LIB` env var, packaged layout (via `lib_path_manifest`).
     fn probe_loft_lib_manifest(&mut self, id: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let Some(v) = env::var_os("LOFT_LIB") else {
@@ -20579,7 +20588,7 @@ impl Parser {
 
     /// `~/.loft/lib/<id>/src/<id>.loft` — packages installed via `loft install`.
     fn probe_user_installed(&mut self, id: &str, f: &mut String) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let home = env::var("HOME")
@@ -20762,7 +20771,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) -> bool {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return false;
         }
         // `None` is `Bare` scope: nothing is declared, so nothing pins this run.  There
@@ -20773,7 +20782,7 @@ impl Parser {
             return false;
         };
         self.resolve_registry_installed(id, &version, f);
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             self.pin_behind_notice(id, &version, cur_script, scope);
             return true;
         }
@@ -20828,7 +20837,7 @@ impl Parser {
     /// would leave `use <dep>` unresolved even though the package is installed.
     #[cfg(feature = "registry")]
     fn resolve_registry_installed(&mut self, id: &str, version: &str, f: &mut String) {
-        if !f.is_empty() && crate::file_access::exists(f.as_str()) {
+        if !f.is_empty() && file_exists(f) {
             return;
         }
         let install_dir = crate::registry_index::extract_dir(id, version);
@@ -20872,7 +20881,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         // Off-switches.
@@ -21072,7 +21081,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if crate::file_access::exists(f.as_str()) {
+        if file_exists(f) {
             return;
         }
         let mut constraints: Vec<String> =
@@ -21139,14 +21148,14 @@ impl Parser {
 
     /// Final fallback: beside the parsed file itself.
     fn probe_cur_dir_flat(id: &str, cur_dir: &str, f: &mut String) {
-        if !cur_dir.is_empty() && !crate::file_access::exists(f.as_str()) {
+        if !cur_dir.is_empty() && !file_exists(f) {
             *f = format!("{cur_dir}{0}{id}.loft", sep_str());
         }
     }
 
     /// Final fallback for scripts inside a `/tests/` tree.
     fn probe_base_dir_flat(id: &str, base_dir: &str, f: &mut String) {
-        if !base_dir.is_empty() && !crate::file_access::exists(f.as_str()) {
+        if !base_dir.is_empty() && !file_exists(f) {
             *f = format!("{base_dir}{0}{id}.loft", sep_str());
         }
     }
@@ -21486,7 +21495,7 @@ impl Parser {
         } else {
             (nested_entry(), None)
         };
-        if crate::file_access::exists(&entry) {
+        if file_exists(&entry) {
             Some(ResolvedPkg {
                 pkg_dir,
                 entry,

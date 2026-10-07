@@ -523,7 +523,8 @@ fn adopt_read_surface(path: &str, stores: &mut Stores) -> u16 {
 /// file; integrity-checked loading is arc E's drift-detection job (Q4).
 #[cfg(feature = "mmap")]
 pub fn open_data(path: &str) -> std::io::Result<Data> {
-    if !crate::file_access::exists(path) {
+    // An empty name names nothing (`file_access` would answer for `.`).
+    if path.is_empty() || !crate::file_access::exists(path) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("IR store not found: {path}"),
