@@ -10935,6 +10935,20 @@ impl Parser {
             })
     }
 
+    /// Does `tp` name one of the interface `iface_method` belongs to's ASSOCIATED types anywhere
+    /// in it (`Self.Rows`, `vector<Self.Item>`)?  Such a type stands for whatever companion the
+    /// implementor supplies, which `associated_bindings` matches; satisfaction asks nothing of
+    /// it.
+    fn names_associated_type(&self, iface_method: u32, tp: &Type) -> bool {
+        let iface = self.data.def(iface_method).parent;
+        iface != u32::MAX
+            && tp.any_node(&mut |t| {
+                matches!(t.base(), Type::Reference(d, _)
+                    if self.data.def(*d).parent == iface
+                        && matches!(self.data.def_type(*d), DefType::Struct))
+            })
+    }
+
     fn return_type_mismatch(
         &self,
         iface_method: u32,
@@ -10958,7 +10972,29 @@ impl Parser {
             _ => None,
         };
         let (Some(w), Some(g)) = (named(&want), named(&got)) else {
-            return None;
+            // `@FR-G-Sat` — the return is part of the signature for every type, not only for a
+            // named one: a `-> float` member met `-> integer` and the generic read the float's
+            // bits as an integer (loft#1927).  A return typed by the interface's own associated
+            // type asks nothing, as such a parameter does (`bound_params_at`).  A member whose
+            // interface member returns nothing may return a value: the generic discards it.
+            if matches!(want.base(), Type::Void) || self.names_associated_type(iface_method, &want)
+            {
+                return None;
+            }
+            return (!self.data.return_fits(&got, &want)).then(|| {
+                let shown = |t: &Type| {
+                    if matches!(t.base(), Type::Void) {
+                        "nothing".to_string()
+                    } else {
+                        format!("'{}'", t.source_name(&self.data))
+                    }
+                };
+                format!(
+                    "'{method}' returns {} but the interface declares {}",
+                    shown(&got),
+                    shown(&want)
+                )
+            });
         };
         if w == g {
             return None;

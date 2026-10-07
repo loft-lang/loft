@@ -17,6 +17,19 @@ The oracle under it (`86-interfaces.loft`, `48-generics.loft`, and the numbered 
 but it is an oracle for the shapes those files happen to write; `D-gen-1` is what it could not
 see.
 
+### D-gen-11 — OPENED AND CLOSED (2026-10-07, loft#1927): a member's RETURN was compared only between named types
+
+`(G-Sat)` satisfies a bound by a function of signature `[Self ↦ C](p̄ -> R)`.  The parameters
+are compared (loft#1818); the return was compared only when both sides named a struct or enum
+(@PLN125 A2a), so `fn size(self: A) -> float` met `fn size(self: Self) -> integer`, and the
+generic, typed with `integer`, read the float's bits (`4612811918334230529` for `2.5 + 1` on
+the interpreter, rustc E0308 on `--native`); a `-> text` member printed `50`, a
+`-> vector<text>` one answered a handle as an integer on both backends, and a member returning
+nothing printed nothing.  `Data::return_fits` compares every return as a parameter is, at
+every position of the type, nullability peeled; a member whose interface member returns
+nothing may still return a value.  Guards: `1927-a-member-returning-another-type-does-not-satisfy-a-bound.loft`,
+`1927b-a-member-returning-the-declared-type-satisfies-a-bound.loft`.
+
 ### D-gen-10 — OPENED (2026-10-05) AND CLOSED (2026-10-06, loft#1872): a recursive instance's struct result read inline
 
 `(G-Mono)` says an instance answers as its concrete twin does.  The twin `fn pick(n, a: S,

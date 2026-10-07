@@ -272,6 +272,16 @@ The record, and every closed deviation, are in the companion
   it and the one the monomorph binds (`Data::operator_member_with` answers both).  `==` is the
   content comparison for every type (`(G-Sat-Eq)`), as the concrete `a == b` is.  Oracle:
   `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
+- **The RETURN is part of the signature (`G-Sat`)** — `fn size(self: A) -> float` leaves `A` short
+  of `interface Sz { fn size(self: Self) -> integer }`, refused as *"'size' returns 'float' but
+  the interface declares 'integer'"*; the generic was typed with the interface's return and would
+  read the member's answer as that type.  The return is compared as a parameter is, at every
+  position of the type (a collection's element, a function type's signature), nullability
+  peeled; a member returning nothing meets only a member declared to return nothing, and a
+  member whose interface member returns nothing may return a value, which the generic discards.
+  A return typed by the interface's associated type asks nothing.  Oracles:
+  `tests/scripts/1927-a-member-returning-another-type-does-not-satisfy-a-bound.loft`,
+  `tests/scripts/1927b-a-member-returning-the-declared-type-satisfies-a-bound.loft`.
 - **A template member is not a concrete function (`G-Sat`)** — `operator plus<U>(self: W, o: U)`
   alone leaves `W` short of `Addable`, refused as *"'plus' is a template, and a bound takes a
   concrete 'plus' of its signature"*.  A concrete member of the set beside the template
