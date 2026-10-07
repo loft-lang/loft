@@ -1,0 +1,26 @@
+diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 114912e5d..722f5086f 100644
+--- a/src/parser/definitions.rs
++++ b/src/parser/definitions.rs
+@@ -80,21 +80,6 @@ impl Parser {
+             }
+             return;
+         }
+-        // @FR-Col-Spatial — an axis is an integer-not-null coordinate.  A float or single axis
+-        // was accepted and then encoded so that a point lookup missed the collection's own
+-        // records, and a float box query did not compile on `--native` (loft#1913).
+-        if !want_text && !is_text && !matches!(tp, Type::Integer(_)) {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "a spatial index interleaves integer coordinates into a Morton code, and the \
+-                 axis `{field}` is `{}` — store the coordinate as an integer in a unit fine \
+-                 enough for it (millimetres, not metres), or key on the VALUE with `sorted` / \
+-                 `index`",
+-                tp.source_name(&self.data)
+-            );
+-            return;
+-        }
+         if is_text == want_text {
+             return;
+         }

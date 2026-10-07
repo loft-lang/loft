@@ -12,7 +12,9 @@
 // the declaration; integer axes of every width keep working (the `1431-…` and `col_spatial`
 // cells).
 //
-// @falsified-at: PENDING
+// @falsified-at: 27e83e117 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1913-a-spatial-axis-is-an-integer.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: the EXPECTATION — the control accepts all three axes.
 
 struct Pf1913 { const x: float, const y: single, n: integer }
 struct Pc1913 { const c: character, n: integer }

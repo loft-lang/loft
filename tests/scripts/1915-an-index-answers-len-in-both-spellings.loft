@@ -10,6 +10,10 @@
 // (after inserts, after a removal by key, empty), and the result's use (printed, arithmetic).
 // Every value is hand-computed.
 //
+// @falsified-at: 9751f5a79 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1915-an-index-answers-len-in-both-spellings.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the control refuses `h.len()` at compile time.
+//
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
 struct E1915 { id: integer, v: integer }

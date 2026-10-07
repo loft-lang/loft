@@ -14,6 +14,11 @@
 // loop bound; each test also looks up the keys inserted LAST, which are the ones dropped.
 // Axes HELD FIXED: one integer key; the record layout (a struct of two integers).
 //
+// @falsified-at: 231a813a9 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1910-an-index-holds-every-record-past-tree-depth-thirty.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — the ascending cell counts 98,302 of 100,000 and the first key past the
+//   old bound reads null, on both backends.
+//
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
 struct E1910 { id: integer, v: integer }

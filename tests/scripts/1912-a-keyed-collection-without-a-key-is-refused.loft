@@ -10,7 +10,9 @@
 // refused, and now says the same thing.  Each kind is its own declaration, so a refusal that
 // reached only one of them leaves the others compiling and the expected error count short.
 //
-// @falsified-at: PENDING
+// @falsified-at: 27e83e117 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1912-a-keyed-collection-without-a-key-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: the EXPECTATION — the control compiles every `[]` declaration and prints the one-record counts.
 
 struct Q1912 { a: integer, n: integer }
 
