@@ -27,8 +27,6 @@
 //! `ANDROID_NDK_HOME` (or `ANDROID_NDK_ROOT`) at it. Build the `x86_64-linux-android`
 //! triple (`LOFT_ANDROID_TARGET`) for a KVM emulator; `aarch64` is the ship target.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// A resolved Android cross-compile descriptor: the NDK, the API level, and the
@@ -59,7 +57,7 @@ impl AndroidTarget {
                  sysroot live there)."
                     .to_string()
             })?;
-        if !ndk.is_dir() {
+        if !crate::file_access::is_dir(&ndk) {
             return Err(format!(
                 "loft: ANDROID_NDK_HOME points at '{}', which is not a directory.",
                 ndk.display()
@@ -75,7 +73,7 @@ impl AndroidTarget {
         // Fail now, with the resolved path, if the toolchain wrapper is absent
         // (wrong host tag, NDK too old for this API, or a partial install).
         let linker = target.linker();
-        if !linker.exists() {
+        if !crate::file_access::exists(&linker) {
             return Err(format!(
                 "loft: NDK linker not found at '{}'.  Check the NDK is complete and that \
                  LOFT_ANDROID_API={} / LOFT_ANDROID_TARGET={} match a wrapper in {}.",
@@ -148,18 +146,19 @@ impl AndroidTarget {
         })?;
         let crate_dir = tree.join("target").join("loft").join("android-app");
         let src_dir = crate_dir.join("src");
-        std::fs::create_dir_all(&src_dir)
-            .map_err(|e| format!("loft: create {}: {e}", src_dir.display()))?;
+        crate::file_access::create_dir_all(&src_dir).map_err(|e| format!("loft: create {e}"))?;
 
         // Serialise on the SAME lock the package / runtime auto-builds use: the
         // crate dir is shared across runs (so cargo caches android-activity + loft),
         // so concurrent `--native-android` runs must not clobber each other's lib.rs.
-        let _build_lock = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(false)
-            .open(std::env::temp_dir().join("loft-native-build.lock"))
-            .ok();
+        let _build_lock = crate::file_access::open_with(
+            std::env::temp_dir().join("loft-native-build.lock"),
+            std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(false),
+        )
+        .ok();
         if let Some(f) = &_build_lock {
             let _ = f.lock();
         }
@@ -175,21 +174,21 @@ impl AndroidTarget {
         // `fn main` stay valid at the root) + `extern crate <pkg>` for each native
         // package (the C-ABI call path names the package's symbols by `#[link_name]`
         // but never `use`s the crate, so force-link its rlib) + the android_main tail.
-        let program = std::fs::read_to_string(rs_path)
-            .map_err(|e| format!("loft: read emitted program {}: {e}", rs_path.display()))?;
+        let program = crate::file_access::read_to_string(rs_path)
+            .map_err(|e| format!("loft: read emitted program {e}"))?;
         let mut externs = String::new();
         for (c, _) in native_packages {
             use std::fmt::Write as _;
             let _ = writeln!(externs, "extern crate {};", c.replace('-', "_"));
         }
         let lib_rs = format!("{program}\n{externs}{}", android_main_tail(needs_gl_app));
-        std::fs::write(src_dir.join("lib.rs"), lib_rs)
-            .map_err(|e| format!("loft: write lib.rs: {e}"))?;
-        std::fs::write(
+        crate::file_access::write(src_dir.join("lib.rs"), lib_rs)
+            .map_err(|e| format!("loft: write {e}"))?;
+        crate::file_access::write(
             crate_dir.join("Cargo.toml"),
             cargo_toml(&tree, native_packages),
         )
-        .map_err(|e| format!("loft: write Cargo.toml: {e}"))?;
+        .map_err(|e| format!("loft: write {e}"))?;
 
         let linker = self.linker();
         let mut cmd = std::process::Command::new("cargo");
@@ -236,20 +235,13 @@ impl AndroidTarget {
             .join("release")
             .join("libloft_android_app.so");
 
-        if out_path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("apk"))
-        {
+        if crate::file_access::extension(out_path).is_some_and(|e| e.eq_ignore_ascii_case("apk")) {
             let sdk = AndroidSdk::detect()?;
             self.package_apk(&sdk, &built, &crate_dir, out_path)
         } else {
-            std::fs::copy(&built, out_path).map(|_| ()).map_err(|e| {
-                format!(
-                    "loft: copy {} -> {}: {e}",
-                    built.display(),
-                    out_path.display()
-                )
-            })
+            crate::file_access::copy(&built, out_path)
+                .map(|_| ())
+                .map_err(|e| format!("loft: copy to {}: {e}", out_path.display()))
         }
     }
 
@@ -286,20 +278,19 @@ impl AndroidTarget {
         let app = app_ident(out_apk);
         let work = crate_dir.join("apk-build");
         let lib_dir = work.join("staging").join("lib").join(self.abi());
-        let _ = std::fs::remove_dir_all(&work);
-        std::fs::create_dir_all(&lib_dir)
-            .map_err(|e| format!("loft: create {}: {e}", lib_dir.display()))?;
-        std::fs::copy(so_path, lib_dir.join(format!("lib{LIB_NAME}.so")))
+        let _ = crate::file_access::remove_dir_all(&work);
+        crate::file_access::create_dir_all(&lib_dir).map_err(|e| format!("loft: create {e}"))?;
+        crate::file_access::copy(so_path, lib_dir.join(format!("lib{LIB_NAME}.so")))
             .map_err(|e| format!("loft: stage .so: {e}"))?;
         // Bundle libc++_shared.so (the app .so links it for oboe's C++).
         let libcxx = self.libcxx_shared();
-        if libcxx.is_file() {
-            std::fs::copy(&libcxx, lib_dir.join("libc++_shared.so"))
+        if crate::file_access::is_file(&libcxx) {
+            crate::file_access::copy(&libcxx, lib_dir.join("libc++_shared.so"))
                 .map_err(|e| format!("loft: stage libc++_shared.so: {e}"))?;
         }
         let manifest = work.join("AndroidManifest.xml");
-        std::fs::write(&manifest, android_manifest(&app, LIB_NAME))
-            .map_err(|e| format!("loft: write manifest: {e}"))?;
+        crate::file_access::write(&manifest, android_manifest(&app, LIB_NAME))
+            .map_err(|e| format!("loft: write manifest {e}"))?;
 
         let base = work.join("base.apk");
         run_tool(
@@ -371,7 +362,7 @@ impl AndroidTarget {
 /// JDK `keytool` (password `android`, the Android debug-key convention).
 fn ensure_debug_keystore(sdk: &AndroidSdk, crate_dir: &Path) -> Result<PathBuf, String> {
     let keystore = crate_dir.join("loft-debug.keystore");
-    if keystore.exists() {
+    if crate::file_access::exists(&keystore) {
         return Ok(keystore);
     }
     run_tool(
@@ -496,10 +487,7 @@ fn exe(name: &str) -> String {
 /// A valid Android package/label segment derived from the APK's file stem
 /// (`com.loft.<ident>`): lowercase ASCII alnum, must start with a letter.
 fn app_ident(out_apk: &Path) -> String {
-    let stem = out_apk
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("app");
+    let stem = crate::file_access::file_stem(out_apk).unwrap_or_else(|| "app".to_string());
     let s: String = stem
         .chars()
         .map(|c| {
@@ -544,7 +532,7 @@ fn android_manifest(app: &str, lib_name: &str) -> String {
 /// on `PATH` (its grandparent).
 fn detect_java_home() -> Option<PathBuf> {
     if let Some(jh) = std::env::var_os("JAVA_HOME").map(PathBuf::from) {
-        if jh.join("bin").join(exe("keytool")).is_file() {
+        if crate::file_access::is_file(jh.join("bin").join(exe("keytool"))) {
             return Some(jh);
         }
     }
@@ -557,7 +545,7 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .map(|d| d.join(name))
-        .find(|p| p.is_file())
+        .find(|p| crate::file_access::is_file(p))
 }
 
 /// The numeric sort key of a dotted version like `34.0.0` → `[34, 0, 0]`.
@@ -568,10 +556,10 @@ fn version_key(name: &str) -> Vec<u32> {
 /// The highest-versioned `build-tools/<v>/` subdir that actually contains `aapt2`.
 fn highest_versioned_subdir(dir: &Path) -> Option<PathBuf> {
     let mut best: Option<(Vec<u32>, PathBuf)> = None;
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let p = entry.path();
-        let key = version_key(&entry.file_name().to_string_lossy());
-        if key.is_empty() || !p.join(exe("aapt2")).exists() {
+    for entry in crate::file_access::read_dir(dir).ok()? {
+        let p = entry.os_spelling();
+        let key = version_key(entry.file_name().unwrap_or_default());
+        if key.is_empty() || !crate::file_access::exists(p.join(exe("aapt2"))) {
             continue;
         }
         if best.as_ref().is_none_or(|(bk, _)| &key > bk) {
@@ -584,16 +572,16 @@ fn highest_versioned_subdir(dir: &Path) -> Option<PathBuf> {
 /// The highest `platforms/android-<N>/android.jar` and its `<N>`.
 fn highest_platform(dir: &Path) -> Option<(PathBuf, u32)> {
     let mut best: Option<(u32, PathBuf)> = None;
-    for entry in std::fs::read_dir(dir).ok()?.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
+    for entry in crate::file_access::read_dir(dir).ok()? {
+        let name = entry.file_name().unwrap_or_default();
         let Some(n) = name
             .strip_prefix("android-")
             .and_then(|s| s.parse::<u32>().ok())
         else {
             continue;
         };
-        let jar = entry.path().join("android.jar");
-        if jar.exists() && best.as_ref().is_none_or(|(bn, _)| n > *bn) {
+        let jar = entry.os_spelling().join("android.jar");
+        if crate::file_access::exists(&jar) && best.as_ref().is_none_or(|(bn, _)| n > *bn) {
             best = Some((n, jar));
         }
     }
