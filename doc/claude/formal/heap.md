@@ -369,7 +369,10 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  wrapper (what `OpDatabase` mints — asking the shape, never a byte
                  offset, is what keeps the two backends together: the field sits at
                  8 on `--native` and 12 on the interpreter) and the element type
-                 OWNS HEAP.  A no-heap element pays exactly the old reset; a field
+                 OWNS HEAP.  A no-heap element pays exactly the old reset — for a
+                 field vector the emitter decides that from `OpGetField`'s vector
+                 type, since asking the layout at run time searched the record's
+                 fields per clear; a field
                  vector, a user-struct root and a placed buffer (never record 1)
                  keep it too.  Values are unaffected either way — this is a leak
                  rule, not a semantics rule.  The release is ONE STORE RESET, not a

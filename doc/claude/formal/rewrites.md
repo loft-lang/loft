@@ -1106,7 +1106,18 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  enum payloads is (R-Scalar)'s: a hoisted scalar is keyed by (type,
                  offset), and two variants put different fields at one offset.  The
                  synthetic `__nullable<S>` stays out: its absence is a discriminant,
-                 not a null record.
+                 not a null record.  THE TUPLE CLAUSE: a record carried as a VALUE
+                 (R-ValueRecord) is read out of a store record — `return
+                 v[i]?` of a value-returning function — and written into one — a
+                 copy from a value local or a forward — through one address taken
+                 where the copy starts: the record evaluated once, its address and
+                 lock state once, then one load or store per field of a kind the
+                 address serves (a `boolean` keeps its own accessor, to the same
+                 bytes).  No block proof is needed: the copy's parts are tuple
+                 elements or loads, so nothing between the address and its last
+                 use grows, moves or frees a store.  A view part declines the
+                 write (its append may grow the store), and a view whose block
+                 already holds an address reads and writes through that one.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1122,8 +1133,11 @@ falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
-(the read and the write), `vector::rec_ptr` / `rec_get` / `rec_set`.  Cells
-`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  The `for e in v` loop
+(the read and the write), `Output::output_record_tuple` and
+`Output::write_tuple_through_address` (the tuple clause), `vector::rec_ptr` / `rec_get` /
+`rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
+`tests/scripts/a-value-record-is-copied-through-one-address.loft`, pins
+`tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
 the same gate admits it once the `Optional` is peeled — the loop body reads every field of
 `e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
