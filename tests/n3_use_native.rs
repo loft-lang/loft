@@ -561,7 +561,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     // the bare name.
     fa::write(
         lib.join("mine.loft"),
-        "pub struct Holder { flag: boolean }\npub fn mine_new() -> Holder { Holder { flag: true } }\n",
+        "pub struct Holder { pub flag: boolean }\npub fn mine_new() -> Holder { Holder { flag: true } }\n",
     )
     .unwrap();
     fa::write(
@@ -1510,12 +1510,12 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
     .unwrap();
     fa::write(
         pkg.join("src/fwd1663.loft"),
-        "pub struct St { size: float }\n\
+        "pub struct St { pub size: float }\n\
          pub fn default_st() -> St { return St { size: 1.0 }; }\n\
          pub fn unit(_id: integer) -> St { return default_st(); }\n\
          pub fn mk(k: integer) -> St { return St { size: k as float }; }\n\
          pub fn fwd(k: integer) -> St { return mk(k); }\n\
-         pub enum Sh { Circle { r: float }, Box { w: float } }\n\
+         pub enum Sh { Circle { pub r: float }, Box { pub w: float } }\n\
          pub fn mk_sh() -> Sh { return Box { w: 2.5 }; }\n\
          pub fn sh(_id: integer) -> Sh { return mk_sh(); }\n\
          pub fn mkv() -> vector<integer> { return [7, 8, 9]; }\n\

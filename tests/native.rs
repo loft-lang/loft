@@ -4474,8 +4474,8 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     )?;
     fa::write(
         pkg.join("src/shadowlib.loft"),
-        "pub struct W { w_n: integer, w_tag: text }\n\
-         pub struct H { h_q: integer, h_r: integer }\n\
+        "pub struct W { pub w_n: integer, pub w_tag: text }\n\
+         pub struct H { pub h_q: integer, pub h_r: integer }\n\
          pub fn make(n: integer) -> W { W { w_n: n, w_tag: \"lib\" } }\n\
          pub fn bump(w: W, n: integer) -> integer { w.w_n + n }\n\
          fn defaulted(w: W) -> boolean { w.w_n > 0 }\n\

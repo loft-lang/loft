@@ -4,9 +4,9 @@
 // parity harness asserts a program using this library produces byte-identical
 // output whether the library runs native or interpreted.
 
-pub struct Point { x: integer, y: integer }
+pub struct Point { pub x: integer, pub y: integer }
 
-pub enum Shape { Circle { r: integer }, Rect { w: integer, h: integer } }
+pub enum Shape { Circle { pub r: integer }, Rect { pub w: integer, pub h: integer } }
 
 pub fn vec_sum(v: vector<integer>) -> integer {
     total = 0;

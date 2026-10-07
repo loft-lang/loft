@@ -2,8 +2,8 @@
 // registers first and keeps the bare name, so this one is registered qualified
 // (`sharedname::Holder`) — and a call into the shared cdylib that has to mint the result
 // record must find it under that name, not under the bare one.
-pub struct Pair { p: integer, v: vector<integer> }
-pub struct Holder { tag: integer, pair: Pair, items: vector<integer> }
+pub struct Pair { pub p: integer, pub v: vector<integer> }
+pub struct Holder { pub tag: integer, pub pair: Pair, pub items: vector<integer> }
 
 pub fn holder_pair(p: integer) -> Pair { Pair { p: p, v: [p, p + 1] } }
 
