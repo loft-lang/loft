@@ -41,8 +41,6 @@
 //! Wire: WebSocket text frames (`<msg_id>:<payload>` convention is the loft
 //! side's concern — the kernel passes payloads through verbatim).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::cell::RefCell;
 // VecDeque / keys::Str are used only in the native (non-wasm) engine-host
 // paths, so they read as unused in wasm / feature-restricted builds.
@@ -724,7 +722,7 @@ fn listen_impl(port: i64, tick_us: i64) -> bool {
             // booted as a swap target, the parent polls this file; touching
             // it means "the new build is serving" and the parent retires.
             if let Ok(ready) = std::env::var("LOFT_SWAP_READY") {
-                let _ = std::fs::write(&ready, b"serving");
+                let _ = crate::file_access::write(&ready, b"serving");
                 eprintln!("loft-swap: new build serving on port {port} (ready file touched)");
             }
         })
@@ -1439,7 +1437,7 @@ fn local_init(tick_us: i64) {
         // The swap-resume handshake (08-S5): a local kernel's "serving" is
         // simply BOOTED — same signal as the connector's connected.
         if let Ok(ready) = std::env::var("LOFT_SWAP_READY") {
-            let _ = std::fs::write(&ready, b"connected");
+            let _ = crate::file_access::write(&ready, b"connected");
         }
     });
 }
@@ -1544,7 +1542,7 @@ fn client_connect(host: &str, port: u16, tick_us: i64) -> Option<()> {
         // "serving" is CONNECTED.  Touching the file tells the retiring
         // parent the new build is live (mirror of listen_impl's signal).
         if let Ok(ready) = std::env::var("LOFT_SWAP_READY") {
-            let _ = std::fs::write(&ready, b"connected");
+            let _ = crate::file_access::write(&ready, b"connected");
             eprintln!("loft-swap: new build connected (ready file touched)");
         }
         Some(())
@@ -2247,7 +2245,7 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
     let Ok(snap_path) = std::env::var("LOFT_RESUME") else {
         return false;
     };
-    let Ok(json) = std::fs::read_to_string(&snap_path) else {
+    let Ok(json) = crate::file_access::read_to_string(&snap_path) else {
         eprintln!("loft-swap: LOFT_RESUME set but {snap_path} unreadable; starting fresh");
         return false;
     };
@@ -2261,7 +2259,7 @@ fn swap_world_impl(stores: &mut Stores, w: DbRef) -> bool {
 /// `rebuild_artifact()`).  The run loop acts at the next frame boundary.
 #[cfg(not(target_arch = "wasm32"))]
 fn swap_start_impl(artifact: &str) -> bool {
-    if artifact.is_empty() || !std::path::Path::new(artifact).exists() {
+    if artifact.is_empty() || !crate::file_access::exists(artifact) {
         eprintln!("loft-swap: no such artifact `{artifact}` — swap refused");
         return false;
     }
@@ -2298,10 +2296,10 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 let mut json = String::new();
                 stores.show_json(&mut json, &w, kt, false);
                 let base = std::env::temp_dir().join(format!("loft_swap_{}", std::process::id()));
-                let snap = base.with_extension("snap.json");
-                let ready = base.with_extension("ready");
-                let _ = std::fs::remove_file(&ready);
-                if std::fs::write(&snap, &json).is_err() {
+                let snap = crate::file_access::with_extension(&base, "snap.json");
+                let ready = crate::file_access::with_extension(&base, "ready");
+                let _ = crate::file_access::remove_file(&ready);
+                if crate::file_access::write(&snap, &json).is_err() {
                     eprintln!("loft-swap: rolled back (cannot write snapshot)");
                     *sw = SwapPhase::Idle;
                     return 0;
@@ -2333,7 +2331,7 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     }
                     Err(e) => {
                         eprintln!("loft-swap: rolled back (cannot spawn {artifact}: {e})");
-                        let _ = std::fs::remove_file(&snap);
+                        let _ = crate::file_access::remove_file(&snap);
                         *sw = SwapPhase::Idle;
                         0
                     }
@@ -2345,21 +2343,21 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                 snap,
                 deadline,
             } => {
-                if ready.exists() {
+                if crate::file_access::exists(&*ready) {
                     // The new build is serving: hand over.  Dropping the
                     // Kernel closes the listener, the UDP socket and every
                     // connection — seats reconnect into the new process.
                     eprintln!("loft-swap: handing over — this build retires");
-                    let _ = std::fs::remove_file(snap);
-                    let _ = std::fs::remove_file(ready);
+                    let _ = crate::file_access::remove_file(&*snap);
+                    let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Done;
                     KERNEL.with(|k| *k.borrow_mut() = None);
                     return 2;
                 }
                 if let Ok(Some(status)) = child.try_wait() {
                     eprintln!("loft-swap: rolled back (new build exited {status} before serving)");
-                    let _ = std::fs::remove_file(snap);
-                    let _ = std::fs::remove_file(ready);
+                    let _ = crate::file_access::remove_file(&*snap);
+                    let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Idle;
                     return 0;
                 }
@@ -2367,8 +2365,8 @@ fn swap_step_impl(stores: &mut Stores) -> i64 {
                     eprintln!("loft-swap: rolled back (new build never became ready)");
                     let _ = child.kill();
                     let _ = child.wait();
-                    let _ = std::fs::remove_file(snap);
-                    let _ = std::fs::remove_file(ready);
+                    let _ = crate::file_access::remove_file(&*snap);
+                    let _ = crate::file_access::remove_file(&*ready);
                     *sw = SwapPhase::Idle;
                     return 0;
                 }
