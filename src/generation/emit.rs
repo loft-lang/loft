@@ -4401,7 +4401,6 @@ impl Output<'_> {
         }
         let pair = &self.elem_first.pairs[pi];
         let dvars = self.data.def(self.def_nr).variables();
-        let outn = sanitize(dvars.name(pair.out));
         let elmn = sanitize(dvars.name(pair.elm));
         let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
         self.indent(w)?;
@@ -4432,15 +4431,19 @@ impl Output<'_> {
                 "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &({operand}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
             );
         }
+        // The container is rendered as any read of it is, so a `&` parameter is dereferenced.
+        let mut out: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut out, &Value::Var(pair.out))?;
+        let out = String::from_utf8_lossy(&out).into_owned();
         if fld == 65535 {
             writeln!(
                 w,
-                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
             )
         } else {
             writeln!(
                 w,
-                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+                "var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
             )
         }
     }
