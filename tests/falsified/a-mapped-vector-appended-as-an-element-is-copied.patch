@@ -1,0 +1,49 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 80a649744..10e2b2ee2 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -1271,19 +1271,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
+     let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
+     let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
+     let tp = raw_tp & crate::keys::COPY_TP_MASK;
+-    // `@FR-Const-Foreign` — the interpreter's twin (`State::do_copy_record`): a VECTOR read
+-    // out of a foreign store is copied element by element, as a bind of it copies; its bytes
+-    // lie outside the store's own blocks, where the record copy would read a record that is
+-    // not there.
+-    if let Some(crate::database::Parts::Vector(elem)) =
+-        stores.types.get(tp as usize).map(|t| &t.parts)
+-        && (data.store_nr as usize) < stores.allocations.len()
+-        && stores.allocations[data.store_nr as usize].is_foreign()
+-    {
+-        let elem = *elem;
+-        stores.vector_add(&to, &data, elem);
+-        return;
+-    }
+     let size = u32::from(stores.size(tp));
+     if crate::keys::trace_copy() {
+         crate::loft_eprintln!(
+diff --git b/src/state/io.rs a/src/state/io.rs
+index bccdfd87e..9008d7c8e 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -1709,20 +1709,6 @@ impl State {
+             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
+             return;
+         }
+-        // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
+-        // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
+-        // its bytes lie outside the store's own blocks, where the record copy below would
+-        // read a record that is not there.  An element append of mapped bytes
+-        // (`v += [file_map(p) ?? []]`) panicked on a corrupt reference.
+-        if let Some(crate::database::Parts::Vector(elem)) =
+-            self.database.types.get(tp as usize).map(|t| &t.parts)
+-            && (data.store_nr as usize) < self.database.allocations.len()
+-            && self.database.allocations[data.store_nr as usize].is_foreign()
+-        {
+-            let elem = *elem;
+-            self.database.vector_add(&to, &data, elem);
+-            return;
+-        }
+         // @PLN90 phase 1 — make the copy visible. A real record deep-copy is about to
+         // run (the no-op-alias and null cases returned above). LOFT_COPY_DUMP prints one
+         // line per executed structure copy so we can inventory every copy + map it to its
