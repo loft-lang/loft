@@ -210,6 +210,7 @@ fn pivot_anchor(canonical: u16) -> u16 {
 /// through `/proc/<pid>/exe`, and kills with `kill(2)`.  Windows has none of the three, so
 /// the port there is simply pivoted around instead — which is what the caller already does
 /// for a port that is not ours.
+// @PLN184 C2 exemption candidate: `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
 #[cfg(unix)]
 #[allow(dead_code)]
 fn reap_our_leaked_holders(port: u16) -> bool {
@@ -235,6 +236,7 @@ fn reap_our_leaked_holders(port: u16) -> bool {
 
 /// Windows has no `lsof`, no `/proc` and no `kill(2)`, so there is nothing to reap — the
 /// caller pivots to another port, exactly as it does for a holder that is not ours.
+// @PLN184 C2 exemption candidate: `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
 #[cfg(not(unix))]
 #[allow(dead_code)]
 fn reap_our_leaked_holders(_port: u16) -> bool {
@@ -443,14 +445,10 @@ use std::sync::OnceLock;
 ///
 /// `rlib` is `target/<profile>/libloft.rlib` or `target/<profile>/deps/libloft-*.rlib`.
 #[allow(dead_code)]
-#[cfg(not(windows))]
-pub fn native_lib_search_dirs(_rlib: &std::path::Path) -> Vec<PathBuf> {
-    Vec::new()
-}
-
-#[allow(dead_code)]
-#[cfg(windows)]
 pub fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<PathBuf> {
+    if loft::platform::host_lib_os() != loft::platform::LibOs::Windows {
+        return Vec::new();
+    }
     // Walk up to the profile dir (release/ or debug/), then scan `build/<crate>-<hash>/`.
     let Some(profile_dir) = rlib.parent().and_then(|p| {
         if fa::file_name(p).is_some_and(|n| n == "deps") {

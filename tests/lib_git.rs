@@ -14,6 +14,7 @@
 // in it, a rename, a binary file), and a real checkout's history is whatever it
 // happens to be that day.
 
+// @PLN184 C2 exemption candidate: `placement = "process"` (`lib_placement::wire` is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;

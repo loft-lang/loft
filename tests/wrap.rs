@@ -864,6 +864,7 @@ pub fn run_lib_test_in_temp_cwd(
     let mut args: Vec<&str> = extra_args.to_vec();
     args.push("test");
     args.push(stem);
+    // @PLN184 C2 exemption candidate: the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(unix)]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -887,6 +888,7 @@ pub fn run_lib_test_in_temp_cwd(
         let _ = fa::remove_dir_all(&tmp);
         out
     }
+    // @PLN184 C2 exemption candidate: the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(not(unix))]
     {
         std::process::Command::new(loft_bin)

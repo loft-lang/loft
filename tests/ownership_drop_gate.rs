@@ -1017,6 +1017,7 @@ fn run_cell(dir: &Path, c: &Cell, mode: &str, timeout: &str) -> Verdict {
 /// `LOFT_MEMORY_LIMIT` is armed only under `loft test`.  A cell peaks near 22 MiB of address
 /// space, so 2 GiB never binds on a working one.  A native cell is left unbounded: its driver
 /// runs `rustc`, which would inherit the limit.
+// @PLN184 C2 exemption candidate: `setrlimit(RLIMIT_AS)` in the child has no Windows equivalent; Windows substitute: the `LOFT_MEMORY_LIMIT` store-heap ceiling (the other arm)
 #[cfg(target_os = "linux")]
 fn cap_address_space(cmd: &mut Command, mode: &str) {
     use std::os::unix::process::CommandExt as _;
@@ -1037,6 +1038,7 @@ fn cap_address_space(cmd: &mut Command, mode: &str) {
     }
 }
 
+// @PLN184 C2 exemption candidate: `setrlimit(RLIMIT_AS)` in the child has no Windows equivalent; Windows substitute: the `LOFT_MEMORY_LIMIT` store-heap ceiling (the other arm)
 #[cfg(not(target_os = "linux"))]
 fn cap_address_space(cmd: &mut Command, mode: &str) {
     // macOS does not enforce `RLIMIT_AS`; the store-heap ceiling bounds the same runaway

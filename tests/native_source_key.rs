@@ -170,6 +170,7 @@ const PROG_100: &str = "fn main() {\n  v = [5, 10, 85];\n  println(\"sum={v[0]+v
 /// edit misses the key but still skips rustc; a sidecar whose binary is gone, whose text is
 /// garbage, or whose fingerprint was altered is a miss and never a crash — and each of those
 /// heals into a hit on the run after.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_misses() {
@@ -282,6 +283,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
 }
 
 /// Cell 2 — THE cell: an edit that changes the program is never answered by the old binary.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn an_edit_that_changes_the_program_is_never_served_stale() {
@@ -319,6 +321,7 @@ fn an_edit_that_changes_the_program_is_never_served_stale() {
 /// an edited source re-validates and rewrites it for the new source, so a sidecar that only
 /// asked "is the manifest current?" execs the OLD binary on the next native run.  The
 /// sidecar names the manifest it was built beside.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
@@ -354,6 +357,7 @@ fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
 
 /// Cell 12 — a source-key hit says what the cold run said: the parse did not run, so its
 /// diagnostics are replayed from the manifest, through the same renderer.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
@@ -395,6 +399,7 @@ fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
 /// Cell 5 — a flag that changes the binary is a different key: `--native-release` after
 /// `--native` misses (and, since the binary cache keeps one entry per program, so does the
 /// `--native` run after it), and each answers correctly.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn a_flag_that_changes_the_binary_is_a_different_key() {
@@ -444,6 +449,7 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
 /// the second run compiles nothing, and the failure it reports still names ITS OWN file.
 /// Both halves matter: sharing the binary while reporting the first file's path would
 /// be a wrong answer served from the cache.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
@@ -489,6 +495,7 @@ fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
 
 /// Cells 7, 8 — a `LOFT_*` switch outside the inert list declines the path (a codegen
 /// switch changes the Rust), and the P254 kill switch turns every native cache off.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn a_switch_in_the_environment_declines_the_fast_path() {
@@ -584,6 +591,7 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
 /// Cell 4 — an edited stdlib is never served from the source key.  A scratch copy of
 /// `default/` (via `--path`) carries one probe function; the key is warmed, the probe
 /// changed, and the next run must answer with the new value.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn an_edited_stdlib_is_never_served_from_the_source_key() {
@@ -625,6 +633,7 @@ fn an_edited_stdlib_is_never_served_from_the_source_key() {
 }
 
 /// Cell 6 — an edited `--lib` dependency is never served from the source key.
+// @PLN184 C2 exemption candidate: the source-keyed fast path is off on Windows by design (main.rs: DLL staging reads the parse); Windows substitute: `the_fast_path_declines_on_windows`
 #[cfg(not(windows))]
 #[test]
 fn an_edited_library_is_never_served_from_the_source_key() {

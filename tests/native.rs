@@ -149,73 +149,68 @@ fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
 /// import libraries in a platform-specific subdirectory such as `out/x86_64-pc-windows-msvc/`
 /// rather than directly in `out/`.  Adding both levels covers all known layouts.
 fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> {
-    #[cfg(not(windows))]
-    {
-        let _ = rlib_info;
-        Vec::new()
+    if loft::platform::host_lib_os() != loft::platform::LibOs::Windows {
+        return Vec::new();
     }
-    #[cfg(windows)]
-    {
-        let Some((rlib, _)) = rlib_info else {
-            return Vec::new();
-        };
-        // rlib is at target/{profile}/libloft.rlib or target/{profile}/deps/libloft-*.rlib.
-        // Walk up to find the profile directory (release/ or debug/).
-        let profile_dir = rlib.parent().and_then(|p| {
-            if fa::file_name(p).is_some_and(|n| n == "deps") {
-                p.parent()
-            } else {
-                Some(p)
-            }
-        });
-        let Some(profile_dir) = profile_dir else {
-            return Vec::new();
-        };
-        let build_dir = profile_dir.join("build");
-        let Ok(entries) = fa::read_dir(&build_dir) else {
-            return Vec::new();
-        };
-        let mut dirs = Vec::new();
-        for entry in entries {
-            let build_entry = entry.os_spelling();
+    let Some((rlib, _)) = rlib_info else {
+        return Vec::new();
+    };
+    // rlib is at target/{profile}/libloft.rlib or target/{profile}/deps/libloft-*.rlib.
+    // Walk up to find the profile directory (release/ or debug/).
+    let profile_dir = rlib.parent().and_then(|p| {
+        if fa::file_name(p).is_some_and(|n| n == "deps") {
+            p.parent()
+        } else {
+            Some(p)
+        }
+    });
+    let Some(profile_dir) = profile_dir else {
+        return Vec::new();
+    };
+    let build_dir = profile_dir.join("build");
+    let Ok(entries) = fa::read_dir(&build_dir) else {
+        return Vec::new();
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let build_entry = entry.os_spelling();
 
-            // Add out/ and its immediate subdirs (for libs generated into OUT_DIR).
-            let out = build_entry.join("out");
-            if fa::is_dir(&out) {
-                dirs.push(out.clone());
-                if let Ok(subdirs) = fa::read_dir(&out) {
-                    for sub in subdirs {
-                        if fa::is_dir(&sub) {
-                            dirs.push(sub.os_spelling());
-                        }
-                    }
-                }
-            }
-
-            // Read the build-script output file for `cargo:rustc-link-search` directives.
-            // Crates like `windows_x86_64_msvc` ship `windows.0.48.5.lib` inside their
-            // source package (cargo registry) and emit
-            //   cargo:rustc-link-search=<CARGO_MANIFEST_DIR>
-            // rather than writing the file to OUT_DIR.  Cargo caches these directives in
-            // `target/{profile}/build/{crate}-{hash}/output`.  Reading them here replicates
-            // exactly what cargo passes to the linker.
-            let output_file = build_entry.join("output");
-            if let Ok(content) = fa::read_to_string(&output_file) {
-                for line in content.lines() {
-                    let path_str = line
-                        .strip_prefix("cargo:rustc-link-search=native=")
-                        .or_else(|| line.strip_prefix("cargo:rustc-link-search="));
-                    if let Some(path_str) = path_str {
-                        let p = PathBuf::from(path_str);
-                        if fa::is_dir(&p) && !dirs.contains(&p) {
-                            dirs.push(p);
-                        }
+        // Add out/ and its immediate subdirs (for libs generated into OUT_DIR).
+        let out = build_entry.join("out");
+        if fa::is_dir(&out) {
+            dirs.push(out.clone());
+            if let Ok(subdirs) = fa::read_dir(&out) {
+                for sub in subdirs {
+                    if fa::is_dir(&sub) {
+                        dirs.push(sub.os_spelling());
                     }
                 }
             }
         }
-        dirs
+
+        // Read the build-script output file for `cargo:rustc-link-search` directives.
+        // Crates like `windows_x86_64_msvc` ship `windows.0.48.5.lib` inside their
+        // source package (cargo registry) and emit
+        //   cargo:rustc-link-search=<CARGO_MANIFEST_DIR>
+        // rather than writing the file to OUT_DIR.  Cargo caches these directives in
+        // `target/{profile}/build/{crate}-{hash}/output`.  Reading them here replicates
+        // exactly what cargo passes to the linker.
+        let output_file = build_entry.join("output");
+        if let Ok(content) = fa::read_to_string(&output_file) {
+            for line in content.lines() {
+                let path_str = line
+                    .strip_prefix("cargo:rustc-link-search=native=")
+                    .or_else(|| line.strip_prefix("cargo:rustc-link-search="));
+                if let Some(path_str) = path_str {
+                    let p = PathBuf::from(path_str);
+                    if fa::is_dir(&p) && !dirs.contains(&p) {
+                        dirs.push(p);
+                    }
+                }
+            }
+        }
     }
+    dirs
 }
 
 /// This checkout's own native cache (`platform::native_cache_dir`): the generated `.rs`,
@@ -1408,7 +1403,7 @@ const POSIX_WRITE: &str = r#"#c "write" "long(int, const void*, size_t)""#;
 /// narrows to `unsigned int` for the same reason: that is `_write`'s third
 /// parameter, where POSIX takes `size_t`.
 fn for_host(src: &str) -> String {
-    if cfg!(windows) {
+    if loft::platform::host_lib_os() == loft::platform::LibOs::Windows {
         src.replace(
             POSIX_WRITE,
             r#"#c "_write" "long(int, const void*, unsigned int)""#,
@@ -1752,12 +1747,13 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // translates `libarity.so` to `arity.dll` for Windows and `libarity.dylib` for
     // macOS, and both backends resolve it through that one home.  Only what gets
     // BUILT is host-specific.
-    let libname = if cfg!(target_os = "macos") {
+    let os = loft::platform::host_lib_os();
+    let libname = if os == loft::platform::LibOs::Macos {
         "libarity.dylib"
     } else {
         "libarity.so"
     };
-    if cfg!(windows) {
+    if os == loft::platform::LibOs::Windows {
         // TWO artifacts, because on Windows the two backends need different files
         // and Unix gets away with one.  `--interpret` LoadLibrary's the fixture at
         // run time, which only a DLL can satisfy; `--native` links it, and a DLL is
@@ -1773,7 +1769,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             .arg(dir.join("arity.c"))
             .args(loft::platform::shim_implib_args(
                 &implib.to_string_lossy(),
-                loft::platform::host_lib_os(),
+                os,
             ))
             .output()?;
         assert!(
@@ -2614,6 +2610,7 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
     // cell with no server to be unreachable, so there it can only be missing if
     // something upstream broke.
     println!("@PLN23 backends exercised: {ran:?}");
+    // @PLN184 C2 exemption candidate: a system sqlite the CI image guarantees (`LOFT_REQUIRE_SQLITE=1`) exists on Linux only; Windows substitute: the cells run where `winsqlite3` loads, and `ran` is printed
     if cfg!(target_os = "linux") {
         assert!(
             ran.contains(&"sqlite"),
@@ -4399,6 +4396,7 @@ fn run_lib_test_in_temp_cwd(
     let mut args: Vec<&str> = extra_args.to_vec();
     args.push("test");
     args.push(stem);
+    // @PLN184 C2 exemption candidate: the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(unix)]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -4422,6 +4420,7 @@ fn run_lib_test_in_temp_cwd(
         let _ = fa::remove_dir_all(&tmp);
         out
     }
+    // @PLN184 C2 exemption candidate: the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(not(unix))]
     {
         std::process::Command::new(loft_bin)

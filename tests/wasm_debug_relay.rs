@@ -12,6 +12,7 @@
 //!
 //! Skips cleanly when node / the wasm32 target / the release binary are missing.
 
+// @PLN184 C2 exemption candidate: `killpg` of the `--native` server grandchild (and `sh -c command -v`) has no Windows equivalent; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;

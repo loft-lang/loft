@@ -13,6 +13,7 @@
 // same conversation whether the kernel is in this process or in a worker — with
 // the consumer's source byte-identical across both runs.
 
+// @PLN184 C2 exemption candidate: library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;

@@ -21,6 +21,7 @@
 //! sibling test that installs or publishes first would pin what this one asserts
 //! — which is exactly what happened when this started life in that file.
 
+// @PLN184 C2 exemption candidate: `fork` and the POSIX signal handler the crash reporter rides (unix-only by design) have no Windows equivalent; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;
