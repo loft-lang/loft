@@ -230,3 +230,57 @@ still links no package native library, so a bench whose library ships a cdylib (
 `pluginabi` via crypto, `web`, `ssh`) needs `-L native=~/.loft/build-cache/<pkg>-<ver>/release
 -l dylib=loft_<pkg>` and an rpath by hand; the `hp.sh` beside each of those two reports is the
 fix shape, not yet in the script.
+
+## The three rows still over 9× (2026-10-07, after `(R-Destination)`)
+
+`map_json` 9.8×, `check_request` 9.2×, `mapfile_to_painted` 9.1× in their lanes.  Each row
+was profiled alone on the shipped flags (`--native-release --names`, one core, the P-core
+table of `perf`); each named lever below was priced by a temporary edit — of the runtime
+(rlib A/B) or of the emitted Rust — with the hash unchanged, then reverted.
+
+### moros `map_json` — the parser, not the formatter
+
+The twin parses bytes straight into its structs; loft drives the general source lexer in
+JSON mode, builds a `Parsed` tree, then walks the tree into the store.  Three runtime fixes,
+all shared by both backends and by every `T.parse` of JSON:
+
+| lever | what it removes | priced |
+|---|---|--:|
+| J1 | `JParser.path` — pushed and popped per array element (`idx.to_string()`) and per key (`name.clone()`), never read; and four token tests that build a `String` to compare (`LexItem::Token("}".to_string())`) where `Lexer::peek_token` compares in place | 15.0 → 13.7 ms (−9 %) |
+| J2 | the lexer's two `HashSet<String>` lookups per punctuation character: an ASCII table for one-character tokens, the two-character lookup only where a two-character token starts with this character (the price form skipped the formatting-mode `}` resume — the real change must keep it) | → 12.7 ms (−8.5 %) |
+| J3 | `walk_parsed_into`'s per-object `HashSet<&str>` of found fields under SipHash; `FxHashSet` (a bitset over field indices would be cheaper still) | → 11.8 ms (−7 %) |
+
+Together −21 % (≈ 7.7×).  What is left: the lexer's core loop (`cont` / `string` / `next`,
+≈ 23 %), one `String` allocated per token (`LexItem::Token(String)` — the representation the
+compiler's parser shares, so an interned `&'static str` token is a front-end change with its
+own compile-time win), `walk_parsed_into` cloning the type's `Parts` (the field list with its
+names) per value walked to escape a borrow, and the two passes themselves: a schema-directed
+parse straight into the store layout (one lexer still, @PLN109) is the structural lever that
+removes the `Parsed` tree.
+
+### dryopea `mapfile_to_painted` — a store per insert
+
+Same algorithm as the twin: per ground entry a palette scan (≤ 16 text compares) and a hash
+insert keyed on `(q, r)`.  Profile: the keyed insert 53 %, the row's own sorted walk of the
+result 15 %, the palette scan 12 %.
+
+| lever | what it removes | priced |
+|---|---|--:|
+| P1 | `paint`'s `w.painted[q, r] = PaintedHex { … }` mints a STORE per call, writes the record, copies it into the hash (`set_keyed` → `insert_keyed_copy_at`) and frees the store.  Priced with the scratch store minted once (the copy kept): | 2.26 → 1.84 ms (−18 %) |
+| P2 | the same insert built IN its hash slot (`(R-Place)` for a keyed destination): the copy goes too, and the find-then-insert pair of probes becomes one | unpriced; P1 is its floor |
+| P3 | the palette scan reads each name through the generic `store.get_str` and `op_eq_text`; through the record address (`(R-RecPtr)`'s text read) it is a slice compare | unpriced, ≤ 12 % |
+| P4 | the row's `for ph in pw.painted` sorts the hash into a scratch first — loft's iteration order is by key, the twin's `HashMap` order is arbitrary.  A walk whose body only accumulates is order-free and need not sort, but integer overflow makes `+` order-sensitive, so the rewrite needs a range proof | unpriced, ≤ 15 % |
+
+### pluginabi `check_request` — the decode it shares, and the texts
+
+`(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  What is left is the § above:
+`pa_get` answers a deep copy of the entry it found (`(R-ViewReturn)`, −10 % priced), its key
+compares copy each key, `pa_text` copies the value twice more, and `decode` still claims,
+fills and frees four texts and two byte strings per frame the twin never materialises —
+`(R-DecodeView)` (@C139), whose ceiling was measured at 3.95 → 2.54 ms (−36 %).
+
+### Order
+
+J1–J3 first: runtime-only, both backends, every JSON parse, −21 % priced, and no rule.  Then
+P1/P2 — the temporary-record mechanism C125 names, at a keyed destination (it reaches every
+`h[k] = Record { … }`).  Then `(R-ViewReturn)` and `(R-DecodeView)` on `check_request`.
