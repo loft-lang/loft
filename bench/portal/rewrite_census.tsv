@@ -1903,6 +1903,7 @@ zttext	11373248d	R-CompleteWrite	189
 zttext	11373248d	R-Counter	206
 zttext	11373248d	R-DischargeInto	1
 zttext	11373248d	R-ExitVector	24
+zttext	11373248d	R-FnRefValue	10
 zttext	11373248d	R-FormatAppend	10
 zttext	11373248d	R-ForwardWalk	5
 zttext	11373248d	R-GroupPush	33
@@ -1917,7 +1918,7 @@ zttext	11373248d	R-Inputs	3
 zttext	11373248d	R-Invariant	16
 zttext	11373248d	R-KernelSum	1
 zttext	11373248d	R-Leaf	131
-zttext	11373248d	R-LeafChain	98
+zttext	11373248d	R-LeafChain	97
 zttext	11373248d	R-LitDiv	23
 zttext	11373248d	R-LoopBuffer	5
 zttext	11373248d	R-Mint	89
@@ -1936,8 +1937,8 @@ zttext	11373248d	R-Reuse	6
 zttext	11373248d	R-Scalar	3
 zttext	11373248d	R-SingleUse	14
 zttext	11373248d	R-TextBorrow	16
-zttext	11373248d	R-ValueLocal	1
-zttext	11373248d	R-ValueRecord	2
+zttext	11373248d	R-ValueLocal	13
+zttext	11373248d	R-ValueRecord	3
 zttext	11373248d	R-VecCopy	1
 zttext	11373248d	R-View	5
 zttext	11373248d	R-WorkBuffer	5
