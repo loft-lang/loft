@@ -6477,14 +6477,8 @@ impl Stores {
         .unwrap_or(u64::MAX);
         // The inode is what catches a rename-replace: the replacement keeps its
         // own mtime, which can predate the bind, so a time comparison alone reads
-        // as "unchanged".
-        #[cfg(unix)]
-        let ino = {
-            use std::os::unix::fs::MetadataExt;
-            md.ino()
-        };
-        #[cfg(not(unix))]
-        let ino = 0u64;
+        // as "unchanged".  0 where the host gives no identity (`platform::file_identity`).
+        let ino = crate::platform::file_identity(&md).map_or(0, |(_, ino)| ino);
         Some((md.len(), mtime, ino))
     }
 

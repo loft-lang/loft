@@ -643,15 +643,9 @@ fn record_spans_across_the_generator_matrix() {
 /// Field 2 of `/proc/self/statm` is resident PAGES. Read from `/proc` rather than
 /// timed or modelled: the plan's cost is memory, and memory is the one thing here that
 /// can be observed exactly.
-#[cfg(target_os = "linux")]
+#[cfg(feature = "mmap")]
 fn rss_kb() -> u64 {
-    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
-    let pages: u64 = statm
-        .split_whitespace()
-        .nth(1)
-        .and_then(|f| f.parse().ok())
-        .unwrap_or(0);
-    pages * 4
+    crate::platform::resident_set_kb().unwrap_or(0)
 }
 
 /// Build the same shape into a store BOUND to a file — the mode @PLN126 is about —
@@ -660,7 +654,7 @@ fn rss_kb() -> u64 {
 /// The measurement that decides whether the call is worth having. A hint that ships
 /// without one reads well and buys nothing, and nothing about `MADV_DONTNEED`
 /// succeeding says the working set followed it.
-#[cfg(all(feature = "mmap", target_os = "linux"))]
+#[cfg(feature = "mmap")]
 fn payoff(run: Run, release: u32) -> (u64, u64, u128) {
     let dir = std::env::temp_dir().join(format!("loft-pln126-{}-{}", std::process::id(), release));
     let _ = std::fs::create_dir_all(&dir);
@@ -730,23 +724,21 @@ fn payoff(run: Run, release: u32) -> (u64, u64, u128) {
 ///
 /// The instrument that tells a page NOT DROPPED from a page dropped and immediately
 /// read back. Both look identical in peak RSS, and they need opposite fixes.
-#[cfg(target_os = "linux")]
+#[cfg(feature = "mmap")]
 fn minor_faults() -> u64 {
-    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
-    // The second field is the comm, parenthesised and free to contain spaces, so
-    // fields are counted from the closing paren rather than from the start.
-    let tail = stat.rsplit_once(')').map(|(_, t)| t).unwrap_or_default();
-    tail.split_whitespace()
-        .nth(7)
-        .and_then(|f| f.parse().ok())
-        .unwrap_or(0)
+    crate::platform::minor_page_faults().unwrap_or(0)
 }
 
-/// Does the hint move the resident set, and what does it cost?
-#[cfg(all(feature = "mmap", target_os = "linux"))]
+/// Does the hint move the resident set, and what does it cost?  Only where the host lets a
+/// process read its own resident set (`platform::resident_set_kb`); elsewhere it says so.
+#[cfg(feature = "mmap")]
 #[test]
 #[ignore = "a design measurement: builds ~90 MB of store and PRINTS peak RSS — run with --release --lib --ignored --nocapture"]
 fn a_frontier_release_moves_the_resident_set() {
+    if crate::platform::resident_set_kb().is_none() {
+        println!("no resident-set reading on this host: nothing to measure");
+        return;
+    }
     for run in [
         Run {
             tiles: 4000,

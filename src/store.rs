@@ -114,11 +114,9 @@ const MIN_FREE_TREE: i32 = 2;
 /// A hard-coded 4096 would mean [`Store::release_resident`] handing `madvise` a length
 /// that is not a whole number of pages, which it rounds DOWN — silently dropping less
 /// than the caller was told.
-#[cfg(all(feature = "mmap", unix))]
+#[cfg(feature = "mmap")]
 fn page_bytes() -> u64 {
-    static PAGE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    #[allow(clippy::cast_sign_loss)]
-    *PAGE.get_or_init(|| unsafe { libc::sysconf(libc::_SC_PAGESIZE).max(4096) as u64 })
+    crate::platform::page_bytes()
 }
 
 /// Smallest size a FILE-BACKED arena is kept at, in words.  [`Store::open`]
@@ -345,8 +343,8 @@ pub struct Store {
     /// reaches an image, and a clone starts at zero because its pages are its own.
     ///
     /// Read only where [`Store::release_resident`] has a body to be — without `mmap`
-    /// there is no file to flush to, and off unix there is no `madvise`.
-    #[cfg_attr(not(all(feature = "mmap", unix)), allow(dead_code))]
+    /// there is no file to flush to.
+    #[cfg_attr(not(feature = "mmap"), allow(dead_code))]
     released_bytes: u64,
     /// @PLN126 — the word past the highest block ever claimed, carried forward by
     /// [`Store::claim_block`].
@@ -365,7 +363,7 @@ pub struct Store {
     /// Maintained on every target and read only where [`Store::release_resident`] has a
     /// body to be: the cost is one `max` per claim, and making the bookkeeping itself
     /// conditional would mean a store whose mark depends on how loft was compiled.
-    #[cfg_attr(not(all(feature = "mmap", unix)), allow(dead_code))]
+    #[cfg_attr(not(feature = "mmap"), allow(dead_code))]
     claimed_end: u32,
     pub(crate) free: bool,
     /// HARD lock: when `true`, the store is immutable.  All `addr_mut`,
@@ -3507,7 +3505,7 @@ impl Store {
     ///
     /// Clamped to the capacity, because the seed is the only place a stale value could
     /// come from and its one consumer hands the result to `madvise`.
-    #[cfg(all(feature = "mmap", unix))]
+    #[cfg(feature = "mmap")]
     fn write_frontier(&mut self) -> u32 {
         // Once per store, on the FIRST release only: a store bound to an existing
         // image holds claims this process never made, so `claimed_end` has seen none
@@ -3551,9 +3549,11 @@ impl Store {
     ///
     /// Only WHOLE pages strictly below the mark are dropped, so the page the next
     /// claim writes into is never among them.
-    #[cfg(all(feature = "mmap", unix))]
+    #[cfg(feature = "mmap")]
     pub fn release_resident(&mut self) -> u64 {
-        if self.file.is_none() || self.read_only {
+        // A host that cannot drop pages (`platform::releases_resident_pages`) answers 0
+        // before the frontier walk, as a no-op hint should.
+        if self.file.is_none() || self.read_only || !crate::platform::releases_resident_pages() {
             return 0;
         }
         let mark = self.write_frontier();
@@ -3594,10 +3594,8 @@ impl Store {
         // kernel to write back; the `msync` only asks for that writeback to START, so
         // the region becomes reclaimable sooner. This call is a residency hint and
         // makes no durability promise — `store_durable_seal` is what does.
-        let ok = unsafe {
-            libc::msync(at.cast(), len as usize, libc::MS_ASYNC) == 0
-                && libc::madvise(at.cast(), len as usize, libc::MADV_DONTNEED) == 0
-        };
+        // SAFETY: as above — a page-aligned range inside this store's live shared mapping.
+        let ok = unsafe { crate::platform::release_resident_pages(at, len as usize) };
         if ok {
             self.released_bytes = till;
             len
@@ -3606,10 +3604,10 @@ impl Store {
         }
     }
 
-    /// Not compiled without `mmap` (no file to flush to) or off unix (no `madvise`).
-    /// A no-op rather than an error: the call is a HINT about residency, and a program
+    /// Not compiled without `mmap` (no file to flush to); a host with no `madvise` takes
+    /// the same answer through `platform::releases_resident_pages`.  A no-op rather than an error: the call is a HINT about residency, and a program
     /// that runs on a target which cannot honour it is not a program that is wrong.
-    #[cfg(not(all(feature = "mmap", unix)))]
+    #[cfg(not(feature = "mmap"))]
     pub fn release_resident(&mut self) -> u64 {
         0
     }
