@@ -85,7 +85,7 @@ def main():
     outs = opt_outs()
     migrating = [o for o in outs if "not yet" in o[1]]
     ci_exempt = marked(r"# @windows-exempt: (.*)", [".github/workflows"], (".yml",))
-    candidates = marked(r"exemption candidate:? (.*)", ["src", "tests"], (".rs",))
+    approved = marked(r"approved exemption \(owner[^)]*\):? (.*)", ["src", "tests"], (".rs",))
 
     def total(rows):
         return sum(n for n, _ in rows)
@@ -112,8 +112,8 @@ def main():
     for path, reason in outs:
         if "not yet" not in reason:
             print(f"  lint opt-out  {path}: {reason or '(no reason stated)'}")
-    for path, line, text in candidates:
-        print(f"  candidate     {path}:{line}: {text}")
+    for path, line, text in approved:
+        print(f"  approved      {path}:{line}: {text}")
     kinds = {}
     for path, _, text in ci_exempt:
         key = re.split(r" \(| — |;", text)[0].strip()
@@ -121,9 +121,15 @@ def main():
     for key, files in sorted(kinds.items(), key=lambda kv: -len(kv[1])):
         print(f"  CI ({len(files):2} jobs)  {key}")
 
-    open_counts = len(migrating) + total(src_gates) + total(test_gates) + total(ci)
+    # A gate file still counted is settled when it states an approved exemption; one with
+    # gates and no stated reason is open.
+    exempt_files = {path for path, _, _ in approved}
+    unexplained = [(n, p) for n, p in src_gates + test_gates if p not in exempt_files]
+    print(f"\n  {total(unexplained):6}  gates in files that state no approved exemption"
+          + "".join(f"\n          {n:4} {p}" for n, p in unexplained))
+    open_counts = len(migrating) + total(unexplained) + total(ci)
     if args.check and open_counts:
-        print(f"\n{open_counts} still open — @PLN184 closes when every count above is 0", file=sys.stderr)
+        print(f"\n{open_counts} still open — @PLN184 closes when every count is 0 or an approved exemption", file=sys.stderr)
         return 1
     return 0
 

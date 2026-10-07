@@ -3100,6 +3100,7 @@ fn every_ignore_reason_says_how_it_runs() {
 /// `every_test_binary_matches_a_subject` alone, and the two loft#1520 guards beside it kept a
 /// bare `bash` and failed the Windows daily the day they reached `main`.
 fn git_bash() -> std::ffi::OsString {
+    // @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
     #[cfg(windows)]
     {
         let mut roots: Vec<std::path::PathBuf> = Vec::new();

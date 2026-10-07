@@ -22,6 +22,7 @@
 //! Probe 5 — UDP on the port a TCP listener already holds (the 05a auto-path
 //!           binds both).  Different protocols, so unix allows it; this asks
 //!           what Windows does.
+// @PLN184 approved exemption (owner, 2026-10-07): a Windows-only probe crate by design (windows-probe workflow)
 #![cfg(windows)]
 
 use loft::file_access as fa;

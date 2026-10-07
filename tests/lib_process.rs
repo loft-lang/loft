@@ -43,7 +43,7 @@ fn the_composition_matrix_holds_compiled() {
     run("--native", "command.loft");
 }
 
-// @PLN184 C2 exemption candidate: `run.loft` drives `sh -c`, `cat`, `printf` and `/dev/zero`, which have no Windows equivalent; Windows substitute: the composition matrix above
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `run.loft` drives `sh -c`, `cat`, `printf` and `/dev/zero`, which have no Windows equivalent; Windows substitute: the composition matrix above
 #[cfg(unix)]
 mod drain {
     use super::run;

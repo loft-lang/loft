@@ -1528,7 +1528,7 @@ fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
 /// The CONTROL that keeps the cure honest: a write error that is NOT a broken pipe is a real
 /// fault and stays loud.  Exiting 0 on every failed write would pass every test above.
 #[test]
-// @PLN184 C2 exemption candidate: `/dev/full` has no Windows equivalent; Windows substitute: none
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `/dev/full` has no Windows equivalent; Windows substitute: none
 #[cfg(unix)]
 fn a_full_disk_is_still_a_failure() {
     if !fa::exists(std::path::Path::new("/dev/full")) {

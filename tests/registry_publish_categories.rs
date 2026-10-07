@@ -315,6 +315,7 @@ fn registry_fixture(tag: &str, validator: Option<&str>) -> PathBuf {
 /// Deliberately falls back to plain `bash` rather than skipping when Git Bash is absent: a
 /// skipped gate test looks exactly like a passing one, which is the very property
 /// `a_missing_validator_refuses_rather_than_skips` exists to deny.
+// @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
 #[cfg(windows)]
 fn windows_bash() -> PathBuf {
     // Beside `git.exe`: `<root>/cmd/git.exe` and `<root>/bin/bash.exe` ship together, so
@@ -344,12 +345,14 @@ fn run_gate(dir: &Path) -> (i32, String) {
     // Windows `CreateProcess` has no shebang handling, so handing it a `.sh` fails outright
     // with `%1 is not a valid Win32 application` — not a gate that refused, a gate that never
     // ran.  The interpreter has to be named there; on unix the shebang still picks it.
+    // @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
     #[cfg(windows)]
     let mut cmd = {
         let mut c = Command::new(windows_bash());
         c.arg(&script);
         c
     };
+    // @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
     #[cfg(not(windows))]
     let mut cmd = Command::new(&script);
     let out = cmd.arg(dir).output().expect("run registry_schema_gate.sh");

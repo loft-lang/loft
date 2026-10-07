@@ -34,7 +34,7 @@ env:
 
 jobs:
   acquisition-chain:
-    # @windows-exempt: OWNER DECISION PENDING (@PLN184 E1): a Windows leg would install a released loft on a clean windows-latest
+    # @windows-exempt: approved exemption (owner, 2026-10-07) — a clean-Windows install leg is future work outside @PLN184
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

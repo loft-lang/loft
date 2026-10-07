@@ -72,7 +72,7 @@ fn first_run_creates_cache_with_safe_permissions() {
     let cache_dir = cache_dir_for(&script);
     assert!(fa::is_dir(&cache_dir), "cache dir missing");
 
-    // @PLN184 C2 exemption candidate: POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -147,7 +147,7 @@ fn second_run_reuses_safe_cache() {
     let _ = fa::remove_dir_all(&dir);
 }
 
-// @PLN184 C2 exemption candidate: POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
+// @PLN184 C2 approved exemption (owner, 2026-10-07): POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
 #[cfg(unix)]
 // @speed 1.0
 #[test]
@@ -227,7 +227,7 @@ fn group_writable_cache_is_recompiled() {
     let _ = fa::remove_dir_all(&dir);
 }
 
-// @PLN184 C2 exemption candidate: POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
+// @PLN184 C2 approved exemption (owner, 2026-10-07): POSIX owner and mode bits (0o700, group-writable) have no Windows equivalent; Windows substitute: none (the cache check there refuses a symlink only)
 #[cfg(unix)]
 // @speed 0.9
 #[test]

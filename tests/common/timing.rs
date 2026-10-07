@@ -60,7 +60,7 @@ pub enum Who {
 /// Unix reads it from `getrusage`.  Everywhere else there is no equivalent this file can reach
 /// without a new dependency, so it reads ZERO — and [`Unit::finish`] says so once per armed run
 /// rather than writing plausible zeros into a report nobody can tell from a fast test.
-// @PLN184 C2 exemption candidate: `getrusage` (own and reaped-children CPU) has no Windows equivalent here; Windows substitute: the wall column, with the CPU columns said to be unmeasured
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `getrusage` (own and reaped-children CPU) has no Windows equivalent here; Windows substitute: the wall column, with the CPU columns said to be unmeasured
 #[cfg(unix)]
 fn cpu(who: Who) -> Duration {
     let who = match who {
@@ -80,7 +80,7 @@ fn cpu(who: Who) -> Duration {
     secs(ru.ru_utime) + secs(ru.ru_stime)
 }
 
-// @PLN184 C2 exemption candidate: `getrusage` (own and reaped-children CPU) has no Windows equivalent here; Windows substitute: the wall column, with the CPU columns said to be unmeasured
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `getrusage` (own and reaped-children CPU) has no Windows equivalent here; Windows substitute: the wall column, with the CPU columns said to be unmeasured
 #[cfg(not(unix))]
 fn cpu(_who: Who) -> Duration {
     Duration::ZERO
@@ -120,7 +120,7 @@ impl Unit {
         // A platform with no `getrusage` writes wall-clock and two zeros, which is a report
         // that reads as "this test used no CPU" — indistinguishable from a very fast one.  Say
         // it once per armed run, and only when armed, so an ordinary run stays silent.
-        // @PLN184 C2 exemption candidate: `getrusage` (own and reaped-children CPU) has no Windows equivalent here; Windows substitute: the wall column, with the CPU columns said to be unmeasured
+        // @PLN184 C2 approved exemption (owner, 2026-10-07): `getrusage` (own and reaped-children CPU) has no Windows equivalent here; Windows substitute: the wall column, with the CPU columns said to be unmeasured
         #[cfg(not(unix))]
         {
             static SAID: std::sync::Once = std::sync::Once::new();

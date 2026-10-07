@@ -22,7 +22,7 @@
 //
 // Any divergence here falsifies the invariant, which is exactly what it is for.
 
-// @PLN184 C2 exemption candidate: library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
+// @PLN184 C2 approved exemption (owner, 2026-10-07): library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;

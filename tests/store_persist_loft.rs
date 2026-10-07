@@ -2149,6 +2149,7 @@ fn store_release_keeps_every_record_and_reference_both_backends() {
         // The no-op is PINNED rather than skipped: `false` is the contract off unix, so a
         // platform that silently started releasing would be a change worth seeing.  Every
         // other assertion here is platform-independent and stays unconditional.
+        // @PLN184 approved exemption (owner, 2026-10-07): needs a release-resident query in platform; both branches already assert, so the test runs on Windows
         if cfg!(all(feature = "mmap", unix)) {
             assert_eq!(
                 line(&out, "released_positive"),

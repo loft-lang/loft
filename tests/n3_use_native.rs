@@ -785,7 +785,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     fa::open_with(&other, std::fs::OpenOptions::new().write(true))
         .and_then(|f| f.set_modified(std::time::SystemTime::now()))
         .expect("give the copy its own modification time");
-    // @PLN184 C2 exemption candidate: the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
     #[cfg(unix)]
     {
         fa::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
@@ -795,7 +795,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
         )
         .unwrap();
     }
-    // @PLN184 C2 exemption candidate: the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
+    // @PLN184 C2 approved exemption (owner, 2026-10-07): the second executable's `deps/` and `default/` are directory symlinks, which need the symlink privilege on Windows; Windows substitute: none
     #[cfg(not(unix))]
     {
         eprintln!("skip: the second-executable layout needs symlinks");

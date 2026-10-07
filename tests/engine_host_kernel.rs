@@ -5,7 +5,7 @@
 // SO_REUSEPORT + process groups (killpg cleans the --native grandchildren),
 // neither of which Windows has in this shape — the Windows kernel story is
 // the WINDOWS.md G-gap set.
-// @PLN184 C2 exemption candidate: the hot swap (`SO_REUSEPORT` + process-group kill, `pgrep`, `lsof`) has no Windows equivalent; Windows substitute: the kernel cells in `engine_host_http`, `engine_host_udp`, `engine_host_connector`
+// @PLN184 C2 approved exemption (owner, 2026-10-07): the hot swap (`SO_REUSEPORT` + process-group kill, `pgrep`, `lsof`) has no Windows equivalent; Windows substitute: the kernel cells in `engine_host_http`, `engine_host_udp`, `engine_host_connector`
 #![cfg(unix)]
 
 //! @PLN18 phase 01 — the kernel end-to-end: a loft program on
