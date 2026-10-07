@@ -2207,8 +2207,9 @@ extern "C" fn profile_handler(sig: libc::c_int) {
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn bind_tcp_handover(port: u16) -> Option<std::net::TcpListener> {
+    // @PLN184 W1.3 — under the emulated Windows host the bind is Windows': no shared port.
     #[cfg(unix)]
-    {
+    if !crate::file_access::Flavor::emulating() {
         use std::os::fd::FromRawFd;
         // SAFETY: plain socket calls on a descriptor this function owns until it is handed
         // to `TcpListener`, or closed on failure.
@@ -2256,10 +2257,9 @@ pub fn bind_tcp_handover(port: u16) -> Option<std::net::TcpListener> {
                 libc::close(fd);
                 return None;
             }
-            Some(std::net::TcpListener::from_raw_fd(fd))
+            return Some(std::net::TcpListener::from_raw_fd(fd));
         }
     }
-    #[cfg(not(unix))]
     {
         let t0 = std::time::Instant::now();
         let r = std::net::TcpListener::bind(("0.0.0.0", port));
@@ -2287,8 +2287,9 @@ pub fn bind_tcp_handover(port: u16) -> Option<std::net::TcpListener> {
 /// Windows: a plain `UdpSocket::bind`; exemption candidate: as [`bind_tcp_handover`].
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
+    // @PLN184 W1.3 — under the emulated Windows host the bind is Windows': no shared port.
     #[cfg(unix)]
-    {
+    if !crate::file_access::Flavor::emulating() {
         use std::os::fd::FromRawFd;
         // SAFETY: as in `bind_tcp_handover`.
         unsafe {
@@ -2318,12 +2319,37 @@ pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
                 libc::close(fd);
                 return Err(e);
             }
-            Ok(std::net::UdpSocket::from_raw_fd(fd))
+            return Ok(std::net::UdpSocket::from_raw_fd(fd));
         }
     }
-    #[cfg(not(unix))]
-    {
-        std::net::UdpSocket::bind(("0.0.0.0", port))
+    std::net::UdpSocket::bind(("0.0.0.0", port))
+}
+
+#[cfg(all(test, unix))]
+mod handover_tests {
+    use crate::file_access::{Flavor, with_program_host};
+
+    /// @PLN184 W1.3 — a second bind to a port that is listening: shared on Unix (the hot
+    /// swap's overlap), refused on Windows — and under the emulated Windows host.
+    #[test]
+    fn a_second_bind_is_shared_on_unix_and_refused_on_windows() {
+        let first = super::bind_tcp_handover(0).expect("first bind");
+        let port = first.local_addr().unwrap().port();
+        assert!(
+            super::bind_tcp_handover(port).is_some(),
+            "Unix shares the port"
+        );
+        assert!(
+            with_program_host(Flavor::Windows, || super::bind_tcp_handover(port)).is_none(),
+            "the emulated Windows host refuses the second bind"
+        );
+        let udp = super::bind_udp_handover(0).expect("first udp bind");
+        let uport = udp.local_addr().unwrap().port();
+        assert!(
+            super::bind_udp_handover(uport).is_ok(),
+            "Unix shares the UDP port"
+        );
+        assert!(with_program_host(Flavor::Windows, || super::bind_udp_handover(uport)).is_err());
     }
 }
 
