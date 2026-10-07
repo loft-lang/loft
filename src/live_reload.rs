@@ -38,8 +38,6 @@
 //!   emit `OpCoroutineCreate`, a different shape);
 //! - a parse error keeps the old body (stale meaning beats a dead loop).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
@@ -86,7 +84,7 @@ pub fn active() -> bool {
 /// warning — never an error (the program itself is unaffected).
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crate::data::Data) {
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Ok(content) = crate::file_access::read_to_string(path) else {
         eprintln!("live-reload: cannot read {path}; reload disabled");
         return;
     };
@@ -177,7 +175,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
         if files.iter().any(|w| *w.path == **f) {
             continue;
         }
-        let Ok(c) = std::fs::read_to_string(&**f) else {
+        let Ok(c) = crate::file_access::read_to_string(&**f) else {
             continue; // unreadable (virtual / moved) — not watchable
         };
         files.push(WatchedFile {
@@ -217,7 +215,7 @@ pub fn poll(state: &mut State) -> bool {
         host.last_check = Instant::now();
         let mut grew = false;
         for i in 0..host.files.len() {
-            let Ok(content) = std::fs::read_to_string(&host.files[i].path) else {
+            let Ok(content) = crate::file_access::read_to_string(&host.files[i].path) else {
                 continue; // transient (editor mid-save); next poll retries
             };
             if content == host.files[i].last_content {
