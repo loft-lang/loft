@@ -137,6 +137,10 @@ const READ_ONLY_COLLECTION_OPS: [&str; 36] = [
     "OpGetText",
 ];
 
+/// A comparison or a null test of a view (`e != null` is `OpNeRef`): it reads the handle and
+/// re-seats nothing (`@FR-R-RecPtr`'s rebind test).
+const VIEW_TESTS: [&str; 4] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef", "OpRefIsNull"];
+
 /// The scalar in-place setters (@PLN157 P4a): each writes one fixed-width value through
 /// an address it is GIVEN — the `set_*` family in `Store` — and cannot resize, insert,
 /// remove or re-key anything.  No record moves and no collection's length changes, so
@@ -2871,13 +2875,9 @@ fn view_extent_verdict(
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
                     // `OpCopyRecord(r, dst, tp)` has the view as its SOURCE: a read of r.
-                    // A comparison or a null test of the view (`e != null` is `OpNeRef`) only
-                    // reads its handle.
-                    let tests =
-                        ["OpEqRef", "OpNeRef", "OpConvBoolFromRef", "OpRefIsNull"].contains(&name);
                     if on_r
                         && native
-                        && !tests
+                        && !VIEW_TESTS.contains(&name)
                         && !name.starts_with("OpGet")
                         && !IN_PLACE_SET_OPS.contains(&name)
                         && name != "OpCopyRecord"
