@@ -323,7 +323,8 @@ impl Output<'_> {
         if matches!(variables.tp(t).base(), Type::RefVar(_)) && !variables.is_argument(t) {
             format!("(*var_{name}).{i}")
         } else {
-            format!("var_{name}.{i}")
+            // A generator's local is its struct field (loft#1899).
+            format!("{}.{i}", self.var_place(t))
         }
     }
 
@@ -681,7 +682,9 @@ impl Output<'_> {
             if matches!(variables.tp(var).base(), Type::Function(..)) {
                 self.fn_ref_context = true;
             }
-            write!(w, "self.var_{name} = ")?;
+            // @PLN167 decision 1 — a LINKED narrow field holds its field encoding (loft#1899).
+            let (narrow_open, narrow_close) = self.narrow_local_enc(var);
+            write!(w, "self.var_{name} = {narrow_open}")?;
             if needs_to_string || wrap_bool {
                 write!(w, "(")?;
             }
@@ -692,6 +695,7 @@ impl Output<'_> {
             } else if wrap_bool {
                 write!(w, ") as u8")?;
             }
+            write!(w, "{narrow_close}")?;
             return Ok(());
         }
         if variables.is_argument(var)
@@ -738,10 +742,10 @@ impl Output<'_> {
                         && let Value::Var(src) = src_arg.unspan()
                         && !matches!(variables.tp(*src).base(), Type::RefVar(_))
                     {
-                        let src_name = sanitize(variables.name(*src));
+                        let src_place = self.var_place(*src);
                         write!(
                             w,
-                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!(var_{src_name}) }}"
+                            "var_{name} = unsafe {{ &mut *std::ptr::addr_of_mut!({src_place}) }}"
                         )?;
                         return Ok(());
                     }
@@ -954,14 +958,16 @@ impl Output<'_> {
                 && let [src_arg] = cargs.as_slice()
                 && let Value::Var(src) = src_arg.unspan()
             {
-                let src_name = sanitize(variables.name(*src));
+                // The source's PLACE: a generator keeps its locals as struct fields
+                // (`self.var_x`), and a link names the field (loft#1899).
+                let src_place = self.var_place(*src);
                 if self.declared.contains(&var) {
-                    write!(w, "var_{name} = std::ptr::addr_of_mut!(var_{src_name})")?;
+                    write!(w, "var_{name} = std::ptr::addr_of_mut!({src_place})")?;
                 } else {
                     self.declared.insert(var);
                     write!(
                         w,
-                        "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!(var_{src_name})"
+                        "let mut var_{name}: *mut {base} = std::ptr::addr_of_mut!({src_place})"
                     )?;
                 }
             } else if let Value::Call(d_nr, cargs) = to.unspan()
@@ -1090,7 +1096,7 @@ impl Output<'_> {
                     format!("var_{src_name}")
                 }
             } else {
-                format!("std::ptr::addr_of_mut!(var_{src_name})")
+                format!("std::ptr::addr_of_mut!({})", self.var_place(*src))
             };
             // loft#1371 — a `*mut DbRef` into the source's slot, not the source's DbRef by
             // VALUE.  By value the link could carry a read and an interior write but never

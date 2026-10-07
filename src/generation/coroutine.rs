@@ -1302,6 +1302,45 @@ fn persistent_field_names(
     out
 }
 
+/// The scalar parameters a generator body WRITES or LINKS — a `Set` of the parameter, or the
+/// `OpCreateStack` a `&` bind and a `&` argument lower to.  Such a parameter is read and
+/// written through its struct field (`self.var_b`), as a persistent local is: a per-state copy
+/// loses every write at the next `yield`, and a `&` to the copy is a pointer into one advance's
+/// frame (loft#1899).  A parameter the body only reads keeps its per-state copy.  Any other
+/// node is searched through its children, because a write can sit anywhere a statement can.
+fn written_scalar_params(
+    def: &crate::data::Definition,
+    data: &crate::data::Data,
+) -> std::collections::HashSet<u16> {
+    fn walk(
+        v: &Value,
+        data: &crate::data::Data,
+        vars: &crate::variables::Function,
+        out: &mut std::collections::HashSet<u16>,
+    ) {
+        let hit = match v.unspan() {
+            Value::Set(p, _) => Some(*p),
+            Value::Call(d, args) if data.def(*d).name() == "OpCreateStack" => {
+                match args.first().map(Value::unspan) {
+                    Some(Value::Var(p)) => Some(*p),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(p) = hit
+            && vars.is_argument(p)
+            && crate::data::is_scalar(vars.tp(p))
+        {
+            out.insert(p);
+        }
+        v.for_each_child(&mut |c| walk(c, data, vars, out));
+    }
+    let mut out = std::collections::HashSet::new();
+    walk(def.code(), data, def.variables(), &mut out);
+    out
+}
+
 /// Bind every parameter under its local spelling at the top of a state arm — `var_x` for
 /// `self.var_x`, a `&str` view for a text slot — so a statement emitted in any state names a
 /// parameter the way the function body does.  Every state arm needs it, the TAIL included: the
@@ -1310,9 +1349,15 @@ fn persistent_field_names(
 fn write_param_shadows(
     w: &mut dyn Write,
     attrs: &[crate::data::Attribute],
+    fielded: &std::collections::HashMap<u16, String>,
     indent: &str,
 ) -> std::io::Result<()> {
-    for attr in attrs {
+    for (a_nr, attr) in attrs.iter().enumerate() {
+        // A parameter the body writes or links is read through its field instead
+        // (`written_scalar_params`): a copy here would hide the field's writes.
+        if u16::try_from(a_nr).is_ok_and(|a| fielded.contains_key(&a)) {
+            continue;
+        }
         let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
@@ -1455,6 +1500,7 @@ fn emit_struct_def(
     yield_tp: &Type,
     persistent: &[(u16, Type)],
     fields: &std::collections::HashMap<u16, String>,
+    narrow: &std::collections::HashMap<u16, crate::data::NarrowSlot>,
 ) -> std::io::Result<()> {
     writeln!(w, "struct {struct_name} {{")?;
     writeln!(w, "    state: u32,")?;
@@ -1462,9 +1508,13 @@ fn emit_struct_def(
     // channels' end sentinel is also a value a generator may yield — `i64::MIN` is the
     // integer null, `"\0"` the text null — so the value alone cannot say which happened.
     writeln!(w, "    __done: bool,")?;
-    for attr in attrs {
+    for (a_nr, attr) in attrs.iter().enumerate() {
+        // A LINKED narrow field is stored at its width, in its field encoding (loft#1899).
+        let narrow_slot = u16::try_from(a_nr).ok().and_then(|a| narrow.get(&a));
         let field_tp = if is_text_slot(&attr.typedef) {
             "String".to_string()
+        } else if let Some(slot) = narrow_slot {
+            slot.rust_type().to_string()
         } else {
             rust_type(&attr.typedef, &Context::Variable)
         };
@@ -1475,6 +1525,8 @@ fn emit_struct_def(
         let n = &fields[v];
         let field_tp = if is_text_slot(tp) {
             "String".to_string()
+        } else if let Some(slot) = narrow.get(v) {
+            slot.rust_type().to_string()
         } else {
             rust_type(tp, &Context::Variable)
         };
@@ -1532,6 +1584,7 @@ fn emit_factory_fn(
     segments: &[YieldSegment],
     persistent: &[(u16, Type)],
     fields: &std::collections::HashMap<u16, String>,
+    narrow: &std::collections::HashMap<u16, crate::data::NarrowSlot>,
 ) -> std::io::Result<()> {
     // ForLoopBody: the entire factory is emitted by Output::emit_for_body_factory.
     if is_eager(segments) {
@@ -1547,10 +1600,14 @@ fn emit_factory_fn(
     writeln!(w, "    Box::new({struct_name} {{")?;
     writeln!(w, "        state: 0,")?;
     writeln!(w, "        __done: false,")?;
-    for attr in attrs {
+    for (a_nr, attr) in attrs.iter().enumerate() {
         let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "        var_{aname}: var_{aname}.to_string(),")?;
+        } else if let Some(slot) = u16::try_from(a_nr).ok().and_then(|a| narrow.get(&a)) {
+            // The caller's wide value, encoded once into the linked field (loft#1899).
+            let enc = slot.encode_rust(&format!("var_{aname}"));
+            writeln!(w, "        var_{aname}: {enc},")?;
         } else {
             writeln!(w, "        var_{aname},")?;
         }
@@ -1558,7 +1615,10 @@ fn emit_factory_fn(
     // P224: initialise persistent locals to default.
     for (v, tp) in persistent {
         let n = &fields[v];
-        let init = persistent_default(tp);
+        let init = match narrow.get(v) {
+            Some(slot) => slot.encode_rust(&persistent_default(tp)),
+            None => persistent_default(tp),
+        };
         writeln!(w, "        var_{n}: {init},")?;
     }
     // N8b.3: initialise sub-generator fields to None.
@@ -2014,7 +2074,12 @@ impl Output<'_> {
         for (seg_idx, segment) in segments.iter().enumerate() {
             let state_idx = state_of[seg_idx];
             writeln!(w, "            {state_idx} => {{")?;
-            write_param_shadows(w, attrs, "                ")?;
+            write_param_shadows(
+                w,
+                attrs,
+                &self.coroutine_persistent_fields,
+                "                ",
+            )?;
             match segment {
                 YieldSegment::Simple { pre, val } => {
                     for stmt in pre {
@@ -2060,7 +2125,12 @@ impl Output<'_> {
                     // State 2 of 2 — pull one value per advance, staying in this state until
                     // the sub-generator is exhausted.
                     writeln!(w, "            {} => {{", state_idx + 1)?;
-                    write_param_shadows(w, attrs, "                ")?;
+                    write_param_shadows(
+                        w,
+                        attrs,
+                        &self.coroutine_persistent_fields,
+                        "                ",
+                    )?;
                     writeln!(w, "                if self.sub_{sub}.is_none() {{")?;
                     let factory = self.gen_inner_factory(init)?;
                     writeln!(w, "                    self.sub_{sub} = Some({factory});")?;
@@ -2149,7 +2219,12 @@ impl Output<'_> {
                     } else {
                         writeln!(w, "            {} | {resume_state} => {{", state_idx + 1)?;
                     }
-                    write_param_shadows(w, attrs, "                ")?;
+                    write_param_shadows(
+                        w,
+                        attrs,
+                        &self.coroutine_persistent_fields,
+                        "                ",
+                    )?;
                     writeln!(w, "                let mut __exhausted = true;")?;
                     writeln!(
                         w,
@@ -2214,7 +2289,12 @@ impl Output<'_> {
                     // last advance suspended at (`__resume_<seg>`, 0 on the first entry).
                     // Running off its end is the construct finishing: on to the next state.
                     writeln!(w, "            {} => {{", state_idx + 1)?;
-                    write_param_shadows(w, attrs, "                ")?;
+                    write_param_shadows(
+                        w,
+                        attrs,
+                        &self.coroutine_persistent_fields,
+                        "                ",
+                    )?;
                     writeln!(
                         w,
                         "                let mut __seek: u32 = self.__resume_{seg_idx};"
@@ -2282,7 +2362,12 @@ impl Output<'_> {
         if !tail.is_empty() {
             let tail_state = after_segments;
             writeln!(w, "            {tail_state} => {{")?;
-            write_param_shadows(w, attrs, "                ")?;
+            write_param_shadows(
+                w,
+                attrs,
+                &self.coroutine_persistent_fields,
+                "                ",
+            )?;
             for op in tail {
                 write!(w, "                ")?;
                 self.output_code_inner(w, op)?;
@@ -2863,7 +2948,27 @@ impl Output<'_> {
         // loft#928: and their field names with them, so every emitter spells a field the
         // same way.  Derived here rather than at each site because a name is only unique
         // relative to the OTHER fields on the struct.
-        let fields = persistent_field_names(&attrs, &persistent, self.data.def(def_nr).variables());
+        let mut fields =
+            persistent_field_names(&attrs, &persistent, self.data.def(def_nr).variables());
+        // loft#1899 — a parameter the body writes or links is read and written through the
+        // field the struct already declares for it, under the parameter's own name.
+        for p in written_scalar_params(self.data.def(def_nr), self.data) {
+            if let Some(attr) = attrs.get(usize::from(p)) {
+                fields.insert(p, sanitize(&attr.name));
+            }
+        }
+        // @PLN167 decision 1 — every field a `&` names that holds a narrow integer is stored at
+        // its width, in its field encoding: the struct, the factory, a read and a write agree.
+        let narrow: std::collections::HashMap<u16, crate::data::NarrowSlot> = fields
+            .keys()
+            .filter_map(|v| {
+                self.data
+                    .def(def_nr)
+                    .variables()
+                    .linked_narrow_slot(*v)
+                    .map(|slot| (*v, slot))
+            })
+            .collect();
 
         // The outer `loop {}` in `next_*` is what lets a state hand over to the next one
         // without returning a value.  A lazily-lowered loop needs it for the same reason a
@@ -2887,6 +2992,7 @@ impl Output<'_> {
             &yield_tp,
             &persistent,
             &fields,
+            &narrow,
         )?;
 
         // ── 2. impl LoftCoroutine ────────────────────────────────────────────
@@ -2959,6 +3065,7 @@ impl Output<'_> {
             &segments,
             &persistent,
             &fields,
+            &narrow,
         )?;
         if has_for_body {
             self.emit_for_body_factory(
