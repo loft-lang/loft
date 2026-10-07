@@ -248,12 +248,12 @@ fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
     ) else {
         return false;
     };
-    #[cfg(unix)]
+    if let (Some(ia), Some(ib)) = (
+        crate::platform::file_identity(&ma),
+        crate::platform::file_identity(&mb),
+    ) && ia == ib
     {
-        use std::os::unix::fs::MetadataExt as _;
-        if ma.dev() == mb.dev() && ma.ino() == mb.ino() {
-            return true;
-        }
+        return true;
     }
     if ma.len() != mb.len() {
         return false;
@@ -1279,72 +1279,16 @@ fn loft_ffi_candidate_links(
 /// (e.g. `windows.0.48.5.lib` from `windows-sys`) must be passed to a hand-driven
 /// `rustc` as `-L` paths — cargo adds them via `cargo:rustc-link-search` but we
 /// don't, so the cdylib link fails `LNK1181: cannot open input file …`.  Mirrors
-/// the `--native` test runner's `find_native_lib_dirs`.  Empty (a no-op) off Windows.
-#[cfg(not(windows))]
-fn native_lib_search_dirs(_rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
-    Vec::new()
-}
-
-#[cfg(windows)]
+/// the `--native` test runner's `find_native_lib_dirs`.  Empty (a no-op) off Windows
+/// (`platform::import_lib_search_dirs`).
 fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
-    // `rlib` is `target/<profile>/libloft.rlib` or `target/<profile>/deps/libloft-*.rlib`;
-    // walk up to the profile dir, then scan `build/<crate>-<hash>/`.
-    let Some(profile_dir) = rlib.parent().and_then(|p| {
-        if crate::file_access::file_name(p).is_some_and(|n| n == "deps") {
-            p.parent()
-        } else {
-            Some(p)
-        }
-    }) else {
-        return Vec::new();
-    };
-    let Ok(entries) = crate::file_access::read_dir(profile_dir.join("build")) else {
-        return Vec::new();
-    };
-    let mut dirs = Vec::new();
-    for entry in entries {
-        let build_entry = entry.os_spelling();
-        // `out/` and its immediate subdirs (some crates emit into `out/<target>/`).
-        let out = build_entry.join("out");
-        if crate::file_access::is_dir(&out) {
-            dirs.push(out.clone());
-            if let Ok(subs) = crate::file_access::read_dir(&out) {
-                dirs.extend(
-                    subs.iter()
-                        .map(crate::file_access::PathText::os_spelling)
-                        .filter(|p| crate::file_access::is_dir(p)),
-                );
-            }
-        }
-        // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
-        // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
-        if let Ok(content) = crate::file_access::read_to_string(build_entry.join("output")) {
-            for line in content.lines() {
-                if let Some(p) = line
-                    .strip_prefix("cargo:rustc-link-search=native=")
-                    .or_else(|| line.strip_prefix("cargo:rustc-link-search="))
-                {
-                    let p = std::path::PathBuf::from(p);
-                    if crate::file_access::is_dir(&p) && !dirs.contains(&p) {
-                        dirs.push(p);
-                    }
-                }
-            }
-        }
-    }
-    dirs
+    crate::platform::import_lib_search_dirs(rlib)
 }
 
 /// Platform cdylib filename for `stem` (`lib<stem>.so` / `.dylib` / `<stem>.dll`).
 #[must_use]
 pub fn platform_cdylib_name(stem: &str) -> String {
-    if cfg!(target_os = "windows") {
-        format!("{stem}.dll")
-    } else if cfg!(target_os = "macos") {
-        format!("lib{stem}.dylib")
-    } else {
-        format!("lib{stem}.so")
-    }
+    crate::platform::cdylib_file_name(stem)
 }
 
 /// @PLN26 — whether a cdylib links `[native] crate` packages by C-ABI (their
@@ -1400,33 +1344,25 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
         "-l".to_string(),
         format!("dylib={libname}"),
     ];
-    if cfg!(windows) {
-        // Naming bridge: a Rust cdylib's import lib is `<stem>.dll.lib`, but
-        // `-l dylib=<stem>` makes MSVC link.exe open `<stem>.lib`.  Copy
-        // `<stem>.dll.lib` → `<stem>.lib` beside it (identical content) so the
-        // `-l dylib=` resolves.
-        let dll_lib = so_dir.join(format!("{libname}.dll.lib"));
-        let plain_lib = so_dir.join(format!("{libname}.lib"));
-        if crate::file_access::exists(&dll_lib) && !crate::file_access::exists(&plain_lib) {
-            let _ = crate::file_access::copy(&dll_lib, &plain_lib);
-        }
+    match crate::platform::bridge_import_lib(so_dir, libname) {
         // Disallow-the-unverifiable-loudly: with NEITHER import-lib name present
         // the link dies on an opaque `LNK1181`, so name it rather than mis-link.
-        if !crate::file_access::exists(&plain_lib) && !crate::file_access::exists(&dll_lib) {
-            eprintln!(
-                "loft: native package `{crate_name}` cdylib at {} has no import \
-                 library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-                 DLL through its import lib; rebuild the package's \
-                 cdylib with a toolchain that emits one.",
-                so_dir.display()
-            );
+        crate::platform::ImportLib::Missing => eprintln!(
+            "loft: native package `{crate_name}` cdylib at {} has no import \
+             library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
+             DLL through its import lib; rebuild the package's \
+             cdylib with a toolchain that emits one.",
+            so_dir.display()
+        ),
+        crate::platform::ImportLib::Ready => {}
+        // A host that links the shared library directly: two RPATH entries, the
+        // build/prebuilt dir (run-from-build-tree) AND `$ORIGIN` (an installed binary
+        // shipping the `.so` beside it).  `$ORIGIN` is literal; the dynamic loader
+        // expands it at run time.
+        crate::platform::ImportLib::NotUsed => {
+            args.push(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
+            args.push("-Clink-arg=-Wl,-rpath,$ORIGIN".to_string());
         }
-    } else {
-        // Two RPATH entries: the build/prebuilt dir (run-from-build-tree) AND
-        // `$ORIGIN` (an installed binary shipping the `.so` beside it).  `$ORIGIN`
-        // is literal; the dynamic loader expands it at run time.
-        args.push(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
-        args.push("-Clink-arg=-Wl,-rpath,$ORIGIN".to_string());
     }
     args
 }
@@ -1860,13 +1796,7 @@ const KEEP_ARTIFACTS: usize = 8;
 /// adopt an artifact it cannot OPEN: the loser of that race rebuilds instead of
 /// dlopening a file that just vanished.
 fn prune_artifacts(dir: &std::path::Path, family: &str) {
-    let ext = if cfg!(target_os = "windows") {
-        "dll"
-    } else if cfg!(target_os = "macos") {
-        "dylib"
-    } else {
-        "so"
-    };
+    let ext = crate::platform::dll_extension();
     let Ok(entries) = crate::file_access::read_dir(dir) else {
         return;
     };

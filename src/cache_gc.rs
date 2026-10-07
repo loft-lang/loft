@@ -165,13 +165,7 @@ fn dir_bytes(dir: &Path) -> u64 {
 
 /// The platform's cdylib extension, matching what the build actually emits.
 fn cdylib_ext() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "dll"
-    } else if cfg!(target_os = "macos") {
-        "dylib"
-    } else {
-        "so"
-    }
+    crate::platform::dll_extension()
 }
 
 /// Whether the running binary is the `loft` on `PATH`.
@@ -190,7 +184,7 @@ pub fn running_is_the_installed_loft() -> Option<bool> {
     let running = crate::file_access::try_plain_canonical(&std::env::current_exe().ok()?)?;
     let on_path = std::env::var_os("PATH").map(|p| {
         std::env::split_paths(&p)
-            .map(|d| d.join(if cfg!(windows) { "loft.exe" } else { "loft" }))
+            .map(|d| d.join(crate::platform::exe_file_name("loft")))
             .find(|c| crate::file_access::is_file(c))
     })??;
     Some(crate::file_access::try_plain_canonical(&on_path)? == running)

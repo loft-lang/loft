@@ -683,17 +683,9 @@ pub fn native_artifact_cache_key() -> u64 {
     )
 }
 
-/// The platform part of how a package cdylib is linked, beyond the baked RUSTFLAGS —
-/// one home, read by the build (`extensions::relocatable_dylib_flags`) and folded into
-/// [`native_artifact_cache_key`], so a change to it rebuilds every cached cdylib instead
-/// of reusing one linked the old way.  On macOS the linker drops the debug symbols itself
-/// and the post-link `strip` is off: that strip left a TLS package's string table
-/// misaligned, and the linker then refused it (`mis-aligned LINKEDIT string pool`).
-pub const NATIVE_LINK_RECIPE: &str = if cfg!(target_os = "macos") {
-    "-Clink-arg=-Wl,-S"
-} else {
-    ""
-};
+/// The platform part of how a package cdylib is linked, folded into
+/// [`native_artifact_cache_key`]: [`crate::platform::NATIVE_LINK_RECIPE`].
+pub use crate::platform::NATIVE_LINK_RECIPE;
 
 /// Pure core of [`native_artifact_cache_key`] (testable without the build-time env):
 /// fold `LOFT_VERSION` into the ABI/RUSTFLAGS key — a release is the one floor under

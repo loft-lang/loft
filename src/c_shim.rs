@@ -111,9 +111,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     // are three-line trampolines, the runtime they actually use is a rounding
     // error, and a self-contained artifact is one fewer thing to ship. Harmless
     // where it does not apply — a non-MinGW `cc` has nothing to statically link.
-    if cfg!(windows) {
-        cmd.arg("-static-libgcc");
-    }
+    cmd.args(crate::platform::shim_cc_runtime_args());
     // `-Wall -Wextra` deliberately absent: a warning in the AUTHOR's C is theirs
     // to see when they compile it, not a reason for a consumer's build to look
     // broken. Errors still fail the build below.

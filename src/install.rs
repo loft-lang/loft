@@ -110,13 +110,7 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     if crate::file_access::create_dir_all(&dir).is_err() {
         return false;
     }
-    let filename = if cfg!(target_os = "macos") {
-        format!("lib{stem}.dylib")
-    } else if cfg!(windows) {
-        format!("{stem}.dll")
-    } else {
-        format!("lib{stem}.so")
-    };
+    let filename = crate::platform::cdylib_file_name(&stem);
     let dest = dir.join(&filename);
     let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
         return false;

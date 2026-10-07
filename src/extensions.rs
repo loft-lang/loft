@@ -1194,129 +1194,12 @@ fn impl_symbol_for(sym: &str, bridge_name: &str) -> Option<String> {
     (implemented_by != sym).then(|| implemented_by.to_string())
 }
 
-/// Ask the dynamic loader what the function at `ptr` is called.
-///
-/// Only an EXACT hit counts: `dladdr` reports the nearest preceding symbol when
-/// the address falls inside one, and a near miss would hand codegen a `#[link_name]`
-/// for a neighbouring function. Requiring `dli_saddr == ptr` turns that into a
-/// `None` (leave the symbol alone), which is the pre-loft#907 behaviour.
-#[cfg(all(feature = "native-extensions", unix))]
+/// Ask the dynamic loader what the function at `ptr` is called — an EXACT hit only
+/// (`platform::exported_symbol_at`), so a near miss leaves the symbol alone, which is the
+/// pre-loft#907 behaviour.
+#[cfg(feature = "native-extensions")]
 fn exported_name_at(ptr: *const ()) -> Option<String> {
-    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
-    if unsafe { libc::dladdr(ptr.cast(), &raw mut info) } == 0 {
-        return None;
-    }
-    if info.dli_sname.is_null() || !std::ptr::eq(info.dli_saddr.cast_const().cast::<()>(), ptr) {
-        return None;
-    }
-    unsafe { std::ffi::CStr::from_ptr(info.dli_sname) }
-        .to_str()
-        .ok()
-        .map(str::to_string)
-}
-
-/// The Windows half of [`exported_name_at`] (loft#972).
-///
-/// There is no `dladdr` here, so the module's own PE export table answers instead:
-/// `GetModuleHandleExW(FROM_ADDRESS)` names the module the pointer lives in — and an
-/// `HMODULE` **is** that module's mapped base — then the export directory is walked for
-/// the export whose address equals the pointer.
-///
-/// Without it `--native` and `--interpret` called DIFFERENT functions on Windows: no
-/// remap was ever recorded, so codegen linked the `#native` string literally, which is
-/// the name a library that remaps (published `graphics`, for `save_png`) does NOT
-/// implement.
-///
-/// The loader is asked rather than the registration because the bridge's own identifier
-/// never crosses the ABI — `loft_register_bridges!` passes `(loft symbol, fn pointer)`,
-/// and the name is a macro token. Fixing it there instead would mean an ABI addition and
-/// a republish of every native library before any of them stopped mis-linking.
-///
-/// `UNCHANGED_REFCOUNT`: this only reads the module, so it must not pin it loaded.
-#[cfg(all(feature = "native-extensions", windows))]
-fn exported_name_at(ptr: *const ()) -> Option<String> {
-    const FROM_ADDRESS: u32 = 0x0000_0004;
-    const UNCHANGED_REFCOUNT: u32 = 0x0000_0002;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetModuleHandleExW(
-            flags: u32,
-            module_name: *const u16,
-            module: *mut *mut core::ffi::c_void,
-        ) -> i32;
-    }
-
-    let mut handle: *mut core::ffi::c_void = std::ptr::null_mut();
-    if unsafe {
-        GetModuleHandleExW(
-            FROM_ADDRESS | UNCHANGED_REFCOUNT,
-            ptr.cast::<u16>(),
-            &raw mut handle,
-        )
-    } == 0
-    {
-        return None;
-    }
-    let base = handle.cast::<u8>();
-    if base.is_null() {
-        return None;
-    }
-    // Every read below is an offset from the mapped base, and each is bounded by the
-    // header field that precedes it — a module whose headers do not parse yields `None`
-    // rather than a guess, which is the same answer the pre-loft#907 path gave.
-    let rd32 = |off: usize| -> u32 { unsafe { base.add(off).cast::<u32>().read_unaligned() } };
-    let rd16 = |off: usize| -> u16 { unsafe { base.add(off).cast::<u16>().read_unaligned() } };
-    if rd16(0) != 0x5A4D {
-        return None; // not `MZ` — not a PE image
-    }
-    let pe = rd32(0x3C) as usize;
-    if rd32(pe) != 0x0000_4550 {
-        return None; // not the PE signature `P`,`E`,NUL,NUL
-    }
-    // The export directory's RVA sits at a different offset in PE32 vs PE32+, and the
-    // magic in the optional header is what tells them apart.
-    let opt = pe + 24;
-    let export_rva = match rd16(opt) {
-        0x20B => rd32(opt + 112) as usize, // PE32+
-        0x10B => rd32(opt + 96) as usize,  // PE32
-        _ => return None,
-    };
-    let export_size = match rd16(opt) {
-        0x20B => rd32(opt + 116) as usize,
-        _ => rd32(opt + 100) as usize,
-    };
-    if export_rva == 0 {
-        return None; // the module exports nothing
-    }
-    let names = rd32(export_rva + 32) as usize;
-    let name_count = rd32(export_rva + 24) as usize;
-    let functions = rd32(export_rva + 28) as usize;
-    let ordinals = rd32(export_rva + 36) as usize;
-    for i in 0..name_count {
-        let ordinal = rd16(ordinals + i * 2) as usize;
-        let func_rva = rd32(functions + ordinal * 4) as usize;
-        // An RVA inside the export directory is a FORWARDER string, not code — it names
-        // another module's export and has no address here.
-        if func_rva >= export_rva && func_rva < export_rva + export_size {
-            continue;
-        }
-        if !std::ptr::eq(unsafe { base.add(func_rva) }.cast::<()>().cast_const(), ptr) {
-            continue;
-        }
-        // Exact hit. Mirrors the `dli_saddr == ptr` requirement on unix: a near miss
-        // would hand codegen a `#[link_name]` for a neighbouring function.
-        let name_ptr = unsafe { base.add(rd32(names + i * 4) as usize) };
-        return unsafe { std::ffi::CStr::from_ptr(name_ptr.cast()) }
-            .to_str()
-            .ok()
-            .map(str::to_string);
-    }
-    None
-}
-
-#[cfg(all(feature = "native-extensions", not(unix), not(windows)))]
-fn exported_name_at(_ptr: *const ()) -> Option<String> {
-    None
+    crate::platform::exported_symbol_at(ptr)
 }
 
 /// loft#907 — record, for each `#native` symbol whose library implements it
@@ -2322,15 +2205,7 @@ fn lib_name_target_os(lib: &str) -> Option<&'static str> {
 /// the unconditionally-compiled `resolve_native_lib`) needs it even when
 /// `native-extensions` is off (e.g. the WASM build).
 fn host_os_name() -> &'static str {
-    if cfg!(target_os = "linux") {
-        "Linux"
-    } else if cfg!(target_os = "macos") {
-        "macOS"
-    } else if cfg!(target_os = "windows") {
-        "Windows"
-    } else {
-        "this OS"
-    }
+    crate::platform::host_os_name()
 }
 
 /// @PLN21 Phase 3 — the first host-applicable `[native] runtime-libs` entry the
@@ -2441,36 +2316,10 @@ pub fn prebuild_installed_natives() -> (usize, usize) {
     (attempted, built)
 }
 
-/// The link flags that make a built cdylib RELOCATABLE — empty on every platform but macOS.
-///
-/// A Mach-O dylib records its own path (`LC_ID_DYLIB`) and a program that links it copies THAT
-/// path in, so the loader follows the build-time location and nothing else.  Cargo's default is
-/// the absolute output path, `…/target/release/deps/lib<stem>.dylib` — and this cdylib is
-/// CACHED and reused from a different directory than the one it was built in, so the recorded
-/// path names a directory that no longer exists.  On the nightly's macOS leg that is
-/// `dyld: Library not loaded: …/.loft_test_tmp_<pid>_0/native/target/release/deps/…`, on a
-/// cache HIT, after a MISS built it under a previous run's temporary directory.
-///
-/// ELF does not have the problem: a `.so` records only its SONAME (the bare file name) and the
-/// consumer's `-rpath` resolves it, which is why the same cache is fine on Linux and why this
-/// is macOS-only rather than a cache bug.  `@rpath/<file>` makes Mach-O behave the same way,
-/// and the consumer already emits both the absolute `-rpath` of the resolved library and
-/// `$ORIGIN` / `@loader_path` (`native_utils::add_native_extern_flags`).
+/// The link flags that make a built cdylib RELOCATABLE — empty on every platform but macOS
+/// (`platform::relocatable_dylib_flags`, which says why).
 fn relocatable_dylib_flags(lib_name: &str) -> String {
-    if cfg!(target_os = "macos") {
-        // `NATIVE_LINK_RECIPE` (`-Wl,-S`): the LINKER drops the debug symbols.  Cargo's default
-        // (`strip = "debuginfo"`) instead runs the system `strip` over the linked dylib, and
-        // on a dylib holding `ring`'s C and assembly objects (every TLS package: web, server)
-        // that rewrite leaves the string table 4-aligned — which the same linker then refuses
-        // to link a program against (`ld: mis-aligned LINKEDIT string pool`).  The post-link
-        // strip is switched off where the build is spawned (`CARGO_PROFILE_RELEASE_STRIP`).
-        format!(
-            "-Clink-arg=-Wl,-install_name,@rpath/{lib_name} {}",
-            crate::cache::NATIVE_LINK_RECIPE
-        )
-    } else {
-        String::new()
-    }
+    crate::platform::relocatable_dylib_flags(lib_name)
 }
 
 #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -2706,9 +2555,9 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
         );
         cmd.env("RUSTFLAGS", flags.trim())
             .env_remove("CARGO_ENCODED_RUSTFLAGS");
-        if cfg!(target_os = "macos") {
-            // No post-link `strip` on macOS — see `relocatable_dylib_flags`.
-            cmd.env("CARGO_PROFILE_RELEASE_STRIP", "none");
+        // No post-link `strip` on macOS — see `relocatable_dylib_flags`.
+        for (key, value) in crate::platform::cdylib_build_env() {
+            cmd.env(key, value);
         }
         if use_redirected_target {
             if let Some(parent) = target_root.parent() {
@@ -2929,13 +2778,7 @@ fn build_deps_hint(pkg_dir: &str) -> String {
 /// Resolve the platform-correct shared-library filename from a stem.
 #[must_use]
 pub fn platform_lib_name(stem: &str) -> String {
-    if cfg!(target_os = "macos") {
-        format!("lib{stem}.dylib")
-    } else if cfg!(windows) {
-        format!("{stem}.dll")
-    } else {
-        format!("lib{stem}.so")
-    }
+    crate::platform::cdylib_file_name(stem)
 }
 
 /// Public API for generated native code that needs to call a cdylib
@@ -3192,12 +3035,10 @@ mod dlopen_diag_tests {
     // another OS (so it's skipped) — derived from the runner's OS so the runtime-
     // lib tests hold on every CI leg (ubuntu/macos/windows), not just Linux.
     fn host_and_foreign_lib_names() -> (&'static str, &'static str) {
-        if cfg!(target_os = "macos") {
-            ("libnot-real-skip.dylib", "libnot-real-skip.so.7")
-        } else if cfg!(target_os = "windows") {
-            ("not-real-skip.dll", "libnot-real-skip.so.7")
-        } else {
-            ("libnot-real-skip.so.7", "libnot-real-skip.dylib")
+        match crate::platform::host_lib_os() {
+            crate::platform::LibOs::Macos => ("libnot-real-skip.dylib", "libnot-real-skip.so.7"),
+            crate::platform::LibOs::Windows => ("not-real-skip.dll", "libnot-real-skip.so.7"),
+            crate::platform::LibOs::Linux => ("libnot-real-skip.so.7", "libnot-real-skip.dylib"),
         }
     }
 
