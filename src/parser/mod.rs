@@ -1459,6 +1459,10 @@ pub struct Parser {
     /// unchanged; this record is only what the refusal SAYS, because the author never wrote
     /// `const` on the view.
     pub(crate) const_views: std::collections::HashMap<(u32, u16), String>,
+    /// `@FR-Const-Foreign` — the variables value-const because their first binding is a
+    /// `-> const T` producer's value (`bind_foreign_value`): the author wrote no `const`, so a
+    /// refused write names the copy as its cure instead.
+    pub(crate) foreign_bound: std::collections::HashSet<(u32, u16)>,
     /// The same proof for a PROJECTION rather than a name — `if !db.map[k] { … } else { … }`
     /// proves `db.map[k]` non-null in the else arm, and nothing named it before.
     ///
@@ -1957,6 +1961,7 @@ impl Parser {
             defended_field_reads: std::collections::HashSet::new(),
             narrowed_non_null: Vec::new(),
             const_views: std::collections::HashMap::new(),
+            foreign_bound: std::collections::HashSet::new(),
             narrowed_non_null_exprs: Vec::new(),
             divisor_nonzero: Vec::new(),
             variant_proven: Vec::new(),

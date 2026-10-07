@@ -150,6 +150,18 @@ impl Parser {
             );
             return;
         }
+        // `@FR-Const-Foreign` — a binding of foreign data: the author wrote no `const`.
+        if self.foreign_bound.contains(&(self.context, nr)) {
+            let name = self.vars.name(nr).to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot modify '{name}': it holds read-only data the program does not own (a \
+                 mapped file or a library's buffer) — copy it first (`w = {name}`, a bind copies) \
+                 and write the copy"
+            );
+            return;
+        }
         // `const_report_var` — see loft#1250: a const text argument is promoted to a
         // `__tp_` local, and the promoted local is not marked an argument, so reporting
         // against it demotes "const parameter" to "const variable".

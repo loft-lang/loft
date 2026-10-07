@@ -63,6 +63,13 @@ and `remainder`** (and every ordered built-in a `compare`), the `operator` defin
 they meet those interfaces.  A program defining its own function of one of those names whose
 first parameter is such a number is refused with "Cannot redefine": rename it.
 
+**A mapped file is `const`, and writing it is a compile error.**  `file_map(path)` answers
+`const vector<u8>`, so a write to the mapping or to a slice of it, a bind of it into a writable
+variable, or passing it to a parameter that is not `const` is refused before the program runs —
+it used to stop the program at the write.  Copy what you change (`w = m`, a bind copies), and
+declare a parameter that only reads it `const`.  A function of yours can say the same of its
+result: `fn view(…) -> const vector<u8>`.
+
 ### New
 
 **Your own type can use `<`, `<=`, `>` and `>=`.**  Write one method with `operator` in place

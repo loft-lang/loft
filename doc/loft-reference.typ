@@ -8966,10 +8966,10 @@ pub fn read_bytes(path: text) -> vector<u8> ?fs#read
 Reads the whole file `path` as raw bytes.  A MISSING / unreadable file reads as NULL (distinct from an EMPTY file, `\[\]`); discharge with `?? \[\]` to keep the old shape.  Binary-exact (round-trips with write\_bytes); use for non-UTF-8 data — for text prefer `file(path).content()`.
 
 ```rust
-pub fn file_map(path: text) -> vector<u8> ?fs#read
+pub fn file_map(path: text) -> const vector<u8> ?fs#read
 ```
 
-Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. A WRITE, to it or a slice, is refused at run time: copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
+Maps the whole file `path` READ-ONLY, without copying it: the vector's bytes ARE the file's, kept mapped for as long as the vector lives.  A MISSING / unreadable file maps as NULL, like read\_bytes.  Every read works as on any vector\<u8\>; a slice is a view. The vector is `const`: a WRITE, to it or a slice, is refused when the program is compiled — copy first (`w = v`, a bind copies) to change bytes.  For a file read once and whole, read\_bytes gives the same bytes at the cost of the copy.
 
 ```rust
 pub fn write_bytes(path: text, bytes: const vector<u8>) -> boolean fs#update

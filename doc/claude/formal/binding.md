@@ -455,15 +455,9 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **D-bind-71 (OPEN, loft#1897)** — violates <!-- doc-lint: ok -->
-  `(Const-Foreign)`: foreign data is typed as writable and its write is refused at RUN time.
-  `file_map` answers `vector<u8>`, not
-  `const vector<u8>`, and so does a `#native` bridge's adopted buffer (`OpAdoptVector`); a write
-  into either runs until it reaches the store, which refuses it (*"write to bytes the program
-  does not own"*), on both backends.  `(Const-Value)` refuses the same write before the program
-  runs once the producer's type says `const`.
+(none)
 
 **D-bind-28 CLOSED 2026-09-07, the collection half of `(B-Ref-Uniform)`.**
 The rule says a `&τ` variable is used *exactly* like a `τ` variable and that no operation is

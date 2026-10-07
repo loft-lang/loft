@@ -8,9 +8,9 @@
 // ways: `LOFT_NO_FOREIGN_VIEW=1` copies everywhere and must print the same lines
 // (tests/foreign_store.rs, both backends, and under the hoist verifier, the strict-store,
 // the poison and the leak switches).  A WRITE into a view is refused with the copy-first
-// advice — asserted on the spawned binary in tests/foreign_store.rs, since a halt ends a
-// run; here every write goes to a copy (`w = s`, a bind copies) or to a local a clear made
-// ordinary again.
+// advice — at compile time: a view of foreign data is value-const (`(Const-Foreign)`, @C139),
+// asserted in tests/foreign_store.rs; here every write goes to a copy (`w = s`, a bind
+// copies).
 //
 // @falsified-at: none — the view has no earlier build to catch; the receipt is the A/B
 //   (the same lines with the view on and off, both backends) and a sabotage: with
@@ -30,7 +30,7 @@ fn fv_bytes() -> vector<u8> {
 
 fn fv_sum(v: const vector<u8>) -> integer { s = 0; for b in v { s += b; } s }
 fn fv_indexed(v: const vector<u8>) -> integer { s = 0; for i in 0..len(v) { s += (v[i] ?? 0) * (i + 1); } s }
-fn fv_take(v: vector<u8>) -> integer { s = 0; for b in v { s += b; } s }
+fn fv_take(v: const vector<u8>) -> integer { s = 0; for b in v { s += b; } s }
 fn fv_dbl(b: u8) -> integer { b * 2 }
 fn fv_same(a: const vector<u8>, b: const vector<u8>) -> boolean {
   if len(a) != len(b) { return false; }
@@ -68,8 +68,8 @@ fn main() {
   h = fv_head(fv_path());
   println("v3 {text_from_bytes(h)} {fv_word(fv_path())} {len(h)}");
 
-  // v4: negative, clamped, reversed and empty bounds answer what the copy answers, and an
-  // EMPTY slice is no view — its local stays an ordinary vector, so it can grow
+  // v4: negative, clamped, reversed and empty bounds answer what the copy answers; an empty
+  // slice is read-only like any view of the mapping, and its copy grows
   a = m[-4..];
   b = m[60..99];
   e1 = m[9..3];
@@ -77,8 +77,9 @@ fn main() {
   e3 = m[64..];
   assert(fv_same(a, r[-4..]) && fv_same(b, r[60..99]) && len(e1) == 0, "v4 paths");
   println("v4 {len(a)} {a[0]} {a[3]} {len(b)} {len(e1)} {len(e2)} {len(e3)}");
-  e1 += [5];
-  println("v4 grown {len(e1)} {e1[0]}");
+  g1 = e1;
+  g1 += [5];
+  println("v4 grown {len(g1)} {g1[0]}");
 
   // v5: a hoisted indexed loop over a view (the header and base held across the loop):
   // m[15..25] weighted by position = 4895
@@ -90,15 +91,15 @@ fn main() {
   s6 = m[0..5];
   println("v6 {text_from_bytes(s6)} {text_from_bytes(m[7..14])} {text_from_bytes(m[-1..])}");
 
-  // v7: the local is rebound — view, view, literal (an ordinary vector again: it grows),
-  // view — and every step reads right
+  // v7: the local is rebound — view, view, view — and every step reads right; the owned
+  // vector that grows beside it has a name of its own, since a view's binding is read-only
   s7 = m[1..3];
   first = s7[0] ?? 0;
   s7 = m[5..9];
   second = s7[2] ?? 0;
-  s7 = [1, 2];
-  s7 += [3];
-  third = len(s7) * 100 + (s7[2] ?? 0);
+  o7: vector<u8> = [1, 2];
+  o7 += [3];
+  third = len(o7) * 100 + (o7[2] ?? 0);
   s7 = m[60..];
   println("v7 {first} {second} {third} {len(s7)} {s7[3]}");
 
@@ -111,7 +112,8 @@ fn main() {
   println("v8 {text_from_bytes(a8)} {text_from_bytes(b8)} {len(m)}");
   m = file_map(fv_path()) ?? [];
 
-  // v9: a view handed to a const parameter and to a by-reference one that only reads
+  // v9: a view handed to const parameters, bound and inline — a plain parameter could write it
+  // and is refused for foreign data (`(Const-Foreign)`)
   s9 = m[15..20];
   println("v9 {fv_sum(s9)} {fv_take(s9)} {fv_take(m[15..20])}");
 
@@ -129,7 +131,7 @@ fn main() {
   // v12: twenty thousand rebinds of one local, no leak (the leak switch runs this file):
   // 333 whole passes over m[0..60] (4762 each) and 20 more elements (1692)
   acc12 = 0;
-  s12: vector<u8> = [];
+  s12: const vector<u8> = [];
   for i in 0..20000 {
     s12 = m[(i % 60)..(i % 60 + 4)];
     acc12 += s12[0] ?? 0;

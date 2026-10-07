@@ -5110,6 +5110,12 @@ pub struct Definition {
     /// same name is an ordinary method.  Persisted through the IR store (`DEF_OPERATOR_FORM`), so
     /// a cached stdlib keeps the mark; mirrored in `tools/ir_schema/ir.loft`.
     pub operator_form: bool,
+    /// `@FR-Const-Foreign` — the declared return type is `-> const T`: the producer hands out
+    /// data loft does not own (a mapped file, a library's adopted buffer), so the value is
+    /// value-const and a binding of the call's result takes `(Const-Value)` (@C139).
+    /// Persisted through the IR store (`DEF_RETURNED_CONST`), so a cached stdlib keeps it;
+    /// mirrored in `tools/ir_schema/ir.loft`.
+    pub returned_const: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -7598,6 +7604,7 @@ impl Data {
             instance_args: Vec::new(),
             builtin: false,
             operator_form: false,
+            returned_const: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,

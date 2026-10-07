@@ -1273,6 +1273,20 @@ refusal names it.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-bind-71** *(opened 2026-10-06, CLOSED 2026-10-07; loft#1897)* — `(Const-Foreign)`:
+  foreign data was typed as writable and its write refused at RUN time.  `file_map` answered
+  `vector<u8>`, and so did a `#native` bridge's adopted buffer (`OpAdoptVector`); a write into
+  either ran until it reached the store, which refused it.  A producer now declares
+  `-> const T` (`Definition::returned_const`, persisted through the IR store), `file_map`
+  answers `const vector<u8>`, and `(Const-Value)` refuses every write before the program runs:
+  a binding whose first value is foreign is value-const, a slice of it bound to a local is too,
+  a foreign value bound into a writable variable is refused, and a function returning one
+  without `-> const` is refused.  A copy (`w = v`) is writable.  The store's run-time refusal
+  stays as the backstop for a producer that does not declare its type.  Guards:
+  `tests/foreign_store.rs`, `tests/foreign_bridge.rs`, `tests/locked_writes.rs` and the four
+  `issues.rs` cells `a_const_returning_function_makes_its_binding_read_only` …
+  `a_copy_of_foreign_data_is_writable`.
+
 * **D-bind-70** *(opened 2026-10-06, CLOSED 2026-10-07; loft#1875)* — `(B-Ref-Lvalue)` with
   tuples.md `(T-Record)`: a member is a field, so `&t.i` links as `&r.f` does, but a NARROW
   member and a TEXT member of a tuple local were refused by name, at a bind and at a `&`

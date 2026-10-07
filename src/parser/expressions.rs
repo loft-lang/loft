@@ -8179,6 +8179,132 @@ use a separate collection or add after the loop"
     /// passed with borrowed text elements however deeply they sit, so `((integer, text), …)`
     /// needs the owning promotion exactly as `(integer, text)` does (loft#1278, and the same
     /// one-level-in fact loft#1005 had to learn on the read side).
+    /// `@FR-Const-Foreign` — does `code`, the assignment just built, bind the value of a call to
+    /// a `-> const T` producer (`Definition::returned_const`: a mapped file, a library's adopted
+    /// buffer)?  Searched through the wrappers an assignment is built in — the `Set` of the
+    /// target, a block's tail — because the call is what decides, not how the bind is spelled.
+    fn binds_foreign_value(&self, code: &Value, target: u16) -> bool {
+        match code.unspan() {
+            Value::Set(v, rhs) if *v == target => self.value_is_foreign(rhs, &[]),
+            // A SLICE of foreign data bound to a local is a view of the same bytes, read in
+            // place without a copy (`OpSliceView`, @PLN174 F4b) — foreign itself.
+            Value::Call(d, args)
+                if self.data.def(*d).name() == "OpSliceView"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == target)
+                    && matches!(args.get(1).map(Value::unspan),
+                        Some(Value::Var(src)) if self.foreign_bound.contains(&(self.context, *src))) =>
+            {
+                true
+            }
+            Value::Insert(ops) => ops.iter().any(|o| self.binds_foreign_value(o, target)),
+            Value::Block(b) => b
+                .operators
+                .iter()
+                .any(|o| self.binds_foreign_value(o, target)),
+            _ => false,
+        }
+    }
+
+    /// `@FR-Const-Foreign` — is `v` foreign data: a call to a `-> const T` producer
+    /// (`Definition::returned_const`), a variable bound to foreign data, an `if` either of
+    /// whose arms is foreign (a null-coalesce `file_map(p) ?? []` answers the mapped bytes on
+    /// one), a block whose tail is, or a variable `scope` (the enclosing block's statements)
+    /// bound to such a value — the coalesce's temp.  Anything else is the program's own: a
+    /// copy, a literal, a computed value.
+    fn value_is_foreign(&self, v: &Value, scope: &[Value]) -> bool {
+        match v.unspan() {
+            Value::Call(d, _) => {
+                (*d as usize) < self.data.definitions.len() && self.data.def(*d).returned_const
+            }
+            Value::If(_, a, b) => {
+                self.value_is_foreign(a, scope) || self.value_is_foreign(b, scope)
+            }
+            Value::Block(b) => b
+                .operators
+                .last()
+                .is_some_and(|t| self.value_is_foreign(t, &b.operators)),
+            Value::Var(x) => {
+                self.foreign_bound.contains(&(self.context, *x))
+                    || scope.iter().any(|op| {
+                        matches!(op.unspan(), Value::Set(y, rhs)
+                            if y == x && self.value_is_foreign(rhs, scope))
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// `@FR-Const-Foreign` — a function whose result is foreign data says so: `-> const T`.
+    /// Declared `-> T`, it would hand the caller foreign data as a writable value, which
+    /// `(Const-Foreign)` forbids (@C139), so it is refused with the cure — the declaration
+    /// says `const`, or the function returns a copy.  Asked of the body's tail and of every
+    /// `return`.
+    pub(crate) fn refuse_unmarked_foreign_return(&mut self) {
+        if self.first_pass || self.data.def(self.context).returned_const {
+            return;
+        }
+        let code = self.data.def(self.context).code().clone();
+        let mut foreign = match code.unspan() {
+            Value::Block(b) => b
+                .operators
+                .last()
+                .is_some_and(|t| self.value_is_foreign(t, &b.operators)),
+            _ => false,
+        };
+        if !foreign {
+            code.walk(&mut |n| {
+                if let Value::Return(r) = n.unspan()
+                    && self.value_is_foreign(r, &[])
+                {
+                    foreign = true;
+                }
+            });
+        }
+        if foreign {
+            let name = self
+                .data
+                .def(self.context)
+                .name()
+                .trim_start_matches("n_")
+                .to_string();
+            let tp = self
+                .data
+                .display_type_name(&self.data.def(self.context).returned().clone());
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "'{name}' returns read-only data the program does not own (a mapped file or a \
+                 library's buffer) as a writable `{tp}` — declare it `-> const {tp}`, or return \
+                 a copy"
+            );
+        }
+    }
+
+    /// `@FR-Const-Foreign` / `@FR-Const-Value` — foreign data is never presented as writable
+    /// (@C139): a variable whose FIRST binding is a `-> const T` producer's value is
+    /// value-const, so every write through it is refused before the program runs.  A later
+    /// binding of such a value into a variable that is not value-const would present it as
+    /// writable, so it is refused, with the cure: bind it to a name of its own (`w = v` then
+    /// binds a copy).
+    fn bind_foreign_value(&mut self, v: u16, code: &Value, first_bind: bool) {
+        if v as usize >= self.vars.count() as usize || !self.binds_foreign_value(code, v) {
+            return;
+        }
+        if first_bind {
+            self.vars.set_value_const(v);
+            self.foreign_bound.insert((self.context, v));
+        } else if !self.vars.is_value_const(v) && !self.first_pass {
+            let name = self.vars.name(v).to_string();
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "'{name}' is writable, and this value is read-only data the program does not own \
+                 (a mapped file or a library's buffer) — bind it to a name of its own \
+                 (`m = file_map(p)`), and copy that where a writable value is needed (`{name} = m`)"
+            );
+        }
+    }
+
     /// loft#1278 — a by-value tuple PARAMETER carrying text whose member is written takes an
     /// owned shadow local (`__tp_<name>`, seeded at function entry), the first time any write
     /// names it: a plain `t.0 = …` and a compound `t.0 += …` alike.  The parameter itself is
@@ -9278,6 +9404,11 @@ use a separate collection or add after the loop"
                 self.declaring_const = u16::MAX;
                 if first_bind.is_some() {
                     self.first_bind_targets.pop();
+                }
+                if op == "="
+                    && let Value::Var(v) = to.unspan()
+                {
+                    self.bind_foreign_value(*v, code, first_bind.is_some());
                 }
                 // loft#1205 — the discharged read runs before the compound, which was built
                 // for a place the seed has just made non-null.  Prepended FIRST so the F2

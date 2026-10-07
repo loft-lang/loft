@@ -274,6 +274,7 @@ struct Definition {
   instance_args: vector<TypeT>, // @PLN165 D3 that instance's type arguments, header order
   builtin: boolean, // @PLN165 arc E #builtin: a call selecting it lowers through the special form of its name
   operator_form: boolean, // @PLN182 written `operator`: what an operator form on its `self` type reaches
+  returned_const: boolean, // @FR-Const-Foreign `-> const T`: the producer's data is value-const
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

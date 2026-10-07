@@ -5,9 +5,9 @@
 //! `LoftStore::foreign_vector_from_owned`, and the cell file reads it beside the copying
 //! answer on both backends, under the hoist verifier, the strict-store, poison and leak
 //! switches, and the copy A/B (`LOFT_NO_FOREIGN_VIEW=1`, which must print the same lines).
-//! A WRITE into the answer, or into a foreign answer beside a vector argument, halts with the
-//! foreign store's own advice; the halt is `report_and_exit`, so it is asserted on the
-//! spawned binary.  The fixture cdylib must be built (`cd tests/lib/native_pkg/native &&
+//! The bridge declares its foreign answers `-> const vector<u8>` (`(Const-Foreign)`, @C139),
+//! so a WRITE into the answer, or into a foreign answer beside a vector argument, is refused
+//! when the program is COMPILED, with the copy advice; asserted on the spawned binary.  The fixture cdylib must be built (`cd tests/lib/native_pkg/native &&
 //! cargo build --release`); the tests skip when it is absent, as `native_loader.rs` does.
 use std::path::PathBuf;
 use std::process::Command;
@@ -149,7 +149,7 @@ fn the_view_and_the_copy_print_the_same_lines_on_both_backends() {
 }
 
 #[test]
-fn a_write_into_a_bridge_answer_halts_with_the_copy_first_advice_on_both_backends() {
+fn a_write_into_a_bridge_answer_is_refused_at_compile_time_with_the_copy_advice() {
     if !fixture_built() {
         return;
     }
@@ -159,14 +159,15 @@ fn a_write_into_a_bridge_answer_halts_with_the_copy_first_advice_on_both_backend
     ] {
         for backend in ["--interpret", "--native"] {
             let (ok, _, out) = run(tag, backend, prog, true, &[]);
+            assert!(!ok, "{backend} {tag}: the write must be refused:\n{out}");
             assert!(
-                !ok,
-                "{backend} {tag}: the write must halt the program:\n{out}"
+                out.contains("it holds read-only data the program does not own")
+                    && out.contains("copy it first"),
+                "{backend} {tag}: the compile-time refusal with the copy cure:\n{out}"
             );
             assert!(
-                out.contains("write to bytes the program does not own")
-                    && out.contains("copy them first"),
-                "{backend} {tag}: the halt must be the foreign store's own advice:\n{out}"
+                !out.contains("write to bytes the program does not own"),
+                "{backend} {tag}: refused before the program runs, not at run time:\n{out}"
             );
             assert!(
                 !out.contains(landed),

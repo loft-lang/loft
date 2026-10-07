@@ -19161,3 +19161,63 @@ fn a_for_over_a_literal_of_an_undefined_struct_reports_the_name() {
     .error("unknown type 'Hexz' — did you mean 'text'? at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:26")
     .fatal("cannot build this record — its type never resolved at a_for_over_a_literal_of_an_undefined_struct_reports_the_name:2:40");
 }
+
+/// `@FR-Const-Foreign` (loft#1897, @C139) — a binding of a `-> const T` producer's value is
+/// value-const, so a write through it is refused before the program runs, with the copy cure.
+#[test]
+fn a_const_returning_function_makes_its_binding_read_only() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn test() { v = mk(); v[0] = 7; }"
+    )
+    .error(
+        "Cannot modify 'v': it holds read-only data the program does not own (a mapped file or a \
+library's buffer) — copy it first (`w = v`, a bind copies) and write the copy at \
+a_const_returning_function_makes_its_binding_read_only:2:32",
+    );
+}
+
+/// `@FR-Const-Foreign` — foreign data bound into a WRITABLE variable would present it as
+/// writable; refused, with the cure of a name of its own.
+#[test]
+fn a_foreign_value_bound_into_a_writable_variable_is_refused() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn test() { v: vector<u8> = [3]; v[0] = 4; v = mk(); }"
+    )
+    .error(
+        "'v' is writable, and this value is read-only data the program does not own (a mapped \
+file or a library's buffer) — bind it to a name of its own (`m = file_map(p)`), and copy that \
+where a writable value is needed (`v = m`) at \
+a_foreign_value_bound_into_a_writable_variable_is_refused:2:53",
+    );
+}
+
+/// `@FR-Const-Foreign` — a function returning foreign data declares it `-> const T`.
+#[test]
+fn a_function_returning_foreign_data_must_say_const() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn wrap() -> vector<u8> { mk() }
+fn test() { w = wrap(); }"
+    )
+    .error(
+        "'wrap' returns read-only data the program does not own (a mapped file or a library's \
+buffer) as a writable `vector<u8>` — declare it `-> const vector<u8>`, or return a copy at \
+a_function_returning_foreign_data_must_say_const:2:33",
+    )
+    .warning("Variable w is never read at a_function_returning_foreign_data_must_say_const:3:16");
+}
+
+/// `@FR-Const-Foreign` — the cure: a bind copies (`w = v`) into a writable value, and a `const`
+/// parameter reads the original; the original is untouched.
+#[test]
+fn a_copy_of_foreign_data_is_writable() {
+    code!(
+        "fn mk() -> const vector<u8> { [1, 2] }
+fn rd(p: const vector<u8>) -> integer { p[1] }
+fn run() -> integer { v = mk(); w = v; w[0] = 9; w += [5]; v[0] * 1000 + w[0] * 100 + len(w) * 10 + rd(v) }"
+    )
+    .expr("run()")
+    .result(Value::Long(1932));
+}
