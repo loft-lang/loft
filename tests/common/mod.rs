@@ -210,7 +210,7 @@ fn pivot_anchor(canonical: u16) -> u16 {
 /// through `/proc/<pid>/exe`, and kills with `kill(2)`.  Windows has none of the three, so
 /// the port there is simply pivoted around instead — which is what the caller already does
 /// for a port that is not ours.
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
+// approved exemption: `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
 #[cfg(unix)]
 #[allow(dead_code)]
 fn reap_our_leaked_holders(port: u16) -> bool {
@@ -236,7 +236,7 @@ fn reap_our_leaked_holders(port: u16) -> bool {
 
 /// Windows has no `lsof`, no `/proc` and no `kill(2)`, so there is nothing to reap — the
 /// caller pivots to another port, exactly as it does for a holder that is not ours.
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
+// approved exemption: `lsof`, `/proc/<pid>/exe` and `kill(2)` have no Windows equivalent; Windows substitute: the caller pivots to another port
 #[cfg(not(unix))]
 #[allow(dead_code)]
 fn reap_our_leaked_holders(_port: u16) -> bool {

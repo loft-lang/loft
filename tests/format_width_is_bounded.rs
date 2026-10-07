@@ -85,7 +85,7 @@ fn run_capped(source: &str) -> String {
 /// (Before this, the Windows leg failed for an unrelated reason: a bare `bash` resolves to
 /// `C:\Windows\System32\bash.exe`, the WSL launcher, which has no distribution installed —
 /// so the test reported a memory-cap failure that was really a missing shell.)
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `ulimit -v` (an address-space cap on the child) has no Windows equivalent; Windows substitute: none
+// approved exemption: `ulimit -v` (an address-space cap on the child) has no Windows equivalent; Windows substitute: none
 #[cfg_attr(windows, ignore = "no `ulimit -v` on Windows; the cap is the guard")]
 #[test]
 fn a_width_below_zero_pads_nothing() {
@@ -125,7 +125,7 @@ fn a_width_below_zero_pads_nothing() {
 /// (Before this, the Windows leg failed for an unrelated reason: a bare `bash` resolves to
 /// `C:\Windows\System32\bash.exe`, the WSL launcher, which has no distribution installed —
 /// so the test reported a memory-cap failure that was really a missing shell.)
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `ulimit -v` (an address-space cap on the child) has no Windows equivalent; Windows substitute: none
+// approved exemption: `ulimit -v` (an address-space cap on the child) has no Windows equivalent; Windows substitute: none
 #[cfg_attr(windows, ignore = "no `ulimit -v` on Windows; the cap is the guard")]
 #[test]
 fn a_positive_width_still_pads() {

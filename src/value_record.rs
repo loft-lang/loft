@@ -234,7 +234,7 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     };
     // `@FR-R-FnRefValue` admits a dispatch's arms on `--native` alone, where the dispatch
     // answers and passes the tuple: the interpreter calls them through the fn-ref with
-    // records, so the IR keeps their signatures, result and parameters — and an arm whose IR result became a tuple would no longer
+    // records, so the IR keeps their signatures, result and parameters — and an arm whose IR result became a tuple would not
     // match its own dispatch (`fnref::dispatch_arms` compares result types).
     let arms = vr.fnref_arms();
     for (&d, &tp) in &vr.fns {

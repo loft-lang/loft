@@ -1100,7 +1100,7 @@ mod tests {
     /// it as a link, a file, or not at all, nothing may land outside the staging
     /// directory — and nothing may be WRITTEN THROUGH it to the link's target.
     #[test]
-    // @PLN184 approved exemption (owner, 2026-10-07): a test of a Unix symlink inside a zip; Windows has none to test
+    // approved exemption: a test of a Unix symlink inside a zip; Windows has none to test
     #[cfg(all(feature = "registry", unix))]
     fn a_symlink_entry_pointing_outside_writes_nothing_there() {
         use std::io::Write;

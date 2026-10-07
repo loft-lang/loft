@@ -49,7 +49,7 @@ fn run_interp(src: &str, name: &str) -> Option<String> {
         .map(|e| format!("{e:?}"))
 }
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): a dangling symlink needs the symlink privilege on Windows; Windows substitute: none
+// approved exemption: a dangling symlink needs the symlink privilege on Windows; Windows substitute: none
 #[cfg(unix)]
 #[test]
 fn f11_2_listing_survives_a_dangling_symlink() {

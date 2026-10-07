@@ -203,7 +203,7 @@ fn the_guard_sees_what_it_must_and_nothing_else() {
 /// migrated — in `src/`, `tests/` or `build.rs` — opts out with one marked
 /// `#![allow(clippy::disallowed_methods, …)]`.  Those files
 /// are listed in `clippy_allow.baseline`, and the list only shrinks: a NEW allow fails, and a
-/// removed one is blessed with `LOFT_BLESS_FILE_ACCESS=1`.
+/// fall is locked in with `LOFT_BLESS_FILE_ACCESS=1`.
 #[test]
 fn the_clippy_opt_outs_only_shrink() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

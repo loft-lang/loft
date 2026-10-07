@@ -545,7 +545,7 @@ pub struct Parser {
     /// @PLN187 — the facts a keyed lookup's key fields are declared with, for `parse_key`.
     pub(crate) pending_key_facts: Vec<crate::data::AliasFact>,
     /// @PLN187 — the definition the last `call_with_named` selected, or `u32::MAX`: a call
-    /// lowered to an operator (`sort` → `OpSortVector`) no longer names it.
+    /// lowered to an operator (`sort` → `OpSortVector`) does not name it.
     pub(crate) last_called: u32,
     /// @PLN187 — the member name the current postfix step read (`v.insert(…)`).
     pub(crate) postfix_member: String,

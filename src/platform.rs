@@ -1379,7 +1379,7 @@ pub fn another_name_that_is_not_text(before: &str, after: &str) -> std::ffi::OsS
 // Each routine below has an answer on every platform and its caller calls it
 // unconditionally.  Where Windows has no implementation of its own, the routine gives
 // the answer Windows got before the move, and its doc comment says so in one line:
-// `Windows: <what it does>; approved exemption (owner, 2026-10-07): <why>`.
+// `Windows: <what it does>; approved exemption: <why>`.
 // ---------------------------------------------------------------------------
 
 /// An executable's file name on this host: `<stem>.exe` on Windows, `<stem>` elsewhere.
@@ -1515,7 +1515,7 @@ pub const NATIVE_LINK_RECIPE: &str = if cfg!(target_os = "macos") {
 /// THAT path in, so the loader follows the build-time location and nothing else.  Cargo's
 /// default is the absolute output path, `…/target/release/deps/lib<stem>.dylib` — and a
 /// package cdylib is CACHED and reused from a different directory than the one it was built
-/// in, so the recorded path names a directory that no longer exists (`dyld: Library not
+/// in, so the recorded path names a directory that is gone (`dyld: Library not
 /// loaded: …/.loft_test_tmp_<pid>_0/native/target/release/deps/…` on a cache HIT).
 ///
 /// ELF does not have the problem: a `.so` records only its SONAME and the consumer's
@@ -1710,7 +1710,7 @@ pub const STATUS_DLL_NOT_FOUND: i32 = 0xC000_0135_u32 as i32;
 
 /// The signal that ended a process, or `None` when it exited (or the host has no signals).
 /// Windows: always `None` — a process there ends with an exit code, never a signal;
-/// approved exemption (owner, 2026-10-07): none needed, the exit code carries the cause.
+/// approved exemption: none needed, the exit code carries the cause.
 #[must_use]
 pub fn exit_signal(status: std::process::ExitStatus) -> Option<i32> {
     #[cfg(unix)]
@@ -1727,7 +1727,7 @@ pub fn exit_signal(status: std::process::ExitStatus) -> Option<i32> {
 
 /// Can a library declared `placement = "process"` run in a worker process on this host?
 /// Windows: `false` — the library runs in-process, and `LOFT_REQUIRE_PLACEMENT=1` refuses;
-/// approved exemption (owner, 2026-10-07): the transport's shared file mapping and the worker's parent-death
+/// approved exemption: the transport's shared file mapping and the worker's parent-death
 /// watch (`lib_placement::wire`) are written for Unix only, the watch being Track P's.
 #[must_use]
 pub fn placement_transport_available() -> bool {
@@ -1763,7 +1763,7 @@ pub fn set_permission_bits(path: &std::path::Path, mode: u32) -> std::io::Result
 }
 
 /// A file's Unix permission bits, or `None` where the host keeps none.
-/// Windows: `None`; approved exemption (owner, 2026-10-07): NTFS has no mode bits.
+/// Windows: `None`; approved exemption: NTFS has no mode bits.
 #[must_use]
 pub fn permission_bits(md: &Metadata) -> Option<u32> {
     #[cfg(unix)]
@@ -1782,7 +1782,7 @@ pub fn permission_bits(md: &Metadata) -> Option<u32> {
 /// test a cached binary and its directory pass before loft executes from them.
 ///
 /// Windows: `true` — there is no owner uid or mode to read, and the cache directory's ACL is
-/// inherited from the user's profile; approved exemption (owner, 2026-10-07): the substitute is an ACL read
+/// inherited from the user's profile; approved exemption: the substitute is an ACL read
 /// (`GetNamedSecurityInfoW`), unwritten.
 #[must_use]
 pub fn is_private_to_owner(md: &Metadata, no_setid: bool) -> bool {
@@ -1808,7 +1808,7 @@ pub fn is_private_to_owner(md: &Metadata, no_setid: bool) -> bool {
 }
 
 /// The identity of the file `md` describes — `(device, inode)` — which a rename-replace
-/// changes and an in-place rewrite keeps.  Windows: `None`; approved exemption (owner, 2026-10-07): std's
+/// changes and an in-place rewrite keeps.  Windows: `None`; approved exemption: std's
 /// `MetadataExt::file_index` / `volume_serial_number` are unstable, and the substitute is
 /// `GetFileInformationByHandle`, unwritten.
 #[must_use]
@@ -1829,7 +1829,7 @@ pub fn file_identity(md: &Metadata) -> Option<(u64, u64)> {
 /// # Errors
 /// The read's error; `Unsupported` where no source is implemented.
 ///
-/// Windows: `Unsupported` ("needs /dev/urandom"); approved exemption (owner, 2026-10-07): the one caller is the
+/// Windows: `Unsupported` ("needs /dev/urandom"); approved exemption: the one caller is the
 /// registry key-generation bootstrap, documented to run on an air-gapped Unix machine — the
 /// substitute would be `BCryptGenRandom`.
 pub fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
@@ -1852,7 +1852,7 @@ pub fn fill_random(buf: &mut [u8]) -> std::io::Result<()> {
 // ── memory: pages and residency ────────────────────────────────────────────
 
 /// The kernel's page size in bytes — the granularity a residency hint drops at, asked of the
-/// host rather than assumed (16 KB on aarch64 macOS).  Windows: 4096; approved exemption (owner, 2026-10-07):
+/// host rather than assumed (16 KB on aarch64 macOS).  Windows: 4096; approved exemption:
 /// nothing there drops pages ([`release_resident_pages`]), so nothing reads it.
 #[must_use]
 pub fn page_bytes() -> u64 {
@@ -1919,7 +1919,7 @@ pub fn resident_set_kb() -> Option<u64> {
 }
 
 /// Minor page faults this process has taken — field 10 of `/proc/self/stat` on Linux — or
-/// `None` where it cannot be read.  Elsewhere `None`; approved exemption (owner, 2026-10-07): a design
+/// `None` where it cannot be read.  Elsewhere `None`; approved exemption: a design
 /// measurement's instrument only (`database::spans`).
 #[must_use]
 pub fn minor_page_faults() -> Option<u64> {
@@ -1958,7 +1958,7 @@ pub fn catches_fatal_signals() -> bool {
 /// `SA_RESETHAND`.  The first `report` armed is the one called.
 ///
 /// Windows: nothing is armed, and a fatal fault ends with Rust's own abort report and the
-/// OS's; approved exemption (owner, 2026-10-07): Windows has structured exceptions rather than signals — the
+/// OS's; approved exemption: Windows has structured exceptions rather than signals — the
 /// substitute is a vectored exception handler (`AddVectoredExceptionHandler`), unwritten.
 pub fn on_fatal_signal(report: fn(&'static str)) {
     #[cfg(unix)]
@@ -2004,7 +2004,7 @@ extern "C" fn fatal_handler(
 /// Write `bytes` to standard error without allocating or locking — callable from a signal
 /// handler (`write(2)` is async-signal-safe).
 ///
-/// Windows: through `std::io::stderr()`, which locks; approved exemption (owner, 2026-10-07): none needed —
+/// Windows: through `std::io::stderr()`, which locks; approved exemption: none needed —
 /// nothing calls it from a handler there, because [`on_fatal_signal`] arms none.
 pub fn signal_safe_stderr(bytes: &[u8]) {
     #[cfg(unix)]
@@ -2027,7 +2027,7 @@ pub fn signal_safe_stderr(bytes: &[u8]) {
 /// and write `bytes` to it — callable from a signal handler (`open`/`write`/`close` are
 /// async-signal-safe, and nothing here allocates).  Answers whether anything was written.
 ///
-/// Windows: writes nothing and answers `false`; approved exemption (owner, 2026-10-07): none needed — nothing
+/// Windows: writes nothing and answers `false`; approved exemption: none needed — nothing
 /// calls it there, because [`on_fatal_signal`] arms no handler.
 #[must_use]
 pub fn signal_safe_write_file(c_path: &[u8], bytes: &[u8]) -> bool {
@@ -2120,7 +2120,7 @@ extern "C" fn profile_handler(sig: libc::c_int) {
 /// spawned child never holds the listener.  `None` when the bind or listen fails.
 ///
 /// Windows: a plain `TcpListener::bind`, so the new build binds only after the old listener
-/// has closed; approved exemption (owner, 2026-10-07): Windows has no `SO_REUSEPORT` load-balancing group, and
+/// has closed; approved exemption: Windows has no `SO_REUSEPORT` load-balancing group, and
 /// its `SO_REUSEADDR` lets a second process steal a port rather than share it.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
@@ -2202,7 +2202,7 @@ pub fn bind_tcp_handover(port: u16) -> Option<std::net::TcpListener> {
 /// # Errors
 /// The OS's error from `socket` or `bind`.
 ///
-/// Windows: a plain `UdpSocket::bind`; approved exemption (owner, 2026-10-07): as [`bind_tcp_handover`].
+/// Windows: a plain `UdpSocket::bind`; approved exemption: as [`bind_tcp_handover`].
 #[cfg(not(target_arch = "wasm32"))]
 pub fn bind_udp_handover(port: u16) -> std::io::Result<std::net::UdpSocket> {
     // @PLN184 W1.3 — under the emulated Windows host the bind is Windows': no shared port.
@@ -2524,7 +2524,7 @@ pub unsafe fn unmap_shared(base: *mut u8, len: usize) {
 /// `os_sync_wait_on_address` (macOS 14.4), looked up at run time so an older macOS still
 /// runs on the polling fallback.
 ///
-/// Windows: the polling fallback — a 200 µs sleep, then return; approved exemption (owner, 2026-10-07):
+/// Windows: the polling fallback — a 200 µs sleep, then return; approved exemption:
 /// `WaitOnAddress` does not cross processes, and the substitute is a named event pair.
 pub fn shared_word_wait(
     a: &std::sync::atomic::AtomicU32,
@@ -2561,7 +2561,7 @@ pub fn shared_word_wait(
 /// Wake one waiter on the shared word `a`.  Linux: `FUTEX_WAKE`; macOS:
 /// `os_sync_wake_by_address_any` where it exists.
 ///
-/// Windows: nothing — the waiter polls, so there is no one to wake; approved exemption (owner, 2026-10-07): as
+/// Windows: nothing — the waiter polls, so there is no one to wake; approved exemption: as
 /// [`shared_word_wait`].
 pub fn shared_word_wake(a: &std::sync::atomic::AtomicU32) {
     #[cfg(target_os = "linux")]

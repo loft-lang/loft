@@ -15,7 +15,7 @@
 // lives with the language wiring; what is proven here is that a call CAN cross
 // with its value, its type, and its error behaviour intact.
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
+// approved exemption: library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;
