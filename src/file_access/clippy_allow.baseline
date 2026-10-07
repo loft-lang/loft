@@ -1,34 +1,6 @@
 # Files still reaching the file system around file_access, each with a marked #![allow] (@PLN184 A1).
 # Only shrinks: see src/file_access/guard.rs.
-src/crash_report.rs
 src/database/allocation.rs
 src/database/journal.rs
 src/database/spans.rs
-src/documentation.rs
-src/engine_host.rs
-src/fuzz_keyed.rs
-src/fuzz_oracle.rs
-src/gendoc.rs
-src/host.rs
-src/html_embed.rs
-src/introspect.rs
-src/lib_placement/arena.rs
-src/lib_placement/wire.rs
-src/live_dispatch.rs
-src/live_reload.rs
-src/logger.rs
-src/lsp.rs
-src/migrate_long.rs
-src/op_census.rs
-src/paged_reader.rs
-src/platform.rs
-src/radix_db/pages.rs
-src/repl.rs
-src/rewrite_census.rs
-src/sandbox.rs
-src/script.rs
-src/serve.rs
 src/store.rs
-src/store_census.rs
-src/trie_db.rs
-src/verify_self.rs
