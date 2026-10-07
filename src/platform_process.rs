@@ -443,6 +443,103 @@ impl Drop for Running {
     }
 }
 
+/// The code a loft script reads for `status`: the program's own, or `128 + n` for signal `n`.
+pub fn exit_code(status: ExitStatus) -> i64 {
+    status
+        .code()
+        .map_or_else(|| signal_code(status), |c| own_code(i64::from(c)))
+}
+
+/// The program's own exit code, in the one form every platform can give it.  A Windows child
+/// built on MSYS or Cygwin (`sh`, the Git for Windows tools) that a signal ended exits with
+/// `n << 8`, a value no Unix exit code can take (those are 0..=255), so it reads as the
+/// `128 + n` the same program answers on Unix: `sh -c 'kill -TERM $$'` is 143 on both, not
+/// 3840 on one (formal/paths.md: one program answers the same on every platform).
+fn own_code(c: i64) -> i64 {
+    own_code_on(c, cfg!(windows))
+}
+
+fn own_code_on(c: i64, windows: bool) -> i64 {
+    if windows && c.trailing_zeros() >= 8 && (1..=64).contains(&(c >> 8)) {
+        128 + (c >> 8)
+    } else {
+        c
+    }
+}
+
+#[cfg(unix)]
+fn signal_code(s: ExitStatus) -> i64 {
+    use std::os::unix::process::ExitStatusExt;
+    s.signal().map_or(-1, |n| 128 + i64::from(n))
+}
+
+#[cfg(not(unix))]
+fn signal_code(_: ExitStatus) -> i64 {
+    -1
+}
+
+#[cfg(unix)]
+/// Arm this process to die when the process that started it dies.  Linux has it in one call
+/// (`PR_SET_PDEATHSIG`); macOS watches the parent's exit with `kqueue` (`EVFILT_PROC` /
+/// `NOTE_EXIT`) on a thread; elsewhere a thread checks for re-parenting.
+pub fn die_with_parent() {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let parent = unsafe { libc::getppid() };
+        std::thread::spawn(move || unsafe {
+            let kq = libc::kqueue();
+            if kq < 0 {
+                return;
+            }
+            let mut ev: libc::kevent = std::mem::zeroed();
+            ev.ident = parent as libc::uintptr_t;
+            ev.filter = libc::EVFILT_PROC;
+            ev.flags = libc::EV_ADD | libc::EV_ONESHOT;
+            ev.fflags = libc::NOTE_EXIT;
+            let mut out: libc::kevent = std::mem::zeroed();
+            // Registers the watch and blocks until the parent exits (or was already gone,
+            // which the registration reports as an error — the same answer).
+            libc::kevent(kq, &raw const ev, 1, &raw mut out, 1, std::ptr::null());
+            libc::_exit(0);
+        });
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            if unsafe { libc::getppid() } == 1 {
+                std::process::exit(0);
+            }
+        }
+    });
+}
+
+#[cfg(test)]
+mod exit_code_tests {
+    #[test]
+    fn a_signal_ended_msys_child_reads_as_128_plus_n_on_windows() {
+        use super::own_code_on;
+        assert_eq!(own_code_on(3840, true), 143, "SIGTERM: 15 << 8");
+        assert_eq!(own_code_on(2304, true), 137, "SIGKILL: 9 << 8");
+        assert_eq!(
+            own_code_on(3, true),
+            3,
+            "an ordinary exit code is the program's own"
+        );
+        assert_eq!(own_code_on(0, true), 0);
+        assert_eq!(own_code_on(65 << 8, true), 65 << 8, "no signal 65");
+        assert_eq!(
+            own_code_on(3840, false),
+            3840,
+            "Unix codes are never read this way"
+        );
+    }
+}
+
 #[cfg(all(test, unix))]
 mod path_tests {
     use super::{Program, Spawn, host_spelling};

@@ -393,7 +393,7 @@ impl Wire {
     }
 
     /// The worker's wait for the next call. Untimed: a worker has its own way of
-    /// noticing the caller is gone (`die_with_parent`), so waking it on a timer
+    /// noticing the caller is gone (`platform::process::die_with_parent`), so waking it on a timer
     /// would burn a wakeup per idle period to learn nothing.  (Where the platform
     /// has no shared wait, `platform::shared_word_wait` polls in short steps instead.)
     fn await_request(&self, last: u32) -> u32 {
@@ -1228,45 +1228,6 @@ const MAX_MESSAGE_BYTES: usize = 256 << 20;
 
 // ── worker side ─────────────────────────────────────────────────────────────
 
-/// Arm the worker to die when the process that started it dies.  Linux has it in one call
-/// (`PR_SET_PDEATHSIG`); macOS watches the parent's exit with `kqueue` (`EVFILT_PROC` /
-/// `NOTE_EXIT`) on a thread; elsewhere a thread checks for re-parenting.
-fn die_with_parent() {
-    #[cfg(target_os = "linux")]
-    unsafe {
-        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let parent = unsafe { libc::getppid() };
-        std::thread::spawn(move || unsafe {
-            let kq = libc::kqueue();
-            if kq < 0 {
-                return;
-            }
-            let mut ev: libc::kevent = std::mem::zeroed();
-            ev.ident = parent as libc::uintptr_t;
-            ev.filter = libc::EVFILT_PROC;
-            ev.flags = libc::EV_ADD | libc::EV_ONESHOT;
-            ev.fflags = libc::NOTE_EXIT;
-            let mut out: libc::kevent = std::mem::zeroed();
-            // Registers the watch and blocks until the parent exits (or was already gone,
-            // which the registration reports as an error — the same answer).
-            libc::kevent(kq, &raw const ev, 1, &raw mut out, 1, std::ptr::null());
-            libc::_exit(0);
-        });
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    std::thread::spawn(|| {
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(200));
-            if unsafe { libc::getppid() } == 1 {
-                std::process::exit(0);
-            }
-        }
-    });
-}
-
 /// Run as the worker for one placed library: attach the wire, load the library,
 /// then serve calls until the caller says stop or goes away.
 ///
@@ -1284,7 +1245,7 @@ pub fn serve(wire_path: &Path, pkg_dir: &Path, stdlib_dir: &Path) -> ! {
     // `exit` from any of a dozen places, or be killed outright. Without this a
     // crashed run leaves a worker holding the terminal's stdout, which reads as
     // the run itself having hung.
-    die_with_parent();
+    crate::platform::process::die_with_parent();
     // Re-check after arming: if the caller died in the window before the
     // watch was armed, its exit has already been missed.
     if unsafe { libc::getppid() } == 1 {

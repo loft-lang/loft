@@ -74,7 +74,7 @@ fn run_until(argv: &[String], input: &[u8], limit: Option<Duration>) -> Finished
             code: if ran.timed_out {
                 -2
             } else {
-                exit_code(ran.status)
+                crate::platform::process::exit_code(ran.status)
             },
             stdout: ran.stdout,
             stderr: ran.stderr,
@@ -85,41 +85,6 @@ fn run_until(argv: &[String], input: &[u8], limit: Option<Duration>) -> Finished
             stderr: format!("{program}: {e}").into_bytes(),
         },
     }
-}
-
-/// The code a loft script reads for `status`: the program's own, or `128 + n` for signal `n`.
-fn exit_code(status: std::process::ExitStatus) -> i64 {
-    status
-        .code()
-        .map_or_else(|| signal_code(status), |c| own_code(i64::from(c)))
-}
-
-/// The program's own exit code, in the one form every platform can give it.  A Windows child
-/// built on MSYS or Cygwin (`sh`, the Git for Windows tools) that a signal ended exits with
-/// `n << 8`, a value no Unix exit code can take (those are 0..=255), so it reads as the
-/// `128 + n` the same program answers on Unix: `sh -c 'kill -TERM $$'` is 143 on both, not
-/// 3840 on one (formal/paths.md: one program answers the same on every platform).
-fn own_code(c: i64) -> i64 {
-    own_code_on(c, cfg!(windows))
-}
-
-fn own_code_on(c: i64, windows: bool) -> i64 {
-    if windows && c.trailing_zeros() >= 8 && (1..=64).contains(&(c >> 8)) {
-        128 + (c >> 8)
-    } else {
-        c
-    }
-}
-
-#[cfg(unix)]
-fn signal_code(s: std::process::ExitStatus) -> i64 {
-    use std::os::unix::process::ExitStatusExt;
-    s.signal().map_or(-1, |n| 128 + i64::from(n))
-}
-
-#[cfg(not(unix))]
-fn signal_code(_: std::process::ExitStatus) -> i64 {
-    -1
 }
 
 /// The programs `start()` left running, by the handle the library holds.
@@ -174,7 +139,7 @@ fn control(enc: &str, input: &str) -> Option<(i64, String, String)> {
                 return Some((-1, String::new(), String::new()));
             };
             if p.wait(Duration::from_millis(u64::try_from(ms).unwrap_or(0))) {
-                let code = p.finish().map_or(-1, exit_code);
+                let code = p.finish().map_or(-1, crate::platform::process::exit_code);
                 (1, code.to_string(), String::new())
             } else {
                 started(|t| t.insert(h, p));
@@ -188,7 +153,9 @@ fn control(enc: &str, input: &str) -> Option<(i64, String, String)> {
         }
         "stop" => match number(words.first()).and_then(|h| started(|t| t.remove(&h))) {
             Some(mut p) => {
-                let code = p.stop_tree().map_or(-1, exit_code);
+                let code = p
+                    .stop_tree()
+                    .map_or(-1, crate::platform::process::exit_code);
                 (1, code.to_string(), String::new())
             }
             None => none(),
@@ -285,24 +252,6 @@ pub mod typed {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_signal_ended_msys_child_reads_as_128_plus_n_on_windows() {
-        use super::own_code_on;
-        assert_eq!(own_code_on(3840, true), 143, "SIGTERM: 15 << 8");
-        assert_eq!(own_code_on(2304, true), 137, "SIGKILL: 9 << 8");
-        assert_eq!(
-            own_code_on(3, true),
-            3,
-            "an ordinary exit code is the program's own"
-        );
-        assert_eq!(own_code_on(0, true), 0);
-        assert_eq!(own_code_on(65 << 8, true), 65 << 8, "no signal 65");
-        assert_eq!(
-            own_code_on(3840, false),
-            3840,
-            "Unix codes are never read this way"
-        );
-    }
 
     use super::*;
 

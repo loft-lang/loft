@@ -50,10 +50,10 @@ fn the_composition_matrix_holds_compiled() {
     run("--native", "command.loft");
 }
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `run.loft` drives `sh -c`, `cat`, `printf` and `/dev/zero`, which have no Windows equivalent; Windows substitute: the composition matrix above
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `run.loft` and `start.loft` drive `sh -c`, `cat`, `printf`, `sleep` and `/dev/zero`, which have no Windows equivalent; Windows substitutes: the composition matrix above, and `windows_rules::a_loft_programs_stop_takes_what_its_child_started`
 #[cfg(unix)]
-mod drain {
-    use super::run;
+mod spawns_sh {
+    use super::{run, run_on};
 
     #[test]
     fn no_stream_is_left_without_a_reader_interpreted() {
@@ -64,12 +64,6 @@ mod drain {
     fn no_stream_is_left_without_a_reader_compiled() {
         run("--native", "run.loft");
     }
-}
-
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `start.loft` drives `sh -c`, `sleep` and `wait`; Windows substitute: `windows_rules::a_loft_programs_stop_takes_what_its_child_started`
-#[cfg(unix)]
-mod start {
-    use super::{run, run_on};
 
     #[test]
     fn a_started_program_and_its_tree_interpreted() {

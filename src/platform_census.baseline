@@ -1,13 +1,9 @@
 # Platform gates per file outside platform / file_access: src/ is @PLN184 B1, tests/ is C1.
 # Only shrinks: see src/platform_census.rs.  Format: <lines> <file>
-1 src/engine_host.rs
 5 src/host.rs
 4 src/lib_placement.rs
-3 src/lib_placement/wire.rs
 5 src/main.rs
 4 src/native_utils.rs
-3 src/process_run.rs
-3 src/repl.rs
 1 src/self_update.rs
 2 tests/common/mod.rs
 3 tests/common/timing.rs
@@ -31,7 +27,6 @@
 1 tests/placement_parity.rs
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs
-3 tests/process_tree.rs
 3 tests/registry_publish_categories.rs
 1 tests/self_update_swap.rs
 1 tests/store_persist_loft.rs
