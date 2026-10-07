@@ -19,11 +19,8 @@
 //! to `stores.*` / `*_runtime` via [`crate::generation`]'s
 //! `substitute_template_body`.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Context, Data, OP_HOT, OP_NORMAL, Type};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::Write;
 
 fn operator_name(operator: &str) -> String {
@@ -54,7 +51,7 @@ fn operator_name(operator: &str) -> String {
     When the file cannot be written correctly.
 */
 pub fn generate_lib(data: &Data) -> std::io::Result<()> {
-    let mut into = File::create("tests/generated/text.rs")?;
+    let mut into = crate::file_access::create("tests/generated/text.rs")?;
     writeln!(
         into,
         "#![allow(clippy::cast_possible_wrap)]
@@ -143,13 +140,13 @@ pub fn generate_code(data: &Data) -> std::io::Result<()> {
 /// # Errors
 /// When the file cannot be written.
 pub fn generate_code_to(data: &Data, path: &str) -> std::io::Result<String> {
-    let mut into = File::create(path)?;
+    let mut into = crate::file_access::create(path)?;
     generate_code_into(data, &mut into)?;
     drop(into);
     let _ = std::process::Command::new("rustfmt")
         .args(["--edition", "2024", path])
         .status();
-    std::fs::read_to_string(path)
+    crate::file_access::read_to_string(path)
 }
 
 /// `@FR-R-OpPriority` — the operators in slot order: the `#hot` ones first, then those with no priority, then the
