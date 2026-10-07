@@ -1,0 +1,82 @@
+// `@FR-R-InPlaceLiteral`'s keyed clause — `h[k] = R { … }` is written into the record the
+// collection claims for it: the literal's values are evaluated first (a value may read the
+// record already under that key), then that record is removed, a fresh one is claimed, the
+// values are written into it, and the subscript's key is written and the record linked — the
+// plain form's order without its temporary store and its copy.  The interpreter copies as
+// before and is the oracle; every value is hand-computed.
+
+struct P { q: integer, r: integer, n: integer }
+// The sorted and index destinations take element types of their own: two keyed fields over
+// one element type are a linked group, where `coll[key] = value` is refused.
+struct Ps { q: integer, r: integer, n: integer }
+struct Pi { q: integer, r: integer, n: integer }
+struct T { q: integer, name: text }
+struct W { h: hash<P[q, r]>, s: sorted<Ps[q, r]>, i: index<Pi[q, r]>, t: hash<T[q]> }
+
+fn put(w: W, q: integer, r: integer, n: integer) { w.h[q, r] = P { q: q, r: r, n: n }; }
+
+/// The value reads the record the assignment replaces: `n` grows by `d` each time.
+fn bump(w: W, q: integer, r: integer, d: integer) { w.h[q, r] = P { q: q, r: r, n: (w.h[q, r]?.n ?? 0) + d }; }
+
+/// The literal's own key fields disagree with the subscript: the subscript wins.
+fn misfiled(w: W) { w.h[3, 4] = P { q: 9, r: 9, n: 77 }; }
+
+fn put_s(w: W, q: integer, r: integer, n: integer) { w.s[q, r] = Ps { q: q, r: r, n: n }; }
+fn put_i(w: W, q: integer, r: integer, n: integer) { w.i[q, r] = Pi { q: q, r: r, n: n }; }
+fn put_t(w: W, q: integer, name: text) { w.t[q] = T { q: q, name: name }; }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+fn main() {
+  w = W { h: [], s: [], i: [], t: [] };
+
+  // c1 — fresh inserts: 10 cells (q, r) = (k, 2k), n = 100 + k.
+  for k in 0..10 { put(w, k, k * 2, 100 + k); }
+  assert(len(w.h) == 10 && w.h[3, 6]?.n == 103 && w.h[9, 18]?.n == 109, "c1: {len(w.h)}");
+
+  // c2 — a replace whose value reads the old record: 103 + 5 + 5 = 113; still 10 entries.
+  bump(w, 3, 6, 5);
+  bump(w, 3, 6, 5);
+  assert(len(w.h) == 10 && w.h[3, 6]?.n == 113, "c2: {len(w.h)} {w.h[3, 6]?.n ?? -1}");
+  // a bump of a key not there starts from 0.
+  bump(w, 50, 50, 7);
+  assert(len(w.h) == 11 && w.h[50, 50]?.n == 7, "c2 fresh: {w.h[50, 50]?.n ?? -1}");
+
+  // c3 — filed under the subscript, its key fields the subscript's.
+  misfiled(w);
+  p3 = w.h[3, 4];
+  assert(len(w.h) == 12 && p3?.n == 77 && p3?.q == 3 && p3?.r == 4 && w.h[9, 9] == null, "c3: {p3?.q ?? -1} {p3?.r ?? -1}");
+
+  // c4 — a sorted and an index destination: the same writes, read back in key order.
+  for k in 0..5 { put_s(w, 5 - k, k, k * 10); put_i(w, 5 - k, k, k * 10); }
+  put_s(w, 3, 2, 999);
+  put_i(w, 3, 2, 999);
+  s4 = 0;
+  for p in w.s { s4 = s4 * 10 + p.q; }
+  i4 = 0;
+  for p in w.i { i4 += p.n; }
+  assert(len(w.s) == 5 && s4 == 12345 && w.s[3, 2]?.n == 999, "c4 sorted: {s4} {w.s[3, 2]?.n ?? -1}");
+  assert(len(w.i) == 5 && i4 == 0 + 10 + 999 + 30 + 40, "c4 index: {i4}");
+
+  // c5 — a text field: replaced twice, the last name stands.
+  put_t(w, 1, "one");
+  put_t(w, 2, "two");
+  put_t(w, 1, "uno");
+  assert(len(w.t) == 2 && w.t[1]?.name == "uno" && w.t[2]?.name == "two", "c5: {w.t[1]?.name ?? \"-\"}");
+
+  // c6 — replacing in place leaves no record behind: after a warm-up, a thousand more
+  // replaces of the same twelve keys hold the live record count still.
+  for k in 0..100 { put(w, k % 10, (k % 10) * 2, k); }
+  r1 = live_records();
+  for k in 0..1000 { put(w, k % 10, (k % 10) * 2, k); }
+  r2 = live_records();
+  assert(r1 > 0 && r2 == r1 && len(w.h) == 12 && w.h[9, 18]?.n == 999, "c6: {r1} -> {r2}");
+  println("ok");
+}
