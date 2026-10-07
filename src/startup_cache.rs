@@ -16,8 +16,6 @@
 //! never read.  Default behaviour (env var unset) is unchanged: both functions
 //! are no-ops, so normal runs always parse.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::parser::Parser;
 
 /// The cache-bundle path when the cache is enabled and the stdlib is readable;
@@ -74,7 +72,7 @@ pub fn save_stdlib_cache(p: &Parser, default_dir: &str) {
         return;
     };
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = crate::file_access::create_dir_all(parent);
     }
     let _ = crate::ir_store::save_bundle(&p.data, &p.database.types, &path.to_string_lossy());
     crate::cache::prune_stdlib_images();
@@ -204,7 +202,7 @@ impl ManifestState {
 #[cfg(feature = "mmap")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<ManifestState> {
-    let Ok(text) = std::fs::read_to_string(manifest) else {
+    let Ok(text) = crate::file_access::read_to_string(manifest) else {
         return manifest_miss(&format!("no manifest at {}", manifest.display()));
     };
     let mut lines = text.lines();
@@ -441,7 +439,7 @@ pub fn warm_load_program(
     if let Some(so) = state
         .auto_native_libs
         .iter()
-        .find(|so| !std::path::Path::new(so).is_file())
+        .find(|so| !crate::file_access::is_file(so))
     {
         return warm_miss(&format!("auto-native artifact {so} is gone"));
     }
@@ -664,7 +662,7 @@ pub fn save_program(
     }
 
     if let Some(parent) = bundle.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = crate::file_access::create_dir_all(parent);
     }
     if crate::ir_store::save_bundle(&p.data, &p.database.types, &bundle.to_string_lossy()).is_err()
     {
@@ -679,11 +677,14 @@ pub fn save_program(
     // parity comparison reports a warning the other does not (loft#1129).  Concurrent loft
     // processes over one bundle are not a test artefact: two builds at once is an ordinary
     // thing for a user to do.
-    let tmp = manifest.with_extension(format!("manifest.{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, lines.as_bytes()).is_ok() {
-        let _ = std::fs::rename(&tmp, &manifest);
+    let tmp = crate::file_access::with_extension(
+        &manifest,
+        &format!("manifest.{}.tmp", std::process::id()),
+    );
+    if crate::file_access::write(&tmp, lines.as_bytes()).is_ok() {
+        let _ = crate::file_access::rename(&tmp, &manifest);
     }
-    let _ = std::fs::remove_file(&tmp);
+    let _ = crate::file_access::remove_file(&tmp);
     // @PLN11 G2 / track 1 — with the cache default-on, bound the directory size
     // by evicting the oldest bundles after each cold save.
     crate::cache::prune_program_cache();
@@ -726,7 +727,7 @@ pub fn native_fast_path(
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, lib_dirs);
     let sidecar = crate::cache::native_sidecar_path(&manifest);
     // The sidecar first: three cheap lines before the manifest's hash walk.
-    let text = std::fs::read_to_string(&sidecar).ok()?;
+    let text = crate::file_access::read_to_string(&sidecar).ok()?;
     let mut lines = text.lines();
     match lines.next().and_then(|l| l.strip_prefix("sig ")) {
         Some(sig) if sig == crate::cache::build_signature() => {}
@@ -746,7 +747,7 @@ pub fn native_fast_path(
     if lines.next().is_some() {
         return None;
     }
-    if !binary.is_file() {
+    if !crate::file_access::is_file(&binary) {
         return None;
     }
     if crate::cache::file_hash(manifest.to_str()?).map(|h| hex32(&h)) != Some(built_beside) {
@@ -777,7 +778,7 @@ pub fn save_native_sidecar(
     binary: &std::path::Path,
 ) {
     let (_, manifest) = crate::cache::program_cache_paths(script_abspath, lib_dirs);
-    if !manifest.is_file() {
+    if !crate::file_access::is_file(&manifest) {
         return;
     }
     let Some(binary) = binary.to_str() else {
@@ -792,11 +793,12 @@ pub fn save_native_sidecar(
         crate::cache::build_signature(),
         hex32(&built_beside)
     );
-    let tmp = sidecar.with_extension(format!("native.{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, body.as_bytes()).is_ok() {
-        let _ = std::fs::rename(&tmp, &sidecar);
+    let tmp =
+        crate::file_access::with_extension(&sidecar, &format!("native.{}.tmp", std::process::id()));
+    if crate::file_access::write(&tmp, body.as_bytes()).is_ok() {
+        let _ = crate::file_access::rename(&tmp, &sidecar);
     }
-    let _ = std::fs::remove_file(&tmp);
+    let _ = crate::file_access::remove_file(&tmp);
 }
 
 #[cfg(not(feature = "mmap"))]
@@ -852,9 +854,9 @@ mod ncrate_manifest_tests {
     #[test]
     fn manifest_state_parses_ncrate_native_packages() {
         let dir = std::env::temp_dir().join(format!("loft_ncrate_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::file_access::create_dir_all(&dir).unwrap();
         let src = dir.join("s.loft");
-        std::fs::write(&src, "fn main() {}\n").unwrap();
+        crate::file_access::write(&src, "fn main() {}\n").unwrap();
         let src_str = src.to_string_lossy().to_string();
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
@@ -864,7 +866,7 @@ mod ncrate_manifest_tests {
             hex32(&hash),
             src_str,
         );
-        std::fs::write(&manifest, &content).unwrap();
+        crate::file_access::write(&manifest, &content).unwrap();
 
         let state = manifest_state(&manifest, "k").expect("valid manifest hit");
         assert_eq!(
@@ -902,9 +904,9 @@ mod ncrate_manifest_tests {
         // loft#1684 — a manifest with no `actx` cannot say which native-library context
         // marked its bundle, so it is a miss.
         let bare = content.replace("actx c\n", "");
-        std::fs::write(&manifest, &bare).unwrap();
+        crate::file_access::write(&manifest, &bare).unwrap();
         assert!(manifest_state(&manifest, "k").is_none(), "no actx → miss");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// @PLN166 B3 — the source-keyed native fast path serves only a program whose manifest
@@ -913,9 +915,9 @@ mod ncrate_manifest_tests {
     #[test]
     fn the_native_fast_path_refuses_a_manifest_with_a_registration() {
         let dir = std::env::temp_dir().join(format!("loft_nsk_pure_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::file_access::create_dir_all(&dir).unwrap();
         let src = dir.join("s.loft");
-        std::fs::write(&src, "fn main() {}\n").unwrap();
+        crate::file_access::write(&src, "fn main() {}\n").unwrap();
         let src_str = src.to_string_lossy().to_string();
         let source_line = format!(
             "{} {}",
@@ -944,7 +946,7 @@ mod ncrate_manifest_tests {
             } else {
                 (header, "")
             };
-            std::fs::write(
+            crate::file_access::write(
                 &manifest,
                 format!("sig {sig}\nstdk k\n{before}actx c\n{after}{source_line}\n"),
             )
@@ -957,6 +959,6 @@ mod ncrate_manifest_tests {
                 "a manifest carrying {header:?}"
             );
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }

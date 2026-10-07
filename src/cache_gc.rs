@@ -52,8 +52,6 @@
 //! pruned artifact that is wanted again is rebuilt — that is the whole risk, and it is
 //! the same trade the post-build sweep already makes.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// How many auto-native artifacts a package keeps, matching the post-build sweep in
@@ -111,11 +109,11 @@ enum Removal {
 impl Removal {
     fn remove(&self) -> bool {
         match self {
-            Removal::Tree(d) => std::fs::remove_dir_all(d).is_ok(),
+            Removal::Tree(d) => crate::file_access::remove_dir_all(d).is_ok(),
             Removal::Artifact { so, siblings } => {
-                let ok = std::fs::remove_file(so).is_ok();
+                let ok = crate::file_access::remove_file(so).is_ok();
                 for s in siblings {
-                    let _ = std::fs::remove_file(s);
+                    let _ = crate::file_access::remove_file(s);
                 }
                 ok
             }
@@ -143,18 +141,22 @@ impl Area {
 /// contributes nothing rather than aborting the walk, because a survey that refuses
 /// to report because one file was busy is a survey nobody runs.
 fn dir_bytes(dir: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::file_access::read_dir(dir) else {
         return 0;
     };
     let mut total = 0;
-    for e in entries.flatten() {
-        let Ok(ft) = e.file_type() else { continue };
+    for e in &entries {
+        // Not following a link, as `DirEntry::file_type` / `metadata` did not.
+        let Ok(m) = crate::file_access::symlink_metadata(e) else {
+            continue;
+        };
+        let ft = m.file_type();
         if ft.is_symlink() {
             continue;
         }
         if ft.is_dir() {
-            total += dir_bytes(&e.path());
-        } else if let Ok(m) = e.metadata() {
+            total += dir_bytes(&e.os_spelling());
+        } else {
             total += m.len();
         }
     }
@@ -189,7 +191,7 @@ pub fn running_is_the_installed_loft() -> Option<bool> {
     let on_path = std::env::var_os("PATH").map(|p| {
         std::env::split_paths(&p)
             .map(|d| d.join(if cfg!(windows) { "loft.exe" } else { "loft" }))
-            .find(|c| c.is_file())
+            .find(|c| crate::file_access::is_file(c))
     })??;
     Some(crate::file_access::try_plain_canonical(&on_path)? == running)
 }
@@ -214,12 +216,12 @@ pub fn survey_build_cache(root: &Path, current_key: u64) -> Area {
         basis: Basis::Exact,
         dead: Vec::new(),
     };
-    let Ok(entries) = std::fs::read_dir(root) else {
+    let Ok(entries) = crate::file_access::read_dir(root) else {
         return area;
     };
-    for e in entries.flatten() {
-        let dir = e.path();
-        if !dir.is_dir() {
+    for e in &entries {
+        let dir = e.os_spelling();
+        if !crate::file_access::is_dir(&dir) {
             continue;
         }
         let bytes = dir_bytes(&dir);
@@ -260,13 +262,13 @@ pub fn survey_native_auto(registry_root: &Path, keep: usize) -> Area {
         basis: Basis::Conservative,
         dead: Vec::new(),
     };
-    let Ok(pkgs) = std::fs::read_dir(registry_root) else {
+    let Ok(pkgs) = crate::file_access::read_dir(registry_root) else {
         return area;
     };
     let ext = cdylib_ext();
-    for pkg in pkgs.flatten() {
-        let auto = pkg.path().join("native-auto");
-        if !auto.is_dir() {
+    for pkg in &pkgs {
+        let auto = pkg.os_spelling().join("native-auto");
+        if !crate::file_access::is_dir(&auto) {
             continue;
         }
         // Group by artifact family, exactly as the post-build sweep does: the keep
@@ -276,15 +278,14 @@ pub fn survey_native_auto(registry_root: &Path, keep: usize) -> Area {
             String,
             Vec<(std::time::SystemTime, PathBuf, u64)>,
         > = std::collections::BTreeMap::new();
-        let Ok(files) = std::fs::read_dir(&auto) else {
+        let Ok(files) = crate::file_access::read_dir(&auto) else {
             continue;
         };
-        for f in files.flatten() {
-            let p = f.path();
-            if p.extension().and_then(|x| x.to_str()) != Some(ext) {
+        for f in &files {
+            if f.last_is_unspellable() || f.extension() != Some(ext) {
                 continue;
             }
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+            let Some(stem) = f.file_stem() else {
                 continue;
             };
             // `libloft_auto_<pkg>_<ver>_<fp>` (the leading `lib` is the platform's,
@@ -297,12 +298,16 @@ pub fn survey_native_auto(registry_root: &Path, keep: usize) -> Area {
             let Some((family, _fp)) = unprefixed.rsplit_once('_') else {
                 continue;
             };
-            let Ok(meta) = f.metadata() else { continue };
+            // Not following a link, as `DirEntry::metadata` did not.
+            let Ok(meta) = crate::file_access::symlink_metadata(f) else {
+                continue;
+            };
             let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-            families
-                .entry(family.to_string())
-                .or_default()
-                .push((mtime, p, meta.len()));
+            families.entry(family.to_string()).or_default().push((
+                mtime,
+                f.os_spelling(),
+                meta.len(),
+            ));
         }
         for (_family, mut built) in families {
             // Newest first, so the keep window is the most recently BUILT — the same
@@ -312,7 +317,7 @@ pub fn survey_native_auto(registry_root: &Path, keep: usize) -> Area {
                 let siblings = sibling_sources(so);
                 let sib_bytes: u64 = siblings
                     .iter()
-                    .filter_map(|p| std::fs::metadata(p).ok().map(|m| m.len()))
+                    .filter_map(|p| crate::file_access::metadata(p).ok().map(|m| m.len()))
                     .sum();
                 let total = size + sib_bytes;
                 area.items += 1;
@@ -334,10 +339,10 @@ pub fn survey_native_auto(registry_root: &Path, keep: usize) -> Area {
 /// The generated `.rs` and rustc `.args` an artifact was built from. They carry the
 /// artifact's own hash in their names, so they are dead exactly when it is.
 fn sibling_sources(so: &Path) -> Vec<PathBuf> {
-    let (Some(dir), Some(stem)) = (so.parent(), so.file_stem().and_then(|s| s.to_str())) else {
+    let (Some(dir), Some(stem)) = (so.parent(), crate::file_access::file_stem(so)) else {
         return Vec::new();
     };
-    let unprefixed = stem.strip_prefix("lib").unwrap_or(stem);
+    let unprefixed = stem.strip_prefix("lib").unwrap_or(&stem);
     vec![
         dir.join(format!("{unprefixed}.rs")),
         dir.join(format!("{unprefixed}.args")),
@@ -350,7 +355,7 @@ fn sibling_sources(so: &Path) -> Vec<PathBuf> {
 /// adoption path already refuses an artifact it cannot open (the loser rebuilds). The
 /// lock is for the other order: a build that is mid-publish into this directory.
 fn with_build_lock<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
-    let Ok(lock) = std::fs::File::create(dir.join(".build.lock")) else {
+    let Ok(lock) = crate::file_access::create(dir.join(".build.lock")) else {
         return f();
     };
     let held = lock.lock().is_ok();
@@ -374,10 +379,10 @@ pub fn prune(area: &Area) -> (u64, u64) {
         let size = match r {
             Removal::Tree(d) => dir_bytes(d),
             Removal::Artifact { so, siblings } => {
-                std::fs::metadata(so).map_or(0, |m| m.len())
+                crate::file_access::metadata(so).map_or(0, |m| m.len())
                     + siblings
                         .iter()
-                        .filter_map(|p| std::fs::metadata(p).ok().map(|m| m.len()))
+                        .filter_map(|p| crate::file_access::metadata(p).ok().map(|m| m.len()))
                         .sum::<u64>()
             }
         };
@@ -407,14 +412,14 @@ pub fn prune_all(area: &Area) -> (u64, u64) {
     }
     let mut items = 0;
     let mut bytes = 0;
-    let Ok(entries) = std::fs::read_dir(&area.root) else {
+    let Ok(entries) = crate::file_access::read_dir(&area.root) else {
         return (0, 0);
     };
-    for e in entries.flatten() {
-        let d = e.path();
-        if d.is_dir() {
+    for e in &entries {
+        let d = e.os_spelling();
+        if crate::file_access::is_dir(&d) {
             let size = dir_bytes(&d);
-            if std::fs::remove_dir_all(&d).is_ok() {
+            if crate::file_access::remove_dir_all(&d).is_ok() {
                 items += 1;
                 bytes += size;
             }
@@ -445,8 +450,8 @@ mod tests {
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("loft_cache_gc_{name}"));
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).expect("mkdir");
+        let _ = crate::file_access::remove_dir_all(&d);
+        crate::file_access::create_dir_all(&d).expect("mkdir");
         d
     }
 
@@ -459,9 +464,9 @@ mod tests {
         let root = tmp("bc");
         for (name, fp) in [("live-1.0.0", 42u64), ("dead-1.0.0", 7), ("dead-2.0.0", 9)] {
             let rel = root.join(name).join("release");
-            std::fs::create_dir_all(&rel).unwrap();
-            std::fs::write(rel.join("libx.rlib"), vec![0u8; 4096]).unwrap();
-            std::fs::write(rel.join(".loft-build-fp"), fp.to_string()).unwrap();
+            crate::file_access::create_dir_all(&rel).unwrap();
+            crate::file_access::write(rel.join("libx.rlib"), vec![0u8; 4096]).unwrap();
+            crate::file_access::write(rel.join(".loft-build-fp"), fp.to_string()).unwrap();
         }
         let area = survey_build_cache(&root, 42);
         assert_eq!(area.items, 3, "every tree is counted");
@@ -472,12 +477,12 @@ mod tests {
         let (items, _) = prune(&area);
         assert_eq!(items, 2);
         assert!(
-            root.join("live-1.0.0").exists(),
+            crate::file_access::exists(root.join("live-1.0.0")),
             "the live generation stays"
         );
-        assert!(!root.join("dead-1.0.0").exists());
-        assert!(!root.join("dead-2.0.0").exists());
-        let _ = std::fs::remove_dir_all(&root);
+        assert!(!crate::file_access::exists(root.join("dead-1.0.0")));
+        assert!(!crate::file_access::exists(root.join("dead-2.0.0")));
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// An UNSTAMPED tree is what an interrupted build looks like. Deleting it on a
@@ -486,15 +491,15 @@ mod tests {
     fn an_unstamped_build_tree_is_left_alone() {
         let root = tmp("bc_unstamped");
         let rel = root.join("mystery-1.0.0").join("release");
-        std::fs::create_dir_all(&rel).unwrap();
-        std::fs::write(rel.join("libx.rlib"), vec![0u8; 128]).unwrap();
+        crate::file_access::create_dir_all(&rel).unwrap();
+        crate::file_access::write(rel.join("libx.rlib"), vec![0u8; 128]).unwrap();
         let area = survey_build_cache(&root, 42);
         assert_eq!(area.items, 1);
         assert_eq!(
             area.dead_items, 0,
             "no stamp is not the same fact as a stale stamp"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// The keep window, and the thing it must not eat: a `[c] shim` cdylib shares the
@@ -503,21 +508,20 @@ mod tests {
     fn native_auto_keeps_the_window_and_spares_a_foreign_cdylib() {
         let root = tmp("na");
         let auto = root.join("pkg-1.0.0").join("native-auto");
-        std::fs::create_dir_all(&auto).unwrap();
+        crate::file_access::create_dir_all(&auto).unwrap();
         let ext = cdylib_ext();
         // Oldest first so mtimes are ordered by creation.
         let shim = auto.join(format!("libpkg_shim_abc.{ext}"));
-        std::fs::write(&shim, vec![0u8; 1024]).unwrap();
+        crate::file_access::write(&shim, vec![0u8; 1024]).unwrap();
         for i in 0..12 {
             let p = auto.join(format!("libloft_auto_pkg_1_0_0_{i:016x}.{ext}"));
-            std::fs::write(&p, vec![0u8; 2048]).unwrap();
-            std::fs::write(auto.join(format!("loft_auto_pkg_1_0_0_{i:016x}.rs")), "//").unwrap();
+            crate::file_access::write(&p, vec![0u8; 2048]).unwrap();
+            crate::file_access::write(auto.join(format!("loft_auto_pkg_1_0_0_{i:016x}.rs")), "//")
+                .unwrap();
             // Distinct mtimes, newest last.
             let t = std::time::SystemTime::UNIX_EPOCH
                 + std::time::Duration::from_secs(1_700_000_000 + i * 60);
-            std::fs::File::options()
-                .write(true)
-                .open(&p)
+            crate::file_access::open_with(&p, std::fs::File::options().write(true))
                 .unwrap()
                 .set_modified(t)
                 .unwrap();
@@ -531,24 +535,25 @@ mod tests {
         let (freed, _) = prune(&area);
         assert_eq!(freed, 4, "the survey's count is what prune delivers");
         assert!(
-            shim.exists(),
+            crate::file_access::exists(&shim),
             "the `[c] shim` cdylib is the oldest file here and must survive — an \
              unscoped sweep eats it and the next run cannot find its `#c` symbols"
         );
-        let left = std::fs::read_dir(&auto)
+        let left = crate::file_access::read_dir(&auto)
             .unwrap()
-            .flatten()
-            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some(ext))
-            .filter(|e| e.file_name().to_string_lossy().starts_with("libloft_auto_"))
+            .iter()
+            .filter(|e| e.extension() == Some(ext))
+            .filter(|e| {
+                e.file_name()
+                    .is_some_and(|n| n.starts_with("libloft_auto_"))
+            })
             .count();
         assert_eq!(left, KEEP_ARTIFACTS, "the newest 8 stay");
         // The generated source goes with its artifact, never orphaned.
-        assert!(
-            !auto
-                .join("loft_auto_pkg_1_0_0_0000000000000000.rs")
-                .exists()
-        );
-        let _ = std::fs::remove_dir_all(&root);
+        assert!(!crate::file_access::exists(
+            auto.join("loft_auto_pkg_1_0_0_0000000000000000.rs")
+        ));
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// An unreadable root is a report of nothing, not a panic — `loft cache status` on
@@ -556,7 +561,7 @@ mod tests {
     #[test]
     fn a_missing_root_surveys_as_empty() {
         let missing = std::env::temp_dir().join("loft_cache_gc_definitely_absent");
-        let _ = std::fs::remove_dir_all(&missing);
+        let _ = crate::file_access::remove_dir_all(&missing);
         let a = survey_build_cache(&missing, 1);
         let b = survey_native_auto(&missing, 8);
         assert_eq!((a.items, a.bytes, b.items, b.bytes), (0, 0, 0, 0));

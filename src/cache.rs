@@ -33,8 +33,6 @@
 //! § Dependencies — serde is a forbidden dependency project-wide
 //! (native builds).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use sha2::{Digest, Sha256};
 
 /// Format-version byte.  Bump whenever the on-disk snapshot layout
@@ -187,7 +185,7 @@ fn binary_signature_tag() -> String {
     let Ok(exe) = std::env::current_exe() else {
         return String::new();
     };
-    let Ok(meta) = std::fs::metadata(&exe) else {
+    let Ok(meta) = crate::file_access::metadata(&exe) else {
         return String::new();
     };
     let Ok(mtime) = meta.modified() else {
@@ -412,21 +410,16 @@ pub fn host_triple() -> String {
 /// "cannot cache" and falls back to a cold parse.
 #[must_use]
 pub fn collect_stdlib_sources(default_dir: &str) -> Vec<(String, String)> {
-    let Ok(entries) = std::fs::read_dir(default_dir) else {
+    let Ok(entries) = crate::file_access::read_dir(default_dir) else {
         return Vec::new();
     };
     let mut out: Vec<(String, String)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for path in &entries {
+        if path.extension() != Some("loft") {
             continue;
         }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let Ok(content) = std::fs::read_to_string(&path) else {
+        let name = path.file_name().unwrap_or_default().to_string();
+        let Ok(content) = crate::file_access::read_to_string(path) else {
             return Vec::new();
         };
         out.push((name, content));
@@ -475,7 +468,7 @@ fn hex32(key: &[u8; 32]) -> String {
 /// hash every parsed source for the whole-program bundle's drift manifest.
 #[must_use]
 pub fn file_hash(path: &str) -> Option<[u8; 32]> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = crate::file_access::read(path).ok()?;
     let mut h = Sha256::new();
     h.update(&bytes);
     Some(h.finalize().into())
@@ -486,16 +479,19 @@ pub fn file_hash(path: &str) -> Option<[u8; 32]> {
 fn loft_rlib_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
-    if let Some(found) = rlib_candidates(exe_dir).into_iter().find(|c| c.exists()) {
+    if let Some(found) = rlib_candidates(exe_dir)
+        .into_iter()
+        .find(|c| crate::file_access::exists(c))
+    {
         return Some(found);
     }
-    if exe_dir.file_name().is_some_and(|n| n == "bin") {
+    if crate::file_access::file_name(exe_dir).as_deref() == Some("bin") {
         let share = exe_dir
             .parent()?
             .join("share")
             .join("loft")
             .join("libloft.rlib");
-        if share.exists() {
+        if crate::file_access::exists(&share) {
             return Some(share);
         }
     }
@@ -588,8 +584,8 @@ fn warn_if_uplifted_rlib_stale() {
     let deps = exe_dir.join("deps").join("libloft.rlib");
     let bare = exe_dir.join("libloft.rlib");
     let (Ok(deps_t), Ok(bare_t)) = (
-        std::fs::metadata(&deps).and_then(|m| m.modified()),
-        std::fs::metadata(&bare).and_then(|m| m.modified()),
+        crate::file_access::metadata(&deps).and_then(|m| m.modified()),
+        crate::file_access::metadata(&bare).and_then(|m| m.modified()),
     ) else {
         return;
     };
@@ -735,7 +731,7 @@ pub fn native_artifact_fingerprint_matches(profile_dir: &std::path::Path, fp: u6
     if fp == 0 {
         return true;
     }
-    std::fs::read_to_string(fp_sidecar(profile_dir))
+    crate::file_access::read_to_string(fp_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .is_some_and(|stored| stored == fp)
@@ -745,7 +741,7 @@ pub fn native_artifact_fingerprint_matches(profile_dir: &std::path::Path, fp: u6
 /// there (best-effort; no-op when `fp == 0`).
 pub fn write_native_artifact_fingerprint(profile_dir: &std::path::Path, fp: u64) {
     if fp != 0 {
-        let _ = std::fs::write(fp_sidecar(profile_dir), fp.to_string());
+        let _ = crate::file_access::write(fp_sidecar(profile_dir), fp.to_string());
     }
 }
 
@@ -764,7 +760,7 @@ const RUNTIME_FPS_KEPT: usize = 4;
 #[must_use]
 pub fn runtime_fingerprint_matches(profile_dir: &std::path::Path, fp: u64) -> bool {
     fp == 0
-        || std::fs::read_to_string(fp_sidecar(profile_dir))
+        || crate::file_access::read_to_string(fp_sidecar(profile_dir))
             .is_ok_and(|s| s.split_whitespace().any(|t| t.parse::<u64>() == Ok(fp)))
 }
 
@@ -781,7 +777,7 @@ pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt
     let mut fps: Vec<u64> = if rebuilt {
         Vec::new()
     } else {
-        std::fs::read_to_string(fp_sidecar(profile_dir))
+        crate::file_access::read_to_string(fp_sidecar(profile_dir))
             .map(|s| {
                 s.split_whitespace()
                     .filter_map(|t| t.parse().ok())
@@ -793,7 +789,7 @@ pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt
     fps.push(fp);
     let keep = fps.len().saturating_sub(RUNTIME_FPS_KEPT);
     let text: Vec<String> = fps[keep..].iter().map(u64::to_string).collect();
-    let _ = std::fs::write(fp_sidecar(profile_dir), text.join(" "));
+    let _ = crate::file_access::write(fp_sidecar(profile_dir), text.join(" "));
 }
 
 /// The fingerprint a native artifact dir was stamped with, if any — the
@@ -805,7 +801,7 @@ pub fn stamp_runtime_fingerprint(profile_dir: &std::path::Path, fp: u64, rebuilt
 /// published `loft-ffi` version instead of the rlib hash.
 #[must_use]
 pub fn native_artifact_stamped_fp(profile_dir: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(fp_sidecar(profile_dir))
+    crate::file_access::read_to_string(fp_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
@@ -877,19 +873,19 @@ pub fn clear_stale_native_target(
         return false;
     }
     let release_dir = target_root.join("release");
-    let artifact_present =
-        release_dir.join(lib_name).exists() || release_dir.join(rlib_name).exists();
+    let artifact_present = crate::file_access::exists(release_dir.join(lib_name))
+        || crate::file_access::exists(release_dir.join(rlib_name));
     // Clear only on a PRESENT-and-mismatched sidecar — proof the artifact
     // was stamped by another loft build.  An ABSENT sidecar is unknown
     // provenance and commonly a legitimate HAND-BUILT artifact (`cargo
     // build` in the library's `native/` dir — the documented workflow; the
     // `tests/lib` fixture cdylibs are exactly this) — deleting those breaks
     // the dev loop, so they keep the pre-existing build-and-stamp path.
-    let stamped = std::fs::read_to_string(release_dir.join(".loft-build-fp"))
+    let stamped = crate::file_access::read_to_string(release_dir.join(".loft-build-fp"))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok());
     if artifact_present && stamped.is_some_and(|s| s != fp) {
-        let _ = std::fs::remove_dir_all(target_root);
+        let _ = crate::file_access::remove_dir_all(target_root);
         return true;
     }
     false
@@ -906,7 +902,7 @@ fn run_hash_sidecar(profile_dir: &std::path::Path) -> std::path::PathBuf {
 /// Read the source hash recorded on the previous run (None if absent/unreadable).
 #[must_use]
 pub fn read_run_source_hash(profile_dir: &std::path::Path) -> Option<u64> {
-    std::fs::read_to_string(run_hash_sidecar(profile_dir))
+    crate::file_access::read_to_string(run_hash_sidecar(profile_dir))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
 }
@@ -915,8 +911,8 @@ pub fn read_run_source_hash(profile_dir: &std::path::Path) -> Option<u64> {
 /// needed, since a library that has only ever interpreted has no artifact dir yet).
 /// Best-effort.
 pub fn write_run_source_hash(profile_dir: &std::path::Path, hash: u64) {
-    let _ = std::fs::create_dir_all(profile_dir);
-    let _ = std::fs::write(run_hash_sidecar(profile_dir), hash.to_string());
+    let _ = crate::file_access::create_dir_all(profile_dir);
+    let _ = crate::file_access::write(run_hash_sidecar(profile_dir), hash.to_string());
 }
 
 /// @PLN11 arc E — the `(bundle, manifest)` paths for the whole-program cache of
@@ -969,7 +965,7 @@ pub fn program_cache_paths(
 /// both current execs the binary without parsing, and one evicts with the other.
 #[must_use]
 pub fn native_sidecar_path(manifest: &std::path::Path) -> std::path::PathBuf {
-    manifest.with_extension("native")
+    crate::file_access::with_extension(manifest, "native")
 }
 
 /// @PLN11 G2 / track 1 — default budget (MiB) for the program-cache directory
@@ -1030,7 +1026,7 @@ pub fn prune_program_cache() {
 /// every bundle idle longer than `ttl` (the primary policy); phase 2 is the
 /// oldest-first size-cap backstop on what remains.
 fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration) {
-    let Ok(entries) = std::fs::read_dir(base) else {
+    let Ok(entries) = crate::file_access::read_dir(base) else {
         return;
     };
     struct Bundle {
@@ -1039,31 +1035,29 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
         size: u64,
     }
     let mut bundles: Vec<Bundle> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let is_program_store = path.extension().and_then(|x| x.to_str()) == Some("store")
-            && path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("program-"));
+    for entry in &entries {
+        let is_program_store = !entry.last_is_unspellable()
+            && entry.extension() == Some("store")
+            && entry.file_name().is_some_and(|n| n.starts_with("program-"));
         if !is_program_store {
             continue;
         }
-        let Ok(meta) = entry.metadata() else {
+        // `DirEntry::metadata` did not follow a link: neither does this.
+        let Ok(meta) = crate::file_access::symlink_metadata(entry) else {
             continue;
         };
         bundles.push(Bundle {
-            store: path,
+            store: entry.os_spelling(),
             mtime: meta.modified().unwrap_or(std::time::UNIX_EPOCH),
             size: meta.len(),
         });
     }
     let now = std::time::SystemTime::now();
     let remove_pair = |store: &std::path::Path| {
-        let _ = std::fs::remove_file(store);
-        let manifest = store.with_extension("manifest");
-        let _ = std::fs::remove_file(native_sidecar_path(&manifest));
-        let _ = std::fs::remove_file(manifest);
+        let _ = crate::file_access::remove_file(store);
+        let manifest = crate::file_access::with_extension(store, "manifest");
+        let _ = crate::file_access::remove_file(native_sidecar_path(&manifest));
+        let _ = crate::file_access::remove_file(manifest);
     };
     // Phase 1 — idle-TTL: drop any bundle not used within `ttl`.
     bundles.retain(|b| {
@@ -1276,7 +1270,7 @@ mod tests {
         );
         assert!(
             srcs.iter()
-                .all(|(n, _)| std::path::Path::new(n).extension() == Some("loft".as_ref()))
+                .all(|(n, _)| crate::file_access::extension(n).as_deref() == Some("loft"))
         );
         // Sorted by filename → deterministic key.
         let mut sorted = srcs.clone();
@@ -1370,8 +1364,8 @@ mod tests {
     #[test]
     fn native_artifact_fingerprint_sidecar_gate() {
         let dir = std::env::temp_dir().join(format!("loft_fpgate_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         // No sidecar yet → a non-zero fp must NOT match (forces a rebuild).
         assert!(!native_artifact_fingerprint_matches(&dir, 0xABCD));
         // Stamp it: the same fp matches, a different (stale) one does not.
@@ -1389,7 +1383,7 @@ mod tests {
             native_artifact_fingerprint_matches(&dir, 0xABCD),
             "a 0-fp write must not overwrite the existing stamp"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1411,8 +1405,8 @@ mod tests {
     #[test]
     fn a_runtime_rlib_is_stamped_for_every_build_it_serves() {
         let dir = std::env::temp_dir().join(format!("loft_runtime_fp_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         // The single-number sidecar every older loft wrote still reads.
         write_native_artifact_fingerprint(&dir, 11);
         assert!(runtime_fingerprint_matches(&dir, 11));
@@ -1433,7 +1427,7 @@ mod tests {
             &dir,
             40 + RUNTIME_FPS_KEPT as u64 - 1
         ));
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1470,11 +1464,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("loft_stale_clear_{}", std::process::id()));
         let release = root.join("release");
         let setup = |sidecar: Option<&str>| {
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(&release).unwrap();
-            std::fs::write(release.join("libprobe.so"), b"so").unwrap();
+            let _ = crate::file_access::remove_dir_all(&root);
+            crate::file_access::create_dir_all(&release).unwrap();
+            crate::file_access::write(release.join("libprobe.so"), b"so").unwrap();
             if let Some(s) = sidecar {
-                std::fs::write(release.join(".loft-build-fp"), s).unwrap();
+                crate::file_access::write(release.join(".loft-build-fp"), s).unwrap();
             }
         };
         // 1. Mismatched sidecar → cleared (the laundering hazard: cargo can
@@ -1486,7 +1480,10 @@ mod tests {
             "libprobe.rlib",
             7
         ));
-        assert!(!release.exists(), "stale target must be removed");
+        assert!(
+            !crate::file_access::exists(&release),
+            "stale target must be removed"
+        );
         // 2. Matching sidecar → kept.
         setup(Some("7"));
         assert!(!clear_stale_native_target(
@@ -1495,7 +1492,10 @@ mod tests {
             "libprobe.rlib",
             7
         ));
-        assert!(release.join("libprobe.so").exists(), "fresh artifact kept");
+        assert!(
+            crate::file_access::exists(release.join("libprobe.so")),
+            "fresh artifact kept"
+        );
         // 3. Missing sidecar = unknown provenance, commonly a legitimate
         //    HAND-BUILT artifact (the documented `cargo build` workflow;
         //    the tests/lib fixture cdylibs) → NOT cleared, keeps the
@@ -1508,12 +1508,12 @@ mod tests {
             7
         ));
         assert!(
-            release.join("libprobe.so").exists(),
+            crate::file_access::exists(release.join("libprobe.so")),
             "hand-built artifact kept"
         );
         // 4. No artifact at all → nothing to clear (first build).
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&release).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&release).unwrap();
         assert!(!clear_stale_native_target(
             &root,
             "libprobe.so",
@@ -1528,7 +1528,7 @@ mod tests {
             "libprobe.rlib",
             0
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     #[test]
@@ -1544,19 +1544,17 @@ mod tests {
     fn prune_dir_evicts_oldest_over_budget() {
         use std::time::Duration;
         let dir = std::env::temp_dir().join(format!("loft_prune_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         // Three 10-byte bundles (+ manifests); set distinct mtimes oldest→newest.
         let mk = |name: &str, age_secs: u64| {
             let store = dir.join(format!("{name}.store"));
-            std::fs::write(&store, b"0123456789").unwrap();
-            std::fs::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
+            crate::file_access::write(&store, b"0123456789").unwrap();
+            crate::file_access::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
             let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write
             // access (Unix `futimens` works on a read-only fd), matching `touch_now`.
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&store)
+            crate::file_access::open_with(&store, std::fs::OpenOptions::new().write(true))
                 .unwrap()
                 .set_modified(when)
                 .unwrap();
@@ -1565,45 +1563,49 @@ mod tests {
         mk("program-bbb", 200);
         mk("program-ccc", 100); // newest
         // A non-program file must be left alone.
-        std::fs::write(dir.join("stdlib-zzz.store"), b"keepme").unwrap();
+        crate::file_access::write(dir.join("stdlib-zzz.store"), b"keepme").unwrap();
 
         // Budget 25 bytes: 3×10 = 30 > 25 → evict the single oldest (→ 20 ≤ 25).
         // TTL of a year so the (recent-mtime) bundles never trip the idle pass —
         // this exercises the size-cap backstop in isolation.
         prune_dir(&dir, 25, Duration::from_hours(24 * 365));
         assert!(
-            !dir.join("program-aaa.store").exists(),
+            !crate::file_access::exists(dir.join("program-aaa.store")),
             "oldest store evicted"
         );
         assert!(
-            !dir.join("program-aaa.manifest").exists(),
+            !crate::file_access::exists(dir.join("program-aaa.manifest")),
             "oldest manifest evicted with it"
         );
-        assert!(dir.join("program-bbb.store").exists(), "newer bundle kept");
-        assert!(dir.join("program-ccc.store").exists(), "newest bundle kept");
         assert!(
-            dir.join("stdlib-zzz.store").exists(),
+            crate::file_access::exists(dir.join("program-bbb.store")),
+            "newer bundle kept"
+        );
+        assert!(
+            crate::file_access::exists(dir.join("program-ccc.store")),
+            "newest bundle kept"
+        );
+        assert!(
+            crate::file_access::exists(dir.join("stdlib-zzz.store")),
             "non-program cache file untouched"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
     fn prune_dir_idle_ttl_evicts_unused() {
         use std::time::Duration;
         let dir = std::env::temp_dir().join(format!("loft_idle_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let mk = |name: &str, age_secs: u64| {
             let store = dir.join(format!("{name}.store"));
-            std::fs::write(&store, b"x").unwrap();
-            std::fs::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
+            crate::file_access::write(&store, b"x").unwrap();
+            crate::file_access::write(dir.join(format!("{name}.manifest")), b"m").unwrap();
             let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write
             // access (Unix `futimens` works on a read-only fd), matching `touch_now`.
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&store)
+            crate::file_access::open_with(&store, std::fs::OpenOptions::new().write(true))
                 .unwrap()
                 .set_modified(when)
                 .unwrap();
@@ -1614,18 +1616,18 @@ mod tests {
         // TTL = 1 day: the 2-day-idle bundle is evicted, the fresh one kept.
         prune_dir(&dir, u64::MAX, Duration::from_hours(24));
         assert!(
-            dir.join("program-fresh.store").exists(),
+            crate::file_access::exists(dir.join("program-fresh.store")),
             "a recently-used bundle is kept regardless of age"
         );
         assert!(
-            !dir.join("program-stale.store").exists(),
+            !crate::file_access::exists(dir.join("program-stale.store")),
             "a bundle idle longer than the TTL is evicted"
         );
         assert!(
-            !dir.join("program-stale.manifest").exists(),
+            !crate::file_access::exists(dir.join("program-stale.manifest")),
             "the idle bundle's manifest is evicted with it"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// loft#1859 — the stdlib images are bounded: the newest `keep` stay, the rest go, and
@@ -1677,8 +1679,8 @@ mod tests {
             stdlib_cache_key("/abs/default", &[("x.loft".into(), "a".into())]),
             "a different spelling of the stdlib directory → a different key (loft#1859)"
         );
-        let name = p1.file_name().unwrap().to_string_lossy();
-        assert!(name.starts_with("stdlib-") && name.ends_with(".store"));
+        let name = crate::file_access::file_name(&p1).unwrap();
+        assert!(name.starts_with("stdlib-") && crate::file_access::has_extension(&p1, "store"));
         assert!(
             name.len() == "stdlib-".len() + 64 + ".store".len(),
             "filename embeds 64-hex key"
