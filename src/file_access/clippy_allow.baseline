@@ -1,10 +1,6 @@
 # Files still reaching the file system around file_access, each with a marked #![allow] (@PLN184 A1).
 # Only shrinks: see src/file_access/guard.rs.
-src/android.rs
 src/bin/loft-keygen.rs
-src/build_phase.rs
-src/c_call.rs
-src/c_shim.rs
 src/crash_report.rs
 src/create.rs
 src/database/allocation.rs
@@ -12,11 +8,9 @@ src/database/journal.rs
 src/database/spans.rs
 src/documentation.rs
 src/engine_host.rs
-src/extensions.rs
 src/fuzz_keyed.rs
 src/fuzz_oracle.rs
 src/gendoc.rs
-src/generation/mod.rs
 src/host.rs
 src/html_embed.rs
 src/install.rs
@@ -30,9 +24,6 @@ src/logger.rs
 src/lsp.rs
 src/manifest.rs
 src/migrate_long.rs
-src/native.rs
-src/native_lib.rs
-src/native_utils.rs
 src/op_census.rs
 src/package.rs
 src/package_layout.rs

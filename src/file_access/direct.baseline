@@ -1,10 +1,8 @@
 # Direct file-system access per compiler file, outside src/file_access/.
 # Only shrinks: see src/file_access/guard.rs.  Format: <lines> <file>
-25 src/android.rs
+3 src/android.rs
 15 src/bin/loft-keygen.rs
-43 src/build_phase.rs
-1 src/c_call.rs
-11 src/c_shim.rs
+1 src/build_phase.rs
 6 src/cache.rs
 6 src/cache_gc.rs
 3 src/codegen_runtime.rs
@@ -17,11 +15,10 @@
 6 src/database/spans.rs
 44 src/documentation.rs
 17 src/engine_host.rs
-46 src/extensions.rs
+4 src/extensions.rs
 2 src/fuzz_keyed.rs
 7 src/fuzz_oracle.rs
 30 src/gendoc.rs
-4 src/generation/mod.rs
 2 src/host.rs
 5 src/html_embed.rs
 10 src/install.rs
@@ -39,8 +36,8 @@
 13 src/manifest.rs
 10 src/migrate_long.rs
 2 src/native.rs
-97 src/native_lib.rs
-151 src/native_utils.rs
+7 src/native_lib.rs
+12 src/native_utils.rs
 2 src/op_census.rs
 36 src/package.rs
 8 src/package_layout.rs
