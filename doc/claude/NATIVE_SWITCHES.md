@@ -667,6 +667,10 @@ build its literal in a store of its own and copy it in again — with it on, the
 staged, the record under the key is removed, a fresh one is claimed in the collection's store
 and written, and the subscript's key links it — and is the first bisect step for a wrong value,
 key or count after a keyed literal assignment on native.
+**`LOFT_NO_VIEW_RETURN=1`** (`@FR-R-ViewReturn`) makes a lookup that returns a view of its
+parameter's entry materialise it again — a buffer minted per call, the entry deep-copied — and
+is the first bisect step for a freed, leaked or wrong lookup result on native;
+`LOFT_TRACE_VIEW_RETURN=1` names each call site's admission or declining condition.
 **`LOFT_NO_DESTINATION=1`** (`@FR-R-Destination`) makes a call whose result is moved whole into
 a fresh element return its record again, instead of the callee's twin building it in the
 element — the bisect step for a wrong or leaked element filled from a call;
