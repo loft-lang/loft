@@ -5540,6 +5540,22 @@ impl Function {
         var.name.starts_with('_') && !var.user_named
     }
 
+    /// `@FR-T-Record` — does tuple variable `v`'s frame slot OWN its `text` members — each the
+    /// tuple's own `String`, as a text local is?  A tuple the AUTHOR named and that is not a
+    /// parameter does (`data::TUPLE_LOCAL_TEXT_OWNED`).  A by-value parameter borrows its
+    /// members, as a text argument does; a compiler temp carries a tuple value through a
+    /// lowering and keeps the borrowed layout that lowering was built for (a null-coalesce
+    /// temp yields its value past its own scope).  The one answer both halves ask: the
+    /// interpreter's slot layout and the scope pass's member frees.
+    #[must_use]
+    pub fn tuple_owns_text(&self, v: u16) -> bool {
+        crate::data::TUPLE_LOCAL_TEXT_OWNED
+            && (v as usize) < self.variables.len()
+            && !self.is_argument(v)
+            && !self.is_compiler_generated(v)
+            && matches!(self.tp(v).base(), Type::Tuple(_))
+    }
+
     /// The parameters the signature of `d_nr` declares are named by the user (loft#1834) —
     /// including one the body never mentions.
     pub fn mark_declared_parameters(&mut self, data: &Data, d_nr: u32) {

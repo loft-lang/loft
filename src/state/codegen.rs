@@ -129,7 +129,7 @@ fn stored_tuple_field_offset(data: &Data, database: &Stores, elems: &[Type], idx
 /// borrows?  The one answer every site laying out a tuple VARIABLE's slot asks
 /// (`element_stack_offsets_in`); a tuple VALUE on the eval stack is always borrowed.
 fn tuple_slot_owned(stack: &Stack, var: u16) -> bool {
-    crate::data::TUPLE_LOCAL_TEXT_OWNED && var != u16::MAX && !stack.function.is_argument(var)
+    var != u16::MAX && stack.function.tuple_owns_text(var)
 }
 
 fn ref_tuple_field_offset(elems: &[Type], idx: usize) -> u16 {
@@ -990,6 +990,7 @@ impl State {
                     Type::Single => stack.add_op("OpVarSingle", self),
                     Type::Character => stack.add_op("OpVarCharacter", self),
                     Type::Enum(_, false, _) => stack.add_op("OpVarEnum", self),
+                    Type::Text(_) if owned => stack.add_op("OpVarText", self),
                     Type::Text(_) => stack.add_op("OpArgText", self),
                     Type::Reference(c, _) | Type::Enum(c, true, _) => {
                         self.types
@@ -1135,6 +1136,13 @@ impl State {
                     // ⚠ That misalignment is mostly silent: on a `(text, text)`, `t.0 = "X"`
                     // writes `.1`, a write to the LAST element falls off the end with nothing
                     // reported, and only a write onto a non-text neighbour faults. (loft#1004)
+                    Type::Text(_) if owned => {
+                        // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                        // member's `String` is emptied in place and takes it (`OpAppendText`).
+                        stack.add_op("OpClearText", self);
+                        self.code_add(var_pos);
+                        stack.add_op("OpAppendText", self);
+                    }
                     Type::Text(_) => stack.add_op("OpPutText", self),
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _) => {
                         stack.add_op("OpPutRef", self);
@@ -1881,6 +1889,29 @@ impl State {
         }
     }
 
+    /// Free every owned text leaf of a tuple member of type `tp` whose slot starts at `base`:
+    /// the member itself when it is text, each text leaf of a nested tuple.  A borrowed slot
+    /// owns no text and frees nothing (`@FR-T-Record`).
+    fn emit_tuple_text_free(&mut self, stack: &mut Stack, tp: &Type, base: u16, owned: bool) {
+        if !owned {
+            return;
+        }
+        match tp.base() {
+            Type::Text(_) => {
+                let pos = stack.position - base;
+                stack.add_op("OpFreeText", self);
+                self.code_add(pos);
+            }
+            Type::Tuple(inner) => {
+                let offsets = crate::data::element_stack_offsets_in(inner, owned);
+                for (e, off) in inner.iter().zip(offsets) {
+                    self.emit_tuple_text_free(stack, e, base + off as u16, owned);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn gen_set_first_tuple_null(&mut self, stack: &mut Stack, v: u16) {
         // Plan-04 Phase B.3 atomic bundle: slot-aware.  Push each null
         // element value then OpPut it at the element's absolute slot
@@ -1934,6 +1965,7 @@ impl State {
                 Type::Single => stack.add_op("OpVarSingle", self),
                 Type::Character => stack.add_op("OpVarCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpVarEnum", self),
+                Type::Text(_) if owned => stack.add_op("OpVarText", self),
                 Type::Text(_) => stack.add_op("OpArgText", self),
                 Type::Reference(c, _) | Type::Enum(c, true, _) => {
                     self.types
@@ -2001,6 +2033,13 @@ impl State {
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
+                Type::Text(_) if owned => {
+                    // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                    // member's `String` is emptied in place and takes it (`OpAppendText`).
+                    stack.add_op("OpClearText", self);
+                    self.code_add(pos);
+                    stack.add_op("OpAppendText", self);
+                }
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 // Every DbRef-shaped element travels as one handle, so the membership
                 // question is [`is_dbref`](crate::data::is_dbref)'s and is asked there —
@@ -2086,6 +2125,13 @@ impl State {
                 Type::Boolean => stack.add_op("OpPutBool", self),
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Float => stack.add_op("OpPutFloat", self),
+                Type::Text(_) if owned => {
+                    // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                    // member's `String` is started in place and takes it (`OpAppendText`).
+                    stack.add_op("OpInitText", self);
+                    self.code_add(pos);
+                    stack.add_op("OpAppendText", self);
+                }
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
@@ -3439,6 +3485,13 @@ impl State {
                 Type::Single => stack.add_op("OpPutSingle", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
+                Type::Text(_) if owned => {
+                    // `@FR-T-Record` — an owned text member: the value is on the stack, the
+                    // member's `String` is started in place and takes it (`OpAppendText`).
+                    stack.add_op("OpInitText", self);
+                    self.code_add(pos);
+                    stack.add_op("OpAppendText", self);
+                }
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 // See the sibling note in `emit_tuple_var_pop_put`: the DbRef-shaped set
                 // is [`is_dbref`](crate::data::is_dbref)'s to answer.
@@ -4860,6 +4913,20 @@ impl State {
         }
         if name == "OpConvRefFromNull" {
             self.emit_push_null_ref(stack);
+            return stack.data.def(op).returned().clone();
+        }
+        // `@FR-T-Record` — a tuple local's text MEMBER freed at scope exit
+        // (`scopes::tuple_members::tuple_text_member_frees`): every owned text leaf under it.
+        if name == "OpFreeText"
+            && let [arg] = parameters
+            && let Value::TupleGet(tv, ti) = arg.unspan()
+            && let Type::Tuple(elems) = stack.function.tp(*tv).base().clone()
+            && (*ti as usize) < elems.len()
+        {
+            let owned = tuple_slot_owned(stack, *tv);
+            let base = stack.function.stack(*tv)
+                + crate::data::element_stack_offsets_in(&elems, owned)[*ti as usize] as u16;
+            self.emit_tuple_text_free(stack, &elems[*ti as usize], base, owned);
             return stack.data.def(op).returned().clone();
         }
         if name == "OpCreateStack" && !parameters.is_empty() {

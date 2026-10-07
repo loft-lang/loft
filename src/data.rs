@@ -3815,7 +3815,7 @@ pub fn element_stack_size(t: &Type) -> usize {
 /// given (`variables::size(Tuple, Context::Variable)`) and the member offsets every emitter
 /// lays the slot out by (`state::codegen::tuple_slot_owned`).  A by-value tuple parameter and
 /// a tuple value on the eval stack stay borrowed either way.
-pub const TUPLE_LOCAL_TEXT_OWNED: bool = false;
+pub const TUPLE_LOCAL_TEXT_OWNED: bool = true;
 
 /// [`element_stack_size`] for a tuple held in an OWNED slot or not.  A `text` member of an
 /// owned tuple — a tuple LOCAL's frame slot — is the tuple's own text, a `String`, as a text
