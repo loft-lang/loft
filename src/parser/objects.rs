@@ -6769,6 +6769,18 @@ impl Parser {
                 && deps.contains(&u16::MAX)
                 && default == Value::Null
             {
+                // `@FR-D-NoRef` — a bare pointer has no default: the null sentinel is the
+                // default of `reference<T>?` only, and an omitted bare one read back null
+                // with no diagnostic (loft#1931).  The `S{}` half of the rule `x?` enforces.
+                if !self.first_pass {
+                    let tn = format!("reference<{}>", tp.base().source_name(&self.data));
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "field `{nm}: {tn}` is a pointer with no default — set it in the \
+                         constructor, or make it `{tn}?` (defaults null)"
+                    );
+                }
                 let sentinel = self.cl("OpNullRefSentinel", &[]);
                 list.push(self.set_field_no_check(td_nr, aid, pos, code.clone(), sentinel));
                 continue;

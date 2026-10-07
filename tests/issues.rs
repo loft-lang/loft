@@ -16513,12 +16513,19 @@ fn run() -> integer {
     untouched = a.value;
     n.next = null;
     cleared = if n.next == null { 1 } else { 0 };
-    d = Node { value: 9 };
+    d = Node { value: 9, next: null };
     default_null = if d.next == null { 1 } else { 0 };
     aliased * 100000 + repointed * 1000 + untouched * 10 + cleared * 2 + default_null
 }"
     )
     .expr("run()")
+    // `@FR-D-NoRef` — a bare pointer has no default, so the null is written out (loft#1931);
+    // writing it is `(N-Store)`'s warn tier, the cure being `reference<Leaf>?`.
+    .warning(
+        "`null` is stored into the field of the non-null type `reference<Leaf>` — the slot \
+         holds null; declare it `reference<Leaf>?` to make that explicit at \
+         issue_328_reference_field_pointer_semantics:14:38",
+    )
     .result(Value::Int(4_102_413));
 }
 
