@@ -34,6 +34,15 @@ hold is refused everywhere; a path loft hands out is in that same form.
                 in `.` or a space (`.` and `..` themselves are names of the walk, not refused).
                 The one `:` allowed is a drive prefix `C:` leading an absolute path.
 
+  (Path-Utf8)   A name loft text cannot spell — bytes that are not UTF-8 on Linux, an unpaired
+                UTF-16 half on Windows — is refused on every platform.  A listing (`files()`,
+                `list_dir`) still shows the entry, spelled with U+FFFD for what cannot be
+                spelled, and one log line names the directory that holds it.  No operation
+                reaches such an entry: a spelling that names an entry only through that U+FFFD
+                — the listed one, or the one two such names collapse to — is refused for reading
+                and for writing, as Path-Case refuses a second spelling.  A name that IS spelled
+                with U+FFFD on disk is its own exact spelling and is not refused.
+
   (Path-Case)   A name means exactly its spelling.  A name that matches an entry of its
                 directory only when case is ignored is refused — for reading (it does not
                 exist) and for writing (it is not created) — so `b.txt` and `B.txt` are never
@@ -56,6 +65,13 @@ operation of both backends routes through — and `file_access::program_path`
 
 ## Deviations
 
-**OPEN: 0.**  The four this chapter opened with — the Windows separator and directories,
+**OPEN: 1.**
+
+- **D-path-5 (OPEN, @PLN184 U2)** — (Path-Utf8): a listing leaves a non-UTF-8 name out, so
+  the program cannot see the entry is there; and an operation given the U+FFFD spelling of
+  such a name reaches the file system as that spelling, so a write CREATES a second entry that
+  lists the same as the first.
+
+The four this chapter opened with — the Windows separator and directories,
 names one platform takes and another refuses, case folding, and `\` meaning two things — are
 closed; the record is in [paths-history.md](paths-history.md).
