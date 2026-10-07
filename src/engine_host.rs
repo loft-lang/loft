@@ -588,83 +588,6 @@ fn write_frame(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std::io::R
     stream.write_all(&frame)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-/// Bind with `SO_REUSEADDR` so a restarted server rebinds through TIME_WAIT —
-/// the arcade flow (restart the cabinet mid-evening) depends on it; Rust's std
-/// `TcpListener::bind` does not set it.
-#[cfg(unix)]
-fn bind_reuseaddr(port: u16) -> Option<TcpListener> {
-    use std::os::fd::FromRawFd;
-    unsafe {
-        // SOCK_CLOEXEC: kernel sockets belong to ONE process.  Without it,
-        // every spawned child (the S4 rebuild driver, the S5 swap target)
-        // inherits this listening fd across exec — the zombie copy stays in
-        // the SO_REUSEPORT group and eats load-balanced SYNs into a backlog
-        // nobody accepts (probe-caught: post-swap dials failed by hash luck).
-        let fd = libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0);
-        if fd < 0 {
-            return None;
-        }
-        // Portable CLOEXEC: macOS has no SOCK_CLOEXEC socket flag — set the
-        // fd flag right after creation (single-threaded; no exec in between).
-        let _ = libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-        let one: libc::c_int = 1;
-        let _ = libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_REUSEADDR,
-            std::ptr::addr_of!(one).cast(),
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-        );
-        // @PLN18 08-S5 — SO_REUSEPORT: during a build swap the NEW process
-        // binds the same port while the old one still serves; the overlap is
-        // what makes rollback trivial (the old build never stops listening
-        // until the new one is proven serving).
-        let _ = libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_REUSEPORT,
-            std::ptr::addr_of!(one).cast(),
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-        );
-        // Zero-init then set fields: BSD's sockaddr_in has an extra sin_len
-        // a struct literal would have to cfg around.
-        let mut addr: libc::sockaddr_in = std::mem::zeroed();
-        addr.sin_family = libc::AF_INET as libc::sa_family_t;
-        addr.sin_port = port.to_be(); // sin_addr stays 0.0.0.0
-        if libc::bind(
-            fd,
-            std::ptr::addr_of!(addr).cast(),
-            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-        ) != 0
-            || libc::listen(fd, 128) != 0
-        {
-            libc::close(fd);
-            return None;
-        }
-        Some(TcpListener::from_raw_fd(fd))
-    }
-}
-
-#[cfg(all(not(unix), not(target_arch = "wasm32")))]
-fn bind_reuseaddr(port: u16) -> Option<TcpListener> {
-    {
-        let t0 = std::time::Instant::now();
-        let r = TcpListener::bind(("0.0.0.0", port));
-        crate::net_profile::record(
-            "listener/bind",
-            t0.elapsed(),
-            if r.is_ok() {
-                crate::net_profile::Outcome::Ok
-            } else {
-                crate::net_profile::Outcome::Failed
-            },
-            None,
-        );
-        r.ok()
-    }
-}
-
 // ── The natives (registered in native.rs; declared in lib/engine_host) ──────
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -682,10 +605,10 @@ pub fn n_kernel_listen(stores: &mut Stores, stack: &mut DbRef) {
 /// (`--native` codegen) twin — one implementation, two calling conventions.
 #[cfg(not(target_arch = "wasm32"))]
 fn listen_impl(port: i64, tick_us: i64) -> bool {
-    bind_reuseaddr(port as u16)
+    crate::platform::bind_tcp_handover(port as u16)
         .map(|listener| {
             let _ = listener.set_nonblocking(true);
-            let udp = match bind_udp_reuseport(port as u16) {
+            let udp = match crate::platform::bind_udp_handover(port as u16) {
                 Ok(s) => {
                     let _ = s.set_nonblocking(true);
                     Some(s)
@@ -727,51 +650,6 @@ fn listen_impl(port: i64, tick_us: i64) -> bool {
             }
         })
         .is_some()
-}
-
-/// UDP bind with `SO_REUSEPORT` (the swap-overlap requirement — see
-/// `bind_reuseaddr`).  Datagrams during the brief dual-bind window
-/// load-balance between old and new; the sync class tolerates that loss
-/// by design (latest-value semantics).
-#[cfg(unix)]
-fn bind_udp_reuseport(port: u16) -> std::io::Result<UdpSocket> {
-    use std::os::fd::FromRawFd;
-    unsafe {
-        // CLOEXEC — same one-process invariant as the TCP listener (set via
-        // fcntl: macOS has no SOCK_CLOEXEC socket flag).
-        let fd = libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0);
-        if fd < 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        let _ = libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
-        let one: libc::c_int = 1;
-        let _ = libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_REUSEPORT,
-            std::ptr::addr_of!(one).cast(),
-            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
-        );
-        let mut addr: libc::sockaddr_in = std::mem::zeroed();
-        addr.sin_family = libc::AF_INET as libc::sa_family_t;
-        addr.sin_port = port.to_be(); // sin_addr stays 0.0.0.0
-        if libc::bind(
-            fd,
-            std::ptr::addr_of!(addr).cast(),
-            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
-        ) != 0
-        {
-            let e = std::io::Error::last_os_error();
-            libc::close(fd);
-            return Err(e);
-        }
-        Ok(UdpSocket::from_raw_fd(fd))
-    }
-}
-
-#[cfg(all(not(unix), not(target_arch = "wasm32")))]
-fn bind_udp_reuseport(port: u16) -> std::io::Result<UdpSocket> {
-    UdpSocket::bind(("0.0.0.0", port))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
