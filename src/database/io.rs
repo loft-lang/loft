@@ -899,7 +899,7 @@ impl Stores {
             let Some(resolved) = self.resolve_path(path) else {
                 return DbRef::NULL;
             };
-            let Ok(file) = crate::file_access::open(&crate::file_access::at(&resolved)) else {
+            let Ok(file) = crate::file_access::open(crate::file_access::at(&resolved)) else {
                 return DbRef::NULL;
             };
             let Ok(meta) = file.metadata() else {
