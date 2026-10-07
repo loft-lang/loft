@@ -315,6 +315,9 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
     // `api_diff::members_of` splitting on `:`, and a value after one would read as part of
     // the type. The value itself is deliberately not rendered — see the note on
     // `api_diff::signature_break`.
+    // A FIELD (`sort`: a struct's or a variant's member) carries `pub ` when it is `pub`
+    // (@C140): losing it breaks every reader outside the file, and `api_diff::split_pub` keeps
+    // the marker out of the shape comparison.
     let render = |atts: &[crate::data::Attribute], sort: bool, defaults: bool| -> Vec<String> {
         let mut v: Vec<(&str, String)> = atts
             .iter()
@@ -329,9 +332,10 @@ pub fn signature_of(data: &Data, d: u32, kind: &str) -> String {
                 } else {
                     ""
                 };
+                let vis = if sort && a.pub_field { "pub " } else { "" };
                 (
                     a.name.as_str(),
-                    format!("{}: {}{}", a.name, ty(&a.typedef), opt),
+                    format!("{vis}{}: {}{}", a.name, ty(&a.typedef), opt),
                 )
             })
             .collect();
