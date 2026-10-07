@@ -1,9 +1,14 @@
 // A vector field assigned an OWNED local — one whose only dep is its own `__vdb_` store
 // witness — takes the direct clear-and-copy: such a local cannot alias the field, so the
 // snapshot through a temp (a second full copy) is not needed.  A local that BORROWS the
-// field (`w = o.v`) keeps the snapshot (#320).  `@FR-R-Compact` recognises the direct form
+// field — a `&` link, `lw = &o.v` — keeps the snapshot (#320).  `@FR-R-Compact` recognises the direct form
 // too, so a history truncated by a rebuild loop is still compacted in place.  Both backends;
 // every value hand-computed.
+//
+// @falsified-at: none — the change and this guard land together; the planted defect is recorded
+//   with `@falsified-by:` below (every var counted as owned: the link in c2b takes the direct
+//   path, the clear empties the field the copy then reads).
+// @falsified-by: tests/falsified/an-owned-vector-local-is-assigned-to-a-field-in-one-copy.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct E { k: integer, tags: vector<integer> }
 struct O { v: vector<E>, n: integer }
@@ -47,6 +52,13 @@ fn main() {
   w += [E { k: 43, tags: [4] }];
   o.v = w;
   assert(len(o.v) == 5 && o.v[4].k == 43 && o.v[1].k == 10, "c2 {len(o.v)}");
+
+  // c2b — a LINK to the field is a borrow: assigning it back keeps the snapshot, so the
+  // clear does not empty what the copy then reads.
+  lw = &o.v;
+  lw += [E { k: 44, tags: [] }];
+  o.v = lw;
+  assert(len(o.v) == 6 && o.v[5].k == 44 && o.v[0].k == 0, "c2b {len(o.v)}");
 
   // c3 — the compacted truncation and the direct rebuild, repeated: values, and no record
   // left behind once warm.
