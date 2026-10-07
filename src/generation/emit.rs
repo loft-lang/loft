@@ -1029,7 +1029,41 @@ impl Output<'_> {
             Value::Set(var, to) => self.output_set(w, *var, to)?,
             Value::If(test, true_v, false_v) => self.output_if(w, test, true_v, false_v)?,
             Value::Call(def_nr, vals) => {
-                self.output_call(w, *def_nr, vals)?;
+                // `@FR-R-Destination` — inside a destination twin, a write to a scalar field
+                // of the return buffer is the tuple element's: the field lies past the
+                // caller's element the buffer stands for.
+                let scalar = self.dest_twin.as_ref().and_then(|dt| {
+                    let [base, off, _] = &vals[..] else {
+                        return None;
+                    };
+                    if !matches!(base.unspan(), Value::Var(b) if *b == dt.rb) {
+                        return None;
+                    }
+                    let Value::Int(off) = off.unspan() else {
+                        return None;
+                    };
+                    let k = dt.scalars.iter().position(|sc| sc.off == i64::from(*off))?;
+                    (dt.scalars[k].setter == self.data.def(*def_nr).name())
+                        .then_some((k, dt.scalars[k].rust))
+                });
+                if let Some((k, rust)) = scalar {
+                    write!(w, "{{ __ds_{k} = (")?;
+                    self.output_code_inner(w, &vals[2])?;
+                    write!(w, ") as {rust}; }}")?;
+                } else {
+                    self.output_call(w, *def_nr, vals)?;
+                }
+            }
+            Value::Return(val)
+                if self
+                    .dest_twin
+                    .as_ref()
+                    .is_some_and(|dt| matches!(val.unspan(), Value::Var(b) if *b == dt.rb)) =>
+            {
+                let n = self.dest_twin.as_ref().map_or(0, |dt| dt.scalars.len());
+                let parts: Vec<String> = (0..n).map(|k| format!("__ds_{k}")).collect();
+                let tail = if n == 1 { "," } else { "" };
+                write!(w, "return ({}{tail})", parts.join(", "))?;
             }
             Value::Return(val) => {
                 let returned = self.data.def(self.def_nr).returned();
@@ -3019,6 +3053,58 @@ impl Output<'_> {
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
     /// carry a narrow-integer cast — see [`block_tail_cast`].
+    /// `@FR-R-Destination`'s caller half: the element's mint, the twin's call into it, and the
+    /// `ok` arm with the move gone — the element finished only there, released otherwise.
+    fn output_destination_site(
+        &mut self,
+        w: &mut dyn Write,
+        site: &super::destination::Site<'_>,
+    ) -> std::io::Result<()> {
+        for m in &site.mint {
+            self.indent(w)?;
+            self.output_code_inner(w, m)?;
+            writeln!(w, ";")?;
+        }
+        self.dest_counter += 1;
+        let n = self.dest_counter;
+        let mut args = site.call_args.to_vec();
+        args[site.at] = site.dest.clone();
+        let call = Value::Call(site.callee, args);
+        if let Value::Call(_, a) = &call {
+            self.dest_site_next = Some((site.callee, a.as_ptr() as usize, site.shape.vo));
+        }
+        self.indent(w)?;
+        write!(w, "let __ds{n} = ")?;
+        self.output_code_inner(w, &call)?;
+        writeln!(w, "; //@FR-R-Destination")?;
+        assert!(
+            self.dest_site_next.take().is_none(),
+            "@FR-R-Destination: the rewritten call of {} was emitted without its twin's name",
+            self.data.def(site.callee).name()
+        );
+        let mut bl = site.then_block.clone();
+        bl.operators = site.then_ops.clone();
+        let tag = format!("__ds{n}.");
+        for op in &mut bl.operators {
+            op.map_nodes(&mut |v| {
+                if let Value::RawExpr(e) = v
+                    && e.contains("__ds#.")
+                {
+                    *e = e.replace("__ds#.", &tag);
+                }
+            });
+        }
+        self.indent(w)?;
+        write!(w, "if __ds{n}.{} == 1 ", site.ok)?;
+        self.output_code_inner(w, &Value::Block(Box::new(bl)))?;
+        write!(w, " else {{ stores.remove_claims(&(")?;
+        self.output_code_inner(w, &site.dest)?;
+        write!(w, "), ({}_u16)); ", site.shape.vt)?;
+        self.output_code_inner(w, site.else_v)?;
+        writeln!(w, " }};")?;
+        Ok(())
+    }
+
     pub(super) fn output_block(
         &mut self,
         w: &mut dyn Write,
@@ -3710,6 +3796,27 @@ impl Output<'_> {
                         continue;
                     }
                     _ => {}
+                }
+            }
+            // `@FR-R-Destination` — a call whose result's heap field is moved whole into a
+            // fresh element: the element is minted first and the callee's twin builds there.
+            if super::destination::enabled() && !self.in_coroutine_body {
+                let mut memo = std::mem::take(&mut self.dest_memo);
+                let site = super::destination::site(
+                    operators,
+                    vnr,
+                    self.data,
+                    self.stores,
+                    self.def_nr,
+                    &mut memo,
+                );
+                self.dest_memo = memo;
+                if let Some(site) = site
+                    && !self.value_records.fns.contains_key(&site.callee)
+                {
+                    self.output_destination_site(w, &site)?;
+                    repeat_skip = Some(site.last);
+                    continue;
                 }
             }
             // `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin: f's twin builds
