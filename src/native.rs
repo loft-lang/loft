@@ -1877,6 +1877,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                const_refs: Arc::clone(&ctx.const_refs),
                 frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },
@@ -2056,6 +2057,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
             data_ptr: ctx.data.clone(),
             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+            const_refs: Arc::clone(&ctx.const_refs),
             frame_headroom: Arc::clone(&ctx.frame_headroom),
             line_numbers: Arc::new(std::collections::BTreeMap::new()),
         };
@@ -2301,6 +2303,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                const_refs: Arc::clone(&ctx.const_refs),
                 frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },

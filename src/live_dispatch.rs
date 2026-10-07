@@ -212,6 +212,7 @@ fn bootstrap_core(
         data: data_ptr,
         stack_trace_lib_nr: stk_lib_nr,
         frame_headroom: std::sync::Arc::clone(&state.frame_headroom),
+        const_refs: std::sync::Arc::new(state.const_refs.clone()),
     }));
     crate::crash_report::set_source_spans(Some(std::sync::Arc::new(state.source_spans.clone())));
 

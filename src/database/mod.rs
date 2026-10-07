@@ -81,6 +81,9 @@ pub struct ParallelCtx {
     pub stack_trace_lib_nr: u16,
     /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
     pub frame_headroom: Arc<Vec<u32>>,
+    /// The running program's constant table (`State::const_refs`), handed to every worker
+    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+    pub const_refs: Arc<Vec<DbRef>>,
 }
 
 impl ParallelCtx {
