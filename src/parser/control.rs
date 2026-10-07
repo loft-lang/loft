@@ -20022,7 +20022,10 @@ impl Parser {
                 let mut p = Value::Null;
                 let t = self.expression(&mut p);
                 self.expected = Type::Unknown(0);
-                named_facts.push((arg_name.clone(), std::mem::take(&mut self.operand_fact)));
+                let fact = std::mem::take(&mut self.operand_fact);
+                if self.abstract_on() {
+                    named_facts.push((arg_name.clone(), fact));
+                }
                 named_args.push((arg_name, p, t));
                 // accept trailing comma on the last named arg.
                 if !self.lexer.has_token(",") || self.lexer.peek_token(")") {
@@ -20143,7 +20146,10 @@ impl Parser {
                 t = view_tp;
             }
             self.expected = Type::Unknown(0);
-            arg_aliases.push(std::mem::take(&mut self.operand_fact));
+            let fact = std::mem::take(&mut self.operand_fact);
+            if self.abstract_on() {
+                arg_aliases.push(fact);
+            }
             types.push(t);
             list.push(p);
             arg_idx += 1;

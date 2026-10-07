@@ -788,7 +788,13 @@ impl Parser {
                 // same reason; a tuple member is the same fact one level in (loft#943).
                 let mut values = vec![val.clone()];
                 let mut types = vec![t.unrewritten()];
-                let mut facts = vec![std::mem::take(&mut self.operand_fact)]; // @PLN187
+                // @PLN187 — collected only while the check is live: a Vec per literal otherwise
+                let facts_on = self.abstract_on();
+                let mut facts = Vec::new();
+                let fact = std::mem::take(&mut self.operand_fact);
+                if facts_on {
+                    facts.push(fact);
+                }
                 loop {
                     if self.lexer.peek_token(")") {
                         break;
@@ -805,7 +811,10 @@ impl Parser {
                     if seeding {
                         self.expected = Type::Unknown(0);
                     }
-                    facts.push(std::mem::take(&mut self.operand_fact));
+                    let fact = std::mem::take(&mut self.operand_fact);
+                    if facts_on {
+                        facts.push(fact);
+                    }
                     values.push(v);
                     types.push(t2.unrewritten());
                     if !self.lexer.has_token(",") {
@@ -4365,7 +4374,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if let Some(value) = self.parse_item(elm, in_t, declared, res) {
                 return Some(value);
             }
-            aliases.push(std::mem::take(&mut self.operand_fact));
+            let fact = std::mem::take(&mut self.operand_fact);
+            if self.abstract_on() {
+                aliases.push(fact);
+            }
             if self.lexer.has_token(";")
                 && let Some(value) = self.parse_multiply(res)
             {

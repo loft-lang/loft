@@ -2847,7 +2847,9 @@ impl Lexer {
 
     /// Shorthand test if the current element is a specific local keyword, so not one of the reserved
     pub fn has_keyword(&mut self, keyword: &'static str) -> bool {
-        if self.peek.has == LexItem::Identifier(keyword.to_string()) {
+        // Compared in place, as `peek_token` does: a `String` built to compare against was
+        // one allocation per keyword test (`-> const T` asks one per declared result).
+        if matches!(&self.peek.has, LexItem::Identifier(n) if n == keyword) {
             self.cont();
             true
         } else {

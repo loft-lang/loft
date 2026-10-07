@@ -1608,7 +1608,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let mut key_facts = Vec::new(); // @PLN187
             for k in &keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
-                key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                if self.abstract_on() {
+                    key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                }
             }
             // @PLN48 S3 — a `spatial` RANGE SLICE `xs[(fx,fy)..(tx,ty)]` /
             // `xs[(fx,fy)..:n]` / `xs[(fx,fy)..]`: iterate the records whose Morton
@@ -1682,7 +1684,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let mut key_facts = Vec::new(); // @PLN187
             for (k, _) in keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
-                key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                if self.abstract_on() {
+                    key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
+                }
             }
             let dep = self.container_dep(code, &t);
             self.pending_key_facts = std::mem::take(&mut key_facts);

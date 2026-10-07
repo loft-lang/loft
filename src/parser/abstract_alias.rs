@@ -814,14 +814,14 @@ impl Parser {
     /// A lambda's parameters as its parse recorded them (`pending_param_facts`), stored on
     /// the lambda's definition the way `parse_function` stores a function's.
     pub(crate) fn store_lambda_param_facts(&mut self) {
-        let facts = std::mem::take(&mut self.pending_param_facts);
-        if self.context == u32::MAX {
-            return;
+        // drained, not taken: the buffer is reused rather than allocated per lambda
+        if self.context != u32::MAX {
+            let attrs = &mut self.data.definitions[self.context as usize].attributes;
+            for (a, fact) in attrs.iter_mut().zip(self.pending_param_facts.drain(..)) {
+                a.fact = fact;
+            }
         }
-        let attrs = &mut self.data.definitions[self.context as usize].attributes;
-        for (a, fact) in attrs.iter_mut().zip(facts) {
-            a.fact = fact;
-        }
+        self.pending_param_facts.clear();
     }
 
     /// The value a `return` (`how`) or the body's tail hands back, against the function's

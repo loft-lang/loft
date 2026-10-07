@@ -8248,7 +8248,7 @@ use a separate collection or add after the loop"
         if self.first_pass || self.data.def(self.context).returned_const {
             return;
         }
-        let code = self.data.def(self.context).code().clone();
+        let code = self.data.def(self.context).code();
         let mut foreign = match code.unspan() {
             Value::Block(b) => b
                 .operators

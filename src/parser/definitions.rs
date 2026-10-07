@@ -3005,14 +3005,15 @@ impl Parser {
             for (idx, token) in std::mem::take(&mut self.pending_param_locks) {
                 self.param_locks.insert((self.context, idx as u32), token);
             }
-            // @PLN187 — each parameter keeps where its declared type names an alias.
-            let facts = std::mem::take(&mut self.pending_param_facts);
+            // @PLN187 — each parameter keeps where its declared type names an alias.  Drained,
+            // not taken: the buffer is reused by every function, not allocated per function.
             if self.context != u32::MAX {
                 let attrs = &mut self.data.definitions[self.context as usize].attributes;
-                for (a, fact) in attrs.iter_mut().zip(facts) {
+                for (a, fact) in attrs.iter_mut().zip(self.pending_param_facts.drain(..)) {
                     a.fact = fact;
                 }
             }
+            self.pending_param_facts.clear();
         }
         // @PLN115 tail — now `self.context` (the fn's def_nr) is known, record each
         // parameter's DECLARATION occurrence: `Local{fn_def, var_nr}` at the signature
