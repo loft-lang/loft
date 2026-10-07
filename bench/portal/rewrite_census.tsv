@@ -1625,6 +1625,7 @@ server	a354cc08e	R-CharWalk	11
 server	a354cc08e	R-CompleteWrite	17
 server	a354cc08e	R-Counter	7
 server	a354cc08e	R-DischargeInto	2
+server	a354cc08e	R-FoldCompare	1
 server	a354cc08e	R-FormatAppend	1
 server	a354cc08e	R-ForwardWalk	1
 server	a354cc08e	R-GuardFree	8
@@ -1640,7 +1641,7 @@ server	a354cc08e	R-RecPtr	2
 server	a354cc08e	R-RetAdopt	3
 server	a354cc08e	R-SingleUse	2
 server	a354cc08e	R-SplitTable	2
-server	a354cc08e	R-TextBorrow	14
+server	a354cc08e	R-TextBorrow	15
 server	a354cc08e	R-ValueLocal	18
 server	a354cc08e	R-ValueRecord	7
 server	a354cc08e	R-View	3
@@ -1872,6 +1873,7 @@ web	a354cc08e	R-CompleteWrite	5
 web	a354cc08e	R-Counter	17
 web	a354cc08e	R-DischargeInto	1
 web	a354cc08e	R-ExitVector	1
+web	a354cc08e	R-FoldCompare	1
 web	a354cc08e	R-FormatAppend	1
 web	a354cc08e	R-ForwardWalk	1
 web	a354cc08e	R-GuardFree	6
@@ -1889,7 +1891,7 @@ web	a354cc08e	R-RecPtr	2
 web	a354cc08e	R-RetAdopt	3
 web	a354cc08e	R-SingleUse	2
 web	a354cc08e	R-SplitTable	1
-web	a354cc08e	R-TextBorrow	15
+web	a354cc08e	R-TextBorrow	16
 web	a354cc08e	R-ValueLocal	9
 web	a354cc08e	R-ValueRecord	1
 web	a354cc08e	R-View	7

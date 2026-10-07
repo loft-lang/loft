@@ -4427,6 +4427,13 @@ scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty
 fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
 `(R-TextBorrow)`'s pins with this rule off.
 
+**BUILT** for a fold that is a synthesised temporary (`codegen_runtime::fold_compare`; the
+emitter `FoldCompareEmitter` in `src/generation/ops/text_ops.rs` and `pre_eval` ask ONE
+predicate, `fold_compare_site`, which admits only operands with no work to lift, so the
+fold's block is neither lifted nor built; guard
+`tests/scripts/a-text-predicate-over-a-case-fold-builds-no-fold.loft`).  Still PROPOSED:
+the operand clause — a local bound to `fold + literal` and read only as a predicate operand.
+
 ### A call result appended to a vector is built in it
 
 ```
@@ -4589,11 +4596,13 @@ trace and falsifiers apply, plus the cells named here.  Priced in
 `bench/portal/analysis/over-9x.md`.
 
 - **The split-table verdict, for `(R-TextBorrow)`.**  A `Set(t, split(…))` whose `t` is a
-  split table `(R-SplitTable)` lowered is not a store write: `borrowed_text_walks`
-  (`src/generation/hoist.rs`) takes the body's split tables, not only the walked vector's,
-  and `may_write_store` skips such a bind.  `(R-Header)`'s loop clause admits by the same
-  verdict.  Cell: a walk whose body splits the walked text and reads the pieces (borrows);
-  one that appends to the walked vector (declines).  server `header`: 9.43 → 7.30 M.
+  split table `(R-SplitTable)` lowered is not a store write, and neither is the mint or a
+  free of the buffer the table leaves dead.  **BUILT** for the walk: `borrowed_text_walks`
+  reads each statement of the loop as emitted (`as_emitted_by_tables`, `src/generation/
+  hoist.rs`), every other statement judged unchanged; guard
+  `tests/scripts/a-walked-text-borrows-beside-a-split-table.loft`, whose element-replacing
+  cell is the one a dangling borrow fails.  Still PROPOSED: `(R-Header)`'s loop clause
+  admitting by the same verdict.
 - **The match-binding clause, for `(R-TextBorrow)`.**  A text bound by a match pattern that
   the arm reads only as a text VALUE — an operand, a `text` argument the callee does not
   store, the source of a format into another slot, `size`, a comparison, a `Str` result —

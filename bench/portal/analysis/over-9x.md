@@ -79,7 +79,10 @@ path's copies (10 %).
 | +C | the split table slices the borrowed `h`; the value returned once | (R-SplitTable) with A; F14 | S | 2.52 M | 3.6× |
 
 A and B are both needed: A alone is 10.3×, and B needs A or the fold re-reads a copied
-`String`.  After A+B+D what remains is twin-shaped.  `(R-FoldCompare)` reaches every
+`String`.  **A and B built** on 157-native-4x: 5.97 → 3.12 ms in the lane (7.4× → 3.87× on
+x86-64, `bench/stats.py`, hash unchanged).  B first measured only −12 %: `pre_eval` lifted the
+fold's block into a `let _pre_N` the new emitter never read, so the fold was still built —
+both sides now ask one predicate.  D (the `prefix` operand) is next.  After A+B+D what remains is twin-shaped.  `(R-FoldCompare)` reaches every
 case-insensitive lookup in the text-scan class (header names, keys, extensions, commands).
 
 ## cbor `decode` — 11.2× → 4.8×
