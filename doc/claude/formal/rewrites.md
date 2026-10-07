@@ -4688,70 +4688,13 @@ and `LOFT_NATIVE_LEAK_CHECK=1` on both backends (a view freed as if owned shows 
 release); a planted arm that appends to `p.entries` before reading the binding must decline;
 `LOFT_POISON=1` catches a read through a view whose record moved.
 
-### A byte-copy loop is the slice it copies
-
-```
-  (R-SliceBuild) a vector LOCAL v of a scalar element type that is bound to the
-                 empty literal and then filled by ONE loop
-                     for k in 0..n { v += [src[a + k] ?? d]; }
-                 IS the slice src[a..a+n], built by one block copy (OpSliceVector),
-                 when ALL of:
-                 (1) n and a are loop-invariant integers, and a >= 0 and
-                     a + n <= len(src) are PROVEN at the loop — a dominating test
-                     that leaves the function or skips the loop otherwise
-                     (`if a + n > len(src) { return … }`), never assumed;
-                 (2) the body is that one append and nothing else, k is the loop
-                     variable read nowhere else, and the `?? d` arm is unreachable
-                     under (1) — the proof of (1) is what lets it be dropped;
-                 (3) src is a local or a parameter that nothing writes inside the
-                     loop, and the element types of v and src are the same;
-                 (4) v is not read between its binding and the loop.
-                 Declines, keeping the loop: any of (1)-(4) unproved — an unproven
-                 bound keeps every `?? d`, which is the program's answer for an
-                 index past the end.
-```
-
-**In words.**  The decoder's `for k in 0..arg { tb += [bytes[argpos + k] ?? 0]; }` is a
-memcpy written as `arg` appends, each with a bounds test and a null test the guard above it
-already decided.  The values are the slice's exactly when every index is in range, which is
-what (1) proves; (Slice-Value)'s clamping never applies because nothing is clamped.  Reach:
-every byte-copy loop over a checked span (cbor's text and byte strings, binary readers).
-Switch `LOFT_NO_SLICE_BUILD`; trace `LOFT_TRACE_SLICE_BUILD` names the condition each loop
-failed.  Falsifier: cells on both backends with hand-computed contents — the decoder's shape;
-a guard one short (`a + n > len(src) + 1`, must decline and keep the null arm's `d` for the
-last index); src appended to inside the loop (declines); a second statement in the body
-(declines).
-
-### A text made from a span of bytes is made from the span
-
-```
-  (R-TextOfSpan) `text_from_bytes(v)` where v is a vector<u8> LOCAL whose value at
-                 the call is a span src[a..b] — a slice, or a loop (R-SliceBuild)
-                 admits — reads the span in place, and v is never built, when ALL of:
-                 (1) the call is v's only mention after its binding, besides its
-                     release — v is a temporary that exists to be converted;
-                 (2) src is not written between v's binding and the call;
-                 (3) the conversion is the same function on the same bytes:
-                     validity, replacement and the result's length are
-                     text_from_bytes's own, applied to src's bytes a..b.
-                 Declines, building v: a second mention of v, a write to src in
-                 between, a span the analysis cannot name.
-```
-
-**In words.**  The decoder copies the span into `tb` and `text_from_bytes` copies `tb` again:
-two copies and two allocations for one text.  Read from the span, the text is the only copy.
-This removes a temporary (C125) and needs no view.  With (R-SliceBuild) it is the first,
-decision-free step on cbor's `decode` and `check_request`.  Switch `LOFT_NO_TEXT_OF_SPAN`;
-trace `LOFT_TRACE_TEXT_OF_SPAN`.  Falsifier: cells with invalid UTF-8 inside the span (the
-replacement must match the built form's byte for byte), a span at the end of src, the empty
-span, and a write to src between binding and call (declines).
-
 ### A decoded text or byte string is a view into the frame
 
 ```
   (R-DecodeView) (@C139) a `text` or `vector<u8>` FIELD f of a record R whose value
-                 at R's construction is a span B[a..b] of a byte vector B — built by
-                 (R-TextOfSpan), (R-SliceBuild) or a slice — holds the SPAN (B's
+                 at R's construction is a span B[a..b] of a byte vector B — read by
+                 (R-TextRun), copied by (R-ByteCopy)'s vector clause, or a slice —
+                 holds the SPAN (B's
                  store, a, b - a) instead of an owned copy, when ALL of:
                  (1) B is not written from the construction of R to the last read
                      of f through any holder: no append, assignment, clear, element
