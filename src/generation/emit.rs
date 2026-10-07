@@ -781,7 +781,11 @@ impl Output<'_> {
                         .join(" && ");
                     writeln!(w, "if {test} {{ //@FR-R-Alias versioned on distinct stores")?;
                     let declared_before = self.declared.clone();
-                    self.assumed_distinct = pairs;
+                    let params: Vec<u16> = pairs.iter().map(|&(p, _)| p).collect();
+                    self.assumed_distinct = match pairs.first() {
+                        Some(&(_, rb)) => self.distinct_pairs(&params, rb),
+                        None => pairs,
+                    };
                     self.indent(w)?;
                     self.output_code_inner(w, code)?;
                     self.assumed_distinct.clear();

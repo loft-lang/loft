@@ -4252,16 +4252,27 @@ impl Output<'_> {
             return None;
         }
         let plain = self.compute_loop_hoist(lp);
+        // The buffer is grown under its own name or under the local that ADOPTED it
+        // (`RetAdopt`: the local is the caller's buffer, and its witness the store's root).
+        let buf_names: Vec<u16> = std::iter::once(rb)
+            .chain(
+                self.ret_adopt
+                    .as_ref()
+                    .filter(|a| a.buf == rb)
+                    .into_iter()
+                    .flat_map(|a| [a.v, a.vdb]),
+            )
+            .collect();
         if plain
             .pushes
             .iter()
             .chain(plain.mint_pushes.iter())
-            .all(|(p, _)| p.0 != rb)
-            && !plain.movers.contains(&rb)
+            .all(|(p, _)| !buf_names.contains(&p.0))
+            && !plain.movers.iter().any(|m| buf_names.contains(m))
         {
             return None;
         }
-        self.assumed_distinct = params.iter().map(|&p| (p, rb)).collect();
+        self.assumed_distinct = self.distinct_pairs(&params, rb);
         let versioned = self.compute_loop_hoist(lp);
         self.assumed_distinct.clear();
         // A path counts only when nothing already holds its header: one an enclosing frame
@@ -4297,6 +4308,21 @@ impl Output<'_> {
             }
         }
         Some(pairs)
+    }
+
+    /// `@FR-R-Alias`'s versioned clause — the pairs a run-time `rb.store_nr != p.store_nr`
+    /// proves apart: each parameter against the return buffer, and against the local that
+    /// ADOPTED the buffer and its witness (`RetAdopt`), which name the buffer's store from
+    /// the adoption on.
+    pub(super) fn distinct_pairs(&self, params: &[u16], rb: u16) -> Vec<(u16, u16)> {
+        let mut out: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
+        if let Some(a) = self.ret_adopt.as_ref().filter(|a| a.buf == rb) {
+            for &q in params {
+                out.push((q, a.v));
+                out.push((q, a.vdb));
+            }
+        }
+        out
     }
 
     /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
@@ -4342,7 +4368,7 @@ impl Output<'_> {
             if out.contains(&p) {
                 continue;
             }
-            let pairs: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
+            let pairs = self.distinct_pairs(params, rb);
             let verdict = |this: &mut Self, assumed: &[(u16, u16)]| {
                 let twin_params = this.twin_params_of(
                     &stmts[at + 1..],
