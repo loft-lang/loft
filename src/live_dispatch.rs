@@ -24,8 +24,6 @@
 //! Failure posture: every bootstrap problem WARNS and falls back to fully
 //! compiled execution — live mode is an instrument, never a halt.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::cell::{RefCell, UnsafeCell};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -730,16 +728,17 @@ thread_local! {
 /// Spawn one background `--check --native` build of `src` via the driver.
 #[cfg(not(target_arch = "wasm32"))]
 fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
-    let snapshot = std::fs::read(src).map_err(|e| format!("cannot read {src}: {e}"))?;
+    // The error starts with the path: "cannot read <src>: <why>".
+    let snapshot = crate::file_access::read(src).map_err(|e| format!("cannot read {e}"))?;
     let seq = REBUILD_SEQ.with(|c| {
         c.set(c.get() + 1);
         c.get()
     });
     let base = std::env::temp_dir().join(format!("loft_rebuild_{}_{seq}", std::process::id()));
-    let out_path = base.with_extension("out");
-    let err_path = base.with_extension("err");
-    let out = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
-    let err = std::fs::File::create(&err_path).map_err(|e| e.to_string())?;
+    let out_path = crate::file_access::with_extension(&base, "out");
+    let err_path = crate::file_access::with_extension(&base, "err");
+    let out = crate::file_access::create(&out_path).map_err(|e| e.to_string())?;
+    let err = crate::file_access::create(&err_path).map_err(|e| e.to_string())?;
     let mut cmd = std::process::Command::new(driver);
     cmd.arg("--no-warnings").arg("--check").arg("--native");
     if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
@@ -836,7 +835,7 @@ fn rebuild_status() -> i64 {
         // since is stale whether it succeeded or failed — and a failure is often BECAUSE of
         // the edit (the build read the file while it was being rewritten, half written).
         // Reporting it as FAILED would leave the settled source unbuilt.
-        let now = std::fs::read(&src).unwrap_or_default();
+        let now = crate::file_access::read(&src).unwrap_or_default();
         if now != *snapshot {
             // Stale: the source changed while the build ran.  Requeue with the
             // current content — the cache makes an already-built version
@@ -856,7 +855,7 @@ fn rebuild_status() -> i64 {
             };
         }
         if !status.success() {
-            let tail: String = std::fs::read_to_string(err_path)
+            let tail: String = crate::file_access::read_to_string(&*err_path)
                 .unwrap_or_default()
                 .lines()
                 .rev()
@@ -871,14 +870,14 @@ fn rebuild_status() -> i64 {
             return REBUILD_FAILED;
         }
         // The artifact path rides the driver's ok line: "ok <src> <artifact>".
-        let out = std::fs::read_to_string(out_path).unwrap_or_default();
+        let out = crate::file_access::read_to_string(&*out_path).unwrap_or_default();
         let artifact = out
             .lines()
             .find_map(|l| l.strip_prefix(&format!("ok {src} ")))
             .unwrap_or("")
             .trim()
             .to_string();
-        if artifact.is_empty() || !std::path::Path::new(&artifact).exists() {
+        if artifact.is_empty() || !crate::file_access::exists(&artifact) {
             eprintln!("loft-live: rebuild succeeded but no artifact on the ok line ({out:?})");
             *r = Rebuild::Failed;
             return REBUILD_FAILED;
@@ -1018,10 +1017,10 @@ mod tests {
     fn bootstrap_from_bytes_parses_a_fs_identical_world() {
         let program = "fn main() {\n  print(\"hi\")\n}\n";
         let path = std::env::temp_dir().join(format!("loft_p31_{}.loft", std::process::id()));
-        std::fs::write(&path, program).unwrap();
+        crate::file_access::write(&path, program).unwrap();
         let (fs_defs, fs_main) = parse_fs(path.to_str().unwrap());
         let (emb_defs, emb_main) = parse_embedded(program);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         assert!(fs_main && emb_main, "n_main resolves in both paths");
         assert!(
             fs_defs > 100,
