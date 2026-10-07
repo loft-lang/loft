@@ -64,5 +64,5 @@ fn main() {
   assert("{p.x} {p.t} {p.inn.c}" == "9 ab 8", "writes through a live reference");
   tv = ["a", "b"];
   sv = [S { x: 1, t: "", inn: null }];
-  assert("{tv[5]} {sv[3].x}" == "null null(oob)", "out of bounds at text and struct elements");
+  assert("{tv[5]} {sv[3].x}" == "null(oob) null(oob)", "out of bounds at text and struct elements");
 }

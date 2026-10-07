@@ -774,7 +774,9 @@ impl State {
 
     pub fn format_database(&mut self) {
         let pos = self.code::<u16>();
-        let s = self.format_db();
+        let mut s = self.format_db();
+        // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
+        crate::ops::tag_rendered_null(&mut s, crate::ops::take_format_fault());
         // @PLAN53 cluster 2 / S4 (2d): format_db pops the composite value's 12-byte
         // DbRef, which advances TOS by stack_step(12) = 16 under LOFT_ALIGN (12 off).
         // The destination-buffer offset must back up by the SAME stepped width, else
@@ -787,7 +789,8 @@ impl State {
 
     pub fn format_stack_database(&mut self) {
         let pos = self.code::<u16>();
-        let s = self.format_db();
+        let mut s = self.format_db();
+        crate::ops::tag_rendered_null(&mut s, crate::ops::take_format_fault());
         // @PLAN53 cluster 2 / S4 (2d): see format_database — back up by the stepped
         // DbRef width so the destination String slot is read on its 8-byte boundary.
         let off = pos - self.stack_step(size_ref()) as u16;

@@ -853,10 +853,12 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f64>();
+        // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
+        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 24);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_float(s, val, width, precision, token, plus, dir)
+            ops::format_float_with_tag(s, val, tag, width, precision, token, plus, dir)
         });
     }
 
@@ -868,10 +870,12 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f64>();
+        // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
+        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 24); // f64(8)+i64(8)+i64(8) = 24 bytes popped
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_float(s, val, width, precision, token, plus, dir)
+            ops::format_float_with_tag(s, val, tag, width, precision, token, plus, dir)
         });
     }
 
@@ -883,13 +887,14 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f32>();
+        let tag = ops::take_format_fault();
         // @PLAN53 cluster 2 / S4: N = stepped span of the popped i64+i64+f32
         // (20 off; 24 aligned — the f32 rounds 4->8).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - n);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_single(s, val, width, precision, token, plus, dir)
+            ops::format_single_with_tag(s, val, tag, width, precision, token, plus, dir)
         });
     }
 
@@ -901,12 +906,13 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f32>();
+        let tag = ops::take_format_fault();
         // @PLAN53 cluster 2 / S4: stepped span of popped i64+i64+f32 (20/24).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - n);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_single(s, val, width, precision, token, plus, dir)
+            ops::format_single_with_tag(s, val, tag, width, precision, token, plus, dir)
         });
     }
 
@@ -916,10 +922,11 @@ impl State {
         let token = self.code::<u8>();
         let width = self.get_stack::<i64>();
         let val = self.string();
+        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 8 - size_ptr() as u16);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_text(s, val.str(), width, dir, token)
+            ops::format_text_with_tag(s, val.str(), tag, width, dir, token)
         });
     }
 
@@ -929,10 +936,11 @@ impl State {
         let token = self.code::<u8>();
         let width = self.get_stack::<i64>();
         let val = self.string();
+        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 8 - size_ptr() as u16);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_text(s, val.str(), width, dir, token)
+            ops::format_text_with_tag(s, val.str(), tag, width, dir, token)
         });
     }
 }

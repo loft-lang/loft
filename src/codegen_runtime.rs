@@ -682,6 +682,8 @@ pub fn OpFormatDatabase(
         max_elements: u16::MAX,
     }
     .write(&mut s, 0);
+    // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
+    crate::ops::tag_rendered_null(&mut s, crate::ops::take_format_fault());
     output.push_str(&s);
 }
 

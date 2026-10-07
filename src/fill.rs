@@ -1611,7 +1611,7 @@ fn cast_text_from_bool<const F: bool>(s: &mut State) {
     let new_value = if v_v1 == 1 {
         "true"
     } else if v_v1 == 255 {
-        "null"
+        "\0"
     } else {
         "false"
     };
@@ -3810,7 +3810,11 @@ fn cast_text_from_enum<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_enum_tp = operands.get::<u16>(0);
     let v_v1 = s.get_stack_m::<F, u8>();
-    let new_value = Str::new(s.database.enum_val(v_enum_tp, v_v1));
+    let new_value = Str::new(if v_v1 == 0 || v_v1 == 255 {
+        "\0"
+    } else {
+        s.database.enum_val(v_enum_tp, v_v1)
+    });
     s.put_stack_m::<F, _>(new_value);
 }
 
