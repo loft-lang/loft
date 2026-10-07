@@ -5553,8 +5553,10 @@ impl Function {
             && (v as usize) < self.variables.len()
             && !self.is_argument(v)
             // A parameter's promoted copy (`__tp_<name>`) is the author's parameter, copied:
-            // it owns its text like any tuple local the author named.
-            && (!self.is_compiler_generated(v) || self.promoted_from(v) != u16::MAX)
+            // it owns its text like any tuple local the author named.  Recognised by its
+            // NAME, which the IR store carries, not by `promoted_from`, which it does not —
+            // a decoded program has to lay the copy out as its parse did.
+            && (!self.is_compiler_generated(v) || self.name(v).starts_with("__tp_"))
             && matches!(self.tp(v).base(), Type::Tuple(_))
     }
 
