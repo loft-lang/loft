@@ -1,0 +1,27 @@
+// @FR-B-Ref-Write — a write through a `&text` link writes the text it names, whatever the
+// write is: a formatted append (`c += "{i}"`, `c += "{f}"`, `c += "{s}"`) as well as a plain one.
+// `--native` holds a local link as a raw `*mut String` and a `&text` parameter as a
+// `&mut String`, and the format ops spelled their destination for the parameter alone, so a
+// formatted append through a LOCAL link did not compile (E0308) (loft#1905).  Each value is
+// worked out by hand beside it.
+// @falsified-at: fbee3ae5e — measured below by `make falsify`
+
+fn through_param(p: &text, n: integer) { p += "<{n}>"; }
+// "s" + "0" + "1" + "2".
+fn integer_through_local_link() -> text { s = "s"; c = &s; for i in 0..3 { c += "{i}"; } s }
+// "f" + "1.5".
+fn float_through_local_link() -> text { s = "f"; c = &s; x = 1.5; c += "{x}"; s }
+// "t" + "ab".
+fn text_through_local_link() -> text { s = "t"; c = &s; w = "ab"; c += "{w}"; s }
+// "p" + "<7>".
+fn through_a_parameter() -> text { s = "p"; through_param(s, 7); s }
+// Control: the plain append already compiled.
+fn plain_through_local_link() -> text { s = "q"; c = &s; c += "!"; s }
+
+fn main() {
+  assert(integer_through_local_link() == "s012", "an integer formatted through a local link");
+  assert(float_through_local_link() == "f1.5", "a float formatted through a local link");
+  assert(text_through_local_link() == "tab", "a text formatted through a local link");
+  assert(through_a_parameter() == "p<7>", "a formatted append through a & parameter");
+  assert(plain_through_local_link() == "q!", "a plain append through a local link");
+}
