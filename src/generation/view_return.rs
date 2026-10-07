@@ -230,22 +230,22 @@ fn pure_read(data: &Data, v: &Value) -> bool {
 
 /// The callee's body outside its view exits: `rb` unnamed, writes only into `own`, no user
 /// calls, every other `return` handing up an own store.
-fn body_ok(data: &Data, v: &Value, rb: u16, own: &[u16], exits: &mut usize) -> bool {
-    if view_exit(data, v, rb).is_some() {
+fn body_ok(data: &Data, val: &Value, rb: u16, own: &[u16], exits: &mut usize) -> bool {
+    if view_exit(data, val, rb).is_some() {
         *exits += 1;
         return true;
     }
-    match v.unspan() {
+    match val.unspan() {
         Value::Var(x) => *x != rb,
-        Value::Call(c, a) => {
-            let n = name(data, *c);
-            let into_own = a
+        Value::Call(callee, vals) => {
+            let op = name(data, *callee);
+            let into_own = vals
                 .first()
                 .is_some_and(|x| matches!(x.unspan(), Value::Var(y) if own.contains(y)));
-            let allowed = read_op(n)
-                || (n.starts_with("Op") && into_own && !data.def(*c).name().is_empty())
-                || (n == "OpFreeRefIfDistinct" && into_own);
-            allowed && a.iter().all(|x| body_ok(data, x, rb, own, exits))
+            let allowed = read_op(op)
+                || (op.starts_with("Op") && into_own && !data.def(*callee).name().is_empty())
+                || (op == "OpFreeRefIfDistinct" && into_own);
+            allowed && vals.iter().all(|x| body_ok(data, x, rb, own, exits))
         }
         Value::Return(r) => owned_value(r, own) && body_ok(data, r, rb, own, exits),
         Value::Set(x, init) => *x != rb && body_ok(data, init, rb, own, exits),
@@ -253,9 +253,9 @@ fn body_ok(data: &Data, v: &Value, rb: u16, own: &[u16], exits: &mut usize) -> b
             .operators
             .iter()
             .all(|o| body_ok(data, o, rb, own, exits)),
-        Value::If(t, a, b) => {
+        Value::If(t, vals, b) => {
             body_ok(data, t, rb, own, exits)
-                && body_ok(data, a, rb, own, exits)
+                && body_ok(data, vals, rb, own, exits)
                 && body_ok(data, b, rb, own, exits)
         }
         Value::Null
@@ -299,15 +299,15 @@ pub struct Site {
 }
 
 /// The buffer prep `if OpRefIsNull(B) { OpDatabase(B, tp) } else OpClear(B, tp)`.
-fn prep_buffer(data: &Data, v: &Value) -> Option<u16> {
-    let Value::If(test, then, els) = v.unspan() else {
+fn prep_buffer(data: &Data, stmt: &Value) -> Option<u16> {
+    let Value::If(cond, then, els) = stmt.unspan() else {
         return None;
     };
-    let Value::Call(t, ta) = test.unspan() else {
+    let Value::Call(probe, probe_args) = cond.unspan() else {
         return None;
     };
-    let Some(Value::Var(b)) = (name(data, *t) == "OpRefIsNull")
-        .then(|| ta.first().map(Value::unspan))
+    let Some(Value::Var(buf)) = (name(data, *probe) == "OpRefIsNull")
+        .then(|| probe_args.first().map(Value::unspan))
         .flatten()
     else {
         return None;
@@ -324,8 +324,8 @@ fn prep_buffer(data: &Data, v: &Value) -> Option<u16> {
     let [mint] = &ops[..] else {
         return None;
     };
-    let is = |v: &Value, op: &str| matches!(v.unspan(), Value::Call(c, a) if name(data, *c) == op && a.first().is_some_and(|x| is_var(x, *b)));
-    (is(mint, "OpDatabase") && is(els, "OpClear")).then_some(*b)
+    let is = |stmt: &Value, op: &str| matches!(stmt.unspan(), Value::Call(c, a) if name(data, *c) == op && a.first().is_some_and(|x| is_var(x, *buf)));
+    (is(mint, "OpDatabase") && is(els, "OpClear")).then_some(*buf)
 }
 
 /// The statement `ops[at]` of function `d_nr`, when it is the buffer prep of an admitted
@@ -438,22 +438,26 @@ pub fn site(
 
 /// A statement of the window: no store write, no user call, the subject read only by a
 /// copying getter (or freed against the buffer), the buffer only freed.
-fn window_ok(data: &Data, v: &Value, s: u16, b: u16) -> bool {
-    match v.unspan() {
-        Value::Var(x) => *x != s && *x != b,
-        Value::Call(c, a) => {
-            let n = name(data, *c);
-            if n == "OpFreeRefIfDistinct" && a.len() == 2 && is_var(&a[0], s) && is_var(&a[1], b) {
+fn window_ok(data: &Data, val: &Value, subj: u16, buf: u16) -> bool {
+    match val.unspan() {
+        Value::Var(lhs) => *lhs != subj && *lhs != buf,
+        Value::Call(callee, vals) => {
+            let op = name(data, *callee);
+            if op == "OpFreeRefIfDistinct"
+                && vals.len() == 2
+                && is_var(&vals[0], subj)
+                && is_var(&vals[1], buf)
+            {
                 return true;
             }
-            if n == "OpFreeRef" && a.first().is_some_and(|x| is_var(x, b)) {
+            if op == "OpFreeRef" && vals.first().is_some_and(|lhs| is_var(lhs, buf)) {
                 return true;
             }
-            if copying_getter(n) && a.first().is_some_and(|x| is_var(x, s)) {
-                return a[1..].iter().all(|x| window_ok(data, x, s, b));
+            if copying_getter(op) && vals.first().is_some_and(|lhs| is_var(lhs, subj)) {
+                return vals[1..].iter().all(|lhs| window_ok(data, lhs, subj, buf));
             }
             let local_text = matches!(
-                n,
+                op,
                 "OpFormatStackText"
                     | "OpFormatStackInt"
                     | "OpFormatStackFloat"
@@ -462,13 +466,17 @@ fn window_ok(data: &Data, v: &Value, s: u16, b: u16) -> bool {
                     | "OpAppendStackCharacter"
                     | "OpClearStackText"
             );
-            (read_op(n) || local_text) && a.iter().all(|x| window_ok(data, x, s, b))
+            (read_op(op) || local_text) && vals.iter().all(|lhs| window_ok(data, lhs, subj, buf))
         }
-        Value::Return(r) => window_ok(data, r, s, b),
-        Value::Set(x, init) => *x != s && *x != b && window_ok(data, init, s, b),
-        Value::Block(bl) | Value::Loop(bl) => bl.operators.iter().all(|o| window_ok(data, o, s, b)),
-        Value::If(t, x, y) => {
-            window_ok(data, t, s, b) && window_ok(data, x, s, b) && window_ok(data, y, s, b)
+        Value::Return(r) => window_ok(data, r, subj, buf),
+        Value::Set(lhs, init) => *lhs != subj && *lhs != buf && window_ok(data, init, subj, buf),
+        Value::Block(bl) | Value::Loop(bl) => {
+            bl.operators.iter().all(|o| window_ok(data, o, subj, buf))
+        }
+        Value::If(tst, lhs, rhs) => {
+            window_ok(data, tst, subj, buf)
+                && window_ok(data, lhs, subj, buf)
+                && window_ok(data, rhs, subj, buf)
         }
         Value::Null
         | Value::Line(_)
