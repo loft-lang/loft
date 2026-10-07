@@ -3058,11 +3058,11 @@ impl Output<'_> {
         ks: &super::keyed_place::Site<'_>,
     ) -> std::io::Result<()> {
         self.dest_counter += 1;
-        let n = self.dest_counter;
+        let site = self.dest_counter;
         self.indent(w)?;
         writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
         let mut writes: Vec<Value> = Vec::new();
-        let mut k = 0usize;
+        let mut nth = 0usize;
         for op in &ks.body {
             let Value::Call(d, args) = op.unspan() else {
                 self.indent(w)?;
@@ -3082,16 +3082,16 @@ impl Output<'_> {
             let mut staged: Vec<Value> = Vec::with_capacity(args.len());
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
-                    staged.push(Value::RawExpr(format!("__kp{n}")));
+                    staged.push(Value::RawExpr(format!("__kp{site}")));
                 } else if super::keyed_place::constant(a) {
                     staged.push(a.clone());
                 } else {
                     self.indent(w)?;
-                    write!(w, "let __kv{n}_{k} = ")?;
+                    write!(w, "let __kv{site}_{nth} = ")?;
                     self.output_code_inner(w, a)?;
                     writeln!(w, ";")?;
-                    staged.push(Value::RawExpr(format!("__kv{n}_{k}")));
-                    k += 1;
+                    staged.push(Value::RawExpr(format!("__kv{site}_{nth}")));
+                    nth += 1;
                 }
             }
             writes.push(Value::Call(*d, staged));
@@ -3116,7 +3116,7 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __kp{n} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
+            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
             ks.tp
         )?;
         for wr in &writes {
@@ -3127,7 +3127,7 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "stores.keyed_place_finish(&({coll}), &__kp{n}, {}_u16, {keys});",
+            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}_u16, {keys});",
             ks.tp
         )?;
         self.indent(w)?;
@@ -3939,6 +3939,13 @@ impl Output<'_> {
             if super::keyed_place::enabled()
                 && !self.in_coroutine_body
                 && let Some(ks) = super::keyed_place::site(v, self.data, self.def_nr)
+                // A partial subscript takes the key from the literal's own fields
+                // (`Stores::set_keyed`'s `full`); only a full one names the record's key.
+                && self
+                    .stores
+                    .types
+                    .get(ks.tp as usize)
+                    .is_some_and(|t| t.keys.len() == ks.keys.len())
             {
                 self.output_keyed_place(w, &ks)?;
                 continue;
