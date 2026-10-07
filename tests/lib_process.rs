@@ -50,7 +50,7 @@ fn the_composition_matrix_holds_compiled() {
     run("--native", "command.loft");
 }
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `run.loft` and `start.loft` drive `sh -c`, `cat`, `printf`, `sleep` and `/dev/zero`, which have no Windows equivalent; Windows substitutes: the composition matrix above, and `windows_rules::a_loft_programs_stop_takes_what_its_child_started`
+// approved exemption: `run.loft` and `start.loft` drive `sh -c`, `cat`, `printf`, `sleep` and `/dev/zero`, which have no Windows equivalent; Windows substitutes: the composition matrix above, and `windows_rules::a_loft_programs_stop_takes_what_its_child_started`
 #[cfg(unix)]
 mod spawns_sh {
     use super::{run, run_on};

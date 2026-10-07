@@ -1866,7 +1866,7 @@ pub(crate) fn add_native_extern_flags(
                 cmd.push_arg("-L")
                     .push_arg(format!("native={}", so_dir.display()));
                 cmd.push_arg("-l").push_arg(format!("dylib={libname}"));
-                // @PLN26 phase 4 — Windows links a DLL through its IMPORT LIBRARY, and
+                // Windows links a DLL through its IMPORT LIBRARY, and
                 // there is NO RPATH: the loader finds the DLL beside the `.exe` / on
                 // `PATH`, so the DLL is staged beside the binary at run time
                 // (`stage_native_dlls`), the Windows form of the `$ORIGIN` rpath below.
@@ -2333,7 +2333,7 @@ mod p254_cache_safety {
         let _ = crate::file_access::remove_file(&p);
     }
 
-    // @PLN184 approved exemption (owner, 2026-10-07): a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
+    // approved exemption: a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
     #[cfg(unix)]
     #[test]
     fn symlink_cache_is_unsafe() {
@@ -2568,7 +2568,7 @@ mod atomics_sysroot_tests {
     /// be created.  The assembly must fall back to the user cache instead of
     /// giving up, which is what silently produced a single-threaded page.
     #[test]
-    // @PLN184 approved exemption (owner, 2026-10-07): a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
+    // approved exemption: a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
     #[cfg(unix)]
     fn falls_back_to_the_user_cache_when_the_target_dir_is_read_only() {
         use std::os::unix::fs::PermissionsExt;
@@ -2883,7 +2883,7 @@ mod publish_cached_binary_tests {
     /// `cfg(unix)` with its one caller: the control exists only for the inode reading, so
     /// on Windows it would be a function nobody calls and `-D warnings` fails the build on
     /// `dead_code`.
-    // @PLN184 approved exemption (owner, 2026-10-07): a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
+    // approved exemption: a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
     #[cfg(unix)]
     fn publish_by_copy(built: &std::path::Path, cached: &std::path::Path) {
         let _ = crate::file_access::copy(built, cached);
@@ -2905,7 +2905,7 @@ mod publish_cached_binary_tests {
     /// deliberately NOT written here, because it cannot be measured from this box and an
     /// assertion nobody has watched fail is the thing this test's own control exists to
     /// refuse.  The sweep test below stays on every platform.
-    // @PLN184 approved exemption (owner, 2026-10-07): a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
+    // approved exemption: a test of Unix-only semantics (symlinks, inodes, a read-only sysroot); Windows has none of them to test
     #[cfg(unix)]
     #[test]
     fn a_publish_swaps_the_inode_instead_of_truncating_in_place() {

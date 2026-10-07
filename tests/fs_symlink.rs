@@ -13,7 +13,7 @@ mod common;
 use common::cross_mode::run_cross_mode_expect;
 use loft::file_access as fa;
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): creating a symlink needs the symlink privilege on Windows; Windows substitute: none
+// approved exemption: creating a symlink needs the symlink privilege on Windows; Windows substitute: none
 #[cfg(unix)]
 #[test]
 fn is_symlink_names_the_link_not_its_target() {

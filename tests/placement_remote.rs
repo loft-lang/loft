@@ -17,7 +17,7 @@
 // `placement_parity.rs` is the setup: a server has to be started, reached, and
 // stopped, and a test that leaked one would wedge a port for every later run.
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
+// approved exemption: library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;

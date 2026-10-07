@@ -562,7 +562,7 @@ fn the_ci_census_reads_a_job_and_its_verdict() {
 // ── D4 — every script has a Windows smoke run, or is counted ──────────────────────────────
 // `scripts/windows_smoke.tsv` lists each script's cheapest invocation, run nightly on
 // windows-latest (`.github/workflows/windows-scripts.yml`).  A tracked script with no entry is
-// counted here, and the count only falls; a listed script that no longer exists is refused.
+// counted here, and the count only falls; a listed script that does not exist is refused.
 
 const SMOKE_LIST: &str = "scripts/windows_smoke.tsv";
 const SMOKE_BASELINE: &str = "src/platform_census_smoke.baseline";
