@@ -1,0 +1,25 @@
+// @FR-F-ParamScalar / @FR-T-Record — a by-value tuple parameter is the callee's own copy, so a
+// COMPOUND write to one of its members (`t.0 += "!"`, `t.1 += 5`) changes that copy and leaves
+// the caller's tuple as it was — exactly as the plain `t.0 = t.0 + "!"` does.  A text-carrying
+// parameter arrives borrowed, and only the plain spelling promoted it to an owned shadow, so
+// the compound one did not compile on `--native` (E0308) (loft#1904).  Each value is worked out
+// by hand beside it.
+// @falsified-at: 320dc8a34 — measured below by `make falsify`
+
+// "x" + "!" + "?".
+fn appended(t: (text, integer)) -> text { t.0 += "!"; t.0 += "?"; t.0 }
+// 1 + 5, beside a text member.
+fn number_beside_text(t: (text, integer)) -> integer { t.1 += 5; t.1 }
+// (7, "q") -> 8 and "q+".
+fn both(t: (integer, text)) -> text { t.1 += "+"; t.0 += 1; "{t.0}{t.1}" }
+// Control: the plain spelling already compiled.
+fn plain(t: (text, integer)) -> text { t.0 = t.0 + "!"; t.0 }
+
+fn main() {
+  c = ("x", 1);
+  assert(appended(c) == "x!?", "a compound text append");
+  assert(number_beside_text(c) == 6, "a compound number write beside a text member");
+  assert(both((7, "q")) == "8q+", "two compound writes");
+  assert(plain(c) == "x!", "the plain spelling");
+  assert(c.0 == "x" && c.1 == 1, "the caller's tuple is untouched");
+}
