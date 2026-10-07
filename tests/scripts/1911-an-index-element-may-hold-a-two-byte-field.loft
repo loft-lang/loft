@@ -1,0 +1,51 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1911, `@FR-L-Align` / `@FR-Col-Index` — an `index` element may hold a 2-byte field, as its
+// key or not.  The index's link triple (9 bytes) is packed as one block aligned to 4, and the
+// packer placed the next field at the byte after it without aligning, so an `i16`/`u16` field sat
+// at an odd offset and `(L-Align)` refused the type: "offset 17 is not a multiple of its
+// alignment 2".  The packer now steps to the boundary and keeps the skipped byte as a gap.
+//
+// Axes it MOVES: the 2-byte field's role (the key, a payload beside an integer key), its
+// signedness (i16, u16), a 1-byte neighbour that can fill the gap, and the value at both ends
+// of the range.  Each cell reads the value back through a lookup and through iteration, and
+// checks each 2-byte field sits at an even offset.  Values are hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct K1911 { k: i16, n: integer }
+struct M1911 { id: integer, m: u16, b: u8 }
+
+// Where a two-byte field `field` of type `name` sits: -1 when absent.
+fn offset1911(name: text, field: text) -> integer {
+  t = type_named(name);
+  if t == null { return -1; }
+  for f in t.fields { if f.name == field { return f.position; } }
+  -1
+}
+
+fn test_a_signed_two_byte_key() {
+  h: index<K1911[k]> = [K1911 { k: -300, n: 1 }, K1911 { k: 300, n: 2 }, K1911 { k: -32767, n: 3 }];
+  assert((h[300].n ?? -1) == 2 && (h[-300].n ?? -1) == 1 && (h[-32767].n ?? -1) == 3, "lookups");
+  s = "";
+  for e in h { s += "{e.k}:{e.n},"; }
+  assert(s == "-32767:3,-300:1,300:2,", "key order: {s}");
+}
+
+fn test_an_unsigned_payload_beside_a_byte() {
+  h: index<M1911[id]> = [M1911 { id: 5, m: 65534, b: 255 }, M1911 { id: 1, m: 7, b: 3 }];
+  assert((h[5].m ?? 0) == 65534 && (h[5].b ?? 0) == 255 && (h[1].m ?? 0) == 7, "payload");
+}
+
+fn test_every_offset_is_aligned() {
+  k = offset1911("K1911", "k");
+  m = offset1911("M1911", "m");
+  assert(k >= 0 && k % 2 == 0 && m >= 0 && m % 2 == 0, "two-byte offsets: k@{k} m@{m}");
+}
+
+fn main() {
+  test_a_signed_two_byte_key();
+  test_an_unsigned_payload_beside_a_byte();
+  test_every_offset_is_aligned();
+}
