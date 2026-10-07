@@ -4,7 +4,12 @@
 // record deep copy, which read the mapping as a record in its store, and both backends crashed
 // on a corrupt reference before anything wrote (loft#1906).  Values worked out by hand: the
 // file holds "hello" = 104 101 108 108 111.
-// @falsified-at: 15181f86e — measured below by `make falsify`
+// @falsified-at: 15181f86e — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/a-mapped-vector-appended-as-an-element-is-copied.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+// CHANNEL: panic on both backends — the control's record copy reads the mapping as a record
+//   and dies on the corrupt reference (`Store access out of bounds`).
+// HOLDS: asserts 0, leak none and free-refusals 0 on both trees and both backends, as measured
+//   by `make falsify` at 15181f86e.
 
 fn appended(p: text) -> integer {
   v: vector<vector<u8>> = [];
