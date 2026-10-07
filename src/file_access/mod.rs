@@ -115,6 +115,19 @@ fn plain_host(p: &Path) -> Option<&Path> {
     .then_some(p)
 }
 
+/// A plain path's text and its last name (`None` for the root), as `PathText` parses them.
+fn plain_parts(p: &Path) -> (&str, Option<&str>) {
+    let s = p.to_str().unwrap_or("");
+    let last = if s == "/" { None } else { s.rsplit('/').next() };
+    (s, last)
+}
+
+/// `PathText::extension`'s rule on one name: after the last dot, `None` for `.hidden`.
+fn name_extension(name: &str) -> Option<&str> {
+    let dot = name.rfind('.')?;
+    (dot > 0).then(|| &name[dot + 1..])
+}
+
 /// An error from the plain route, naming its path as the parsed route does.
 fn named_plain<T>(p: &Path, r: io::Result<T>) -> io::Result<T> {
     r.map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", p.display())))
@@ -760,18 +773,33 @@ pub fn is_under(file: &str, dir: &str) -> bool {
 /// The last name (`std`: `Path::file_name`).
 #[must_use]
 pub fn file_name(path: impl HostPath) -> Option<String> {
+    if let Some(p) = path.plain_host() {
+        return plain_parts(p).1.map(str::to_string);
+    }
     path.to_path_text().file_name().map(str::to_string)
 }
 
 /// The last name without its extension (`std`: `Path::file_stem`).
 #[must_use]
 pub fn file_stem(path: impl HostPath) -> Option<String> {
+    if let Some(p) = path.plain_host() {
+        return plain_parts(p).1.map(|name| match name.rfind('.') {
+            Some(dot) if dot > 0 => name[..dot].to_string(),
+            _ => name.to_string(),
+        });
+    }
     path.to_path_text().file_stem().map(str::to_string)
 }
 
 /// The last name's extension, without its dot (`std`: `Path::extension`).
 #[must_use]
 pub fn extension(path: impl HostPath) -> Option<String> {
+    if let Some(p) = path.plain_host() {
+        return plain_parts(p)
+            .1
+            .and_then(name_extension)
+            .map(str::to_string);
+    }
     path.to_path_text().extension().map(str::to_string)
 }
 
@@ -779,6 +807,10 @@ pub fn extension(path: impl HostPath) -> Option<String> {
 /// `x.DLL` is a `dll` on Windows?
 #[must_use]
 pub fn has_extension(path: impl HostPath, ext: &str) -> bool {
+    if let Some(p) = path.plain_host() {
+        // The plain route is a Unix host's: names compare exactly.
+        return plain_parts(p).1.and_then(name_extension) == Some(ext);
+    }
     let p = path.to_path_text();
     p.extension().is_some_and(|e| match p.flavor() {
         Flavor::Unix => e == ext,
@@ -789,6 +821,15 @@ pub fn has_extension(path: impl HostPath, ext: &str) -> bool {
 /// The path without its last name (`std`: `Path::parent`), `None` at a root.
 #[must_use]
 pub fn parent(path: impl HostPath) -> Option<PathBuf> {
+    if let Some(p) = path.plain_host() {
+        let (s, last) = plain_parts(p);
+        last?;
+        return Some(PathBuf::from(match s.rsplit_once('/') {
+            Some(("", _)) => "/",
+            Some((up, _)) => up,
+            None => "",
+        }));
+    }
     path.to_path_text()
         .parent()
         .map(|p| PathBuf::from(p.native_or_empty()))
@@ -812,6 +853,9 @@ pub fn with_extension(path: impl HostPath, ext: &str) -> PathBuf {
 /// Does the path start at a root (`std`: `Path::is_absolute`)?
 #[must_use]
 pub fn is_absolute(path: impl HostPath) -> bool {
+    if let Some(p) = path.plain_host() {
+        return plain_parts(p).0.starts_with('/');
+    }
     path.to_path_text().is_absolute()
 }
 
@@ -1203,6 +1247,27 @@ mod tests {
             Path::new("/a")
         )
         .is_none()));
+        // The name operations answer on the plain route exactly what the parsed route does.
+        for t in [
+            "/a/b.tar.gz",
+            "a/.hidden",
+            "x",
+            "/",
+            "/a",
+            "dir/b.",
+            "a/b.c/d",
+        ] {
+            let pt = PathText::host(t);
+            assert_eq!(file_name(t), pt.file_name().map(str::to_string), "{t}");
+            assert_eq!(file_stem(t), pt.file_stem().map(str::to_string), "{t}");
+            assert_eq!(extension(t), pt.extension().map(str::to_string), "{t}");
+            assert_eq!(is_absolute(t), pt.is_absolute(), "{t}");
+            assert_eq!(
+                parent(t),
+                pt.parent().map(|q| PathBuf::from(q.native_or_empty())),
+                "{t}"
+            );
+        }
     }
 
     #[test]
