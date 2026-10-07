@@ -31,8 +31,9 @@ pub struct Site<'a> {
     pub tp: u16,
     pub keys: &'a [Value],
     pub buf: u16,
-    /// The literal's field writes, in program order.
-    pub sets: Vec<&'a Value>,
+    /// The literal's statements after its mint, in program order: its field writes (the
+    /// buffer as their base) and the statements that compute a value for one of them.
+    pub body: Vec<&'a Value>,
 }
 
 fn name(data: &Data, d: u32) -> &str {
@@ -89,13 +90,15 @@ pub fn site<'a>(stmt: &'a Value, data: &Data, d_nr: u32) -> Option<Site<'a>> {
         .iter()
         .filter(|o| !matches!(o, Value::Line(_)))
         .collect();
-    let (Some(Value::Var(buf)), [body @ .., _]) = (ops.last().map(|v| v.unspan()), &ops[..]) else {
+    let (Some(Value::Var(buf)), [stmts @ .., _]) = (ops.last().map(|v| v.unspan()), &ops[..])
+    else {
         return None;
     };
     let buf = *buf;
-    let mut sets: Vec<&Value> = Vec::new();
+    let mut body: Vec<&Value> = Vec::new();
+    let mut sets = 0usize;
     let mut minted = false;
-    for op in body {
+    for op in stmts {
         match op.unspan() {
             Value::Set(v, init) if *v == buf && matches!(init.unspan(), Value::Null) => {}
             Value::Call(c, a)
@@ -112,12 +115,16 @@ pub fn site<'a>(stmt: &'a Value, data: &Data, d_nr: u32) -> Option<Site<'a>> {
                     && a.first().is_some_and(|x| is_var(x, buf))
                     && a.iter().skip(1).all(|x| mentions(x, buf) == 0) =>
             {
-                sets.push(op);
+                sets += 1;
+                body.push(op);
             }
+            // A statement computing a value for a later write (`__ref_1 = (h[k]?.n ?? 0) + d`):
+            // it runs where it stood, before the claim, as every staged value does.
+            _ if mentions(op, buf) == 0 => body.push(op),
             _ => return None,
         }
     }
-    if !minted || sets.is_empty() {
+    if !minted || sets == 0 {
         return None;
     }
     // The buffer is the literal's alone: outside this statement only its null declaration
@@ -142,7 +149,7 @@ pub fn site<'a>(stmt: &'a Value, data: &Data, d_nr: u32) -> Option<Site<'a>> {
         tp: u16::try_from(*tp & 0x7FFF).ok()?,
         keys,
         buf,
-        sets,
+        body,
     })
 }
 
