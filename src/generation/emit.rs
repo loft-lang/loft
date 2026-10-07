@@ -3053,8 +3053,10 @@ impl Output<'_> {
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
     /// carry a narrow-integer cast — see [`block_tail_cast`].
-    /// `@FR-R-Destination`'s caller half: the element's mint, the twin's call into it, and the
-    /// `ok` arm with the move gone — the element finished only there, released otherwise.
+    /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
+    /// each call into its destination and its `ok` arm with the moves gone — the element
+    /// finished only where the plain form moved every result, and each destination filled so
+    /// far released on a failing path.
     fn output_destination_site(
         &mut self,
         w: &mut dyn Write,
@@ -3065,13 +3067,44 @@ impl Output<'_> {
             self.output_code_inner(w, m)?;
             writeln!(w, ";")?;
         }
+        let mut names: Vec<usize> = Vec::new();
+        let mut filled: Vec<(Value, u16)> = Vec::new();
+        self.output_destination_level(w, &site.top, &mut names, &mut filled)
+    }
+
+    /// Resolve the chain's `__ds#m#.` placeholders to the tuples already named.
+    fn destination_names(v: &Value, names: &[usize]) -> Value {
+        let mut v = v.clone();
+        v.map_nodes(&mut |n| {
+            if let Value::RawExpr(e) = n
+                && e.contains("__ds#")
+            {
+                for (m, k) in names.iter().enumerate() {
+                    *e = e.replace(&format!("__ds#{m}#."), &format!("__ds{k}."));
+                }
+            }
+        });
+        v
+    }
+
+    fn output_destination_level(
+        &mut self,
+        w: &mut dyn Write,
+        level: &super::destination::Level<'_>,
+        names: &mut Vec<usize>,
+        filled: &mut Vec<(Value, u16)>,
+    ) -> std::io::Result<()> {
         self.dest_counter += 1;
         let n = self.dest_counter;
-        let mut args = site.call_args.to_vec();
-        args[site.at] = site.dest.clone();
-        let call = Value::Call(site.callee, args);
+        let mut args: Vec<Value> = level
+            .call_args
+            .iter()
+            .map(|a| Self::destination_names(a, names))
+            .collect();
+        args[level.at] = level.dest.clone();
+        let call = Value::Call(level.callee, args);
         if let Value::Call(_, a) = &call {
-            self.dest_site_next = Some((site.callee, a.as_ptr() as usize, site.shape.vo));
+            self.dest_site_next = Some((level.callee, a.as_ptr() as usize, level.shape.vo));
         }
         self.indent(w)?;
         write!(w, "let __ds{n} = ")?;
@@ -3080,28 +3113,44 @@ impl Output<'_> {
         assert!(
             self.dest_site_next.take().is_none(),
             "@FR-R-Destination: the rewritten call of {} was emitted without its twin's name",
-            self.data.def(site.callee).name()
+            self.data.def(level.callee).name()
         );
-        let mut bl = site.then_block.clone();
-        bl.operators = site.then_ops.clone();
-        let tag = format!("__ds{n}.");
-        for op in &mut bl.operators {
-            op.map_nodes(&mut |v| {
-                if let Value::RawExpr(e) = v
-                    && e.contains("__ds#.")
-                {
-                    *e = e.replace("__ds#.", &tag);
-                }
-            });
+        names.push(n);
+        filled.push((level.dest.clone(), level.shape.vt));
+        self.indent(w)?;
+        writeln!(w, "if __ds{n}.{} == 1 {{", level.ok)?;
+        for op in &level.pre {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = Self::destination_names(op, names);
+            self.indent(w)?;
+            self.output_code_inner(w, &op)?;
+            writeln!(w, ";")?;
+        }
+        if let Some(inner) = &level.inner {
+            self.output_destination_level(w, inner, names, filled)?;
+        }
+        for op in &level.post {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = Self::destination_names(op, names);
+            self.indent(w)?;
+            self.output_code_inner(w, &op)?;
+            writeln!(w, ";")?;
         }
         self.indent(w)?;
-        write!(w, "if __ds{n}.{} == 1 ", site.ok)?;
-        self.output_code_inner(w, &Value::Block(Box::new(bl)))?;
-        write!(w, " else {{ stores.remove_claims(&(")?;
-        self.output_code_inner(w, &site.dest)?;
-        write!(w, "), ({}_u16)); ", site.shape.vt)?;
-        self.output_code_inner(w, site.else_v)?;
+        write!(w, "}} else {{ ")?;
+        for (d, vt) in filled.iter().rev() {
+            write!(w, "stores.remove_claims(&(")?;
+            self.output_code_inner(w, d)?;
+            write!(w, "), ({vt}_u16)); ")?;
+        }
+        self.output_code_inner(w, level.else_v)?;
         writeln!(w, " }};")?;
+        filled.pop();
+        names.pop();
         Ok(())
     }
 
@@ -3812,7 +3861,7 @@ impl Output<'_> {
                 );
                 self.dest_memo = memo;
                 if let Some(site) = site
-                    && !self.value_records.fns.contains_key(&site.callee)
+                    && site.callees().iter().all(|c| !self.value_records.fns.contains_key(c))
                 {
                     self.output_destination_site(w, &site)?;
                     repeat_skip = Some(site.last);

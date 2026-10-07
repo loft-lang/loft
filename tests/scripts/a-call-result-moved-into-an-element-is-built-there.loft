@@ -5,8 +5,10 @@
 // is hand-computed.
 //
 // The format, one byte a head: below 100 an integer; 100 + n a text of the n bytes after it;
-// 200 + n a list of n values.  A value that runs past the end fails, and so does every list
-// holding it — a failure answers `next` = where the failing value started.
+// 200 + n a list of n values; 240 + n a map of n key/value pairs.  A value that runs past
+// the end fails, and so does every list or map holding it — a failure answers `next` = where
+// the failing value started.  A map entry is the CHAIN form: two calls built into the two
+// halves of one element, the second only where the first succeeded.
 //
 // @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
 //   with `@falsified-by:` below: admission without the offset-0 condition, which takes `dw`
@@ -16,7 +18,8 @@
 // @falsified-by: tests/falsified/a-call-result-moved-into-an-element-is-built-there.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move)
 
-enum Val { VNone, VInt { value: integer }, VText { value: text }, VList { items: vector<Val> } }
+enum Val { VNone, VInt { value: integer }, VText { value: text }, VList { items: vector<Val> }, VMap { entries: vector<Entry> } }
+struct Entry { key: Val, value: Val }
 struct Dv { const value: Val, const next: integer, const ok: boolean }
 /// The same record with the moved field NOT first: the twin binds its buffer to the
 /// element, so this shape declines (and must answer the same).
@@ -30,6 +33,27 @@ fn dv(b: vector<u8>, pos: integer) -> Dv {
     n = t - 100;
     if pos + 1 + n > len(b) { return Dv { value: VNone, next: pos, ok: false }; }
     return Dv { value: VText { value: text_from_byte_range(b, pos + 1, pos + 1 + n) }, next: pos + 1 + n, ok: true };
+  }
+  if t >= 240 {
+    entries: vector<Entry> = [];
+    p = pos + 1;
+    mok = true;
+    for _ in 0..t - 240 {
+      if mok {
+        kd = dv(b, p);
+        if kd.ok {
+          vd = dv(b, kd.next);
+          if vd.ok {
+            kv = kd.value;
+            vv = vd.value;
+            entries += [Entry { key: kv, value: vv }];
+            p = vd.next;
+          } else { mok = false; }
+        } else { mok = false; }
+      }
+    }
+    if !mok { return Dv { value: VNone, next: pos, ok: false }; }
+    return Dv { value: VMap { entries: entries }, next: p, ok: true };
   }
   items: vector<Val> = [];
   p = pos + 1;
@@ -70,6 +94,7 @@ fn ints(v: Val) -> integer {
   match v {
     VInt { value } => value,
     VList { items } => { s = 0; for x in items { s += ints(x); } s },
+    VMap { entries } => { s = 0; for x in entries { s += ints(x.key) * 100 + ints(x.value); } s },
     _ => 0
   }
 }
@@ -78,6 +103,7 @@ fn texts(v: Val) -> text {
   match v {
     VText { value } => value,
     VList { items } => { s = ""; for x in items { s += texts(x); } s },
+    VMap { entries } => { s = ""; for x in entries { s += texts(x.key) + "=" + texts(x.value) + ";"; } s },
     _ => ""
   }
 }
@@ -114,6 +140,20 @@ fn main() {
   b4: vector<u8> = [201, 201, 201, 201, 201, 4];
   d4 = dv(b4, 0);
   assert(d4.ok && d4.next == 6 && ints(d4.value) == 4, "c4: {d4.next} {ints(d4.value)}");
+
+  // c6 — a map {"ab": 3, 4: [5, "c"]}: keys weigh 100 in ints, so 3 + 400 + 5 = 408; texts
+  // render key=value; per entry.
+  m6: vector<u8> = [242, 102, 97, 98, 3, 4, 202, 5, 101, 99];
+  d6 = dv(m6, 0);
+  assert(d6.ok && d6.next == 10 && ints(d6.value) == 408, "c6: {d6.ok} {d6.next} {ints(d6.value)}");
+  assert(texts(d6.value) == "ab=;=c;", "c6 texts: {texts(d6.value)}");
+
+  // c7 — every prefix of that map: the second entry's VALUE fails after its key (4) and the
+  // first entry ("ab" = 3) were built into elements, the first finished, the second not —
+  // only the whole frame decodes.
+  ok7 = 0;
+  for l in 0..11 { if dv(m6[0..l], 0).ok { ok7 += 1; } }
+  assert(ok7 == 1, "c7: {ok7}");
 
   // c5 — the record whose moved field is not first answers the same (and is not admitted).
   w1 = dw(b1, 0);
