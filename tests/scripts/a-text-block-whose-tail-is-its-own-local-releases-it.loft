@@ -11,6 +11,9 @@
 // lost" in a-null-can-leave-the-loop-through-a-coalesce.loft and
 // a-diverging-arm-beside-a-text-or-boolean-arm-compiles-natively.loft (loft#1907), because
 // every `e ?? return|break|continue` over a text binds `e` to a temp that IS such a tail.
+// The same block-scoped temp is what `--native` could not name inside a GENERATOR, whose locals
+// are state-struct fields: `?? continue` / `?? break` over a text before a `yield` failed rustc
+// with E0425 `var__ncr_1` (loft#1937).  Homing the temp at the function body scope closes both.
 //
 // Axes this file MOVES:  how the tail local is made (a `??` exit's temp — `return`,
 //                        `continue`, `break` — or the author's own `{ s = …; s }`); what reads
@@ -29,7 +32,13 @@
 // `tests/text_buffer_ledger.rs`, which runs this file under `LOFT_TEXT_TIMELINE=1` and requires
 // "NO text leak" — the exit and assertion channels cannot see a leak whose value is right.
 //
-// @falsified-at: PENDING
+// @falsified-at: 653383a5a — measured by hand: interpret under LOFT_TEXT_TIMELINE=1, 52 orphaned
+//   text buffers -> 0 (the channel tests/text_buffer_ledger.rs asserts); native exit 1 -> 0
+//   (E0425 `var__ncr_1` in the generator cells -> compiles).
+// @falsified-by: tests/falsified/a-text-block-whose-tail-is-its-own-local-releases-it.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   ARMED: `LOFT_TEXT_TIMELINE=1` for the interpret half — every value is right on both trees,
+//   so the scored channels see only the native compile; the orphan count is the leak channel.
 
 fn name(k: integer) -> text? { if k % 2 == 0 { "n{k}" } else { null } }
 
@@ -65,6 +74,9 @@ fn via_lambda() -> text {
 }
 
 fn names(n: integer) -> iterator<text> { for k in 0..n { t = name(k) ?? continue; yield t } }
+fn names_until(n: integer) -> iterator<text> { for k in 0..n { t = name(k) ?? break; yield t } }
+fn names_formatted(n: integer) -> iterator<text> { for k in 0..n { t = name(k) ?? continue; yield "{t}!" } }
+fn name_lengths(n: integer) -> iterator<integer> { for k in 0..n { yield len(name(k) ?? continue) } }
 
 // Controls.
 fn coalesce_default(k: integer) -> text { t = name(k) ?? "dflt"; "{t}!" }
@@ -94,6 +106,16 @@ fn main() {
   gen = "";
   for s in names(6) { gen += s }
   assert(gen == "n0n2n4", "in a generator: {gen}");
+  // `?? break` stops at k = 1; the formatted yield keeps 0, 2, 4; their lengths sum to 6.
+  until = "";
+  for s in names_until(5) { until += s }
+  assert(until == "n0", "?? break in a generator: {until}");
+  formatted = "";
+  for s in names_formatted(5) { formatted += s }
+  assert(formatted == "n0!n2!n4!", "a formatted yield: {formatted}");
+  lengths = 0;
+  for v in name_lengths(5) { lengths += v }
+  assert(lengths == 6, "?? continue as a yield's argument: {lengths}");
   assert(coalesce_default(2) == "n2!" && coalesce_default(3) == "dflt!", "control ??: {coalesce_default(3)}");
   assert(outer_tail(4) == "n4!", "control outer tail: {outer_tail(4)}");
   println("own text tails ok");
