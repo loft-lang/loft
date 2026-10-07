@@ -2983,6 +2983,7 @@ use #count instead"
             Type::Optional(inner) => *inner,
             other => other,
         };
+        self.sandbox_read_whole(&tp, format);
         // `@FR-F-Render` — a tuple has no rendering, and that answer holds wherever the walk
         // REACHES one.  The refusal below is the `_` arm of the match on this type, so it
         // caught `"{t}"` and nothing else: a vector of tuples, a tuple FIELD of a struct and a

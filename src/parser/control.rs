@@ -7519,6 +7519,7 @@ impl Parser {
                     self.check_visibility("pattern-field", e_nr, attr_idx);
                 }
                 if attr_idx != usize::MAX {
+                    self.sandbox_read_member(e_nr, &field_name, subject_val);
                     let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
                     let field_type = self.data.attr_type(e_nr, attr_idx);
                     if self.lexer.has_token(":") {
@@ -8004,6 +8005,7 @@ impl Parser {
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
                     self.check_visibility("pattern-field", variant_def_nr, attr_idx);
+                    self.sandbox_read_member(variant_def_nr, &field_name, subject_val);
                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                     if self.lexer.has_token(":") {
                         // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
