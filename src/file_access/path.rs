@@ -449,6 +449,16 @@ impl PathText {
         self.raw.get(i).and_then(Option::as_ref)
     }
 
+    /// The last name as the OS spells it — its own bytes for a name that is not text — to
+    /// join under another directory without losing it.
+    #[must_use]
+    pub fn os_name(&self) -> Option<std::ffi::OsString> {
+        match self.raw.last() {
+            Some(Some(raw)) => Some(raw.clone()),
+            _ => self.file_name().map(std::ffi::OsString::from),
+        }
+    }
+
     /// `@FR-Path-Utf8` — is the last name one loft text cannot spell (shown with U+FFFD)?
     #[must_use]
     pub fn last_is_unspellable(&self) -> bool {

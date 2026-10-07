@@ -4,8 +4,6 @@
 
 //! Test runner: discover and run callable functions in `.loft` files.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(unused_imports)] // Module used from main(), not from test builds.
 
 use crate::compile;
@@ -17,6 +15,7 @@ use crate::native_utils;
 use crate::parser::Parser;
 use crate::scopes;
 use crate::state::State;
+use loft::file_access as fa;
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -36,7 +35,7 @@ struct CwdGuard(Option<std::path::PathBuf>);
 impl Drop for CwdGuard {
     fn drop(&mut self) {
         if let Some(prev) = self.0.take() {
-            let _ = std::env::set_current_dir(prev);
+            let _ = fa::set_current_dir(prev);
         }
     }
 }
@@ -51,7 +50,7 @@ impl Drop for CwdGuard {
 fn sandbox_policy_for(file: &str) -> Option<loft::sandbox::SandboxConfig> {
     let mut dir = std::path::Path::new(file).parent()?;
     for _ in 0..4 {
-        if let Ok(content) = std::fs::read_to_string(dir.join("loft.toml")) {
+        if let Ok(content) = fa::read_to_string(dir.join("loft.toml")) {
             let cfg = loft::sandbox::parse_sandbox_config(&content);
             if cfg.is_active() {
                 return Some(cfg);
@@ -69,7 +68,7 @@ fn sandbox_policy_for(file: &str) -> Option<loft::sandbox::SandboxConfig> {
 fn package_root_for(file: &str) -> Option<std::path::PathBuf> {
     let mut dir = std::path::Path::new(file).parent()?;
     for _ in 0..4 {
-        if dir.join("loft.toml").is_file() {
+        if fa::is_file(dir.join("loft.toml")) {
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
@@ -306,7 +305,7 @@ fn enter_source_dir(source_dir: &str, program_relative: bool) -> CwdGuard {
     if program_relative
         && !source_dir.is_empty()
         && let Ok(prev) = std::env::current_dir()
-        && std::env::set_current_dir(source_dir).is_ok()
+        && fa::set_current_dir(source_dir).is_ok()
     {
         return CwdGuard(Some(prev));
     }
@@ -599,23 +598,20 @@ pub(crate) fn run_tests(
         dir: &std::path::Path,
         out: &mut BTreeMap<String, Vec<std::path::PathBuf>>,
     ) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
         let mut files = Vec::new();
         let mut subdirs = Vec::new();
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
+        for entry in entries {
+            let path = entry.os_spelling();
+            if fa::is_dir(&path) {
                 // Skip hidden directories and .loft artifact dirs
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let name = fa::file_name(&path).unwrap_or_default();
                 if !name.starts_with('.') {
                     subdirs.push(path);
                 }
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            {
+            } else if fa::extension(&path).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
                 files.push(path);
             }
         }
@@ -726,9 +722,7 @@ pub(crate) fn run_tests(
     /// The last path component of `path`, which is how a diagnostic's location names the file
     /// whatever directory the run started in.
     fn file_name_of(path: &str) -> String {
-        std::path::Path::new(path)
-            .file_name()
-            .map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned())
+        fa::file_name(path).unwrap_or_else(|| path.to_string())
     }
 
     /// Every `@EXPECT_…` claim of a file as `(owner, substring)`: the per-function ones under
@@ -787,13 +781,13 @@ pub(crate) fn run_tests(
 
     let root = std::path::Path::new(path_part);
     let mut dirs: BTreeMap<String, Vec<std::path::PathBuf>> = BTreeMap::new();
-    if root.is_file() {
+    if fa::is_file(root) {
         // Single file mode: run tests in just this file.
         let dir_key = root
             .parent()
             .map_or(".".to_string(), |p| p.to_string_lossy().to_string());
         dirs.insert(dir_key, vec![root.to_path_buf()]);
-    } else if root.is_dir() {
+    } else if fa::is_dir(root) {
         collect_loft_files(root, &mut dirs);
     } else {
         std::panic::set_hook(prev_hook);
@@ -927,7 +921,7 @@ pub(crate) fn run_tests(
             let display_name = crate::file_access::portable(file_path);
 
             // Read the raw source to extract annotations before parsing.
-            let source = match std::fs::read_to_string(file_path) {
+            let source = match fa::read_to_string(file_path) {
                 Ok(s) => s,
                 Err(e) => {
                     println!("  FAIL  {display_name}  (cannot read: {e})");
@@ -999,8 +993,9 @@ pub(crate) fn run_tests(
                     // one.  The group pays one ordinary parse plus one base.
                     std::collections::btree_map::Entry::Occupied(mut slot) => {
                         if matches!(slot.get(), BaseSlot::Once) {
-                            let base_file = std::path::Path::new(&abs_file)
-                                .with_file_name("__loft_test_base.loft")
+                            let base_file = fa::parent(std::path::Path::new(&abs_file))
+                                .unwrap_or_default()
+                                .join("__loft_test_base.loft")
                                 .to_string_lossy()
                                 .into_owned();
                             let (libs, region) = slot.key();
@@ -1042,7 +1037,7 @@ pub(crate) fn run_tests(
                         total_files += 1;
                         continue;
                     }
-                    if std::path::Path::new(&stdlib_dir).is_dir() {
+                    if fa::is_dir(std::path::Path::new(&stdlib_dir)) {
                         loft::startup_cache::save_stdlib_cache(&p, &stdlib_dir);
                     }
                 }
@@ -1695,10 +1690,8 @@ pub(crate) fn run_tests(
                         }
                     };
                     if !buf.is_empty() {
-                        let stem = std::path::Path::new(&abs_file)
-                            .file_stem()
+                        let stem = fa::file_stem(&abs_file)
                             .unwrap_or_default()
-                            .to_string_lossy()
                             .replace('-', "_");
                         // The scratch directory is shared by every process on the box —
                         // every test binary of a gate, and every checkout's gate — and one
@@ -1728,9 +1721,9 @@ pub(crate) fn run_tests(
                         let work = crate::platform::build_scratch_dir("test_native");
                         let tmp_rs = work.join(format!("loft_test_native_{stem}.rs"));
                         let tmp_bin = work.join(format!("loft_test_native_{stem}_bin"));
-                        let cached = binary.exists();
+                        let cached = fa::exists(&binary);
                         if !cached {
-                            let _ = std::fs::write(&tmp_rs, &buf);
+                            let _ = fa::write(&tmp_rs, &buf);
                         }
 
                         // Layer 2: never start a compile that could overflow a
@@ -1855,7 +1848,7 @@ pub(crate) fn run_tests(
                                 .map(|o| o.status.success())
                                 .unwrap_or(false);
                             let ok = ok
-                                && (std::fs::rename(&tmp_bin, &binary).is_ok() || binary.exists());
+                                && (fa::rename(&tmp_bin, &binary).is_ok() || fa::exists(&binary));
                             if !ok {
                                 let stderr_msg = compile_result.as_ref().ok().map_or_else(
                                     || "rustc not found".to_string(),
@@ -1905,7 +1898,7 @@ pub(crate) fn run_tests(
                                         }
                                     },
                                 );
-                                let _ = std::fs::remove_file(&tmp_bin);
+                                let _ = fa::remove_file(&tmp_bin);
                                 for (_, fn_name) in &native_fns {
                                     file_result.tests.push((
                                         fn_name.clone(),
@@ -2022,7 +2015,7 @@ pub(crate) fn run_tests(
                         // build directory goes.  `LOFT_KEEP_NATIVE_RS=1` keeps it, source
                         // included, for inspection.
                         if std::env::var_os("LOFT_KEEP_NATIVE_RS").is_none() {
-                            let _ = std::fs::remove_dir_all(&work);
+                            let _ = fa::remove_dir_all(&work);
                         }
                     }
                 }
