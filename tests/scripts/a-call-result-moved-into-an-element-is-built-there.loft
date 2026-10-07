@@ -13,10 +13,14 @@
 // @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
 //   with `@falsified-by:` below: admission without the offset-0 condition, which takes `dw`
 //   (its moved field at +8) and writes every value 8 bytes past the element (`c5`).  Measured
-//   by hand beside it: the failing-prefix sweep leaves the same live records (603 in the kept
-//   store) with the rule on, off (`LOFT_NO_DESTINATION=1`) and on the interpreter.
+//   by hand beside it: the failing-prefix sweeps leave the same live records with the rule on,
+//   off (`LOFT_NO_DESTINATION=1`) and on the interpreter (603 lists, 807 maps).
 // @falsified-by: tests/falsified/a-call-result-moved-into-an-element-is-built-there.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
 //   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-call-result-moved-into-an-element-is-built-there-chain.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).  The plant releases only the failing
+//   level's own destination; the key built before it stays in the kept results' store, which
+//   only the live record count `c8` reads can see (values and the leak check stay green).
 
 enum Val { VNone, VInt { value: integer }, VText { value: text }, VList { items: vector<Val> }, VMap { entries: vector<Entry> } }
 struct Entry { key: Val, value: Val }
