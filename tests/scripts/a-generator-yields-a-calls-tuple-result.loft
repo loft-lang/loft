@@ -1,0 +1,32 @@
+// @FR-G-Yield — a yield hands over its value whatever spelled it: a call whose tuple result
+// lives in a `__tuple` record reaches the consumer as the tuple, member for member.  The
+// interpreter crashed (SIGSEGV in `OpCopyRecord`) when the tuple carried a `text` member: the
+// yield's store face had already unboxed the record into a stack tuple, and the hand-over was
+// still asked about the record type, so it copied the stack tuple AS a record (loft#1903).
+// Each value is worked out by hand beside it.
+// @falsified-at: e45fb9101 — measured below by `make falsify`
+
+struct P { x: integer }
+fn mk(n: integer) -> (integer, text) { (n, "m{n}") }
+fn mkp(n: integer) -> (integer, text, P) { (n, "m{n}", P { x: n * 3 }) }
+fn mki(n: integer) -> (integer, integer) { (n, n * 2) }
+fn yielded() -> iterator<(integer, text)> { yield mk(4); yield mk(5); }
+fn bound() -> iterator<(integer, text)> { t = mk(4); yield t; }
+fn in_loop() -> iterator<(integer, text)> { for i in 0..3 { yield mk(i); } }
+fn with_struct() -> iterator<(integer, text, P)> { yield mkp(2); t = mkp(5); yield t; }
+// Control: an all-integer tuple already reached the consumer.
+fn integers() -> iterator<(integer, integer)> { yield mki(4); }
+
+fn main() {
+  s = ""; for (a, b) in yielded() { s += "{a}{b} "; }
+  assert(s == "4m4 5m5 ", "a call's tuple result yielded: {s}");
+  s = ""; for (a, b) in bound() { s += "{a}{b} "; }
+  assert(s == "4m4 ", "a call's tuple result bound, then yielded: {s}");
+  s = ""; for (a, b) in in_loop() { s += "{a}{b} "; }
+  assert(s == "0m0 1m1 2m2 ", "a call's tuple result yielded in a loop: {s}");
+  // (2, "m2", P{6}) and (5, "m5", P{15}).
+  s = ""; for (a, b, p) in with_struct() { s += "{a}{b}{p.x} "; }
+  assert(s == "2m26 5m515 ", "a tuple with a struct member: {s}");
+  s = ""; for (a, b) in integers() { s += "{a},{b} "; }
+  assert(s == "4,8 ", "an all-integer tuple: {s}");
+}
