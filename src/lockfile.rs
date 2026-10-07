@@ -6,8 +6,6 @@
 // AND the binary crate (where parser/mod.rs::probe_registry_installed
 // only reads).  `allow(dead_code)` silences the binary's view; in the
 // lib the attribute is a no-op because every symbol IS used.
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(dead_code)]
 
 //! `loft.lock` — reproducible-build lock file for the package registry.
@@ -54,7 +52,7 @@
 //!   preserves unknown source kinds so an older loft binary doesn't
 //!   corrupt a newer-format lockfile by rewriting it.
 
-use std::fs;
+use crate::file_access;
 use std::io;
 use std::path::Path;
 
@@ -157,7 +155,7 @@ pub fn update_worklist(
 ///   when its major version exceeds `SCHEMA_VERSION` (newer file we
 ///   can't safely consume).
 pub fn read_lockfile(path: &Path) -> io::Result<Option<LockFile>> {
-    let content = match fs::read_to_string(path) {
+    let content = match file_access::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
@@ -299,10 +297,11 @@ pub fn write_lockfile(path: &Path, lock: &LockFile) -> io::Result<()> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let serialised = serialise(lock);
-    let tmp_path = path.with_extension(format!("lock.tmp{}-{n}", std::process::id()));
-    fs::write(&tmp_path, serialised.as_bytes())?;
-    fs::rename(&tmp_path, path).inspect_err(|_| {
-        let _ = fs::remove_file(&tmp_path);
+    let tmp_path =
+        file_access::with_extension(path, &format!("lock.tmp{}-{n}", std::process::id()));
+    file_access::write(&tmp_path, serialised.as_bytes())?;
+    file_access::rename(&tmp_path, path).inspect_err(|_| {
+        let _ = file_access::remove_file(&tmp_path);
     })
 }
 
@@ -362,10 +361,10 @@ mod tests {
     fn tmpdir(name: &str) -> PathBuf {
         let mut p = env::temp_dir();
         p.push(format!("loft_lock_test_{}_{}", std::process::id(), name));
-        if p.exists() {
-            let _ = fs::remove_dir_all(&p);
+        if file_access::exists(&p) {
+            let _ = file_access::remove_dir_all(&p);
         }
-        fs::create_dir_all(&p).unwrap();
+        file_access::create_dir_all(&p).unwrap();
         p
     }
 
@@ -414,9 +413,12 @@ mod tests {
         let dir = tmpdir("write_atomic_creates_no_tmp");
         let path = dir.join("loft.lock");
         write_lockfile(&path, &sample_lock()).expect("write");
-        assert!(path.exists(), "lockfile not created");
-        assert!(!dir.join("loft.lock.tmp").exists(), ".tmp leaked");
-        let _ = fs::remove_dir_all(&dir);
+        assert!(file_access::exists(&path), "lockfile not created");
+        assert!(
+            !file_access::exists(dir.join("loft.lock.tmp")),
+            ".tmp leaked"
+        );
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -427,7 +429,7 @@ mod tests {
         write_lockfile(&path, &lock).expect("write");
         let read = read_lockfile(&path).expect("read").expect("Some");
         assert_eq!(read, lock);
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -435,7 +437,7 @@ mod tests {
         let dir = tmpdir("read_missing_returns_none");
         let result = read_lockfile(&dir.join("does_not_exist.lock")).expect("no io error");
         assert!(result.is_none());
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
