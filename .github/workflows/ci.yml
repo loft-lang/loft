@@ -1682,6 +1682,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   clippy:
+    # @windows-leg: the cross-target Windows clippy step (x86_64-pc-windows-msvc) in this job
     name: Clippy
     runs-on: ubuntu-latest
 
@@ -1719,6 +1720,13 @@ jobs:
 
       - name: Clippy (all targets, all features, deny warnings)
         run: cargo clippy --all-targets --all-features -- -D warnings
+      # @PLN184 E1 — the Windows leg of this job: lint the code `cfg(windows)` hides from the
+      # Linux run, cross-target on this runner (no Windows runner needed for a lint).  Without
+      # default features: `ring` (registry, remote-store) needs a Windows C toolchain to build.
+      - name: Clippy (the Windows target, deny warnings)
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo clippy --lib --bins --no-default-features --features mmap,native-extensions,threading,random --target x86_64-pc-windows-msvc -- -D warnings
       - name: Save cargo cache (main only)
         if: github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
