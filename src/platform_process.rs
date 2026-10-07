@@ -511,12 +511,132 @@ impl Running {
 impl Drop for Running {
     /// A child that already ended is reaped.  One still running keeps running, as a dropped
     /// `std::process::Child` does, and its tree stays owned: loft's end still reaches it.
+    /// What it holds — its process-table entry and forwarding slot on unix, its job on
+    /// Windows — goes to the [`orphanage`], which lets go of it once the child has finished.
     fn drop(&mut self) {
         if self.status.is_none() && !self.alive() {
             let _ = self.reap();
         }
-        self.os.keep();
+        if self.status.is_none()
+            && let Some(kept) = self.os.keep()
+        {
+            orphanage::adopt(kept);
+        }
     }
+}
+
+/// The children whose [`Running`] was dropped while they ran.  A long-running program that
+/// starts a job and forgets it must not pay for that job after it ends: without this a
+/// finished child stayed a zombie on unix and kept its job handle on Windows until loft ended,
+/// one for every such start.  One thread looks every [`orphanage::EVERY`] and lets go of each
+/// child that has finished; it starts on the first adoption and ends when none are left.
+mod orphanage {
+    use super::os::Kept;
+    use std::sync::{Mutex, PoisonError};
+    use std::time::Duration;
+
+    pub(super) const EVERY: Duration = Duration::from_millis(200);
+
+    /// The kept children, and whether the watching thread is running.
+    static KEPT: Mutex<(Vec<Kept>, bool)> = Mutex::new((Vec::new(), false));
+
+    pub(super) fn adopt(kept: Kept) {
+        let mut g = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+        g.0.push(kept);
+        if !g.1 {
+            g.1 = std::thread::Builder::new()
+                .name("loft-orphanage".to_string())
+                .spawn(watch)
+                .is_ok();
+        }
+    }
+
+    fn watch() {
+        loop {
+            std::thread::sleep(EVERY);
+            let mut g = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+            g.0.retain_mut(|k| !k.finished());
+            if g.0.is_empty() {
+                g.1 = false;
+                return;
+            }
+        }
+    }
+
+    /// How many dropped children are still held.
+    pub(super) fn held() -> usize {
+        KEPT.lock().unwrap_or_else(PoisonError::into_inner).0.len()
+    }
+}
+
+#[cfg(test)]
+mod orphanage_tests {
+    use super::{Program, Spawn, kept_children};
+    use std::time::{Duration, Instant};
+
+    /// A child that is still running a moment after it starts.
+    fn a_short_job() -> Spawn {
+        if cfg!(windows) {
+            Spawn::new(Program::search("ping")).args(["-n", "2", "127.0.0.1"])
+        } else {
+            Spawn::new(Program::search("sh")).args(["-c", "sleep 0.3"])
+        }
+        .stdout(std::process::Stdio::null())
+    }
+
+    /// Children dropped while they run are let go of once they finish: nothing is held
+    /// after them — no zombie and no forwarding slot on unix, no job handle on Windows —
+    /// however many a long-running program starts and forgets.
+    #[test]
+    fn a_dropped_child_is_let_go_of_once_it_finishes() {
+        let mut pids = Vec::new();
+        for _ in 0..20 {
+            let p = a_short_job().start().expect("start");
+            pids.push(p.id());
+            drop(p);
+            assert!(
+                kept_children() > 0 || !cfg!(any(unix, windows)),
+                "dropped while running"
+            );
+        }
+        let until = Instant::now() + Duration::from_secs(30);
+        while kept_children() > 0 && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(
+            kept_children(),
+            0,
+            "dropped children still held after they finished"
+        );
+        #[cfg(unix)]
+        for pid in pids {
+            // SAFETY: `waitid` writes one `siginfo_t` this frame owns; `WNOWAIT` reaps nothing.
+            let r = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    &raw mut info,
+                    libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+                )
+            };
+            assert_eq!(r, -1, "pid {pid} is still an unreaped child of loft");
+            assert!(
+                !super::os::forwarding_to(i32::try_from(pid).unwrap_or(0)),
+                "pid {pid}'s group still holds a forwarding slot"
+            );
+        }
+        #[cfg(not(unix))]
+        let _ = pids;
+    }
+}
+
+/// How many dropped-while-running children loft still holds: their process-table entry on
+/// unix, their job on Windows.  It falls to 0 once they have all finished.
+#[doc(hidden)]
+#[must_use]
+pub fn kept_children() -> usize {
+    orphanage::held()
 }
 
 /// A raw `std::process::Command` for a TEST HARNESS (`tests/`): the process a test drives
@@ -786,13 +906,56 @@ mod os {
             }
         }
 
-        /// The handle goes away while the child runs: the group stays in the table, held by
-        /// the child, which is never reaped and so keeps its id until loft ends.
-        #[allow(
-            clippy::unused_self,
-            reason = "one signature across platforms: the Windows twin keeps its job here"
-        )]
-        pub(super) fn keep(&mut self) {}
+        /// The handle goes away while the child runs: what it holds — its process-table
+        /// entry, and its forwarding slot — goes to the orphanage.
+        pub(super) fn keep(&mut self) -> Option<Kept> {
+            let kept = Kept {
+                pid: self.pid,
+                group: self.group,
+                forwarded: self.forwarded,
+            };
+            self.forwarded = false;
+            (self.pid > 0).then_some(kept)
+        }
+    }
+
+    /// A dropped child the orphanage holds until it has ended.
+    pub(super) struct Kept {
+        pid: i32,
+        group: i32,
+        forwarded: bool,
+    }
+
+    impl Kept {
+        /// Has the child ended?  Then its group leaves the forwarding table FIRST — while the
+        /// child is unreaped its id names the group and nothing else — and only then is the
+        /// child reaped.  A child something else already reaped reads as ended.
+        pub(super) fn finished(&mut self) -> bool {
+            // SAFETY: `waitid` writes one `siginfo_t` this frame owns; `WNOWAIT` reaps nothing.
+            let (r, signo) = unsafe {
+                let mut info: libc::siginfo_t = std::mem::zeroed();
+                let r = libc::waitid(
+                    libc::P_PID,
+                    self.pid as libc::id_t,
+                    &raw mut info,
+                    libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+                );
+                (r, info.si_signo)
+            };
+            if r == 0 && signo != libc::SIGCHLD {
+                return false;
+            }
+            if self.forwarded {
+                forget(self.group);
+                self.forwarded = false;
+            }
+            // SAFETY: reaps this loft's own child, which has ended; writes one int it owns.
+            unsafe {
+                let mut status = 0;
+                libc::waitpid(self.pid, &raw mut status, libc::WNOHANG);
+            }
+            true
+        }
     }
 
     /// Has `child` exited?  Asked with `WNOWAIT`, so it stays unreaped and its id stays its
@@ -834,6 +997,14 @@ mod os {
             slot.compare_exchange(0, group, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn forwarding_to(group: i32) -> bool {
+        group > 0
+            && GROUPS
+                .iter()
+                .any(|slot| slot.load(Ordering::SeqCst) == group)
     }
 
     fn forget(group: i32) {
@@ -1094,6 +1265,13 @@ mod os {
         fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
         fn TerminateJobObject(job: Handle, exit_code: u32) -> i32;
         fn CloseHandle(handle: Handle) -> i32;
+        fn QueryInformationJobObject(
+            job: Handle,
+            class: i32,
+            info: *mut c_void,
+            len: u32,
+            returned: *mut u32,
+        ) -> i32;
     }
 
     /// `JOBOBJECT_BASIC_LIMIT_INFORMATION`.
@@ -1125,6 +1303,8 @@ mod os {
 
     /// `JobObjectExtendedLimitInformation`.
     const EXTENDED_LIMIT_INFORMATION: i32 = 9;
+    /// `JobObjectBasicAccountingInformation`.
+    const JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION: i32 = 1;
     const KILL_ON_JOB_CLOSE: u32 = 0x2000;
     const BREAKAWAY_OK: u32 = 0x0800;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
@@ -1238,12 +1418,50 @@ mod os {
         #[allow(clippy::unused_self, reason = "one signature across platforms")]
         pub(super) fn release(&mut self, _child: &Child) {}
 
-        /// The handle goes away: the job stays open until loft ends, so what the child
-        /// started still ends with loft, and not before.
-        pub(super) fn keep(&mut self) {
-            if let Some(job) = self.job.take() {
-                std::mem::forget(job);
-            }
+        /// The handle goes away: the job goes to the orphanage, which closes it once the
+        /// job holds no process — what the child started still ends with loft, and not
+        /// before, and a finished job does not stay open until loft ends.
+        pub(super) fn keep(&mut self) -> Option<Kept> {
+            self.job.take().map(|job| Kept { job })
+        }
+    }
+
+    /// A dropped child's job, held until nothing in it runs.
+    pub(super) struct Kept {
+        job: Job,
+    }
+
+    /// `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION`.
+    #[repr(C)]
+    #[derive(Default)]
+    struct Accounting {
+        total_user_time: i64,
+        total_kernel_time: i64,
+        this_period_total_user_time: i64,
+        this_period_total_kernel_time: i64,
+        total_page_fault_count: u32,
+        total_processes: u32,
+        active_processes: u32,
+        total_terminated_processes: u32,
+    }
+
+    impl Kept {
+        /// Does the job hold no process any more?  Then dropping it closes the handle, which
+        /// ends nothing.  A job that cannot be asked stays held: closing it could end a
+        /// process still running.
+        pub(super) fn finished(&mut self) -> bool {
+            let mut info = Accounting::default();
+            // SAFETY: the job's own handle; the call writes one struct of the size it is told.
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    self.job.0,
+                    JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+                    (&raw mut info).cast(),
+                    u32::try_from(std::mem::size_of::<Accounting>()).unwrap_or(0),
+                    std::ptr::null_mut(),
+                )
+            };
+            ok != 0 && info.active_processes == 0
         }
     }
 
@@ -1274,7 +1492,19 @@ mod os {
         }
         pub(super) fn stop(&self, _child: &mut Child) {}
         pub(super) fn release(&mut self, _child: &Child) {}
-        pub(super) fn keep(&mut self) {}
+        pub(super) fn keep(&mut self) -> Option<Kept> {
+            None
+        }
+    }
+
+    /// Nothing is held on this platform.
+    pub(super) struct Kept;
+
+    impl Kept {
+        #[allow(clippy::unused_self, reason = "one signature across platforms")]
+        pub(super) fn finished(&mut self) -> bool {
+            true
+        }
     }
 
     pub(super) fn exited(child: &mut Child, block: bool) -> bool {

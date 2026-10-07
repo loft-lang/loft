@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // `start`, `wait`, `alive`, `stop` and `run(timeout:)` (@PLN184 P7): a program that runs
-// beside this one, and a stop — or a timeout — that takes everything it started with it.
-// A grandchild is seen through its pid: `kill -0` answers whether it still exists.  Every
-// value by hand.
+// beside this one, and what a stop or a timeout answers, on every host.  That a stop takes
+// what the program STARTED with it is `../tests-unix/tree.loft` (a grandchild seen through
+// its pid) and, on Windows, `tests/windows_rules.rs`.  Every value by hand.
 use process::*;
 
 // Pause `ms` milliseconds: a program that is never stopped waits out its own wait.
@@ -15,15 +15,16 @@ fn pause(ms: integer) {
   s.stop();
 }
 
-// Does the process `pid` still exist?  A stopped one is reaped by the system shortly after,
-// so this asks for up to two seconds before answering that it does.
-fn still_there(pid: text) -> boolean {
-  for _ in 0..20 {
-    k: Command = "kill -0 {pid}";
-    if !k.run().ok { return false; }
-    pause(100);
-  }
-  true
+fn test_a_timeout_stops_a_run() {
+  t: Command = "sleep 30";
+  r = t.run(timeout: 300);
+  assert(r.timed_out && !r.ok && r.code == -2, "timed out: {r.timed_out} {r.code}");
+  q: Command = "sh -c 'echo in time'";
+  x = q.run(timeout: 10000);
+  assert(x.ok && !x.timed_out && x.code == 0 && x.stdout == "in time\n", "a run that ends in time: {x.code} {x.stdout}");
+  e: Command = "cat";
+  y = e.run("fed", timeout: 10000);
+  assert(y.ok && y.stdout == "fed", "input reaches a run with a timeout: {y.stdout}");
 }
 
 fn test_a_program_that_ends_by_itself() {
@@ -49,24 +50,6 @@ fn test_a_stop_ends_a_running_program() {
   assert(s.code == 143, "a second stop changes nothing: {s.code}");
 }
 
-fn test_a_stop_takes_what_it_started() {
-  d = temp_dir() ?? "/tmp";
-  pidfile = "{d}/loft_process_start_{now()}.pid";
-  // The pid file reaches sh as a path: in the host's spelling, also under an emulated host.
-  tree: Command = "sh -c 'sleep 30 & echo $! > \"$1\"; wait' sh {path(pidfile)}";
-  t = tree.start();
-  for _ in 0..100 {
-    if (file(pidfile).content() ?? "") != "" { break; }
-    pause(50);
-  }
-  pid = (file(pidfile).content() ?? "").trim();
-  assert(pid != "", "the grandchild wrote its pid");
-  assert(still_there(pid), "the grandchild runs before the stop");
-  t.stop();
-  assert(!still_there(pid), "the grandchild {pid} outlived the stop");
-  delete(pidfile);
-}
-
 fn test_a_program_that_cannot_start() {
   m: Command = "no-such-program-for-loft";
   n = m.start();
@@ -78,41 +61,25 @@ fn test_a_program_that_cannot_start() {
   assert(q.error == r.refused && q.code == -1 && !q.alive(), "a refused command never starts: {q.error}");
 }
 
-fn test_a_timeout_stops_the_tree() {
-  // sh prints its background sleep's pid, then waits for it.  The sleep's output goes
-  // elsewhere, so a timeout that stopped only sh would return at once and leave it running.
-  t: Command = "sh -c 'sleep 30 >/dev/null 2>&1 & echo $!; wait'";
-  r = t.run(timeout: 300);
-  assert(r.timed_out && !r.ok && r.code == -2, "timed out: {r.timed_out} {r.code}");
-  pid = r.stdout.trim();
-  assert(pid != "", "the background sleep's pid arrived before the stop: [{r.stdout}]");
-  assert(!still_there(pid), "the grandchild {pid} outlived the timeout");
-  q: Command = "sh -c 'echo in time'";
-  x = q.run(timeout: 10000);
-  assert(x.ok && !x.timed_out && x.code == 0 && x.stdout == "in time\n", "a run that ends in time: {x.code} {x.stdout}");
-  e: Command = "cat";
-  y = e.run("fed", timeout: 10000);
-  assert(y.ok && y.stdout == "fed", "input reaches a run with a timeout: {y.stdout}");
-}
-
 fn test_path_holes() {
-  // A text hole is passed as it is written; a path hole in the host's spelling, which on
-  // this unix host is the same.
+  // A text hole is passed as it is written; a path hole in the host's spelling: `a/b` on
+  // unix, `a\b` on Windows.
   t = "a/b";
   c: Command = "printf %s {t}";
   assert("{c.argv}" == "[\"printf\",\"%s\",\"a/b\"]", "a text hole: {c.argv}");
   assert(c.run().stdout == "a/b", "a text hole holding a/b arrives unchanged");
   p: Command = "printf %s {path("a/b")}";
-  assert(p.refused == "" && p.run().stdout == "a/b", "a path hole: {p.argv} {p.refused}");
+  got_p = p.run().stdout;
+  assert(p.refused == "" && (got_p == "a/b" || got_p == "a\\b"), "a path hole: {p.argv} {p.refused} [{got_p}]");
   inside: Command = "x --out={path("dir/f.txt")}";
   assert("{inside.argv}" == "[\"x\",\"--out=dir/f.txt\"]", "a path hole inside a word: {inside.argv}");
   bad: Command = "cat {path("a/b:c")}";
   assert(bad.refused != "" && "{bad.argv}" == "[\"cat\"]", "a name no platform holds refuses: {bad.argv} {bad.refused}");
-  // A path hole reaches its file, as the program word and as an argument.
+  // A path hole reaches its file as an argument.
   d = temp_dir() ?? "/tmp";
   f = "{d}/loft_process_path_{now()}.txt";
   { w = file(f); w.write("reached"); }
-  r: Command = "{path("/bin/cat")} {path(f)}";
+  r: Command = "cat {path(f)}";
   got = r.run();
   assert(got.ok && got.stdout == "reached", "the paths reach their files: {got.code} {got.stdout} {got.stderr}");
   delete(f);
@@ -121,9 +88,8 @@ fn test_path_holes() {
 fn main() {
   test_a_program_that_ends_by_itself();
   test_a_stop_ends_a_running_program();
-  test_a_stop_takes_what_it_started();
   test_a_program_that_cannot_start();
-  test_a_timeout_stops_the_tree();
+  test_a_timeout_stops_a_run();
   test_path_holes();
   println("ok");
 }

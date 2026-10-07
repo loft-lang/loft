@@ -5,8 +5,9 @@
 // the cells and their hand-computed values: `command.loft` the composition matrix (a value
 // can never become syntax), `run.loft` the drain gate (a stream is never left without a
 // reader) and the contract of a finished run, `start.loft` a program running beside this one
-// and the tree a stop or a timeout takes with it, and path holes (@PLN184 P7) — that one
-// also under the emulated Windows host, where a path hole must still reach its file.  Each
+// and path holes (@PLN184 P7), `../tests-unix/tree.loft` the tree a stop or a timeout takes
+// with it — both also under the emulated Windows host, where a path hole must still reach
+// its file.  Each
 // must print `ok` on the interpreter AND the compiled backend: the native is one body behind
 // two calling conventions, and this is what keeps the second one honest.  The composition
 // matrix spawns nothing and runs on every host; the drain gate and `start.loft` spawn `sh`.
@@ -75,8 +76,19 @@ mod spawns_sh {
     }
 
     #[test]
+    fn a_stop_takes_the_tree_interpreted() {
+        run("--interpret", "../tests-unix/tree.loft");
+    }
+
+    #[test]
+    fn a_stop_takes_the_tree_compiled() {
+        run("--native", "../tests-unix/tree.loft");
+    }
+
+    #[test]
     fn a_started_program_and_its_tree_under_the_emulated_windows_host() {
         run_on("--interpret", "start.loft", "windows");
         run_on("--native", "start.loft", "windows");
+        run_on("--interpret", "../tests-unix/tree.loft", "windows");
     }
 }
