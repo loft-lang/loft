@@ -687,8 +687,7 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         op_priority: crate::data::OP_NORMAL,
         builtin: r.field_bool(stores, ds::DEF_BUILTIN), // @PLN165 arc E
         operator_form: r.field_bool(stores, ds::DEF_OPERATOR_FORM), // @PLN182
-        returned_alias: u32::try_from(r.field_int(stores, ds::DEF_RETURNED_ALIAS))
-            .unwrap_or(u32::MAX),
+        returned_fact: crate::data::AliasFact::decode(r.field_str(stores, ds::DEF_RETURNED_FACT)),
         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
         mutated_captures: read_name_list(
             stores,
@@ -753,6 +752,7 @@ fn read_attribute(stores: &Stores, r: Record) -> Attribute {
         check: read_node_child(stores, r.field_vec(ds::ATTR_CHECK)),
         check_message: read_node_child(stores, r.field_vec(ds::ATTR_CHECK_MESSAGE)),
         alias_d_nr: r.field_int(stores, ds::ATTR_ALIAS_D_NR) as u32,
+        fact: crate::data::AliasFact::decode(r.field_str(stores, ds::ATTR_FACT)),
         assigned_lambda_d_nr: r.field_int(stores, ds::ATTR_ASSIGNED_LAMBDA_D_NR) as u32,
         // @PLN86 F8b — restore the group#right member links (space-joined; "" = none).
         links: r

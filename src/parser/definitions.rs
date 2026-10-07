@@ -6,6 +6,7 @@ use super::{
     ToString, Type, Value, complete_definition, diagnostic_format, is_camel, is_lower, is_op,
     is_upper, rename, v_block, v_if,
 };
+use crate::data::AliasFact;
 
 /// What a synthesised dispatcher (@F20) hands to the arm it calls.
 ///
@@ -1234,9 +1235,16 @@ impl Parser {
         };
         self.limit_refused = false;
         if self.lexer.has_token("=") {
+            self.type_fact = AliasFact::Plain;
             if let Some(tp) = self.parse_type_full(d_nr, false) {
                 if self.first_pass && !conflict && d_nr != u32::MAX {
                     self.data.set_returned(d_nr, tp);
+                }
+                // @PLN187 — where the right-hand side names another alias: a `pub type`
+                // stays transparent, and what it names keeps its own abstraction.
+                if !conflict && d_nr != u32::MAX {
+                    self.data.definitions[d_nr as usize].returned_fact =
+                        std::mem::take(&mut self.type_fact);
                 }
             } else if !self.first_pass {
                 diagnostic!(self.lexer, Level::Error, "Expected a type after =");
@@ -2997,14 +3005,12 @@ impl Parser {
             for (idx, token) in std::mem::take(&mut self.pending_param_locks) {
                 self.param_locks.insert((self.context, idx as u32), token);
             }
-            // @PLN187 — each parameter keeps the alias it was declared with.
-            let aliases = std::mem::take(&mut self.pending_param_aliases);
+            // @PLN187 — each parameter keeps where its declared type names an alias.
+            let facts = std::mem::take(&mut self.pending_param_facts);
             if self.context != u32::MAX {
                 let attrs = &mut self.data.definitions[self.context as usize].attributes;
-                for (a, alias) in attrs.iter_mut().zip(aliases) {
-                    if alias != u32::MAX {
-                        a.alias_d_nr = alias;
-                    }
+                for (a, fact) in attrs.iter_mut().zip(facts) {
+                    a.fact = fact;
                 }
             }
         }
@@ -3092,7 +3098,7 @@ impl Parser {
         }
         let mut returned_not_null = false;
         self.pending_forward_return = None;
-        self.declared_alias = u32::MAX;
+        self.type_fact = AliasFact::Plain;
         let mut result = if self.lexer.has_token("->") {
             // Will be the correct def_nr on the second pass
             if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
@@ -3309,13 +3315,13 @@ impl Parser {
         if generic_return_promotable && needs_tuple_rewrite {
             result = self.boxed_tuple_return(result);
         }
-        let returned_alias = self.declared_alias;
+        let returned_fact = std::mem::take(&mut self.type_fact);
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
         if self.first_pass {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
-            self.data.definitions[self.context as usize].returned_alias = returned_alias;
+            self.data.definitions[self.context as usize].returned_fact = returned_fact;
             if let Some((stub, args)) = self.pending_forward_return.take() {
                 self.forward_generic_returns
                     .push((self.context, stub, args));
@@ -3944,7 +3950,7 @@ impl Parser {
         // @PLN86 §7.2 (F7) — collect this list's `…#default` parameter locks fresh; the
         // caller (`parse_function`) records them once the function's def_nr exists.
         self.pending_param_locks.clear();
-        self.pending_param_aliases.clear();
+        self.pending_param_facts.clear();
         // @PLN115 tail — likewise collect each parameter's name position; the def_nr /
         // var_nr are not established until after this list, so the DECLARATION
         // occurrence is recorded in `parse_function` (param arg-index == var_nr).
@@ -3958,7 +3964,7 @@ impl Parser {
             let attr_pos = self
                 .record_resolutions
                 .then(|| self.lexer.peek_pos().clone());
-            self.declared_alias = u32::MAX;
+            self.type_fact = AliasFact::Plain;
             let Some(attr_name) = self.lexer.has_identifier() else {
                 diagnostic!(self.lexer, Level::Error, "Expect attribute");
                 return false;
@@ -4234,7 +4240,8 @@ impl Parser {
                     typedef.source_name(&self.data)
                 );
             }
-            self.pending_param_aliases.push(self.declared_alias);
+            self.pending_param_facts
+                .push(std::mem::take(&mut self.type_fact));
             (*arguments).push(Argument {
                 name: attr_name,
                 typedef,
@@ -4366,20 +4373,11 @@ impl Parser {
         type_name: &str,
         returned: bool,
     ) -> Option<Type> {
-        self.type_nesting += 1;
-        if self.type_nesting == 1 {
-            self.element_alias = u32::MAX;
-        }
+        // @PLN187 — this level's fact, set by the alias arm or `sub_type`'s vector; a
+        // nested level takes its own before returning here.
+        self.own_fact = None;
         let t = self.parse_type_inner(on_d, type_name, returned);
-        // @PLN187 — `vector<Handle>`: the element's alias, marked as a vector of it.
-        if self.type_nesting == 1
-            && self.element_alias != u32::MAX
-            && self.declared_alias == u32::MAX
-            && matches!(t.as_ref().map(Type::base), Some(Type::Vector(..)))
-        {
-            self.declared_alias = self.element_alias | crate::parser::abstract_alias::ELEM;
-        }
-        self.type_nesting -= 1;
+        self.type_fact = self.own_fact.take().unwrap_or_default();
         let t = t?;
         // @PLN125 arc A step A2b — `Self.X`, an interface's ASSOCIATED TYPE used in one
         // of its own method signatures:
@@ -4736,12 +4734,9 @@ impl Parser {
             )
         {
             // @PLN187 — the outermost type of a declaration was spelled with a user alias.
+            // @PLN187 — a user alias spelled here: its fact is the alias itself.
             if dt == DefType::Type && self.data.def(tp_nr).source != crate::data::STD_SOURCE {
-                if self.type_nesting == 1 {
-                    self.declared_alias = tp_nr;
-                } else if self.type_nesting == 2 {
-                    self.element_alias = tp_nr;
-                }
+                self.own_fact = Some(AliasFact::Alias(tp_nr));
             }
             if matches!(dt, DefType::EnumValue)
                 || (self.first_pass && matches!(dt, DefType::Struct))
@@ -4836,13 +4831,14 @@ impl Parser {
         if self.lexer.has_token("(") {
             // Tuple type: (T1, T2, ...)
             let mut types = Vec::new();
+            let mut facts = Vec::new();
             loop {
                 if self.lexer.peek_token(")") {
                     break;
                 }
-                self.type_nesting += 1;
+                self.type_fact = AliasFact::Plain;
                 let member = self.parse_type_full(on_d, false);
-                self.type_nesting -= 1;
+                facts.push(std::mem::take(&mut self.type_fact));
                 if let Some(tp) = member {
                     types.push(tp);
                 } else {
@@ -4853,6 +4849,8 @@ impl Parser {
                 }
             }
             self.lexer.token(")");
+            // @PLN187 — `(Handle, u8)`: each member's fact, by position.
+            self.type_fact = AliasFact::tuple(facts);
             if types.len() < 2 {
                 diagnostic!(
                     self.lexer,
@@ -4897,7 +4895,9 @@ impl Parser {
             }
             Some(Type::Tuple(types))
         } else if self.lexer.has_token("fn") {
-            Some(self.parse_fn_type(on_d))
+            let tp = self.parse_fn_type(on_d);
+            self.type_fact = AliasFact::Plain;
+            Some(tp)
         } else if let Some(id) = self.lexer.has_identifier() {
             self.parse_type(on_d, &id, returned)
         } else {
@@ -4906,7 +4906,14 @@ impl Parser {
     }
 
     pub(crate) fn sub_type(&mut self, on_d: u32, type_name: &str, link: Link) -> Option<Type> {
-        let tp = self.sub_type_inner(on_d, type_name, link)?;
+        self.type_fact = AliasFact::Plain;
+        let tp = self.sub_type_inner(on_d, type_name, link);
+        // @PLN187 — `vector<Handle>`: the element's fact, one level down.  Any other
+        // collection holds records, whose fields carry their own facts.
+        if type_name == "vector" {
+            self.own_fact = Some(AliasFact::vector(std::mem::take(&mut self.type_fact)));
+        }
+        let tp = tp?;
         // #318 sink R3: no collection of a closure-carrying struct.
         // An element copy embeds a closure record whose raw DbRefs
         // point into the constructing frame (silent corruption once
@@ -6949,6 +6956,7 @@ impl Parser {
         // so `fill_database` / codegen can consult `forced_size(alias)` even
         // though the resolved Type::Integer collapses the alias info.
         let mut alias_d_nr: u32 = u32::MAX;
+        let mut field_fact = AliasFact::Plain; // @PLN187
         loop {
             // @PLN40 Phase 2 — consume a `const` before the field type (`v: const T`).
             // Runs on BOTH passes so the lexer position stays aligned; the flag is
@@ -6984,9 +6992,10 @@ impl Parser {
                     }
                     self.lexer.token(")");
                 } else if let Some(tp) = {
-                    self.declared_alias = u32::MAX;
+                    self.type_fact = AliasFact::Plain;
                     self.parse_type(d_nr, &id, false)
                 } {
+                    field_fact = self.type_fact.clone();
                     defined = true;
                     // If the type carries a not-null flag (e.g. integer not null),
                     // propagate it to the field's nullable flag so is_null and
@@ -7003,16 +7012,10 @@ impl Parser {
                     // A QUALIFIED alias (`units::Coord`) reads its library's name as `id`: the
                     // alias the type resolved to is the one recorded (@PLN187).
                     if matches!(tp.base(), Type::Integer(_)) && id != "integer" {
-                        alias_d_nr = if self.declared_alias == u32::MAX {
-                            self.data.def_nr(&id)
-                        } else {
-                            self.declared_alias
+                        alias_d_nr = match &field_fact {
+                            AliasFact::Alias(a) => *a,
+                            _ => self.data.def_nr(&id),
                         };
-                    } else if self.declared_alias != u32::MAX {
-                        // @PLN187 — any other user alias is kept too: a non-`pub` one stays
-                        // abstract outside its file (C140).  It has no `size(N)`, so the
-                        // `forced_size` readers of this field see no width from it.
-                        alias_d_nr = self.declared_alias;
                     }
                     a_type = tp;
                     // '= expr' shorthand for a field default value
@@ -7020,7 +7023,11 @@ impl Parser {
                     // @PLN86 P6.4 — links after a scalar/named field type.
                     self.parse_field_links(d_nr, a_name);
                 }
-            } else if let Some(tp) = self.parse_type_full(d_nr, false) {
+            } else if let Some(tp) = {
+                self.type_fact = AliasFact::Plain;
+                self.parse_type_full(d_nr, false)
+            } {
+                field_fact = self.type_fact.clone();
                 // Plan-06 phase 4d: tuple-typed struct fields are now
                 // accepted.  Storage layout uses the synthetic
                 // `__tuple<…>` struct's positions (registered via
@@ -7109,6 +7116,7 @@ impl Parser {
             if alias_d_nr != u32::MAX {
                 self.data.definitions[d_nr as usize].attributes[a].alias_d_nr = alias_d_nr;
             }
+            self.data.definitions[d_nr as usize].attributes[a].fact = field_fact;
             if is_computed {
                 self.data.definitions[d_nr as usize].attributes[a].constant = true;
             }

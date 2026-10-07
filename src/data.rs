@@ -4623,6 +4623,156 @@ pub struct Argument {
     pub const_pos: (u32, u32),
 }
 
+/// @PLN187 (@C140) — where a declared type names a user `type` alias, by position: the alias
+/// itself, a vector's elements, a tuple's members.  `type Handle = integer` declared without
+/// `pub` is ABSTRACT outside its file (`parser::abstract_alias`), so the checker follows these
+/// positions through a program while the `Type` stays the alias's underlying type.  A
+/// position no alias names is `Plain`; a compound whose positions are all plain is `Plain`.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub enum AliasFact {
+    #[default]
+    Plain,
+    /// The value IS the alias (its def number).
+    Alias(u32),
+    /// A vector whose elements carry the inner fact.
+    Vector(Box<AliasFact>),
+    /// A tuple whose members carry these facts, in order.
+    Tuple(Vec<AliasFact>),
+    /// An empty vector literal `[]` — fits a vector of any fact.  Never recorded.
+    Empty,
+    /// A lambda whose body yields the inner fact — what binds a generic's result type
+    /// variable (`map(v, |x| x)`).  Never recorded.
+    Lambda(Box<AliasFact>),
+}
+
+impl AliasFact {
+    #[must_use]
+    pub fn is_plain(&self) -> bool {
+        matches!(self, AliasFact::Plain)
+    }
+
+    /// Every alias the fact names, at any position.
+    pub fn aliases(&self, out: &mut Vec<u32>) {
+        match self {
+            AliasFact::Alias(a) => out.push(*a),
+            AliasFact::Vector(inner) => inner.aliases(out),
+            AliasFact::Tuple(ms) => ms.iter().for_each(|m| m.aliases(out)),
+            AliasFact::Plain | AliasFact::Empty | AliasFact::Lambda(_) => {}
+        }
+    }
+
+    /// `vector<inner>`, plain when its elements are.
+    #[must_use]
+    pub fn vector(inner: AliasFact) -> AliasFact {
+        match inner {
+            AliasFact::Plain | AliasFact::Empty => AliasFact::Plain,
+            f => AliasFact::Vector(Box::new(f)),
+        }
+    }
+
+    /// `(members…)`, plain when every member is.
+    #[must_use]
+    pub fn tuple(members: Vec<AliasFact>) -> AliasFact {
+        let members: Vec<AliasFact> = members
+            .into_iter()
+            .map(|m| {
+                if m == AliasFact::Empty {
+                    AliasFact::Plain
+                } else {
+                    m
+                }
+            })
+            .collect();
+        if members.iter().all(AliasFact::is_plain) {
+            AliasFact::Plain
+        } else {
+            AliasFact::Tuple(members)
+        }
+    }
+
+    /// The IR's text for it: `""` plain, `a<n>` an alias, `v<f>` a vector, `t(<f>,…)` a tuple,
+    /// `_` a plain member inside a tuple.
+    #[must_use]
+    pub fn encode(&self) -> String {
+        fn put(f: &AliasFact, out: &mut String) {
+            match f {
+                AliasFact::Plain | AliasFact::Empty | AliasFact::Lambda(_) => out.push('_'),
+                AliasFact::Alias(a) => {
+                    out.push('a');
+                    out.push_str(&a.to_string());
+                }
+                AliasFact::Vector(inner) => {
+                    out.push('v');
+                    put(inner, out);
+                }
+                AliasFact::Tuple(ms) => {
+                    out.push_str("t(");
+                    for (i, m) in ms.iter().enumerate() {
+                        if i > 0 {
+                            out.push(',');
+                        }
+                        put(m, out);
+                    }
+                    out.push(')');
+                }
+            }
+        }
+        if self.is_plain() {
+            return String::new();
+        }
+        let mut out = String::new();
+        put(self, &mut out);
+        out
+    }
+
+    /// The inverse of [`Self::encode`]; anything unreadable is `Plain`.
+    #[must_use]
+    pub fn decode(text: &str) -> AliasFact {
+        fn get(b: &[u8], at: &mut usize) -> AliasFact {
+            match b.get(*at) {
+                Some(b'a') => {
+                    *at += 1;
+                    let start = *at;
+                    while b.get(*at).is_some_and(u8::is_ascii_digit) {
+                        *at += 1;
+                    }
+                    std::str::from_utf8(&b[start..*at])
+                        .ok()
+                        .and_then(|d| d.parse().ok())
+                        .map_or(AliasFact::Plain, AliasFact::Alias)
+                }
+                Some(b'v') => {
+                    *at += 1;
+                    AliasFact::vector(get(b, at))
+                }
+                Some(b't') if b.get(*at + 1) == Some(&b'(') => {
+                    *at += 2;
+                    let mut ms = Vec::new();
+                    loop {
+                        ms.push(get(b, at));
+                        match b.get(*at) {
+                            Some(b',') => *at += 1,
+                            Some(b')') => {
+                                *at += 1;
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                    AliasFact::tuple(ms)
+                }
+                Some(b'_') => {
+                    *at += 1;
+                    AliasFact::Plain
+                }
+                _ => AliasFact::Plain,
+            }
+        }
+        let mut at = 0;
+        get(text.as_bytes(), &mut at)
+    }
+}
+
 #[derive(Clone)]
 #[allow(clippy::struct_excessive_bools)] // independent property flags (mutable/constant/const_field/nullable/primary); an enum would add indirection without clarity
 pub struct Attribute {
@@ -4672,6 +4822,8 @@ pub struct Attribute {
     /// `size(N)` annotation (e.g. `i32`), this holds the alias def_nr so
     /// `fill_database` / codegen can consult `forced_size(alias_nr)`.  `0`
     /// means "no alias" — fall back to the limit()-based heuristic.
+    /// @PLN187 — where this parameter's or field's DECLARED type names a `type` alias.
+    pub fact: AliasFact,
     pub alias_d_nr: u32,
     /// P213: for fn-ref struct fields, the def_nr of the lambda assigned
     /// at the (single) construction site.  Used by `fill_database`'s
@@ -4989,10 +5141,11 @@ pub struct Definition {
     /// Related type for fields, and the return type for functions
     pub returned: Type,
     /// Whether the return type was declared `not null` (only meaningful for functions)
-    /// @PLN187 — the `type` alias the result was DECLARED with (`-> Handle`), or `u32::MAX`.
-    /// `returned` holds the alias's underlying type; this keeps the name a caller in another
-    /// file sees, so a non-`pub` alias can stay abstract there (C140).
-    pub returned_alias: u32,
+    /// @PLN187 — where the DECLARED result type names a `type` alias (`-> Handle`,
+    /// `-> (Handle, u8)`); for an alias definition, where its right-hand side does.
+    /// `returned` holds the underlying type; this keeps what a caller in another file sees,
+    /// so a non-`pub` alias can stay abstract there (C140).
+    pub returned_fact: AliasFact,
     pub returned_not_null: bool,
     /// Rust code
     pub rust: String,
@@ -7547,6 +7700,7 @@ impl Data {
             check: Value::Null,
             check_message: Value::Null,
             alias_d_nr: u32::MAX,
+            fact: AliasFact::Plain,
             assigned_lambda_d_nr: u32::MAX,
             links: Vec::new(),
             lexeme: false,
@@ -7599,7 +7753,7 @@ impl Data {
             code: Value::Null,
             returned: Type::Unknown(rec),
             returned_not_null: false,
-            returned_alias: u32::MAX,
+            returned_fact: AliasFact::Plain,
             rust: String::new(),
             native: String::new(),
             cap: String::new(),

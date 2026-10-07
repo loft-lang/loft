@@ -258,6 +258,7 @@ fn write_attribute(stores: &mut Stores, r: &Record, a: &Attribute) {
     // @PLN86 F8b — the group#right member links, joined by spaces (tokens contain no
     // whitespace), so a warm-cached host type keeps its capability links.
     r.set_field_str(stores, ds::ATTR_LINKS, &a.links.join(" "));
+    r.set_field_str(stores, ds::ATTR_FACT, &a.fact.encode()); // @PLN187
 }
 
 /// Materialize a `Vec<Attribute>` into the `vector<Attribute>` field at `off`
@@ -435,15 +436,7 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_bool(stores, ds::DEF_NULL_SAFE, d.null_safe); // @PLN46 W2
     r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
     r.set_field_bool(stores, ds::DEF_OPERATOR_FORM, d.operator_form); // @PLN182
-    r.set_field_int(
-        stores,
-        ds::DEF_RETURNED_ALIAS,
-        if d.returned_alias == u32::MAX {
-            -1
-        } else {
-            i64::from(d.returned_alias)
-        },
-    ); // @PLN187
+    r.set_field_str(stores, ds::DEF_RETURNED_FACT, &d.returned_fact.encode()); // @PLN187
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);
@@ -1576,6 +1569,7 @@ mod tests {
             check: Value::Null,
             check_message: Value::Text("bad".into()),
             alias_d_nr: 3,
+            fact: crate::data::AliasFact::Plain,
             assigned_lambda_d_nr: 99,
             links: vec!["fs#read".into()],
             lexeme: false,

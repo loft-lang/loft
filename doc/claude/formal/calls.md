@@ -376,6 +376,12 @@ DESIGN_DECISIONS.md C123.
               operation that never looks at an element (`len`, `+=` of `vector<A>`,
               `insert`, `reverse` — a callee whose parameter is an untyped `vector` or an
               unbounded `vector<T>`) takes it; a bounded generic (`sort`, `sum`) reads τ.
+              The same holds at every depth a value carries A: a tuple member, a vector
+              of vectors, a transparent `pub type` that names A, a keyed lookup's key, the
+              value of an `if` / `match` / block / comprehension (its branches must agree),
+              a destructured or pattern-bound member, a lambda's parameter and result
+              through a generic's type variable, a named argument.  An `if` on an A, a
+              `match` on one, and a literal or variant pattern against an A member read τ.
               Inside F, and as a `pub type`, A is τ.  A tuple spelled inline is no declaration: its
               members are visible wherever it is.
 ```
@@ -408,7 +414,7 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 ## Deviations
 
-**OPEN: 2.**  The closed record is in [calls-history.md](calls-history.md).
+**OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
 
 - **D-call-28 (OPEN, @PLN187)** — violates `(F-Visible)`: a private field read, written or matched
   outside its file, a literal of a `pub` type with a private field and a variant of a non-`pub`
@@ -416,14 +422,6 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
   first (@PLN187 step 5), so no consumer of a published release breaks; then the refusal is the
   default.  Naming and the build refusal for a name-only type already hold on every build.
   Guard `tests/pub_visibility.rs` (`@C140`).
-- **D-call-29 (OPEN, @PLN187)** — violates `(F-Visible)`'s alias clause where the checker does
-  not yet follow an abstract value (`parser::abstract_alias`): an alias nested deeper than one
-  `vector<…>` level — a tuple member `(Handle, u8)`, `vector<vector<Handle>>`, a keyed
-  collection's element, a comprehension's result — carries no abstraction, so it reads as τ;
-  `if` and `match` over an abstract value, a lambda's parameters and a NAMED argument are not
-  checked; a block or `if` that yields one reads as plain, so handing it on is refused rather
-  than accepted.  Enforced, like D-call-28, only under `LOFT_PUB_ENFORCE=1`.  Guard
-  `tests/pub_visibility.rs`.
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

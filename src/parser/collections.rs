@@ -4057,7 +4057,7 @@ use #count instead"
             // tail after the loop still needs it.
             let block_expected = std::mem::replace(&mut self.expected, Type::Unknown(0));
             let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
-            let iterable_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+            let iterable_fact = std::mem::take(&mut self.operand_fact);
             self.expected = block_expected;
             self.in_control_head = outer_head;
             // if #fields was detected, take the compile-time unrolling path.
@@ -4243,7 +4243,7 @@ use #count instead"
                     expr,
                     destructure_names.as_deref(),
                 );
-            self.bind_loop_variable(iterable_alias, for_var);
+            self.bind_loop_variable(&iterable_fact, for_var);
             // loft#1540 — a loop variable over a value-const value's elements is a view of it.
             self.mark_const_view(for_var, &orig_coll_expr, true);
             // loft#762 — `_` names THIS loop's binding while its body is parsed, and

@@ -818,6 +818,7 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_block_inner(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
+        let mut last_fact = crate::data::AliasFact::Plain; // @PLN187
         if let Value::Var(v) = val
             && let Type::Reference(r, _) = self.vars.tp(*v).clone()
             && context == "block"
@@ -1109,6 +1110,7 @@ impl Parser {
             self.stmt_if_pending = self.lexer.peek_token("if") || self.lexer.peek_token("match");
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
+            last_fact = std::mem::take(&mut self.operand_fact); // @PLN187
             // `@FR-H-Write-Else` — an `else` left over after a whole statement can only be a
             // store's failure arm: an `if` or a value-`if` has already consumed its own.
             if self.lexer.peek_token("else") {
@@ -1352,6 +1354,7 @@ impl Parser {
             if !matches!(t, Type::Never) {
                 t = Type::Void;
             }
+            last_fact = crate::data::AliasFact::Plain;
             match l.last() {
                 Some(
                     Value::If(_, _, _) | Value::Loop(_) | Value::Block(_) | Value::Parallel(_),
@@ -1826,6 +1829,11 @@ impl Parser {
         self.index_bounded.truncate(ib_base);
         self.divisor_nonzero.truncate(dz_base);
         self.math_sign_proven.truncate(ms_base);
+        // @PLN187 — a block's value carries its last expression's fact.
+        if self.abstract_on() {
+            self.operand_fact = last_fact.clone();
+            self.produced = Some(last_fact);
+        }
         *val = v_block(l, t.clone(), "block");
         t
     }
@@ -5531,6 +5539,8 @@ impl Parser {
         self.in_control_head = true;
         let cond_at = self.lexer.peek().position.clone();
         let tp = self.expression(&mut test);
+        let cond_fact = std::mem::take(&mut self.operand_fact);
+        self.check_subject(&cond_fact, "branching on it"); // @PLN187
         self.in_control_head = outer_head;
         self.warn_constant_condition(&tp, &cond_at, "if");
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
@@ -5585,6 +5595,8 @@ impl Parser {
         let write_state = self.vars.save_and_clear_write_state();
         self.vars.clear_write_state();
         let mut true_type = self.parse_block("if", &mut true_code, expected);
+        let true_fact = std::mem::take(&mut self.operand_fact); // @PLN187
+        let mut false_fact = crate::data::AliasFact::Empty;
         let true_is_null_literal = self.block_tail_null_literal;
         if !is_bindings.is_empty()
             && let Value::Block(bl) = &mut true_code
@@ -5676,6 +5688,7 @@ impl Parser {
                     true_type.clone()
                 };
                 let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                false_fact = std::mem::take(&mut self.operand_fact);
                 if true_type == Type::Unknown(0) {
                     false_type = chain_type;
                 } else {
@@ -5717,6 +5730,7 @@ impl Parser {
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
                 false_type = self.parse_block("else", &mut false_code, &true_type);
+                false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
                 // value is whichever arm ran, so the expression promises no more than either.
@@ -5897,6 +5911,13 @@ impl Parser {
             }
         }
         *code = v_if(test, true_code, false_code);
+        // @PLN187 — an `if` that yields a value carries what its branches yield.
+        if had_else && !matches!(result_tp, Type::Void | Type::Never) {
+            self.settle_join(&[true_fact, false_fact]);
+        } else if self.abstract_on() {
+            self.produced = Some(crate::data::AliasFact::Plain);
+        }
+        self.operand_fact = self.produced.clone().unwrap_or_default();
         // loft#1019 — an arm that OWNS what it yields needs a home in this frame when
         // the merged type is a view (`Parser::own_joined_call_arms`).
         self.own_joined_call_arms(code, &result_tp);
@@ -5995,7 +6016,18 @@ impl Parser {
         let is_stmt = std::mem::replace(&mut self.stmt_if_pending, false);
         let outer_arms = std::mem::replace(&mut self.arms_of_statement_construct, is_stmt);
         let outer_void = std::mem::replace(&mut self.match_void_arm, false);
+        // @PLN187 — this match's subject and arm facts; a nested match keeps its own.
+        let outer_subject = std::mem::take(&mut self.match_subject);
+        let outer_arm_facts = std::mem::take(&mut self.match_arm_facts);
         let r = self.parse_match_inner(code);
+        let arm_facts = std::mem::replace(&mut self.match_arm_facts, outer_arm_facts);
+        self.match_subject = outer_subject;
+        if !matches!(r, Type::Void | Type::Null | Type::Never) {
+            self.settle_join(&arm_facts);
+        } else if self.abstract_on() {
+            self.produced = Some(crate::data::AliasFact::Plain);
+        }
+        self.operand_fact = self.produced.clone().unwrap_or_default();
         // @FR-F-Block discards a STATEMENT's arms, so a void one there is no defect.  In
         // VALUE position the path that ran yields nothing, and the exemption let the match
         // take the other arms' type: `v = match k { 1 => { 5 }, _ => { println(…) } }`
@@ -6035,6 +6067,14 @@ impl Parser {
         // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
         // match `void`, and a local bound to it refused pass 2's real type.
         let mut subject_type = self.expression(&mut subject).unrewritten();
+        // @PLN187 — a tuple subject is inspected position by position, by its patterns; any
+        // other abstract subject is read by the match itself.
+        let subject_fact = std::mem::take(&mut self.operand_fact);
+        if matches!(subject_type.base(), Type::Tuple(_)) {
+            self.match_subject = subject_fact;
+        } else {
+            self.check_subject(&subject_fact, "matching on it");
+        }
         // `(T-Ref)`: a `&(…)` binding denotes the bound tuple itself, so a tuple pattern over it
         // reads every element through the reference, as `t.0` does.  The subject becomes the
         // tuple of those element reads, which the tuple match stores and projects like any
@@ -7143,6 +7183,10 @@ impl Parser {
         self.vars.clear_write_state();
         let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        if self.abstract_on() {
+            let fact = std::mem::take(&mut self.operand_fact);
+            self.match_arm_facts.push(fact); // @PLN187
+        }
         if (bare_null && matches!(arm_code.unspan(), Value::Null))
             || (block_arm && self.block_tail_null_literal)
         {
@@ -12253,9 +12297,11 @@ impl Parser {
                 self.lexer.token(":");
                 let bind_nr = self.pattern_binding(&name, &elem_type);
                 self.vars.defined(bind_nr);
+                self.tuple_pattern_element(i, Some(bind_nr)); // @PLN187
                 bindings.push(v_set(bind_nr, elem_get.clone()));
             }
             if self.peek_is_variant_subpattern(&elem_type) {
+                self.tuple_pattern_element(i, None); // @PLN187 — a tag test reads the member
                 // @FR-P-Point — a unit or struct variant is a point pattern over ONE
                 // value, and a tuple element is one value, so an enum element takes
                 // the forms a slice element takes: `(Fire, Wall { hp })` tag-tests
@@ -12318,10 +12364,12 @@ impl Parser {
                     // binding variable — always matches, captures element value
                     let bind_nr = self.pattern_binding(&id, &elem_type);
                     self.vars.defined(bind_nr);
+                    self.tuple_pattern_element(i, Some(bind_nr)); // @PLN187
                     bindings.push(v_set(bind_nr, elem_get));
                 }
             } else {
                 // literal: build elem_get == literal condition
+                self.tuple_pattern_element(i, None); // @PLN187 — a literal compares the member
                 let negate = self.lexer.has_token("-");
                 let lit: Value = if let Some(n) = self.lexer.has_integer() {
                     let v = n as i32;
@@ -19902,7 +19950,8 @@ impl Parser {
         let mut arg_idx = 0usize;
         // @PLN187 — each positional argument's abstract alias, checked against the callee's
         // parameters once `dispatch_call` has chosen it.
-        let mut arg_aliases: Vec<u32> = Vec::new();
+        let mut arg_aliases: Vec<crate::data::AliasFact> = Vec::new();
+        let mut named_facts: Vec<(String, crate::data::AliasFact)> = Vec::new();
         let mut named_args: Vec<(String, Value, Type)> = Vec::new();
         let mut in_named = false;
         loop {
@@ -19933,6 +19982,7 @@ impl Parser {
                 let mut p = Value::Null;
                 let t = self.expression(&mut p);
                 self.expected = Type::Unknown(0);
+                named_facts.push((arg_name.clone(), std::mem::take(&mut self.operand_fact)));
                 named_args.push((arg_name, p, t));
                 // accept trailing comma on the last named arg.
                 if !self.lexer.has_token(",") || self.lexer.peek_token(")") {
@@ -20036,6 +20086,7 @@ impl Parser {
                         if matches!(inner.base(), Type::Reference(t, _)
                             if self.data.def(*t).name().starts_with("__tuple<")))
             });
+            self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
             let mut t = self.expression(&mut p);
             self.tuple_place_wanted = prev_place;
             // A member of a call result handed on as an argument is read where it lives
@@ -20052,7 +20103,7 @@ impl Parser {
                 t = view_tp;
             }
             self.expected = Type::Unknown(0);
-            arg_aliases.push(self.operand_alias);
+            arg_aliases.push(std::mem::take(&mut self.operand_fact));
             types.push(t);
             list.push(p);
             arg_idx += 1;
@@ -20093,8 +20144,8 @@ impl Parser {
             &arg_pos,
             name_pos,
         );
-        self.recall_vector_builtin(name, arg_aliases.first().copied());
-        self.check_call_arguments(val, &arg_aliases);
+        self.recall_vector_builtin(name, arg_aliases.first());
+        self.check_call_arguments(val, &arg_aliases, &named_facts);
         // Plan-07 phase 1, step 1.13 — wrap user-typed Call / CallRef
         // at the `(` token position so runtime errors inside the call
         // (panic, divide-by-zero in callee, etc.) can be reported with
@@ -21695,16 +21746,40 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the empty and the filled argument list share one selection tail"
-    )]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,
         hint_nr: u32,
         on: Type,
         select: &MethodSelect,
+    ) -> Type {
+        // @PLN187 — a method's receiver and arguments are checked like a free call's: the
+        // receiver's fact (`method_receiver`, from `parse_part`) and each argument's, against
+        // the definition the call selects.
+        let name = std::mem::take(&mut self.postfix_member);
+        let receiver = std::mem::take(&mut self.method_receiver);
+        let outer = std::mem::replace(&mut self.method_facts, (vec![receiver], Vec::new()));
+        let tp = self.parse_method_selecting_inner(val, hint_nr, on, select, &name);
+        let (positional, named) = std::mem::replace(&mut self.method_facts, outer);
+        if self.abstract_on() {
+            self.recall_vector_builtin(&name, positional.first());
+            self.check_call_arguments(val, &positional, &named);
+            self.method_checked = true;
+        }
+        tp
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the empty and the filled argument list share one selection tail"
+    )]
+    fn parse_method_selecting_inner(
+        &mut self,
+        val: &mut Value,
+        hint_nr: u32,
+        on: Type,
+        select: &MethodSelect,
+        method: &str,
     ) -> Type {
         let mut list = vec![val.clone()];
         let mut types = vec![on];
@@ -21765,6 +21840,8 @@ impl Parser {
                 let mut p = Value::Null;
                 let t = self.expression(&mut p);
                 self.expected = Type::Unknown(0);
+                let fact = std::mem::take(&mut self.operand_fact);
+                self.method_facts.1.push((arg_name.clone(), fact));
                 named_args.push((arg_name, p, t));
                 // accept a trailing comma on the last named arg.
                 if !self.lexer.has_token(",") || self.lexer.peek_token(")") {
@@ -21815,8 +21892,12 @@ impl Parser {
             }
             let mut p = Value::Null;
             arg_pos.push(self.lexer.peek_pos().clone());
+            let before = self.method_facts.0.clone();
+            self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
             let t = self.expression(&mut p);
             self.expected = Type::Unknown(0);
+            let fact = std::mem::take(&mut self.operand_fact);
+            self.method_facts.0.push(fact);
             types.push(t);
             list.push(p);
             if !self.lexer.has_token(",") {
@@ -21824,6 +21905,8 @@ impl Parser {
             }
         }
         self.lexer.token(")");
+        // @PLN187 — what the arguments called is not this call (a special form records none)
+        self.last_called = u32::MAX;
         let selected = self.select_method_def(select, &types);
         // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
         // the whole answer, as `Parser::call` makes it for the bare spelling.

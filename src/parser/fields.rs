@@ -568,7 +568,7 @@ impl Parser {
                     *code = self.get_field(found_d_nr, found_fnr, recv);
                     self.data.attr_used(found_d_nr, found_fnr);
                     self.check_visibility("field", found_d_nr, found_fnr);
-                    self.field_alias = self.abstract_attr_of(found_d_nr, found_fnr);
+                    self.produced = Some(self.attr_fact_of(found_d_nr, found_fnr));
                 }
                 return t;
             } else if !self.first_pass {
@@ -854,7 +854,11 @@ impl Parser {
         }
         self.data.attr_used(dnr, fnr);
         self.check_visibility("field", dnr, fnr);
-        self.field_alias = self.abstract_attr_of(dnr, fnr);
+        // a field read produces the field's fact; a METHOD's slot is a routine, and its call
+        // already left the call's answer (`parse_method_selecting`)
+        if !matches!(self.data.attr_type(dnr, fnr), Type::Routine(_)) {
+            self.produced = Some(self.attr_fact_of(dnr, fnr));
+        }
         // `@FR-N-Chain` — the receiver's `?` reaches the RESULT TYPE, not just the lints above.
         self.wrap_projection_nullable(&mut t, receiver_optional);
         t
@@ -1603,8 +1607,10 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // rewritten to `__nullable<S>`; resolve names against the key-bearing def.
             let el = crate::typedef::key_bearing_def(&self.data, el_nr);
             let mut key_types = Vec::new();
+            let mut key_facts = Vec::new(); // @PLN187
             for k in &keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
+                key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
             }
             // @PLN48 S3 — a `spatial` RANGE SLICE `xs[(fx,fy)..(tx,ty)]` /
             // `xs[(fx,fy)..:n]` / `xs[(fx,fy)..]`: iterate the records whose Morton
@@ -1635,6 +1641,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 }
             } else {
                 let dep = self.container_dep(code, &t);
+                self.pending_key_facts = std::mem::take(&mut key_facts);
                 self.parse_key(code, &t, &key_types);
                 if let Some(cv) = dep {
                     elm_type = elm_type.depending(cv);
@@ -1674,10 +1681,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else if let Type::Sorted(el, keys, _) | Type::Index(el, keys, _) = &t {
             let el = crate::typedef::key_bearing_def(&self.data, *el);
             let mut key_types = Vec::new();
+            let mut key_facts = Vec::new(); // @PLN187
             for (k, _) in keys {
                 key_types.push(self.data.attr_type(el, self.data.attr(el, k)).clone());
+                key_facts.push(self.attr_fact_of(el, self.data.attr(el, k)));
             }
             let dep = self.container_dep(code, &t);
+            self.pending_key_facts = std::mem::take(&mut key_facts);
             self.parse_key(code, &t, &key_types);
             if let Some(cv) = dep {
                 elm_type = elm_type.depending(cv);
@@ -3352,6 +3362,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // against the key's enum exactly as `f(Green)` does against a parameter's.
             let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
             let t = self.expression(&mut p);
+            let first_fact = std::mem::take(&mut self.operand_fact);
+            self.check_key_fact(0, &first_fact); // @PLN187
             self.expected = saved_expected;
             // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
             if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
@@ -3395,6 +3407,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 let mut ex = Value::Null;
                 let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
                 let ex_t = self.expression(&mut ex);
+                let ex_fact = std::mem::take(&mut self.operand_fact);
+                self.check_key_fact(nr, &ex_fact); // @PLN187
                 self.expected = saved_expected;
                 if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
                     && !self.first_pass

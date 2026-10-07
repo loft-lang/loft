@@ -3675,10 +3675,10 @@ use a separate collection or add after the loop"
         let outer_target = std::mem::replace(&mut self.assign_target_discounted, target);
         let outer_taken = std::mem::replace(&mut self.assign_target_taken, false);
         // @PLN187 — the place's abstract alias (its read settled it) against the value's.
-        let place_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+        let place_fact = std::mem::take(&mut self.operand_fact);
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
-        let value_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
-        self.check_assignment(op, to, place_alias, value_alias);
+        let value_fact = std::mem::take(&mut self.operand_fact);
+        self.check_assignment(op, to, &place_fact, &value_fact);
         let taken = std::mem::replace(&mut self.assign_target_taken, outer_taken);
         self.assign_target_discounted = outer_target;
         // `x = x` is the identity (#330): the statement is erased and writes nothing, so it is
@@ -8380,7 +8380,7 @@ use a separate collection or add after the loop"
             // is a real annotation (`= …` follows), mirroring the param parser.
             let is_value_const = self.lexer.has_keyword("const");
             let mut got_annotation = false;
-            self.declared_alias = u32::MAX;
+            self.type_fact = crate::data::AliasFact::Plain;
             if let Some(tp) = self.parse_type_full(u32::MAX, false)
                 && self.lexer.peek_token("=")
             {
@@ -8547,7 +8547,8 @@ use a separate collection or add after the loop"
             let mut rhs = Value::Null;
             let destr_rhs_pos = self.lexer.pos().clone();
             let mut rhs_type = self.expression(&mut rhs);
-            self.check_unpacked();
+            let rhs_fact = std::mem::take(&mut self.operand_fact);
+            self.bind_unpacked(&rhs_fact, &var_nrs); // @PLN187
             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
             // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
             // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`

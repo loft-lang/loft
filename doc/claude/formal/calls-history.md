@@ -28,6 +28,23 @@ list, and does not descend into a replacement (the caller's expression, whose va
 caller's).  Guard `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft`.
 Found walking `(T-Syn)`: a parameter default is the one place pass 1's TREE is replayed.
 
+### D-call-29 — OPENED AND CLOSED (2026-10-07, @PLN187): an abstract alias the checker did not follow
+
+Opened with the abstract-alias rule (7598b6537): the fact rode one alias per operand, so an
+alias nested in a type (`vector<Handle>`, `(Handle, u8)`), the value of a branch, a `match`
+subject or pattern, a lambda's parameters and a named argument read as τ — silently, under
+enforcement.  Closed in two steps.  5ad3eb9d5 carried one `vector<…>` level.  The closing
+commit replaced the per-operand alias with `AliasFact` — a tree over a value's positions
+(alias, vector, tuple), recorded per declaration (`Attribute::fact`,
+`Definition::returned_fact`, IR text) and resolved per file, so a transparent `pub type Pair =
+(Handle, u8)` still carries its abstract member — and added the producers and consumers it
+was missing: tuple literals, member and element reads, destructuring and tuple patterns,
+`if` / `match` / block / comprehension values joined across branches, the `if` condition and
+`match` subject, lambda parameters (declared, and inferred from a generic's bound type
+variable) and results, named arguments, keyed lookups' keys, and method calls checked as calls.
+Measured: 24 new refusal cells plus the accepted program in `tests/pub_visibility.rs`, every
+earlier cell unchanged, `scripts/introspect_diff.sh` IDENTICAL with the switches off and on.
+
 ### D-call-27 — OPENED AND CLOSED (2026-09-30): a lowered text-tuple default did not answer what its argument would (loft#1758)
 
 A default that needs a temporary is lowered into a minted function (`default_value_fn`), and that

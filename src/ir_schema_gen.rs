@@ -648,6 +648,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t76, "alias_d_nr", 0);
     db.field(t76, "assigned_lambda_d_nr", 0);
     db.field(t76, "links", t5);
+    db.field(t76, "fact", t5);
     db.field(t77, "name", t5);
     let vec_type_def = db.vector(t7);
     db.field(t77, "type_def", vec_type_def);
@@ -730,7 +731,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "instance_args", vec_instance_args);
     db.field(t80, "builtin", t4);
     db.field(t80, "operator_form", t4);
-    db.field(t80, "returned_alias", 0);
+    db.field(t80, "returned_fact", t5);
     let t121 = db.vector(t76);
     let _ = t121; // may be unused
     let t122 = db.vector(t79);

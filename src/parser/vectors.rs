@@ -560,8 +560,8 @@ impl Parser {
             let mut t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             // @PLN187 — a unary operator reads an abstract operand's representation.
-            let unary_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
-            self.check_binary("!", unary_alias, u32::MAX);
+            let unary_fact = std::mem::take(&mut self.operand_fact);
+            self.check_binary("!", &unary_fact, &crate::data::AliasFact::Plain);
             // A unary prefix operator must validate its operand like a binary
             // one does, else an undefined name (a pass-1 placeholder Var with no
             // slot) reaches codegen and panics instead of a clean "Unknown
@@ -651,8 +651,8 @@ impl Parser {
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             // @PLN187 — a unary operator reads an abstract operand's representation.
-            let unary_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
-            self.check_binary("~", unary_alias, u32::MAX);
+            let unary_fact = std::mem::take(&mut self.operand_fact);
+            self.check_binary("~", &unary_fact, &crate::data::AliasFact::Plain);
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
             let arg = val.clone();
             self.call_op_as(val, "BitNot", "~", &[arg], &[t])
@@ -665,8 +665,8 @@ impl Parser {
             let t = self.parse_part(var_tp, val, parent_tp);
             self.prefix_operand = outer_prefix;
             // @PLN187 — a unary operator reads an abstract operand's representation.
-            let unary_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
-            self.check_binary("-", unary_alias, u32::MAX);
+            let unary_fact = std::mem::take(&mut self.operand_fact);
+            self.check_binary("-", &unary_fact, &crate::data::AliasFact::Plain);
             self.known_var_or_type(val, &operand_pos); // @PLN53 F1-1 (see `!` above)
             // @PLN102 pre-freeze — the leading `-` binds tighter than `**` (loft's uniform
             // rule: a unary prefix binds tighter than any binary op — the `-` is the sign of
@@ -788,6 +788,7 @@ impl Parser {
                 // same reason; a tuple member is the same fact one level in (loft#943).
                 let mut values = vec![val.clone()];
                 let mut types = vec![t.unrewritten()];
+                let mut facts = vec![std::mem::take(&mut self.operand_fact)]; // @PLN187
                 loop {
                     if self.lexer.peek_token(")") {
                         break;
@@ -804,6 +805,7 @@ impl Parser {
                     if seeding {
                         self.expected = Type::Unknown(0);
                     }
+                    facts.push(std::mem::take(&mut self.operand_fact));
                     values.push(v);
                     types.push(t2.unrewritten());
                     if !self.lexer.has_token(",") {
@@ -854,8 +856,13 @@ impl Parser {
                     }
                 }
                 *val = Value::Tuple(values);
+                self.settle_tuple_literal(facts);
                 Type::Tuple(types)
             } else {
+                // @PLN187 — a parenthesised value is the value: its fact passes through.
+                if self.abstract_on() {
+                    self.produced = Some(std::mem::take(&mut self.operand_fact));
+                }
                 if seeding {
                     self.expected = saved_expected;
                 }
@@ -1036,7 +1043,9 @@ impl Parser {
             self.parse_match(val)
         } else if self.lexer.has_token("fn") {
             if self.lexer.peek_token("(") {
-                self.parse_lambda(val)
+                let t = self.parse_lambda(val);
+                self.settle_lambda(); // @PLN187
+                t
             } else {
                 // function references use the bare name, not 'fn name'.
                 diagnostic!(
@@ -1048,10 +1057,14 @@ impl Parser {
             }
         } else if self.lexer.has_token("||") {
             // Zero-parameter short lambda: || { body } — `||` already consumed, no closing `|`
-            self.parse_lambda_short(val, false)
+            let t = self.parse_lambda_short(val, false);
+            self.settle_lambda(); // @PLN187
+            t
         } else if self.lexer.has_token("|") {
             // Short lambda with parameters: |x: T, …| { body } — opening `|` consumed
-            self.parse_lambda_short(val, true)
+            let t = self.parse_lambda_short(val, true);
+            self.settle_lambda(); // @PLN187
+            t
         } else if self.lexer.has_token("sizeof") {
             self.lexer.token("(");
             self.parse_size(val)
@@ -1478,6 +1491,7 @@ or build a local and use that."
         } else {
             self.data.def_nr(&stored_name)
         };
+        self.store_lambda_param_facts(); // @PLN187
         if self.context == u32::MAX {
             self.context = outer_context;
             self.vars = outer_vars;
@@ -1564,6 +1578,7 @@ or build a local and use that."
             }
         }
 
+        self.seed_abstract_params(); // @PLN187
         self.parse_code();
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
@@ -1967,6 +1982,7 @@ or build a local and use that."
         if infer_ret {
             self.infer_ret_defs.insert(d_nr);
         }
+        self.seed_abstract_params(); // @PLN187
         self.parse_code();
         if infer_ret {
             self.infer_ret_defs.remove(&d_nr);
@@ -3350,6 +3366,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         self.last_range_from = None;
         self.last_range_till = None;
         let mut in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+        let iterable_fact = std::mem::take(&mut self.operand_fact); // @PLN187
         let range_bounds = self
             .last_range_from
             .clone()
@@ -3385,6 +3402,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             self.vars.set_name(&src_id, for_var);
         }
         self.vars.defined(for_var);
+        self.bind_loop_variable(&iterable_fact, for_var);
         // The binders exist before the filter is parsed: it reads them.
         let mut destructure_setup = match &destructure_names {
             Some(names) => self.destructure_binders(names, for_var, &var_tp),
@@ -3466,6 +3484,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
         Self::prepend_destructure(&mut body, destructure_setup, &body_type);
+        // @PLN187 — the comprehension is a vector of what its body yields.
+        if self.abstract_on() {
+            let body_fact = std::mem::take(&mut self.operand_fact);
+            self.comprehension_fact = Some(crate::data::AliasFact::vector(body_fact));
+        }
         // #319 — a struct-literal body returns `Rewritten(Reference(...))`.
         // The wrapper is a parse-internal marker, not an element type:
         // leaking it into the vector's element type broke every later
@@ -4234,6 +4257,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     self.refuse_mixed_comprehension();
                 }
                 self.lexer.token("]");
+                if let Some(f) = self.comprehension_fact.take() {
+                    self.produced = Some(f); // @PLN187
+                }
                 return tp;
             }
             if let Some(early) = self.collect_vector_items(elm, &mut in_t, declared, &mut res) {
@@ -4333,11 +4359,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // @PLN187 — each element's abstract alias: one alias throughout is a `vector<Handle>`.
         let mut aliases = Vec::new();
         loop {
-            self.operand_alias = u32::MAX;
+            self.operand_fact = crate::data::AliasFact::Plain;
             if let Some(value) = self.parse_item(elm, in_t, declared, res) {
                 return Some(value);
             }
-            aliases.push(self.operand_alias);
+            aliases.push(std::mem::take(&mut self.operand_fact));
             if self.lexer.has_token(";")
                 && let Some(value) = self.parse_multiply(res)
             {

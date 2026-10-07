@@ -38,6 +38,17 @@ pub fn data(x: integer) -> Data { (x, \"x\", true) }
 pub fn opened() -> Open { (1, \"o\") }
 pub fn many() -> vector<Handle> { [1, 2] }
 pub fn total(hs: vector<Handle>) -> integer { s = 0; for h in hs { s += h; } s }
+pub type Pair = (Handle, integer);
+pub struct Item { pub id: Handle, pub tag: text }
+type Flag = boolean;
+pub fn both(path: text) -> (Handle, integer) { (len(path), 10) }
+pub fn pair_of(path: text) -> Pair { (len(path), 20) }
+pub fn grid() -> vector<vector<Handle>> { [[1, 2], [3]] }
+pub fn named() -> vector<(Handle, text)> { [(4, \"four\"), (5, \"five\")] }
+pub fn items() -> hash<Item[id]> { [Item { id: 7, tag: \"seven\" }] }
+pub fn id_of(h: Handle) -> integer { h }
+pub fn add(h: Handle, extra: integer) -> integer { h + extra }
+pub fn flag() -> Flag { true }
 ";
 
 fn scratch(tag: &str) -> PathBuf {
@@ -369,7 +380,7 @@ fn main() {
         (
             "sort-method",
             "v.sort(); println(\"{v}\");",
-            "a method of the underlying type",
+            "parameter `self` of `sort`",
         ),
         (
             "plain-element",
@@ -392,6 +403,189 @@ fn main() {
         let (out, err, ok) = run(&format!("vreveal-{tag}-off"), &program, false);
         assert!(ok, "{tag} switched off runs as before: {out}{err}");
         let (_, err, ok) = run(&format!("vreveal-{tag}-on"), &program, true);
+        assert!(
+            !ok && err.contains("is abstract outside `units`") && err.contains(why),
+            "{tag}: {err}"
+        );
+    }
+}
+
+#[test]
+fn an_abstract_alias_is_followed_through_tuples_branches_patterns_and_lambdas() {
+    // A `Handle` keeps its abstraction wherever a value carries it: a tuple member (a
+    // returned tuple, a transparent `pub type Pair`, a tuple literal, destructuring, a
+    // tuple pattern's binder), `vector<vector<Handle>>` and `vector<(Handle, text)>`, the
+    // value of an `if`, a `match` and a block, a comprehension, a lambda's parameter and
+    // result through a generic (`map`), a named argument and a keyed lookup's key.  Each
+    // `Handle` reaches `id_of`, which takes only a `Handle`.  Hand-computed: both("abc") =
+    // (3, 10); both("xy").0 = 2; pair("four") = (4, 20); grid()[0] = [1, 2]; named()[1].0 = 5.
+    let program = "use units;
+fn main() {
+  (h, n) = units::both(\"abc\");
+  t = units::both(\"xy\");
+  a = t.0;
+  p = units::pair_of(\"four\");
+  b = p.0;
+  q = p.1 + 1;
+  row = units::grid()[0];
+  c = row[1];
+  e = units::named()[1].0;
+  tg = units::named()[0].1;
+  it = units::items()[units::open(\"1234567\")];
+  x = if n > 5 { h } else { a };
+  y = match n { 10 => b, _ => c };
+  z = { a };
+  m = [for v in row { v }];
+  w = match t { (hh, 10) => hh, _ => h };
+  mapped = map(row, |v| { v });
+  lit = (h, 1);
+  row.insert(0, h);
+  via_method = row.map(|v| { v });
+  print(\"{units::id_of(h)} {n} {units::id_of(a)} {units::id_of(b)} {q} {units::id_of(c)} \");
+  print(\"{units::id_of(e)} {tg} {it.tag} {units::id_of(x)} {units::id_of(y)} {units::id_of(z)} \");
+  print(\"{units::id_of(m[0])} {units::id_of(w)} {units::add(extra: 1, h: h)} \");
+  println(\"{units::id_of(mapped[1])} {units::id_of(lit.0)} {units::id_of(via_method[0])}\");
+}
+";
+    for enforce in [false, true] {
+        let (out, err, ok) = run(&format!("abstract-nested{enforce}"), program, enforce);
+        assert!(
+            ok && out == "3 10 2 4 21 2 5 four seven 3 4 2 1 2 4 2 3 3\n",
+            "enforce={enforce}: {out}{err}"
+        );
+    }
+    // Each cell reads a `Handle` (or a `Flag`) somewhere a value carries it, or builds one.
+    let cells = [
+        ("tuple-member", "println(\"{t.0 + 1}\");", "`+` reads"),
+        (
+            "destructure",
+            "(a, b) = t; println(\"{a * 2}{b}\");",
+            "`*` reads",
+        ),
+        (
+            "pub-pair",
+            "p = units::pair_of(\"four\"); println(\"{p.0 + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "grid",
+            "println(\"{units::grid()[0][1] + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "grid-loop",
+            "for r in units::grid() { for v in r { println(\"{v + 1}\"); } }",
+            "`+` reads",
+        ),
+        (
+            "named-tuple",
+            "println(\"{units::named()[0].0 + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "tuple-literal",
+            "x = (h, 1); println(\"{x.0 + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "tuple-build",
+            "x: (units::Handle, integer) = (5, 1); println(\"{x.1}\");",
+            "takes a `(Handle, _)`",
+        ),
+        (
+            "if-mix",
+            "x = if t.1 > 5 { h } else { 7 }; println(\"{x}\");",
+            "another branch of this value",
+        ),
+        (
+            "if-value",
+            "x = if t.1 > 5 { h } else { h }; println(\"{x + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "if-flag",
+            "if units::flag() { println(\"yes\"); }",
+            "branching on it",
+        ),
+        (
+            "match-subject",
+            "v = match h { 3 => 1, _ => 0 }; println(\"{v}\");",
+            "matching on it",
+        ),
+        (
+            "match-literal",
+            "v = match t { (2, k) => k, _ => 0 }; println(\"{v}\");",
+            "matching a pattern",
+        ),
+        (
+            "match-binder",
+            "v = match t { (hh, k) => hh + k }; println(\"{v}\");",
+            "`+` reads",
+        ),
+        ("block", "x = { h }; println(\"{x + 1}\");", "`+` reads"),
+        (
+            "comprehension",
+            "m = [for v in units::grid()[0] { v }]; println(\"{m[0] + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "comprehension-build",
+            "m = [for v in units::grid()[0] { 5 }]; println(\"{units::id_of(m[0])}\");",
+            "takes a `Handle`",
+        ),
+        (
+            "lambda-param",
+            "d = map(units::grid()[0], |v| { v + 1 }); println(\"{d}\");",
+            "`+` reads",
+        ),
+        (
+            "lambda-result",
+            "d = map(units::grid()[0], |v| { v }); println(\"{d[0] + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "lambda-declared",
+            "f = fn(x: units::Handle) -> integer { x + 1 }; println(\"{f(h)}\");",
+            "`+` reads",
+        ),
+        (
+            "named-build",
+            "println(\"{units::add(h: 7, extra: 1)}\");",
+            "parameter `h` of `add` takes a `Handle`",
+        ),
+        (
+            "method-lambda",
+            "d = units::grid()[0].map(|v| { v + 1 }); println(\"{d}\");",
+            "`+` reads",
+        ),
+        (
+            "method-lambda-result",
+            "r = units::grid()[0]; d = r.map(|v| { v }); println(\"{d[0] + 1}\");",
+            "`+` reads",
+        ),
+        (
+            "method-insert-build",
+            "r = units::grid()[0]; r.insert(0, 5); println(\"{r}\");",
+            "parameter `elem` of `insert` takes a `Handle`",
+        ),
+        (
+            "key-build",
+            "println(\"{units::items()[7].tag}\");",
+            "this key takes a `Handle`",
+        ),
+        (
+            "key-field",
+            "for it in units::items() { println(\"{it.id + 1}\"); }",
+            "`+` reads",
+        ),
+    ];
+    for (tag, body, why) in cells {
+        let program = format!(
+            "use units;\nfn main() {{\n  h = units::open(\"abc\");\n  t = units::both(\"xy\");\n  {body}\n}}\n"
+        );
+        let (out, err, ok) = run(&format!("nreveal-{tag}-off"), &program, false);
+        assert!(ok, "{tag} switched off runs as before: {out}{err}");
+        let (_, err, ok) = run(&format!("nreveal-{tag}-on"), &program, true);
         assert!(
             !ok && err.contains("is abstract outside `units`") && err.contains(why),
             "{tag}: {err}"

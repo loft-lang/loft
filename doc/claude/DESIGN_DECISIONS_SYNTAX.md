@@ -288,7 +288,9 @@ a parameter declared `Handle`, keep it in a variable or field declared `Handle`,
 `==` and print it; an operator, a member or element read, a method or parameter of `integer`,
 destructuring, and a plain value handed where a `Handle` is declared are refused.  A
 `vector<Handle>` holds `Handle`s: its elements read as `Handle`, and what never looks at an
-element (`len`, `insert`, `+=`) is open while `sort` and `sum` are not.  So
+element (`len`, `insert`, `+=`) is open while `sort` and `sum` are not.  The abstraction follows
+the value wherever it goes — a tuple member, a branch's value, a pattern binder, a lambda's
+parameter through `map` — and an `if` or `match` on a `Handle` reads it.  So
 `type Data = (integer, text, boolean)` keeps a tuple's members private the way a struct's own
 fields are.  In its own file, and as a `pub type`, an alias is the substitution it always was.
 The abstraction is a fact the checker tracks beside the type (`parser::abstract_alias`), never

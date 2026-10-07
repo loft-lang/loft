@@ -496,7 +496,9 @@ mod tests {
             url: String::new(),
             sha256: String::new(),
             size: 0,
-            loft: "*".to_string(),
+            // a floor every loft meets, spelled as the registry spells one (`*` is not a
+            // floor: `floor_admits` reads it as malformed and the release is skipped)
+            loft: ">=0".to_string(),
             api_compatible_with: None,
             data_compatible_with: None,
             deps: BTreeMap::new(),

@@ -2155,7 +2155,7 @@ impl Parser {
                 return current_type;
             }
             // @PLN187 — the left operand's abstract alias; checked against the right's below.
-            let left_alias = std::mem::replace(&mut self.operand_alias, u32::MAX);
+            let left_fact = std::mem::take(&mut self.operand_fact);
             // `@FR-E-Eq` — a recorded `&<operand>` is the LEFT side of `&a == &b` only when it
             // spans this whole operand, from `operand_pos` to the operator.
             if let Some(amp) = self.amp_identity.take() {
@@ -2214,8 +2214,8 @@ impl Parser {
                 let mut second_code = Value::Null;
                 let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
                 ls.push((second_code, tp));
-                let right_alias = self.operand_alias;
-                self.operand_alias = self.check_binary(operator, left_alias, right_alias);
+                let right_fact = std::mem::take(&mut self.operand_fact);
+                self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
             } else {
                 let handled = self.handle_operator(
                     var_tp,
@@ -2226,8 +2226,8 @@ impl Parser {
                     operator,
                     &op_pos,
                 );
-                let right_alias = self.operand_alias;
-                self.operand_alias = self.check_binary(operator, left_alias, right_alias);
+                let right_fact = std::mem::take(&mut self.operand_fact);
+                self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
                 if let Some(value) = handled {
                     return value;
                 }
@@ -2244,7 +2244,8 @@ impl Parser {
     ) -> Type {
         // @PLN187 — the operand's abstract alias, settled after its primary and each postfix
         // step (`parser::abstract_alias`).
-        self.operand_alias = u32::MAX;
+        self.operand_fact = crate::data::AliasFact::Plain;
+        self.produced = None;
         let mut t = self.parse_single(var_tp, code, parent_tp);
         self.settle_operand(code);
         // --show-types --trace: log the type after the initial
@@ -2266,10 +2267,39 @@ impl Parser {
             || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
         {
-            let recv = std::mem::replace(&mut self.operand_alias, u32::MAX);
-            let is_index = self.lexer.peek_token("[");
-            self.last_called = u32::MAX;
+            let recv = std::mem::take(&mut self.operand_fact);
+            self.produced = None;
             self.postfix_member.clear();
+            self.method_checked = false;
+            if self.abstract_on() {
+                self.method_receiver = recv.clone();
+            }
+            // a slice answers the receiver's own type; an element of `vector<vector<…>>` does not
+            let recv_tp = if self.abstract_on() {
+                t.without_deps()
+            } else {
+                Type::Null
+            };
+            let step = if self.lexer.peek_token("[") {
+                crate::parser::abstract_alias::Step::Index
+            } else if self.lexer.peek_token("?") {
+                crate::parser::abstract_alias::Step::Fallback
+            } else {
+                crate::parser::abstract_alias::Step::Member
+            };
+            // @PLN187 — the member a `.` step names, read ahead: `.0` picks a tuple member's fact.
+            if self.abstract_on() && self.lexer.peek_token(".") {
+                let saved = self.lexer.link();
+                self.lexer.cont();
+                self.postfix_member = match &self.lexer.peek().has {
+                    crate::lexer::LexItem::Integer(i, _) => i.to_string(),
+                    crate::lexer::LexItem::Long(i) => i.to_string(),
+                    crate::lexer::LexItem::Identifier(n) => n.clone(),
+                    _ => String::new(),
+                };
+                self.lexer.revert(saved);
+            }
+            self.last_called = u32::MAX;
             // @PLN116 — postfix default-fallback `x?`.  Handled first (a default-
             // fallback never faults, so it skips the `.`/`[]` span-wrapping below),
             // then re-enter the loop so a following `.`/`[]` chains onto the
@@ -2277,7 +2307,7 @@ impl Parser {
             // two-char match means `??` never reaches here as two `?` tokens.
             if self.lexer.has_token("?") {
                 self.handle_default_fallback(var_tp, code, parent_tp, &mut t);
-                self.check_postfix(recv, false, false, &Value::Null);
+                self.check_postfix(&recv, step, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
             }
@@ -2782,7 +2812,8 @@ impl Parser {
                 *code = Value::with_span(chain_pos, inner);
             }
             self.settle_operand(code);
-            self.check_postfix(recv, is_index, matches!(t.base(), Type::Vector(..)), code);
+            let is_slice = self.abstract_on() && t.without_deps() == recv_tp;
+            self.check_postfix(&recv, step, is_slice, code);
             // --show-types --trace: log the resulting type after
             // each chaining step (`.field`, `.tuple_idx`, `[idx]`,
             // `(args)`).  Combined with the post-`parse_single`

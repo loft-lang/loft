@@ -495,31 +495,49 @@ pub struct Parser {
     /// `param_locks` once the function's def_nr is known (parameters parse BEFORE the def
     /// is created).  Cleared at the start of each parameter list; consumed per function.
     pub(crate) pending_param_locks: Vec<(usize, String)>,
-    /// @PLN187 — each parameter's declared `type` alias (`u32::MAX` for none), in order,
+    /// @PLN187 — each parameter's fact (where its declared type names an alias), in order,
     /// ferried to `parse_function` like `pending_param_locks` and stored on the parameter's
-    /// attribute (`Attribute::alias_d_nr`).
-    pub(crate) pending_param_aliases: Vec<u32>,
-    /// @PLN187 — how deep `parse_type` is nested (a generic argument, a tuple member): only the
-    /// OUTERMOST type is the one a declaration was written with.
-    pub(crate) type_nesting: u32,
-    /// @PLN187 — the user `type` alias the last outermost type was spelled with, or
-    /// `u32::MAX`.  A site that wants it resets it before parsing the type.
-    pub(crate) declared_alias: u32,
-    /// @PLN187 — the user alias a `vector<…>`'s element was spelled with, one level inside the
-    /// outermost type; `parse_type` turns it into `ELEM | alias` (`parser::abstract_alias`).
-    pub(crate) element_alias: u32,
-    /// @PLN187 — the abstract alias of the operand just parsed, or `u32::MAX`
+    /// attribute (`Attribute::fact`).
+    pub(crate) pending_param_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the fact of the type spelling parsed last (`parser::abstract_alias`).
+    pub(crate) type_fact: crate::data::AliasFact,
+    /// @PLN187 — the fact the CURRENT `parse_type` level produced (an alias, a vector of one);
+    /// a nested level takes its own before returning.
+    pub(crate) own_fact: Option<crate::data::AliasFact>,
+    /// @PLN187 — where the operand just parsed holds an abstract alias
     /// (`parser::abstract_alias`, the protocol).
-    pub(crate) operand_alias: u32,
+    pub(crate) operand_fact: crate::data::AliasFact,
     /// @PLN187 — the locals that hold an abstract alias, by `(function, variable)`: a lambda's
     /// body numbers its variables afresh under its own `context`.
-    pub(crate) abstract_vars: std::collections::HashMap<(u32, u16), u32>,
+    pub(crate) abstract_vars: std::collections::HashMap<(u32, u16), crate::data::AliasFact>,
     /// @PLN187 — the locals declared with a PLAIN type annotation: an abstract value is not
     /// one of those.
     pub(crate) plain_declared: std::collections::HashSet<(u32, u16)>,
-    /// @PLN187 — the abstract alias of a field the current postfix step read, taken by
-    /// `settle_operand`.
-    pub(crate) field_alias: u32,
+    /// @PLN187 — the fact a producer that is not a variable or a call (a field read, a
+    /// literal, a branch's value) left for `settle_operand` to take.
+    pub(crate) produced: Option<crate::data::AliasFact>,
+    /// @PLN187 — the parameter facts the next lambda's body is seeded with: a generic's type
+    /// variable an earlier argument bound (`map(v, |x| …)`).
+    pub(crate) pending_lambda_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the fact the last lambda body yielded (`check_result` records it).
+    pub(crate) lambda_result: crate::data::AliasFact,
+    /// @PLN187 — the fact of the enclosing `match`'s subject, for its tuple patterns.
+    pub(crate) match_subject: crate::data::AliasFact,
+    /// @PLN187 — the facts the arms of the enclosing `match` yielded.
+    pub(crate) match_arm_facts: Vec<crate::data::AliasFact>,
+    /// @PLN187 — the receiver fact of the method step being parsed (`parse_part` sets it).
+    pub(crate) method_receiver: crate::data::AliasFact,
+    /// @PLN187 — the positional and named argument facts of the method call being parsed.
+    pub(crate) method_facts: (
+        Vec<crate::data::AliasFact>,
+        Vec<(String, crate::data::AliasFact)>,
+    ),
+    /// @PLN187 — the method step just parsed was checked as a call; `check_postfix` skips it.
+    pub(crate) method_checked: bool,
+    /// @PLN187 — the fact of the comprehension just parsed, for the literal that holds it.
+    pub(crate) comprehension_fact: Option<crate::data::AliasFact>,
+    /// @PLN187 — the facts a keyed lookup's key fields are declared with, for `parse_key`.
+    pub(crate) pending_key_facts: Vec<crate::data::AliasFact>,
     /// @PLN187 — the definition the last `call_with_named` selected, or `u32::MAX`: a call
     /// lowered to an operator (`sort` → `OpSortVector`) no longer names it.
     pub(crate) last_called: u32,
@@ -1815,14 +1833,22 @@ impl Parser {
             sandbox_param_overrides: HashMap::new(),
             len_bound_locals: HashMap::new(),
             pending_param_locks: Vec::new(),
-            pending_param_aliases: Vec::new(),
-            type_nesting: 0,
-            declared_alias: u32::MAX,
-            element_alias: u32::MAX,
-            operand_alias: u32::MAX,
+            pending_param_facts: Vec::new(),
+            type_fact: crate::data::AliasFact::Plain,
+            own_fact: None,
+            operand_fact: crate::data::AliasFact::Plain,
             abstract_vars: std::collections::HashMap::new(),
             plain_declared: std::collections::HashSet::new(),
-            field_alias: u32::MAX,
+            produced: None,
+            pending_lambda_facts: Vec::new(),
+            lambda_result: crate::data::AliasFact::Plain,
+            match_subject: crate::data::AliasFact::Plain,
+            match_arm_facts: Vec::new(),
+            pending_key_facts: Vec::new(),
+            comprehension_fact: None,
+            method_receiver: crate::data::AliasFact::Plain,
+            method_facts: (Vec::new(), Vec::new()),
+            method_checked: false,
             last_called: u32::MAX,
             postfix_member: String::new(),
             pending_param_positions: Vec::new(),
@@ -13993,7 +14019,27 @@ impl Parser {
         // The call NAME's position, forwarded to `call_nr` for the arc-C steer caret.
         name_pos: Option<&Position>,
     ) -> Type {
+        let tp = self.call_with_named_inner(
+            code, d_nr, positional, pos_types, named, is_method, arg_pos, name_pos,
+        );
+        // @PLN187 — recorded AFTER: a generic's instance parses its body in here, and the
+        // calls in that body are not this one.
         self.last_called = d_nr;
+        tp
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn call_with_named_inner(
+        &mut self,
+        code: &mut Value,
+        d_nr: u32,
+        positional: &[Value],
+        pos_types: &[Type],
+        named: &[(String, Value, Type)],
+        is_method: bool,
+        arg_pos: &[Position],
+        name_pos: Option<&Position>,
+    ) -> Type {
         if named.is_empty() {
             return self.call_nr(
                 code, d_nr, positional, pos_types, is_method, arg_pos, name_pos,
