@@ -48,7 +48,6 @@ pub struct BridgeArgs {
     pub handed: Vec<DbRef>,
     copies: Vec<(DbRef, DbRef)>,
 }
-use std::collections::HashSet;
 
 /// Why a field is being given its absent value — which decides what that value may COST.
 ///
@@ -2200,7 +2199,7 @@ impl Stores {
     /// Together they form the only `text → struct` path in the
     /// crate; the legacy hand-rolled scanner was removed when
     /// every Parts arm gained walker coverage.
-    #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // path push/pop; arg-count is intrinsic to the dispatch
+    #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // arg-count is intrinsic to the dispatch
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn walk_parsed_into(
         &mut self,
@@ -2261,11 +2260,16 @@ impl Stores {
                     self.set_default_value(tp, &slot);
                 }
                 for (idx, item) in items.iter().enumerate() {
-                    path.push(format!("[{idx}]"));
                     let res = self.record_new(to, rec_tp, field);
-                    self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at)?;
+                    // The element's segment joins the error's path as it unwinds: pushed per
+                    // element on the way in, it was a formatted `String` per array item that
+                    // only a failing walk reads.
+                    self.walk_parsed_into(item, c, c, u16::MAX, &res, path, at)
+                        .map_err(|mut e| {
+                            e.path.insert(0, format!("[{idx}]"));
+                            e
+                        })?;
                     self.record_finish(to, &res, rec_tp, field);
-                    path.pop();
                 }
                 Ok(())
             }
@@ -2413,7 +2417,7 @@ impl Stores {
     /// `at` hint so a leaf type-mismatch reports the field's position),
     /// default-fills any unmentioned field (mirroring the legacy
     /// scanner's "missing field → default" behaviour).
-    #[allow(clippy::ptr_arg)] // path needs push/pop, slice not enough
+    #[allow(clippy::ptr_arg)] // `path` is the walk's error path, built as an error unwinds
     fn walk_parsed_struct(
         &mut self,
         parsed: &crate::json::Parsed,
@@ -2436,13 +2440,14 @@ impl Stores {
         } else {
             to.rec
         };
-        let mut found_fields: HashSet<&str> = HashSet::new();
+        // Fx, not the default SipHash: a per-object set of field names, never adversarial input
+        // to a hash table that outlives the call — SipHash was 7 % of a JSON-parse row.
+        let mut found_fields: crate::fxhash::FxHashSet<&str> = crate::fxhash::FxHashSet::default();
         for (name, key_at, value) in entries {
             let mut matched = false;
             for (f_nr, f) in object.iter().enumerate() {
                 if f.name == *name {
                     matched = true;
-                    path.push(name.clone());
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -2461,8 +2466,11 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
-                    res?;
-                    path.pop();
+                    // The key's segment joins the error's path as it unwinds (see the array arm).
+                    res.map_err(|mut e| {
+                        e.path.insert(0, name.clone());
+                        e
+                    })?;
                     break;
                 }
             }
@@ -2504,7 +2512,7 @@ impl Stores {
     /// `at` is the byte offset where this primitive was parsed —
     /// reported on the [`WalkErr`] of any type mismatch so users
     /// see the real position instead of byte 0.
-    #[allow(clippy::ptr_arg)] // path needs push/pop, slice not enough
+    #[allow(clippy::ptr_arg)] // `path` is the walk's error path, built as an error unwinds
     fn walk_primitive_into(
         &mut self,
         parsed: &crate::json::Parsed,
