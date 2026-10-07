@@ -94,11 +94,7 @@ fn spawn_server(script: &str) -> Guard {
     // only ever "passed" by being CI-skipped.  With a manifest declaring `server`,
     // it resolves offline from the installed registry and the leg actually runs.
     let src = fa::read_to_string(root().join(script)).expect("read fixture");
-    let name = std::path::Path::new(script)
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
+    let name = fa::file_name(script).unwrap();
     // Per-script pkg dir: the kernel + original legs run sequentially (the first
     // Guard drops/kills before the second spawns), but a per-script dir keeps each
     // leg's manifest/script fully isolated regardless of ordering.

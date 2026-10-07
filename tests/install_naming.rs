@@ -180,10 +180,10 @@ fn a_bare_install_resolves_the_manifest_not_the_project() {
     // registry copy of the same name, which is loft#667, and bare install reached that
     // trap from a command whose name reads like "install my dependencies".
     let lib = home.join(".loft/lib");
-    let installed: Vec<String> = std::fs::read_dir(&lib)
+    let installed: Vec<String> = fa::read_dir(&lib)
         .map(|d| {
-            d.filter_map(Result::ok)
-                .map(|e| e.file_name().to_string_lossy().to_string())
+            d.into_iter()
+                .map(|e| e.file_name().unwrap_or_default().to_string())
                 .collect()
         })
         .unwrap_or_default();

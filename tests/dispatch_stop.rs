@@ -74,11 +74,11 @@ fn a_runtime_error_is_stored_only_by_its_setter() {
     let mut sites = Vec::new();
     let mut stack = vec![root];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).expect("read src") {
-            let path = entry.expect("entry").path();
+        for entry in fa::read_dir(&dir).expect("read src") {
+            let path = entry.os_spelling();
             if fa::is_dir(&path) {
                 stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "rs") {
+            } else if fa::has_extension(&path, "rs") {
                 let text = fa::read_to_string(&path).expect("read file");
                 for (n, line) in text.lines().enumerate() {
                     if line.contains("runtime_error = Some(")

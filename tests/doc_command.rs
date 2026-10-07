@@ -54,10 +54,10 @@ fn an_unresolvable_name_creates_nothing_and_fails() {
         !fa::exists(root.join("definitely_not_a_package_zzz")),
         "no directory may be created for a name that resolved to nothing"
     );
-    let left: Vec<_> = std::fs::read_dir(&root)
+    let left: Vec<_> = fa::read_dir(&root)
         .expect("read root")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name())
+        .into_iter()
+        .map(|e| e.os_name().unwrap_or_default())
         .collect();
     assert!(
         left.is_empty(),
@@ -114,11 +114,11 @@ fn a_package_directory_documents_its_own_api() {
         index.contains("API Reference"),
         "the index must link the API it extracted"
     );
-    let api: String = std::fs::read_dir(pkg.join("doc"))
+    let api: String = fa::read_dir(pkg.join("doc"))
         .expect("read doc")
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("api-"))
-        .filter_map(|e| fa::read_to_string(e.path()).ok())
+        .into_iter()
+        .filter(|e| e.file_name().is_some_and(|n| n.starts_with("api-")))
+        .filter_map(|e| fa::read_to_string(&e).ok())
         .collect();
     assert!(
         api.contains("add_two"),
@@ -153,11 +153,11 @@ fn a_doc_comment_is_shown_as_text_on_the_api_page() {
         .output()
         .expect("run loft doc");
     assert!(out.status.success(), "loft doc failed");
-    let api: String = std::fs::read_dir(pkg.join("doc"))
+    let api: String = fa::read_dir(pkg.join("doc"))
         .expect("read doc")
-        .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().starts_with("api-"))
-        .filter_map(|e| fa::read_to_string(e.path()).ok())
+        .into_iter()
+        .filter(|e| e.file_name().is_some_and(|n| n.starts_with("api-")))
+        .filter_map(|e| fa::read_to_string(&e).ok())
         .collect();
     assert!(
         api.contains(

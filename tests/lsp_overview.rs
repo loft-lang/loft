@@ -207,7 +207,12 @@ fn the_server_offers_the_overview_and_opens_it() {
         index.contains("(libraries.md)") && index.contains("(inside.md)"),
         "{index}"
     );
-    let libs = fa::read_to_string(root_path.with_file_name("libraries.md")).unwrap();
+    let libs = fa::read_to_string(
+        fa::parent(&root_path)
+            .unwrap_or_default()
+            .join("libraries.md"),
+    )
+    .unwrap();
     assert!(
         libs.contains("no registry index on this machine yet"),
         "says what is missing: {libs}"

@@ -33,12 +33,14 @@ pub fn source_run_lock(source: &std::path::Path) -> Option<std::fs::File> {
     let abs = std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
     let mut h = std::collections::hash_map::DefaultHasher::new();
     abs.hash(&mut h);
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join(format!("loft-run-{:016x}.lock", h.finish())))
-        .ok()?;
+    let lock = fa::open_with(
+        std::env::temp_dir().join(format!("loft-run-{:016x}.lock", h.finish())),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false),
+    )
+    .ok()?;
     lock.lock().ok()?;
     Some(lock)
 }
@@ -451,7 +453,7 @@ pub fn native_lib_search_dirs(_rlib: &std::path::Path) -> Vec<PathBuf> {
 pub fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<PathBuf> {
     // Walk up to the profile dir (release/ or debug/), then scan `build/<crate>-<hash>/`.
     let Some(profile_dir) = rlib.parent().and_then(|p| {
-        if p.file_name().is_some_and(|n| n == "deps") {
+        if fa::file_name(p).is_some_and(|n| n == "deps") {
             p.parent()
         } else {
             Some(p)
@@ -459,34 +461,34 @@ pub fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<PathBuf> {
     }) else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) else {
+    let Ok(entries) = fa::read_dir(profile_dir.join("build")) else {
         return Vec::new();
     };
     let mut dirs = Vec::new();
-    for entry in entries.filter_map(|e| e.ok()) {
-        let build_entry = entry.path();
+    for entry in entries {
+        let build_entry = entry.os_spelling();
         // `out/` and its immediate subdirs (libs generated into OUT_DIR).
         let out = build_entry.join("out");
-        if out.is_dir() {
+        if fa::is_dir(&out) {
             dirs.push(out.clone());
-            if let Ok(subs) = std::fs::read_dir(&out) {
+            if let Ok(subs) = fa::read_dir(&out) {
                 dirs.extend(
-                    subs.filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| p.is_dir()),
+                    subs.into_iter()
+                        .map(|e| e.os_spelling())
+                        .filter(|p| fa::is_dir(p)),
                 );
             }
         }
         // `cargo:rustc-link-search` directives cached in `build/<crate>-<hash>/output`
         // (e.g. `windows_x86_64_msvc` ships its `.lib` inside the registry package).
-        if let Ok(content) = std::fs::read_to_string(build_entry.join("output")) {
+        if let Ok(content) = fa::read_to_string(build_entry.join("output")) {
             for line in content.lines() {
                 if let Some(p) = line
                     .strip_prefix("cargo:rustc-link-search=native=")
                     .or_else(|| line.strip_prefix("cargo:rustc-link-search="))
                 {
                     let p = PathBuf::from(p);
-                    if p.is_dir() && !dirs.contains(&p) {
+                    if fa::is_dir(&p) && !dirs.contains(&p) {
                         dirs.push(p);
                     }
                 }

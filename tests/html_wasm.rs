@@ -143,7 +143,7 @@ fn run_html_wasm_full(
     fa::write(&src, source).expect("write source");
 
     for asset in assets {
-        let Some(fname) = asset.file_name() else {
+        let Some(fname) = fa::file_name(asset) else {
             continue;
         };
         let dest = tmp.join(fname);
@@ -824,25 +824,23 @@ const LIB_PKGS_WASMTIME_SKIP: &[&str] = &[
 /// Collect every `lib/<pkg>/tests/*.loft`, sorted.
 fn collect_lib_wasm_tests() -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = Vec::new();
-    let Ok(pkgs) = std::fs::read_dir(repo_root().join("lib")) else {
+    let Ok(pkgs) = fa::read_dir(repo_root().join("lib")) else {
         return files;
     };
-    for pkg in pkgs.filter_map(|e| e.ok()) {
+    for pkg in pkgs {
         // Skip the `.loft_test_tmp_*` artifact-isolation dirs that the interp /
         // native lib suites create as siblings inside lib/ (run_lib_test_in_temp_cwd)
         // — they exist only transiently and must not be discovered as packages.
-        if pkg.file_name().to_string_lossy().starts_with('.') {
+        if pkg.file_name().unwrap_or_default().starts_with('.') {
             continue;
         }
-        let tests_dir = pkg.path().join("tests");
-        let Ok(entries) = std::fs::read_dir(&tests_dir) else {
+        let tests_dir = pkg.os_spelling().join("tests");
+        let Ok(entries) = fa::read_dir(&tests_dir) else {
             continue;
         };
-        for f in entries.filter_map(|e| e.ok()) {
-            let p = f.path();
-            if p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            {
+        for f in entries {
+            let p = f.os_spelling();
+            if fa::extension(&p).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
                 files.push(p);
             }
         }
@@ -853,16 +851,11 @@ fn collect_lib_wasm_tests() -> Vec<PathBuf> {
 
 /// `(pkg, file)` key for an entry, e.g. `("time", "01-basics.loft")`.
 fn lib_test_key(entry: &std::path::Path) -> (String, String) {
-    let file = entry
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let file = fa::file_name(entry).unwrap_or_default();
     let pkg = entry
         .parent()
         .and_then(|d| d.parent())
-        .and_then(|d| d.file_name())
-        .map(|s| s.to_string_lossy().to_string())
+        .and_then(fa::file_name)
         .unwrap_or_default();
     (pkg, file)
 }
@@ -1069,10 +1062,8 @@ fn wasm_library_suite() {
             println!("skip {pkg}/{file} (no fn main — no wasm entry)");
             continue;
         }
-        let stem = entry
-            .file_stem()
+        let stem = fa::file_stem(&entry)
             .unwrap_or_default()
-            .to_string_lossy()
             .replace(['-', '.'], "_");
         let name = format!("libwasm_{pkg}_{stem}");
 
@@ -1082,11 +1073,11 @@ fn wasm_library_suite() {
         // can embed them.
         let assets: Vec<PathBuf> = entry
             .parent()
-            .and_then(|d| std::fs::read_dir(d).ok())
+            .and_then(|d| fa::read_dir(d).ok())
             .into_iter()
             .flatten()
-            .filter_map(|e| e.ok().map(|d| d.path()))
-            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("png")))
+            .map(|d| d.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("png")))
             .collect();
 
         if have_node && !LIB_PKGS_NODE_SKIP.contains(&pkg.as_str()) {
@@ -2146,10 +2137,11 @@ fn generated_loft_paths_survive_the_wasm_feature_set() {
 
     let mut sources = vec![root.join("src/codegen_runtime.rs")];
     let gen_dir = root.join("src/generation");
-    let mut entries: Vec<PathBuf> = std::fs::read_dir(&gen_dir)
+    let mut entries: Vec<PathBuf> = fa::read_dir(&gen_dir)
         .expect("read src/generation")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "rs"))
         .collect();
     entries.sort();
     sources.extend(entries);

@@ -1287,19 +1287,18 @@ fn n1_native_pipeline_trivial_program() {
     // fresh one, and a find-first pick then feeds rustc mismatched crate
     // metadata (a wall of misleading E0432 "unresolved import" noise in the
     // nightly toolchain-matrix logs).
-    let loft_rlib = std::fs::read_dir(&deps_dir).ok().and_then(|it| {
-        it.flatten()
+    let loft_rlib = fa::read_dir(&deps_dir).ok().and_then(|it| {
+        it.into_iter()
             .filter(|e| {
-                let n = e.file_name();
-                let s = n.to_string_lossy();
+                let s = e.file_name().unwrap_or_default();
                 s.starts_with("libloft") && s.ends_with(".rlib")
             })
             .max_by_key(|e| {
-                e.metadata()
+                fa::symlink_metadata(e)
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
             })
-            .map(|e| e.path())
+            .map(|e| e.os_spelling())
     });
     let binary = std::env::temp_dir().join("loft_n1_test_bin");
     let mut rustc_args = vec![
@@ -1315,9 +1314,9 @@ fn n1_native_pipeline_trivial_program() {
         // S31: pass --extern for every non-loft rlib in deps/ so that optional
         // feature dependencies (rand_core, rand_pcg, png, etc.) can be resolved.
         // Without this, rustc cannot find crates that loft was compiled with.
-        if let Ok(entries) = std::fs::read_dir(&deps_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
+        if let Ok(entries) = fa::read_dir(&deps_dir) {
+            for entry in entries {
+                let name = entry.file_name().unwrap_or_default().to_string();
                 if !name.starts_with("lib")
                     || !name.ends_with(".rlib")
                     || name.starts_with("libloft")
@@ -1332,7 +1331,7 @@ fn n1_native_pipeline_trivial_program() {
                     without_rlib.replace('-', "_")
                 };
                 rustc_args.push("--extern".to_string());
-                rustc_args.push(format!("{crate_name}={}", entry.path().display()));
+                rustc_args.push(format!("{crate_name}={}", entry.os_spelling().display()));
             }
         }
     }

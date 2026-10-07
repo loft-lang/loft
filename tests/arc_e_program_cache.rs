@@ -58,12 +58,11 @@ fn program_cache_cold_warm_then_drift() {
     assert!(ok_cold, "cold run failed: {out_cold}");
     let dir = cache_dir.join("loft");
     let has = |ext: &str| {
-        std::fs::read_dir(&dir)
+        fa::read_dir(&dir)
             .ok()
             .into_iter()
             .flatten()
-            .flatten()
-            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some(ext))
+            .any(|e| fa::has_extension(&e, ext))
     };
     assert!(
         has("store") && has("manifest"),
@@ -106,12 +105,11 @@ fn a_development_build_caches_unless_told_not_to() {
     let script = tmp.join(format!("loft_c133_{pid}.loft"));
     fa::write(&script, "fn main() {\n  print(\"c133={6 * 7}\\n\");\n}\n").expect("script");
     let bundles = |root: &std::path::Path| {
-        std::fs::read_dir(root.join("loft"))
+        fa::read_dir(root.join("loft"))
             .ok()
             .into_iter()
             .flatten()
-            .flatten()
-            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("store"))
+            .filter(|e| fa::has_extension(e, "store"))
             .count()
     };
     let run_in = |root: &std::path::Path, off: bool| {
@@ -203,11 +201,11 @@ fn manifest_build_signature_invalidates_stale_bundle() {
     let (ok_cold, _) = run(&script, Some(&cache_dir));
     assert!(ok_cold, "cold run failed");
     let dir = cache_dir.join("loft");
-    let manifest = std::fs::read_dir(&dir)
+    let manifest = fa::read_dir(&dir)
         .expect("cache dir")
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.extension().and_then(|x| x.to_str()) == Some("manifest"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .find(|p| fa::has_extension(p, "manifest"))
         .expect("manifest written");
     let text = fa::read_to_string(&manifest).expect("read manifest");
     assert!(
@@ -391,12 +389,12 @@ fn lib_dependency_edit_invalidates_program_cache() {
     // Cold run caches; the manifest must cover the lib file.
     let out_cold = run_lib("cold");
     assert!(out_cold.contains("v=28"), "cold output: {out_cold}");
-    let manifest = std::fs::read_dir(cache_dir.join("loft"))
+    let manifest = fa::read_dir(cache_dir.join("loft"))
         .expect("cache dir")
-        .filter_map(Result::ok)
-        .find(|e| e.file_name().to_string_lossy().ends_with(".manifest"))
+        .into_iter()
+        .find(|e| e.file_name().is_some_and(|n| n.ends_with(".manifest")))
         .expect("manifest written");
-    let manifest_text = fa::read_to_string(manifest.path()).expect("read manifest");
+    let manifest_text = fa::read_to_string(&manifest).expect("read manifest");
     assert!(
         manifest_text.contains("rstream.loft"),
         "manifest must list the --lib dependency:\n{manifest_text}"
@@ -751,10 +749,9 @@ fn scratch_stdlib(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let _ = fa::remove_dir_all(&root);
     let dflt = root.join("default");
     fa::create_dir_all(&dflt).expect("scratch default/");
-    for e in std::fs::read_dir(workspace_root().join("default")).expect("default/") {
-        let p = e.expect("entry").path();
-        if p.extension().and_then(|x| x.to_str()) == Some("loft") {
-            fa::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
+    for p in fa::read_dir(workspace_root().join("default")).expect("default/") {
+        if fa::has_extension(&p, "loft") {
+            fa::copy(&p, dflt.join(p.os_name().expect("name"))).expect("copy");
         }
     }
     fa::write(
@@ -941,10 +938,10 @@ fn every_binary_of_one_build_shares_one_stdlib_image() {
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "ok");
     };
     let images = || -> Vec<String> {
-        std::fs::read_dir(cache.join("loft"))
+        fa::read_dir(cache.join("loft"))
             .map(|d| {
-                d.flatten()
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                d.into_iter()
+                    .map(|e| e.file_name().unwrap_or_default().to_string())
                     .filter(|n| n.starts_with("stdlib-") && n.ends_with(".store"))
                     .collect()
             })

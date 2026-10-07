@@ -191,11 +191,11 @@ fn the_falsify_scorer_reads_its_channels_on_this_platform() {
 #[ignore = "PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under"]
 fn every_patch_receipt_still_applies() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut patches: Vec<std::path::PathBuf> = fs::read_dir(root.join("tests/falsified"))
+    let mut patches: Vec<std::path::PathBuf> = fa::read_dir(root.join("tests/falsified"))
         .expect("tests/falsified is readable")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "patch"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "patch"))
         .collect();
     patches.sort();
     assert!(
@@ -290,19 +290,12 @@ fn every_new_guard_records_its_control() {
 
     let mut missing: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for entry in fs::read_dir("tests/scripts").expect("cannot read tests/scripts") {
-        let path = entry.expect("bad dir entry").path();
-        if path
-            .extension()
-            .is_none_or(|e| !e.eq_ignore_ascii_case("loft"))
-        {
+    for entry in fa::read_dir("tests/scripts").expect("cannot read tests/scripts") {
+        let path = entry.os_spelling();
+        if fa::extension(&path).is_none_or(|e| !e.eq_ignore_ascii_case("loft")) {
             continue;
         }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .expect("non-utf8 script name")
-            .to_string();
+        let name = fa::file_name(&path).expect("non-utf8 script name");
         let src = fa::read_to_string(&path).unwrap_or_default();
         let records = src.contains("@falsified-at:") || src.contains("@falsified-by:");
         if records && baseline.contains(name.as_str()) {
@@ -356,22 +349,22 @@ fn every_new_guard_records_its_control() {
 #[test]
 fn ignored_tests_baseline_is_current() {
     fn rust_files(dir: &str, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
-        for e in entries.flatten() {
-            let p = e.path();
+        for e in entries {
+            let p = e.os_spelling();
             if fa::is_dir(&p) {
                 rust_files(&p.to_string_lossy(), out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
+            } else if fa::has_extension(&p, "rs") {
                 out.push(p.to_string_lossy().replace('\\', "/"));
             }
         }
     }
     let mut files: Vec<String> = Vec::new();
-    for e in fs::read_dir("tests").expect("read tests/").flatten() {
-        let p = e.path();
-        if fa::is_file(&p) && p.extension().is_some_and(|x| x == "rs") {
+    for e in fa::read_dir("tests").expect("read tests/") {
+        let p = e.os_spelling();
+        if fa::is_file(&p) && fa::has_extension(&p, "rs") {
             files.push(p.to_string_lossy().replace('\\', "/"));
         }
     }
@@ -1605,18 +1598,14 @@ fn lib_fixtures_have_loft_toml() {
         // Pre-population state — no fixtures yet.  Acceptable.
         return;
     }
-    let entries = fs::read_dir(dir).expect("read tests/fixtures/libs");
+    let entries = fa::read_dir(dir).expect("read tests/fixtures/libs");
     let mut missing: Vec<String> = Vec::new();
-    for ent in entries.filter_map(Result::ok) {
-        let path = ent.path();
+    for ent in entries {
+        let path = ent.os_spelling();
         if !fa::is_dir(&path) {
             continue;
         }
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with('.'))
-        {
+        if fa::file_name(&path).is_some_and(|n| n.starts_with('.')) {
             continue;
         }
         if !fa::exists(path.join("loft.toml")) {
@@ -2023,17 +2012,14 @@ fn repro_matrix_covers_every_published_triple() {
 #[test]
 fn no_source_file_is_invisible_to_grep() {
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = fs::read_dir(dir) else {
+        let Ok(entries) = fa::read_dir(dir) else {
             return;
         };
-        for e in entries.flatten() {
-            let p = e.path();
+        for e in entries {
+            let p = e.os_spelling();
             if fa::is_dir(&p) {
                 walk(&p, out);
-            } else if p
-                .extension()
-                .is_some_and(|x| x == "rs" || x == "loft" || x == "md")
-            {
+            } else if fa::extension(&p).is_some_and(|x| x == "rs" || x == "loft" || x == "md") {
                 out.push(p);
             }
         }
@@ -2287,9 +2273,9 @@ fn every_doc_page_asserts_something() {
     let mut silent = Vec::new();
     let dir = std::path::Path::new("tests/docs");
     let mut pages = 0;
-    for entry in std::fs::read_dir(dir).expect("tests/docs is readable") {
-        let path = entry.expect("dir entry").path();
-        if !fa::is_file(&path) || path.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(dir).expect("tests/docs is readable") {
+        let path = entry.os_spelling();
+        if !fa::is_file(&path) || !fa::has_extension(&path, "loft") {
             continue;
         }
         let body = fa::read_to_string(&path).expect("page is readable");
@@ -2302,7 +2288,7 @@ fn every_doc_page_asserts_something() {
         // `@EXPECT_ERROR` is a page whose CLAIM is the diagnostic, which the harness
         // checks for it.
         if !body.contains("assert") && !body.contains("@EXPECT_ERROR") {
-            silent.push(path.file_name().unwrap().to_string_lossy().to_string());
+            silent.push(fa::file_name(&path).unwrap());
         }
     }
     assert!(pages >= 30, "expected the doc corpus, found {pages} pages");
@@ -2564,16 +2550,12 @@ fn no_topic_renders_its_own_directives_as_prose() {
     // `// @NAME:` line is the content and rendering it is the point.
     let mut offenders: Vec<String> = Vec::new();
     let mut pages_read = 0_usize;
-    for entry in std::fs::read_dir(root.join("tests/docs")).expect("tests/docs is unreadable") {
-        let topic = entry.expect("tests/docs entry").path();
-        if topic.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(root.join("tests/docs")).expect("tests/docs is unreadable") {
+        let topic = entry.os_spelling();
+        if !fa::has_extension(&topic, "loft") {
             continue;
         }
-        let stem = topic
-            .file_stem()
-            .expect("stem")
-            .to_string_lossy()
-            .into_owned();
+        let stem = fa::file_stem(&topic).expect("stem");
         let path = root.join("doc").join(format!("{stem}.html"));
         // `00-general` is the front matter of the index rather than a page of its own.
         let Ok(html) = fa::read_to_string(&path) else {
@@ -2621,13 +2603,9 @@ fn no_topic_renders_its_own_directives_as_prose() {
 fn stdlib_entries() -> Vec<(String, String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(root.join("doc")).expect("doc/ is unreadable") {
-        let path = entry.expect("doc entry").path();
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+    for entry in fa::read_dir(root.join("doc")).expect("doc/ is unreadable") {
+        let path = entry.os_spelling();
+        let name = fa::file_name(&path).unwrap_or_default();
         if !name.starts_with("stdlib") || !name.ends_with(".html") {
             continue;
         }
@@ -2688,9 +2666,9 @@ fn strip_tags(s: &str) -> String {
 fn every_public_stdlib_function_is_published() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut declared: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root.join("default")).expect("default/ is unreadable") {
-        let path = entry.expect("default entry").path();
-        if path.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(root.join("default")).expect("default/ is unreadable") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
         for line in fa::read_to_string(&path).expect("stdlib file").lines() {
@@ -2765,9 +2743,9 @@ fn no_stdlib_section_shows_the_reader_a_tracker_tag_or_a_private_name() {
     // The private declarations are derived, not listed: anything `default/` declares
     // without `pub` is a name the reader has no way to use.
     let mut private: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root.join("default")).expect("default/") {
-        let path = entry.expect("entry").path();
-        if path.extension().is_none_or(|e| e != "loft") {
+    for entry in fa::read_dir(root.join("default")).expect("default/") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
         for line in fa::read_to_string(&path).expect("stdlib file").lines() {
@@ -2789,13 +2767,9 @@ fn no_stdlib_section_shows_the_reader_a_tracker_tag_or_a_private_name() {
     );
 
     let mut bad: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(root.join("doc")).expect("doc/") {
-        let path = entry.expect("doc entry").path();
-        let file = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+    for entry in fa::read_dir(root.join("doc")).expect("doc/") {
+        let path = entry.os_spelling();
+        let file = fa::file_name(&path).unwrap_or_default();
         if !file.starts_with("stdlib-") || !file.ends_with(".html") {
             continue;
         }
@@ -2884,9 +2858,9 @@ fn both_corpus_halves_pick_entry_points_through_one_predicate() {
 fn no_worked_example_citation_is_rendered_as_prose() {
     let mut leaked: Vec<String> = Vec::new();
     let mut pages = 0usize;
-    for entry in fs::read_dir("doc").expect("doc/ is readable") {
-        let path = entry.expect("readable entry").path();
-        if path.extension().is_none_or(|e| e != "html") {
+    for entry in fa::read_dir("doc").expect("doc/ is readable") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "html") {
             continue;
         }
         let Ok(text) = fa::read_to_string(&path) else {
@@ -2960,16 +2934,12 @@ fn the_source_browsers_still_show_the_citations_in_their_source() {
 fn no_internal_tracker_tag_reaches_the_reference_prose() {
     let mut leaked: Vec<String> = Vec::new();
     let mut pages = 0usize;
-    for entry in fs::read_dir("doc").expect("doc/ is readable") {
-        let path = entry.expect("readable entry").path();
-        if path.extension().is_none_or(|e| e != "html") {
+    for entry in fa::read_dir("doc").expect("doc/ is readable") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "html") {
             continue;
         }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let name = fa::file_name(&path).unwrap_or_default();
         if page_is_exempt(&name) {
             continue;
         }
@@ -3141,7 +3111,7 @@ fn git_bash() -> std::ffi::OsString {
         roots.push(std::path::PathBuf::from(r"C:\Program Files"));
         for r in roots {
             let c = r.join("Git").join("bin").join("bash.exe");
-            if c.is_file() {
+            if fa::is_file(&c) {
                 return c.into_os_string();
             }
         }
@@ -3679,8 +3649,8 @@ fn the_generated_pages_match_their_sources() {
     let tracked_set: std::collections::HashSet<&str> = files.iter().map(String::as_str).collect();
     let mut stack = vec![copy.join("doc")];
     while let Some(dir) = stack.pop() {
-        for entry in fs::read_dir(&dir).expect("read the copy's doc/").flatten() {
-            let path = entry.path();
+        for entry in fa::read_dir(&dir).expect("read the copy's doc/") {
+            let path = entry.os_spelling();
             if fa::is_dir(&path) {
                 stack.push(path);
                 continue;
@@ -3712,11 +3682,11 @@ fn the_generated_pages_match_their_sources() {
 /// are assertions, not output.
 fn diagnostic_literals() -> Vec<(String, usize, String)> {
     fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-        for e in fs::read_dir(dir).expect("src/ is readable") {
-            let p = e.expect("entry").path();
+        for e in fa::read_dir(dir).expect("src/ is readable") {
+            let p = e.os_spelling();
             if fa::is_dir(&p) {
                 rs_files(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
+            } else if fa::has_extension(&p, "rs") {
                 out.push(p);
             }
         }

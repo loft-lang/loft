@@ -135,11 +135,10 @@ impl Unit {
             own + kids
         );
         use std::io::Write as _;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
+        if let Ok(mut f) = loft::file_access::open_with(
+            path.as_os_str(),
+            std::fs::OpenOptions::new().create(true).append(true),
+        ) {
             let _ = f.write_all(row.as_bytes());
         }
     }

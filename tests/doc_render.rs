@@ -204,11 +204,11 @@ fn collapse(s: &str) -> String {
 #[test]
 fn every_back_end_shows_the_same_words() {
     let mut items: Vec<(String, String)> = Vec::new();
-    let mut files: Vec<_> = std::fs::read_dir("default")
+    let mut files: Vec<_> = fa::read_dir("default")
         .expect("default/")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     files.sort();
     for f in files {

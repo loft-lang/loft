@@ -46,7 +46,7 @@ fn prose(line: &str) -> Option<&str> {
 /// exactly what a reader sees as one screenful.
 fn transcripts_in(page: &Path) -> Vec<Transcript> {
     let text = fa::read_to_string(page).expect("read doc page");
-    let name = page.file_name().unwrap().to_string_lossy().into_owned();
+    let name = fa::file_name(page).unwrap();
     let mut out: Vec<Transcript> = Vec::new();
     for (i, raw) in text.lines().enumerate() {
         let Some(body) = prose(raw) else { continue };
@@ -81,24 +81,29 @@ fn fixture_copy(tag: &str) -> PathBuf {
 
 fn copy_tree(from: &Path, to: &Path) {
     fa::create_dir_all(to).expect("mkdir fixture");
-    for entry in std::fs::read_dir(from).expect("read fixture dir") {
-        let entry = entry.expect("fixture entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
-            copy_tree(&entry.path(), &target);
+    for entry in fa::read_dir(from).expect("read fixture dir") {
+        let name = entry.os_name().expect("fixture entry");
+        let path = from.join(&name);
+        let target = to.join(name);
+        if fa::symlink_metadata(&path)
+            .expect("file type")
+            .file_type()
+            .is_dir()
+        {
+            copy_tree(&path, &target);
         } else {
-            fa::copy(entry.path(), &target).expect("copy fixture file");
+            fa::copy(&path, &target).expect("copy fixture file");
         }
     }
 }
 
 #[test]
 fn every_documented_command_runs_and_prints_what_the_page_shows() {
-    let pages: Vec<PathBuf> = std::fs::read_dir("tests/docs")
+    let pages: Vec<PathBuf> = fa::read_dir("tests/docs")
         .expect("read tests/docs")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
 
     let mut all: Vec<Transcript> = Vec::new();

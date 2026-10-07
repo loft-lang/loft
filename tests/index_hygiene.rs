@@ -156,9 +156,9 @@ fn check_new_decisions_are_guarded(index: &str) {
     // The register is one flat id sequence spread over the subject files
     // `DESIGN_DECISIONS_<SUBJECT>.md`; DESIGN_DECISIONS.md is its index.
     let mut defined: Vec<(String, String)> = Vec::new();
-    for entry in std::fs::read_dir("doc/claude").expect("read doc/claude") {
-        let path = entry.expect("dir entry").path();
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
+    for entry in fa::read_dir("doc/claude").expect("read doc/claude") {
+        let path = entry.os_spelling();
+        let name = fa::file_name(&path).unwrap();
         if !name.starts_with("DESIGN_DECISIONS_") || !name.ends_with(".md") {
             continue;
         }

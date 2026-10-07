@@ -55,14 +55,15 @@ struct Case {
 
 fn collect_cases() -> Vec<Case> {
     let mut out = Vec::new();
-    let mut entries: Vec<_> = std::fs::read_dir(cases_dir())
+    let mut entries: Vec<_> = fa::read_dir(cases_dir())
         .expect("read cases dir")
-        .filter_map(|e| e.ok())
+        .into_iter()
+        .filter_map(|e| e.os_name())
         .collect();
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let path = e.path();
-        let file_name = e.file_name().to_string_lossy().into_owned();
+    entries.sort();
+    for name in entries {
+        let path = cases_dir().join(&name);
+        let file_name = name.to_string_lossy().into_owned();
         if fa::is_file(&path) && file_name.ends_with(".loft") {
             let name = file_name.trim_end_matches(".loft").to_string();
             out.push(Case {

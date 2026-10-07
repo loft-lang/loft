@@ -264,11 +264,12 @@ fn crystal_editor_gl_matches_gold() {
     // pixels, the content identical).  Each is held to the same strict limits, so a missing
     // or wrong element fails against every one of them.
     let mut accepted: Vec<(String, Vec<u8>)> = vec![("crystal-editor-gl.png".into(), expected)];
-    if let Ok(dir) = std::fs::read_dir(root.join("tests/gold")) {
+    if let Ok(dir) = fa::read_dir(root.join("tests/gold")) {
         let mut others: Vec<PathBuf> = dir
-            .filter_map(|e| e.ok().map(|e| e.path()))
+            .into_iter()
+            .map(|e| e.os_spelling())
             .filter(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                fa::file_name(p).is_some_and(|n| {
                     n.starts_with("crystal-editor-gl.")
                         && n.ends_with(".png")
                         && n != "crystal-editor-gl.png"
@@ -279,7 +280,7 @@ fn crystal_editor_gl_matches_gold() {
         for p in others {
             let (px, w, h) = decode_rgba8(&p);
             if (w, h) == (ew, eh) {
-                accepted.push((p.file_name().unwrap().to_string_lossy().into_owned(), px));
+                accepted.push((fa::file_name(&p).unwrap(), px));
             }
         }
     }

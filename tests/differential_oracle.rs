@@ -228,11 +228,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
     if !wasm_toolchain_present() {
         return None;
     }
-    let stem = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
+    let stem = fa::file_stem(path).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("loft_oracle_{stem}_{}.wasm", std::process::id()));
     let compile = Command::new(loft_bin())
         .arg("--native-wasm")
@@ -313,11 +309,11 @@ fn twin_of(path: &Path) -> Option<String> {
 /// The corpus: every `.loft` under `tests/oracle/`, in alphabetical order.
 fn corpus() -> Vec<PathBuf> {
     let dir = workspace_root().join("tests/oracle");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut files: Vec<PathBuf> = fa::read_dir(&dir)
         .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     files.sort();
     assert!(
@@ -388,7 +384,7 @@ fn halt_opt_out(path: &Path) -> Option<String> {
 fn oracle_corpus_agrees_across_backends() {
     let mut report = Vec::new();
     for path in corpus() {
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let name = fa::file_name(&path).unwrap();
         let dump = run_mode("--dump", &path, &[]);
         let interp = run_mode("--interpret", &path, &[]);
         let native = run_mode("--native", &path, &[("LOFT_NATIVE_LEAK_CHECK", "1")]);
@@ -463,7 +459,7 @@ fn oracle_corpus_agrees_across_backends() {
         // run must print what this program printed.  The twin is a corpus program itself, so
         // its own backends are held to each other by its own turn of this loop.
         if let Some(twin) = twin_of(&path) {
-            let twin_path = path.with_file_name(&twin);
+            let twin_path = fa::parent(&path).unwrap_or_default().join(&twin);
             assert!(
                 fa::exists(&twin_path),
                 "{name} declares `@ORACLE_TWIN: {twin}`, which is not in tests/oracle/"

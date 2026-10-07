@@ -52,10 +52,7 @@ fn loft_binary() -> std::path::PathBuf {
 fn baseline_present() -> bool {
     fa::exists(std::path::Path::new(BASELINE_DIR))
         && CORPUS.iter().all(|t| {
-            let name = std::path::Path::new(t)
-                .file_stem()
-                .unwrap()
-                .to_string_lossy();
+            let name = fa::file_stem(t).unwrap();
             fa::exists(std::path::Path::new(BASELINE_DIR).join(format!("{name}.rs")))
         })
 }
@@ -93,17 +90,14 @@ fn baseline_emission_unchanged() {
     let _ = fa::create_dir_all(&tmp_dir);
     let mut diffs: Vec<String> = Vec::new();
     for src in CORPUS {
-        let name = std::path::Path::new(src)
-            .file_stem()
-            .unwrap()
-            .to_string_lossy();
+        let name = fa::file_stem(src).unwrap();
         let out = tmp_dir.join(format!("{name}.rs"));
         emit_native(src, &out);
         let baseline = std::path::Path::new(BASELINE_DIR).join(format!("{name}.rs"));
         let actual = fa::read_to_string(&out).expect("read emitted .rs");
         let expected = fa::read_to_string(&baseline).expect("read baseline .rs");
         if actual != expected {
-            diffs.push(name.into_owned());
+            diffs.push(name);
         }
     }
     assert!(
@@ -762,10 +756,7 @@ fn p205_no_str_new_of_local_in_corpus() {
     let baseline = std::path::Path::new(BASELINE_DIR);
     let mut offenders: Vec<String> = Vec::new();
     for test in CORPUS {
-        let name = std::path::Path::new(test)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or(test);
+        let name = fa::file_stem(test).unwrap_or_else(|| test.to_string());
         let path = baseline.join(format!("{name}.rs"));
         let src = match fa::read_to_string(&path) {
             Ok(s) => s,

@@ -922,7 +922,7 @@ fn native_emit_includes_loft_source_map() {
     // the test's expectation against the same canonical form.  A
     // simple `.display()` form fails on Windows because the test's
     // path lacks the UNC prefix.
-    let canonical = std::fs::canonicalize(&script_path).unwrap_or_else(|_| script_path.clone());
+    let canonical = fa::try_plain_canonical(&script_path).unwrap_or_else(|| script_path.clone());
     let path_str = canonical.display().to_string();
     // Function-header comment maps to the .loft source line.  It heads the item, so it
     // sits above the function's attributes (`#[inline]`, `#[inline(never)]`), not between
@@ -1530,10 +1530,10 @@ fn stderr_sharing_a_closed_pipe_does_not_abort_or_write_a_crash_report() {
         "a closed pipe is the ordinary end of the run; got {:?}",
         status.code()
     );
-    let reports: Vec<_> = std::fs::read_dir(dir.join(".loft"))
+    let reports: Vec<_> = fa::read_dir(dir.join(".loft"))
         .expect("read cache dir")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().to_string())
+        .into_iter()
+        .map(|e| e.file_name().unwrap_or_default().to_string())
         .filter(|n| n.starts_with("loft-crash-"))
         .collect();
     assert!(
@@ -1653,11 +1653,13 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     let bundled = bundle.join("loft");
     fa::copy(loft_bin(), &bundled).expect("copy the binary");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    for entry in std::fs::read_dir(root.join("default")).expect("default/") {
-        let entry = entry.expect("entry");
-        if fa::is_file(entry.path()) {
-            fa::copy(entry.path(), bundle.join("default").join(entry.file_name()))
-                .expect("copy default/");
+    for entry in fa::read_dir(root.join("default")).expect("default/") {
+        if fa::is_file(&entry) {
+            fa::copy(
+                &entry,
+                bundle.join("default").join(entry.os_name().expect("entry")),
+            )
+            .expect("copy default/");
         }
     }
     let prog = tmp.join("p.loft");

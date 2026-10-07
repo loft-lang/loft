@@ -163,10 +163,10 @@ fn prune_all_clears_the_caches_but_not_the_package() {
     let (out, ok) = run(&home, &["cache", "prune", "--all", "--force"]);
     assert!(ok, "prune --all must succeed:\n{out}");
     let auto = home.join(".loft/registry/demo-1.0.0/native-auto");
-    let left = std::fs::read_dir(&auto)
+    let left = fa::read_dir(&auto)
         .map(|d| {
-            d.flatten()
-                .filter(|e| e.file_name().to_string_lossy().contains("loft_auto_demo"))
+            d.iter()
+                .filter(|e| e.file_name().is_some_and(|n| n.contains("loft_auto_demo")))
                 .count()
         })
         .unwrap_or(0);

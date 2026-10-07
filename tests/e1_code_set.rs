@@ -949,14 +949,14 @@ fn scan_source_codes() -> BTreeSet<String> {
 }
 
 fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    let Ok(rd) = fa::read_dir(dir) else {
         return;
     };
-    for e in rd.flatten() {
-        let p = e.path();
+    for e in rd {
+        let p = e.os_spelling();
         if fa::is_dir(&p) {
             collect_rs(&p, out);
-        } else if p.extension().is_some_and(|x| x == "rs") {
+        } else if fa::has_extension(&p, "rs") {
             out.push(p);
         }
     }

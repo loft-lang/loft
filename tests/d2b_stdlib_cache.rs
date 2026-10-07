@@ -61,12 +61,11 @@ fn stdlib_cache_off_cold_warm_match() {
     // 2. Cache ON, cold — parses default/ then writes the bundle.
     let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
     assert!(ok_cold, "cold cache run failed: {out_cold}");
-    let store = std::fs::read_dir(cache_dir.join("loft"))
+    let store = fa::read_dir(cache_dir.join("loft"))
         .ok()
         .into_iter()
         .flatten()
-        .flatten()
-        .find(|e| e.path().extension().and_then(|x| x.to_str()) == Some("store"));
+        .find(|e| fa::has_extension(e, "store"));
     assert!(store.is_some(), "cold run did not write a .store bundle");
 
     // 3. Cache ON, warm — mmaps the bundle, skips the parse.
@@ -135,12 +134,12 @@ fn corrupt_bundle_falls_back_to_parse() {
     // Cold run writes a valid bundle.
     let (ok, out) = run(&script, Some(&cache_dir));
     assert!(ok, "cold run failed: {out}");
-    let store = std::fs::read_dir(cache_dir.join("loft"))
+    let store = fa::read_dir(cache_dir.join("loft"))
         .expect("cache dir")
-        .flatten()
-        .find(|e| e.path().extension().and_then(|x| x.to_str()) == Some("store"))
+        .into_iter()
+        .find(|e| fa::has_extension(e, "store"))
         .expect("bundle written")
-        .path();
+        .os_spelling();
 
     // Overwrite the bundle with garbage (a partial / foreign file).
     fa::write(&store, b"definitely not a valid loft store image").expect("corrupt");

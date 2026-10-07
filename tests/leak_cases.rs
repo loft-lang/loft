@@ -69,19 +69,19 @@ fn folder_expect(folder: &str) -> Option<Expect> {
 fn case_files() -> Vec<(String, String, PathBuf)> {
     let base = root().join("tests/leak_cases");
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(&base).expect("tests/leak_cases must exist") {
-        let dir = entry.unwrap().path();
+    for entry in fa::read_dir(&base).expect("tests/leak_cases must exist") {
+        let dir = entry.os_spelling();
         if !fa::is_dir(&dir) {
             continue;
         }
-        let folder = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let folder = fa::file_name(&dir).unwrap();
         if folder_expect(&folder).is_none() {
             continue;
         }
-        for f in std::fs::read_dir(&dir).unwrap() {
-            let p = f.unwrap().path();
-            if p.extension().and_then(|e| e.to_str()) == Some("loft") {
-                let stem = p.file_stem().unwrap().to_string_lossy().into_owned();
+        for f in fa::read_dir(&dir).unwrap() {
+            let p = f.os_spelling();
+            if fa::has_extension(&p, "loft") {
+                let stem = fa::file_stem(&p).unwrap();
                 out.push((folder.clone(), stem, p));
             }
         }

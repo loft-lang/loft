@@ -172,7 +172,7 @@ fn logger_production_mode_writes_no_file() {
 #[test]
 fn logger_from_missing_config_uses_defaults() {
     let fake = PathBuf::from("/definitely/does/not/exist/loft.log.conf");
-    let main = unique_tmp("logger_main").with_extension("loft");
+    let main = fa::with_extension(unique_tmp("logger_main"), "loft");
     let lg = Logger::from_config_file(&fake, main.to_str().unwrap());
     // Default level is Info — verify by logging a Warn and checking it gets through
     // to the default log path under the main file's parent.
@@ -211,13 +211,13 @@ fn logger_size_rotation_creates_backup() {
     lg.log(Severity::Info, "rot.loft", 2, "second-after-rotation");
     drop(lg);
 
-    let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
+    let stem = fa::file_stem(&path).unwrap();
+    let ext = fa::extension(&path)
         .map(|s| format!(".{s}"))
         .unwrap_or_default();
-    let backup = path.with_file_name(format!("{stem}.1{ext}"));
+    let backup = fa::parent(&path)
+        .unwrap_or_default()
+        .join(format!("{stem}.1{ext}"));
     let backup_exists = fa::exists(&backup);
     let current = read_log(&path);
     cleanup(&path);

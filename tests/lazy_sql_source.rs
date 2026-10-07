@@ -230,6 +230,11 @@ fn scratch(name: &str) -> std::path::PathBuf {
     dir.join("people.db")
 }
 
+/// `name` in the directory holding `path` (`std`: `Path::with_file_name`).
+fn sibling(path: &std::path::Path, name: &str) -> std::path::PathBuf {
+    fa::parent(path).unwrap_or_default().join(name)
+}
+
 #[test]
 fn a_source_string_names_its_driver() {
     assert_eq!(
@@ -453,8 +458,8 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
         return;
     };
     let dir = scratch("graph");
-    let persons = dir.with_file_name("persons.db");
-    let companies = dir.with_file_name("companies.db");
+    let persons = sibling(&dir, "persons.db");
+    let companies = sibling(&dir, "companies.db");
     seed(
         &companies,
         "CREATE TABLE sqcompany(id INTEGER PRIMARY KEY, name TEXT); \
@@ -550,7 +555,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
         .join("tests/scripts/129-lazy-sql-schema.loft");
 
     // The control: a table with an indexed key and matching types FETCHES.
-    let good = scratch("schema_ok").with_file_name("good.db");
+    let good = sibling(&scratch("schema_ok"), "good.db");
     seed(
         &good,
         "CREATE TABLE sqchecked(id INTEGER PRIMARY KEY, name TEXT); \
@@ -561,7 +566,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
     assert!(out.contains("why=[]"), "control must report healthy: {out}");
 
     // A column the type declares and the table does not.
-    let missing = scratch("schema_col").with_file_name("missing.db");
+    let missing = sibling(&scratch("schema_col"), "missing.db");
     seed(
         &missing,
         "CREATE TABLE sqchecked(id INTEGER PRIMARY KEY, naam TEXT); \
@@ -579,7 +584,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
 
     // A column whose affinity cannot hold the field: `name` is loft `text` and
     // the column is INTEGER, so every fetch would reinterpret someone's data.
-    let wrong = scratch("schema_type").with_file_name("wrong.db");
+    let wrong = sibling(&scratch("schema_type"), "wrong.db");
     seed(
         &wrong,
         "CREATE TABLE sqchecked(id INTEGER PRIMARY KEY, name INTEGER); \
@@ -595,7 +600,7 @@ fn a_schema_that_cannot_serve_the_lookup_is_refused_and_says_why() {
     // The one that does NOT announce itself: no index on the key. Every answer
     // stays right and every fault reads the whole table — a working feature and
     // a catastrophic one, which is why this is measured rather than assumed.
-    let unindexed = scratch("schema_scan").with_file_name("scan.db");
+    let unindexed = sibling(&scratch("schema_scan"), "scan.db");
     seed(
         &unindexed,
         "CREATE TABLE sqchecked(id INTEGER, name TEXT); \
@@ -622,7 +627,7 @@ fn an_explicit_query_populates_the_collection_both_backends() {
     else {
         return;
     };
-    let path = scratch("b2").with_file_name("liked.db");
+    let path = sibling(&scratch("b2"), "liked.db");
     seed(
         &path,
         "CREATE TABLE sqliked(id INTEGER PRIMARY KEY, name TEXT); \
@@ -695,7 +700,7 @@ fn a_key_range_is_one_query_both_backends() {
     let Some(_sqlite) = sqlite_guard("a_key_range_is_one_query_both_backends") else {
         return;
     };
-    let path = scratch("range").with_file_name("events.db");
+    let path = sibling(&scratch("range"), "events.db");
     let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
     seed(
         &path,
@@ -762,7 +767,7 @@ fn a_range_of_five_records_costs_one_query() {
     let Some(_sqlite) = sqlite_guard("a_range_of_five_records_costs_one_query") else {
         return;
     };
-    let path = scratch("range_count").with_file_name("evcount.db");
+    let path = sibling(&scratch("range_count"), "evcount.db");
     let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
     seed(
         &path,
@@ -808,7 +813,7 @@ fn a_slice_reads_what_is_resident_and_fetches_nothing() {
     let Some(_sqlite) = sqlite_guard("a_slice_reads_what_is_resident_and_fetches_nothing") else {
         return;
     };
-    let path = scratch("slice_count").with_file_name("evslice.db");
+    let path = sibling(&scratch("slice_count"), "evslice.db");
     let rows: Vec<String> = (1..=20).map(|i| format!("({i},'e{i}')")).collect();
     seed(
         &path,
@@ -861,7 +866,7 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
     else {
         return;
     };
-    let path = scratch("owner").with_file_name("hands.db");
+    let path = sibling(&scratch("owner"), "hands.db");
     seed(
         &path,
         "CREATE TABLE sqhand(id INTEGER PRIMARY KEY, name TEXT, company_id INTEGER); \

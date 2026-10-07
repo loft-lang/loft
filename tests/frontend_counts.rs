@@ -113,13 +113,9 @@ fn front_end_allocations(src: &str, tag: &str) -> (u64, u64) {
 fn pristine_stdlib(dir: &std::path::Path) -> String {
     let to = dir.join("default");
     fa::create_dir_all(&to).expect("stdlib copy dir");
-    for entry in std::fs::read_dir("default").expect("default/ is readable") {
-        let from = entry.expect("default/ entry").path();
-        let name = from
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+    for entry in fa::read_dir("default").expect("default/ is readable") {
+        let from = entry.os_spelling();
+        let name = fa::file_name(&from).unwrap_or_default();
         if !name.starts_with('.') && name.ends_with(".loft") && fa::is_file(&from) {
             fa::copy(&from, to.join(&name)).expect("copy a stdlib source");
         }
@@ -139,10 +135,9 @@ fn key() -> String {
     let exe = std::env::current_exe().unwrap_or_default();
     let profile = exe
         .ancestors()
-        .filter_map(|a| a.file_name()?.to_str())
-        .find(|n| *n == "debug" || *n == "release")
-        .unwrap_or("unknown")
-        .to_string();
+        .filter_map(fa::file_name)
+        .find(|n| n == "debug" || n == "release")
+        .unwrap_or_else(|| "unknown".to_string());
     format!("{}-{profile}", std::env::consts::OS)
 }
 
@@ -217,11 +212,11 @@ fn front_end_allocations_do_not_grow() {
     // a pin can be taken from the runner's numbers rather than one box's.
     if let Some(path) = std::env::var_os("LOFT_FRONTEND_REPORT") {
         use std::io::Write as _;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .expect("open LOFT_FRONTEND_REPORT");
+        let mut f = fa::open_with(
+            path.as_os_str(),
+            std::fs::OpenOptions::new().create(true).append(true),
+        )
+        .expect("open LOFT_FRONTEND_REPORT");
         for (row, counts) in &rows {
             let agree = counts.iter().all(|c| *c == counts[0]);
             let note = if agree {
