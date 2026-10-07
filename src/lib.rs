@@ -354,6 +354,8 @@ pub mod ownership_cfg;
 pub mod paged_reader;
 pub mod place_result;
 pub mod placement;
+#[cfg(test)]
+mod platform_census;
 pub mod pure_reuse;
 pub mod rebind_place;
 pub mod repeat_run;
