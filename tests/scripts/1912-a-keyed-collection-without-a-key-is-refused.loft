@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @EXPECT_ERROR: a keyed collection needs at least one key field
+// @EXPECT_ERROR: a keyed collection needs at least one key field
+// @EXPECT_ERROR: a keyed collection needs at least one key field
+// @EXPECT_ERROR: a keyed collection needs at least one key field
+// @EXPECT_ERROR: a keyed collection needs at least one key field
 //
 // loft#1912, `@FR-Col-Hash` / `@FR-Col-Sorted` / `@FR-Col-Index` / `@FR-Col-Spatial` — a keyed
 // collection is `kind<T[k…]>` with at least one key.  `hash<Q[]>`, `sorted<Q[]>`, `index<Q[]>`
@@ -13,6 +17,8 @@
 // @falsified-at: 27e83e117 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/1912-a-keyed-collection-without-a-key-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
 //   CHANNEL: the EXPECTATION — the control compiles every `[]` declaration and prints the one-record counts.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 struct Q1912 { a: integer, n: integer }
 
