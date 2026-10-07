@@ -31,6 +31,12 @@
 //! read at all).  It keeps its path, and the first write or resize through it reopens the
 //! file read-write at the logical position — the program's `File` is one handle whichever
 //! operation came first (loft#1861: a write after a read failed with `Bad file descriptor`).
+//!
+//! A handle is named by a NUMBER inside the `File` record, so a copy of the record names the
+//! same handle.  The handle therefore counts the records that hold it — its LEASES — and closes
+//! only when the last one is released (`@FR-H-Lease`).  Closing it at the first release cut the
+//! handle out from under the copy: a `File` local placed in a vector and returned lost every
+//! later write through the element, silently (loft#1896).
 
 use crate::file_access::PathText;
 use std::fs::File;
@@ -50,6 +56,8 @@ pub struct LoftFile {
     len: usize,
     /// A read-only handle's path, kept to reopen it read-write on its first write.
     reopen: Option<PathText>,
+    /// The `File` records that name this handle: one at the open, one more per copy.
+    leases: u32,
 }
 
 impl LoftFile {
@@ -63,7 +71,20 @@ impl LoftFile {
             pos: 0,
             len: 0,
             reopen: None,
+            leases: 1,
         }
+    }
+
+    /// A copy of a `File` record now names this handle too.
+    pub fn lease(&mut self) {
+        self.leases += 1;
+    }
+
+    /// A `File` record that named this handle is gone; answers whether it was the last, so
+    /// the handle closes.
+    pub fn release(&mut self) -> bool {
+        self.leases = self.leases.saturating_sub(1);
+        self.leases == 0
     }
 
     /// A handle opened read-only from `path` — a path the runtime resolved, in the program's

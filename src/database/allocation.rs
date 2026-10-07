@@ -1410,8 +1410,27 @@ impl Stores {
             return;
         }
         let file_ref = self.store(db).get_i32_raw(db.rec, db.pos + 28);
-        if file_ref != i32::MIN && (file_ref as usize) < self.files.len() {
-            self.files[file_ref as usize] = None;
+        if file_ref != i32::MIN
+            && let Some(slot) = self.files.get_mut(file_ref as usize)
+            && slot
+                .as_mut()
+                .is_some_and(super::loft_file::LoftFile::release)
+        {
+            *slot = None;
+        }
+    }
+
+    /// A deep copy of a `File` record names the source's handle too, so it takes a lease on
+    /// it (`@FR-H-Lease`): the source's free then leaves the handle open for the copy, and the
+    /// handle closes at the last release ([`Self::close_file_handle`]).  A record whose handle
+    /// is not open yet names none, and opens its own on first use.
+    #[cfg(not(host_fs))]
+    fn lease_file_handle(&mut self, to: &DbRef) {
+        let file_ref = self.store(to).get_i32_raw(to.rec, to.pos + 28);
+        if file_ref != i32::MIN
+            && let Some(Some(handle)) = self.files.get_mut(file_ref as usize)
+        {
+            handle.lease();
         }
     }
 
@@ -3748,6 +3767,11 @@ impl Stores {
                         },
                         f.content,
                     );
+                }
+                // The one copy that is not of loft data: a `File` names an OS handle.
+                #[cfg(not(host_fs))]
+                if self.types[tp as usize].name == "File" {
+                    self.lease_file_handle(to);
                 }
             }
             Parts::Vector(_) | Parts::Sorted(_, _) => {

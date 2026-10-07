@@ -53,8 +53,7 @@ fn bait(p: text, n: integer) {
   file(p).write(s);
 }
 
-// Every open file written a second time, then read back from disk.  The files are opened in
-// each test's own frame: one returned from a helper inside a vector loses its writes (loft#1896).
+// Every open file written a second time, then read back from disk.
 fn each_holds_xy(d: text, fs: vector<File>) -> text {
   for g in fs { g += "y"; }
   out = "";
