@@ -13,8 +13,6 @@
 //! See `doc/claude/plans/08-repl-and-introspection/01-introspection-cli.md`
 //! for the surface design.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile;
 use crate::data::{Data, DefType, Value};
 use crate::diagnostics::Level;
@@ -25,7 +23,6 @@ use crate::scopes;
 use crate::state::State;
 use crate::variables;
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{BufWriter, Write};
 
 /// Section selector — mirrors the four things the introspection
@@ -222,7 +219,7 @@ pub fn emit_all(
     let mut buffer: Vec<u8> = Vec::new();
     if opts.includes(Section::Bytecode) {
         if let Some(path) = opts.bytecode_out.as_deref() {
-            let mut writer = BufWriter::new(File::create(path)?);
+            let mut writer = BufWriter::new(crate::file_access::create(path)?);
             emit_bytecode(&mut writer, state, data, opts)?;
         } else if diff_mode {
             writeln!(buffer, "=== bytecode ===")?;
@@ -235,7 +232,7 @@ pub fn emit_all(
     }
     if opts.includes(Section::Rust) {
         if let Some(path) = opts.rust_out.as_deref() {
-            let mut writer = BufWriter::new(File::create(path)?);
+            let mut writer = BufWriter::new(crate::file_access::create(path)?);
             emit_rust(&mut writer, data, &state.database, end_def)?;
         } else if diff_mode {
             writeln!(buffer)?;
@@ -250,7 +247,7 @@ pub fn emit_all(
     }
     if opts.includes(Section::Slots) {
         if let Some(path) = opts.slots_out.as_deref() {
-            let mut writer = BufWriter::new(File::create(path)?);
+            let mut writer = BufWriter::new(crate::file_access::create(path)?);
             emit_slots(&mut writer, data, end_def, opts)?;
         } else if diff_mode {
             writeln!(buffer)?;
@@ -265,7 +262,7 @@ pub fn emit_all(
     }
     if opts.includes(Section::Types) {
         if let Some(path) = opts.types_out.as_deref() {
-            let mut writer = BufWriter::new(File::create(path)?);
+            let mut writer = BufWriter::new(crate::file_access::create(path)?);
             emit_types(&mut writer, data, end_def, opts)?;
         } else if diff_mode {
             writeln!(buffer)?;
@@ -442,20 +439,20 @@ fn emit_roundtrip(
 /// "trouble".  Requires `diff` on PATH; falls back to a "use system
 /// diff yourself" message if unavailable.
 fn run_diff_against_baseline(baseline: &str, buffer: &[u8]) -> std::io::Result<()> {
-    if !std::path::Path::new(baseline).exists() {
+    if !crate::file_access::exists(baseline) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("baseline file '{baseline}' not found"),
         ));
     }
     let tmp = std::env::temp_dir().join(format!("loft_introspect_diff_{}.txt", std::process::id()));
-    std::fs::write(&tmp, buffer)?;
+    crate::file_access::write(&tmp, buffer)?;
     let status = std::process::Command::new("diff")
         .arg("-u")
         .arg(baseline)
         .arg(&tmp)
         .status();
-    let _ = std::fs::remove_file(&tmp);
+    let _ = crate::file_access::remove_file(&tmp);
     if let Ok(s) = status {
         // 0 = identical, 1 = differs.  Both are valid outcomes;
         // mirror diff's exit code.
