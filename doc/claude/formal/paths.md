@@ -61,17 +61,12 @@ that works on Linux works on Windows, and one that fails, fails the same way.
 
 *Anchors:* `Stores::resolve_path` (`src/database/mod.rs`) — the one home every path-taking
 operation of both backends routes through — and `file_access::program_path`
-(`src/file_access/mod.rs`); `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`.
+(`src/file_access/mod.rs`); `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`,
+and for Path-Utf8 `file_access::read_dir`, `PathText::from_os` and
+`tests/windows_rules.rs::a_name_that_is_not_text_is_listed_and_never_reached`.
 
 ## Deviations
 
-**OPEN: 1.**
-
-- **D-path-5 (OPEN, @PLN184 U2)** — (Path-Utf8): a listing leaves a non-UTF-8 name out, so
-  the program cannot see the entry is there; and an operation given the U+FFFD spelling of
-  such a name reaches the file system as that spelling, so a write CREATES a second entry that
-  lists the same as the first.
-
-The four this chapter opened with — the Windows separator and directories,
-names one platform takes and another refuses, case folding, and `\` meaning two things — are
-closed; the record is in [paths-history.md](paths-history.md).
+**OPEN: 0.**  The five this chapter has opened — the Windows separator and directories,
+names one platform takes and another refuses, case folding, `\` meaning two things, and a name
+that is not text — are closed; the record is in [paths-history.md](paths-history.md).

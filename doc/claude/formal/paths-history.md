@@ -31,3 +31,17 @@ backends (windows-probe run 37060992821, commit 08b0ad037).
 
 After the fix (commit 832ee4ccd), the guard passes 9 of 9 on both backends on Linux and on
 windows-latest (windows-probe run 37064377332), with a UTF-8 round-trip row added.
+
+## Closed 2026-10-07 (@PLN184 U2)
+
+```
+  D-path-5  (Path-Utf8)  A listing left a non-UTF-8 name out, so the program could not see the
+                         entry; and the U+FFFD spelling of such a name reached the file system as
+                         that spelling, so a write created a second entry that listed the same.
+                         CLOSED: `file_access::read_dir` lists the entry (U+FFFD, one log line per
+                         directory) and `PathText` keeps the OS's own spelling of the name;
+                         `file_access::case_clash` refuses a spelling that names an entry only
+                         through U+FFFD.  Guard: `windows_rules::a_name_that_is_not_text_is_listed_
+                         and_never_reached` — with the refusal removed, `write` and `delete` of the
+                         U+FFFD spelling answer true.
+```
