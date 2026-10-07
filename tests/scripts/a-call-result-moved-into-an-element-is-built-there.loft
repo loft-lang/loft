@@ -175,14 +175,27 @@ fn main() {
   for l in 0..11 { if dv(m6[0..l], 0).ok { ok7 += 1; } }
   assert(ok7 == 1, "c7: {ok7}");
 
-  // c8 — the failing prefixes leave nothing behind: after a warm-up the live record count
-  // stands still however many more rounds run (a key built into an element whose value then
-  // failed, and not released, would add records every round).
-  _ = map_sweep(m6, 5);
-  r1 = live_records();
-  _ = map_sweep(m6, 40);
+  // c8 — the failing prefixes leave nothing behind.  Ten rounds decoding the whole frame and
+  // keeping it cost some number of live records; ten rounds of EVERY prefix, keeping the one
+  // success each round, must cost exactly as many — a key built into an element whose value then failed, and not released,
+  // stays in the store the kept results live in and adds records every round.
+  // Both phases run the same loop and end on the same last iteration (the whole frame), so
+  // they leave the same temporaries live; they differ only in the failing prefixes.
+  keep: vector<Val> = [];
+  // A warm-up of ten whole-frame rounds first, which settles what a first round claims once.
+  r0 = 0;
+  r1 = 0;
+  for round in 0..30 {
+    if round == 10 { r0 = live_records(); }
+    if round == 20 { r1 = live_records(); }
+    lo = if round < 20 { 10 } else { 0 };
+    for l in lo..11 {
+      d8 = dv(m6[0..l], 0);
+      if d8.ok { keep += [d8.value]; }
+    }
+  }
   r2 = live_records();
-  assert(r1 > 0 && r2 == r1, "c8: {r1} -> {r2}");
+  assert(len(keep) == 30 && r1 > r0 && r2 - r1 == r1 - r0, "c8: {r0} {r1} {r2}");
 
   // c5 — the record whose moved field is not first answers the same (and is not admitted).
   w1 = dw(b1, 0);
