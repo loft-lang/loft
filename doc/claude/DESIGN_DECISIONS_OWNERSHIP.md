@@ -236,3 +236,22 @@ read-before-write stayed invisible until a different filler ran.
 `tests/scripts/a-par-text-result-leaves-its-output-record-intact.loft`.
 **Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads C125
 
+
+## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
+
+**Decision.** Where a value is decoded out of a byte buffer, its text and byte-string fields
+may be represented as VIEWS into that buffer — an offset and a length — and every operation
+on such a field (a comparison, a per-character step, a length, a format) may run on the view,
+wherever the program's results are the ones the owned form gives.  It is a representation the
+compiler picks under the proof that the buffer outlives every read of the view and is not
+written while the view is read; nothing in the language names it, and where the proof fails
+the field is owned exactly as today.  **Why.** The contract is semantics (C122): a decoder
+that copies four texts and two byte strings out of a frame to answer one lookup does work the
+program cannot observe, and the Rust reference never does it (`&str` into the frame).  It
+stays inside C125: no program holds a view by choice, so the programmer still never chooses
+between two kinds of value — the compiler proves where a view is the same value.
+
+**Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c139--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
+**Holds at:** to be built — the rewrite that admits a view names `@C141` where it states its
+conditions, and its guard pins the values against the owned form.
+**Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)

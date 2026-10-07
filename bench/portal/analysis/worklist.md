@@ -159,9 +159,11 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
   the CALLER releases what the failed child placed (the release walk the plain form's
   discarded result runs).  Identical in values, members and live records; spare capacity is
   not part of the contract (owner).
-- **A decoded value whose texts and byte strings are views into the input frame** — the only
-  form the analysis names that reaches even 6× on `check_request` against an aligned twin; a
-  borrowed field inside a store record does not exist (APART_VALUES.md, @PLN174).
+- **A decoded value whose texts and byte strings are views into the input frame**: DECIDED
+  (C141) — a view with per-character operations on it is allowed wherever the results are the
+  owned form's; the compiler proves the buffer outlives every read and is not written meanwhile.
+  The only form the analysis names that reaches even 6× on `check_request` against an aligned
+  twin.
 - **A move through a by-value parameter**: it changes what a callee may assume of its
   parameter's store after an append.
 - **Relational range facts** (`index < len(v)`) in `generation::range` (C9's second half).

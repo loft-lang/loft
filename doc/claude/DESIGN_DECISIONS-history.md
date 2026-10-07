@@ -4729,3 +4729,15 @@ decided by the file's own `pub` signatures; enum variant fields follow the struc
 non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
 **Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
 contract 1 because it adds refusals.
+
+## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
+
+Asked 2026-10-07 while working the worst native routines: `pluginabi`'s `check_request` (12.0×
+Rust) spends half of `decode` claiming, zeroing, copying and freeing the texts and byte strings
+of a CBOR frame it reads one key out of, and the analysis named one form that reaches 6×
+against an aligned twin — a decoded value whose text and byte fields are views into the frame —
+which the memory model did not have (a borrowed field inside a store record).  Presented as
+three options: views where the compiler proves confinement, a view as a run-time state of a
+field copied on escape, or no views and the levers that need no decision (≈ 5.5×).  The owner:
+*"In the optimizations everything is possible as long as the semantics of the original program
+is kept.  So giving a view with operations per character is fine."*
