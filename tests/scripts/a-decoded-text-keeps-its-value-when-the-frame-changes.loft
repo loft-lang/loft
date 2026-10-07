@@ -1,0 +1,54 @@
+// @C139 — a decoded text or byte string may be a VIEW into the bytes it was decoded from only
+// where the program's results are the owned copy's.  This pins the boundary every such view
+// must respect: a value decoded from a frame keeps what it decoded when the frame is written,
+// appended to, cleared or rebound afterwards, and when it outlives the function that owned the
+// frame.  Every value is hand-computed; both backends answer the owned copy's values.
+//
+// @falsified-at: none — the decision admits no view yet (`(R-DecodeView)` is proposed, not
+//   built), so no build exists that breaks this boundary; the rule's own guard falsifies it by
+//   planting a view that a frame write reaches.
+
+struct Item { name: text, raw: vector<u8>, at: integer }
+
+/// The decoder's two spellings: a text read off a byte range in place, a byte string sliced.
+fn decode_at(frame: vector<u8>, lo: integer, n: integer) -> Item {
+  Item { name: text_from_byte_range(frame, lo, lo + n), raw: frame[lo..lo + n], at: lo }
+}
+
+/// The frame dies with this function; the item it decoded outlives it.
+fn decode_owned(lo: integer) -> Item {
+  f: vector<u8> = [104, 101, 108, 108, 111, 33, 33];
+  decode_at(f, lo, 5)
+}
+
+fn main() {
+  // "hello world" as bytes.
+  frame: vector<u8> = [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100];
+
+  // c1 — decode "world" (6..11), then overwrite those bytes: the item keeps "world".
+  w = decode_at(frame, 6, 5);
+  for i in 6..11 { frame[i] = 88; }
+  assert(w.name == "world" && len(w.raw) == 5 && w.raw[0] == 119 && w.raw[4] == 100, "c1: {w.name} {w.raw}");
+
+  // c2 — decode "hello" (0..5), then grow and clear the frame: the item keeps "hello".
+  h = decode_at(frame, 0, 5);
+  for i in 0..64 { frame += [1]; }
+  frame = [];
+  assert(h.name == "hello" && h.raw[1] == 101 && h.at == 0, "c2: {h.name} {h.raw}");
+
+  // c3 — the frame was a local of the decoding function, gone when it returned.
+  o = decode_owned(0);
+  assert(o.name == "hello" && len(o.raw) == 5 && o.raw[4] == 111, "c3: {o.name} {o.raw}");
+
+  // c4 — items kept in a vector while the frame they came from is rebound each round.
+  kept: vector<Item> = [];
+  for r in 0..3 {
+    fr: vector<u8> = [(97 + r) & 255, (98 + r) & 255, (99 + r) & 255];
+    kept += [decode_at(fr, 0, 3)];
+    fr = [0, 0, 0];
+  }
+  assert(kept[0].name == "abc" && kept[1].name == "bcd" && kept[2].name == "cde", "c4: {kept[0].name} {kept[2].name}");
+  assert(kept[2].raw[2] == 101, "c4 raw: {kept[2].raw}");
+
+  println("ok");
+}

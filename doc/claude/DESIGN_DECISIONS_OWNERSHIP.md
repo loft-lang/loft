@@ -253,5 +253,7 @@ between two kinds of value — the compiler proves where a view is the same valu
 
 **Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c139--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
 **Holds at:** `@C139` — the rule `(R-DecodeView)` in [formal/rewrites.md](formal/rewrites.md)
-(proposed; its guard, which pins every span's value against the owned form, lands with it).
+(proposed); guard `tests/scripts/a-decoded-text-keeps-its-value-when-the-frame-changes.loft`
+(the boundary: a decoded value keeps its bytes when its frame is written, grown, cleared or
+gone).
 **Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)
