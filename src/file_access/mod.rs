@@ -75,11 +75,61 @@ fn run<T>(path: &PathText, op: impl FnOnce(&Path) -> io::Result<T>) -> io::Resul
     named(path, op(&os))
 }
 
+/// What an operation here takes as its path: a [`PathText`], or a host path the compiler
+/// holds (`&Path`, `&PathBuf`, `&str`, `&String`, `&OsStr`), parsed once, here, by the host's
+/// rules — a name that is not text keeps the OS's own spelling (`@FR-Path-Utf8`).
+pub trait HostPath {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText>;
+}
+
+impl HostPath for PathText {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        std::borrow::Cow::Borrowed(self)
+    }
+}
+
+impl HostPath for Path {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        std::borrow::Cow::Owned(PathText::from_os(self))
+    }
+}
+
+impl HostPath for PathBuf {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        self.as_path().to_path_text()
+    }
+}
+
+impl HostPath for std::ffi::OsStr {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        Path::new(self).to_path_text()
+    }
+}
+
+impl HostPath for str {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        Path::new(self).to_path_text()
+    }
+}
+
+impl HostPath for String {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        Path::new(self.as_str()).to_path_text()
+    }
+}
+
+impl<T: HostPath + ?Sized> HostPath for &T {
+    fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
+        (**self).to_path_text()
+    }
+}
+
 /// The file's text.
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn read_to_string(path: &PathText) -> io::Result<String> {
+pub fn read_to_string(path: impl HostPath) -> io::Result<String> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::read_to_string(p))
 }
 
@@ -87,7 +137,8 @@ pub fn read_to_string(path: &PathText) -> io::Result<String> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn read(path: &PathText) -> io::Result<Vec<u8>> {
+pub fn read(path: impl HostPath) -> io::Result<Vec<u8>> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::read(p))
 }
 
@@ -95,7 +146,8 @@ pub fn read(path: &PathText) -> io::Result<Vec<u8>> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn write(path: &PathText, contents: impl AsRef<[u8]>) -> io::Result<()> {
+pub fn write(path: impl HostPath, contents: impl AsRef<[u8]>) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| {
         std::fs::write(p, contents)?;
         emulated::stream_base(path, p)
@@ -106,14 +158,16 @@ pub fn write(path: &PathText, contents: impl AsRef<[u8]>) -> io::Result<()> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn create_dir_all(path: &PathText) -> io::Result<()> {
+pub fn create_dir_all(path: impl HostPath) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::create_dir_all(p))
 }
 
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn remove_file(path: &PathText) -> io::Result<()> {
+pub fn remove_file(path: impl HostPath) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::remove_file(p))
 }
 
@@ -121,7 +175,8 @@ pub fn remove_file(path: &PathText) -> io::Result<()> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn create_dir(path: &PathText) -> io::Result<()> {
+pub fn create_dir(path: impl HostPath) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::create_dir(p))
 }
 
@@ -129,7 +184,8 @@ pub fn create_dir(path: &PathText) -> io::Result<()> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn remove_dir(path: &PathText) -> io::Result<()> {
+pub fn remove_dir(path: impl HostPath) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::remove_dir(p))
 }
 
@@ -137,14 +193,16 @@ pub fn remove_dir(path: &PathText) -> io::Result<()> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn remove_dir_all(path: &PathText) -> io::Result<()> {
+pub fn remove_dir_all(path: impl HostPath) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::remove_dir_all(p))
 }
 
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn copy(from: &PathText, to: &PathText) -> io::Result<u64> {
+pub fn copy(from: impl HostPath, to: impl HostPath) -> io::Result<u64> {
+    let (from, to) = (&*from.to_path_text(), &*to.to_path_text());
     let dest = to.os()?;
     run(from, |p| std::fs::copy(p, &dest))
 }
@@ -152,7 +210,8 @@ pub fn copy(from: &PathText, to: &PathText) -> io::Result<u64> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn rename(from: &PathText, to: &PathText) -> io::Result<()> {
+pub fn rename(from: impl HostPath, to: impl HostPath) -> io::Result<()> {
+    let (from, to) = (&*from.to_path_text(), &*to.to_path_text());
     let dest = to.os()?;
     run(from, |p| std::fs::rename(p, &dest))
 }
@@ -161,7 +220,8 @@ pub fn rename(from: &PathText, to: &PathText) -> io::Result<()> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn open(path: &PathText) -> io::Result<std::fs::File> {
+pub fn open(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::File::open(p))
 }
 
@@ -169,7 +229,8 @@ pub fn open(path: &PathText) -> io::Result<std::fs::File> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn create(path: &PathText) -> io::Result<std::fs::File> {
+pub fn create(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
     run(path, |p| {
         let opened = std::fs::File::create(p)?;
         emulated::stream_base(path, p)?;
@@ -181,7 +242,8 @@ pub fn create(path: &PathText) -> io::Result<std::fs::File> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn open_read_write(path: &PathText) -> io::Result<std::fs::File> {
+pub fn open_read_write(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
     run(path, |p| {
         std::fs::OpenOptions::new().read(true).write(true).open(p)
     })
@@ -195,7 +257,8 @@ pub fn open_read_write(path: &PathText) -> io::Result<std::fs::File> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn set_modified(path: &PathText, when: std::time::SystemTime) -> io::Result<()> {
+pub fn set_modified(path: impl HostPath, when: std::time::SystemTime) -> io::Result<()> {
+    let path = &*path.to_path_text();
     run(path, |p| {
         std::fs::OpenOptions::new()
             .read(true)
@@ -209,7 +272,8 @@ pub fn set_modified(path: &PathText, when: std::time::SystemTime) -> io::Result<
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn open_with(path: &PathText, options: &std::fs::OpenOptions) -> io::Result<std::fs::File> {
+pub fn open_with(path: impl HostPath, options: &std::fs::OpenOptions) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
     run(path, |p| {
         let opened = options.open(p)?;
         emulated::stream_base(path, p)?;
@@ -220,7 +284,8 @@ pub fn open_with(path: &PathText, options: &std::fs::OpenOptions) -> io::Result<
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn metadata(path: &PathText) -> io::Result<std::fs::Metadata> {
+pub fn metadata(path: impl HostPath) -> io::Result<std::fs::Metadata> {
+    let path = &*path.to_path_text();
     run(path, |p| std::fs::metadata(p))
 }
 
@@ -230,7 +295,8 @@ pub fn metadata(path: &PathText) -> io::Result<std::fs::Metadata> {
 ///
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
+pub fn read_dir(path: impl HostPath) -> io::Result<Vec<PathText>> {
+    let path = &*path.to_path_text();
     run(path, |p| {
         let mut out = Vec::new();
         let mut unspellable = false;
@@ -258,24 +324,131 @@ pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
     })
 }
 
+/// The entry's metadata without following a symbolic link (`std`: `fs::symlink_metadata`).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn symlink_metadata(path: impl HostPath) -> io::Result<std::fs::Metadata> {
+    let path = &*path.to_path_text();
+    run(path, |p| std::fs::symlink_metadata(p))
+}
+
+/// Set the file's permissions.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn set_permissions(path: impl HostPath, perms: std::fs::Permissions) -> io::Result<()> {
+    let path = &*path.to_path_text();
+    run(path, |p| std::fs::set_permissions(p, perms))
+}
+
+/// Where a symbolic link points, as the OS spells it.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn read_link(path: impl HostPath) -> io::Result<PathBuf> {
+    let path = &*path.to_path_text();
+    run(path, |p| std::fs::read_link(p))
+}
+
+/// A second name `link` for the file `from` (`std`: `fs::hard_link`).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn hard_link(from: impl HostPath, link: impl HostPath) -> io::Result<()> {
+    let (from, link) = (&*from.to_path_text(), &*link.to_path_text());
+    let dest = link.os()?;
+    run(from, |p| std::fs::hard_link(p, &dest))
+}
+
+/// A symbolic link `link` naming `target`.  On Windows a link is a file link or a directory
+/// link; it is the kind `target` is.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn symlink(target: impl HostPath, link: impl HostPath) -> io::Result<()> {
+    let (target, link) = (&*target.to_path_text(), &*link.to_path_text());
+    let to = target.os()?;
+    run(link, |p| {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&to, p)
+        }
+        #[cfg(windows)]
+        {
+            if to.is_dir() {
+                std::os::windows::fs::symlink_dir(&to, p)
+            } else {
+                std::os::windows::fs::symlink_file(&to, p)
+            }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (&to, p);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "no symbolic links on this target",
+            ))
+        }
+    })
+}
+
+/// Create the file, failing when it exists (`std`: `File::create_new`).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn create_new(path: impl HostPath) -> io::Result<std::fs::File> {
+    let path = &*path.to_path_text();
+    run(path, |p| std::fs::File::create_new(p))
+}
+
+/// Make `path` the process's current directory.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn set_current_dir(path: impl HostPath) -> io::Result<()> {
+    let path = &*path.to_path_text();
+    run(path, |p| std::env::set_current_dir(p))
+}
+
+/// Load the dynamic library at `path`.
+///
+/// # Safety
+/// Loading runs the library's initialisers: the caller vouches for what it loads, as with
+/// `libloading::Library::new`.
+///
+/// # Errors
+/// The loader's error, naming the path.
+#[cfg(feature = "native-extensions")]
+pub unsafe fn load_library(path: impl HostPath) -> Result<libloading::Library, String> {
+    let path = &*path.to_path_text();
+    let os = path.os().map_err(|e| e.to_string())?;
+    // SAFETY: the caller's contract, stated above.
+    unsafe { libloading::Library::new(&os) }.map_err(|e| format!("{}: {e}", path.portable()))
+}
+
 #[must_use]
-pub fn exists(path: &PathText) -> bool {
+pub fn exists(path: impl HostPath) -> bool {
+    let path = &*path.to_path_text();
     path.os().is_ok_and(|p| p.exists())
 }
 
 #[must_use]
-pub fn is_file(path: &PathText) -> bool {
+pub fn is_file(path: impl HostPath) -> bool {
+    let path = &*path.to_path_text();
     path.os().is_ok_and(|p| p.is_file())
 }
 
 #[must_use]
-pub fn is_dir(path: &PathText) -> bool {
+pub fn is_dir(path: impl HostPath) -> bool {
+    let path = &*path.to_path_text();
     path.os().is_ok_and(|p| p.is_dir())
 }
 
 /// Is the path itself a symbolic link (the link, not what it names)?
 #[must_use]
-pub fn is_symlink(path: &PathText) -> bool {
+pub fn is_symlink(path: impl HostPath) -> bool {
+    let path = &*path.to_path_text();
     path.os()
         .is_ok_and(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
 }
@@ -283,7 +456,8 @@ pub fn is_symlink(path: &PathText) -> bool {
 /// The resolved path, in the plain spelling every other path in the process uses (never
 /// Windows's verbatim `\\?\D:\…`) — `None` when it does not exist.
 #[must_use]
-pub fn canonical(path: &PathText) -> Option<PathText> {
+pub fn canonical(path: impl HostPath) -> Option<PathText> {
+    let path = &*path.to_path_text();
     let os = path.os().ok()?;
     std::fs::canonicalize(os)
         .ok()
@@ -292,7 +466,8 @@ pub fn canonical(path: &PathText) -> Option<PathText> {
 
 /// Do two spellings name the same file on disk?  `false` when either does not exist.
 #[must_use]
-pub fn same_file(a: &PathText, b: &PathText) -> bool {
+pub fn same_file(a: impl HostPath, b: impl HostPath) -> bool {
+    let (a, b) = (&*a.to_path_text(), &*b.to_path_text());
     match (canonical(a), canonical(b)) {
         (Some(x), Some(y)) => x == y,
         _ => false,
@@ -301,7 +476,8 @@ pub fn same_file(a: &PathText, b: &PathText) -> bool {
 
 /// Does `path` on disk live inside `dir` on disk?  `false` when either does not exist.
 #[must_use]
-pub fn is_under_canonical(path: &PathText, dir: &PathText) -> bool {
+pub fn is_under_canonical(path: impl HostPath, dir: impl HostPath) -> bool {
+    let (path, dir) = (&*path.to_path_text(), &*dir.to_path_text());
     match (canonical(path), canonical(dir)) {
         (Some(p), Some(d)) => p.starts_with(&d),
         _ => false,
@@ -465,27 +641,27 @@ pub fn is_under(file: &str, dir: &str) -> bool {
 
 /// The last name (`std`: `Path::file_name`).
 #[must_use]
-pub fn file_name(path: &Path) -> Option<String> {
-    PathText::from_os(path).file_name().map(str::to_string)
+pub fn file_name(path: impl HostPath) -> Option<String> {
+    path.to_path_text().file_name().map(str::to_string)
 }
 
 /// The last name without its extension (`std`: `Path::file_stem`).
 #[must_use]
-pub fn file_stem(path: &Path) -> Option<String> {
-    PathText::from_os(path).file_stem().map(str::to_string)
+pub fn file_stem(path: impl HostPath) -> Option<String> {
+    path.to_path_text().file_stem().map(str::to_string)
 }
 
 /// The last name's extension, without its dot (`std`: `Path::extension`).
 #[must_use]
-pub fn extension(path: &Path) -> Option<String> {
-    PathText::from_os(path).extension().map(str::to_string)
+pub fn extension(path: impl HostPath) -> Option<String> {
+    path.to_path_text().extension().map(str::to_string)
 }
 
 /// Does the last name carry extension `ext` — compared under the flavor's case rule, so
 /// `x.DLL` is a `dll` on Windows?
 #[must_use]
-pub fn has_extension(path: &Path, ext: &str) -> bool {
-    let p = PathText::from_os(path);
+pub fn has_extension(path: impl HostPath, ext: &str) -> bool {
+    let p = path.to_path_text();
     p.extension().is_some_and(|e| match p.flavor() {
         Flavor::Unix => e == ext,
         Flavor::Windows => e.eq_ignore_ascii_case(ext),
@@ -494,8 +670,8 @@ pub fn has_extension(path: &Path, ext: &str) -> bool {
 
 /// The path without its last name (`std`: `Path::parent`), `None` at a root.
 #[must_use]
-pub fn parent(path: &Path) -> Option<PathBuf> {
-    PathText::from_os(path)
+pub fn parent(path: impl HostPath) -> Option<PathBuf> {
+    path.to_path_text()
         .parent()
         .map(|p| PathBuf::from(p.native_or_empty()))
 }
@@ -503,22 +679,22 @@ pub fn parent(path: &Path) -> Option<PathBuf> {
 /// `path` below `base` as a relative path (`std`: `Path::strip_prefix`), `None` when it
 /// is not inside — by component, under the flavor's case rule.
 #[must_use]
-pub fn relative(path: &Path, base: &Path) -> Option<PathBuf> {
-    PathText::from_os(path)
-        .relative_to(&PathText::from_os(base))
+pub fn relative(path: impl HostPath, base: impl HostPath) -> Option<PathBuf> {
+    path.to_path_text()
+        .relative_to(&base.to_path_text())
         .map(|p| PathBuf::from(p.native_or_empty()))
 }
 
 /// The path with its extension replaced (`std`: `Path::with_extension`).
 #[must_use]
-pub fn with_extension(path: &Path, ext: &str) -> PathBuf {
-    PathBuf::from(PathText::from_os(path).with_extension(ext).native())
+pub fn with_extension(path: impl HostPath, ext: &str) -> PathBuf {
+    PathBuf::from(path.to_path_text().with_extension(ext).native())
 }
 
 /// Does the path start at a root (`std`: `Path::is_absolute`)?
 #[must_use]
-pub fn is_absolute(path: &Path) -> bool {
-    PathText::from_os(path).is_absolute()
+pub fn is_absolute(path: impl HostPath) -> bool {
+    path.to_path_text().is_absolute()
 }
 
 /// Do two spellings of a host path name the same place — by components, a trailing
@@ -589,8 +765,8 @@ pub fn plain_canonical(path: &Path) -> PathBuf {
 
 /// [`canonical`] for a host `Path`; `None` when it does not exist.
 #[must_use]
-pub fn try_plain_canonical(path: &Path) -> Option<PathBuf> {
-    canonical(&PathText::from_os(path)).map(|p| PathBuf::from(p.native()))
+pub fn try_plain_canonical(path: impl HostPath) -> Option<PathBuf> {
+    canonical(path).map(|p| PathBuf::from(p.native()))
 }
 
 /// [`plain_canonical`] for a path held as text.
