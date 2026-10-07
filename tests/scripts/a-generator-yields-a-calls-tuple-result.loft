@@ -4,7 +4,13 @@
 // yield's store face had already unboxed the record into a stack tuple, and the hand-over was
 // still asked about the record type, so it copied the stack tuple AS a record (loft#1903).
 // Each value is worked out by hand beside it.
-// @falsified-at: e45fb9101 — measured below by `make falsify`
+// @falsified-at: e45fb9101 — interpret exit 139 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generator-yields-a-calls-tuple-result.patch — interpret exit 139 -> 0, native exit 1 -> 0
+// CHANNEL: the exit on both backends, one cause — the interpreter dies of SIGSEGV in
+//   `OpCopyRecord`, and `--native` is handed the same record reference where the tuple was
+//   due, so rustc refuses `__yt.0` on a `DbRef` (E0609, E0308).
+// HOLDS: asserts 0, leak none and free-refusals 0 on both trees and both backends, as measured
+//   by `make falsify` at e45fb9101.
 
 struct P { x: integer }
 fn mk(n: integer) -> (integer, text) { (n, "m{n}") }
