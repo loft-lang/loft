@@ -16,6 +16,7 @@ mod dispatch;
 mod emit;
 pub mod fnref;
 pub mod hoist;
+pub mod keyed_place;
 pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;

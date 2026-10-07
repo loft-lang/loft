@@ -3001,6 +3001,81 @@ impl Output<'_> {
         Ok(())
     }
 
+    /// `@FR-R-InPlaceLiteral`'s keyed clause: the literal's values staged in program order,
+    /// the record under the key removed and a fresh one claimed, the values written into it,
+    /// then its key written and the record linked.
+    fn output_keyed_place(
+        &mut self,
+        w: &mut dyn Write,
+        ks: &super::keyed_place::Site<'_>,
+    ) -> std::io::Result<()> {
+        self.dest_counter += 1;
+        let n = self.dest_counter;
+        self.indent(w)?;
+        writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
+        let mut writes: Vec<Value> = Vec::new();
+        let mut k = 0usize;
+        for set in &ks.sets {
+            let Value::Call(d, args) = set.unspan() else {
+                continue;
+            };
+            let mut staged: Vec<Value> = Vec::with_capacity(args.len());
+            for (i, a) in args.iter().enumerate() {
+                if i == 0 {
+                    staged.push(Value::RawExpr(format!("__kp{n}")));
+                } else if super::keyed_place::constant(a) {
+                    staged.push(a.clone());
+                } else {
+                    self.indent(w)?;
+                    write!(w, "let __kv{n}_{k} = ")?;
+                    self.output_code_inner(w, a)?;
+                    writeln!(w, ";")?;
+                    staged.push(Value::RawExpr(format!("__kv{n}_{k}")));
+                    k += 1;
+                }
+            }
+            writes.push(Value::Call(*d, staged));
+        }
+        let key_types: Vec<i8> = self
+            .stores
+            .types
+            .get(ks.tp as usize)
+            .map(|t| t.keys.iter().map(|k| k.type_nr).collect())
+            .unwrap_or_default();
+        let mut keys = String::from("&[");
+        for (i, key) in ks.keys.iter().enumerate() {
+            if i > 0 {
+                keys.push_str(", ");
+            }
+            let mut buf: Vec<u8> = Vec::new();
+            self.emit_content(&mut buf, key, key_types.get(i).copied().unwrap_or(1))?;
+            keys.push_str(&String::from_utf8_lossy(&buf));
+        }
+        keys.push(']');
+        let coll = self.expr_string(ks.coll)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let __kp{n} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
+            ks.tp
+        )?;
+        for wr in &writes {
+            self.indent(w)?;
+            self.output_code_inner(w, wr)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(
+            w,
+            "stores.keyed_place_finish(&({coll}), &__kp{n}, {}_u16, {keys});",
+            ks.tp
+        )?;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
+        Ok(())
+    }
+
     /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
     /// each call into its destination and its `ok` arm with the moves gone — the element
     /// finished only where the plain form moved every result, and each destination filled so
@@ -3798,6 +3873,15 @@ impl Output<'_> {
                     }
                     _ => {}
                 }
+            }
+            // `@FR-R-InPlaceLiteral`'s keyed clause — `h[k] = R { … }` written into the record
+            // the collection claims for it, not built in a store of its own and copied.
+            if super::keyed_place::enabled()
+                && !self.in_coroutine_body
+                && let Some(ks) = super::keyed_place::site(v, self.data, self.def_nr)
+            {
+                self.output_keyed_place(w, &ks)?;
+                continue;
             }
             // `@FR-R-Destination` — a call whose result's heap field is moved whole into a
             // fresh element: the element is minted first and the callee's twin builds there.
