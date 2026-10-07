@@ -160,6 +160,37 @@ impl Output<'_> {
         crate::generation::ops::emit_op(&mut ctx, &name, vals)
     }
 
+    /// `@FR-R-AppendTwin` — does this call of `d` go to its append twin?  The caller-side
+    /// rewrite's own call (matched by callee and argument slice), or — inside a twin — a call
+    /// handed the twin's buffer, or a view of it, as the callee's buffer.  Either records the
+    /// request for the twin.
+    fn append_call(&mut self, d: u32, vals: &[Value]) -> bool {
+        let site = self
+            .ap_site_next
+            .is_some_and(|(c, at)| c == d && at == vals.as_ptr() as usize);
+        let handed = !site
+            && self.append_twin_buf.is_some()
+            && self
+                .data
+                .def(d)
+                .hidden_return_buffer_attr()
+                .and_then(|at| vals.get(at))
+                .is_some_and(
+                    |a| matches!(a.unspan(), Value::Var(x) if self.append_twin_views.contains(x)),
+                );
+        if !site && !handed {
+            return false;
+        }
+        if site {
+            self.ap_site_next = None;
+        }
+        if !self.ap_requests.contains(&d) {
+            self.ap_requests.push(d);
+        }
+        crate::rewrite_census::fired("R-AppendTwin", 1);
+        true
+    }
+
     /// Internal helper: emits the user-fn / Op-stub call body.  Reachable
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
@@ -190,7 +221,14 @@ impl Output<'_> {
         // is a local the enclosing frames hold for the argument variable.  The definition
         // number comes from `output_call_inner`; the identity check keeps a stale one from
         // naming another function's twin.
-        let twin_args = if (self.current_call_def as usize) < self.data.definitions.len()
+        // `@FR-R-AppendTwin` — the call appends into a destination: the caller-side rewrite's
+        // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
+        // calls the plain-bodied twin, so no other twin form applies to it.
+        let append = (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && self.append_call(self.current_call_def, vals);
+        let twin_args = if !append
+            && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
             self.twin_call_inputs(self.current_call_def, vals)
@@ -213,6 +251,7 @@ impl Output<'_> {
         // `@FR-R-RangedCall` — the ranged variant, when every integer argument is proven
         // within its bound.  Not for a forward site, which spells its own call shape.
         let ranged = forward.is_none()
+            && !append
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -220,15 +259,16 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some(),
+            twin_args.is_some() || ranged || forward.is_some() || append,
         )?;
         write!(
             w,
-            "{}{}{}{}(",
+            "{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
             if ranged { "__rg" } else { "" },
-            if refill_twin { "__rt" } else { "" }
+            if refill_twin { "__rt" } else { "" },
+            if append { "__ap" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {

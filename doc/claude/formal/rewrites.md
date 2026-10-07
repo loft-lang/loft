@@ -4427,6 +4427,42 @@ scalar fold, the written form), `ß` under `to_uppercase` against `SS`, an empty
 fold bound to a local and read twice (declines); the switch A/B over `server`'s bench hash;
 `(R-TextBorrow)`'s pins with this rule off.
 
+### A call result appended to a vector is built in it
+
+```
+  (R-AppendTwin) `X += f(args)`, f returning a vector through its hidden buffer B, is
+                 f's APPEND TWIN called with X as B: f's body with none of B's clears,
+                 B minted only when null, and every call that hands B (or a view of it)
+                 to a callee AS that callee's buffer calling the callee's own twin.
+                 Admission asks the CALLEE, over its IR: every mention of B or of a
+                 view of B (a local whose dependencies reach it, an alias the body
+                 binds of it) is a clear, mint or length reset before the body's first
+                 write to B; an append into it (OpAppendVector, OpAppendTextBytes,
+                 OpPreAllocVector, an OpPush kind) whose values do not read it; the
+                 self-replace of B by its own view; a call handing it on to an
+                 admitted callee as that callee's buffer; or its value flowing out as
+                 the result.  Anything else — a length read, an index, a walk, B as an
+                 ordinary argument, a free, an insert at an index — observes what B
+                 held on entry, and declines; so do a fn-ref call, a `par` and a
+                 yield.  Admission is a fixpoint over the call graph: a recursive
+                 builder calls its own twin.  The CALLER asks that X's root be a local
+                 or the frame's own buffer and that no argument name that root or a
+                 local whose dependencies reach it: a caller never hands a buffer one
+                 of its other arguments reaches (loft#1895).  A twin emits the IR's
+                 own semantics — no adoption of B by a result local (R-RetAdopt) and
+                 no refill — so what admission read is what runs.
+```
+
+**In words.**  A builder clears the buffer it is handed and writes its result into it, and a
+caller that appends that result then copies it.  The twin starts writing after the
+caller's elements instead, so the copy is gone — but only a body that never looks at what
+the buffer held may run that way, which is what admission checks, mention by mention.
+Native only; the interpreter copies and is the reference.
+
+**BUILT** (`src/generation/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
+`emit.rs` / `text.rs`; `LOFT_NO_APPEND_TWIN`, `LOFT_TRACE_APPEND_TWIN`; guard
+`tests/scripts/a-call-result-appended-is-built-in-the-destination.loft`).
+
 ### A call whose result is moved whole into an element builds it there
 
 ```

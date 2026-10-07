@@ -33,6 +33,14 @@ impl Output<'_> {
         w: &mut dyn Write,
         vals: &[Value],
     ) -> std::io::Result<()> {
+        // `@FR-R-AppendTwin` — inside a twin the buffer's clear is the caller's elements:
+        // eligibility admitted it only before the body's first write, so it clears nothing
+        // the twin's own result needs.
+        if let [Value::Var(nr)] = vals
+            && self.append_twin_views.contains(nr)
+        {
+            return write!(w, "()");
+        }
         if let [Value::Var(nr)] = vals {
             let v_nr = self.var_place(*nr);
             // `@FR-R-RefillBuffer` — the entry clear of a refilling buffer resets the length

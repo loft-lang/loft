@@ -3548,6 +3548,57 @@ impl Output<'_> {
             {
                 continue;
             }
+            // `@FR-R-AppendTwin` — inside a twin, the buffer's leading length reset is skipped and
+            // its mint runs only for a buffer the caller did not hand in.
+            if let Some(tb) = self.append_twin_buf
+                && let Value::Call(d, a) = v.unspan()
+                && let Some(Value::Var(first)) = a.first().map(Value::unspan)
+                && *first == tb
+            {
+                match self.data.def(*d).name() {
+                    "OpSetInt4" => continue,
+                    "OpDatabase" => {
+                        let b = sanitize(self.data.def(self.def_nr).variables().name(tb));
+                        self.indent(w)?;
+                        writeln!(
+                            w,
+                            "if var_{b}.store_nr == u16::MAX {{ //@FR-R-AppendTwin mint"
+                        )?;
+                        self.indent(w)?;
+                        self.output_code_inner(w, v)?;
+                        writeln!(w, ";")?;
+                        self.indent(w)?;
+                        writeln!(w, "}}")?;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            // `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin: f's twin builds
+            // its result after X's elements, and the copy is gone.
+            if crate::keys::append_twin_enabled() && !self.in_coroutine_body {
+                let mut memo = std::mem::take(&mut self.ap_memo);
+                let site = super::append_twin::call_site(v, self.data, self.def_nr, &mut memo);
+                self.ap_memo = memo;
+                if let Some(site) = site {
+                    let mut args = site.args.to_vec();
+                    args[site.at] = site.dest.clone();
+                    let call = Value::Call(site.callee, args);
+                    if let Value::Call(_, a) = &call {
+                        self.ap_site_next = Some((site.callee, a.as_ptr() as usize));
+                    }
+                    self.indent(w)?;
+                    self.output_code_inner(w, &call)?;
+                    writeln!(w, "; //@FR-R-AppendTwin")?;
+                    assert!(
+                        self.ap_site_next.take().is_none(),
+                        "@FR-R-AppendTwin: the rewritten call of {} was emitted without its twin's \
+                         name — the plain callee would clear the destination",
+                        self.data.def(site.callee).name()
+                    );
+                    continue;
+                }
+            }
             // `@FR-R-RefillBuffer` — a refilling buffer's vector-field zero empties the vector
             // in place: a fresh mint holds no vector there (a no-op), a kept store holds the
             // previous value's, whose record the group's fill then reuses.
