@@ -868,17 +868,52 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
 /// doesn't exist — even though `==` works via the cross-type `PartialEq`.
 /// Routing `OpLtText` / `OpLeText` through these helpers unifies both
 /// provenances.  @P347.
+///
+/// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
+/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
+/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
+/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
+/// home both backends call, rather than at each operator site.
 #[inline]
 #[must_use]
 pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
-    a.as_ref() < b.as_ref()
+    let (a, b) = (a.as_ref(), b.as_ref());
+    let a_null = a == crate::state::STRING_NULL;
+    let b_null = b == crate::state::STRING_NULL;
+    if a_null || b_null {
+        return a_null && !b_null;
+    }
+    a < b
 }
 
-/// Text ordering compare `<=` — see [`op_lt_text`].  @P347.
+/// Text ordering compare `<=` — see [`op_lt_text`], whose null order it shares: a null left
+/// operand is `<=` everything, and nothing non-null is `<=` a null.  @P347.
 #[inline]
 #[must_use]
 pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
-    a.as_ref() <= b.as_ref()
+    let (a, b) = (a.as_ref(), b.as_ref());
+    let a_null = a == crate::state::STRING_NULL;
+    if a_null || b == crate::state::STRING_NULL {
+        return a_null;
+    }
+    a <= b
+}
+
+/// Text concatenation's append step, `dst += src`, on both backends — `@FR-E-NullArg`: a null
+/// operand makes the concatenation null.  A null `dst` (an accumulator that already met a null)
+/// stays null, and a null `src` turns `dst` null — appending the sentinel's NUL byte made
+/// `"a" + t` the two-byte `"a\0"`, a present text no null test sees (loft#1924).
+#[inline]
+pub fn append_text(dst: &mut String, src: &str) {
+    if dst.as_str() == crate::state::STRING_NULL {
+        return;
+    }
+    if src == crate::state::STRING_NULL {
+        dst.clear();
+        dst.push_str(crate::state::STRING_NULL);
+        return;
+    }
+    dst.push_str(src);
 }
 
 /// Text equality — the `==` twin of [`op_lt_text`], and for the same reason.

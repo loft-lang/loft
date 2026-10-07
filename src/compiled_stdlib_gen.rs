@@ -601,7 +601,7 @@ fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mu
   // loft:default/02_files.loft:166
   OpGetFileText(cell, var_self, &mut var_txt);
   // loft:default/02_files.loft:167
-  (*var_result) += &*(&var_txt);
+  ops::append_text(&mut (*var_result), &*(&var_txt));
   // loft:default/02_files.loft:172
   if ((if ((((t_4text_size(cell, &*var_result)) as i64) == ((0_i64) as i64)) as u8) == 1 {({((0_i64) as i64) < (({{let db = (var_self); if db.rec == 0 { i64::MIN } else { stores.store(&db).get_int(db.rec, db.pos + (0_i64) as u32)} }}) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 { //block_4: never
     ;
@@ -866,7 +866,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
       var___work_p2_1.clear();
       let _pre_4 = t_4text_size(cell, &*var_t);
       let _pre_3 = OpGetTextSub(&*var_t, 2_i64, _pre_4);
-      var___work_p2_1 += &*(_pre_3);
+      ops::append_text(&mut var___work_p2_1, &*(_pre_3));
       *var_t = (&var___work_p2_1).to_string();
       } /*block_4: void*/;
     } /*while_2*/;
@@ -904,7 +904,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
       // loft:default/02_files.loft:1346
       if ((var_walked) as u8) == 1 { //block_12: void
         var___work_1.clear();
-        var___work_1 += &*(OpGetTextSub(&var_base, 0_i64, var_cut));
+        ops::append_text(&mut var___work_1, &*(OpGetTextSub(&var_base, 0_i64, var_cut)));
         var_base = var___work_1.clone();
         } /*block_12: void*/ else { //block_13: void
         var_base = "".to_string();
@@ -913,7 +913,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
       var___work_p2_2.clear();
       let _pre_4 = t_4text_size(cell, &*var_t);
       let _pre_3 = OpGetTextSub(&*var_t, 3_i64, _pre_4);
-      var___work_p2_2 += &*(_pre_3);
+      ops::append_text(&mut var___work_p2_2, &*(_pre_3));
       *var_t = (&var___work_p2_2).to_string();
       } /*block_7: void*/;
     } /*while_5*/;
@@ -929,7 +929,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
   { //Formatted string_15: text["__work_2"]
     *var___work_2 = ("").to_string();
     ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
-    (*var___work_2) += &*("/");
+    ops::append_text(&mut (*var___work_2), &*("/"));
     ops::format_text(&mut var___work_2, &*var_t, 0_i64, 2, 32);
     ;
     ;
@@ -1367,10 +1367,10 @@ fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut
       { //block_7: void
         // loft:default/03_text.loft:213
         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
-          (*var_result) += &*(var_sep);
+          ops::append_text(&mut (*var_result), &*(var_sep));
           } /*block_8: void*/ else {()};
         // loft:default/03_text.loft:214
-        (*var_result) += &*(var_p);
+        ops::append_text(&mut (*var_result), &*(var_p));
         } /*block_7: void*/;
       var_p__count = ops::op_add_int((var_p__count), (1_i64));
       ;
@@ -1409,10 +1409,10 @@ fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef
       { //block_7: void
         // loft:default/03_text.loft:213
         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
-          (*var_result) += &*(var_sep);
+          ops::append_text(&mut (*var_result), &*(var_sep));
           } /*block_8: void*/ else {()};
         // loft:default/03_text.loft:214
-        (*var_result) += &*(var_p);
+        ops::append_text(&mut (*var_result), &*(var_p));
         } /*block_7: void*/;
       var_p__count = ops::op_add_int((var_p__count), (1_i64));
       ;

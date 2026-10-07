@@ -1,0 +1,179 @@
+diff --git a/src/generation/text.rs b/src/generation/text.rs
+index 8c6ed04d7..ec2799c59 100644
+--- a/src/generation/text.rs
++++ b/src/generation/text.rs
+@@ -287,19 +287,38 @@ impl Output<'_> {
+             // raises E0502 — mutable and immutable borrows of the same
+             // place.  Hoist the RHS through a fresh `String` so the
+             // self-borrow never overlaps the `+=` target.
+-            // `@FR-E-NullArg` — one append step for both backends (`ops::append_text`, the
+-            // interpreter's `append_text` calls it too): a null dest stays null and a null
+-            // source turns the dest null.  A bare `+=` pushed the sentinel's NUL byte, so
+-            // `"a" + t` with a null `t` answered the present two-byte `"a\0"` (loft#1924), and
+-            // a non-`Optional` dest holding null took `"\0x"`.
++            // @PLN25 slice (c): a nullable dest (`text?` local, an owned `String`) skips the
++            // append when it holds the null sentinel — `s += x` on a null `s` stays null
++            // (propagate). Gated on `Optional` so plain-text / `&mut String` work-buffer
++            // appends (never null, and not always owned Strings) keep the bare emission.
++            // A `&text?` parameter's nullability sits inside the reference.
++            let dest_nullable = match self.data.def(self.def_nr).variables().tp(*nr) {
++                Type::Optional(_) => true,
++                Type::RefVar(pointee) => matches!(pointee.as_ref(), Type::Optional(_)),
++                _ => false,
++            };
+             if val.reads_var(*nr) {
++                if dest_nullable {
++                    write!(
++                        w,
++                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += &__p222_tmp; }} }}"
++                    )?;
++                } else {
++                    write!(
++                        w,
++                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); {s_nr} += &__p222_tmp; }}"
++                    )?;
++                }
++                return Ok(());
++            }
++            if dest_nullable {
+                 write!(
+                     w,
+-                    "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); ops::append_text(&mut {s_nr}, &__p222_tmp); }}"
++                    "{{ let __app_tmp: &str = &*({val_expr}); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += __app_tmp; }} }}"
+                 )?;
+-                return Ok(());
++            } else {
++                write!(w, "{s_nr} += &*({val_expr})")?;
+             }
+-            write!(w, "ops::append_text(&mut {s_nr}, &*({val_expr}))")?;
+             return Ok(());
+         }
+         panic!("Could not parse {vals:?}");
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index c04b5184c..c34b4e9c6 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -2099,14 +2099,9 @@ impl Parser {
+                             // not a bare `Value::Null` — for a buffer-backed return the bare null
+                             // leaves the return buffer empty and interp reads "" back instead of
+                             // null (the normal `else { null }` flow converts it the same way).
+-                            // ADMITTING: this null is the compiler's propagate arm, typed
+-                            // `text?` by the `Type::optional` below, not a store the author
+-                            // wrote — asked through the store face, @FR-N-Store warned
+-                            // *"`null` is stored into a slot of the non-null scalar type
+-                            // `text`"* on every `t? + "a"`.
+                             let null_arm = |this: &mut Self| {
+                                 let mut n = Value::Null;
+-                                this.convert_admitting(&mut n, &Type::Null, &base_text);
++                                this.convert(&mut n, &Type::Null, &base_text);
+                                 n
+                             };
+                             if matches!(code.unspan(), Value::Var(_)) {
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index e53278f2b..5a8fe1ce7 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -360,17 +360,11 @@ impl Parser {
+             // A `&text` argument (parameter passed by reference) appears
+             // as `Type::RefVar(Type::Text(_))` here but the OpAppend* ops
+             // accept it directly via the same code path as plain `Text`.
+-            //
+-            // A `text?` part is a text OPERAND too, so it is APPENDED — `@FR-E-NullArg`: the
+-            // append makes the concatenation null when the part is (`ops::append_text`).  It
+-            // used to take the format path below, which RENDERS a null as the word, so
+-            // `"a" + t` with a null `t` answered `"anull"` (loft#1924).
+             let dispatch_tp: &Type = if let Type::RefVar(inner) = tp {
+                 inner.as_ref()
+             } else {
+                 tp
+             };
+-            let dispatch_tp: &Type = dispatch_tp.base();
+             if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
+                 if *dispatch_tp == Type::Character {
+                     ls.push(self.cl("OpAppendStackCharacter", &[Value::Var(var_nr), val.clone()]));
+diff --git a/src/state/text.rs b/src/state/text.rs
+index bd4a64668..4af96f541 100644
+--- a/src/state/text.rs
++++ b/src/state/text.rs
+@@ -310,8 +310,10 @@ impl State {
+         let v1 = self.string_mut(off);
+         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
+         let before = (v1.as_ptr() as usize, v1.capacity());
+-        // `@FR-E-NullArg` — a null SOURCE makes the concatenation null (loft#1924).
+-        ops::append_text(v1, owned.as_deref().unwrap_or(text.str()));
++        match &owned {
++            Some(o) => v1.push_str(o),
++            None => v1.push_str(text.str()),
++        }
+         if let Some(fn_nr) = tl_fn {
+             text_tl_grow(
+                 fn_nr,
+@@ -425,8 +427,10 @@ impl State {
+         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
+         let v1 = self.string_ref_mut(off);
+         let before = (v1.as_ptr() as usize, v1.capacity());
+-        // `@FR-E-NullArg` — a null SOURCE makes the concatenation null (loft#1924).
+-        ops::append_text(v1, owned.as_deref().unwrap_or(text.str()));
++        match &owned {
++            Some(o) => v1.push_str(o),
++            None => v1.push_str(text.str()),
++        }
+         if let Some(fn_nr) = tl_fn {
+             text_tl_grow(
+                 fn_nr,
+diff --git a/src/ops.rs b/src/ops.rs
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -868,35 +868,17 @@
+ /// doesn't exist — even though `==` works via the cross-type `PartialEq`.
+ /// Routing `OpLtText` / `OpLeText` through these helpers unifies both
+ /// provenances.  @P347.
+-///
+-/// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
+-/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
+-/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
+-/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
+-/// home both backends call, rather than at each operator site.
+ #[inline]
+ #[must_use]
+ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
+-    let (a, b) = (a.as_ref(), b.as_ref());
+-    let a_null = a == crate::state::STRING_NULL;
+-    let b_null = b == crate::state::STRING_NULL;
+-    if a_null || b_null {
+-        return a_null && !b_null;
+-    }
+-    a < b
+-}
+-
+-/// Text ordering compare `<=` — see [`op_lt_text`], whose null order it shares: a null left
+-/// operand is `<=` everything, and nothing non-null is `<=` a null.  @P347.
++    a.as_ref() < b.as_ref()
++}
++
++/// Text ordering compare `<=` — see [`op_lt_text`].  @P347.
+ #[inline]
+ #[must_use]
+ pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
+-    let (a, b) = (a.as_ref(), b.as_ref());
+-    let a_null = a == crate::state::STRING_NULL;
+-    if a_null || b == crate::state::STRING_NULL {
+-        return a_null;
+-    }
+-    a <= b
++    a.as_ref() <= b.as_ref()
+ }
+ 
+ /// Text concatenation's append step, `dst += src`, on both backends — `@FR-E-NullArg`: a null
+@@ -906,11 +888,6 @@
+ #[inline]
+ pub fn append_text(dst: &mut String, src: &str) {
+     if dst.as_str() == crate::state::STRING_NULL {
+-        return;
+-    }
+-    if src == crate::state::STRING_NULL {
+-        dst.clear();
+-        dst.push_str(crate::state::STRING_NULL);
+         return;
+     }
+     dst.push_str(src);
