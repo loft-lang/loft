@@ -22,10 +22,8 @@
 //! tar/flate2/sha2): `loft install <dir>` works in a `--no-default-features` build, so the
 //! rule it depends on must compile there too.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+use crate::file_access;
 use std::collections::HashSet;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -123,21 +121,23 @@ fn copy_tree_inner(
     dst: &Path,
     ignored: &HashSet<PathBuf>,
 ) -> io::Result<usize> {
-    fs::create_dir_all(dst)?;
+    file_access::create_dir_all(dst)?;
     let mut copied = 0;
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let name = entry.file_name();
+    for entry in file_access::read_dir(dir)? {
+        let Some(name) = entry.os_name() else {
+            continue;
+        };
+        // Spelled under `dir` as given, so `is_excluded_entry` strips `root` as it is spelled.
+        let path = dir.join(&name);
         let name_str = name.to_string_lossy();
-        let file_type = entry.file_type()?;
+        let file_type = file_access::symlink_metadata(&path)?.file_type();
         if is_excluded_entry(root, &path, name_str.as_ref(), file_type.is_dir(), ignored) {
             continue;
         }
         if file_type.is_dir() {
             copied += copy_tree_inner(root, &path, &dst.join(&name), ignored)?;
         } else if file_type.is_file() {
-            fs::copy(&path, dst.join(&name))?;
+            file_access::copy(&path, dst.join(&name))?;
             copied += 1;
         }
     }
