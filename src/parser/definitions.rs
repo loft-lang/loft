@@ -80,6 +80,21 @@ impl Parser {
             }
             return;
         }
+        // @FR-Col-Spatial — an axis is an integer-not-null coordinate.  A float or single axis
+        // was accepted and then encoded so that a point lookup missed the collection's own
+        // records, and a float box query did not compile on `--native` (loft#1913).
+        if !want_text && !is_text && !matches!(tp, Type::Integer(_)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a spatial index interleaves integer coordinates into a Morton code, and the \
+                 axis `{field}` is `{}` — store the coordinate as an integer in a unit fine \
+                 enough for it (millimetres, not metres), or key on the VALUE with `sorted` / \
+                 `index`",
+                tp.source_name(&self.data)
+            );
+            return;
+        }
         if is_text == want_text {
             return;
         }
@@ -5223,6 +5238,9 @@ impl Parser {
                             if f.len() == 1 {
                                 self.check_key_is_text(sub_nr, &f[0], true);
                                 Type::Trie(sub_nr, f[0].clone(), crate::data::Deps::none())
+                            } else if f.is_empty() {
+                                // `parse_fields` refused the empty key list.
+                                Type::Unknown(0)
                             } else {
                                 diagnostic!(
                                     self.lexer,
@@ -5412,6 +5430,18 @@ impl Parser {
             }
         }
         self.lexer.token("]");
+        // @FR-Col-Hash / @FR-Col-Sorted / @FR-Col-Index / @FR-Col-Spatial — a keyed collection is
+        // `kind<T[k…]>` with at least one key.  `[]` names none, so every record would share
+        // the empty key and each insert would replace the last (loft#1912).
+        if result.is_empty() {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a keyed collection needs at least one key field — `[]` names none, so every \
+                 record would share one key; name the field to key on, as in `hash<Row[id]>`, \
+                 or hold the records in a `vector<…>`"
+            );
+        }
         self.lexer.closing_angle();
     }
 
