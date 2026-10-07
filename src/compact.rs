@@ -22,7 +22,8 @@
 //! prelude) whose body appends exactly the `?`-discharged element `V[i]` of the loop
 //! variable — a RECORD element, since an in-range record element is never absent, where a
 //! scalar element can hold the null its `??` would replace — and the rebind `V = t` in its
-//! field form (snapshot, clear, copy back) or its local form (a fresh store filled from `t`),
+//! field form (snapshot, clear, copy back — or clear and copy, where `t` owns its store), or
+//! its local form (a fresh store filled from `t`),
 //! with `t` mentioned nowhere else in the function and the bounds pure reads (a literal, a
 //! variable the loop does not write, the length of `V` itself).  Anything else keeps the
 //! rebuild: a wrong decline is the copies the program already pays, a wrong admission would
@@ -486,6 +487,18 @@ fn match_rebind(
         } else {
             (4, elem_tp, Some(*rhs))
         });
+    }
+    // Direct field form: `OpClearVector(V); OpAppendVector(V, t, tp)` — the parser takes it
+    // when `t` owns its store (no snapshot is needed: an owned local cannot alias `V`).
+    if let Some(cl) = call(s.first()?.1, ops.clear_vector)
+        && same(&cl[0], place)
+        && let Some(a) = call(s.get(1)?.1, ops.append_vector)
+        && same(&a[0], place)
+        && var(&a[1]) == Some(t)
+        && let Some(elem_tp) = int(a.get(2)?)
+        && elem_tp > 0
+    {
+        return Some((2, elem_tp, None));
     }
     // Local form: `OpDatabase(vdb2, _); V = OpGetField(vdb2, 0, _); OpSetInt4(vdb2, 0, 0);
     // OpAppendVector(V, t, tp)`.

@@ -6629,9 +6629,18 @@ use a separate collection or add after the loop"
                 // @FR-O-Proxy asks copy — an ALIASING question: only a dep-free var is
                 // provably independent of the destination, so only it may take the direct
                 // clear+append.  The other arm materialises into a temp; neither frees.
+                // A local vector whose one dep is its OWN `__vdb_` store witness owns that
+                // store too (`@FR-R-Alias`'s ownership spelling): it cannot borrow the
+                // destination, so it takes the direct path rather than a second full copy
+                // through a temp (`doe_new: vector<T> = []; …; h.entries = doe_new`).
                 let owned_var_rhs = matches!(
                     code.unspan(),
-                    Value::Var(rv) if self.vars.tp(*rv).depend().is_empty()
+                    Value::Var(rv) if {
+                        let deps = self.vars.tp(*rv).depend();
+                        deps.is_empty()
+                            || matches!(deps.as_slice(), [w] if self.vars.name(*w).starts_with("__vdb_")
+                                && self.vars.tp(*w).depend().is_empty())
+                    }
                 );
                 // A field that may record absence takes the whole-value REPLACE for every
                 // copy below, temp fills included: an append cannot make its target absent,
