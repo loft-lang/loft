@@ -395,3 +395,140 @@ fn the_script_census_sees_a_hazard_and_nothing_else() {
     assert!(!shell_hazard("echo nopgrepx"));
     assert!(!shell_hazard("make valgrind-check-target"));
 }
+
+// ── E1 — every CI job runs on Windows or says why it need not ─────────────────────────────
+// A job is COVERED when it runs on Windows (`runs-on` or a matrix line naming `windows`), when
+// it calls a reusable workflow (whose own jobs carry the verdict), or when the line under its
+// name is `# @windows-exempt: <why>` — a job that posts a comment or reads text is
+// platform-free; one that runs a loft program is not.  The uncovered count only falls.
+
+const CI_BASELINE: &str = "src/platform_census_ci.baseline";
+
+/// The jobs of one workflow text without a Windows leg or an exemption.
+fn uncovered_jobs(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_jobs = false;
+    let mut job: Option<(String, bool)> = None;
+    let mut finish = |job: &mut Option<(String, bool)>, out: &mut Vec<String>| {
+        if let Some((name, covered)) = job.take()
+            && !covered
+        {
+            out.push(name);
+        }
+    };
+    for line in text.lines() {
+        if !line.starts_with(' ') && !line.is_empty() && !line.starts_with('#') {
+            finish(&mut job, &mut out);
+            in_jobs = line.trim_end() == "jobs:";
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let t = line.trim();
+        if indent == 2 && t.ends_with(':') && !t.starts_with('#') {
+            finish(&mut job, &mut out);
+            job = Some((t.trim_end_matches(':').to_string(), false));
+            continue;
+        }
+        if let Some((_, covered)) = job.as_mut() {
+            let code = t.split(" #").next().unwrap_or(t);
+            *covered |= t.starts_with("# @windows-exempt:")
+                || (indent == 4 && code.starts_with("uses:"))
+                || ((code.starts_with("runs-on:")
+                    || code.starts_with("os:")
+                    || code.starts_with("- os:")
+                    || code.starts_with('[')
+                    || code.starts_with("- windows"))
+                    && code.contains("windows"));
+        }
+    }
+    finish(&mut job, &mut out);
+    out
+}
+
+fn measure_ci(root: &PathText) -> BTreeMap<String, usize> {
+    let mut out = BTreeMap::new();
+    for p in file_access::read_dir(root.join(".github/workflows")).unwrap_or_default() {
+        if !has_extension(&p, "yml") {
+            continue;
+        }
+        let n = uncovered_jobs(&file_access::read_to_string(&p).unwrap_or_default()).len();
+        if n > 0 {
+            out.insert(
+                p.relative_to(root)
+                    .map(|r| r.portable())
+                    .unwrap_or_default(),
+                n,
+            );
+        }
+    }
+    out
+}
+
+#[test]
+fn ci_jobs_without_a_windows_verdict_only_fall() {
+    let root = PathText::host(env!("CARGO_MANIFEST_DIR"));
+    let now = measure_ci(&root);
+    let base_path = root.join(CI_BASELINE);
+    let base = read_baseline(&base_path);
+    let bless = std::env::var_os("LOFT_BLESS_PLATFORM_CENSUS").is_some();
+    let rose: Vec<String> = now
+        .iter()
+        .filter(|(f, n)| **n > base.get(*f).copied().unwrap_or(0))
+        .map(|(f, n)| {
+            let jobs = uncovered_jobs(
+                &file_access::read_to_string(root.join(f.as_str())).unwrap_or_default(),
+            );
+            format!(
+                "{f}: {} -> {n} ({})",
+                base.get(f).copied().unwrap_or(0),
+                jobs.join(", ")
+            )
+        })
+        .collect();
+    assert!(
+        rose.is_empty() || (bless && base.is_empty()),
+        "a CI job runs neither on Windows nor says why it need not (@PLN184 E1): give it a \
+         windows-latest leg, or put `# @windows-exempt: <why>` on the line under its name:\n  {}",
+        rose.join("\n  ")
+    );
+    let fell: Vec<String> = base
+        .iter()
+        .filter(|(f, n)| now.get(*f).copied().unwrap_or(0) < **n)
+        .map(|(f, n)| format!("{f}: {n} -> {}", now.get(f).copied().unwrap_or(0)))
+        .collect();
+    if bless {
+        let mut text = String::from(
+            "# CI jobs per workflow with no Windows leg and no exemption (@PLN184 E1).  Only\n\
+             # shrinks: see src/platform_census.rs.  Format: <jobs> <workflow>\n",
+        );
+        for (f, n) in &now {
+            let _ = writeln!(text, "{n} {f}");
+        }
+        file_access::write(&base_path, text).expect("write baseline");
+        return;
+    }
+    assert!(
+        fell.is_empty(),
+        "CI jobs without a Windows verdict FELL — lock the progress in: \
+         LOFT_BLESS_PLATFORM_CENSUS=1 cargo test --lib platform_census\n  {}",
+        fell.join("\n  ")
+    );
+}
+
+#[test]
+fn the_ci_census_reads_a_job_and_its_verdict() {
+    let wf = "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n  b:\n    runs-on: windows-latest\n  \
+              c:\n    # @windows-exempt: posts a label\n    runs-on: ubuntu-latest\n  d:\n    \
+              strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n    runs-on: \
+              ${{ matrix.os }}\n  e:\n    uses: ./.github/workflows/x.yml\n  f:\n    runs-on: \
+              ubuntu-latest\n    steps:\n      - run: echo windows\n  g:\n    runs-on: \
+              ubuntu-latest\n    steps:\n      - name: tools\n        uses: actions/checkout@v5\n";
+    assert_eq!(
+        uncovered_jobs(wf),
+        ["a", "f", "g"],
+        "a step's `uses:` is not a reusable call"
+    );
+}
