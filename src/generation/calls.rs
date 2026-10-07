@@ -207,6 +207,38 @@ impl Output<'_> {
         dest
     }
 
+    /// `@FR-R-ViewReturn` — the call its buffer prep was dropped for: the twin, which
+    /// answers the record and whether it is owned; the flag goes to the site's local.
+    /// Answers whether the call was emitted.
+    fn vr_call(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+    ) -> std::io::Result<bool> {
+        let vr = self
+            .vr_site_next
+            .is_some_and(|(c, at)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        if !vr {
+            return Ok(false);
+        }
+        self.vr_site_next = None;
+        let callee_nr = self.current_call_def;
+        if !self.vr_requests.contains(&callee_nr) {
+            self.vr_requests.push(callee_nr);
+        }
+        crate::rewrite_census::fired("R-ViewReturn", 1);
+        let flag = self.vr_flag_pending.take().unwrap_or_default();
+        write!(w, "{{ let __vr = {}__vr(cell", self.fn_ident(def_fn))?;
+        self.vr_drop_buf = true;
+        let r = self.emit_user_call_args(w, def_fn, vals, false);
+        self.vr_drop_buf = false;
+        r?;
+        self.current_call_def = callee_nr;
+        write!(w, "); {flag} = __vr.1; __vr.0 }}")?;
+        Ok(true)
+    }
+
     /// Internal helper: emits the user-fn / Op-stub call body.  Reachable
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
@@ -241,33 +273,7 @@ impl Output<'_> {
         // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
         // calls the plain-bodied twin, so no other twin form applies to it.
         let dest = self.dest_call(vals);
-        // `@FR-R-ViewReturn` — the call its buffer prep was dropped for: the twin, which
-        // answers the record and whether it is owned; the flag goes to the site's local.
-        let vr = !dest
-            && self
-                .vr_site_next
-                .is_some_and(|(c, at)| c == self.current_call_def && at == vals.as_ptr() as usize);
-        let vr_flag = if vr {
-            self.vr_site_next = None;
-            let c = self.current_call_def;
-            if !self.vr_requests.contains(&c) {
-                self.vr_requests.push(c);
-            }
-            crate::rewrite_census::fired("R-ViewReturn", 1);
-            self.vr_flag_pending.take()
-        } else {
-            None
-        };
-        if let Some(flag) = &vr_flag {
-            write!(w, "{{ let __vr = ")?;
-            write!(w, "{}__vr(cell", self.fn_ident(def_fn))?;
-            let callee_nr = self.current_call_def;
-            self.vr_drop_buf = true;
-            let r = self.emit_user_call_args(w, def_fn, vals, false);
-            self.vr_drop_buf = false;
-            r?;
-            self.current_call_def = callee_nr;
-            write!(w, "); {flag} = __vr.1; __vr.0 }}")?;
+        if !dest && self.vr_call(w, def_fn, vals)? {
             return Ok(());
         }
         let append = !dest

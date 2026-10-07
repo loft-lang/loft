@@ -1553,7 +1553,7 @@ pluginabi	0def11e52	R-AppendTwin	16
 pluginabi	0def11e52	R-Base	14
 pluginabi	0def11e52	R-ByteCopy	3
 pluginabi	0def11e52	R-CharWalk	10
-pluginabi	0def11e52	R-CompleteWrite	51
+pluginabi	0def11e52	R-CompleteWrite	52
 pluginabi	0def11e52	R-Counter	67
 pluginabi	0def11e52	R-Destination	9
 pluginabi	0def11e52	R-DischargeInto	1
@@ -1572,7 +1572,7 @@ pluginabi	0def11e52	R-InlineLeaf	8
 pluginabi	0def11e52	R-Inputs	5
 pluginabi	0def11e52	R-Invariant	4
 pluginabi	0def11e52	R-KernelSum	1
-pluginabi	0def11e52	R-Leaf	117
+pluginabi	0def11e52	R-Leaf	118
 pluginabi	0def11e52	R-LeafChain	32
 pluginabi	0def11e52	R-LitDiv	115
 pluginabi	0def11e52	R-MoveLast	3
@@ -1581,7 +1581,7 @@ pluginabi	0def11e52	R-PureReuse	1
 pluginabi	0def11e52	R-Push	13
 pluginabi	0def11e52	R-PushFill	10
 pluginabi	0def11e52	R-PushFill/run	12
-pluginabi	0def11e52	R-Range	185
+pluginabi	0def11e52	R-Range	186
 pluginabi	0def11e52	R-RangedCall	10
 pluginabi	0def11e52	R-RecPtr	2
 pluginabi	0def11e52	R-RefillBuffer	2
@@ -1592,6 +1592,7 @@ pluginabi	0def11e52	R-SingleUse	2
 pluginabi	0def11e52	R-TextBorrow	11
 pluginabi	0def11e52	R-TextRun	1
 pluginabi	0def11e52	R-View	5
+pluginabi	0def11e52	R-ViewReturn	1
 pluginabi	0def11e52	R-WorkBuffer	3
 pluginabi	0def11e52	R-Wrapper	31
 random	11373248d	R-Base	5
