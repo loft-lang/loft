@@ -88,6 +88,24 @@ impl Output<'_> {
         // Compute the DbRef inline and call vector::clear_vector.
         if let [val] = vals {
             let expr = self.generate_expr_buf(val)?;
+            // @FR-H-ClearRelease owes a release only for elements that own heap; for any
+            // other element the release-aware clear IS the length reset, after asking the
+            // type table at run time which field of the record `db.pos` names — a search
+            // over the fields per clear (`undo_push`'s `s.us_redo = []`, 7 % of its row).
+            // The field's vector type is the emitter's: `OpGetField`'s third operand.
+            if let Value::Call(g, args) = val.unspan()
+                && self.data.def(*g).name() == "OpGetField"
+                && let Some(Value::Int(vec_tp)) = args.get(2).map(Value::unspan)
+                && let Ok(vec_tp) = u16::try_from(*vec_tp)
+                && let Some(crate::database::Parts::Vector(elem)) =
+                    self.stores.types.get(vec_tp as usize).map(|t| &t.parts)
+                && !self.stores.owns_heap(*elem)
+            {
+                return write!(
+                    w,
+                    "{{ let _cv = {expr}; if _cv.rec != 0 {{ vector::clear_vector(&_cv, &mut stores.allocations); }} }}"
+                );
+            }
             write!(
                 w,
                 "{{ let _cv = {expr}; if _cv.rec != 0 {{ stores.clear_vector_release(&_cv); }} }}"

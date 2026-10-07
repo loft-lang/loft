@@ -1,0 +1,111 @@
+// `@FR-R-RecPtr`'s tuple clause — a record returned as a VALUE (a tuple, `@FR-R-ValueRecord`)
+// is read out of a store record, and written into one, through ONE address: the record
+// evaluated once, its address taken once, one load or store per field of a kind the address
+// serves (`integer`, `float`, `single`); a `boolean` field keeps its own accessor, to the same
+// bytes.  And `@FR-H-ClearRelease`'s field clear of a vector whose elements own no heap is the
+// plain length reset, chosen by the emitter from the field's type.  The interpreter takes no
+// address and is the oracle; every value is hand-computed.
+//
+// The shapes are moros' map accessors (`map_get_hex`, `map_set_hex`, `undo_push`): the record
+// is found by a walk over the chunks, which is what lets the compiler carry `P` as a tuple.
+// mk_c's chunk 7 holds the items; element i is P { a: 10 i + 1, f: 1.5 i, s: 0.25 i, b: i odd,
+// c: 100 - i }.  Chunk 3, walked first, holds one decoy element that nothing may read or write.
+
+struct P { a: integer, f: float, s: single, b: boolean, c: integer }
+struct K { tag: integer, items: vector<P> }
+struct C { ks: vector<K> }
+struct E { q: integer, r: integer, prev: P }
+struct S { es: vector<E>, redo: vector<E>, n: integer }
+struct T { name: text }
+struct H { ts: vector<T>, k: integer }
+
+fn mk_c() -> C {
+  items: vector<P> = [];
+  for i in 0..6 {
+    items += [P { a: i * 10 + 1, f: (i as float) * 1.5, s: (i as single) * 0.25f, b: i % 2 == 1, c: 100 - i }];
+  }
+  decoy: vector<P> = [P { a: -1, f: -1.0, s: -1.0f, b: true, c: -1 }];
+  C { ks: [K { tag: 3, items: decoy }, K { tag: 7, items: items }] }
+}
+
+/// The read: the `map_get_hex` shape, an element returned as the function's value.
+fn get_p(c: const C, i: integer) -> P {
+  for k in c.ks {
+    if k.tag == 7 && i >= 0 && i < len(k.items) { return k.items[i]?; }
+  }
+  P { a: 0, f: 0.0, s: 0.0f, b: false, c: 0 }
+}
+
+/// The write: the `map_set_hex` shape, a value parameter stored into an element.
+fn put_p(c: &C, i: integer, p: P) {
+  for k in c.ks {
+    if k.tag == 7 { k.items[i] = p; return; }
+  }
+}
+
+/// The nested write and the field clear: the `undo_push` shape.
+fn push_e(s: &S, c: const C, i: integer) {
+  prev = get_p(c, i);
+  s.es += [E { q: i, r: i * 2, prev: prev }];
+  s.redo = [];
+}
+
+fn main() {
+  c = mk_c();
+
+  // c1 — every field of element 3, the boolean through its own accessor.
+  p1 = get_p(c, 3);
+  assert(p1.a == 31 && p1.c == 97, "c1 ints: {p1.a} {p1.c}");
+  assert(p1.f == 4.5 && p1.s == 0.75f && p1.b, "c1 kinds: {p1.f} {p1.s} {p1.b}");
+
+  // c2 — out of range: the literal's values, not a stale element.
+  p2 = get_p(c, 9);
+  assert(p2.a == 0 && p2.c == 0 && p2.f == 0.0 && p2.s == 0.0f && !p2.b, "c2: {p2.a} {p2.c} {p2.f} {p2.b}");
+
+  // c3 — element 4 written over element 2; 4 and its neighbour 1 untouched.
+  put_p(c, 2, get_p(c, 4));
+  p3 = get_p(c, 2);
+  assert(p3.a == 41 && p3.f == 6.0 && p3.s == 1.0f && !p3.b && p3.c == 96, "c3: {p3.a} {p3.f} {p3.s} {p3.b} {p3.c}");
+  n4 = get_p(c, 4);
+  n1 = get_p(c, 1);
+  assert(n4.a == 41 && n1.a == 11 && n1.c == 99, "c3 neighbours: {n4.a} {n1.a} {n1.c}");
+
+  // c4 — a changed value written back: only the changed field differs.
+  p4 = get_p(c, 5);
+  p4.a = 500;
+  p4.s = 2.5f;
+  put_p(c, 0, p4);
+  q4 = get_p(c, 0);
+  assert(q4.a == 500 && q4.s == 2.5f && q4.f == 7.5 && q4.b && q4.c == 95, "c4: {q4.a} {q4.s} {q4.f} {q4.b} {q4.c}");
+  n5 = get_p(c, 5);
+  assert(n5.a == 51 && n5.s == 1.25f, "c4 source untouched: {n5.a} {n5.s}");
+  d = c.ks[0].items[0]?;
+  assert(len(c.ks[0].items) == 1 && d.a == -1 && d.c == -1, "c4 decoy untouched: {d.a} {d.c}");
+
+  // c5 — the nested sub-record written at its offset inside each appended element:
+  // sum over k = 0..3 of prev.a + prev.c + q + r = (10k + 1) + (100 - k) + k + 2k = 101 + 12k.
+  f = mk_c();
+  s = S { es: [], redo: [], n: 0 };
+  for k in 0..4 { push_e(s, f, k); }
+  t5 = 0;
+  for e in s.es { t5 += e.prev.a + e.prev.c + e.q + e.r; }
+  assert(len(s.es) == 4 && t5 == 476, "c5: {len(s.es)} {t5}");
+  assert(s.es[3].prev.f == 4.5 && s.es[3].prev.b && !s.es[2].prev.b, "c5 kinds");
+
+  // c6 — the field clear of a FILLED no-heap vector, then appends after it.
+  for k in 0..3 { s.redo += [E { q: 90 + k, r: 0, prev: get_p(f, k) }]; }
+  assert(len(s.redo) == 3 && s.redo[2].q == 92, "c6 filled: {len(s.redo)}");
+  push_e(s, f, 5);
+  assert(len(s.redo) == 0 && len(s.es) == 5 && s.es[4].prev.c == 95, "c6 cleared: {len(s.redo)} {len(s.es)}");
+  s.redo += [E { q: 7, r: 8, prev: get_p(f, 1) }];
+  assert(len(s.redo) == 1 && s.redo[0].q == 7 && s.redo[0].prev.a == 11, "c6 refilled");
+
+  // c7 — a field clear of HEAP-owning elements keeps the release path.
+  h = H { ts: [], k: 3 };
+  for k in 0..3 { h.ts += [T { name: "n{k}" }]; }
+  h.ts = [];
+  h.ts += [T { name: "after" }];
+  assert(len(h.ts) == 1 && h.ts[0].name == "after" && h.k == 3, "c7: {len(h.ts)}");
+
+  println("ok");
+}
