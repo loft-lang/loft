@@ -7498,6 +7498,34 @@ impl Parser {
     /// Search for definitions with the given name and call that with the given parameters.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex` with
+    /// the per-record link offset (`database.fields`), a constant only the parser knows once the
+    /// type is registered — which is why no stdlib `len(self: index)` can carry it (@FR-Col-Len).
+    /// An `index<…>?` counts 0 when absent, through `@FR-N-Store`'s store as every keyed `len`.
+    /// `None` when the type or the op is not registered yet.
+    pub(crate) fn index_len(
+        &mut self,
+        code: &mut Value,
+        recv: &Type,
+        mut args: Vec<Value>,
+        at: Option<&Position>,
+    ) -> Option<Type> {
+        let (base, absent) = recv.peel_optional();
+        let base = base.clone();
+        let known = self.get_type(&base);
+        let op_d_nr = self.data.def_nr("OpLengthIndex");
+        if known == u16::MAX || op_d_nr == u32::MAX {
+            return None;
+        }
+        let fields = self.database.fields(known);
+        if absent && let Some(first) = args.first_mut() {
+            self.convert_store(first, recv, &base, "parameter 1 of `len`", at);
+        }
+        args.push(Value::Int(i32::from(fields)));
+        *code = Value::Call(op_d_nr, args);
+        Some(crate::data::I64.clone())
+    }
+
     fn call(
         &mut self,
         code: &mut Value,
@@ -7775,19 +7803,8 @@ impl Parser {
             // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
             // "Unknown function len".  This route bypasses `convert`, so it asks
             // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
-            let (base, absent) = recv.peel_optional();
-            let base = base.clone();
-            let known = self.get_type(&base);
-            let op_d_nr = self.data.def_nr("OpLengthIndex");
-            if known != u16::MAX && op_d_nr != u32::MAX {
-                let fields = self.database.fields(known);
-                let mut args = list.to_vec();
-                if absent && let Some(first) = args.first_mut() {
-                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
-                }
-                args.push(Value::Int(i32::from(fields)));
-                *code = Value::Call(op_d_nr, args);
-                return crate::data::I64.clone();
+            if let Some(tp) = self.index_len(code, recv, list.to_vec(), arg_pos.first()) {
+                return tp;
             }
             // Type or op not registered — drop to the standard
             // error path so the user sees the same diagnostic shape
