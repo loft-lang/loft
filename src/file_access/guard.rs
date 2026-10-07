@@ -200,29 +200,36 @@ fn the_guard_sees_what_it_must_and_nothing_else() {
 }
 
 /// @PLN184 A1 — Clippy refuses direct file access (`clippy.toml`), and a file not yet
-/// migrated opts out with one marked `#![allow(clippy::disallowed_methods, …)]`.  Those files
+/// migrated — in `src/`, `tests/` or `build.rs` — opts out with one marked
+/// `#![allow(clippy::disallowed_methods, …)]`.  Those files
 /// are listed in `clippy_allow.baseline`, and the list only shrinks: a NEW allow fails, and a
 /// removed one is blessed with `LOFT_BLESS_FILE_ACCESS=1`.
 #[test]
 fn the_clippy_opt_outs_only_shrink() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut now = std::collections::BTreeSet::new();
-    let mut stack = vec![root.join("src")];
+    // The compiler (`src/`), the integration tests (`tests/`, minus the library fixtures, which
+    // are crates of their own) and `build.rs` (@PLN184 A7).
+    let mut stack = vec![root.join("src"), root.join("tests"), root.join("build.rs")];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+        let entries: Vec<std::path::PathBuf> = if dir.is_file() {
+            vec![dir.clone()]
+        } else if let Ok(rd) = std::fs::read_dir(&dir) {
+            rd.flatten().map(|e| e.path()).collect()
+        } else {
             continue;
         };
-        for entry in rd.flatten() {
-            let p = entry.path();
+        for p in entries {
             let rel = p
                 .strip_prefix(root)
                 .map(super::portable)
                 .unwrap_or_default();
             if p.is_dir() {
-                if rel != "src/file_access" {
+                if rel != "src/file_access" && rel != "tests/fixtures" {
                     stack.push(p);
                 }
-            } else if let Ok(text) = std::fs::read_to_string(&p)
+            } else if super::has_extension(&p, "rs")
+                && let Ok(text) = std::fs::read_to_string(&p)
                 && text
                     .lines()
                     .any(|l| l.starts_with("#![allow(clippy::disallowed_methods"))
