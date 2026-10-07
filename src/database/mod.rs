@@ -2824,6 +2824,10 @@ impl Stores {
                 // walk's delete per element.
                 let elem_size = u32::from(self.size(elem));
                 let words = 1 + u32::from(self.size(kt)).div_ceil(8);
+                // The reset skips the element walk, and with it each element's death: a
+                // `File` among them releases its handle here (`@FR-H-Drop`).
+                #[cfg(not(host_fs))]
+                self.release_file_leases(db.store_nr);
                 // @PLN157 § V-ai — the capacity the previous fill reached, read off the
                 // record the reset is about to drop.  The buffer is reused across calls
                 // (`@FR-R-Reuse`) and the store already holds this extent

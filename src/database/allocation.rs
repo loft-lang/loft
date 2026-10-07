@@ -911,10 +911,10 @@ impl Stores {
             // `@FR-H-Claim` — the root record's header is its size word and its TYPE TAG
             // (`alloc_record_into` writes both); a claim writes only the first.  A typed mint
             // stamps its tag over this; a raw one (`read_bytes`, a parsed vector, …) has none,
-            // and says so: left unwritten, the word kept the tag of whatever record the reused
-            // slot held, and `close_file_handle` read a freed `File`'s tag off a `vector<u8>`
-            // root — then its handle field past the record's end, closing a live file whose
-            // index the vector's length happened to name.
+            // and says so: left unwritten, the word keeps the tag of whatever record the reused
+            // slot held, and the free's `File` release (`release_file_leases`) reads a freed
+            // `File`'s tag off a `vector<u8>` root — then its handle field past the record's
+            // end, releasing a live file whose index the vector's length happens to name.
             store.set_u32_raw(rec, 4, u32::from(u16::MAX));
             rec
         };
@@ -1370,7 +1370,7 @@ impl Stores {
             return;
         }
         // ABSENT displaces nothing — the sentinel is a value, not a store.  Guarded here rather
-        // than at the callers for the reason `close_file_handle` states with the same test.
+        // than at the callers: neither number names a store to index.
         if displaced.store_nr == u16::MAX || (displaced.store_nr as usize) >= self.allocations.len()
         {
             return;
@@ -1389,27 +1389,19 @@ impl Stores {
         self.free_named(displaced, "");
     }
 
-    /// Close the OS handle a `File` record owns, at the moment its store is
-    /// freed — the one point where the runtime sees the record go.  Both
-    /// backends' free ops call this before [`Self::free_named`].
-    ///
-    /// The record's stored type tag names the row, so the test is that row's
-    /// NAME rather than a resolution of `"File"` through the name map: the
-    /// same identity, without a string hash on every free (@PLN157 § V-e).
+    /// The browser build keeps no OS handles, so a copy has nothing to lease.
+    #[cfg(host_fs)]
+    #[allow(clippy::unused_self)]
+    fn lease_if_file(&self, _to: &DbRef, _tp: u16) {}
+
+    /// A `File` record is gone: release the lease it holds on its OS handle, which closes
+    /// at the last release (`@FR-H-Lease`, `@FR-H-Drop`).  Asked of every record that dies
+    /// holding one — a store's root, a member of a record, an element of a collection — by
+    /// [`Self::release_file_leases`] when its store is freed and by `remove_claims` when it
+    /// dies inside a store that lives on.
     #[cfg(not(host_fs))]
-    pub fn close_file_handle(&mut self, db: &DbRef) {
-        if db.store_nr == u16::MAX
-            || (db.store_nr as usize) >= self.allocations.len()
-            || self.allocations[db.store_nr as usize].free
-            || db.rec == 0
-        {
-            return;
-        }
-        let stored_type = self.store(db).get_u32_raw(db.rec, 4) as usize;
-        if self.types.get(stored_type).is_none_or(|t| t.name != "File") {
-            return;
-        }
-        let file_ref = self.store(db).get_i32_raw(db.rec, db.pos + 28);
+    fn release_file_handle(&mut self, rec: &DbRef) {
+        let file_ref = self.store(rec).get_i32_raw(rec.rec, rec.pos + 28);
         if file_ref != i32::MIN
             && let Some(slot) = self.files.get_mut(file_ref as usize)
             && slot
@@ -1420,12 +1412,118 @@ impl Stores {
         }
     }
 
+    /// Store `store_nr` is being freed or re-initialised: release every `File` its records
+    /// hold, reached from its root (1@8) through the type that root's header names.  A raw
+    /// mint names no type (`@FR-H-Claim`), and a store minted while no file was ever opened
+    /// has nothing to release, so neither is walked.
+    ///
+    /// The walk reaches what the root OWNS; a record nothing reaches from the root (a
+    /// coroutine's extra snapshot records) keeps its lease, which leaves its handle open
+    /// rather than closing one something may still use.
+    #[cfg(not(host_fs))]
+    pub(super) fn release_file_leases(&mut self, store_nr: u16) {
+        if self.files.is_empty() || self.allocations[store_nr as usize].capacity_words() < 2 {
+            return;
+        }
+        let tp = self.allocations[store_nr as usize].get_u32_raw(1, 4) as usize;
+        if tp < self.types.len() {
+            let root = DbRef {
+                store_nr,
+                rec: 1,
+                pos: 8,
+            };
+            self.release_files_in(&root, tp as u16);
+        }
+    }
+
+    /// The descent of [`Self::release_file_leases`]: a `File` releases its own lease, any
+    /// other type that can hold one is walked through the owned-child keystone.  A VIEW
+    /// child is skipped — the sibling that owns those records releases them.
+    #[cfg(not(host_fs))]
+    fn release_files_in(&mut self, rec: &DbRef, tp: u16) {
+        if !self.type_holds_file(tp) {
+            return;
+        }
+        if self.types[tp as usize].name == "File" {
+            self.release_file_handle(rec);
+            return;
+        }
+        for c in self.for_each_owned_child(rec, tp).children {
+            if !c.borrowed {
+                self.release_files_in(&c.child, c.child_tp);
+            }
+        }
+    }
+
+    /// Can a value of `tp` hold a `File` record — the type itself, or a member at any depth?
+    pub(super) fn type_holds_file(&self, tp: u16) -> bool {
+        match self
+            .types
+            .get(tp as usize)
+            .and_then(|row| row.facts.holds_file())
+        {
+            Some(known) => known,
+            None => self.derive_holds_file(tp, &mut Vec::new()).0,
+        }
+    }
+
+    /// Answers `(holds, open)`: `open` says the answer passed through a type still being
+    /// derived (a recursive type), so a `false` is provisional and is not cached.  A `true`
+    /// is always final.
+    fn derive_holds_file(&self, tp: u16, seen: &mut Vec<u16>) -> (bool, bool) {
+        let Some(row) = self.types.get(tp as usize) else {
+            return (false, false);
+        };
+        if let Some(known) = row.facts.holds_file() {
+            return (known, false);
+        }
+        if seen.contains(&tp) {
+            return (false, true);
+        }
+        seen.push(tp);
+        let mut open = false;
+        let mut any = |content: u16, open: &mut bool| {
+            let (h, o) = self.derive_holds_file(content, seen);
+            *open |= o;
+            h
+        };
+        let holds = match &row.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
+                row.name == "File" || fields.iter().any(|f| any(f.content, &mut open))
+            }
+            Parts::Enum(values) => values
+                .iter()
+                .any(|(v, _)| *v != u16::MAX && any(*v, &mut open)),
+            Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Sorted(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _, _)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _)
+            | Parts::ChildRec(c) => any(*c, &mut open),
+            _ => false,
+        };
+        seen.pop();
+        if holds || !open {
+            row.facts.set_holds_file(holds);
+        }
+        (holds, open && !holds)
+    }
+
     /// A deep copy of a `File` record names the source's handle too, so it takes a lease on
     /// it (`@FR-H-Lease`): the source's free then leaves the handle open for the copy, and the
-    /// handle closes at the last release ([`Self::close_file_handle`]).  A record whose handle
+    /// handle closes at the last release ([`Self::release_file_handle`]).  A record whose handle
     /// is not open yet names none, and opens its own on first use.
+    ///
+    /// The one copy that is not of loft data: a `File` names an OS handle.  Asked only once a
+    /// file has been opened, so a program that never opens one pays a length test per copy.
     #[cfg(not(host_fs))]
-    fn lease_file_handle(&mut self, to: &DbRef) {
+    fn lease_if_file(&mut self, to: &DbRef, tp: u16) {
+        if self.files.is_empty() || self.types[tp as usize].name != "File" {
+            return;
+        }
         let file_ref = self.store(to).get_i32_raw(to.rec, to.pos + 28);
         if file_ref != i32::MIN
             && let Some(Some(handle)) = self.files.get_mut(file_ref as usize)
@@ -1598,6 +1696,9 @@ impl Stores {
         if store.pinned {
             return;
         }
+        // `@FR-H-Drop` — the store's death is the death of every `File` it holds.
+        #[cfg(not(host_fs))]
+        self.release_file_leases(al);
         // Plan-57 Phase C: the Stores ref-count is removed.  Every non-pinned
         // store is single-owner (closure-captured cells are owned by the closure
         // record's cascade, not rc — see Phase B), so `free_named` always frees.
@@ -1997,6 +2098,13 @@ impl Stores {
         // the first's record (#348: a File record clobbered by a sibling
         // call's result vector).  #513: a file-backed slot is replaced, not
         // init()'d through the mmap (see reinit_reused_slot).
+        // `@FR-H-Drop` — a LIVE store re-minted in place loses every record it held, so the
+        // `File`s among them release their handles; an adopted FREED store released them at
+        // its free.
+        #[cfg(not(host_fs))]
+        if !self.allocations[slot as usize].free {
+            self.release_file_leases(slot);
+        }
         self.reinit_reused_slot(slot as usize);
         self.allocations[slot as usize].free = false;
         self.clear_free_bit(slot);
@@ -3768,11 +3876,7 @@ impl Stores {
                         f.content,
                     );
                 }
-                // The one copy that is not of loft data: a `File` names an OS handle.
-                #[cfg(not(host_fs))]
-                if self.types[tp as usize].name == "File" {
-                    self.lease_file_handle(to);
-                }
+                self.lease_if_file(to, tp);
             }
             Parts::Vector(_) | Parts::Sorted(_, _) => {
                 // Pass the CONTAINER type: the keystone walk keys on it, and the helper
@@ -4168,6 +4272,13 @@ impl Stores {
         // invariant now holds HERE, not by every caller pre-checking the container.
         if rec.store_nr == u16::MAX {
             return;
+        }
+        // `@FR-H-Drop` — a `File` record dying inside a store that lives on (a cleared or
+        // overwritten element, a displaced field) releases its handle.  `remove_claims`'s fast
+        // path never skips one that holds a handle: an open file always has its `path` text.
+        #[cfg(not(host_fs))]
+        if !borrowed && !self.files.is_empty() && self.types[tp as usize].name == "File" {
+            self.release_file_handle(rec);
         }
         // A view's own text/leaf fields do not exist — it is a collection, never a
         // scalar — so the borrowed mode only ever reaches the cascade arm below.

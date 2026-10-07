@@ -537,10 +537,7 @@ fn free_ref_slow(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     if (db.store_nr as usize) >= stores.allocations.len() {
         return;
     }
-    // Plan-57 Phase C: single-ownership (ref-count removed) — close the file
-    // handle whenever its File store is freed.
-    #[cfg(not(host_fs))]
-    stores.close_file_handle(&db);
+    // A `File` the store holds releases its handle inside the free (`@FR-H-Drop`).
     stores.free_named(&db, name);
 }
 

@@ -3390,6 +3390,8 @@ pub struct TypeFacts(std::sync::atomic::AtomicU8);
 const FACTS_KNOWN: u8 = 1;
 const FACTS_OWNS_HEAP: u8 = 2;
 const FACTS_ZERO_DEFAULT: u8 = 4;
+const FILE_KNOWN: u8 = 8;
+const HOLDS_FILE: u8 = 16;
 
 impl TypeFacts {
     /// `(owns_heap, zero_default)` when derived already.
@@ -3404,7 +3406,19 @@ impl TypeFacts {
         let bits = FACTS_KNOWN
             | if owns_heap { FACTS_OWNS_HEAP } else { 0 }
             | if zero_default { FACTS_ZERO_DEFAULT } else { 0 };
-        self.0.store(bits, std::sync::atomic::Ordering::Relaxed);
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a value of the type can hold a `File` record, when derived already.
+    #[inline]
+    pub(super) fn holds_file(&self) -> Option<bool> {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & FILE_KNOWN != 0).then_some(bits & HOLDS_FILE != 0)
+    }
+
+    pub(super) fn set_holds_file(&self, holds: bool) {
+        let bits = FILE_KNOWN | if holds { HOLDS_FILE } else { 0 };
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub(super) fn forget(&self) {

@@ -12,8 +12,10 @@
 //
 // Axes this file MOVES:  the destination (a vector literal `[f]`, an append `fs += [f]`, a
 //                        record-literal field, a tuple member, a vector literal of a COPY
-//                        `g = f`), the literal chosen by an `if` arm, and a local REASSIGNED in
-//                        a loop, where only the last turn's handle was closed.
+//                        `g = f`), the literal chosen by an `if` arm, a local REASSIGNED in a
+//                        loop, where only the last turn's handle was closed, and a COPY of a
+//                        vector whose original is then replaced, which releases the original's
+//                        elements and must leave the copy's handles open.
 // Axes it HOLDS FIXED:   the File opened and written once (`"x"`) in the callee, written once
 //                        more (`"y"`) by the caller after the callee returned; text format.
 //                        A File copied while BOTH copies stay in use is not here: what that
@@ -131,6 +133,18 @@ fn test_a_copy_placed_in_a_literal() {
   clean(d);
 }
 
+fn test_a_copy_outlives_the_replaced_original() {
+  d = scratch("replaced");
+  fs = [file("{d}/kept.txt")];
+  for g in fs { g += "x"; }
+  gs = fs;
+  fs = [file("{d}/other.txt")];
+  for g in gs { g += "y"; }
+  got = holds("{d}/kept.txt");
+  assert(got == "xy" && len(fs) == 1, "gs = fs; fs = [..]: {got}");
+  clean(d);
+}
+
 fn main() {
   test_a_vector_literal();
   test_an_append();
@@ -139,4 +153,5 @@ fn main() {
   test_a_tuple_member();
   test_a_literal_in_an_if_arm();
   test_a_copy_placed_in_a_literal();
+  test_a_copy_outlives_the_replaced_original();
 }

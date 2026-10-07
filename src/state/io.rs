@@ -768,10 +768,7 @@ impl State {
             self.free_coroutine(&db);
             return;
         }
-        // Plan-57 Phase C: single-ownership (ref-count removed) — close the OS file
-        // handle whenever its File store is freed (free_named frees unconditionally).
-        #[cfg(not(host_fs))]
-        self.database.close_file_handle(&db);
+        // A `File` the store holds releases its handle inside the free (`@FR-H-Drop`).
         self.database.free(&db);
     }
 
