@@ -37,14 +37,14 @@ fn get_p(c: const C, i: integer) -> P {
 }
 
 /// The write: the `map_set_hex` shape, a value parameter stored into an element.
-fn put_p(c: &C, i: integer, p: P) {
+fn put_p(c: C, i: integer, p: P) {
   for k in c.ks {
     if k.tag == 7 { k.items[i] = p; return; }
   }
 }
 
 /// The nested write and the field clear: the `undo_push` shape.
-fn push_e(s: &S, c: const C, i: integer) {
+fn push_e(s: S, c: const C, i: integer) {
   prev = get_p(c, i);
   s.es += [E { q: i, r: i * 2, prev: prev }];
   s.redo = [];
