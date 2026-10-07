@@ -34,6 +34,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
   CARGO_TERM_COLOR: always
 
 jobs:

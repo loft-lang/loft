@@ -16,6 +16,10 @@ permissions:
   issues: write
   pull-requests: read
   contents: read
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   close:
     if: github.event.pull_request.merged == true

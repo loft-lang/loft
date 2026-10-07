@@ -59,6 +59,10 @@ concurrency:
   group: label-guard-${{ github.event.issue.number }}
   cancel-in-progress: false
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   guard:
     runs-on: ubuntu-latest

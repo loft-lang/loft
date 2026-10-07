@@ -15,6 +15,10 @@ on:
 permissions:
   issues: write
   contents: read
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   apply:
     uses: loft-lang/.github/.github/workflows/apply-fixed-pending-merge.yml@main

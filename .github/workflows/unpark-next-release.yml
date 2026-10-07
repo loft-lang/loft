@@ -29,6 +29,10 @@ on:
 permissions:
   issues: write
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   unpark:
     if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease

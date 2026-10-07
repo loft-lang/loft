@@ -45,6 +45,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   test:
     runs-on: ubuntu-latest

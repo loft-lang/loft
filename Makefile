@@ -122,6 +122,10 @@ export CARGO_INCREMENTAL := 0
 endif
 endif
 
+# @PLN184 D1 — every Python script a recipe runs decodes files as UTF-8, as it does on
+# Linux; a Windows Python defaults to cp1252 and misreads any non-ASCII byte.
+export PYTHONUTF8 := 1
+
 # macOS: cc-rs invocations (notably `ring`'s build script) need the SDK path
 # on -isysroot.  When `xcode-select -p` points at the bare Command Line Tools,
 # plain `cc` does not auto-detect it and the build fails with

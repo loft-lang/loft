@@ -24,6 +24,10 @@ on:
         required: false
         default: "binary(n2_cdylib) or binary(n3_use_native) or binary(n3_parity) or binary(native)"
 
+env:
+  # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).
+  PYTHONUTF8: '1'
+
 jobs:
   # @PLN26 phase 4 is FLIPPED: the C-ABI link is now the default on every host,
   # incl. Windows.  This job pins `LOFT_NATIVE_CABI=0` so it keeps exercising the
