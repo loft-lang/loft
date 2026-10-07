@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @F11 — Tuples — anonymous fixed-arity `(T1, T2, …)`
 
 //! `@FR-T-Record` — which NARROW members of a tuple local a `&` link names.
 //!

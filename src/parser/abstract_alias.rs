@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I59 — Type resolver
 
 //! @PLN187 (@C140, @FR-F-Visible) — a non-`pub` `type` alias is ABSTRACT outside its file.
 //!

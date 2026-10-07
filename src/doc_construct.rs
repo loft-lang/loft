@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I91 — Editor tooling: language server (LSP), debug adapter (DAP), resolution index
 
 //! @PLN183 P4 — which language construct is under the cursor, named in the catalogue's
 //! vocabulary (`op:??`, `kw:match`, `index:hash`, `slice:text`, …).
