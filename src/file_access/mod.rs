@@ -841,6 +841,35 @@ mod tests {
         remove_dir_all(&dir).unwrap();
     }
 
+    /// `@FR-Path-Utf8` — a host path the OS handed over reaches its file even through a name
+    /// that is not text: the name shows with U+FFFD and keeps the OS's own spelling through
+    /// `join`, `parent` and a listing.  Two such names that show alike stay two paths.
+    #[test]
+    fn a_host_path_through_a_name_that_is_not_text_still_reaches_its_files() {
+        let dir = scratch("not_text");
+        let real = dir.os_spelling();
+        let odd = real.join(crate::platform::name_that_is_not_text("d", ""));
+        if std::fs::create_dir(&odd).is_err() {
+            return; // the file system holds only text names (APFS): nothing to keep
+        }
+        let p = PathText::from_os(&odd);
+        assert!(p.last_is_unspellable());
+        assert_eq!(p.file_name(), Some("d\u{FFFD}"));
+        let f = p.join("x.txt");
+        write(&f, "inside").unwrap();
+        assert_eq!(read_to_string(&f).unwrap(), "inside");
+        assert!(same_file(&f.parent().unwrap(), &p));
+        let listed = read_dir(&dir).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].last_is_unspellable() && listed[0] == p);
+        let twin =
+            PathText::from_os(&real.join(crate::platform::another_name_that_is_not_text("d", "")));
+        assert_eq!(twin.portable(), p.portable(), "they show alike");
+        assert!(twin != p, "and are two names");
+        assert!(!exists(&twin));
+        remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn uri_rendering_is_not_platform_rendering() {
         assert_eq!(for_uri(Path::new(r"C:\a\b.loft")), "C:/a/b.loft");
