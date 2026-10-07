@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-FoldCompare` — `starts_with`, `ends_with`, `==` and `!=` with a case-folded operand
+// are answered byte by byte while every byte they inspect is ASCII, and through the written
+// form (the fold built) from the first non-ASCII byte on: Unicode case is not byte-local.
+// The cells cross what the fast path assumes: ASCII hit and miss (c1); a prefix longer than
+// the line (c2); U+212A KELVIN SIGN, which lowercases to an ASCII `k` (c3); `İ`, which
+// lowercases to two scalars (c4); `ß`, which uppercases to `SS` (c5); empty operands (c6);
+// the other operand read as WRITTEN, not folded (c7); the fold on the argument side (c8);
+// `ends_with` (c9); `==` and `!=` (c10); a final sigma, whose fold depends on its neighbours
+// (c11); and a fold bound to a local and read twice, which keeps the written form (c12).
+// Every value by hand; `LOFT_NO_FOLD_COMPARE=1` answers the same.
+
+fn sw_l(t: text, p: text) -> boolean { return t.to_lowercase().starts_with(p); }
+fn sw_u(t: text, p: text) -> boolean { return t.to_uppercase().starts_with(p); }
+fn sw_r(t: text, p: text) -> boolean { return t.starts_with(p.to_lowercase()); }
+fn ew_l(t: text, p: text) -> boolean { return t.to_lowercase().ends_with(p); }
+fn ew_u(t: text, p: text) -> boolean { return t.to_uppercase().ends_with(p); }
+fn ew_r(t: text, p: text) -> boolean { return t.ends_with(p.to_lowercase()); }
+fn eq_l(t: text, p: text) -> boolean { return t.to_lowercase() == p; }
+fn eq_u(t: text, p: text) -> boolean { return t.to_uppercase() == p; }
+fn ne_l(t: text, p: text) -> boolean { return p != t.to_lowercase(); }
+fn twice(t: text, p: text) -> text {
+  low = t.to_lowercase();
+  return "{low.starts_with(p)} {low}";
+}
+
+fn main() {
+  // c1
+  assert(sw_l("Host: a", "host:") && !sw_l("Origin: o", "host:") && sw_u("host: a", "HOST"), "c1");
+  // c2
+  assert(!sw_l("Ho", "host:") && !sw_u("ho", "HOST:"), "c2");
+  // c3: "\u{212A}ey: v" lowercases to "key: v".
+  assert(sw_l("\u{212A}ey: v", "key:") && ew_l("x\u{212A}", "k") && eq_l("\u{212A}", "k"), "c3");
+  // c4: "İd" lowercases to "i\u{307}d" — it starts with "i", not with "id".
+  assert(sw_l("\u{130}d", "i") && !sw_l("\u{130}d", "id") && eq_l("\u{130}", "i\u{307}"), "c4");
+  // c5: "straße" uppercases to "STRASSE".
+  assert(eq_u("straße", "STRASSE") && ew_u("straße", "SSE") && sw_u("ßa", "SS"), "c5");
+  // c6
+  assert(sw_l("", "") && sw_l("Abc", "") && !eq_l("Abc", "") && eq_u("", "") && ew_l("x", ""), "c6");
+  // c7: the other operand is compared as written: "host: a" does not start with "Host".
+  assert(!sw_l("HOST: a", "Host") && !eq_l("ABC", "ABC") && eq_u("abc", "ABC"), "c7");
+  // c8: the fold on the argument side.
+  assert(sw_r("host: a", "HOST") && !sw_r("ho", "HOST") && ew_r("report.txt", ".TXT") && !ew_r("txt", ".TXT"), "c8");
+  // c9
+  assert(ew_l("File.TXT", ".txt") && !ew_l("File.TXT", ".TXT") && !ew_l("t", ".txt"), "c9");
+  // c10: "ÄBC" lowercases to "äbc"; "abc" never equals "äbc".
+  assert(eq_l("AbC", "abc") && !ne_l("AbC", "abc") && ne_l("AbC", "ABC") && eq_l("ÄBC", "äbc") && !eq_l("abc", "äbc"), "c10");
+  // c11: "ΟΔΟΣ" lowercases with a FINAL sigma, "οδος".
+  assert(eq_l("ΟΔΟΣ", "οδος") && !eq_l("ΟΔΟΣ", "οδοσ") && ew_l("ΟΔΟΣ", "ς"), "c11");
+  // c12: a local read twice keeps the written form.
+  assert(twice("HeLLo", "hel") == "true hello" && twice("HeLLo", "HEL") == "false hello", "c12 {twice("HeLLo", "hel")}");
+  println("ok");
+}
