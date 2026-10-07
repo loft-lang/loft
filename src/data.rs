@@ -8025,6 +8025,33 @@ impl Data {
         h == w || variant_of(h, w) || variant_of(w, h)
     }
 
+    /// `@FR-G-Sat` — may a member returning `have` stand where an interface member declares the
+    /// return `want` (`Self` already replaced)?  The return is part of the signature
+    /// `[Self ↦ C](p̄ -> R)` the generic body was typed with: a `float` read where `integer`
+    /// was promised is its bits, a `text` its handle.  Compared as a parameter is
+    /// ([`Self::param_fits`]) at every position of the type — a collection's element, a
+    /// function type's parameters and result — with nullability peeled at each, as a nullable
+    /// parameter takes its dense type.  A `want` naming a type variable or unknown asks
+    /// nothing; `have` returning NOTHING meets only a `want` of nothing.
+    #[must_use]
+    pub fn return_fits(&self, have: &Type, want: &Type) -> bool {
+        let (h, w) = (have.base(), want.base());
+        if w.is_unknown() || self.mentions_type_var(w) || self.mentions_type_var(h) {
+            return true;
+        }
+        if matches!(h, Type::Void) || matches!(w, Type::Void) {
+            return matches!(h, Type::Void) == matches!(w, Type::Void);
+        }
+        if !h.has_child_types() && !w.has_child_types() {
+            return self.param_fits(h, w);
+        }
+        if std::mem::discriminant(h) != std::mem::discriminant(w) {
+            return false;
+        }
+        h.zip_children(w)
+            .is_some_and(|pairs| pairs.into_iter().all(|(a, b)| self.return_fits(a, b)))
+    }
+
     /// The member of `start`'s overload set whose visible parameters are `params`
     /// ([`Self::params_fit`]) — `None` when the name has no set or no member fits.  What
     /// [`Self::possible_with_signature`] asks by arity and receiver, asked of the whole
