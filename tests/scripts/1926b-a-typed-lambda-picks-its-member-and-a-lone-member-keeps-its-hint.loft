@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1926 — the other side of `(Disp-Hint)`: what still WORKS once a `self` set offers no
+// hint.  A lambda that types its own parameter is typed from its spelling and selects the member
+// that takes it, in both spellings; a name with ONE definition at the receiver keeps its hint,
+// so an untyped lambda and a narrow vector literal are typed by it — including a set whose
+// members take DIFFERENT receivers, where the receiver already names one definition.
+//
+// Axes this file MOVES:  typed lambda · untyped lambda to a lone member · untyped lambda to a
+//                        set split by receiver · a literal hinted by a lone member; method and
+//                        free spelling.
+// Axes it HOLDS FIXED:   struct receivers; integer and text callbacks.
+//
+// @falsified-at: none — the CONTROLS of loft#1926's fix: every cell answers the same on the
+//   build before it (measured: `ok` there and here, both backends).  It fails if the fix
+//   withholds a hint it must keep — a lone member, or a set split by receiver.
+
+struct P { x: integer }
+struct Q { y: integer }
+fn ap(self: P, f: fn(integer) -> integer) -> text { "int {f(2)}" }
+fn ap(self: P, f: fn(text) -> text) -> text { "text {f("a")}" }
+fn one(self: P, f: fn(integer) -> integer) -> integer { f(self.x) }
+fn by(self: P, f: fn(integer) -> integer) -> integer { f(self.x) + 100 }
+fn by(self: Q, f: fn(text) -> text) -> text { f("q{self.y}") }
+fn w(self: P, v: vector<u8>) -> integer { v.len() * 10 }
+
+fn main() {
+  p = P { x: 7 };
+  q = Q { y: 3 };
+  a = p.ap(fn(x: integer) -> integer { x * 5 });
+  b = p.ap(fn(s: text) -> text { "{s}{s}" });
+  c = ap(p, fn(x: integer) -> integer { x + 1 });
+  assert(a == "int 10" && b == "text aa" && c == "int 3", "typed lambdas: {a} | {b} | {c}");
+  d = p.one(|x| { x * 3 });
+  e = one(p, |x| { x - 1 });
+  assert(d == 21 && e == 6, "a lone member keeps its hint: {d} {e}");
+  f = p.by(|x| { x * 2 });
+  g = q.by(|s| { "{s}!" });
+  assert(f == 114 && g == "q3!", "a set split by receiver keeps each receiver's hint: {f} {g}");
+  h = p.w([1, 200, 3]);
+  assert(h == 30, "a lone member hints a narrow literal: {h}");
+  println("ok");
+}

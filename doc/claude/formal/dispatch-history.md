@@ -92,3 +92,14 @@ OPEN: **0**.
   `tests/scripts/1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`,
   `tests/scripts/1925b-two-converting-members-are-ambiguous-in-either-order.loft`.
 
+- **D-disp-4 — CLOSED 2026-10-07** (opened the same day, loft#1926).  `(Disp-Hint)`: a free set
+  offered no hint, but a `self` set hinted its arguments with the attribute slot's routine —
+  again its FIRST member — so an untyped `|x|` lambda took that member's parameter type and the
+  call then selected that member because of it (`int 2` / `text a` by declaration order, both
+  spellings, both backends), and a bare vector literal took the first member's element width.
+  `Data::receiver_shared_in_set` withholds the hint where several members take the receiver; a
+  lambda left untyped is refused naming the members (`untyped-lambda-at-overload-set`), and a
+  literal that then fits no member is `Disp-Exhaustive`'s refusal in both spellings.  A `self`
+  set split by receiver keeps each receiver's hint, as the rule now says in words.  Guards:
+  `tests/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`,
+  `tests/scripts/1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft`.

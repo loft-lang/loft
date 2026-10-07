@@ -655,6 +655,41 @@ impl Parser {
         out
     }
 
+    /// `@FR-Disp-Hint` — the definitions a call of `name` parses its arguments WITHOUT a hint
+    /// for, as a refusal names them: those of a free overload set, or the members of a set
+    /// that take the call's `receiver` when several do ([`crate::data::Data::receiver_shared_in_set`]).
+    /// `None` when one definition steers the arguments.
+    pub(crate) fn unhinted_set_names(&self, name: &str, receiver: Option<&Type>) -> Option<String> {
+        let main = match receiver {
+            Some(r) if self.data.receiver_shared_in_set(name, r) => {
+                let source = self.data.receiver_overload_source(name, r);
+                self.data.source_nr(source, name)
+            }
+            _ if self.data.has_overload_set(name) => self.data.def_nr(name),
+            _ => return None,
+        };
+        let shown: Vec<String> = self
+            .data
+            .def(main)
+            .attributes
+            .iter()
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
+            })
+            .filter(|&r| {
+                receiver.is_none_or(|rt| {
+                    self.data
+                        .visible_params(r)
+                        .first()
+                        .is_some_and(|p| self.data.param_fits(rt, p))
+                })
+            })
+            .map(|r| self.data.overload_signature(name, r))
+            .collect();
+        (shown.len() > 1).then(|| format!("`{name}` is {}", shown.join(" and ")))
+    }
+
     /// The two refusals selection can end in, worded once for both call spellings.
     pub(crate) fn report_selection(
         &mut self,
