@@ -1030,6 +1030,77 @@ impl<'a> Iterator for LazySplit<'a> {
     }
 }
 
+/// `@FR-R-FoldCompare` — which text predicate [`fold_compare`] answers.
+pub mod fold_op {
+    /// `F(t) == other`.
+    pub const EQ: u8 = 0;
+    /// `F(t) != other`.
+    pub const NE: u8 = 1;
+    /// `F(t).starts_with(other)`, or with `fold_right` `other.starts_with(F(t))`.
+    pub const STARTS: u8 = 2;
+    /// `F(t).ends_with(other)`, or with `fold_right` `other.ends_with(F(t))`.
+    pub const ENDS: u8 = 3;
+}
+
+/// `@FR-R-FoldCompare` — the predicate `op` over the case fold `F(t)` (`to_uppercase` when
+/// `upper`, else `to_lowercase`) and `other` read as written, with `F(t)` the receiver
+/// unless `fold_right` puts it in the argument position — answered without building
+/// `F(t)` while every byte the predicate inspects, in both operands, is ASCII: there the
+/// fold is byte-wise and one-to-one.  The first non-ASCII byte in that span takes the
+/// written form (`F(t)` built, the predicate applied), because Unicode case is not
+/// byte-local (U+212A KELVIN SIGN lowercases to `k`, `ß` uppercases to `SS`).
+#[inline]
+#[must_use]
+pub fn fold_compare(op: u8, fold_right: bool, upper: bool, t: &str, other: &str) -> bool {
+    let fold = |b: u8| {
+        if upper {
+            b.to_ascii_uppercase()
+        } else {
+            b.to_ascii_lowercase()
+        }
+    };
+    // `a` folded equals `b` as written, both all ASCII and of one length.
+    let same =
+        |a: &[u8], b: &[u8]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| fold(*x) == *y);
+    let (tb, ob) = (t.as_bytes(), other.as_bytes());
+    let fast = match (op, fold_right) {
+        (fold_op::EQ | fold_op::NE, _) => (tb.is_ascii() && ob.is_ascii()).then(|| same(tb, ob)),
+        (fold_op::STARTS, false) => {
+            let span = &tb[..tb.len().min(ob.len())];
+            (ob.is_ascii() && span.is_ascii()).then(|| tb.len() >= ob.len() && same(span, ob))
+        }
+        (fold_op::STARTS, true) => {
+            let span = &ob[..ob.len().min(tb.len())];
+            (tb.is_ascii() && span.is_ascii()).then(|| ob.len() >= tb.len() && same(tb, span))
+        }
+        (fold_op::ENDS, false) => {
+            let span = &tb[tb.len() - tb.len().min(ob.len())..];
+            (ob.is_ascii() && span.is_ascii()).then(|| tb.len() >= ob.len() && same(span, ob))
+        }
+        (fold_op::ENDS, true) => {
+            let span = &ob[ob.len() - ob.len().min(tb.len())..];
+            (tb.is_ascii() && span.is_ascii()).then(|| ob.len() >= tb.len() && same(tb, span))
+        }
+        _ => None,
+    };
+    if let Some(answer) = fast {
+        return if op == fold_op::NE { !answer } else { answer };
+    }
+    let folded = if upper {
+        t.to_uppercase()
+    } else {
+        t.to_lowercase()
+    };
+    match (op, fold_right) {
+        (fold_op::EQ, _) => folded == other,
+        (fold_op::NE, _) => folded != other,
+        (fold_op::STARTS, false) => folded.starts_with(other),
+        (fold_op::STARTS, true) => other.starts_with(folded.as_str()),
+        (fold_op::ENDS, false) => folded.ends_with(other),
+        _ => other.ends_with(folded.as_str()),
+    }
+}
+
 /// Start a [`LazySplit`] over `text`.
 #[inline]
 #[must_use]

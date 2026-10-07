@@ -127,6 +127,21 @@ pub fn emit_op(ctx: &mut EmitCtx<'_, '_>, name: &str, args: &[Value]) -> io::Res
 /// priority over the special-case match arms (phase 00 step 0.6).
 /// While the registry is empty this always returns false, so the
 /// dispatch falls through to today's match unchanged.
+/// `@FR-R-FoldCompare` — the predicates [`text_ops::FoldCompareEmitter`] is registered for:
+/// the names `pre_eval` asks before lifting an operand the emitter may not read.
+pub const FOLD_COMPARE_OPS: [&str; 4] = [
+    "t_4text_starts_with",
+    "t_4text_ends_with",
+    "OpEqText",
+    "OpNeText",
+];
+
+/// Is `name` one of [`FOLD_COMPARE_OPS`]?
+#[must_use]
+pub fn is_fold_compare(name: &str) -> bool {
+    FOLD_COMPARE_OPS.contains(&name)
+}
+
 pub fn has_custom_emitter(name: &str) -> bool {
     registry().contains_key(name)
 }
@@ -191,6 +206,14 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("n_parallel_for", Box::new(parallel::ParallelForEmitter));
     // A file read the site types statically: `OpReadFileInt` with constant width and sign.
     r.insert("OpReadFile", Box::new(file_ops::ReadFileEmitter));
+    // `@FR-R-FoldCompare` — a text predicate over a case fold, answered without the fold.
+    {
+        use crate::codegen_runtime::fold_op;
+        let ops = [fold_op::STARTS, fold_op::ENDS, fold_op::EQ, fold_op::NE];
+        for (name, op) in FOLD_COMPARE_OPS.into_iter().zip(ops) {
+            r.insert(name, Box::new(text_ops::FoldCompareEmitter { op }));
+        }
+    }
     r.insert(
         "n_parallel_for_light",
         Box::new(parallel::ParallelForEmitter),
@@ -590,8 +613,11 @@ mod tests {
         // header the loop holds refreshes that header at its own site.  `@FR-R-TypedRead`
         // adds one, `ReadFileEmitter` for `OpReadFile`: a fixed-width integer read calls
         // `OpReadFileInt::<W, SIGNED>`; every other read falls through to the template.
+        // `@FR-R-FoldCompare` adds four, `FoldCompareEmitter` for `starts_with`, `ends_with`,
+        // `OpEqText` and `OpNeText`: a predicate over a case fold compares without building
+        // it; every other one falls through to its template.
         assert!(
-            count <= 134,
+            count <= 138,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
