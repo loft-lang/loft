@@ -10,7 +10,8 @@
 //
 // Axes it MOVES: how many constants precede the one read (none, two — which moved the builder's
 // numbering past the reader's table), the read's shape (an element bound to a local, through
-// `??`, the length, a loop over it, a whole-value copy that is then written), the element type
+// `??`, the length, a loop over it, a whole-value copy that is then written, a
+// return of an element and of the whole constant), the element type
 // (a struct, an integer, a text), and repetition (a function called many times, which a free of
 // the constant store would break on the second call).  Values are hand-computed.
 //
@@ -22,6 +23,9 @@ A1936 = [10];
 B1936 = ["aa"];
 PTS1936 = [P1936 { x: 7, name: "p" }, P1936 { x: 9, name: "qq" }];
 NUMS1936 = [3, 4, 5];
+
+fn first1936() -> P1936 { PTS1936[0] }
+fn whole1936() -> vector<integer> { NUMS1936 }
 
 fn elem1936(i: integer) -> integer {
   p = PTS1936[i % 2] ?? P1936 { x: 0, name: "" };
@@ -49,8 +53,21 @@ fn test_a_loop_and_a_copy() {
   assert(len(A1936) + len(B1936) == 2, "the other constants");
 }
 
+// A constant RETURNED is a copy the caller owns: written, it leaves the constant whole.  The
+// first form of the fix made the read's anchor the return buffer, and the caller's first write
+// reached the write-locked constant store.
+fn test_a_returned_constant_is_a_copy() {
+  a = first1936();
+  a.x = 100;
+  w = whole1936();
+  w += [6];
+  assert(a.x == 100 && PTS1936[0].x == 7, "element: {a.x} {PTS1936[0].x}");
+  assert("{w}" == "[3,4,5,6]" && "{NUMS1936}" == "[3,4,5]", "whole: {w} {NUMS1936}");
+}
+
 fn main() {
   test_an_element_after_two_constants();
+  test_a_returned_constant_is_a_copy();
   test_many_calls_leave_the_constant_whole();
   test_a_loop_and_a_copy();
 }
