@@ -20,8 +20,6 @@
 //! `plans/12-repl-and-introspection/03-state-reset-and-append.md`.  That
 //! refinement sits behind this same `ReplSession` API.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile;
 use crate::data::{DefType, Type};
 #[cfg(not(target_arch = "wasm32"))]
@@ -2249,7 +2247,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be read.
     pub fn load_program(&mut self, path: &str) -> std::io::Result<Result<(), Vec<DiagEntry>>> {
-        let src = std::fs::read_to_string(path)?;
+        let src = crate::file_access::read_to_string(path)?;
         // Reset to a pristine stdlib (+ the session's `--lib` dirs) parser before loading, so
         // a **re-launch is idempotent**: `load_program_str` is additive, and re-parsing a
         // `use`-program over an already-loaded one re-loads its libraries → "Cannot redefine".
@@ -2274,7 +2272,7 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be read.
     pub fn compile(&mut self, path: &str) -> std::io::Result<Vec<DiagEntry>> {
-        let src = std::fs::read_to_string(path)?;
+        let src = crate::file_access::read_to_string(path)?;
         let sp = self.savepoint();
         let pre_diag = self.parser.diagnostics.entries().len();
         self.parser.parse_str(&src, path, false);
@@ -2314,7 +2312,7 @@ impl ReplSession {
         // does not run a bare test function (every native call faults "Unknown definition").
         // Parse the file **by path** (`parse`, not `parse_str`): that sets up the source dir +
         // `use` context a bare-function call needs.  Read it first for a clean io error.
-        let _ = std::fs::read_to_string(path)?;
+        let _ = crate::file_access::read_to_string(path)?;
         let abs = crate::file_access::plain_canonical_str(path);
         let mut parser = Parser::new();
         // Parsed against again after compiling: no whole-program signature rewrite.
@@ -2449,13 +2447,13 @@ impl ReplSession {
         use std::io::{Error, ErrorKind};
         // Find the package root: the nearest ancestor of `start` holding a loft.toml.
         let abs = crate::file_access::plain_canonical(std::path::Path::new(start));
-        let mut root = if abs.is_dir() {
+        let mut root = if crate::file_access::is_dir(&abs) {
             Some(abs.as_path())
         } else {
             abs.parent()
         };
         while let Some(dir) = root {
-            if dir.join("loft.toml").exists() {
+            if crate::file_access::exists(dir.join("loft.toml")) {
                 break;
             }
             root = dir.parent();
@@ -2482,27 +2480,24 @@ impl ReplSession {
         }
         // Every tests/*.loft, in name order (stable output for the panel).
         let tests_dir = root.join("tests");
-        if !tests_dir.is_dir() {
+        if !crate::file_access::is_dir(&tests_dir) {
             return Err(Error::new(
                 ErrorKind::NotFound,
                 format!("package {} has no tests/ directory", root.display()),
             ));
         }
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&tests_dir)?
-            .flatten()
-            .map(|e| e.path())
+        let mut files: Vec<std::path::PathBuf> = crate::file_access::read_dir(&tests_dir)?
+            .iter()
+            .map(crate::file_access::PathText::os_spelling)
             .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+                crate::file_access::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft"))
             })
             .collect();
         files.sort();
         let mut out = Vec::with_capacity(files.len());
         for f in files {
-            let name = f.file_name().map_or_else(
-                || f.to_string_lossy().into_owned(),
-                |n| n.to_string_lossy().into_owned(),
-            );
+            let name = crate::file_access::file_name(&f)
+                .unwrap_or_else(|| f.to_string_lossy().into_owned());
             let results = self.run_file_tests_with(&f.to_string_lossy(), &lib_dirs)?;
             out.push((name, results));
         }
@@ -2532,9 +2527,8 @@ impl ReplSession {
         // it), so a path that resolves anywhere else — `..`, a symlink, an absolute escape —
         // fails this equality and is refused.
         match crate::file_access::try_plain_canonical(std::path::Path::new(path)) {
-            Some(p) if &p == allowed => {
-                std::fs::write(allowed, content).map_err(|e| format!("write failed: {e}"))
-            }
+            Some(p) if &p == allowed => crate::file_access::write(allowed, content)
+                .map_err(|e| format!("write failed: {e}")),
             _ => Err("path is outside the editable file".to_string()),
         }
     }
@@ -3668,12 +3662,10 @@ impl ReplSession {
     /// # Errors
     /// Returns the I/O error if `path` cannot be opened for appending.
     pub fn enable_persistence(&mut self, path: &Path) -> std::io::Result<()> {
-        self.record = Some(
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)?,
-        );
+        self.record = Some(crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().create(true).append(true),
+        )?);
         Ok(())
     }
 
@@ -3703,7 +3695,7 @@ impl ReplSession {
     /// is an empty session.  Returns how many entries were restored vs skipped.
     pub fn resume_from(&mut self, path: &Path) -> ResumeStats {
         let mut stats = ResumeStats::default();
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(bytes) = crate::file_access::read(path) else {
             return stats; // no prior session
         };
         let text = String::from_utf8_lossy(&bytes);
@@ -3727,7 +3719,7 @@ impl ReplSession {
     /// Discard the saved session at `path` (the `:reset` command and the
     /// `--fresh` flag) so the next launch starts clean.  Best-effort.
     pub fn clear_session(path: &Path) {
-        let _ = std::fs::remove_file(path);
+        let _ = crate::file_access::remove_file(path);
     }
 
     /// Evaluate one input line/statement against the session.
@@ -5026,7 +5018,7 @@ impl ReplSession {
         let bytes = store.raw_bytes();
         out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         out.extend_from_slice(bytes);
-        std::fs::write(path, &out)?;
+        crate::file_access::write(path, &out)?;
         Ok(true)
     }
 
@@ -5043,7 +5035,7 @@ impl ReplSession {
     /// layout key is computed against the current schema, so an image referencing
     /// a struct this session has not defined is correctly refused.
     pub fn load_session_image(&mut self, path: &Path) -> ImageLoad {
-        let Ok(bytes) = std::fs::read(path) else {
+        let Ok(bytes) = crate::file_access::read(path) else {
             return ImageLoad::Missing;
         };
         let Some((env, store_bytes, key)) = Self::decode_session_image(&bytes) else {
