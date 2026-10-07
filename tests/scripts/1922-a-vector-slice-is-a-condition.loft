@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1922 — `(Slice-Value)` with `@FR-E-Truthy-1`: a vector slice is a FRESH vector,
+// owed at every position a value is read, and a truthiness position reads one — a present
+// vector, so true, even when the slice is empty.
+//
+// A slice is lowered to an ITERATOR and materialised where a vector is wanted; a condition
+// wanted a boolean, so the iterator stayed one and its loop `break` reached the scopes pass
+// outside any loop — an internal compiler error on both backends.  The condition's one home
+// (`convert_condition`) now materialises it, and `!` reads it there too.
+//
+// Cells: a slice as the `if` condition, an empty (out-of-range) slice, a slice whose subject
+// has an EFFECT (evaluated exactly once), a slice as an `&&` / `||` operand and under `!`, a
+// `while` over one, and the source left as it was.
+//
+// @falsified-by: tests/falsified/1922-a-vector-slice-is-a-condition.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file (`!` on an iterator) and
+//   stops before any cell runs, so only the abort is scored.
+//   WITNESS: by hand on the control, `if x[0..1] { … }` alone is an internal compiler error
+//   (`scopes/scan.rs:272`) on both backends.
+//   HOLDS: leak, panic and free-refusal are equal on BOTH trees.
+
+fn src(log: vector<integer>) -> vector<integer> {
+  log += [1];
+  [1, 2, 3]
+}
+
+fn test_a_slice_is_a_true_condition() {
+  x = [1, 2];
+  took = "";
+  if x[0..1] { took = "then"; } else { took = "else"; }
+  assert(took == "then", "slice: took {took}");
+  if x[5..9] { took = "then"; } else { took = "else"; }
+  assert(took == "then", "an empty slice is still a vector: took {took}");
+  assert(x == [1, 2] && len(x) == 2, "the source: {x}");
+}
+
+fn test_the_subject_is_evaluated_once() {
+  log: vector<integer> = [];
+  took = "";
+  if src(log)[0..2] { took = "then"; } else { took = "else"; }
+  assert(took == "then", "took {took}");
+  assert(len(log) == 1, "the subject ran {len(log)} times");
+}
+
+fn test_a_slice_operand_and_negation() {
+  x = [1, 2];
+  assert("{x[0..1] && true} {false || x[5..9]} {!x[0..1]}" == "true true false",
+    "got {x[0..1] && true} {false || x[5..9]} {!x[0..1]}");
+  n = 0;
+  while x[0..1] && n < 3 { n += 1; }
+  assert(n == 3, "while: n={n}");
+}
