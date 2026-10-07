@@ -127,7 +127,7 @@ pub fn callee(data: &Data, d: u32) -> bool {
     let Some(ai) = super::hoist::ret_buffer_attr(def) else {
         return false;
     };
-    if matches!(def.returned(), crate::data::Type::Iterator(_, _)) {
+    if matches!(def.returned().base(), crate::data::Type::Iterator(_, _)) {
         return false;
     }
     let vars = def.variables();
