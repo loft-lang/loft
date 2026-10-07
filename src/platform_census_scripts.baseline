@@ -45,16 +45,15 @@
 1 scripts/claim.py
 8 scripts/clippy-review.py
 1 scripts/compiled_stdlib_fresh.py
-3 scripts/disk_headroom.sh
+1 scripts/disk_headroom.sh
 3 scripts/disk_janitor.sh
 4 scripts/doc-review.sh
-1 scripts/eq_census.sh
 3 scripts/falsify.sh
 2 scripts/fetch-library-guards.py
-9 scripts/find_problems.sh
+8 scripts/find_problems.sh
 2 scripts/gallery_render_check.sh
 5 scripts/gate_ledger.py
-6 scripts/gate_lock.sh
+5 scripts/gate_lock.sh
 1 scripts/gen-library-catalogue.py
 4 scripts/gen-toolchain-entry.py
 4 scripts/gen_target_surface.py
@@ -74,7 +73,6 @@
 1 scripts/reference-review.py
 5 scripts/registry-sign.sh
 1 scripts/registry_retention_check.py
-1 scripts/repro-verify.sh
 1 scripts/revalidate_matrix.py
 3 scripts/rewrite_census.py
 2 scripts/rule_tags.py
@@ -94,7 +92,6 @@
 8 tests/scripts/test_gl_snapshots.sh
 1 tests/wasm/coi-server.py
 1 tests/wasm/html-plain-server.py
-1 tools/audience-demo/run-demo.sh
 3 tools/indexer/fix_broken_links.py
 2 tools/indexer/rewrite_links.py
 1 tools/ir_schema/extract.py

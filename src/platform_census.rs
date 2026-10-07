@@ -287,7 +287,10 @@ fn shell_hazard(line: &str) -> bool {
             code.match_indices(w)
                 .any(|(at, _)| word_at(code, at, w.len()))
         })
-        || code.contains("/tmp/")
+        // The system temp directory itself, not a `tmp` directory inside another path.
+        || code.match_indices("/tmp/").any(|(at, _)| {
+            at == 0 || !matches!(code.as_bytes()[at - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'}')
+        })
         || code.contains("sed -i")
 }
 
@@ -394,6 +397,10 @@ fn the_script_census_sees_a_hazard_and_nothing_else() {
     assert!(!shell_hazard("# uses flock"));
     assert!(!shell_hazard("echo nopgrepx"));
     assert!(!shell_hazard("make valgrind-check-target"));
+    assert!(!shell_hazard(
+        "WORK=${XDG_CACHE_HOME:-$HOME/.cache}/tmp/loft-x"
+    ));
+    assert!(shell_hazard("log=\"/tmp/x.log\""));
 }
 
 // ── E1 — every CI job runs on Windows or says why it need not ─────────────────────────────
