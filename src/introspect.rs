@@ -447,11 +447,12 @@ fn run_diff_against_baseline(baseline: &str, buffer: &[u8]) -> std::io::Result<(
     }
     let tmp = std::env::temp_dir().join(format!("loft_introspect_diff_{}.txt", std::process::id()));
     crate::file_access::write(&tmp, buffer)?;
-    let status = std::process::Command::new("diff")
-        .arg("-u")
-        .arg(baseline)
-        .arg(&tmp)
-        .status();
+    let status =
+        crate::platform::process::Spawn::new(crate::platform::process::Program::search("diff"))
+            .arg("-u")
+            .arg(baseline)
+            .arg(&tmp)
+            .status();
     let _ = crate::file_access::remove_file(&tmp);
     if let Ok(s) = status {
         // 0 = identical, 1 = differs.  Both are valid outcomes;

@@ -20,6 +20,7 @@
 //! `substitute_template_body`.
 
 use crate::data::{Context, Data, OP_HOT, OP_NORMAL, Type};
+use crate::platform::process::{Program, Spawn};
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -110,7 +111,7 @@ pub fn init(state: &mut State) {{
         writeln!(into, "}}")?;
     }
     drop(into);
-    let _ = std::process::Command::new("rustfmt")
+    let _ = Spawn::new(Program::search("rustfmt"))
         .args(["--edition", "2024", "tests/generated/text.rs"])
         .status();
     Ok(())
@@ -143,7 +144,7 @@ pub fn generate_code_to(data: &Data, path: &str) -> std::io::Result<String> {
     let mut into = crate::file_access::create(path)?;
     generate_code_into(data, &mut into)?;
     drop(into);
-    let _ = std::process::Command::new("rustfmt")
+    let _ = Spawn::new(Program::search("rustfmt"))
         .args(["--edition", "2024", path])
         .status();
     crate::file_access::read_to_string(path)

@@ -456,11 +456,11 @@ pub fn evict_own_native_cache(dir: &std::path::Path, want_avail: u64) -> u64 {
 /// to run.
 #[must_use]
 pub fn fs_avail_bytes(path: &std::path::Path) -> Option<u64> {
-    let out = std::process::Command::new("df")
+    let out = process::Spawn::new(process::Program::search("df"))
         .arg("-P")
         .arg("-k")
         .arg(path)
-        .output()
+        .run(b"")
         .ok()?;
     if !out.status.success() {
         return None;
