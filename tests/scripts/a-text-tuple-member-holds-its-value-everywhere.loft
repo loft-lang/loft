@@ -1,0 +1,55 @@
+// @FR-T-Record — a tuple's `text` member is the tuple's own text: it holds its value through
+// construction, a member write and an append, a loop, a copy, a swap, a by-value argument the
+// callee writes, a return, `==`, a destructure, a stored element read back, a nested tuple, a
+// closure capture, a pattern, a reassignment in a loop, a null member, and a narrow neighbour.
+// The safety net under a change of the member's interpreter representation (an owned text, as
+// `(T-Record)` asks for): every cell must answer the same before and after.  Each value is worked
+// out by hand in the comment beside it.
+// @falsified-at: none — a regression net written ahead of the representation change; it holds today.
+
+fn bump_copy(t: (text, integer)) -> text { t.0 += "!"; t.0 }
+fn ret(n: integer) -> (integer, text) { (n, "r{n}") }
+fn first(t: (text, text)) -> text { t.0 }
+
+fn main() {
+  t = ("ab", 1);
+  assert("{t.0} {t.1}" == "ab 1", "construction");
+  t.0 = "cd"; t.0 += "e";
+  assert(t.0 == "cde", "a write and an append");
+  for i in 0..3 { t.0 += "{i}"; }
+  assert(t.0 == "cde012", "appends in a loop");
+  u = t; u.0 += "Z";
+  assert(t.0 == "cde012" && u.0 == "cde012Z", "a copy is independent");
+  s = ("left", "right");
+  s = (s.1, s.0);
+  assert("{s.0}/{s.1}" == "right/left", "a swap");
+  assert(bump_copy(t) == "cde012!" && t.0 == "cde012", "a by-value argument the callee writes");
+  r = ret(7);
+  assert("{r.0}{r.1}" == "7r7", "a return");
+  assert(t == ("cde012", 1) && t != ("cde012", 2) && t != ("x", 1), "==");
+  (a, b) = t;
+  assert(a == "cde012" && b == 1, "a destructure");
+  v: vector<(text, integer)> = [t, ("w", 2)];
+  v += [("q", 3)];
+  w = v[1];
+  w.0 += "W";
+  assert("{v[0].0} {v[1].0} {w.0} {v[2].0} {len(v)}" == "cde012 w wW q 3", "stored and read back");
+  n = (("in", 4), "out");
+  n.0.0 += "+";
+  assert("{n.0.0} {n.0.1} {n.1}" == "in+ 4 out", "a nested tuple");
+  f = fn(k: text) -> text { k + t.0 };
+  assert(f(">") == ">cde012", "a closure capture");
+  k = match t { ("cde012", m) => m * 10, _ => -1 };
+  assert(k == 10, "a pattern on a text member");
+  acc = "";
+  for i in 0..3 { p = ("p{i}", i); acc += p.0; }
+  assert(acc == "p0p1p2", "a reassignment in a loop");
+  z: (text?, integer) = (null, 5);
+  assert(z.0 == null && z.1 == 5, "a null member");
+  z.0 = "set";
+  assert(z.0 == "set", "a null member set");
+  x: (u8, text) = (250, "nb");
+  x.1 += "!"; x.0 += 1;
+  assert("{x.0} {x.1}" == "251 nb!", "a narrow neighbour");
+  assert(first(("one", "two")) == "one", "a literal argument");
+}
