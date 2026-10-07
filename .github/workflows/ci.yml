@@ -466,7 +466,7 @@ jobs:
       # 2106 KB on the run that caught this) and the name section never appears.
       - name: Install mold + ALSA + headless GL + sqlite + binaryen (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri libxkbcommon-x11-0 libsqlite3-0 binaryen
 
       # The repo's cache budget is 10 GB, evicted least-recently-used, and it is
       # the binding constraint on everything below.  Measured 2026-09-28: one run
@@ -1174,7 +1174,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1248,7 +1248,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache (saved on main): this job builds the
       # same release `loft`, so a cache of its own only competed for the 10 GB budget.
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
@@ -1304,7 +1304,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache, as `index-hygiene` does: the path list must stay
       # IDENTICAL to that job's, or the restore never matches.
       - name: Restore cargo registry and build (the test job's, read-only)
@@ -1339,7 +1339,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache, as `leak-scan` does: the path list must stay
       # IDENTICAL to that job's, or the restore never matches.
       - name: Restore cargo registry and build (the test job's, read-only)
@@ -1466,7 +1466,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from the `test` job's cache (saved on main): this job builds the
       # same release `loft`, so a cache of its own only competed for the 10 GB budget.
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
@@ -1605,7 +1605,7 @@ jobs:
         with:
           toolchain: nightly-2026-05-28
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1699,7 +1699,7 @@ jobs:
       # this even though it doesn't link the final binary — cargo
       # still compiles + links build scripts.
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       # Saved on main only, by the last step of this job (budget note: `test` job).
       - name: Cache cargo
@@ -1797,7 +1797,7 @@ jobs:
       # `assertion failed: pack_atlas: could not write assets/bb`, which names
       # neither GL nor ALSA.
       - name: Install mold + binaryen (wasm-opt) + GL/ALSA headers
-        run: sudo apt-get update && sudo apt-get install -y mold binaryen libgl-dev libasound2-dev
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen libgl-dev libasound2-dev
 
       - name: Install wasm-pack
         run: |

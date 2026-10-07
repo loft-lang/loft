@@ -54,7 +54,7 @@ jobs:
           echo "head $(git rev-parse --short HEAD), base $base, code $code"
 
       - name: Install mold
-        run: sudo apt-get update -y && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo
         uses: actions/cache@v4
