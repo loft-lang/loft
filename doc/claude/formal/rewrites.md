@@ -897,6 +897,11 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
                  record's cursor fields in place, and is on the list with the
                  address of its local; the scalar tier still reads it as a write
                  it cannot type.  A text, vector or record read stays a writer.
+                 THE LINK CLAUSE: the address of a local naming a record that owns
+                 no heap (`f(rows[i])` for `fn f(p: &(integer, integer))`) writes
+                 nothing — through it a callee writes scalars in place or rebinds
+                 the local, and its own summary judges those writes; a heap-owning
+                 record's link stays a writer.
 ```
 
 **In words.** @PLN157 P4a.  Aliasing is free for headers under this rule — an
