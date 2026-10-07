@@ -12101,12 +12101,16 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                             super::fnref::dispatch_arms(data, &every, vars.tp(*v), args.len())
                     {
                         let ds: Vec<u32> = found.iter().map(|a| a.d_nr).collect();
-                        match fnref_site_record(data, vars.tp(*v), args, &found) {
-                            Some(rec) => {
-                                grouped.extend(ds.iter().copied());
-                                sites.insert((d_nr, *v), (ds, rec));
-                            }
-                            None => arms.extend(ds),
+                        if fnref_site_listed(data, vars.tp(*v), args, &found) {
+                            // The record the dispatch may answer as a tuple, when it answers one.
+                            let rec = match vars.tp(*v).base() {
+                                Type::Function(_, ret, ..) => plain_record_type(data, ret),
+                                _ => None,
+                            };
+                            grouped.extend(ds.iter().copied());
+                            sites.insert((d_nr, *v), (ds, rec));
+                        } else {
+                            arms.extend(ds);
                         }
                     }
                 }
@@ -12268,19 +12272,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                         .map_or(u16::MAX, |a| cvars.var(&a.name));
                     let empty = HashSet::new();
                     let offs = view_offs.get(tp).unwrap_or(&empty);
-                    if v == u16::MAX
-                        || !local_uses_ok(
-                            cdef.code(),
-                            v,
-                            data,
-                            &served,
-                            &admitted,
-                            &params,
-                            offs,
-                            None,
-                            (caller, &sites),
-                        )
-                    {
+                    if v == u16::MAX || !local_uses_ok(cdef.code(), v, &c, &served, offs, None) {
                         declined_params.push((caller, *idx));
                     }
                 }
@@ -12348,30 +12340,27 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     out
 }
 
-/// `(R-FnRefValue)` — whether a call through a value of `fn_type` is a listed site, and the
-/// record it may answer as a tuple: its signature returns a plain record
-/// ([`plain_record_type`] — an optional one keeps the buffer, whose null the tuple does not
-/// spell) or takes one, no arm captures (a closure's environment rides beside the records
-/// it builds) and no `&text` argument picks an arm's store instance (the instance is another
-/// definition the group does not list).  `None` keeps the site on the buffer road; the
-/// caller declines its arms outright.  `Some(None)`: listed for its parameters alone.
-fn fnref_site_record(
+/// `(R-FnRefValue)` — is a call through a value of `fn_type` a listed site?  Its signature
+/// returns a plain record or takes one ([`plain_record_type`] — an optional one keeps the
+/// buffer, whose null the tuple does not spell), no arm captures (a closure's environment
+/// rides beside the records it builds) and no `&text` argument picks an arm's store instance
+/// (the instance is another definition the group does not list).  `false` keeps the site on
+/// the buffer road; the caller declines its arms outright.
+fn fnref_site_listed(
     data: &Data,
     fn_type: &Type,
     args: &[Value],
     arms: &[super::fnref::Arm],
-) -> Option<Option<u16>> {
+) -> bool {
     if !fnref_value_on() || arms.is_empty() || arms.iter().any(|a| a.has_closure) {
-        return None;
+        return false;
     }
     let Type::Function(params, ret, ..) = fn_type.base() else {
-        return None;
+        return false;
     };
-    if data.store_text_mask(params, args) != 0 {
-        return None;
-    }
-    let rec = plain_record_type(data, ret);
-    (rec.is_some() || params.iter().any(|p| plain_record_type(data, p).is_some())).then_some(rec)
+    data.store_text_mask(params, args) == 0
+        && (plain_record_type(data, ret).is_some()
+            || params.iter().any(|p| plain_record_type(data, p).is_some()))
 }
 
 /// `(R-FnRefValue)` — take every arm of a group out of `cand` once one arm of it is out, or
@@ -14342,6 +14331,16 @@ struct ShapeCtx<'a> {
     fnref: &'a FnRefSites,
 }
 
+impl<'a> ShapeCtx<'a> {
+    /// The same context over another set of value locals.
+    fn with_locals<'b>(&self, locals: &'b HashMap<u16, u16>) -> ShapeCtx<'b>
+    where
+        'a: 'b,
+    {
+        ShapeCtx { locals, ..*self }
+    }
+}
+
 /// The return-buffer variable of `own`, when it is admitted and has one — the PHANTOM
 /// parameter the value form drops from the signature.  It may still be ASSIGNED in the
 /// body: the parser's `return f(…)` lowering hands the callee this buffer and returns it
@@ -14781,16 +14780,18 @@ pub fn value_locals_in(
     let eligible = |v: u16| !vars.is_argument(v) || Some(v) == rb;
     // Per local, GIVEN a locals set: the tuple its assignments carry, or `None` once ANY
     // assignment is not a value shape (the declaration's `null` aside).
+    let empty_locals: HashMap<u16, u16> = HashMap::new();
+    let base = ShapeCtx {
+        data,
+        def_nr,
+        admitted,
+        params,
+        locals: &empty_locals,
+        own,
+        fnref,
+    };
     let shapes_given = |locals: &HashMap<u16, u16>| -> HashMap<u16, Option<u16>> {
-        let c = ShapeCtx {
-            data,
-            def_nr,
-            admitted,
-            params,
-            locals,
-            own,
-            fnref,
-        };
+        let c = base.with_locals(locals);
         let mut shapes: HashMap<u16, Option<u16>> = HashMap::new();
         body.any_node(&mut |n| {
             if let Value::Set(v, rhs) = n
@@ -14844,6 +14845,7 @@ pub fn value_locals_in(
             let with = joined(&locals, &cands);
             let shapes = shapes_given(&with);
             let leaves = collect_leaves(body, &with, own.is_some(), data);
+            let c = base.with_locals(&with);
             let mut served = leaves.reads;
             served.extend(dropped.iter().copied());
             let kept: HashMap<u16, u16> = cands
@@ -14860,18 +14862,7 @@ pub fn value_locals_in(
                             vars.name(*v)
                         );
                     }
-                    local_uses_ok(
-                        body,
-                        *v,
-                        data,
-                        &served,
-                        admitted,
-                        params,
-                        offs,
-                        phantom,
-                        (def_nr, fnref),
-                    )
-                        .then_some((*v, d))
+                    local_uses_ok(body, *v, &c, &served, offs, phantom).then_some((*v, d))
                 })
                 .collect();
             let stable = kept.len() == cands.len();
@@ -14961,18 +14952,15 @@ fn dropped_reads(body: &Value) -> HashSet<usize> {
 /// (@PLN164 B2) writes it there, exactly as [`retbuf_uses_ok`] accounts for a phantom that
 /// is no local.  Any other use — an argument, an append, a copy INTO it, a whole-value
 /// read anywhere else — needs the record, so the local keeps its buffer.
-#[allow(clippy::too_many_arguments)]
 fn local_uses_ok(
     body: &Value,
     v: u16,
-    data: &Data,
+    c: &ShapeCtx,
     served: &HashSet<usize>,
-    admitted: &HashMap<u32, u16>,
-    params: &TupleParams,
     view_offs: &HashSet<i64>,
     phantom: Option<&HashSet<usize>>,
-    (def_nr, fnref): (u32, &FnRefSites),
 ) -> bool {
+    let (data, admitted, params) = (c.data, c.admitted, c.params);
     let no_objects = HashSet::new();
     let objects = phantom.unwrap_or(&no_objects);
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
@@ -15007,15 +14995,7 @@ fn local_uses_ok(
             Value::Call(..) if inside => {}
             // `(R-FnRefValue)` — handed whole to a parameter every arm of the dispatch
             // receives as a tuple: the same hand-off as a direct call's.
-            Value::CallRef(f, args) if !inside => {
-                for (i, a) in args.iter().enumerate() {
-                    if matches!(a.unspan(), Value::Var(w) if *w == v)
-                        && fnref_param(fnref, params, def_nr, *f, i).is_some()
-                    {
-                        accounted += 1;
-                    }
-                }
-            }
+            Value::CallRef(f, args) if !inside => accounted += fnref_handoffs(c, v, *f, args),
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
                 let arg_is_v = |i: usize| {
@@ -15111,6 +15091,20 @@ fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// `(R-FnRefValue)` — how many of a fn-ref call's arguments hand local `v` whole to a
+/// parameter every arm of the dispatch receives as a tuple.
+fn fnref_handoffs(ctx: &ShapeCtx, local: u16, fref: u16, args: &[Value]) -> u32 {
+    let hands = args
+        .iter()
+        .enumerate()
+        .filter(|(idx, arg)| {
+            matches!(arg.unspan(), Value::Var(w) if *w == local)
+                && fnref_param(ctx.fnref, ctx.params, ctx.def_nr, fref, *idx).is_some()
+        })
+        .count();
+    u32::try_from(hands).unwrap_or(u32::MAX)
 }
 
 /// @PLN164 C5 — the SITE condition of a view leaf, per `(O-ViewField)`: the functions
@@ -15348,36 +15342,7 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
                 site_walk(arg, pos_here, ctx, declined);
             }
         }
-        Value::CallRef(v, args) => {
-            // `(R-FnRefValue)` — the same gate as a direct call: a tuple-answering dispatch
-            // consumed where a record is wanted takes every arm back to the buffer road.
-            if pos == Pos::Operand
-                && fnref_value(ctx.fnref, ctx.admitted, ctx.def_nr, *v).is_some()
-                && let Some((arms, _)) = ctx.fnref.get(&(ctx.def_nr, *v))
-            {
-                for a in arms {
-                    if declined.insert(*a) && std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
-                        eprintln!(
-                            "[valuerec] {}: its record is consumed through a fn-ref in {}",
-                            ctx.data.def(*a).name(),
-                            ctx.data.def(ctx.def_nr).name()
-                        );
-                    }
-                }
-            }
-            for (i, arg) in args.iter().enumerate() {
-                // A tuple parameter of every arm is a hand-off the tuple serves, exactly as
-                // at a direct call.
-                let pos_here = if fnref_param(ctx.fnref, ctx.params, ctx.def_nr, *v, i).is_some()
-                    && tuple_arg_ready(arg, ctx.admitted, ctx.locals)
-                {
-                    Pos::Bound
-                } else {
-                    Pos::Operand
-                };
-                site_walk(arg, pos_here, ctx, declined);
-            }
-        }
+        Value::CallRef(v, args) => site_walk_callref(*v, args, pos, ctx, declined),
         Value::Tuple(args) => {
             for arg in args {
                 site_walk(arg, Pos::Operand, ctx, declined);
@@ -15457,6 +15422,42 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
     }
 }
 
+/// [`site_walk`] over a call through fn-ref `v` (`(R-FnRefValue)`): the same gate as a direct
+/// call — a tuple-answering dispatch consumed where a record is wanted takes every arm back
+/// to the buffer road — and each argument a hand-off when every arm receives it as a tuple.
+fn site_walk_callref(
+    v: u16,
+    args: &[Value],
+    pos: Pos,
+    ctx: &ShapeCtx,
+    declined: &mut HashSet<u32>,
+) {
+    if pos == Pos::Operand
+        && fnref_value(ctx.fnref, ctx.admitted, ctx.def_nr, v).is_some()
+        && let Some((arms, _)) = ctx.fnref.get(&(ctx.def_nr, v))
+    {
+        for a in arms {
+            if declined.insert(*a) && std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                eprintln!(
+                    "[valuerec] {}: its record is consumed through a fn-ref in {}",
+                    ctx.data.def(*a).name(),
+                    ctx.data.def(ctx.def_nr).name()
+                );
+            }
+        }
+    }
+    for (i, arg) in args.iter().enumerate() {
+        let pos_here = if fnref_param(ctx.fnref, ctx.params, ctx.def_nr, v, i).is_some()
+            && tuple_arg_ready(arg, ctx.admitted, ctx.locals)
+        {
+            Pos::Bound
+        } else {
+            Pos::Operand
+        };
+        site_walk(arg, pos_here, ctx, declined);
+    }
+}
+
 /// The DEAD BUFFERS of `def_nr` (@PLN157 § V-ah, `@FR-R-ValueRecord`): a local minted by
 /// `OpDatabase` whose every mention the value form drops — the buffer argument of an
 /// admitted callee (dropped from the call), the subject of a free or of the pool's
@@ -15471,7 +15472,14 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     if vr.fns.is_empty() {
         return out;
     }
-    let locals = value_locals_in(data, def_nr, &vr.fns, &vr.params, &vr.view_offs, &vr.fnref_sites);
+    let locals = value_locals_in(
+        data,
+        def_nr,
+        &vr.fns,
+        &vr.params,
+        &vr.view_offs,
+        &vr.fnref_sites,
+    );
     // A forward's buffer is WRITTEN by the site (`forward_site`), so its argument is a use.
     let forwards = forward_sites(data, def_nr, &vr.fns, &locals);
     let def = data.def(def_nr);
@@ -15579,7 +15587,14 @@ pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves 
     if !vr.fns.contains_key(&def_nr) {
         return ValueLeaves::default();
     }
-    let locals = value_locals_in(data, def_nr, &vr.fns, &vr.params, &vr.view_offs, &vr.fnref_sites);
+    let locals = value_locals_in(
+        data,
+        def_nr,
+        &vr.fns,
+        &vr.params,
+        &vr.view_offs,
+        &vr.fnref_sites,
+    );
     collect_leaves(data.def(def_nr).code(), &locals, true, data)
 }
 
