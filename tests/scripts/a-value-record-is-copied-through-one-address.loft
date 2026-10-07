@@ -6,6 +6,12 @@
 // plain length reset, chosen by the emitter from the field's type.  The interpreter takes no
 // address and is the oracle; every value is hand-computed.
 //
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below.  By hand (env-gated plants, one build): the read offset +8
+//   fails c1, the write offset +8 fails c3, a no-op no-heap field clear fails c6.
+// @falsified-by: tests/falsified/a-value-record-is-copied-through-one-address.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//
 // The shapes are moros' map accessors (`map_get_hex`, `map_set_hex`, `undo_push`): the record
 // is found by a walk over the chunks, which is what lets the compiler carry `P` as a tuple.
 // mk_c's chunk 7 holds the items; element i is P { a: 10 i + 1, f: 1.5 i, s: 0.25 i, b: i odd,
