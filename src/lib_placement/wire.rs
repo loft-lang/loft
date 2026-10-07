@@ -6,8 +6,6 @@
 //! See the parent module for why the handshake spins before it sleeps and what
 //! arc A does and does not carry across the boundary.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use super::arena::Arena;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -197,7 +195,7 @@ impl Drop for Wire {
             libc::munmap(self.base.cast::<libc::c_void>(), WIRE_BYTES);
         }
         if self.owner {
-            let _ = std::fs::remove_file(&self.path);
+            let _ = crate::file_access::remove_file(&self.path);
         }
     }
 }
@@ -209,12 +207,14 @@ impl Wire {
     /// # Errors
     /// Any failure to create, size, or map the file.
     pub fn create(path: &Path) -> io::Result<Wire> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)?;
+        let file = crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(true),
+        )?;
         file.set_len(WIRE_BYTES as u64)?;
         let w = Wire::map(&file, path, true)?;
         unsafe {
@@ -233,10 +233,10 @@ impl Wire {
     /// A missing or unmappable file, a wrong magic (not our file), or a
     /// protocol mismatch (a stale worker executable against a newer caller).
     pub fn attach(path: &Path) -> io::Result<Wire> {
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)?;
+        let file = crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().read(true).write(true),
+        )?;
         let w = Wire::map(&file, path, false)?;
         if w.get_u32(OFF_MAGIC) != MAGIC {
             return Err(io::Error::new(
