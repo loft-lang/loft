@@ -656,7 +656,27 @@ pub fn name_refusal(name: &str) -> Option<String> {
 /// stdlib; that is the price of a path-shaped answer.
 #[must_use]
 pub fn is_stdlib_source(file: &str, flavor: Flavor) -> bool {
-    PathText::parse(file, flavor).has_component("default")
+    // Asked of every definition's file many times per compile, so answered without building
+    // the parts: split on the flavor's separators, the directory names are every segment but
+    // the last.  A `..` (which folds a name away) or a Windows share or verbatim prefix (whose
+    // server and share names are no directories) takes the parsed route, which is exact.
+    let is_sep = |c: char| flavor.is_separator(c);
+    let unc = flavor == Flavor::Windows
+        && file.starts_with(|c: char| is_sep(c))
+        && file[1..].starts_with(|c: char| is_sep(c));
+    if unc || file.split(is_sep).any(|n| n == "..") {
+        return PathText::parse(file, flavor).has_component("default");
+    }
+    let mut names = file
+        .split(is_sep)
+        .filter(|n| !n.is_empty() && *n != ".")
+        .peekable();
+    while let Some(name) = names.next() {
+        if names.peek().is_some() && flavor.name_eq(name, "default") {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -807,6 +827,25 @@ mod tests {
 
     #[test]
     fn the_stdlib_is_recognised_however_it_was_loaded() {
+        // The split route agrees with the parsed one, `..` and Windows prefixes included.
+        for (t, f) in [
+            ("/opt/loft/default/01_code.loft", Flavor::Unix),
+            ("default/x.loft", Flavor::Unix),
+            ("a/default", Flavor::Unix),
+            ("a/default/", Flavor::Unix),
+            ("default/../x.loft", Flavor::Unix),
+            ("a/../default/x.loft", Flavor::Unix),
+            (r"D:\a\loft/default\01_code.loft", Flavor::Windows),
+            (r"\\default\share\x.loft", Flavor::Windows),
+            (r"\\?\C:\Default\x.loft", Flavor::Windows),
+            ("./default/./x.loft", Flavor::Unix),
+        ] {
+            assert_eq!(
+                is_stdlib_source(t, f),
+                PathText::parse(t, f).has_component("default"),
+                "{t}"
+            );
+        }
         assert!(is_stdlib_source("default/01_code.loft", Unix));
         assert!(is_stdlib_source(
             "/usr/local/share/loft/default/01_code.loft",
