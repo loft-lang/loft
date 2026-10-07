@@ -4,6 +4,8 @@
 
 //! Package registry — parse registry files, resolve versions, classify installed packages.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// Default registry URL — used when no `source:` header or env var is set.

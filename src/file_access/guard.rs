@@ -13,6 +13,8 @@
 //! file_access::guard` — so the migration's progress is locked in and never given back.
 //! Bless refuses while any count is above its baseline.
 
+// @PLN184 A1: this module IS the one way to the file system.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -195,4 +197,68 @@ fn the_guard_sees_what_it_must_and_nothing_else() {
     ));
     assert!(!line_accesses("    my_fs::write(x);"));
     assert!(!line_accesses("    let q = path_text.portable();"));
+}
+
+/// @PLN184 A1 — Clippy refuses direct file access (`clippy.toml`), and a file not yet
+/// migrated opts out with one marked `#![allow(clippy::disallowed_methods, …)]`.  Those files
+/// are listed in `clippy_allow.baseline`, and the list only shrinks: a NEW allow fails, and a
+/// removed one is blessed with `LOFT_BLESS_FILE_ACCESS=1`.
+#[test]
+fn the_clippy_opt_outs_only_shrink() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut now = std::collections::BTreeSet::new();
+    let mut stack = vec![root.join("src")];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            let rel = p
+                .strip_prefix(root)
+                .map(super::portable)
+                .unwrap_or_default();
+            if p.is_dir() {
+                if rel != "src/file_access" {
+                    stack.push(p);
+                }
+            } else if let Ok(text) = std::fs::read_to_string(&p)
+                && text
+                    .lines()
+                    .any(|l| l.starts_with("#![allow(clippy::disallowed_methods"))
+            {
+                now.insert(rel);
+            }
+        }
+    }
+    let base_path = root.join("src/file_access/clippy_allow.baseline");
+    let base: std::collections::BTreeSet<String> = std::fs::read_to_string(&base_path)
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    let added: Vec<&String> = now.difference(&base).collect();
+    assert!(
+        added.is_empty(),
+        "a NEW opt-out from the file-access lints — reach the file system through \
+         `file_access` instead (src/file_access/mod.rs):\n  {added:?}"
+    );
+    let gone: Vec<&String> = base.difference(&now).collect();
+    if std::env::var_os("LOFT_BLESS_FILE_ACCESS").is_some() {
+        let mut out = String::from(
+            "# Files still reaching the file system around file_access, each with a marked #![allow] (@PLN184 A1).\n\
+             # Only shrinks: see src/file_access/guard.rs.\n",
+        );
+        for f in &now {
+            let _ = writeln!(out, "{f}");
+        }
+        std::fs::write(&base_path, out).expect("write baseline");
+        return;
+    }
+    assert!(
+        gone.is_empty(),
+        "these files no longer opt out of the file-access lints — lock it in: \
+         LOFT_BLESS_FILE_ACCESS=1 cargo test --lib file_access::guard\n  {gone:?}"
+    );
 }

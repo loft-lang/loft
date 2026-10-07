@@ -30,6 +30,8 @@
 //! args are already valid in it).  Args/return are passed through the uniform
 //! [`LibArg`] slot.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};

@@ -16,6 +16,8 @@
 //! `targets`, gated on `needs`, with a cached green run.  See
 //! `doc/claude/PACKAGES_BUILD.md § The build phase` and the @PLN100 plan.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::manifest::{BuildAsset, BuildTest, Manifest};
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -7,6 +7,8 @@
 // parser/mod.rs::probe_registry_installed routes through lockfile only).
 // `allow(dead_code)` silences the binary's view; the lib uses every
 // symbol so the attribute is a no-op there.
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(dead_code)]
 
 //! Parsed `registry.json` (the JSON-format file-based registry index

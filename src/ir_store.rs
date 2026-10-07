@@ -19,6 +19,8 @@
 //! (finding 2's box-of-one); a `Vec<Value>` maps to the same field with N
 //! elements — both materialize identically.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, LinkedFieldGroup, LinkedFieldKind,
     Purity, Type, Value,

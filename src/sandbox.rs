@@ -17,6 +17,8 @@
 //! @FR-Cap-Write consult.  @FR-Cap-Trusted is enforced by [`reachable_set`], where a
 //! trusted symbol is a leaf: its body is the host's contract and is not walked.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Data, DefType, Position, Type, Value};
 use std::collections::{HashMap, HashSet};
 

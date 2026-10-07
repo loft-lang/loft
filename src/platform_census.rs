@@ -72,6 +72,15 @@ fn line_gates(line: &str) -> bool {
         })
 }
 
+/// Does the last name end in `.ext`?  Asked of the parts: `PathText::extension` reads to the
+/// text guard as `std::path`'s.
+fn has_extension(p: &PathText, ext: &str) -> bool {
+    p.parts()
+        .last()
+        .and_then(|n| n.rsplit_once('.'))
+        .is_some_and(|(stem, e)| !stem.is_empty() && e == ext)
+}
+
 /// Gate lines per `.rs` file under `dir`, outside the modules that hide the platform.
 fn measure(root: &PathText, dir: &str, into: &mut BTreeMap<String, usize>) {
     let mut stack = vec![root.join(dir)];
@@ -89,7 +98,7 @@ fn measure(root: &PathText, dir: &str, into: &mut BTreeMap<String, usize>) {
             }
             if file_access::is_dir(&p) {
                 stack.push(p);
-            } else if p.portable().ends_with(".rs")
+            } else if has_extension(&p, "rs")
                 && let Ok(text) = file_access::read_to_string(&p)
             {
                 let n = text.lines().filter(|l| line_gates(l)).count();
@@ -106,7 +115,7 @@ fn without_utf8_python(root: &PathText) -> Vec<String> {
     let mut missing = Vec::new();
     let workflows = root.join(".github/workflows");
     for p in file_access::read_dir(&workflows).unwrap_or_default() {
-        if !p.portable().ends_with(".yml") {
+        if !has_extension(&p, "yml") {
             continue;
         }
         let text = file_access::read_to_string(&p).unwrap_or_default();

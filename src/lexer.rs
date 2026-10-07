@@ -6,6 +6,8 @@
 //! It is possible to link to the current position in the lexer (link) and return to it (revert)
 //! when the parser has to try a certain path and might dismiss this later.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::diagnostics::{Diagnostics, Fix, FixKind, Level, diagnostic_format};
 use crate::fxhash::FxHashSet as HashSet;
 use std::cell::RefCell;

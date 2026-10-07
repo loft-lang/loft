@@ -20,6 +20,8 @@
 //! `plans/12-repl-and-introspection/03-state-reset-and-append.md`.  That
 //! refinement sits behind this same `ReplSession` API.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile;
 use crate::data::{DefType, Type};
 #[cfg(not(target_arch = "wasm32"))]

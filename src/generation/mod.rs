@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust code generator (--native)
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;

@@ -300,7 +300,7 @@ mod tests {
         let got = file.read(&mut rest).unwrap();
         assert_eq!(got, data.len() - (CAPACITY + 7));
         assert_eq!(file.read(&mut ten).unwrap(), 0);
-        std::fs::remove_file(path).unwrap();
+        crate::file_access::remove_file(&host(&path)).unwrap();
     }
 
     #[test]
@@ -355,7 +355,7 @@ mod tests {
         f.write_all(b"Z").unwrap();
         assert_eq!(f.stream_position().unwrap(), 4);
         drop(f);
-        assert_eq!(std::fs::read(&p).unwrap(), b"abcZef");
+        assert_eq!(crate::file_access::read(&host(&p)).unwrap(), b"abcZef");
         crate::file_access::remove_file(&host(&p)).unwrap();
     }
 

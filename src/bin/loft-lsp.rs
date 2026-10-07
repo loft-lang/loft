@@ -20,6 +20,8 @@
 // Protocol channel discipline: stdout carries ONLY framed JSON-RPC; anything
 // else (logging) must go to stderr, or the transport corrupts.
 
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, BufRead, Write};
@@ -1553,7 +1555,8 @@ fn ensure_tag_index(
     mtime: &mut Option<std::time::SystemTime>,
 ) {
     let Some(r) = root else { return };
-    let current = std::fs::metadata(format!("{r}/index/tags.json"))
+    let tags = loft::file_access::PathText::host(r).join("index/tags.json");
+    let current = loft::file_access::metadata(&tags)
         .and_then(|m| m.modified())
         .ok();
     if current == *mtime {
@@ -1651,7 +1654,7 @@ fn resolve_stdlib_dir() -> String {
         exe_dir.join("../default"),    // release layout with default beside the binary dir
     ];
     for c in candidates {
-        if c.is_dir() {
+        if loft::file_access::is_dir(&loft::file_access::PathText::from_os(&c)) {
             return c.to_string_lossy().into_owned();
         }
     }

@@ -20,6 +20,8 @@
 //! own (I/O and non-UTF-8 become clean returns) and swallows no language panic
 //! (the panic-gate allowlist starts EMPTY).
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile::byte_code;
 use crate::data::Data;
 use crate::database::Stores;

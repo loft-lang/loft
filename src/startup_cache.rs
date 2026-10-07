@@ -16,6 +16,8 @@
 //! never read.  Default behaviour (env var unset) is unchanged: both functions
 //! are no-ops, so normal runs always parse.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::parser::Parser;
 
 /// The cache-bundle path when the cache is enabled and the stdlib is readable;

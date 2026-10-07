@@ -33,6 +33,9 @@
 //! call home, doesn't log anything beyond stdout/stderr, and
 //! doesn't keep the key in memory beyond the one stack frame.
 
+// @PLN184 A1: not yet through `file_access` — a crate root's allow covers the whole binary,
+// so this binary is checked once its root is clean (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 #![allow(clippy::missing_docs_in_private_items)]
 

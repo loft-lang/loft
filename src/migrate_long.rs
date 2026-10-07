@@ -20,6 +20,8 @@
 //! Usage: `loft --migrate-long <path-or-dir>` (or `--dry-run` to print
 //! diffs without writing).
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;

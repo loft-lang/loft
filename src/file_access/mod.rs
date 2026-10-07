@@ -17,6 +17,8 @@
 //! path is parsed once under an explicit flavor ([`path`]), so every Windows rule is a unit
 //! test on any host, and every operation's error names its path.
 
+// @PLN184 A1: this module IS the one way to the file system.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 mod emulated;
 pub mod path;
 

@@ -25,6 +25,9 @@
 //! test harness (it logs every range fetched, making "bytes fetched ≪ file" a
 //! countable assertion); #517 HTTP swaps in at Phase 5 behind the same trait.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 /// Page granularity (bytes) — the unit of a fetch. 64 KiB matches the design's
 /// recommendation for the small-word index traversal.
 pub const PAGE_SIZE: usize = 64 * 1024;

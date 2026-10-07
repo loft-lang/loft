@@ -18,6 +18,8 @@
 //! and the whole existing corpus stays untouched. `is_script` is swept over
 //! `default/*.loft` + `tests/**` in the test below to prove that.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::parser::Parser;
 
 /// True when `src` is a beginner-style SCRIPT: it has ≥1 loose top-level statement

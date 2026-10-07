@@ -6,6 +6,8 @@
 //! See the parent module for why the handshake spins before it sleeps and what
 //! arc A does and does not carry across the boundary.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use super::arena::Arena;
 use std::io;
 use std::path::{Path, PathBuf};

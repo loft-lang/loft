@@ -6,6 +6,8 @@
 // AND the binary crate (where parser/mod.rs::probe_registry_installed
 // only reads).  `allow(dead_code)` silences the binary's view; in the
 // lib the attribute is a no-op because every symbol IS used.
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(dead_code)]
 
 //! `loft.lock` — reproducible-build lock file for the package registry.

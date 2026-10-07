@@ -21,6 +21,8 @@
 //! on the machine, reached remotely only via an explicit SSH port-forward (the `make view`
 //! shape).
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::repl::ReplSession;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};

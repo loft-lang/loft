@@ -7,6 +7,8 @@
 //! Distinct from `log_config.rs` (the compile/test trace framework):
 //! this module handles structured, file-based output from running loft code.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(dead_code)]
 
 use std::collections::HashMap;

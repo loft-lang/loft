@@ -21,6 +21,8 @@
 //! this module's `bytes_word` and descending with `radix_tree`'s own geometry, so
 //! there is one answer and not two (@PLN134). `mod paged` below pins that they agree.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::keys::{Content, DbRef, Key};
 use crate::radix_tree::{self as rt, KeyOracle};
 use crate::store::Store;

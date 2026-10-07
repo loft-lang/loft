@@ -27,6 +27,8 @@
 //!   downgrade is the one outcome that could hand a user a known-vulnerable release,
 //!   so the direction is enforced in the planner rather than at the call site.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::registry_index::{Package, RegistryIndex, compare_semver, find_newest_release};
 use std::path::{Path, PathBuf};
 

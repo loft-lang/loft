@@ -41,6 +41,8 @@
 //! An entry that names no digest leaves question 3 **unanswered, and says so**; it is
 //! never reported as a pass.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// What one check found.  `Skipped` is not a failure: a dev tree legitimately has no

@@ -1,9 +1,7 @@
 # Direct file-system access per compiler file, outside src/file_access/.
 # Only shrinks: see src/file_access/guard.rs.  Format: <lines> <file>
 25 src/android.rs
-2 src/bin/loft-dap.rs
 15 src/bin/loft-keygen.rs
-2 src/bin/loft-lsp.rs
 43 src/build_phase.rs
 1 src/c_call.rs
 11 src/c_shim.rs
@@ -15,7 +13,7 @@
 8 src/database/allocation.rs
 7 src/database/io.rs
 3 src/database/journal.rs
-5 src/database/loft_file.rs
+3 src/database/loft_file.rs
 6 src/database/spans.rs
 1 src/diagnostic_render.rs
 44 src/documentation.rs

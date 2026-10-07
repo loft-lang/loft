@@ -1,5 +1,7 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 #![warn(clippy::pedantic)]
 #![allow(
     // Numeric casts: pervasive in the interpreter's hot paths; every

@@ -41,6 +41,8 @@
 //! Wire: WebSocket text frames (`<msg_id>:<payload>` convention is the loft
 //! side's concern — the kernel passes payloads through verbatim).
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::cell::RefCell;
 // VecDeque / keys::Str are used only in the native (non-wasm) engine-host
 // paths, so they read as unused in wasm / feature-restricted builds.

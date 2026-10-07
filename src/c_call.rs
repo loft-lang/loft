@@ -39,6 +39,8 @@
 //! unifying by RAISING rather than narrowing, so nothing that compiled stopped
 //! compiling. See `c_signature::MAX_C_ARITY` and DESIGN_DECISIONS.md § C106.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "native-extensions")]
 
 use crate::c_signature::{CSignature, CType};

@@ -33,6 +33,8 @@
 //! § Dependencies — serde is a forbidden dependency project-wide
 //! (native builds).
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use sha2::{Digest, Sha256};
 
 /// Format-version byte.  Bump whenever the on-disk snapshot layout

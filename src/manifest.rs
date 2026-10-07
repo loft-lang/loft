@@ -9,6 +9,8 @@
 //! and disables `{…}` string interpolation — so there is no second lexer in the
 //! codebase.  A small walk over the token stream fills the [`Manifest`] fields.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::lexer::{LexConfig, LexItem, Lexer};
 
 /// @PLN100 Slice 2 — one declared build target from `[build.target.<name>]`: a

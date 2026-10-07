@@ -5,6 +5,8 @@
 //! Parse scripts and create internal code from it.
 //! Including type checking.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{
     Argument, Context, Data, DefType, Deps, I32, IntegerSpec, Type, Value, to_default, v_block,
     v_if, v_loop, v_set,

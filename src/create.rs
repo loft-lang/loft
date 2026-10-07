@@ -19,6 +19,8 @@
 //! to `stores.*` / `*_runtime` via [`crate::generation`]'s
 //! `substitute_template_body`.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Context, Data, OP_HOT, OP_NORMAL, Type};
 use std::collections::HashMap;
 use std::fs::File;

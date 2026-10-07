@@ -39,6 +39,8 @@
 //! `git` rather than re-implemented; outside a git repo only the hardcoded list
 //! above applies.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 
 use std::fs;

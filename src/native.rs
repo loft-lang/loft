@@ -1,6 +1,8 @@
 //! Native function registry: Rust implementations of loft built-ins.
 //! Naming: `n_<name>` for globals, `t_<LEN><Type>_<method>` for methods.
 // @I73 — native function registry
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(non_snake_case)]
 use crate::database::Stores;
 use crate::keys::{DbRef, Str};

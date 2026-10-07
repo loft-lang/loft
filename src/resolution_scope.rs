@@ -26,6 +26,8 @@
 //! Not to be confused with [`crate::resolution`], which is the LSP's name-resolution
 //! index. This module resolves *versions*, not identifiers.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// The declaration in force for a program's registry dependencies.

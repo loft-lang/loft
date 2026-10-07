@@ -21,6 +21,8 @@
 //!    extract to `~/.loft/registry/<pkg>-<version>/`.
 //! 6. Write `loft.lock` reflecting the install graph.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 
 use std::path::{Path, PathBuf};

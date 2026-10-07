@@ -1,5 +1,8 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @PLN184 A1: not yet through `file_access` — a crate root's allow covers the whole binary,
+// so this binary is checked once its root is clean (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::cast_possible_truncation,

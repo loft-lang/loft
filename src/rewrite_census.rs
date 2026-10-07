@@ -21,6 +21,8 @@
 //! generator emits (the interpreter never sees that form), `ir` for the scope pass's per-body
 //! rewrites (both backends run them), and `parse` for everything decided before either.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};

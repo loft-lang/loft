@@ -43,6 +43,8 @@
 //!
 //! Workings and the decision they led to: `doc/claude/plans/126-record-frontier.md`.
 
+// @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,

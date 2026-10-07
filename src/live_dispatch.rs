@@ -24,6 +24,8 @@
 //! Failure posture: every bootstrap problem WARNS and falls back to fully
 //! compiled execution — live mode is an instrument, never a halt.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::cell::{RefCell, UnsafeCell};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I79 — Documentation generator
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs::{DirEntry, File};

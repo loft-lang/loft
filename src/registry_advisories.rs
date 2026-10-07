@@ -34,6 +34,8 @@
 //! [`lib-plan 30 § Phase 30.4`](../doc/claude/lib_plans/78-loft-distribution/README.md)
 //! for the binary-side flow.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 
 use std::path::PathBuf;

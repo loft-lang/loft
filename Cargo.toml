@@ -268,3 +268,9 @@ assets = [
 # Skip wasm-opt to keep the table descriptor intact; the ~30 % size
 # increase is acceptable compared to a non-functional deployed site.
 wasm-opt = false
+
+# @PLN184 A1 — clippy.toml's file-access lints are off by default (the tests, build.rs and
+# benches are @PLN184 A7's wave) and switched on at each lib and bin crate root.
+[lints.clippy]
+disallowed_methods = "allow"
+disallowed_types = "allow"

@@ -4,6 +4,8 @@
 
 //! Native compilation utilities: rlib management, cache keys, artifact paths.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::env;
 pub(crate) fn with_trailing_sep(p: &std::path::Path) -> String {
     let mut s = p.to_str().unwrap_or("").to_string();

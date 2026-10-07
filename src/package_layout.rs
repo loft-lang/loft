@@ -22,6 +22,8 @@
 //! tar/flate2/sha2): `loft install <dir>` works in a `--no-default-features` build, so the
 //! rule it depends on must compile there too.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashSet;
 use std::fs;
 use std::io;

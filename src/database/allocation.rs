@@ -3,6 +3,8 @@
 // @I70 — Database subsystem (alloc / persistence / journal / snapshot / schema)
 //! Memory/store allocation helpers and claim management.
 
+// @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::database::types::HeapSlot;
 use crate::database::{Parts, Stores, WorkerStores};
 use crate::hash;

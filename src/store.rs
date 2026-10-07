@@ -8,6 +8,8 @@
 // that the codebase has always tolerated as internal — fixing each one
 // is a project-wide doc sweep, out of scope here.  Allow them at the
 // module level so this PR stays focused on the durable-store API.
+// @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(
     clippy::missing_panics_doc,
     clippy::missing_errors_doc,

@@ -4,6 +4,8 @@
 
 //! @PLN136 step 1 — the measurement. Module header on `mod pages` in `radix_db.rs`.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,

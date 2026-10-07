@@ -16,6 +16,8 @@
 //! The version/identity is the RUNNING program's live type table (the in-memory
 //! source of truth); the sidecar merely records it.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::database::Stores;
 use std::path::{Path, PathBuf};
 

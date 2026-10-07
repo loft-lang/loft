@@ -22,6 +22,8 @@
 
 // @I85 — Engine-host kernel natives (the controlled loft ↔ host boundary; this is
 // the Rust-host side of it: a host program calling into a loaded loft program).
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile;
 use crate::data::{Data, Type};
 use crate::parser;

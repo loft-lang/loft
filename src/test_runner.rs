@@ -4,6 +4,8 @@
 
 //! Test runner: discover and run callable functions in `.loft` files.
 
+// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(unused_imports)] // Module used from main(), not from test builds.
 
 use crate::compile;

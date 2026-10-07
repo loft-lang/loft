@@ -19,6 +19,8 @@
 //! Not reproduced: `MAX_PATH`.  `std` on Windows hands a long path to the OS in the verbatim
 //! form, so a file operation does not meet the limit; a spawned tool does (W1.1).
 
+// @PLN184 A1: this module IS the one way to the file system.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use super::{Flavor, PathText};
 use std::io;
 use std::path::{Path, PathBuf};

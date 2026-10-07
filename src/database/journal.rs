@@ -29,6 +29,8 @@
 //! replay is the next slice (probe #2 — replay-position determinism — is confirmed,
 //! so it needs no `DbRef` remap).
 
+// @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::database::Stores;
 use crate::store::Store;
 use std::fs::{File, OpenOptions};
