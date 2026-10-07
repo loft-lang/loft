@@ -24,6 +24,7 @@
 //!           what Windows does.
 #![cfg(windows)]
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
@@ -281,7 +282,7 @@ fn winprobe_role_helper() {
         // The real server: hold the port until killed.
         "grandchild" => {
             if let Ok(pidfile) = std::env::var(ROLE_PIDFILE) {
-                std::fs::write(pidfile, std::process::id().to_string()).expect("pid file");
+                fa::write(pidfile, std::process::id().to_string()).expect("pid file");
             }
             let listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind");
             let deadline = Instant::now() + Duration::from_secs(120);
@@ -305,7 +306,7 @@ fn winprobe_role_helper() {
 fn probe_child_kill_reaches_the_grandchild() {
     let port = 18203u16;
     let pidfile = std::env::temp_dir().join(format!("loft_winprobe_4a_{}.pid", std::process::id()));
-    let _ = std::fs::remove_file(&pidfile);
+    let _ = fa::remove_file(&pidfile);
     // SAFETY: set before the child is spawned, and no other thread of this test reads or
     // writes the environment; the child and grandchild inherit it.
     unsafe { std::env::set_var(ROLE_PIDFILE, &pidfile) };
@@ -329,7 +330,7 @@ fn probe_child_kill_reaches_the_grandchild() {
     // the child reaches nothing here, because the child is already dead and the tree walk
     // goes by parent link (probe 4b is that ordering, the right way round).
     if !reaped {
-        let pid = std::fs::read_to_string(&pidfile).unwrap_or_default();
+        let pid = fa::read_to_string(&pidfile).unwrap_or_default();
         let pid = pid.trim();
         assert!(
             !pid.is_empty(),
@@ -344,7 +345,7 @@ fn probe_child_kill_reaches_the_grandchild() {
             "the orphaned grandchild (pid {pid}) still holds port {port} after taskkill"
         );
     }
-    let _ = std::fs::remove_file(&pidfile);
+    let _ = fa::remove_file(&pidfile);
 }
 
 /// Probe 4b — the sequence `Repl::stop_game` runs on Windows, in its exact order:

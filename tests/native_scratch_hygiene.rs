@@ -66,10 +66,10 @@ fn a_native_compile_sweeps_dead_process_artefacts_and_keeps_the_test_cache() {
         fa::exists(&cache_bin),
         "the test runner's per-file cache survives a compile with room"
     );
-    let own: Vec<String> = std::fs::read_dir(&scratch)
+    let own: Vec<String> = fa::read_dir(&scratch)
         .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().to_string())
+        .into_iter()
+        .map(|e| e.file_name().unwrap_or_default().to_string())
         .filter(|n| n.starts_with("loft_native_"))
         .collect();
     assert!(

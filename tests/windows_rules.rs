@@ -109,7 +109,7 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
     fa::write(dir.join("c\u{FFFD}.txt"), "exact").expect("exact name");
     fa::write(dir.join("b.txt"), "plain").expect("plain name");
     let d = dir.to_string_lossy().replace('\\', "/");
-    let program = dir.with_extension("loft");
+    let program = fa::with_extension(&dir, "loft");
     fa::write(
         &program,
         format!(
@@ -157,7 +157,7 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
             // Nothing was reached: both files keep their content, and no third `a?.txt`.
             assert_eq!(fa::read_to_string(&one).unwrap(), "one");
             assert_eq!(fa::read_to_string(&two).unwrap(), "two");
-            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 4);
+            assert_eq!(fa::read_dir(&dir).unwrap().len(), 4);
         }
     }
     let _ = fa::remove_dir_all(&dir);

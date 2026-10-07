@@ -79,16 +79,13 @@ fn first_run_creates_cache_with_safe_permissions() {
         // P254 — directory must be 0o700 after first cache write.
         assert_eq!(md.mode() & 0o777, 0o700, "cache dir mode wrong");
         // P254 — every cached binary inside must also be 0o700.
-        for entry in std::fs::read_dir(&cache_dir)
-            .expect("read cache dir")
-            .flatten()
-        {
-            let cmd = fa::metadata(entry.path()).expect("stat cache file");
+        for entry in fa::read_dir(&cache_dir).expect("read cache dir") {
+            let cmd = fa::metadata(&entry).expect("stat cache file");
             assert_eq!(
                 cmd.mode() & 0o777,
                 0o700,
                 "cache file {} mode wrong",
-                entry.path().display()
+                entry.os_spelling().display()
             );
         }
     }
@@ -111,10 +108,10 @@ fn second_run_reuses_safe_cache() {
     assert!(out.status.success());
 
     let cache_dir = cache_dir_for(&script);
-    let entries: Vec<_> = std::fs::read_dir(&cache_dir)
+    let entries: Vec<_> = fa::read_dir(&cache_dir)
         .expect("read cache dir")
-        .flatten()
-        .map(|e| e.path())
+        .into_iter()
+        .map(|e| e.os_spelling())
         .collect();
     assert_eq!(entries.len(), 1, "expected exactly one cached binary");
 
@@ -135,10 +132,10 @@ fn second_run_reuses_safe_cache() {
         "recompile happened when the cache was usable: {stderr}"
     );
 
-    let entries2: Vec<_> = std::fs::read_dir(&cache_dir)
+    let entries2: Vec<_> = fa::read_dir(&cache_dir)
         .expect("read cache dir 2")
-        .flatten()
-        .map(|e| e.path())
+        .into_iter()
+        .map(|e| e.os_spelling())
         .collect();
     assert_eq!(entries2.len(), 1, "expected exactly one cached binary");
     assert_eq!(
@@ -167,12 +164,12 @@ fn group_writable_cache_is_recompiled() {
     assert!(out.status.success());
 
     let cache_dir = cache_dir_for(&script);
-    let cached = std::fs::read_dir(&cache_dir)
+    let cached = fa::read_dir(&cache_dir)
         .expect("read cache dir")
-        .flatten()
+        .into_iter()
         .next()
         .expect("at least one cache file")
-        .path();
+        .os_spelling();
 
     // Loosen the cache file's mode to simulate an attacker-friendly cache
     // (group + other write).  The next run must reject it and recompile.
@@ -208,12 +205,12 @@ fn group_writable_cache_is_recompiled() {
     );
 
     // After the recompile the cache file should be back to 0o700.
-    let cached_after = std::fs::read_dir(&cache_dir)
+    let cached_after = fa::read_dir(&cache_dir)
         .expect("read cache dir 2")
-        .flatten()
+        .into_iter()
         .next()
         .expect("at least one cache file")
-        .path();
+        .os_spelling();
     let md_after = fa::metadata(&cached_after).expect("stat after");
     assert_eq!(
         md_after.mode() & 0o777,
@@ -246,12 +243,12 @@ fn poisoned_cache_binary_is_not_executed() {
     assert!(String::from_utf8_lossy(&out.stdout).contains(marker));
 
     let cache_dir = cache_dir_for(&script);
-    let cached = std::fs::read_dir(&cache_dir)
+    let cached = fa::read_dir(&cache_dir)
         .expect("read cache dir")
-        .flatten()
+        .into_iter()
         .next()
         .expect("at least one cache file")
-        .path();
+        .os_spelling();
 
     // Replace the cached binary with a "poisoned" shell script that
     // would print an attacker marker if loft ran it.  Make it group-
@@ -314,7 +311,7 @@ fn no_cache_env_var_skips_cache() {
 
     let cache_dir = cache_dir_for(&script);
     assert!(
-        !fa::exists(&cache_dir) || std::fs::read_dir(&cache_dir).map_or(true, |d| d.count() == 0),
+        !fa::exists(&cache_dir) || fa::read_dir(&cache_dir).map_or(true, |d| d.is_empty()),
         "LOFT_NATIVE_NO_CACHE=1 should not write to the cache directory"
     );
 

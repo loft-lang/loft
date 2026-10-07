@@ -122,11 +122,11 @@ fn warm_to_a_hit(root: &Path, script: &Path, want: &str) {
 
 fn sidecar_of(root: &Path) -> PathBuf {
     let dir = root.join("cache").join("loft");
-    let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut found: Vec<PathBuf> = fa::read_dir(&dir)
         .expect("program cache dir")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("native"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "native"))
         .collect();
     assert_eq!(
         found.len(),
@@ -140,14 +140,11 @@ fn sidecar_of(root: &Path) -> PathBuf {
 /// Every compiled program in the script directory's binary cache.
 fn cached_binaries_of(root: &Path) -> Vec<PathBuf> {
     let dir = root.join(".loft").join("cache");
-    std::fs::read_dir(&dir)
+    fa::read_dir(&dir)
         .expect("binary cache dir")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("native-"))
-        })
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::file_name(p).is_some_and(|n| n.starts_with("native-")))
         .collect()
 }
 
@@ -593,10 +590,10 @@ fn an_edited_stdlib_is_never_served_from_the_source_key() {
     let root = fresh_root("stdlib");
     let dflt = root.join("default");
     fa::create_dir_all(&dflt).expect("scratch default/");
-    for e in std::fs::read_dir(workspace_root().join("default")).expect("default/") {
-        let p = e.expect("entry").path();
-        if p.extension().and_then(|x| x.to_str()) == Some("loft") {
-            fa::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
+    for e in fa::read_dir(workspace_root().join("default")).expect("default/") {
+        let p = e.os_spelling();
+        if fa::has_extension(&p, "loft") {
+            fa::copy(&p, dflt.join(fa::file_name(&p).expect("name"))).expect("copy");
         }
     }
     let probe = dflt.join("99_b3_probe.loft");
@@ -673,7 +670,7 @@ fn an_edited_library_is_never_served_from_the_source_key() {
 fn the_fast_path_declines_on_windows() {
     let root = fresh_root("windows");
     let script = root.join("prog.loft");
-    std::fs::write(&script, PROG_30).expect("script");
+    fa::write(&script, PROG_30).expect("script");
     for pass in ["cold", "warm"] {
         let r = run(&root, &script);
         assert!(
@@ -684,5 +681,5 @@ fn the_fast_path_declines_on_windows() {
         );
         assert_eq!(r.source_key(), "off", "{pass}: {}", r.stderr);
     }
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

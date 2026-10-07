@@ -50,7 +50,7 @@ const I1511_OK: &str = "";
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)], tag: &str) -> (bool, String, String) {
     let cwd = std::env::temp_dir().join(format!(
         "loft_1512_1513_{}_{}_{}",
-        file.file_stem().and_then(|s| s.to_str()).unwrap_or("g"),
+        fa::file_stem(file).unwrap_or_else(|| "g".to_string()),
         backend.trim_start_matches('-'),
         tag
     ));

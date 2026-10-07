@@ -325,14 +325,14 @@ fn windows_bash() -> PathBuf {
         let git = PathBuf::from(first.trim());
         if let Some(root) = git.parent().and_then(|p| p.parent()) {
             let candidate = root.join("bin").join("bash.exe");
-            if candidate.is_file() {
+            if fa::is_file(&candidate) {
                 return candidate;
             }
         }
     }
     for root in ["C:\\Program Files\\Git", "C:\\Program Files (x86)\\Git"] {
         let candidate = Path::new(root).join("bin").join("bash.exe");
-        if candidate.is_file() {
+        if fa::is_file(&candidate) {
             return candidate;
         }
     }

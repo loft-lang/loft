@@ -639,8 +639,8 @@ fn arc_c2_the_same_script_resolves_the_same_from_two_directories() {
     // Nothing may appear in either directory as a result of running.
     let left_behind: Vec<String> = [&script_dir, &elsewhere]
         .iter()
-        .flat_map(|d| std::fs::read_dir(d).expect("read_dir"))
-        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .flat_map(|d| fa::read_dir(d).expect("read_dir"))
+        .map(|e| e.file_name().unwrap_or_default().to_string())
         .filter(|n| n == "loft.lock" || n == "loft.toml")
         .collect();
     let _ = fa::remove_dir_all(&home);

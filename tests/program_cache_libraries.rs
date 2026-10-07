@@ -104,13 +104,9 @@ const ANSWER: &str = "probepkg-0.1.0 45";
 /// The auto-native cdylibs the saved manifest records (`alib` lines).
 fn recorded_artifacts(home: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    for e in std::fs::read_dir(home.join("cache/loft"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let p = e.path();
-        if p.extension().is_some_and(|x| x == "manifest")
+    for e in fa::read_dir(home.join("cache/loft")).into_iter().flatten() {
+        let p = e.os_spelling();
+        if fa::has_extension(&p, "manifest")
             && let Ok(text) = fa::read_to_string(&p)
         {
             out.extend(

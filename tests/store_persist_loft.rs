@@ -702,7 +702,7 @@ fn a_rebound_store_sheds_the_slack_its_vectors_grew_to() {
 
     for backend in ["--interpret", "--native"] {
         let _ = fa::remove_file(&path);
-        let _ = fa::remove_file(path.with_extension("store.dschema"));
+        let _ = fa::remove_file(fa::with_extension(&path, "store.dschema"));
         // The fixture MANUFACTURES slack through in-place vector growth, which the exact
         // free tree gives it: the default lazy phase (`@FR-H-LazyFree`) writes the same data
         // into a file a third smaller (1.37× content against 2.07×), below the slack floor
@@ -774,7 +774,7 @@ fn a_loaded_working_set_does_not_inherit_the_source_growth_slack() {
         // would measure an already-dense store and the slack precondition below
         // would fail for a reason that has nothing to do with the loader.
         let _ = fa::remove_file(&path);
-        let _ = fa::remove_file(path.with_extension("store.dschema"));
+        let _ = fa::remove_file(fa::with_extension(&path, "store.dschema"));
         let _ = fa::remove_file(format!("{}.loaded", path.display()));
         let _ = fa::remove_file(format!("{}.loaded.dschema", path.display()));
         // The fixture MANUFACTURES slack through in-place vector growth, which the exact

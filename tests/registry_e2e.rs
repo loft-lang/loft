@@ -27,7 +27,6 @@
 use loft::file_access as fa;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -689,11 +688,11 @@ fn concurrent_installs_of_one_package_all_succeed() {
             .expect("a lockfile was written");
         assert_eq!(lock.packages.len(), 1, "round {round}: one locked package");
         assert_eq!(lock.packages[0].name, "race");
-        let strays: Vec<_> = fs::read_dir(home_dir.join(".loft/registry"))
+        let strays: Vec<_> = fa::read_dir(home_dir.join(".loft/registry"))
             .unwrap()
-            .chain(fs::read_dir(lock_path.parent().unwrap()).unwrap())
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .into_iter()
+            .chain(fa::read_dir(lock_path.parent().unwrap()).unwrap())
+            .map(|e| e.file_name().unwrap_or_default().to_string())
             .filter(|n| n.contains(".tmp") || n.ends_with(".tar.gz") || n.starts_with(".staging"))
             .collect();
         assert!(

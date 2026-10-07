@@ -38,8 +38,8 @@ fn write_manifest(root: &Path) {
     let mut lines = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        for e in std::fs::read_dir(&dir).unwrap().flatten() {
-            let p = e.path();
+        for e in fa::read_dir(&dir).unwrap() {
+            let p = dir.join(e.os_name().unwrap());
             if fa::is_dir(&p) {
                 stack.push(p);
                 continue;
@@ -220,11 +220,11 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
         &bundle.join("bin").join("loft"),
         &fa::read(env!("CARGO_BIN_EXE_loft")).unwrap(),
     );
-    for e in std::fs::read_dir("default").unwrap().flatten() {
-        if e.path().extension().is_some_and(|x| x == "loft") {
+    for e in fa::read_dir("default").unwrap() {
+        if fa::has_extension(&e, "loft") {
             write(
-                &bundle.join("default").join(e.file_name()),
-                &fa::read(e.path()).unwrap(),
+                &bundle.join("default").join(e.os_name().unwrap()),
+                &fa::read(&e).unwrap(),
             );
         }
     }

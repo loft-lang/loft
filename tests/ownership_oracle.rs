@@ -256,9 +256,9 @@ fn oracle_clean_on_generated_fuzz_corpus() {
 
     let mut offenders = Vec::new();
     let mut count = 0usize;
-    for entry in std::fs::read_dir(&cells).expect("read cells") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for entry in fa::read_dir(&cells).expect("read cells") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
         count += 1;
@@ -278,7 +278,7 @@ fn oracle_clean_on_generated_fuzz_corpus() {
         if !reds.is_empty() {
             offenders.push(format!(
                 "{}:\n{}",
-                path.file_name().unwrap().to_string_lossy(),
+                fa::file_name(&path).unwrap(),
                 reds.iter().cloned().collect::<Vec<_>>().join("\n")
             ));
         }
@@ -307,9 +307,9 @@ const LEAK_SCAN_BASELINE: usize = 0;
 fn oracle_leak_scan_ratchet() {
     let dir = root().join("tests/scripts");
     let mut total = 0usize;
-    for entry in std::fs::read_dir(&dir).expect("read tests/scripts") {
-        let path = entry.expect("dir entry").path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for entry in fa::read_dir(&dir).expect("read tests/scripts") {
+        let path = entry.os_spelling();
+        if !fa::has_extension(&path, "loft") {
             continue;
         }
         let out = Command::new(loft_bin())

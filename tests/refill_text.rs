@@ -34,10 +34,7 @@ fn emit(env: &[(&str, &str)]) -> (String, bool) {
 fn emit_file(cells: &str, env: &[(&str, &str)]) -> (String, bool) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     // One file per test: the tests are threads of one process.
-    let stem = Path::new(cells)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("cells");
+    let stem = fa::file_stem(cells).unwrap_or_else(|| "cells".to_string());
     let tag = env.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("_");
     let out = std::env::temp_dir().join(format!(
         "loft_refill_text_{}_{stem}_{tag}.rs",

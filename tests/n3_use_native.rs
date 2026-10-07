@@ -42,17 +42,17 @@ fn private_lib(dir: &std::path::Path, pkgs: &[&str]) -> std::path::PathBuf {
 /// Recursive copy that skips build output (`native-auto/`, `target/`).
 fn copy_pkg(from: &std::path::Path, to: &std::path::Path) {
     fa::create_dir_all(to).expect("create the private package dir");
-    let Ok(entries) = std::fs::read_dir(from) else {
+    let Ok(entries) = fa::read_dir(from) else {
         return;
     };
-    for e in entries.flatten() {
-        let name = e.file_name();
+    for e in entries {
+        let name = e.os_name().unwrap_or_default();
         if name == "native-auto" || name == "target" {
             continue;
         }
-        let src = e.path();
+        let src = e.os_spelling();
         let dst = to.join(&name);
-        if e.file_type().is_ok_and(|t| t.is_dir()) {
+        if fa::symlink_metadata(&src).is_ok_and(|m| m.file_type().is_dir()) {
             copy_pkg(&src, &dst);
         } else {
             fa::copy(&src, &dst).expect("copy a fixture file");
@@ -75,10 +75,9 @@ fn cdylib_present(dir: &std::path::Path) -> bool {
     } else {
         ("libloft_auto_mathnative", "so")
     };
-    std::fs::read_dir(dir).is_ok_and(|rd| {
-        rd.flatten().any(|e| {
-            let n = e.file_name();
-            let n = n.to_string_lossy();
+    fa::read_dir(dir).is_ok_and(|rd| {
+        rd.iter().any(|e| {
+            let n = e.file_name().unwrap_or_default();
             n.starts_with(prefix) && n.ends_with(ext)
         })
     })
@@ -210,13 +209,12 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     // NOT `apply_inc` (CallRef → interpreted), and NOT its synthetic lambda.
     // loft#715 — the generated source is named for the caller's type-layout
     // fingerprint, like the cdylib beside it, so find it by prefix.
-    let rs_path = std::fs::read_dir(native_auto)
+    let rs_path = fa::read_dir(native_auto)
         .expect("native-auto dir should exist")
-        .flatten()
-        .map(|e| e.path())
+        .into_iter()
+        .map(|e| e.os_spelling())
         .find(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
+            fa::file_name(p)
                 .is_some_and(|n| n.starts_with("loft_auto_mathmixed") && n.ends_with(".rs"))
         })
         .expect("generated cdylib source should exist");
@@ -576,11 +574,11 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     }
     // The interpreted run built the library's shared cdylib; its bridge must ask for the
     // library's row.
-    let generated: Vec<String> = std::fs::read_dir(lib.join("sharedname/native-auto"))
+    let generated: Vec<String> = fa::read_dir(lib.join("sharedname/native-auto"))
         .expect("the interpreted run built the library's cdylib")
-        .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "rs"))
-        .map(|e| fa::read_to_string(e.path()).unwrap_or_default())
+        .into_iter()
+        .filter(|e| fa::has_extension(e, "rs"))
+        .map(|e| fa::read_to_string(&e).unwrap_or_default())
         .collect();
     assert!(!generated.is_empty(), "no generated bridge source");
     for src in &generated {
@@ -656,10 +654,10 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
             .expect("run the loft binary")
     };
     let sos = || -> Vec<std::path::PathBuf> {
-        let mut v: Vec<_> = std::fs::read_dir(native_auto)
+        let mut v: Vec<_> = fa::read_dir(native_auto)
             .map(|rd| {
-                rd.flatten()
-                    .map(|e| e.path())
+                rd.into_iter()
+                    .map(|e| e.os_spelling())
                     // `.dll` too — Windows names an auto-built cdylib `<stem>.dll`
                     // (`native_lib.rs::cdylib_file_name`), so a filter of just
                     // `so`/`dylib` counts ZERO there and the artifact assertions below
@@ -668,8 +666,7 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
                     // only this closure was short.  The import-library sidecar
                     // (`<stem>.dll.lib`) has extension `lib`, so it is not counted twice.
                     .filter(|p| {
-                        p.extension()
-                            .is_some_and(|e| e == "so" || e == "dylib" || e == "dll")
+                        fa::extension(p).is_some_and(|e| e == "so" || e == "dylib" || e == "dll")
                     })
                     .collect()
             })
@@ -781,23 +778,21 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     let other_root = tmp.join("other");
     let other_dir = other_root.join("target").join("release");
     fa::create_dir_all(&other_dir).unwrap();
-    let other = other_dir.join(real.file_name().unwrap());
+    let other = other_dir.join(fa::file_name(&real).unwrap());
     // A later mtime than the original's, even on a coarse-grained filesystem.  Set on the
     // copy explicitly: macOS `fs::copy` clones the file (`clonefile`) and keeps the
     // original's timestamps, so there the copy carried the SAME mtime, the same identity,
     // and adopted the artifact — the test's premise, not the product, failed.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     fa::copy(&real, &other).unwrap();
-    std::fs::OpenOptions::new()
-        .write(true)
-        .open(&other)
+    fa::open_with(&other, std::fs::OpenOptions::new().write(true))
         .and_then(|f| f.set_modified(std::time::SystemTime::now()))
         .expect("give the copy its own modification time");
     #[cfg(unix)]
     {
         fa::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
         fa::symlink(
-            std::fs::canonicalize("default").unwrap(),
+            fa::try_plain_canonical("default").expect("default/ resolves"),
             other_root.join("default"),
         )
         .unwrap();
@@ -805,7 +800,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     #[cfg(not(unix))]
     {
         eprintln!("skip: the second-executable layout needs symlinks");
-        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = fa::remove_dir_all(&tmp);
         return;
     }
 
@@ -825,13 +820,12 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
             .expect("run a loft binary")
     };
     let sos = || -> Vec<std::path::PathBuf> {
-        let mut v: Vec<_> = std::fs::read_dir(&native_auto)
+        let mut v: Vec<_> = fa::read_dir(&native_auto)
             .map(|rd| {
-                rd.flatten()
-                    .map(|e| e.path())
+                rd.into_iter()
+                    .map(|e| e.os_spelling())
                     .filter(|p| {
-                        p.extension()
-                            .is_some_and(|e| e == "so" || e == "dylib" || e == "dll")
+                        fa::extension(p).is_some_and(|e| e == "so" || e == "dylib" || e == "dll")
                     })
                     .collect()
             })
@@ -1162,13 +1156,11 @@ fn a_packages_artifact_directory_stays_bounded() {
         built += 1;
     }
 
-    let count = std::fs::read_dir(&native_auto)
+    let count = fa::read_dir(&native_auto)
         .map(|rd| {
-            rd.flatten()
+            rd.iter()
                 .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|x| x == "so" || x == "dylib" || x == "dll")
+                    fa::extension(*e).is_some_and(|x| x == "so" || x == "dylib" || x == "dll")
                 })
                 .count()
         })
@@ -1182,17 +1174,14 @@ fn a_packages_artifact_directory_stays_bounded() {
          pruning — the padding no longer shifts the layout fingerprint"
     );
     // The sweep bounds only the family it BUILT, so the decoy is not counted here.
-    let family = std::fs::read_dir(&native_auto)
+    let family = fa::read_dir(&native_auto)
         .map(|rd| {
-            rd.flatten()
+            rd.iter()
                 .filter(|e| {
                     // The LIBRARIES only: each artifact also leaves the generated `.rs`
                     // and `.args` it was built from, and counting those reads as 3x.
-                    e.path().extension().is_some_and(|x| x == ext)
-                        && e.path()
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.contains("loft_auto_"))
+                    fa::has_extension(*e, ext)
+                        && e.file_name().is_some_and(|n| n.contains("loft_auto_"))
                 })
                 .count()
         })
@@ -1276,11 +1265,11 @@ fn sole_artifact(dir: &std::path::Path) -> std::path::PathBuf {
     } else {
         "so"
     };
-    let mut found: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+    let mut found: Vec<std::path::PathBuf> = fa::read_dir(dir)
         .expect("read native-auto")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == ext))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, ext))
         .collect();
     assert_eq!(found.len(), 1, "expected exactly one artifact in {dir:?}");
     found.pop().expect("the artifact")
@@ -1541,10 +1530,9 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
         out.status.success(),
         "loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let built = std::fs::read_dir(pkg.join("native-auto")).is_ok_and(|rd| {
-        rd.flatten().any(|e| {
-            let n = e.file_name();
-            let n = n.to_string_lossy();
+    let built = fa::read_dir(pkg.join("native-auto")).is_ok_and(|rd| {
+        rd.iter().any(|e| {
+            let n = e.file_name().unwrap_or_default();
             n.contains("loft_auto_fwd1663")
                 && (n.ends_with(".so") || n.ends_with(".dll") || n.ends_with(".dylib"))
         })
@@ -1653,11 +1641,11 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
     let first = [run(&locked), run(&newest)];
     let _ = fa::remove_dir_all(chain.join("native-auto"));
     let second = [run(&newest), run(&locked)];
-    let artifacts = std::fs::read_dir(chain.join("native-auto"))
+    let artifacts = fa::read_dir(chain.join("native-auto"))
         .map(|d| {
-            d.flatten()
+            d.iter()
                 .filter(|e| {
-                    let name = e.file_name().to_string_lossy().into_owned();
+                    let name = e.file_name().unwrap_or_default();
                     [".so", ".dylib", ".dll"].iter().any(|x| name.ends_with(x))
                 })
                 .count()

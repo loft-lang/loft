@@ -1402,7 +1402,7 @@ fn file_debugger_resolves_a_library_from_lib_dirs() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lib");
     let lib_dirs = vec![dir.to_string_lossy().into_owned()];
 
-    let path = tmp_session("filedebug_lib").with_extension("loft");
+    let path = fa::with_extension(tmp_session("filedebug_lib"), "loft");
     fa::write(
         &path,
         "use typeshift::*;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
@@ -1431,7 +1431,7 @@ fn file_debugger_resolves_a_library_from_lib_dirs() {
 /// `typeshift` happening to be findable some other way.
 #[test]
 fn file_debugger_without_lib_dirs_cannot_resolve_the_library() {
-    let path = tmp_session("filedebug_nolib").with_extension("loft");
+    let path = fa::with_extension(tmp_session("filedebug_nolib"), "loft");
     fa::write(
         &path,
         "use typeshift::*;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
@@ -1465,7 +1465,7 @@ fn file_debugger_can_call_into_a_native_library() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lib");
     let lib_dirs = vec![dir.to_string_lossy().into_owned()];
 
-    let path = tmp_session("filedebug_native").with_extension("loft");
+    let path = fa::with_extension(tmp_session("filedebug_native"), "loft");
     fa::write(
         &path,
         "use native_pkg::*;\nfn main() {\n  v = ext_add_one(41);\n  \
@@ -1528,7 +1528,7 @@ fn cond_session(cond: &str, file: &std::path::Path) -> (bool, Vec<String>) {
 
 #[test]
 fn an_unevaluable_breakpoint_condition_is_reported_and_stops() {
-    let f = tmp_session("cond_bad").with_extension("loft");
+    let f = fa::with_extension(tmp_session("cond_bad"), "loft");
     // `k`'s slot belongs to `step` at line 6, so the condition cannot be evaluated.
     let (paused, trace) = cond_session("k == 2", &f);
     assert!(
@@ -1544,7 +1544,7 @@ fn an_unevaluable_breakpoint_condition_is_reported_and_stops() {
 
 #[test]
 fn a_false_breakpoint_condition_stays_silent_and_does_not_stop() {
-    let f = tmp_session("cond_false").with_extension("loft");
+    let f = fa::with_extension(tmp_session("cond_false"), "loft");
     // `total` IS in the frame; the condition is simply never true.
     let (paused, trace) = cond_session("total == 999", &f);
     assert!(!paused, "a false condition must not stop: {trace:?}");
@@ -1557,7 +1557,7 @@ fn a_false_breakpoint_condition_stays_silent_and_does_not_stop() {
 
 #[test]
 fn a_true_breakpoint_condition_stops_without_a_diagnostic() {
-    let f = tmp_session("cond_true").with_extension("loft");
+    let f = fa::with_extension(tmp_session("cond_true"), "loft");
     let (paused, trace) = cond_session("total == 10", &f);
     assert!(paused, "a true condition must stop: {trace:?}");
     assert!(
@@ -1831,7 +1831,7 @@ fn debug_eval_can_call_a_library_function_at_a_frame() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/lib");
     let lib_dirs = vec![dir.to_string_lossy().into_owned()];
 
-    let path = tmp_session("eval_libcall").with_extension("loft");
+    let path = fa::with_extension(tmp_session("eval_libcall"), "loft");
     fa::write(
         &path,
         "use typeshift::*;\n\

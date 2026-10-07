@@ -155,21 +155,17 @@ fn walk(root: &Path, ext: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else {
+        let Ok(rd) = fa::read_dir(&dir) else {
             continue;
         };
-        for e in rd.flatten() {
-            let p = e.path();
-            let name = p
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
+        for e in rd {
+            let p = e.os_spelling();
+            let name = fa::file_name(&p).unwrap_or_default();
             if fa::is_dir(&p) {
                 if name != "target" && name != ".loft" && name != ".git" {
                     stack.push(p);
                 }
-            } else if p.extension().is_some_and(|x| x == ext) {
+            } else if fa::has_extension(&p, ext) {
                 out.push(p);
             }
         }
@@ -233,11 +229,11 @@ fn native_declarations_and_exports_agree() {
     let mut checked = 0;
     let mut problems = Vec::new();
     for base in ["tests/fixtures/libs", "tests/lib"] {
-        let Ok(rd) = std::fs::read_dir(root.join(base)) else {
+        let Ok(rd) = fa::read_dir(root.join(base)) else {
             continue;
         };
-        for e in rd.flatten() {
-            let pkg = e.path();
+        for e in rd {
+            let pkg = e.os_spelling();
             let crate_dir = pkg.join("native");
             if !fa::exists(crate_dir.join("src/lib.rs")) {
                 continue;

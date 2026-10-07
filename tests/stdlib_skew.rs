@@ -14,7 +14,6 @@
 //! `--path` at a copy.
 
 use loft::file_access as fa;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,10 +30,10 @@ fn copy_stdlib(tag: &str) -> PathBuf {
     let dst = base.join("default");
     let _ = fa::remove_dir_all(&base);
     fa::create_dir_all(&dst).unwrap();
-    for entry in fs::read_dir(root().join("default")).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "loft") {
-            fa::copy(&path, dst.join(path.file_name().unwrap())).unwrap();
+    for entry in fa::read_dir(root().join("default")).unwrap() {
+        let path = entry.os_spelling();
+        if fa::has_extension(&path, "loft") {
+            fa::copy(&path, dst.join(fa::file_name(&path).unwrap())).unwrap();
         }
     }
     base
@@ -124,10 +123,11 @@ fn an_operator_past_the_table_names_make_fill() {
     let base = copy_stdlib("appended");
     // The LAST file the stdlib loads (they load in name order), so the probe is declared after
     // every operator the table holds — any earlier file is followed by later declarations.
-    let mut files: Vec<PathBuf> = fs::read_dir(base.join("default"))
+    let mut files: Vec<PathBuf> = fa::read_dir(base.join("default"))
         .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|e| e == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     files.sort();
     let file = files.pop().expect("a stdlib file");

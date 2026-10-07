@@ -153,13 +153,11 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
     // Needs a registry package to outrank the local file WITH, and the only honest one
     // is a real dependency.  Self-skip rather than reach the network from a unit test:
     // a cached extraction is what makes this run offline-clean.
-    let cached = dirs_registry()
-        .read_dir()
+    let cached = fa::read_dir(dirs_registry())
         .ok()
         .into_iter()
         .flatten()
-        .flatten()
-        .any(|e| e.file_name().to_string_lossy().starts_with("arguments-"));
+        .any(|e| e.file_name().is_some_and(|n| n.starts_with("arguments-")));
     if !cached {
         eprintln!("SKIP: no ~/.loft/registry/arguments-* extraction to outrank the local file");
         return;

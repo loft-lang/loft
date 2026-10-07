@@ -91,15 +91,15 @@ fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
     // (produced when building lib+test together).  Both live in the same
     // profile-specific deps/ directory, so there is no cross-profile shadowing
     // (the S33 risk only arose when scanning multiple profile directories).
-    let rlib = std::fs::read_dir(&deps)
+    let rlib = fa::read_dir(&deps)
         .ok()?
-        .flatten()
+        .into_iter()
         .filter(|e| {
-            let n = e.file_name().to_string_lossy().to_string();
+            let n = e.file_name().unwrap_or_default();
             (n.starts_with("libloft-") || n == "libloft.rlib") && n.ends_with(".rlib")
         })
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?
-        .path();
+        .max_by_key(|e| fa::symlink_metadata(e).and_then(|m| m.modified()).ok())?
+        .os_spelling();
 
     Some((rlib, deps))
 }
@@ -115,12 +115,12 @@ fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
 /// `(crate_name, rlib_path)` pairs.  All versions of each crate are included so that
 /// rustc can select the hash that matches what `libloft` was compiled against.
 fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
-    let Ok(entries) = std::fs::read_dir(deps_dir) else {
+    let Ok(entries) = fa::read_dir(deps_dir) else {
         return Vec::new();
     };
     let mut result = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
+    for entry in entries {
+        let name = entry.file_name().unwrap_or_default().to_string();
         if !name.starts_with("lib") || !name.ends_with(".rlib") || name.starts_with("libloft") {
             continue;
         }
@@ -132,7 +132,7 @@ fn collect_extra_externs(deps_dir: &Path) -> Vec<(String, PathBuf)> {
         } else {
             without_rlib.replace('-', "_")
         };
-        result.push((crate_name, entry.path()));
+        result.push((crate_name, entry.os_spelling()));
     }
     result
 }
@@ -162,7 +162,7 @@ fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> 
         // rlib is at target/{profile}/libloft.rlib or target/{profile}/deps/libloft-*.rlib.
         // Walk up to find the profile directory (release/ or debug/).
         let profile_dir = rlib.parent().and_then(|p| {
-            if p.file_name().map(|n| n == "deps").unwrap_or(false) {
+            if fa::file_name(p).is_some_and(|n| n == "deps") {
                 p.parent()
             } else {
                 Some(p)
@@ -172,21 +172,21 @@ fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> 
             return Vec::new();
         };
         let build_dir = profile_dir.join("build");
-        let Ok(entries) = std::fs::read_dir(&build_dir) else {
+        let Ok(entries) = fa::read_dir(&build_dir) else {
             return Vec::new();
         };
         let mut dirs = Vec::new();
-        for entry in entries.filter_map(|e| e.ok()) {
-            let build_entry = entry.path();
+        for entry in entries {
+            let build_entry = entry.os_spelling();
 
             // Add out/ and its immediate subdirs (for libs generated into OUT_DIR).
             let out = build_entry.join("out");
-            if out.is_dir() {
+            if fa::is_dir(&out) {
                 dirs.push(out.clone());
-                if let Ok(subdirs) = std::fs::read_dir(&out) {
-                    for sub in subdirs.filter_map(|e| e.ok()) {
-                        if sub.path().is_dir() {
-                            dirs.push(sub.path());
+                if let Ok(subdirs) = fa::read_dir(&out) {
+                    for sub in subdirs {
+                        if fa::is_dir(&sub) {
+                            dirs.push(sub.os_spelling());
                         }
                     }
                 }
@@ -200,14 +200,14 @@ fn find_native_lib_dirs(rlib_info: &Option<(PathBuf, PathBuf)>) -> Vec<PathBuf> 
             // `target/{profile}/build/{crate}-{hash}/output`.  Reading them here replicates
             // exactly what cargo passes to the linker.
             let output_file = build_entry.join("output");
-            if let Ok(content) = std::fs::read_to_string(&output_file) {
+            if let Ok(content) = fa::read_to_string(&output_file) {
                 for line in content.lines() {
                     let path_str = line
                         .strip_prefix("cargo:rustc-link-search=native=")
                         .or_else(|| line.strip_prefix("cargo:rustc-link-search="));
                     if let Some(path_str) = path_str {
                         let p = PathBuf::from(path_str);
-                        if p.is_dir() && !dirs.contains(&p) {
+                        if fa::is_dir(&p) && !dirs.contains(&p) {
                             dirs.push(p);
                         }
                     }
@@ -347,11 +347,7 @@ fn rlib_content_hash(path: &Path) -> u64 {
 ///
 /// Fails the test if the loft parse or scope-check step produces diagnostics.
 fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
-    let stem = entry
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .replace('-', "_");
+    let stem = fa::file_stem(entry).unwrap_or_default().replace('-', "_");
     println!("native {entry:?}");
 
     let mut p = Parser::new();
@@ -972,19 +968,17 @@ fn native_dir() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/docs")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/docs")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
-        let name = entry.file_name().unwrap_or_default().to_string_lossy();
-        if NATIVE_SKIP.iter().any(|s| *s == name.as_ref()) {
+        let name = fa::file_name(&entry).unwrap_or_default();
+        if NATIVE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (native skip list — see NATIVE_SKIP)");
             continue;
         }
@@ -1004,13 +998,11 @@ fn native_reference() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/reference") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/reference") {
         Ok(rd) => rd
-            .filter_map(|f| f.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => return Ok(()),
     };
@@ -1066,13 +1058,11 @@ fn native_comparisons() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/comparisons") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/comparisons") {
         Ok(rd) => rd
-            .filter_map(|f| f.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => return Ok(()),
     };
@@ -1113,13 +1103,11 @@ fn native_features() -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = match std::fs::read_dir("tests/docs/features") {
+    let mut files: Vec<PathBuf> = match fa::read_dir("tests/docs/features") {
         Ok(rd) => rd
-            .filter_map(|f| f.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension()
-                    .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            })
+            .into_iter()
+            .map(|e| e.os_spelling())
+            .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -1182,12 +1170,10 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/scripts")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/scripts")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     let files: Vec<PathBuf> = files
@@ -1200,8 +1186,8 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let mut jobs = Vec::new();
     let mut not_generated: Vec<String> = Vec::new();
     for entry in files {
-        let name = entry.file_name().unwrap_or_default().to_string_lossy();
-        if SCRIPTS_NATIVE_SKIP.iter().any(|s| *s == name.as_ref()) {
+        let name = fa::file_name(&entry).unwrap_or_default();
+        if SCRIPTS_NATIVE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (scripts native skip list — see SCRIPTS_NATIVE_SKIP)");
             continue;
         }
@@ -3934,8 +3920,8 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
         );
     }
     // The artifact is the proof loft did the compiling: nothing else put it there.
-    let built: Vec<_> = std::fs::read_dir(libdir.join("lcshim").join("native-auto"))
-        .map(|d| d.filter_map(Result::ok).map(|e| e.file_name()).collect())
+    let built: Vec<_> = fa::read_dir(libdir.join("lcshim").join("native-auto"))
+        .map(|d| d.into_iter().filter_map(|e| e.os_name()).collect())
         .unwrap_or_default();
     assert!(
         !built.is_empty(),
@@ -4383,16 +4369,11 @@ const LIB_TESTS_NATIVE_SKIP: &[&str] = &[
 /// NATIVE library gate (its own codegen-gap list above; the interpreter gate's
 /// skips live in `wrap.rs::lib_test_skipped`).
 fn native_lib_test_skipped(entry: &Path) -> bool {
-    let file = entry
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let file = fa::file_name(entry).unwrap_or_default();
     let pkg = entry
         .parent()
         .and_then(|d| d.parent())
-        .and_then(|d| d.file_name())
-        .map(|s| s.to_string_lossy().to_string())
+        .and_then(fa::file_name)
         .unwrap_or_default();
     if LIB_PKGS_NATIVE_SKIP.contains(&pkg.as_str()) {
         return true;
@@ -4430,9 +4411,9 @@ fn run_lib_test_in_temp_cwd(
         ));
         let _ = fa::remove_dir_all(&tmp);
         fa::create_dir(&tmp)?;
-        for entry in std::fs::read_dir(pkg_dir)?.filter_map(|e| e.ok()) {
-            let target = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
-            let _ = fa::symlink(&target, tmp.join(entry.file_name()));
+        for entry in fa::read_dir(pkg_dir)? {
+            let target = fa::try_plain_canonical(&entry).unwrap_or_else(|| entry.os_spelling());
+            let _ = fa::symlink(&target, tmp.join(entry.os_name().unwrap_or_default()));
         }
         let out = std::process::Command::new(loft_bin)
             .current_dir(&tmp)
@@ -4563,21 +4544,19 @@ fn native_library_suite() -> std::io::Result<()> {
     }
     let loft_bin = env!("CARGO_BIN_EXE_loft");
     let mut files: Vec<PathBuf> = Vec::new();
-    for pkg in std::fs::read_dir("lib")?.filter_map(|e| e.ok()) {
+    for pkg in fa::read_dir("lib")? {
         // Skip the `.loft_test_tmp_*` artifact-isolation dirs (see
         // run_lib_test_in_temp_cwd) so they're never discovered as packages.
-        if pkg.file_name().to_string_lossy().starts_with('.') {
+        if pkg.file_name().is_some_and(|n| n.starts_with('.')) {
             continue;
         }
-        let tests_dir = pkg.path().join("tests");
+        let tests_dir = pkg.os_spelling().join("tests");
         if !fa::is_dir(&tests_dir) {
             continue;
         }
-        for f in std::fs::read_dir(&tests_dir)?.filter_map(|e| e.ok()) {
-            let p = f.path();
-            if p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            {
+        for f in fa::read_dir(&tests_dir)? {
+            let p = f.os_spelling();
+            if fa::extension(&p).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
                 files.push(p);
             }
         }
@@ -4592,11 +4571,7 @@ fn native_library_suite() -> std::io::Result<()> {
             continue;
         }
         let pkg_dir = entry.parent().and_then(|d| d.parent()).unwrap_or(&entry);
-        let stem = entry
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let stem = fa::file_stem(&entry).unwrap_or_default();
         println!("native lib test {entry:?}");
         let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, &stem, &["--native"])?;
         ran += 1;

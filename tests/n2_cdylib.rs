@@ -37,15 +37,15 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 /// feature set of this test binary (mirrors `tests/native.rs::find_loft_rlib`).
 fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
     let deps = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let rlib = std::fs::read_dir(&deps)
+    let rlib = fa::read_dir(&deps)
         .ok()?
-        .flatten()
+        .into_iter()
         .filter(|e| {
-            let n = e.file_name().to_string_lossy().to_string();
+            let n = e.file_name().unwrap_or_default();
             (n.starts_with("libloft-") || n == "libloft.rlib") && n.ends_with(".rlib")
         })
-        .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())?
-        .path();
+        .max_by_key(|e| fa::symlink_metadata(e).and_then(|m| m.modified()).ok())?
+        .os_spelling();
     Some((rlib, deps))
 }
 
@@ -53,9 +53,9 @@ fn find_loft_rlib() -> Option<(PathBuf, PathBuf)> {
 /// stdlib code may reference, mirroring `tests/native.rs::collect_extra_externs`.
 fn extra_externs(deps: &Path) -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(deps) {
-        for e in entries.flatten() {
-            let n = e.file_name().to_string_lossy().to_string();
+    if let Ok(entries) = fa::read_dir(deps) {
+        for e in entries {
+            let n = e.file_name().unwrap_or_default().to_string();
             if !n.starts_with("lib") || !n.ends_with(".rlib") || n.starts_with("libloft") {
                 continue;
             }
@@ -64,7 +64,7 @@ fn extra_externs(deps: &Path) -> Vec<(String, PathBuf)> {
                 .and_then(|s| s.rsplit_once('-'))
                 .map(|x| x.0)
             {
-                out.push((stem.to_string(), e.path()));
+                out.push((stem.to_string(), e.os_spelling()));
             }
         }
     }

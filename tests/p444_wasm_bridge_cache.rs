@@ -44,7 +44,7 @@ fn wasm_bridge_state_survives_warm_program_cache() {
     // source file on disk.
     let script = tmp.join(format!("loft_p444_{pid}.loft"));
     fa::write(&script, "fn main() { println(sha256(\"hi\")); }\n").expect("write script");
-    let script_abs = std::fs::canonicalize(&script)
+    let script_abs = fa::try_plain_canonical(&script)
         .expect("canonicalize")
         .to_string_lossy()
         .into_owned();

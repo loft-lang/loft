@@ -1282,11 +1282,11 @@ fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &st
     if std::env::var_os(BLESS).is_some() {
         let lock = format!("{path}.lock");
         let mut waited = 0;
-        while std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock)
-            .is_err()
+        while fa::open_with(
+            &lock,
+            std::fs::OpenOptions::new().write(true).create_new(true),
+        )
+        .is_err()
         {
             waited += 1;
             assert!(

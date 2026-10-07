@@ -328,16 +328,11 @@ fn default_native_dispatches_unopted_library() {
 
 /// The single auto-built cdylib under a package's `native-auto/`, if any.
 fn single_cdylib(native_auto: &Path) -> Option<std::path::PathBuf> {
-    std::fs::read_dir(native_auto)
-        .ok()?
-        .flatten()
-        .find_map(|e| {
-            let p = e.path();
-            let is_lib = p
-                .extension()
-                .is_some_and(|x| x == "so" || x == "dylib" || x == "dll");
-            is_lib.then_some(p)
-        })
+    fa::read_dir(native_auto).ok()?.into_iter().find_map(|e| {
+        let p = e.os_spelling();
+        let is_lib = fa::extension(&p).is_some_and(|x| x == "so" || x == "dylib" || x == "dll");
+        is_lib.then_some(p)
+    })
 }
 
 /// @PLN11 N3 Step 4 — **dev-interpret-on-edit**.
@@ -931,12 +926,10 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
             "so"
         };
         let mut newest: Option<std::time::SystemTime> = None;
-        for e in std::fs::read_dir(&auto)
-            .expect("native-auto must exist")
-            .flatten()
-        {
-            if e.path().extension().is_some_and(|x| x == ext)
-                && let Ok(m) = e.metadata().and_then(|m| m.modified())
+        for e in fa::read_dir(&auto).expect("native-auto must exist") {
+            let p = e.os_spelling();
+            if fa::has_extension(&p, ext)
+                && let Ok(m) = fa::symlink_metadata(&p).and_then(|m| m.modified())
                 && newest.is_none_or(|n| m > n)
             {
                 newest = Some(m);

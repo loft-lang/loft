@@ -66,11 +66,7 @@ const WASM_SKIP: &[&str] = &[
 /// `rustc` is not found.  Runs the wasm with `wasmtime` if it is in PATH; otherwise
 /// only verifies that compilation succeeds.
 fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
-    let stem = entry
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .replace('-', "_");
+    let stem = fa::file_stem(entry).unwrap_or_default().replace('-', "_");
     println!("wasm  {entry:?}");
 
     // Parse
@@ -154,15 +150,14 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
         // Walk up from target/debug/deps to target/, then into wasm32-wasip2/debug/
         let target_dir = exe.parent()?.parent()?.parent()?;
         let rlib_dir = target_dir.join("wasm32-wasip2").join("debug");
-        std::fs::read_dir(&rlib_dir)
+        fa::read_dir(&rlib_dir)
             .ok()?
-            .filter_map(|e| e.ok())
+            .into_iter()
             .find(|e| {
-                let n = e.file_name();
-                let s = n.to_string_lossy();
+                let s = e.file_name().unwrap_or_default();
                 s.starts_with("libloft") && s.ends_with(".rlib")
             })
-            .map(|e| (e.path(), rlib_dir))
+            .map(|e| (e.os_spelling(), rlib_dir))
     });
     if let Some((rlib, deps_dir)) = wasm_rlib {
         cmd.arg("--extern")
@@ -223,17 +218,15 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
 #[test]
 fn dir() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/docs")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/docs")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     for entry in files {
-        let name = entry.file_name().unwrap_or_default().to_string_lossy();
-        if SUITE_SKIP.iter().any(|s| *s == name.as_ref()) {
+        let name = fa::file_name(&entry).unwrap_or_default();
+        if SUITE_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (known issue — see SUITE_SKIP)");
             continue;
         }
@@ -263,12 +256,10 @@ fn dir() -> std::io::Result<()> {
 #[test]
 fn comparisons() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/comparisons")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/comparisons")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     assert!(
@@ -329,12 +320,10 @@ fn learn_loft_samples() {
 #[test]
 fn reference() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/reference")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/reference")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     assert!(
@@ -373,17 +362,15 @@ fn reference() -> std::io::Result<()> {
 #[test]
 fn wasm_dir() -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/docs")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/docs")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     for entry in files {
-        let name = entry.file_name().unwrap_or_default().to_string_lossy();
-        if WASM_SKIP.iter().any(|s| *s == name.as_ref()) {
+        let name = fa::file_name(&entry).unwrap_or_default();
+        if WASM_SKIP.contains(&name.as_str()) {
             println!("skip {entry:?} (wasm skip list — see WASM_SKIP)");
             continue;
         }
@@ -407,12 +394,10 @@ fn wasm_dir() -> std::io::Result<()> {
 /// [`loft_suite_whole_corpus`], `#[ignore]`d and run by the nightly release-gate job.
 fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/scripts")?
-        .filter_map(|f| f.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-        })
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/scripts")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
         .collect();
     files.sort();
     // `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` — run only a WINDOW of the sorted corpus.
@@ -460,11 +445,7 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
     // loft_suite green while the feature is under development.
     let skip: HashSet<&str> = ignored_scripts();
     for entry in files {
-        let name = entry
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let name = fa::file_name(&entry).unwrap_or_default();
         if skip.contains(name.as_str()) {
             println!("skip {entry:?} (has dedicated #[ignore] test)");
             continue;
@@ -550,14 +531,10 @@ fn corpus_files() -> Vec<PathBuf> {
         "tests/reference",
     ]
     .iter()
-    .filter_map(|d| std::fs::read_dir(d).ok())
+    .filter_map(|d| fa::read_dir(d).ok())
     .flatten()
-    .filter_map(|f| f.ok().map(|e| e.path()))
-    .filter(|p| {
-        fa::is_file(p)
-            && p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-    })
+    .map(|e| e.os_spelling())
+    .filter(|p| fa::is_file(p) && fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
     .collect();
     files.sort();
     files
@@ -811,16 +788,11 @@ const LIB_PKGS_SKIP: &[&str] = &[
 /// Returns true if `entry` (a `lib/<pkg>/tests/<file>.loft` path) is in the
 /// shared skip-list.  Public so `tests/native.rs` reuses the same keying.
 pub fn lib_test_skipped(entry: &std::path::Path) -> bool {
-    let file = entry
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let file = fa::file_name(entry).unwrap_or_default();
     let pkg = entry
         .parent()
         .and_then(|d| d.parent())
-        .and_then(|d| d.file_name())
-        .map(|s| s.to_string_lossy().to_string())
+        .and_then(fa::file_name)
         .unwrap_or_default();
     if LIB_PKGS_SKIP.contains(&pkg.as_str()) {
         return true;
@@ -833,22 +805,20 @@ pub fn lib_test_skipped(entry: &std::path::Path) -> bool {
 /// the interp + native library suites so they cover an identical set.
 pub fn collect_library_tests() -> std::io::Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = Vec::new();
-    for pkg in std::fs::read_dir("lib")?.filter_map(|e| e.ok()) {
+    for pkg in fa::read_dir("lib")? {
         // Skip dot-dirs — `run_lib_test_in_temp_cwd` creates `.loft_test_tmp_*`
         // sibling dirs inside lib/ for artifact isolation; they must never be
         // discovered as packages.
-        if pkg.file_name().to_string_lossy().starts_with('.') {
+        if pkg.file_name().is_some_and(|n| n.starts_with('.')) {
             continue;
         }
-        let tests_dir = pkg.path().join("tests");
+        let tests_dir = pkg.os_spelling().join("tests");
         if !fa::is_dir(&tests_dir) {
             continue;
         }
-        for f in std::fs::read_dir(&tests_dir)?.filter_map(|e| e.ok()) {
-            let p = f.path();
-            if p.extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
-            {
+        for f in fa::read_dir(&tests_dir)? {
+            let p = f.os_spelling();
+            if fa::extension(&p).is_some_and(|e| e.eq_ignore_ascii_case("loft")) {
                 files.push(p);
             }
         }
@@ -887,9 +857,9 @@ pub fn run_lib_test_in_temp_cwd(
         ));
         let _ = fa::remove_dir_all(&tmp);
         fa::create_dir(&tmp)?;
-        for entry in std::fs::read_dir(pkg_dir)?.filter_map(|e| e.ok()) {
-            let target = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
-            let _ = fa::symlink(&target, tmp.join(entry.file_name()));
+        for entry in fa::read_dir(pkg_dir)? {
+            let target = fa::try_plain_canonical(&entry).unwrap_or_else(|| entry.os_spelling());
+            let _ = fa::symlink(&target, tmp.join(entry.os_name().unwrap_or_default()));
         }
         let out = std::process::Command::new(loft_bin)
             .current_dir(&tmp)
@@ -932,11 +902,7 @@ fn library_suite() -> std::io::Result<()> {
             continue;
         }
         let pkg_dir = entry.parent().and_then(|d| d.parent()).unwrap_or(&entry);
-        let stem = entry
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let stem = fa::file_stem(&entry).unwrap_or_default();
         println!("lib test {entry:?}");
         let out = run_lib_test_in_temp_cwd(loft_bin, pkg_dir, &stem, &[])?;
         ran += 1;
@@ -2119,11 +2085,7 @@ fn run_test_inner(
             state.check_store_leaks();
             let leaks = state.collect_store_leaks();
             if !leaks.is_empty() {
-                let fname = entry
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
+                let fname = fa::file_name(&entry).unwrap_or_default();
                 if SCRIPTS_LEAK_ALLOW.contains(&fname.as_str()) {
                     println!("  (grandfathered leak — SCRIPTS_LEAK_ALLOW) {path}");
                 } else {
@@ -2155,8 +2117,8 @@ fn dump_results(
     state: &mut State,
     config: &LogConfig,
 ) -> Result<File, Error> {
-    let filename = entry.file_name().unwrap_or_default().to_string_lossy();
-    let mut w = File::create(format!("tests/dumps/{filename}.txt"))?;
+    let filename = fa::file_name(&entry).unwrap_or_default();
+    let mut w = fa::create(format!("tests/dumps/{filename}.txt"))?;
     for tp in types..state.database.types.len() {
         writeln!(
             &mut w,

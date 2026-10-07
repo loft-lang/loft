@@ -23,10 +23,11 @@ const KNOWN_DEPENDENT: &[&str] = &[];
 
 fn scripts() -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts");
-    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+    let mut out: Vec<PathBuf> = fa::read_dir(dir)
         .expect("tests/scripts")
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "loft"))
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
         .filter(|p| {
             let src = fa::read_to_string(p).unwrap_or_default();
             !src.contains("@EXPECT_ERROR") && !src.contains("@IGNORE")
@@ -93,7 +94,7 @@ fn census(scripts: &[PathBuf]) -> Vec<String> {
         .iter()
         .zip(hits)
         .filter(|(_, hit)| *hit)
-        .map(|(p, _)| p.file_stem().unwrap().to_string_lossy().to_string())
+        .map(|(p, _)| fa::file_stem(p).unwrap())
         .collect()
 }
 
