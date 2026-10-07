@@ -233,3 +233,165 @@ fn the_census_sees_a_gate_and_nothing_else() {
     assert!(!line_gates("let unix_time = now();"));
     assert!(!line_gates("cfg(unix_like_feature)"));
 }
+
+// ── D2/D3 — the scripts' Windows hazards ───────────────────────────────────────────────────
+// Until a script is ported to loft (@PLN179), what makes it fail on Windows only falls.
+// Python (D2): a text `open` / `read_text` / `write_text` without an encoding (cp1252 on a
+// Windows runner whenever PYTHONUTF8 is not set), and a path split by hand on `/`.  Shell (D3):
+// a tool Git Bash does not have (`flock`, `pgrep`, `pkill`, `xvfb-run`, `valgrind`), a
+// hard-coded `/tmp/`, and GNU's `sed -i`.
+
+const SCRIPTS_BASELINE: &str = "src/platform_census_scripts.baseline";
+
+/// The code part of a script line: what precedes a comment that starts the line or follows
+/// whitespace.
+fn script_code(line: &str) -> &str {
+    let t = line.trim_start();
+    if t.starts_with('#') {
+        return "";
+    }
+    line.find(" #").map_or(line, |at| &line[..at])
+}
+
+fn word_at(code: &str, at: usize, len: usize) -> bool {
+    let b = code.as_bytes();
+    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'-' || c == b'.';
+    (at == 0 || !ident(b[at - 1])) && b.get(at + len).is_none_or(|c| !ident(*c))
+}
+
+fn python_hazard(line: &str) -> bool {
+    let code = script_code(line);
+    if code.contains("encoding") {
+        return code.contains("split('/')") || code.contains("split(\"/\")");
+    }
+    let binary = [
+        "'rb'", "\"rb\"", "'wb'", "\"wb\"", "'ab'", "\"ab\"", "'r+b'", "\"r+b\"",
+    ]
+    .iter()
+    .any(|m| code.contains(m));
+    let bare_open = code
+        .match_indices("open(")
+        .any(|(at, _)| at == 0 || !matches!(code.as_bytes()[at - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'.'));
+    (bare_open && !binary)
+        || code.contains(".read_text(")
+        || code.contains(".write_text(")
+        || code.contains("split('/')")
+        || code.contains("split(\"/\")")
+}
+
+fn shell_hazard(line: &str) -> bool {
+    let code = script_code(line);
+    ["flock", "pgrep", "pkill", "xvfb-run", "valgrind"]
+        .iter()
+        .any(|w| {
+            code.match_indices(w)
+                .any(|(at, _)| word_at(code, at, w.len()))
+        })
+        || code.contains("/tmp/")
+        || code.contains("sed -i")
+}
+
+/// Hazard lines per tracked script (`.py`, `.sh`) under `root`.
+fn measure_scripts(root: &PathText) -> BTreeMap<String, usize> {
+    const SKIP: &[&str] = &[
+        ".git",
+        "target",
+        ".claude/worktrees",
+        "tests/fixtures",
+        "node_modules",
+    ];
+    let mut out = BTreeMap::new();
+    let mut stack = vec![root.clone()];
+    while let Some(d) = stack.pop() {
+        for p in file_access::read_dir(&d).unwrap_or_default() {
+            let rel = p
+                .relative_to(root)
+                .map(|r| r.portable())
+                .unwrap_or_default();
+            if SKIP.iter().any(|s| rel == *s) {
+                continue;
+            }
+            if file_access::is_dir(&p) && !file_access::is_symlink(&p) {
+                stack.push(p);
+                continue;
+            }
+            let hazard: fn(&str) -> bool = if has_extension(&p, "py") {
+                python_hazard
+            } else if has_extension(&p, "sh") {
+                shell_hazard
+            } else {
+                continue;
+            };
+            let n = file_access::read_to_string(&p)
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| hazard(l))
+                .count();
+            if n > 0 {
+                out.insert(rel, n);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn script_hazards_only_fall() {
+    let root = PathText::host(env!("CARGO_MANIFEST_DIR"));
+    let now = measure_scripts(&root);
+    let base_path = root.join(SCRIPTS_BASELINE);
+    let base = read_baseline(&base_path);
+    let bless = std::env::var_os("LOFT_BLESS_PLATFORM_CENSUS").is_some();
+    let rose: Vec<String> = now
+        .iter()
+        .filter(|(f, n)| **n > base.get(*f).copied().unwrap_or(0))
+        .map(|(f, n)| format!("{f}: {} -> {n}", base.get(f).copied().unwrap_or(0)))
+        .collect();
+    assert!(
+        rose.is_empty() || (bless && base.is_empty()),
+        "a script gained a Windows hazard (@PLN184 D2/D3): Python — give `open` / `read_text` / \
+         `write_text` an `encoding=\"utf-8\"` and join paths with `os.path`/`pathlib`; shell — no \
+         `flock` / `pgrep` / `pkill` / `xvfb-run` / `valgrind` / hard-coded `/tmp/` / `sed -i` \
+         (or port the script to loft, @PLN179):\n  {}",
+        rose.join("\n  ")
+    );
+    let fell: Vec<String> = base
+        .iter()
+        .filter(|(f, n)| now.get(*f).copied().unwrap_or(0) < **n)
+        .map(|(f, n)| format!("{f}: {n} -> {}", now.get(f).copied().unwrap_or(0)))
+        .collect();
+    if bless {
+        let mut text = String::from(
+            "# Windows hazards per script (@PLN184 D2 Python, D3 shell).  Only shrinks: see\n\
+             # src/platform_census.rs.  Format: <lines> <file>\n",
+        );
+        for (f, n) in &now {
+            let _ = writeln!(text, "{n} {f}");
+        }
+        file_access::write(&base_path, text).expect("write baseline");
+        return;
+    }
+    assert!(
+        fell.is_empty(),
+        "script hazards FELL — lock the progress in: \
+         LOFT_BLESS_PLATFORM_CENSUS=1 cargo test --lib platform_census\n  {}",
+        fell.join("\n  ")
+    );
+}
+
+#[test]
+fn the_script_census_sees_a_hazard_and_nothing_else() {
+    assert!(python_hazard("    with open(p) as f:"));
+    assert!(python_hazard("text = Path(p).read_text()"));
+    assert!(python_hazard("parts = rel.split('/')"));
+    assert!(!python_hazard("with open(p, encoding='utf-8') as f:"));
+    assert!(!python_hazard("with open(p, 'rb') as f:"));
+    assert!(!python_hazard("data = gzip.open(p)"));
+    assert!(!python_hazard("# open(p) in a comment"));
+    assert!(shell_hazard("flock -n 9 || exit 1"));
+    assert!(shell_hazard("out=/tmp/loft_x"));
+    assert!(shell_hazard("sed -i 's/a/b/' f"));
+    assert!(!shell_hazard("# uses flock"));
+    assert!(!shell_hazard("echo nopgrepx"));
+    assert!(!shell_hazard("make valgrind-check-target"));
+}
