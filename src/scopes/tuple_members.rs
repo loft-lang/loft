@@ -48,6 +48,35 @@ impl MemberFacts<'_> {
     };
 }
 
+/// `@FR-T-Record` — the frees a tuple LOCAL owes its `text` members at scope exit: one
+/// `OpFreeText(TupleGet(v, i))` per member that is text or a tuple carrying text, which the
+/// interpreter's codegen expands to every owned text leaf under the member.  A member is the
+/// tuple's own text only where the slot owns it (`data::TUPLE_LOCAL_TEXT_OWNED`); a by-value
+/// parameter borrows its members, and a never-free binding frees nothing.
+pub(super) fn tuple_text_member_frees(
+    elems: &[Type],
+    v: u16,
+    data: &Data,
+    function: &crate::variables::Function,
+) -> Vec<Value> {
+    fn carries_text(t: &Type) -> bool {
+        match t.base() {
+            Type::Text(_) => true,
+            Type::Tuple(inner) => inner.iter().any(carries_text),
+            _ => false,
+        }
+    }
+    if !function.tuple_owns_text(v) || function.is_skip_free(v) {
+        return Vec::new();
+    }
+    let free_text = data.def_nr("OpFreeText");
+    (0..elems.len())
+        .rev()
+        .filter(|&i| carries_text(&elems[i]))
+        .map(|i| Value::Call(free_text, vec![Value::TupleGet(v, i as u16)]))
+        .collect()
+}
+
 pub(super) fn tuple_owned_elem_frees(
     elems: &[Type],
     v: u16,

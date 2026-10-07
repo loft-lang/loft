@@ -372,6 +372,9 @@ impl Scopes<'_> {
                     None,
                 ));
                 ls.extend(self.tuple_handle_frees(v, function, data));
+                ls.extend(super::tuple_members::tuple_text_member_frees(
+                    &elems, v, data, function,
+                ));
                 continue;
             }
             if matches!(function.tp(v).base(), Type::Text(_)) {
