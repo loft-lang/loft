@@ -512,7 +512,18 @@ pub fn cr_park_or_free(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &s
     stores.park_or_free(&db, name);
 }
 
+#[inline]
 pub fn OpFreeRef(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
+    // A null reference frees nothing: answered here, in the caller, where a function's exit
+    // frees of buffers it never minted were each a call that returned at its first test.
+    if db.store_nr == u16::MAX {
+        return;
+    }
+    free_ref_slow(cell, db, name);
+}
+
+#[inline(never)]
+fn free_ref_slow(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
     // A generator handle addresses no store — free the coroutine, which releases the heap
     // locals it still owns.  Mirrors the interpreter's `free_ref_db` (loft#835).
