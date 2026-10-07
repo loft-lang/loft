@@ -10,9 +10,6 @@
 //!
 //! See `EXTERNAL_LIBS.md` for the full design.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
-
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
 use std::collections::HashMap;
@@ -174,6 +171,32 @@ fn dlopen_diagnostic(path: &str, err: &str) -> String {
     format!("loft: cannot load native extension '{path}': {err}")
 }
 
+/// Open the library `name` names, with the loader's own error text.
+///
+/// A name with a separator is a FILE, relative to the current directory; a bare name asks
+/// the dynamic linker's search path.  `file_access` parses `./x.so` to `x.so`, so a
+/// relative file path is made absolute first, or `dlopen` would search for it instead.
+/// The path `file_access` puts in front of the error is taken off again: the callers name
+/// the path themselves, and `dlopen_diagnostic` reads the loader's text from its start.
+#[cfg(feature = "native-extensions")]
+unsafe fn open_library(name: &str) -> Result<libloading::Library, String> {
+    let given = std::path::Path::new(name);
+    let at = if name.contains(std::path::is_separator) {
+        std::path::absolute(given).unwrap_or_else(|_| given.to_path_buf())
+    } else {
+        given.to_path_buf()
+    };
+    // SAFETY: the caller's contract — loading runs the library's initialisers.
+    unsafe { crate::file_access::load_library(&at) }.map_err(|e| {
+        let named = format!(
+            "{}: ",
+            crate::file_access::PathText::from_os(&at).portable()
+        );
+        e.strip_prefix(named.as_str())
+            .map_or_else(|| e.clone(), str::to_string)
+    })
+}
+
 /// Load a single native extension shared library.
 ///
 /// If the library exports `loft_register_v1`, calls it to collect all symbols.
@@ -189,7 +212,6 @@ fn dlopen_diagnostic(path: &str, err: &str) -> String {
 /// fails at the first `#c` call, naming the symbol rather than the library
 /// (loft#739's neighbour — see `load_c_library`, which used to do exactly this).
 fn load_one(path: &str) -> bool {
-    use libloading::Library;
     use std::collections::HashSet;
 
     static LOAD_LOCK: Mutex<Option<HashSet<String>>> = Mutex::new(None);
@@ -204,10 +226,10 @@ fn load_one(path: &str) -> bool {
         return true;
     }
 
-    let lib = match unsafe { Library::new(path) } {
+    let lib = match unsafe { open_library(path) } {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("{}", dlopen_diagnostic(path, &e.to_string()));
+            eprintln!("{}", dlopen_diagnostic(path, &e));
             return false;
         }
     };
@@ -308,12 +330,12 @@ pub fn load_c_library(name: &str, pkg_dir: &str) -> bool {
         // `load_one`, not `exists()`: a file that will not `dlopen` (a Linux
         // `.so` sitting in the tree on macOS) must fall through to the next
         // candidate rather than be reported as loaded.
-        if beside.exists() && load_one(&beside.to_string_lossy()) {
+        if crate::file_access::exists(&beside) && load_one(&beside.to_string_lossy()) {
             return true;
         }
         // Not a path we can see: hand the soname to the dynamic linker, which
         // knows the search path we do not.
-        match unsafe { libloading::Library::new(&cand) } {
+        match unsafe { open_library(&cand) } {
             Ok(_) => {
                 load_one(&cand);
                 return true;
@@ -430,14 +452,14 @@ mod c_lib_naming_tests {
     #[test]
     fn a_file_that_cannot_be_mapped_is_not_reported_as_loaded() {
         let dir = std::env::temp_dir().join(format!("loft_cload_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("probe dir");
+        crate::file_access::create_dir_all(&dir).expect("probe dir");
         let bogus = dir.join("libnotanelf.so");
-        std::fs::write(&bogus, b"this is not a shared object").expect("write probe");
+        crate::file_access::write(&bogus, b"this is not a shared object").expect("write probe");
         assert!(
             !super::load_c_library("libnotanelf.so", &dir.to_string_lossy()),
             "a path that exists but will not dlopen must not count as loaded"
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }
 
@@ -2203,10 +2225,8 @@ pub fn native_target_root(pkg_dir: &std::path::Path) -> std::path::PathBuf {
             _ => false,
         };
         if use_redirected {
-            let stem_dir = pkg_dir.file_name().map_or_else(
-                || "native-pkg".to_string(),
-                |s| s.to_string_lossy().into_owned(),
-            );
+            let stem_dir =
+                crate::file_access::file_name(pkg_dir).unwrap_or_else(|| "native-pkg".to_string());
             registry_cache
                 .parent()
                 .map_or_else(
@@ -2275,7 +2295,7 @@ pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     // is skipped (never mis-loaded), falling through to a source build.
     let triple_dir = format!("{pkg_dir}/prebuilt/{}", crate::cache::host_triple());
     let triple_lib = format!("{triple_dir}/{filename}");
-    if std::path::Path::new(&triple_lib).exists()
+    if crate::file_access::exists(&triple_lib)
         && crate::cache::native_artifact_fingerprint_matches(
             std::path::Path::new(&triple_dir),
             crate::cache::loft_ffi_fingerprint(),
@@ -2286,7 +2306,7 @@ pub fn resolve_native_lib(pkg_dir: &str, stem: &str) -> Option<String> {
     }
     // Legacy platform-agnostic prebuilt (existence-only; kept for back-compat).
     let prebuilt = format!("{pkg_dir}/native/{filename}");
-    if std::path::Path::new(&prebuilt).exists() {
+    if crate::file_access::exists(&prebuilt) {
         return Some(prebuilt);
     }
     auto_build_native(pkg_dir, stem)
@@ -2346,7 +2366,7 @@ fn first_missing_runtime_lib(pkg_dir: &str) -> Option<String> {
         .runtime_libs
         .into_iter()
         .filter(|lib| lib_name_target_os(lib).is_none_or(|os| os == host))
-        .find(|lib| unsafe { libloading::Library::new(lib) }.is_err())
+        .find(|lib| unsafe { open_library(lib) }.is_err())
 }
 
 #[cfg(not(feature = "native-extensions"))]
@@ -2395,13 +2415,13 @@ fn runtime_lib_missing_diagnostic(stem: &str, lib: &str) -> String {
 /// needs it will try again and report properly. Returns `(attempted, built)`.
 #[cfg(feature = "registry")]
 pub fn prebuild_installed_natives() -> (usize, usize) {
-    let Ok(entries) = std::fs::read_dir(crate::registry_index::cache_dir()) else {
+    let Ok(entries) = crate::file_access::read_dir(crate::registry_index::cache_dir()) else {
         return (0, 0);
     };
     let mut dirs: Vec<std::path::PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.join("native").join("Cargo.toml").exists())
+        .iter()
+        .map(crate::file_access::PathText::os_spelling)
+        .filter(|p| crate::file_access::exists(p.join("native").join("Cargo.toml")))
         .collect();
     // Deterministic order, so two runs of the same tree do the same work in the same
     // sequence and a slow package is identifiable from the log rather than from timing.
@@ -2421,9 +2441,7 @@ pub fn prebuild_installed_natives() -> (usize, usize) {
         // early return, so this is nearly silent; a run that takes minutes is one where the
         // loft binary changed and every stamp went stale, and then this log is the only
         // thing that says which package is being waited on.
-        let name = dir
-            .file_name()
-            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let name = crate::file_access::file_name(&dir).unwrap_or_default();
         let t = std::time::Instant::now();
         if resolve_native_lib(&pkg, &stem).is_some() {
             built += 1;
@@ -2484,7 +2502,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     // through proper Path semantics on every platform.
     let pkg = PathBuf::from(pkg_dir);
     let cargo_toml = pkg.join("native").join("Cargo.toml");
-    if !cargo_toml.exists() {
+    if !crate::file_access::exists(&cargo_toml) {
         return None;
     }
     let lib_name = platform_lib_name(stem);
@@ -2522,8 +2540,8 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
                 let dir = root.join(profile);
                 let lib = dir.join(&lib_name);
                 let rlib = dir.join(&rlib_name);
-                if lib.exists()
-                    && rlib.exists()
+                if crate::file_access::exists(&lib)
+                    && crate::file_access::exists(&rlib)
                     && crate::cache::native_artifact_fingerprint_matches(&dir, fp)
                     // loft#965 — and the crate's OWN Rust sources are not newer.  The
                     // fingerprint answers "same loft-ffi ABI, RUSTFLAGS and codegen
@@ -2559,7 +2577,9 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     'scan: for root in &search_roots {
         for profile in ["release", "debug"] {
             let dir = root.join(profile);
-            if dir.join(&lib_name).exists() && dir.join(&rlib_name).exists() {
+            if crate::file_access::exists(dir.join(&lib_name))
+                && crate::file_access::exists(dir.join(&rlib_name))
+            {
                 let stamped = crate::cache::native_artifact_stamped_fp(&dir)
                     .map_or_else(|| "none".to_string(), |s| s.to_string());
                 eprintln!(
@@ -2592,12 +2612,14 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     // we proceed unserialised — no worse than before.  `File::lock` blocks until
     // acquired and releases when `_build_lock` drops at function exit (so a crash
     // mid-build can't strand the lock).
-    let _build_lock = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join("loft-native-build.lock"))
-        .ok();
+    let _build_lock = crate::file_access::open_with(
+        std::env::temp_dir().join("loft-native-build.lock"),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false),
+    )
+    .ok();
     if let Some(f) = &_build_lock {
         // Reveal cross-process contention on this ONE global lock (the prime
         // suspect for the CI 600s multiplayer hang): record `lockwait` BEFORE
@@ -2705,7 +2727,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
         }
         if use_redirected_target {
             if let Some(parent) = target_root.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                let _ = crate::file_access::create_dir_all(parent);
             }
             cmd.env("CARGO_TARGET_DIR", &target_root);
         }
@@ -2723,7 +2745,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     // that (Goal F), so on a locked failure we retry WITHOUT --locked, warning
     // it is non-reproducible — reproducibility is best-effort here; the
     // submit-time gate is where a complete lock is enforced.
-    let has_lock = cargo_toml.with_file_name("Cargo.lock").exists();
+    let has_lock = crate::file_access::exists(pkg.join("native").join("Cargo.lock"));
     let mut status = make_cmd(has_lock).status();
     if has_lock && matches!(&status, Ok(s) if !s.success()) {
         eprintln!(
@@ -2746,8 +2768,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
             // cdylib `built_path` is absent, so a later loft change still
             // invalidates it (see `find_existing` / `add_native_extern_flags`).
             crate::cache::write_native_artifact_fingerprint(&target_root.join("release"), fp);
-            built_path
-                .exists()
+            crate::file_access::exists(&built_path)
                 .then(|| built_path.to_string_lossy().to_string())
         }
         // @PLN21 Phase 3 — the build RAN but failed (cargo's error is on the
@@ -2795,27 +2816,27 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
 /// Unreadable metadata answers "newer", so the failure mode is a rebuild, never a reuse
 /// of something stale.
 fn native_crate_newer_than(pkg_dir: &str, artifact: &std::path::Path) -> bool {
-    let Ok(art) = artifact.metadata().and_then(|m| m.modified()) else {
+    let Ok(art) = crate::file_access::metadata(artifact).and_then(|m| m.modified()) else {
         return true;
     };
     let mut stack = vec![std::path::PathBuf::from(pkg_dir).join("native")];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = crate::file_access::read_dir(&dir) else {
             continue;
         };
-        for e in entries.flatten() {
-            if e.file_name() == "target" {
+        for e in entries {
+            if e.file_name() == Some("target") {
                 continue;
             }
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() {
-                stack.push(e.path());
+            // Not followed, as the directory entry answered it: a link is not walked.
+            let Ok(meta) = crate::file_access::symlink_metadata(&e) else {
+                continue;
+            };
+            if meta.file_type().is_dir() {
+                stack.push(e.os_spelling());
                 continue;
             }
-            if e.metadata()
-                .and_then(|m| m.modified())
-                .is_ok_and(|mt| mt > art)
-            {
+            if meta.modified().is_ok_and(|mt| mt > art) {
                 return true;
             }
         }
@@ -2827,7 +2848,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
     use std::path::PathBuf;
     let pkg = PathBuf::from(pkg_dir);
     let cargo_toml = pkg.join("native").join("Cargo.toml");
-    if !cargo_toml.exists() {
+    if !crate::file_access::exists(&cargo_toml) {
         return false;
     }
     let rlib_name = format!("lib{stem}.rlib");
@@ -2842,7 +2863,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
     let rlib = out_dir.join(&rlib_name);
     let fp = crate::cache::native_artifact_cache_key();
     let fresh = |out: &std::path::Path| {
-        out.join(&rlib_name).exists()
+        crate::file_access::exists(out.join(&rlib_name))
             && crate::cache::native_artifact_fingerprint_matches(out, fp)
             // loft#965 — same hole, same cure, on the cross-target path.
             && !native_crate_newer_than(pkg_dir, &out.join(&rlib_name))
@@ -2852,12 +2873,14 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
     }
     // Serialise cross-process builds on the SAME global lock the host path uses, so
     // parallel `loft` invocations don't race cargo's shared registry index/cache.
-    let _build_lock = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join("loft-native-build.lock"))
-        .ok();
+    let _build_lock = crate::file_access::open_with(
+        std::env::temp_dir().join("loft-native-build.lock"),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false),
+    )
+    .ok();
     if let Some(f) = &_build_lock {
         let _ = f.lock();
     }
@@ -2881,7 +2904,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
         Ok(s) if s.success() => {
             // Stamp the same loft-ffi ABI key so a later loft-ffi change re-builds it.
             crate::cache::write_native_artifact_fingerprint(&out_dir, fp);
-            rlib.exists()
+            crate::file_access::exists(&rlib)
         }
         Ok(_) => {
             eprintln!(
@@ -3175,8 +3198,8 @@ mod dlopen_diag_tests {
 
     fn temp_pkg(name: &str, toml: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("loft_p21_{name}_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("loft.toml"), toml).unwrap();
+        let _ = crate::file_access::create_dir_all(&dir);
+        crate::file_access::write(dir.join("loft.toml"), toml).unwrap();
         dir
     }
 
@@ -3302,9 +3325,9 @@ mod c_lib_beside_tests {
     fn the_host_spelling_beside_a_package_is_found() {
         let dir = std::env::temp_dir().join(format!("loft_beside_{}", std::process::id()));
         let sub = dir.join("pkg");
-        std::fs::create_dir_all(&sub).expect("probe dir");
+        crate::file_access::create_dir_all(&sub).expect("probe dir");
         // Only the macOS artefact exists, as on a Mac that just ran `make`.
-        std::fs::write(dir.join("liblc_types.dylib"), b"x").expect("write probe");
+        crate::file_access::write(dir.join("liblc_types.dylib"), b"x").expect("write probe");
 
         assert_eq!(
             existing_lib_beside(&sub, "../liblc_types.so", LibOs::Macos).as_deref(),
@@ -3319,7 +3342,7 @@ mod c_lib_beside_tests {
 
         // With the declared spelling present, it wins on every host: the
         // fallback may only ever ADD a candidate.
-        std::fs::write(dir.join("liblc_types.so"), b"x").expect("write probe");
+        crate::file_access::write(dir.join("liblc_types.so"), b"x").expect("write probe");
         for os in [LibOs::Linux, LibOs::Macos, LibOs::Windows] {
             assert_eq!(
                 existing_lib_beside(&sub, "../liblc_types.so", os).as_deref(),
@@ -3327,7 +3350,7 @@ mod c_lib_beside_tests {
                 "the declared spelling is authoritative when it is there"
             );
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }
 
@@ -3339,11 +3362,12 @@ mod native_freshness_tests {
     /// Build `<root>/native/src/lib.rs` plus an artifact, and return both paths.
     fn fixture(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
         let root = std::env::temp_dir().join(format!("loft_965_{tag}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("native/src")).expect("mkdir");
-        std::fs::create_dir_all(root.join("native/target/release")).expect("mkdir target");
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(root.join("native/src")).expect("mkdir");
+        crate::file_access::create_dir_all(root.join("native/target/release"))
+            .expect("mkdir target");
         let src = root.join("native/src/lib.rs");
-        std::fs::File::create(&src)
+        crate::file_access::create(&src)
             .and_then(|mut f| f.write_all(b"// crate source\n"))
             .expect("write source");
         (root, src)
@@ -3357,7 +3381,7 @@ mod native_freshness_tests {
         // choice.
         std::thread::sleep(std::time::Duration::from_millis(20));
         let art = root.join(name);
-        std::fs::write(&art, b"artifact").expect("write artifact");
+        crate::file_access::write(&art, b"artifact").expect("write artifact");
         art
     }
 
@@ -3367,7 +3391,7 @@ mod native_freshness_tests {
         let (root, _src) = fixture("fresh");
         let art = artifact_after(&root, "libx.so");
         assert!(!native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// loft#965 itself: the crate's own Rust edited after the artifact was built.  This
@@ -3378,11 +3402,11 @@ mod native_freshness_tests {
         let (root, src) = fixture("edited");
         let art = artifact_after(&root, "libx.so");
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::File::create(&src)
+        crate::file_access::create(&src)
             .and_then(|mut f| f.write_all(b"// edited\n"))
             .expect("re-write source");
         assert!(native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// ⚠ `native/target/` is the build's OWN output and is always newer than the
@@ -3393,12 +3417,13 @@ mod native_freshness_tests {
         let (root, _src) = fixture("target");
         let art = artifact_after(&root, "libx.so");
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(root.join("native/target/release/stamp"), b"x").expect("write stamp");
+        crate::file_access::write(root.join("native/target/release/stamp"), b"x")
+            .expect("write stamp");
         assert!(
             !native_crate_newer_than(&root.to_string_lossy(), &art),
             "output under native/target must not make the crate look stale"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// A package with no native crate at all answers "not newer" rather than walking
@@ -3406,10 +3431,10 @@ mod native_freshness_tests {
     #[test]
     fn a_package_without_a_native_crate_is_not_newer() {
         let root = std::env::temp_dir().join(format!("loft_965_none_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).expect("mkdir");
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(&root).expect("mkdir");
         let art = artifact_after(&root, "libx.so");
         assert!(!native_crate_newer_than(&root.to_string_lossy(), &art));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 }
