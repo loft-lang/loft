@@ -138,6 +138,5 @@ value-shaped decision, and value clauses would make coverage undecidable.
 
 ## Deviations
 
-**OPEN: 0.**  D-disp-1 (the `self` set over variants), D-disp-2 (a nullable enum position),
-D-disp-3 (a converting member, loft#1925) and D-disp-4 (a `self` set's hint, loft#1926) are
-closed; the record is in [dispatch-history.md](dispatch-history.md).
+**OPEN: 0.**  The register — D-disp-1 to D-disp-4, each with what resolved it — is
+[dispatch-history.md](dispatch-history.md).
