@@ -16,8 +16,6 @@
 //! `targets`, gated on `needs`, with a cached green run.  See
 //! `doc/claude/PACKAGES_BUILD.md § The build phase` and the @PLN100 plan.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::manifest::{BuildAsset, BuildTest, Manifest};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -238,12 +236,12 @@ pub fn tool_on_path(tool: &str) -> bool {
         return false;
     };
     std::env::split_paths(&paths).any(|dir| {
-        if dir.join(tool).is_file() {
+        if crate::file_access::is_file(dir.join(tool)) {
             return true;
         }
         cfg!(windows)
-            && (dir.join(format!("{tool}.exe")).is_file()
-                || dir.join(format!("{tool}.cmd")).is_file())
+            && (crate::file_access::is_file(dir.join(format!("{tool}.exe")))
+                || crate::file_access::is_file(dir.join(format!("{tool}.cmd"))))
     })
 }
 
@@ -505,7 +503,7 @@ pub fn glob_expand(base: &Path, pattern: &str) -> Vec<PathBuf> {
 fn match_segments(dir: &Path, segs: &[&str], out: &mut Vec<PathBuf>) {
     let Some((first, rest)) = segs.split_first() else {
         // No more segments: `dir` matches if it is a file.
-        if dir.is_file() {
+        if crate::file_access::is_file(dir) {
             out.push(dir.to_path_buf());
         }
         return;
@@ -514,10 +512,10 @@ fn match_segments(dir: &Path, segs: &[&str], out: &mut Vec<PathBuf>) {
         // `**` matches zero segments (recurse with the rest here)…
         match_segments(dir, rest, out);
         // …or one+ segments: descend into each subdir keeping the `**`.
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for e in entries.flatten() {
-                let p = e.path();
-                if p.is_dir() {
+        if let Ok(entries) = crate::file_access::read_dir(dir) {
+            for e in entries {
+                let p = e.os_spelling();
+                if crate::file_access::is_dir(&p) {
                     match_segments(&p, segs, out);
                 }
             }
@@ -525,18 +523,18 @@ fn match_segments(dir: &Path, segs: &[&str], out: &mut Vec<PathBuf>) {
         return;
     }
     if first.contains('*') || first.contains('?') {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for e in entries.flatten() {
-                let name = e.file_name();
-                if segment_matches(&name.to_string_lossy(), first) {
-                    match_segments(&e.path(), rest, out);
+        if let Ok(entries) = crate::file_access::read_dir(dir) {
+            for e in entries {
+                let name = e.file_name().unwrap_or_default();
+                if segment_matches(name, first) {
+                    match_segments(&e.os_spelling(), rest, out);
                 }
             }
         }
         return;
     }
     let next = dir.join(first);
-    if next.exists() {
+    if crate::file_access::exists(&next) {
         match_segments(&next, rest, out);
     }
 }
@@ -579,7 +577,7 @@ fn asset_stamp_path(project_dir: &Path, name: &str) -> PathBuf {
 
 /// Read an asset's stored `(fingerprint, unix_secs)`, if a stamp exists.
 fn read_stamp(project_dir: &Path, name: &str) -> Option<(u64, u64)> {
-    let text = std::fs::read_to_string(asset_stamp_path(project_dir, name)).ok()?;
+    let text = crate::file_access::read_to_string(asset_stamp_path(project_dir, name)).ok()?;
     let mut lines = text.lines();
     let fp = lines.next()?.trim().parse().ok()?;
     let time = lines.next()?.trim().parse().ok()?;
@@ -590,16 +588,19 @@ fn read_stamp(project_dir: &Path, name: &str) -> Option<(u64, u64)> {
 fn write_stamp(project_dir: &Path, name: &str, fingerprint: u64, time: u64) {
     let path = asset_stamp_path(project_dir, name);
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = crate::file_access::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, format!("{fingerprint}\n{time}\n"));
+    let _ = crate::file_access::write(&path, format!("{fingerprint}\n{time}\n"));
 }
 
 /// Whether all of an asset's declared `outputs` exist under `project_dir`.  An
 /// asset with no declared outputs is treated as present (staleness then rests on
 /// the fingerprint + TTL alone).
 fn outputs_present(project_dir: &Path, asset: &BuildAsset) -> bool {
-    asset.outputs.iter().all(|o| project_dir.join(o).exists())
+    asset
+        .outputs
+        .iter()
+        .all(|o| crate::file_access::exists(project_dir.join(o)))
 }
 
 /// Run one asset step if it is stale: compute its inputs fingerprint, compare to
@@ -679,9 +680,7 @@ pub fn run_asset(asset: &BuildAsset, project_dir: &Path, force: bool) -> AssetOu
 /// the project's own manifest, @PLN100 open question 3 / @PLN86).
 fn run_asset_command(cmd: &str, project_dir: &Path) -> std::io::Result<std::process::ExitStatus> {
     let is_loft_script = !cmd.contains(char::is_whitespace)
-        && Path::new(cmd)
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("loft"));
+        && crate::file_access::extension(cmd).is_some_and(|e| e.eq_ignore_ascii_case("loft"));
     if is_loft_script {
         let loft_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("loft"));
         Command::new(loft_exe)
@@ -802,7 +801,7 @@ fn test_stamp_path(project_dir: &Path, name: &str, target: &str) -> PathBuf {
 
 /// Whether a test's last green run on `target` matches `fp` (a cached pass).
 fn test_cached_green(project_dir: &Path, name: &str, target: &str, fp: u64) -> bool {
-    std::fs::read_to_string(test_stamp_path(project_dir, name, target))
+    crate::file_access::read_to_string(test_stamp_path(project_dir, name, target))
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .is_some_and(|stored| stored == fp)
@@ -812,9 +811,9 @@ fn test_cached_green(project_dir: &Path, name: &str, target: &str, fp: u64) -> b
 fn write_test_stamp(project_dir: &Path, name: &str, target: &str, fp: u64) {
     let path = test_stamp_path(project_dir, name, target);
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = crate::file_access::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, fp.to_string());
+    let _ = crate::file_access::write(&path, fp.to_string());
 }
 
 /// Run one declared test over one backend, honouring the green-run cache.
@@ -1123,11 +1122,11 @@ mod tests {
     #[test]
     fn glob_expand_and_fingerprint_react_to_change() {
         let dir = std::env::temp_dir().join(format!("loft_glob_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("art/sub")).unwrap();
-        std::fs::write(dir.join("art/a.png"), b"aaa").unwrap();
-        std::fs::write(dir.join("art/sub/b.png"), b"bbb").unwrap();
-        std::fs::write(dir.join("art/notes.txt"), b"txt").unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(dir.join("art/sub")).unwrap();
+        crate::file_access::write(dir.join("art/a.png"), b"aaa").unwrap();
+        crate::file_access::write(dir.join("art/sub/b.png"), b"bbb").unwrap();
+        crate::file_access::write(dir.join("art/notes.txt"), b"txt").unwrap();
 
         // `**/*.png` finds both PNGs at any depth, not the .txt.
         let hits = glob_expand(&dir, "art/**/*.png");
@@ -1138,15 +1137,15 @@ mod tests {
 
         // Fingerprint changes when an input's content changes…
         let fp1 = inputs_fingerprint(&dir, &["art/**/*.png".to_string()]);
-        std::fs::write(dir.join("art/a.png"), b"CHANGED").unwrap();
+        crate::file_access::write(dir.join("art/a.png"), b"CHANGED").unwrap();
         let fp2 = inputs_fingerprint(&dir, &["art/**/*.png".to_string()]);
         assert_ne!(fp1, fp2);
         // …and when a new matching file appears.
-        std::fs::write(dir.join("art/c.png"), b"ccc").unwrap();
+        crate::file_access::write(dir.join("art/c.png"), b"ccc").unwrap();
         let fp3 = inputs_fingerprint(&dir, &["art/**/*.png".to_string()]);
         assert_ne!(fp2, fp3);
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1185,11 +1184,11 @@ mod tests {
     #[test]
     fn test_fingerprint_reacts_to_script_input_and_target() {
         let dir = std::env::temp_dir().join(format!("loft_testfp_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("tests")).unwrap();
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::write(dir.join("tests/smoke.loft"), b"fn main() {}").unwrap();
-        std::fs::write(dir.join("assets/data.bin"), b"v1").unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(dir.join("tests")).unwrap();
+        crate::file_access::create_dir_all(dir.join("assets")).unwrap();
+        crate::file_access::write(dir.join("tests/smoke.loft"), b"fn main() {}").unwrap();
+        crate::file_access::write(dir.join("assets/data.bin"), b"v1").unwrap();
         let inputs = vec!["assets/data.bin".to_string()];
 
         let base = test_fingerprint(&dir, "tests/smoke.loft", &inputs, "interpret");
@@ -1200,20 +1199,20 @@ mod tests {
             test_fingerprint(&dir, "tests/smoke.loft", &inputs, "native")
         );
         // A changed input data file → different key.
-        std::fs::write(dir.join("assets/data.bin"), b"v2").unwrap();
+        crate::file_access::write(dir.join("assets/data.bin"), b"v2").unwrap();
         assert_ne!(
             base,
             test_fingerprint(&dir, "tests/smoke.loft", &inputs, "interpret")
         );
         // A changed run script → different key.
-        std::fs::write(dir.join("assets/data.bin"), b"v1").unwrap();
-        std::fs::write(dir.join("tests/smoke.loft"), b"fn main() { print(1) }").unwrap();
+        crate::file_access::write(dir.join("assets/data.bin"), b"v1").unwrap();
+        crate::file_access::write(dir.join("tests/smoke.loft"), b"fn main() { print(1) }").unwrap();
         assert_ne!(
             base,
             test_fingerprint(&dir, "tests/smoke.loft", &inputs, "interpret")
         );
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// A step that exits zero without producing what it declared is a FAILED step.
@@ -1226,8 +1225,8 @@ mod tests {
     #[test]
     fn an_asset_that_does_not_produce_its_declared_output_fails() {
         let dir = std::env::temp_dir().join(format!("loft_asset_out_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let asset = |run: &str| BuildAsset {
             name: Some("pack".to_string()),
             run: Some(run.to_string()),
@@ -1243,7 +1242,7 @@ mod tests {
         // The control, and it is one variable: the same declaration, by a command
         // that DOES write the file. Without it the assertion above would also pass
         // for a `run_asset` that could never answer `Built` at all.
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        crate::file_access::create_dir_all(dir.join("assets")).unwrap();
         assert_eq!(
             run_asset(&asset("touch assets/game.pack"), &dir, true),
             AssetOutcome::Built
@@ -1256,14 +1255,14 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(run_asset(&bare, &dir, true), AssetOutcome::Built);
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     #[test]
     fn unmet_needs_detects_missing_asset_output() {
         let dir = std::env::temp_dir().join(format!("loft_needs_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let mut m = Manifest::default();
         m.build_assets.push(BuildAsset {
             name: Some("atlas".to_string()),
@@ -1277,8 +1276,8 @@ mod tests {
         // Output absent → unmet.
         assert!(unmet_needs(&test, &m, &dir).is_some());
         // Create the output → met.
-        std::fs::create_dir_all(dir.join("assets")).unwrap();
-        std::fs::write(dir.join("assets/atlas.bin"), b"x").unwrap();
+        crate::file_access::create_dir_all(dir.join("assets")).unwrap();
+        crate::file_access::write(dir.join("assets/atlas.bin"), b"x").unwrap();
         assert!(unmet_needs(&test, &m, &dir).is_none());
         // A need on an unknown asset is unmet.
         let bad = crate::manifest::BuildTest {
@@ -1287,6 +1286,6 @@ mod tests {
         };
         assert!(unmet_needs(&bad, &m, &dir).is_some());
 
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }
