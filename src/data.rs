@@ -3807,9 +3807,27 @@ fn element_offsets_alignment_max(types: &[Type]) -> u8 {
 /// (`calculate_positions_with_groups`) agree on every byte offset.
 #[must_use]
 pub fn element_stack_size(t: &Type) -> usize {
+    element_stack_size_in(t, false)
+}
+
+/// `@FR-T-Record` — does a tuple LOCAL's frame slot hold each `text` member as the tuple's own
+/// text?  The one switch both halves of the layout read: the slot size a tuple variable is
+/// given (`variables::size(Tuple, Context::Variable)`) and the member offsets every emitter
+/// lays the slot out by (`state::codegen::tuple_slot_owned`).  A by-value tuple parameter and
+/// a tuple value on the eval stack stay borrowed either way.
+pub const TUPLE_LOCAL_TEXT_OWNED: bool = false;
+
+/// [`element_stack_size`] for a tuple held in an OWNED slot or not.  A `text` member of an
+/// owned tuple — a tuple LOCAL's frame slot — is the tuple's own text, a `String`, as a text
+/// local is (`variables::size(Text, Context::Variable)`); in a borrowed position — a tuple
+/// value on the eval stack, a by-value parameter — it is the `Str` a text argument is
+/// (`@FR-T-Record`).  Every other member is the same width either way.
+#[must_use]
+pub fn element_stack_size_in(t: &Type, owned: bool) -> usize {
     match t {
         // @PLN25 slice (b): `Optional(τ)` shares its base's sentinel storage size.
-        Type::Optional(inner) => element_stack_size(inner),
+        Type::Optional(inner) => element_stack_size_in(inner, owned),
+        Type::Text(_) if owned => std::mem::size_of::<String>(),
         Type::Boolean | Type::Enum(_, false, _) => 1,
         Type::Single | Type::Character => 4,
         // P249 — fn-ref slot is 20 bytes (8 B d_nr + 12 B closure DbRef);
@@ -3843,7 +3861,8 @@ pub fn element_stack_size(t: &Type) -> usize {
             elems
                 .iter()
                 .map(|t| {
-                    crate::variables::aligned_stack_step(element_stack_size(t) as u32) as usize
+                    crate::variables::aligned_stack_step(element_stack_size_in(t, owned) as u32)
+                        as usize
                 })
                 .sum()
         }
@@ -3947,12 +3966,20 @@ pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
 /// functions so a call site has to say which it means.
 #[must_use]
 pub fn element_stack_offsets(types: &[Type]) -> Vec<usize> {
+    element_stack_offsets_in(types, false)
+}
+
+/// [`element_stack_offsets`] for a tuple held in an OWNED slot or not — see
+/// [`element_stack_size_in`]: only a `text` member's width differs.
+#[must_use]
+pub fn element_stack_offsets_in(types: &[Type], owned: bool) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(types.len());
     let mut pos: usize = 0;
     for t in types {
         offsets.push(pos);
         // @PLN114 — one stepped slot per element; see `element_stack_size`.
-        pos += crate::variables::aligned_stack_step(element_stack_size(t) as u32) as usize;
+        pos +=
+            crate::variables::aligned_stack_step(element_stack_size_in(t, owned) as u32) as usize;
     }
     offsets
 }

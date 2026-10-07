@@ -5900,7 +5900,11 @@ pub fn size(tp: &Type, context: &Context) -> u16 {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Iterator(_, _) => size_of::<DbRef>() as u16,
-        Type::Tuple(elems) => crate::data::element_stack_size(&Type::Tuple(elems.clone())) as u16,
+        // A tuple LOCAL's slot holds its own text members (`data::TUPLE_LOCAL_TEXT_OWNED`).
+        Type::Tuple(elems) => crate::data::element_stack_size_in(
+            &Type::Tuple(elems.clone()),
+            crate::data::TUPLE_LOCAL_TEXT_OWNED && context == &Context::Variable,
+        ) as u16,
         _ => 0,
     }
 }
