@@ -1,0 +1,120 @@
+// `@FR-R-Destination` — `sub = dv(b, p); if sub.ok { items += [sub.value]; p = sub.next }`:
+// the element is minted before the call and the callee's DESTINATION TWIN builds `value` in
+// it, answering `next` and `ok`; the element is finished where the plain form moved and
+// released where it did not.  The interpreter moves as before and is the oracle; every value
+// is hand-computed.
+//
+// The format, one byte a head: below 100 an integer; 100 + n a text of the n bytes after it;
+// 200 + n a list of n values.  A value that runs past the end fails, and so does every list
+// holding it — a failure answers `next` = where the failing value started.
+
+enum Val { VNone, VInt { value: integer }, VText { value: text }, VList { items: vector<Val> } }
+struct Dv { const value: Val, const next: integer, const ok: boolean }
+/// The same record with the moved field NOT first: the twin binds its buffer to the
+/// element, so this shape declines (and must answer the same).
+struct Dw { const next: integer, const value: Val, const ok: boolean }
+
+fn dv(b: vector<u8>, pos: integer) -> Dv {
+  if pos >= len(b) { return Dv { value: VNone, next: pos, ok: false }; }
+  t = b[pos] ?? 0;
+  if t < 100 { return Dv { value: VInt { value: t }, next: pos + 1, ok: true }; }
+  if t < 200 {
+    n = t - 100;
+    if pos + 1 + n > len(b) { return Dv { value: VNone, next: pos, ok: false }; }
+    return Dv { value: VText { value: text_from_byte_range(b, pos + 1, pos + 1 + n) }, next: pos + 1 + n, ok: true };
+  }
+  items: vector<Val> = [];
+  p = pos + 1;
+  aok = true;
+  for _ in 0..t - 200 {
+    if aok {
+      sub = dv(b, p);
+      if sub.ok { items += [sub.value]; p = sub.next; } else { aok = false; }
+    }
+  }
+  if !aok { return Dv { value: VNone, next: pos, ok: false }; }
+  return Dv { value: VList { items: items }, next: p, ok: true };
+}
+
+fn dw(b: vector<u8>, pos: integer) -> Dw {
+  if pos >= len(b) { return Dw { value: VNone, next: pos, ok: false }; }
+  t = b[pos] ?? 0;
+  if t < 100 { return Dw { value: VInt { value: t }, next: pos + 1, ok: true }; }
+  if t < 200 {
+    n = t - 100;
+    if pos + 1 + n > len(b) { return Dw { value: VNone, next: pos, ok: false }; }
+    return Dw { value: VText { value: text_from_byte_range(b, pos + 1, pos + 1 + n) }, next: pos + 1 + n, ok: true };
+  }
+  items: vector<Val> = [];
+  p = pos + 1;
+  aok = true;
+  for _ in 0..t - 200 {
+    if aok {
+      sub = dw(b, p);
+      if sub.ok { items += [sub.value]; p = sub.next; } else { aok = false; }
+    }
+  }
+  if !aok { return Dw { value: VNone, next: pos, ok: false }; }
+  return Dw { value: VList { items: items }, next: p, ok: true };
+}
+
+fn ints(v: Val) -> integer {
+  match v {
+    VInt { value } => value,
+    VList { items } => { s = 0; for x in items { s += ints(x); } s },
+    _ => 0
+  }
+}
+
+fn texts(v: Val) -> text {
+  match v {
+    VText { value } => value,
+    VList { items } => { s = ""; for x in items { s += texts(x); } s },
+    _ => ""
+  }
+}
+
+fn main() {
+  // c1 — [5, [7, 8], 9]: 29 across four integers, the whole frame read.
+  b1: vector<u8> = [203, 5, 202, 7, 8, 9];
+  d1 = dv(b1, 0);
+  assert(d1.ok && d1.next == 6 && ints(d1.value) == 29, "c1: {d1.ok} {d1.next} {ints(d1.value)}");
+
+  // c2 — a text inside a list: ["hij", 42].
+  b2: vector<u8> = [202, 103, 104, 105, 106, 42];
+  d2 = dv(b2, 0);
+  assert(d2.ok && d2.next == 6 && ints(d2.value) == 42 && texts(d2.value) == "hij", "c2: {d2.next} {texts(d2.value)}");
+
+  // c3 — every prefix of [1, ["xy", 7], 9]: only the whole frame (length 8) decodes, every
+  // shorter one fails at the top with next 0 — after a text or a list was already built
+  // into an element that must then be released.
+  f: vector<u8> = [203, 1, 202, 102, 120, 121, 7, 9];
+  oks = 0;
+  nexts = 0;
+  for l in 0..9 {
+    d = dv(f[0..l], 0);
+    if d.ok {
+      oks += 1;
+      assert(l == 8 && d.next == 8 && ints(d.value) == 17 && texts(d.value) == "xy", "c3 whole: {l} {d.next}");
+    } else {
+      nexts += d.next;
+    }
+  }
+  assert(oks == 1 && nexts == 0, "c3: {oks} {nexts}");
+
+  // c4 — five lists deep around one integer.
+  b4: vector<u8> = [201, 201, 201, 201, 201, 4];
+  d4 = dv(b4, 0);
+  assert(d4.ok && d4.next == 6 && ints(d4.value) == 4, "c4: {d4.next} {ints(d4.value)}");
+
+  // c5 — the record whose moved field is not first answers the same (and is not admitted).
+  w1 = dw(b1, 0);
+  w2 = dw(b2, 0);
+  assert(w1.ok && w1.next == 6 && ints(w1.value) == 29, "c5 w1: {w1.next}");
+  assert(w2.ok && texts(w2.value) == "hij" && ints(w2.value) == 42, "c5 w2: {texts(w2.value)}");
+  wok = 0;
+  for l in 0..9 { if dw(f[0..l], 0).ok { wok += 1; } }
+  assert(wok == 1, "c5 prefixes: {wok}");
+
+  println("ok");
+}
