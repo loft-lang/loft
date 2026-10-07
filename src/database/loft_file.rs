@@ -321,7 +321,10 @@ mod tests {
     #[test]
     fn a_reader_written_through_reopens_at_the_logical_position() {
         let p = scratch("reader", b"abcdefghij");
-        let mut f = LoftFile::reader(crate::file_access::open(&host(&p)).unwrap(), &p);
+        let mut f = LoftFile::reader(
+            crate::file_access::open(&host(&p)).unwrap(),
+            &p.to_string_lossy(),
+        );
         let mut three = [0u8; 3];
         f.read_exact(&mut three).unwrap();
         f.write_all(b"XY").unwrap();
