@@ -235,8 +235,11 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
             !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),
             "{name}'s join local is a tuple: no mint, no copy"
         );
+        // The tuple is read straight off the view's fields, or through the one address
+        // `@FR-R-RecPtr`'s tuple clause takes for it.
         assert!(
-            body.contains("var____ret_join_1 = ("),
+            body.contains("var____ret_join_1 = (")
+                || body.contains("var____ret_join_1 = { let __rt: DbRef = "),
             "{name}'s join local is bound to the view's field tuple"
         );
     }
