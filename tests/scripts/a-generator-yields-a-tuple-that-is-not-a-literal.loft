@@ -3,7 +3,14 @@
 // the transport slots only for a literal, so any other tuple-valued yield handed over zeros
 // (`0,0` for `(4, 8)`), with nothing reported — in a straight-line generator and in one whose
 // loop is collected eagerly alike (loft#1899).  Each value is worked out by hand beside it.
-// @falsified-at: 594cceed8 — measured below by `make falsify`
+// @falsified-at: 594cceed8 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generator-yields-a-tuple-that-is-not-a-literal.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: native asserts — the control compiles and hands over zeros for a non-literal tuple;
+//   its first failing cell reads `0,0` for `(1, 7)`.
+// HOLDS: leak none, panic none and free-refusals 0 on both trees and both backends; the
+//   interpreter answers every cell on both, as measured by `make falsify` at 594cceed8.
 
 fn mk(n: integer) -> (integer, integer) { (n, n * 2) }
 fn mk10(n: integer) -> (integer, integer) { (n, n + 10) }

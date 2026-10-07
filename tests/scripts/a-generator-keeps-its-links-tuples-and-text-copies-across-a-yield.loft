@@ -4,7 +4,14 @@
 // the generator struct, so each was declared in the state that bound it and was missing in the
 // next (E0425), and a tuple field could not be zeroed (E0605) (loft#1899).  Each value is
 // worked out by hand in the comment beside it.
-// @falsified-at: 594cceed8 — measured below by `make falsify`
+// @falsified-at: 594cceed8 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generator-keeps-its-links-tuples-and-text-copies-across-a-yield.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the native exit — rustc refuses the control (E0425 on a link, a tuple or the text
+//   parameter's copy declared in another state; E0605 on a tuple field's zero).
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends;
+//   the interpreter answers every cell on both, as measured by `make falsify` at 594cceed8.
 
 fn bump8(x: &u8) { x += 1; }
 fn run(g: iterator<integer>) -> text { s = ""; for v in g { s += "{v} "; } s }
