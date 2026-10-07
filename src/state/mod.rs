@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I66 — Bytecode VM / executor
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(dead_code)]
 
 pub(crate) mod codegen;
@@ -4030,13 +4028,14 @@ impl State {
         line: u32,
         data: &crate::data::Data,
     ) -> Option<u32> {
-        let want = std::path::Path::new(file).file_name()?;
+        let want = crate::file_access::file_name(file)?;
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if std::path::Path::new(&*def.position.file).file_name() != Some(want) {
+            if crate::file_access::file_name(&*def.position.file).as_deref() != Some(want.as_str())
+            {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -4052,14 +4051,15 @@ impl State {
     /// `line_numbers` table, scoped to the user file's function defs.
     #[must_use]
     pub fn breakable_lines_in_file(&self, file: &str, data: &crate::data::Data) -> Vec<u32> {
-        let Some(want) = std::path::Path::new(file).file_name() else {
+        let Some(want) = crate::file_access::file_name(file) else {
             return Vec::new();
         };
         let mut ls: Vec<u32> = Vec::new();
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || std::path::Path::new(&*def.position.file).file_name() != Some(want)
+                || crate::file_access::file_name(&*def.position.file).as_deref()
+                    != Some(want.as_str())
             {
                 continue;
             }

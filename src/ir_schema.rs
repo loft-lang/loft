@@ -24,8 +24,6 @@
 //!
 //! [`DESIGN_DECISIONS.md` § C69]: ../../doc/claude/DESIGN_DECISIONS.md
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, IntegerSpec, LinkedFieldGroup,
     LinkedFieldKind, Purity, Type, Value,
@@ -1574,8 +1572,8 @@ pub fn data_from_json(src: &str) -> Result<Data, TypeDecodeError> {
 /// # Errors
 /// File read error, or any [`data_from_json`] decode error.
 pub fn load_snapshot(path: &str) -> Result<Data, TypeDecodeError> {
-    let src = std::fs::read_to_string(path)
-        .map_err(|e| TypeDecodeError::Shape(format!("read {path}: {e}")))?;
+    let src = crate::file_access::read_to_string(path)
+        .map_err(|e| TypeDecodeError::Shape(format!("read {e}")))?;
     data_from_json(&src)
 }
 

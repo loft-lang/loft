@@ -20,8 +20,6 @@
 //! renderer; phase 5 adds suggestions; phase 6 adds typed-mismatch
 //! detail.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -60,7 +58,7 @@ impl SourceLoader for FileSourceLoader {
         }
         let mut cache = self.cache.lock().ok()?;
         let entry = cache.entry(file.to_string()).or_insert_with(|| {
-            std::fs::read_to_string(file)
+            crate::file_access::read_to_string(file)
                 .ok()
                 .map(|text| text.lines().map(str::to_string).collect())
         });

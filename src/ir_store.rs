@@ -19,8 +19,6 @@
 //! (finding 2's box-of-one); a `Vec<Value>` maps to the same field with N
 //! elements — both materialize identically.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, LinkedFieldGroup, LinkedFieldKind,
     Purity, Type, Value,
@@ -736,7 +734,7 @@ fn write_key_fields(stores: &mut Stores, parent: &Record, off: u32, keys: &[(u16
 /// store was not fresh) — a guard so `open_data` never reads from the wrong record.
 #[cfg(feature = "mmap")]
 pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
-    match std::fs::remove_file(path) {
+    match crate::file_access::remove_file(path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
@@ -797,7 +795,7 @@ pub fn materialize_bundle(stores: &mut Stores, root: DbRef, data: &Data, schema:
 #[cfg(feature = "mmap")]
 pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::Result<()> {
     let tmp = format!("{path}.{}.tmp", std::process::id());
-    match std::fs::remove_file(&tmp) {
+    match crate::file_access::remove_file(&tmp) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
@@ -821,7 +819,7 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
         // Drop `stores` → the file-backed Store unmaps + flushes `tmp` fully
         // before the atomic rename publishes it at `path`.
     }
-    std::fs::rename(&tmp, path)
+    crate::file_access::rename(&tmp, path)
 }
 
 /// Write `v` into the already-allocated `slot` (its bytes are zeroed).
