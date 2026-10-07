@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @EXPECT_ERROR: a keyed collection needs at least one key field
+//
+// loft#1912, `@FR-Col-Hash` / `@FR-Col-Sorted` / `@FR-Col-Index` / `@FR-Col-Spatial` — a keyed
+// collection is `kind<T[k…]>` with at least one key.  `hash<Q[]>`, `sorted<Q[]>`, `index<Q[]>`
+// and `spatial<Q[]>` compiled, every record carried the same empty key, and each insert quietly
+// replaced the one before (`hash=1 sorted=1` after two inserts).  `trie<Q[]>` was already
+// refused, and now says the same thing.  Each kind is its own declaration, so a refusal that
+// reached only one of them leaves the others compiling and the expected error count short.
+//
+// @falsified-at: PENDING
+
+struct Q1912 { a: integer, n: integer }
+
+fn main() {
+  h: hash<Q1912[]> = [Q1912 { a: 1, n: 10 }, Q1912 { a: 2, n: 20 }];
+  s: sorted<Q1912[]> = [Q1912 { a: 1, n: 10 }];
+  x: index<Q1912[]> = [Q1912 { a: 1, n: 10 }];
+  sp: spatial<Q1912[]> = [Q1912 { a: 1, n: 10 }];
+  t: trie<Q1912[]> = [];
+  println("{h.len()} {s.len()} {sp.len()}");
+}
