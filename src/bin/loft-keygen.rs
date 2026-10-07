@@ -327,46 +327,20 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
         .cloned()
 }
 
-#[cfg(unix)]
+/// Owner read/write only.  Windows: NTFS ACLs are out of scope for the bootstrap (see
+/// `platform::set_permission_bits`); the private key file should be on an air-gapped
+/// machine anyway, where filesystem perms are secondary.
 fn chmod_600(path: &Path) {
-    use std::os::unix::fs::PermissionsExt as _;
-    if let Ok(metadata) = file_access::metadata(path) {
-        let mut perms = metadata.permissions();
-        perms.set_mode(0o600);
-        let _ = file_access::set_permissions(path, perms);
+    if file_access::metadata(path).is_ok() {
+        let _ = loft::platform::set_permission_bits(path, 0o600);
     }
-}
-
-#[cfg(not(unix))]
-fn chmod_600(_path: &Path) {
-    // Windows: NTFS ACLs are out of scope for the bootstrap.  The
-    // private key file should still be on an air-gapped machine
-    // anyway, where filesystem perms are secondary.
 }
 
 fn getrandom_fill(buf: &mut [u8]) -> io::Result<()> {
-    // /dev/urandom path keeps the dependency surface minimal — no
-    // `rand` / `getrandom` crate needed.  Same entropy source on
-    // Linux + macOS + the BSDs.  Windows falls back to the OS-level
-    // BCryptGenRandom via a tiny wrapper; if the user's air-gap
-    // machine is Linux/macOS this code path is what runs.
-    #[cfg(unix)]
-    {
-        let mut f = file_access::open("/dev/urandom")?;
-        f.read_exact(buf)?;
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        // For non-Unix, defer to the user running keygen on a real
-        // air-gapped Unix box.  The bootstrap doc recommends this
-        // anyway.
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "loft-keygen needs /dev/urandom (Unix-only).  \
-             Run on Linux/macOS instead.",
-        ))
-    }
+    // /dev/urandom keeps the dependency surface minimal — no `rand` / `getrandom` crate
+    // needed.  Same entropy source on Linux + macOS + the BSDs; Windows answers
+    // `Unsupported`, deferring to the bootstrap doc's air-gapped Unix box.
+    loft::platform::fill_random(buf)
 }
 
 fn die(msg: &str) -> ! {

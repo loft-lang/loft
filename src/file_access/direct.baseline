@@ -9,7 +9,7 @@
 7 src/database/io.rs
 3 src/database/journal.rs
 3 src/database/loft_file.rs
-6 src/database/spans.rs
+4 src/database/spans.rs
 1 src/documentation.rs
 4 src/extensions.rs
 2 src/ir_read.rs
@@ -21,7 +21,7 @@
 2 src/migrate_long.rs
 2 src/native.rs
 7 src/native_lib.rs
-12 src/native_utils.rs
+8 src/native_utils.rs
 6 src/package.rs
 3 src/package_layout.rs
 2 src/paged_reader.rs
@@ -32,7 +32,7 @@
 1 src/registry.rs
 2 src/registry_index.rs
 2 src/repl.rs
-3 src/self_update.rs
+2 src/self_update.rs
 3 src/state/io.rs
 23 src/store.rs
 1 src/store_census.rs

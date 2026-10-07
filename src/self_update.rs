@@ -459,15 +459,11 @@ pub fn apply_bundle(
 /// is not executable is not an installation.
 fn copy_file(source: &Path, target: &Path) -> Result<(), String> {
     file_access::copy(source, target).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
+    if let Some(mode) = file_access::metadata(source)
+        .ok()
+        .and_then(|meta| crate::platform::permission_bits(&meta))
     {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = file_access::metadata(source) {
-            let _ = file_access::set_permissions(
-                target,
-                std::fs::Permissions::from_mode(meta.permissions().mode()),
-            );
-        }
+        let _ = crate::platform::set_permission_bits(target, mode);
     }
     Ok(())
 }

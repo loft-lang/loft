@@ -408,8 +408,7 @@ mod tests {
         assert!(manifest_path_escapes("/etc/loft-evil"));
         // Windows-only spellings: Rust parses a drive prefix only on Windows, so on unix
         // these are ordinary file names and asserting the refusal there would be vacuous.
-        #[cfg(windows)]
-        {
+        if crate::platform::is_windows_fs() {
             assert!(manifest_path_escapes(r"C:\loft-evil"));
             // Drive-RELATIVE: no root, but `join` still replaces the prefix.
             assert!(manifest_path_escapes("C:loft-evil"));

@@ -1228,11 +1228,8 @@ pub fn uri_to_path(uri: &str) -> String {
         Some(after) if drive_prefixed(after) => after,
         _ => rest,
     };
-    if cfg!(windows) {
-        rest.replace('/', "\\")
-    } else {
-        rest.to_string()
-    }
+    // The host's separator: `\` on Windows, so a `/`-spelled URI path reads natively.
+    rest.replace('/', crate::platform::sep_str())
 }
 
 /// Every `.loft` file under `root`, skipping build / VCS / dependency dirs.
@@ -2595,16 +2592,13 @@ mod uri_path_tests {
     #[test]
     fn uri_to_path_inverts_path_to_uri_on_this_platform() {
         // Round-trips with native separators, whichever platform runs the test.
-        #[cfg(windows)]
-        {
-            assert_eq!(uri_to_path("file:///C:/a/b"), r"C:\a\b");
-            assert_eq!(uri_to_path(&path_to_uri(Path::new(r"C:\a\b"))), r"C:\a\b");
-        }
-        #[cfg(not(windows))]
-        {
-            assert_eq!(uri_to_path("file:///a/b"), "/a/b");
-            assert_eq!(uri_to_path(&path_to_uri(Path::new("/a/b"))), "/a/b");
-        }
+        let (uri, native) = if crate::platform::is_windows_fs() {
+            ("file:///C:/a/b", r"C:\a\b")
+        } else {
+            ("file:///a/b", "/a/b")
+        };
+        assert_eq!(uri_to_path(uri), native);
+        assert_eq!(uri_to_path(&path_to_uri(Path::new(native))), native);
         // A non-file:// string passes through.
         assert_eq!(uri_to_path("stdin://x"), "stdin://x");
     }

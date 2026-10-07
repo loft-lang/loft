@@ -235,13 +235,11 @@ pub fn tool_on_path(tool: &str) -> bool {
     let Some(paths) = std::env::var_os("PATH") else {
         return false;
     };
+    let names = crate::platform::executable_candidates(tool);
     std::env::split_paths(&paths).any(|dir| {
-        if crate::file_access::is_file(dir.join(tool)) {
-            return true;
-        }
-        cfg!(windows)
-            && (crate::file_access::is_file(dir.join(format!("{tool}.exe")))
-                || crate::file_access::is_file(dir.join(format!("{tool}.cmd"))))
+        names
+            .iter()
+            .any(|n| crate::file_access::is_file(dir.join(n)))
     })
 }
 
@@ -687,14 +685,10 @@ fn run_asset_command(cmd: &str, project_dir: &Path) -> std::io::Result<std::proc
             .arg(cmd)
             .current_dir(project_dir)
             .status()
-    } else if cfg!(windows) {
-        Command::new("cmd")
-            .args(["/C", cmd])
-            .current_dir(project_dir)
-            .status()
     } else {
-        Command::new("sh")
-            .args(["-c", cmd])
+        let (shell, args) = crate::platform::shell_invocation(cmd);
+        Command::new(shell)
+            .args(args)
             .current_dir(project_dir)
             .status()
     }
