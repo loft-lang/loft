@@ -1275,6 +1275,19 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     let free_source = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
     let fresh_dest = raw_tp & crate::keys::COPY_FRESH_DEST != 0;
     let tp = raw_tp & crate::keys::COPY_TP_MASK;
+    // `@FR-Const-Foreign` — the interpreter's twin (`State::do_copy_record`): a VECTOR read
+    // out of a foreign store is copied element by element, as a bind of it copies; its bytes
+    // lie outside the store's own blocks, where the record copy would read a record that is
+    // not there.
+    if let Some(crate::database::Parts::Vector(elem)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+        && (data.store_nr as usize) < stores.allocations.len()
+        && stores.allocations[data.store_nr as usize].is_foreign()
+    {
+        let elem = *elem;
+        stores.vector_add(&to, &data, elem);
+        return;
+    }
     let size = u32::from(stores.size(tp));
     if crate::keys::trace_copy() {
         crate::loft_eprintln!(
