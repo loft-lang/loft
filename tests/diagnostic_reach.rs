@@ -31,6 +31,7 @@
 //! `same_lint_reaches_the_library_author_who_can_fix_it` failing in the other direction.
 //! Both are 0 and loud respectively now.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -43,14 +44,14 @@ fn loft_bin() -> PathBuf {
 fn write_package(root: &Path) {
     let src = root.join("mylib/src");
     let tests = root.join("mylib/tests");
-    std::fs::create_dir_all(&src).expect("src");
-    std::fs::create_dir_all(&tests).expect("tests");
-    std::fs::write(
+    fa::create_dir_all(&src).expect("src");
+    fa::create_dir_all(&tests).expect("tests");
+    fa::write(
         root.join("mylib/loft.toml"),
         "[package]\nname = \"mylib\"\nversion = \"0.1.0\"\ncategories = [\"testing\"]\n",
     )
     .expect("manifest");
-    std::fs::write(
+    fa::write(
         src.join("mylib.loft"),
         // `Thing { a: 1 }` omits two fields; `World` declares two collections over `E`
         // with an unrelated field between them.
@@ -61,7 +62,7 @@ fn write_package(root: &Path) {
          pub fn make() -> Thing {\n  Thing { a: 1 }\n}\n",
     )
     .expect("lib source");
-    std::fs::write(
+    fa::write(
         tests.join("t.loft"),
         "use mylib;\nfn test_make() {\n  t = mylib::make();\n  assert(t.a == 1, \"a\");\n}\n",
     )
@@ -112,7 +113,7 @@ fn same_lint_reaches_the_library_author_who_can_fix_it() {
          scope silences exactly this, because the entry is tests/ and the struct is src/. \
          Got:\n{joined}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
+    fa::remove_dir_all(&tmp).ok();
 }
 
 /// A consumer of that package sees none of it: they cannot edit `src/mylib.loft`.
@@ -124,8 +125,8 @@ fn a_dependencys_lints_do_not_reach_its_consumer() {
     let tmp = tempdir("reach-consumer");
     write_package(&tmp);
     let app = tmp.join("app");
-    std::fs::create_dir_all(&app).expect("app dir");
-    std::fs::write(
+    fa::create_dir_all(&app).expect("app dir");
+    fa::write(
         app.join("app.loft"),
         "use mylib;\nfn main() {\n  t = mylib::make();\n  println(\"{t.a}\");\n}\n",
     )
@@ -150,7 +151,7 @@ fn a_dependencys_lints_do_not_reach_its_consumer() {
         String::from_utf8_lossy(&out.stdout).contains('1'),
         "the program must still have RUN — a silenced diagnostic is not a silenced program"
     );
-    std::fs::remove_dir_all(&tmp).ok();
+    fa::remove_dir_all(&tmp).ok();
 }
 
 /// The consumer's OWN code still lints. The gate is about whose file the caret lands in,
@@ -160,8 +161,8 @@ fn a_consumers_own_code_still_lints() {
     let tmp = tempdir("reach-own");
     write_package(&tmp);
     let app = tmp.join("app");
-    std::fs::create_dir_all(&app).expect("app dir");
-    std::fs::write(
+    fa::create_dir_all(&app).expect("app dir");
+    fa::write(
         app.join("app.loft"),
         "struct Own {\n  a: integer,\n  b: integer\n}\n\
          fn main() {\n  o = Own { a: 1 };\n  println(\"{o.a}\");\n}\n",
@@ -177,7 +178,7 @@ fn a_consumers_own_code_still_lints() {
         joined.contains("omitted-field-zero"),
         "the author's own partial literal must still be advised, got:\n{joined}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
+    fa::remove_dir_all(&tmp).ok();
 }
 
 /// A bare multi-file program: the module BESIDE the entry is the author's own.
@@ -189,12 +190,12 @@ fn a_consumers_own_code_still_lints() {
 #[test]
 fn a_sibling_module_of_a_bare_script_still_lints() {
     let tmp = tempdir("reach-sibling");
-    std::fs::write(
+    fa::write(
         tmp.join("helper1260.loft"),
         "pub struct Side {\n  a: integer,\n  b: integer\n}\n         pub fn side() -> Side {\n  Side { a: 1 }\n}\n",
     )
     .expect("sibling module");
-    std::fs::write(
+    fa::write(
         tmp.join("main.loft"),
         "use helper1260;\nfn main() {\n  println(\"{helper1260::side().a}\");\n}\n",
     )
@@ -209,7 +210,7 @@ fn a_sibling_module_of_a_bare_script_still_lints() {
         joined.contains("omitted-field-zero"),
         "a module beside the entry is the author's own; got:\n{joined}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
+    fa::remove_dir_all(&tmp).ok();
 }
 
 /// An ERROR in a dependency still reaches the consumer: a program that will not run has to
@@ -219,8 +220,8 @@ fn an_error_is_never_dropped_by_reach() {
     let tmp = tempdir("reach-error");
     write_package(&tmp);
     let app = tmp.join("app");
-    std::fs::create_dir_all(&app).expect("app dir");
-    std::fs::write(
+    fa::create_dir_all(&app).expect("app dir");
+    fa::write(
         app.join("app.loft"),
         "use mylib;\nfn main() {\n  println(\"{mylib::make(1, 2, 3).a}\");\n}\n",
     )
@@ -244,7 +245,7 @@ fn an_error_is_never_dropped_by_reach() {
         text.to_lowercase().contains("error"),
         "a call the library cannot satisfy must still be refused, got:\n{text}"
     );
-    std::fs::remove_dir_all(&tmp).ok();
+    fa::remove_dir_all(&tmp).ok();
 }
 
 fn tempdir(tag: &str) -> PathBuf {
@@ -256,6 +257,6 @@ fn tempdir(tag: &str) -> PathBuf {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    std::fs::create_dir_all(&dir).expect("tempdir");
+    fa::create_dir_all(&dir).expect("tempdir");
     dir
 }

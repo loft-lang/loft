@@ -15,6 +15,7 @@
 
 #![cfg(not(target_os = "windows"))]
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::os::unix::process::CommandExt;
@@ -24,7 +25,7 @@ use std::time::Duration;
 
 fn test_tmp() -> PathBuf {
     let d = std::env::temp_dir().join("loft_eh_http");
-    let _ = std::fs::create_dir_all(&d);
+    let _ = fa::create_dir_all(&d);
     d
 }
 
@@ -99,7 +100,7 @@ fn main() {{
 
 fn run_fixture(name: &str, ws_port: u16, url: &str) -> String {
     let prog = test_tmp().join(format!("{name}_{}.loft", std::process::id()));
-    std::fs::write(&prog, fixture(ws_port, url)).unwrap();
+    fa::write(&prog, fixture(ws_port, url)).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut cmd = Command::new(loft_bin());
     cmd.process_group(0);
@@ -129,7 +130,7 @@ fn run_fixture(name: &str, ws_port: u16, url: &str) -> String {
 /// The invariant probe: a 400 ms upstream while 2 ms ticks keep flowing.
 #[test]
 fn http_fetch_completes_as_event_without_stalling_ticks() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -163,7 +164,7 @@ fn http_fetch_completes_as_event_without_stalling_ticks() {
 /// event (the loop decides what that means) — it never throws or blocks.
 #[test]
 fn http_fetch_error_is_a_negative_status_event() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }

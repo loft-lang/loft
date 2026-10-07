@@ -9,6 +9,7 @@
 //! pins the EMISSION — which appends earn the early mint, and that every declining
 //! shape (a read after the append, an `out` read in between, an append under an `if`
 //! arm) keeps the temp-store build — and the switch (`LOFT_NO_ELEMENT_FIRST=1`).
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -44,12 +45,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 fn counts(rust: &str) -> HashMap<String, usize> {
@@ -83,7 +84,7 @@ fn each_cell_mints_exactly_the_elements_predicted() {
             .unwrap_or_else(|| panic!("{name} was not emitted"));
         assert_eq!(g, *mints, "{name}: elements minted at a declaration site");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -95,7 +96,7 @@ fn the_switch_restores_the_temp_store_build() {
         0,
         "under LOFT_NO_ELEMENT_FIRST=1 every literal field keeps its temp-store build"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 /// @PLN164 E-2 — the element-first build reaches a record's COLLECTION FIELD and a temp a CALL
@@ -168,7 +169,7 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
         rust.contains("= n_mkpts(cell, var_n, DbRef { store_nr: var__elm_1.store_nr, rec: var__elm_1.rec, pos: var__elm_1.pos + 24 });"),
         "g1's call builds into the element"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     let off = emit(
         &src,
         &std::env::temp_dir().join("loft_element_place_off.rs"),
@@ -179,5 +180,5 @@ fn a_parameter_collection_and_a_call_take_the_element_first_build() {
         0,
         "under LOFT_NO_ELEMENT_PLACE=1 no parameter collection or call takes the build"
     );
-    let _ = std::fs::remove_file(std::env::temp_dir().join("loft_element_place_off.rs"));
+    let _ = fa::remove_file(std::env::temp_dir().join("loft_element_place_off.rs"));
 }

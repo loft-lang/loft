@@ -16,12 +16,13 @@
 //!   to interp still anchors at the program dir).
 
 use loft::compile;
+use loft::file_access as fa;
 use loft::parser::Parser;
 use loft::state::State;
 
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -52,11 +53,11 @@ fn run_interp(src: &str, name: &str) -> Option<String> {
 #[test]
 fn f11_2_listing_survives_a_dangling_symlink() {
     let dir = test_tmp().join(format!("f11_dirlist_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("a.txt"), "a").unwrap();
-    std::os::unix::fs::symlink("/nonexistent_f11_target", dir.join("b_dangle")).unwrap();
-    std::fs::write(dir.join("c.txt"), "c").unwrap();
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).unwrap();
+    fa::write(dir.join("a.txt"), "a").unwrap();
+    fa::symlink("/nonexistent_f11_target", dir.join("b_dangle")).unwrap();
+    fa::write(dir.join("c.txt"), "c").unwrap();
 
     let src = format!(
         r#"fn main() {{
@@ -68,7 +69,7 @@ fn f11_2_listing_survives_a_dangling_symlink() {
     );
     let err = run_interp(&src, "<f11-2>");
     assert!(err.is_none(), "listing must be complete: {err:?}");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
@@ -81,16 +82,16 @@ fn f11_4_driver_mode_anchors_at_the_program_dir() {
             "release"
         }
     ));
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("skipping: loft binary not built");
         return;
     }
     let dir = test_tmp().join(format!("f11_anchor_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).unwrap();
     let prog = dir.join("anchor_prog.loft");
     let marker = format!("f11_marker_{}.txt", std::process::id());
-    std::fs::write(
+    fa::write(
         &prog,
         format!(r#"fn main() {{ file("{marker}").write("anchored"); }}"#),
     )
@@ -106,13 +107,13 @@ fn f11_4_driver_mode_anchors_at_the_program_dir() {
         .expect("run loft");
     assert!(status.success(), "program must run clean");
     assert!(
-        dir.join(&marker).exists(),
+        fa::exists(dir.join(&marker)),
         "the marker must land in the program's dir ({})",
         dir.display()
     );
     assert!(
-        !std::path::Path::new("/tmp").join(&marker).exists(),
+        !fa::exists(std::path::Path::new("/tmp").join(&marker)),
         "the marker must NOT land at the artifact anchor (/tmp)"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

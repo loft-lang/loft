@@ -10,14 +10,15 @@
 // doc/claude/plans/25-nullable-sequences/implementation-steps.md § Phase 3 / DN4
 // and doc/claude/formal/types.md § DN4.
 
+use loft::file_access as fa;
 use std::io::Write;
 use std::process::Command;
 
 fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_dn4");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(name);
-    std::fs::File::create(&path)
+    fa::create(&path)
         .expect("create probe")
         .write_all(src.as_bytes())
         .expect("write probe");

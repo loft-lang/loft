@@ -10,6 +10,7 @@
 
 use loft::doc_catalogue::{self, GROUPS, MAINTAINERS_GROUP};
 use loft::doc_render::{self, Block, Item, Span};
+use loft::file_access as fa;
 use std::collections::HashMap;
 
 #[test]
@@ -81,7 +82,7 @@ fn a_body_is_blocks_and_its_keys_comment_is_not_text() {
 
 #[test]
 fn the_embedded_catalogue_is_the_committed_mirror() {
-    let mirror = std::fs::read_to_string("index/features.json").expect("index/features.json");
+    let mirror = fa::read_to_string("index/features.json").expect("index/features.json");
     let parsed = doc_catalogue::parse(&mirror);
     let embedded = doc_catalogue::entries();
     assert!(
@@ -150,7 +151,7 @@ fn an_entrys_example_is_the_program_its_example_test_runs() {
     let mut bad = Vec::new();
     for e in doc_catalogue::entries() {
         let path = format!("tests/docs/features/{}.loft", e.tag);
-        let Ok(file) = std::fs::read_to_string(&path) else {
+        let Ok(file) = fa::read_to_string(&path) else {
             continue;
         };
         // The generator writes a three-line header, then the fence's text and a newline.
@@ -211,7 +212,7 @@ fn every_back_end_shows_the_same_words() {
         .collect();
     files.sort();
     for f in files {
-        let src = std::fs::read_to_string(&f).expect("a stdlib file");
+        let src = fa::read_to_string(&f).expect("a stdlib file");
         let mut doc: Vec<&str> = Vec::new();
         for line in src.lines() {
             if let Some(d) = line.trim_start().strip_prefix("///") {

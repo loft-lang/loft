@@ -30,6 +30,7 @@
 //! actually fail — a green sweep is only evidence once the detector is known to
 //! fire (engineering-rigor: a silent sentinel needs a positive control).
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -241,7 +242,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
         .env("LOFT_TIMEOUT", "180")
         .output()
         .unwrap_or_else(|e| panic!("failed to spawn loft --native-wasm: {e}"));
-    if compile.status.code() != Some(0) || !out.exists() {
+    if compile.status.code() != Some(0) || !fa::exists(&out) {
         return Some(ModeRun {
             stdout: String::from_utf8_lossy(&compile.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&compile.stderr).into_owned(),
@@ -252,7 +253,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
         .arg(&out)
         .output()
         .unwrap_or_else(|e| panic!("failed to run wasmtime: {e}"));
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     Some(ModeRun {
         stdout: String::from_utf8_lossy(&run.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&run.stderr).into_owned(),
@@ -345,7 +346,7 @@ fn wasm_opt_out(path: &Path) -> Option<String> {
 /// what counts as the header.  A marker must sit in the leading comment block: an opt-out
 /// buried beside the code it excuses is one a reader of the file will not see.
 fn marker(path: &Path, tag: &str) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = fa::read_to_string(path).ok()?;
     text.lines()
         .take_while(|l| l.trim_start().starts_with("//") || l.trim().is_empty())
         .find_map(|l| l.split_once(tag).map(|(_, why)| why.trim().to_string()))
@@ -425,7 +426,7 @@ fn oracle_corpus_agrees_across_backends() {
         // ever report agreement.  A statically-rejected program is exempt because it
         // never runs; nothing else is.
         if static_reject_opt_out(&path).is_none()
-            && !std::fs::read_to_string(&path).is_ok_and(|t| t.contains("assert("))
+            && !fa::read_to_string(&path).is_ok_and(|t| t.contains("assert("))
         {
             d.push(
                 "has no `assert` — it can only report that the backends AGREE, which two \
@@ -464,7 +465,7 @@ fn oracle_corpus_agrees_across_backends() {
         if let Some(twin) = twin_of(&path) {
             let twin_path = path.with_file_name(&twin);
             assert!(
-                twin_path.exists(),
+                fa::exists(&twin_path),
                 "{name} declares `@ORACLE_TWIN: {twin}`, which is not in tests/oracle/"
             );
             let t = run_mode("--interpret", &twin_path, &[]);

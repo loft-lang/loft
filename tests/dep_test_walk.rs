@@ -23,6 +23,7 @@
 //! (skip the subtree) silently drops everything reachable only through it, and a skip is
 //! asked for because a package is broken here, not because its dependencies are.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,8 +32,8 @@ fn loft_bin() -> PathBuf {
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A package that answers `label` from `who()`, with a test asserting exactly that.
@@ -74,7 +75,7 @@ struct Fixture {
 
 fn fixture(tag: &str) -> Fixture {
     let base = std::env::temp_dir().join(format!("loft_dep_walk_{tag}"));
-    let _ = std::fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
     let home = base.join("home");
     let reg = home.join(".loft/registry");
     let proj = base.join("proj");
@@ -201,7 +202,7 @@ fn an_explicit_lock_outranks_the_working_copy() {
 #[test]
 fn with_no_lockfile_only_path_and_sibling_deps_resolve() {
     let fx = fixture("nolock");
-    std::fs::remove_file(fx.root.join("loft.lock")).expect("drop the lock");
+    fa::remove_file(fx.root.join("loft.lock")).expect("drop the lock");
     let (out, code) = run(&fx, &[]);
     assert!(out.contains("testing sibling"), "{out}");
     assert!(

@@ -11,6 +11,7 @@
 //! Every cell is its own program, so one cell's report cannot be another's: the logger keys
 //! its rate limit by (file, line), and on `--native` the line is the running function's.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -25,8 +26,8 @@ fn run(name: &str, body: &str, backend: &str) -> (String, String) {
         backend.trim_start_matches('-'),
         std::process::id()
     ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
     let source = format!(
         "struct P {{ x: integer, t: text }}\n\
          struct H {{ k: integer, v: integer }}\n\
@@ -42,10 +43,10 @@ fn run(name: &str, body: &str, backend: &str) -> (String, String) {
          }}\n"
     );
     let script = dir.join(format!("{name}.loft"));
-    std::fs::write(&script, source).expect("write script");
+    fa::write(&script, source).expect("write script");
     let log_path = dir.join("log.txt");
     let conf = format!("[log]\nfile = {}\nlevel = info\n", log_path.display());
-    std::fs::write(dir.join("log.conf"), conf).expect("write log.conf");
+    fa::write(dir.join("log.conf"), conf).expect("write log.conf");
     let out = Command::new(loft_bin())
         .arg(backend)
         .arg(&script)
@@ -53,8 +54,8 @@ fn run(name: &str, body: &str, backend: &str) -> (String, String) {
         .env("LOFT_TIMEOUT", "240")
         .output()
         .expect("invoke loft");
-    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(&dir);
+    let log = fa::read_to_string(&log_path).unwrap_or_default();
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         out.status.success(),
         "{name} {backend}: exit {:?}\n{}",

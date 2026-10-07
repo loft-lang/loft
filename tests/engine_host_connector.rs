@@ -10,6 +10,7 @@
 //! its conflation slots (`udp=true`), events round-trip over WS, and
 //! `run_client` RETURNS when the server goes away.
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -29,7 +30,7 @@ mod common;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -137,12 +138,12 @@ fn harness_env_skip(out: &std::process::Output) -> Option<String> {
 #[test]
 fn connector_auto_path_end_to_end() {
     let port = common::bind_port(PORT_BASE);
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let server_prog = test_tmp().join(format!("eh_conn_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -165,7 +166,7 @@ fn main() {{
     )
     .unwrap();
     let client_prog = test_tmp().join(format!("eh_conn_cli_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &client_prog,
         format!(
             r#"
@@ -248,8 +249,8 @@ fn main() {{
     wait_for(&rx, "client: disconnected", 10);
     wait_for(&rx, "client: loop exited", 10);
 
-    let _ = std::fs::remove_file(&server_prog);
-    let _ = std::fs::remove_file(&client_prog);
+    let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
 }
 
 /// Priority keyframes: a sync sample promoted to must-deliver survives a
@@ -262,13 +263,13 @@ fn main() {{
 // @speed 7.6
 #[test]
 fn keyframes_survive_total_datagram_loss() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let port = common::bind_port(18090);
     let server_prog = test_tmp().join(format!("eh_kf_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -292,7 +293,7 @@ fn main() {{
     )
     .unwrap();
     let client_prog = test_tmp().join(format!("eh_kf_cli_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &client_prog,
         format!(
             r#"
@@ -388,8 +389,8 @@ fn main() {{
         }
     }
 
-    let _ = std::fs::remove_file(&server_prog);
-    let _ = std::fs::remove_file(&client_prog);
+    let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
 }
 
 /// Minimal masked-client WS for the S6 push driver (16-bit length frames —
@@ -481,7 +482,7 @@ fn assert_bundle_describes_this_tree() {
         return;
     };
     let want = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let have = std::fs::read_to_string(root.join("doc/pkg-src.stamp"))
+    let have = fa::read_to_string(root.join("doc/pkg-src.stamp"))
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -524,7 +525,7 @@ fn s6_fnv64(s: &str) -> String {
 // @speed 27.1
 #[test]
 fn s6_browser_swap_under_living_page() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -544,7 +545,8 @@ fn s6_browser_swap_under_living_page() {
         .output()
         .is_ok_and(|o| o.status.success());
     let harness = root.join("tools/html_render_check.mjs");
-    if !chrome_ok || !node_ok || !harness.exists() || !root.join("doc/pkg/loft.js").exists() {
+    if !chrome_ok || !node_ok || !fa::exists(&harness) || !fa::exists(root.join("doc/pkg/loft.js"))
+    {
         eprintln!("SKIP: chromium/node/harness/bundle missing");
         return;
     }
@@ -554,7 +556,7 @@ fn s6_browser_swap_under_living_page() {
     // The relay server: ticks the sync class; relays "pushblob:" payloads
     // verbatim to every client (the bulk-channel role — content-agnostic).
     let server_prog = test_tmp().join(format!("eh_s6_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -750,7 +752,7 @@ fn main() {{
     let _ = http.wait();
     if let Some(reason) = harness_env_skip(&out) {
         eprintln!("{reason}");
-        let _ = std::fs::remove_file(&server_prog);
+        let _ = fa::remove_file(&server_prog);
         return;
     }
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -759,7 +761,7 @@ fn main() {{
         out.status.success(),
         "browser swap failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let _ = std::fs::remove_file(&server_prog);
+    let _ = fa::remove_file(&server_prog);
 }
 
 /// @PLN18 phase 07 acceptance — the ONE-SCRIPT differential: the same loft
@@ -771,7 +773,7 @@ fn main() {{
 // @speed 13.4
 #[test]
 fn browser_kernel_one_script_differential() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -791,7 +793,8 @@ fn browser_kernel_one_script_differential() {
         .output()
         .is_ok_and(|o| o.status.success());
     let harness = root.join("tools/html_render_check.mjs");
-    if !chrome_ok || !node_ok || !harness.exists() || !root.join("doc/pkg/loft.js").exists() {
+    if !chrome_ok || !node_ok || !fa::exists(&harness) || !fa::exists(root.join("doc/pkg/loft.js"))
+    {
         eprintln!("SKIP: chromium/node/harness/bundle missing");
         return;
     }
@@ -799,7 +802,7 @@ fn browser_kernel_one_script_differential() {
 
     let port = common::bind_port(18105);
     let server_prog = test_tmp().join(format!("eh_diff_srv_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &server_prog,
         format!(
             r#"
@@ -855,7 +858,7 @@ fn main() {{
 "#
     );
     let client_prog = test_tmp().join(format!("eh_diff_cli_{}.loft", std::process::id()));
-    std::fs::write(&client_prog, &client_src).unwrap();
+    fa::write(&client_prog, &client_src).unwrap();
     let expect = [
         "t:connected",
         "t:event 7:hi",
@@ -974,6 +977,6 @@ fn main() {{
         "browser-kernel differential failed.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 
-    let _ = std::fs::remove_file(&server_prog);
-    let _ = std::fs::remove_file(&client_prog);
+    let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
 }

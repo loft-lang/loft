@@ -15,6 +15,7 @@
 //! reader closure + a writer closure crashes; struct-held state is the correct
 //! idiom and works).
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
@@ -35,7 +36,7 @@ mod common;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -239,7 +240,7 @@ fn s3_await_stderr(ws: &TcpStream, last: &mut i64, path: &std::path::Path, needl
     let deadline = vm_deadline(15);
     loop {
         s3_ping(ws, last);
-        if std::fs::read_to_string(path)
+        if fa::read_to_string(path)
             .unwrap_or_default()
             .contains(needle)
         {
@@ -254,7 +255,7 @@ fn s3_await_stderr(ws: &TcpStream, last: &mut i64, path: &std::path::Path, needl
 }
 
 fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return S2Run {
             replies: Vec::new(),
@@ -263,10 +264,10 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     }
     let decl_v0 = "fn bump_events(w: W) -> integer";
     let prog = test_tmp().join(format!("eh_s3_{port}_{}.loft", std::process::id()));
-    std::fs::write(&prog, s3_fixture(port, decl_v0, "w.events = w.events + 1;")).unwrap();
+    fa::write(&prog, s3_fixture(port, decl_v0, "w.events = w.events + 1;")).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s3_{port}_{}.err", std::process::id()));
-    let err_file = std::fs::File::create(&err_path).unwrap();
+    let err_file = fa::create(&err_path).unwrap();
     let mut cmd = Command::new(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_RELOAD", "1");
@@ -294,7 +295,7 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     let mut last = 0i64;
     assert_eq!(s3_ping(&ws, &mut last), 1, "original body steps by 1");
     // Good edit: the step becomes +100; the world counter continues.
-    std::fs::write(
+    fa::write(
         &prog,
         s3_fixture(port, decl_v0, "w.events = w.events + 100;"),
     )
@@ -303,7 +304,7 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     // Broken edit: a real parse ERROR (the lenient parser downgrades a
     // missing operand to warning + null, so use an unknown name).  Sync on
     // the refusal line, then prove the +100 body still serves.
-    std::fs::write(
+    fa::write(
         &prog,
         s3_fixture(port, decl_v0, "w.events = w.events + nosuchvar;"),
     )
@@ -315,7 +316,7 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
         "broken edit must not change the body"
     );
     // Signature change: rejected; the +100 body still serves.
-    std::fs::write(
+    fa::write(
         &prog,
         s3_fixture(
             port,
@@ -331,9 +332,9 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
         "sig change must not change the body"
     );
     drop(_guard); // kill now so the stderr file is complete
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&prog);
-    let _ = std::fs::remove_file(&err_path);
+    let stderr = fa::read_to_string(&err_path).unwrap_or_default();
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
     S2Run {
         replies: vec![last.to_string()],
         stderr,
@@ -478,7 +479,7 @@ impl Drop for S5Hygiene {
 // @speed 1.8
 #[test]
 fn s5_native_swap_under_running_world() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -495,10 +496,10 @@ fn s5_native_swap_under_running_world() {
     // and runners (macOS CI refused it — forensics pending); a temp script
     // is deterministic everywhere this unix-only suite runs.
     let bad_bin = test_tmp().join(format!("eh_s5_false_{port}.sh"));
-    std::fs::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
+    fa::write(&bad_bin, "#!/bin/sh\nexit 1\n").unwrap();
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&bad_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        fa::set_permissions(&bad_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let bad_bin = bad_bin.to_string_lossy().into_owned();
     let fixture = |ver: &str| {
@@ -545,10 +546,10 @@ fn main() {{
         )
     };
     let prog = test_tmp().join(format!("eh_s5_{port}.loft"));
-    std::fs::write(&prog, fixture("v1")).unwrap();
+    fa::write(&prog, fixture("v1")).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s5_{port}.err"));
-    let err_file = std::fs::File::create(&err_path).unwrap();
+    let err_file = fa::create(&err_path).unwrap();
     let mut cmd = Command::new(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_FLIP", "1")
@@ -567,7 +568,7 @@ fn main() {{
         .expect("spawn kernel");
     let _guard = Guard(Some(child));
 
-    let stderr_now = || std::fs::read_to_string(&err_path).unwrap_or_default();
+    let stderr_now = || fa::read_to_string(&err_path).unwrap_or_default();
     let mut count = 0i64; // every event bumps the world counter
     let ws = ws_connect(port);
     let ask = |ws: &TcpStream, msg: &str, count: &mut i64| -> String {
@@ -602,7 +603,7 @@ fn main() {{
         badswap,
         "badswap:true",
         "swap_start must accept the test's false-binary; server stderr:\n{}",
-        std::fs::read_to_string(&err_path).unwrap_or_default()
+        fa::read_to_string(&err_path).unwrap_or_default()
     );
     let r = ask(&ws, "b", &mut count);
     assert!(
@@ -616,7 +617,7 @@ fn main() {{
     );
 
     // S3+S4: live edit, then background rebuild to ready.
-    std::fs::write(&prog, fixture("v2")).unwrap();
+    fa::write(&prog, fixture("v2")).unwrap();
     assert_eq!(ask(&ws, "rebuild", &mut count), "rebuild:true");
     let deadline = vm_deadline(300);
     loop {
@@ -707,8 +708,8 @@ fn main() {{
         "the swap must reset the dispatch tier:\n{after}"
     );
     drop(_guard);
-    let _ = std::fs::remove_file(&prog);
-    let _ = std::fs::remove_file(&err_path);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
 }
 
 /// @PLN18 08-S5 (connector half) — swap a CLIENT process under its running
@@ -723,7 +724,7 @@ fn main() {{
 /// the old one's value.
 #[test]
 fn s5_client_swap_under_running_world() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -734,7 +735,7 @@ fn s5_client_swap_under_running_world() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     let srv_prog = test_tmp().join(format!("eh_s5c_srv_{port}.loft"));
-    std::fs::write(
+    fa::write(
         &srv_prog,
         format!(
             r#"
@@ -766,7 +767,7 @@ fn main() {{
     let _sguard = Guard(Some(server));
 
     let cli_prog = test_tmp().join(format!("eh_s5c_cli_{port}.loft"));
-    std::fs::write(
+    fa::write(
         &cli_prog,
         format!(
             r#"
@@ -800,8 +801,8 @@ fn main() {{
         .arg(root.join("lib"))
         .arg(&cli_prog)
         .current_dir(&root)
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
+        .stdout(Stdio::from(fa::create(&out_path).unwrap()))
+        .stderr(Stdio::from(fa::create(&err_path).unwrap()))
         .spawn()
         .expect("spawn client");
     let mut cguard = Guard(Some(client));
@@ -809,7 +810,7 @@ fn main() {{
     // Scrape the FIRST control endpoint.
     let deadline = vm_deadline(120);
     let ctl_port: u16 = loop {
-        let out = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let out = fa::read_to_string(&out_path).unwrap_or_default();
         if let Some(rest) = out.split("debug control on 127.0.0.1:").nth(1) {
             break rest
                 .split_whitespace()
@@ -857,7 +858,7 @@ fn main() {{
     // positive value) and announced its own endpoint.
     let deadline = vm_deadline(30);
     let (resumed_ticks, ctl2_port): (i64, u16) = loop {
-        let out = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let out = fa::read_to_string(&out_path).unwrap_or_default();
         let announce2 = out.match_indices("debug control on 127.0.0.1:").nth(1);
         if let (Some(rest), Some((idx, _))) =
             (out.split("client: resumed ticks=").nth(1), announce2)
@@ -884,7 +885,7 @@ fn main() {{
         resumed_ticks > 0,
         "the world must cross the swap (resumed ticks={resumed_ticks})"
     );
-    let out = std::fs::read_to_string(&out_path).unwrap_or_default();
+    let out = fa::read_to_string(&out_path).unwrap_or_default();
     assert!(
         out.contains("client: retired"),
         "swap_retired must fire: {out}"
@@ -894,10 +895,10 @@ fn main() {{
     let ctl2 = ws_connect(ctl2_port);
     ws_send(&ctl2, "D!:quit");
     assert_eq!(ws_recv(&ctl2), "D:quitting");
-    let _ = std::fs::remove_file(&srv_prog);
-    let _ = std::fs::remove_file(&cli_prog);
-    let _ = std::fs::remove_file(&out_path);
-    let _ = std::fs::remove_file(&err_path);
+    let _ = fa::remove_file(&srv_prog);
+    let _ = fa::remove_file(&cli_prog);
+    let _ = fa::remove_file(&out_path);
+    let _ = fa::remove_file(&err_path);
 }
 
 /// @PLN18 08-S7 (connector half) — debug a CLIENT process via its own
@@ -911,7 +912,7 @@ fn main() {{
 /// still serving) -> quit over the channel.
 #[test]
 fn s7_client_debug_over_its_own_endpoint() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -923,7 +924,7 @@ fn s7_client_debug_over_its_own_endpoint() {
 
     // A minimal kernel server for the client to ride against.
     let srv_prog = test_tmp().join(format!("eh_s7c_srv_{port}.loft"));
-    std::fs::write(
+    fa::write(
         &srv_prog,
         format!(
             r#"
@@ -956,7 +957,7 @@ fn main() {{
 
     // The COMPILED debuggable client: tick_step is the breakpoint target.
     let cli_prog = test_tmp().join(format!("eh_s7c_cli_{port}.loft"));
-    std::fs::write(
+    fa::write(
         &cli_prog,
         format!(
             r#"
@@ -993,8 +994,8 @@ fn main() {{
         .arg(root.join("lib"))
         .arg(&cli_prog)
         .current_dir(&root)
-        .stdout(Stdio::from(std::fs::File::create(&out_path).unwrap()))
-        .stderr(Stdio::from(std::fs::File::create(&err_path).unwrap()))
+        .stdout(Stdio::from(fa::create(&out_path).unwrap()))
+        .stderr(Stdio::from(fa::create(&err_path).unwrap()))
         .spawn()
         .expect("spawn client");
     let mut cguard = Guard(Some(client));
@@ -1002,7 +1003,7 @@ fn main() {{
     // Scrape the announced control port (the editor's exact move).
     let deadline = vm_deadline(120);
     let ctl_port: u16 = loop {
-        let out = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let out = fa::read_to_string(&out_path).unwrap_or_default();
         if let Some(rest) = out.split("debug control on 127.0.0.1:").nth(1) {
             break rest
                 .split_whitespace()
@@ -1049,15 +1050,15 @@ fn main() {{
         assert!(Instant::now() < deadline, "client never exited on D!:quit");
         std::thread::sleep(Duration::from_millis(100));
     }
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     assert!(
         stderr.contains("loft-debug: paused in tick_step"),
         "the pause must be real:\n{stderr}"
     );
-    let _ = std::fs::remove_file(&srv_prog);
-    let _ = std::fs::remove_file(&cli_prog);
-    let _ = std::fs::remove_file(&out_path);
-    let _ = std::fs::remove_file(&err_path);
+    let _ = fa::remove_file(&srv_prog);
+    let _ = fa::remove_file(&cli_prog);
+    let _ = fa::remove_file(&out_path);
+    let _ = fa::remove_file(&err_path);
 }
 
 /// @PLN18 08 scenario S8 — THE STANDING DIFFERENTIAL: one meaning scenario
@@ -1072,7 +1073,7 @@ fn main() {{
 // @speed 1.1
 #[test]
 fn s8_standing_four_state_differential() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -1127,10 +1128,10 @@ fn main() {{
 "#
     );
     let prog = test_tmp().join(format!("eh_s8_{port}.loft"));
-    std::fs::write(&prog, &fixture).unwrap();
+    fa::write(&prog, &fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s8_{port}.err"));
-    let err_file = std::fs::File::create(&err_path).unwrap();
+    let err_file = fa::create(&err_path).unwrap();
     let mut cmd = Command::new(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     match mode {
@@ -1213,7 +1214,7 @@ fn main() {{
     reap_port(port); // the swapped kernel outlives the group kill above
 
     // Per-leg positive controls: the tier state must be REAL, not silent.
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     match mode {
         "mixed" => assert!(
             stderr.contains("live-dispatch: n_bump_events"),
@@ -1231,8 +1232,8 @@ fn main() {{
         }
         _ => {}
     }
-    let _ = std::fs::remove_file(&prog);
-    let _ = std::fs::remove_file(&err_path);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
     replies
 }
 
@@ -1260,7 +1261,7 @@ fn scopeguard_kill(stem: String) -> impl Drop {
 // @speed 2.4
 #[test]
 fn s7_debugger_loop_end_to_end() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -1298,10 +1299,10 @@ fn main() {{
         )
     };
     let prog = test_tmp().join(format!("eh_s7_{port}.loft"));
-    std::fs::write(&prog, fixture(1)).unwrap();
+    fa::write(&prog, fixture(1)).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s7_{port}.err"));
-    let err_file = std::fs::File::create(&err_path).unwrap();
+    let err_file = fa::create(&err_path).unwrap();
     let mut cmd = Command::new(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_FLIP", "1")
@@ -1347,7 +1348,7 @@ fn main() {{
 
     // Stage 4: live edit THROUGH the pause (the S3 poll-now finding),
     // structured ack.  The 200 ms reload throttle needs the edit to settle.
-    std::fs::write(&prog, fixture(100)).unwrap();
+    fa::write(&prog, fixture(100)).unwrap();
     std::thread::sleep(Duration::from_millis(350));
     ws_send(&ctl, "D!:reload");
     assert_eq!(ws_recv(&ctl), "D:reload applied");
@@ -1415,15 +1416,15 @@ fn main() {{
     assert_eq!(ws_recv(&ctl2), "D:resumed");
     assert_eq!(ws_recv(&game2), "got:c#201");
 
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     assert!(
         stderr.contains("loft-debug: paused in bump_events"),
         "{stderr}"
     );
     assert!(stderr.contains("loft-swap: world restored"), "{stderr}");
     drop(_guard);
-    let _ = std::fs::remove_file(&prog);
-    let _ = std::fs::remove_file(&err_path);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
 }
 
 /// @PLN18 08 scenario S4 — the background rebuild: the serve host compiles
@@ -1442,7 +1443,7 @@ fn main() {{
 // @speed 2.3
 #[test]
 fn s4_background_rebuild_under_serving_kernel() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -1480,10 +1481,10 @@ fn main() {{
         )
     };
     let prog = test_tmp().join(format!("eh_s4_{port}.loft"));
-    std::fs::write(&prog, fixture(1)).unwrap();
+    fa::write(&prog, fixture(1)).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s4_{port}.err"));
-    let err_file = std::fs::File::create(&err_path).unwrap();
+    let err_file = fa::create(&err_path).unwrap();
     let mut cmd = Command::new(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.process_group(0);
@@ -1514,7 +1515,7 @@ fn main() {{
     // ── Phase 1 (b): a clean unique-content rebuild — a real rustc window
     // with no interference; every poll interval must show tick progress.
     // (The running v0 binary is unaffected: reload is OFF.)
-    std::fs::write(&prog, fixture(unique_step)).unwrap();
+    fa::write(&prog, fixture(unique_step)).unwrap();
     assert_eq!(ask("rebuild"), "rebuild:true");
     let mut last_ticks = ticks(ask("t"));
     let deadline = vm_deadline(300);
@@ -1541,9 +1542,9 @@ fn main() {{
     // is taken at request time, so wherever the edit lands relative to the
     // child's own file read, completion sees drift -> requeue.  The settled
     // content (v0) is already cached -> the requeued build converges fast.
-    std::fs::write(&prog, fixture(unique_step + 1)).unwrap();
+    fa::write(&prog, fixture(unique_step + 1)).unwrap();
     assert_eq!(ask("rebuild"), "rebuild:true");
-    std::fs::write(&prog, fixture(1)).unwrap();
+    fa::write(&prog, fixture(1)).unwrap();
     let deadline = vm_deadline(300);
     loop {
         let st = ask("status");
@@ -1557,7 +1558,7 @@ fn main() {{
         assert!(Instant::now() < deadline, "requeued rebuild never ready");
         std::thread::sleep(Duration::from_millis(300));
     }
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
+    let stderr = fa::read_to_string(&err_path).unwrap_or_default();
     assert!(
         stderr.contains("rebuild stale (source changed during build) — requeued"),
         "the mid-build edit must requeue:\n{stderr}"
@@ -1570,10 +1571,10 @@ fn main() {{
     // file halfway through being rewritten.  Rewriting at once instead lets the child read the
     // settled source and succeed, which never reaches the failure arm.  Before drift was
     // checked ahead of the exit status this read `status:3` and left the source unbuilt.
-    std::fs::write(&prog, "fn main( {").unwrap();
+    fa::write(&prog, "fn main( {").unwrap();
     assert_eq!(ask("rebuild"), "rebuild:true");
     std::thread::sleep(Duration::from_secs(2));
-    std::fs::write(&prog, fixture(1)).unwrap();
+    fa::write(&prog, fixture(1)).unwrap();
     let deadline = vm_deadline(300);
     loop {
         let st = ask("status");
@@ -1592,7 +1593,7 @@ fn main() {{
     let path = artifact.strip_prefix("artifact:").unwrap().to_string();
     assert!(!path.is_empty(), "ready artifact must have a path");
     assert!(
-        std::path::Path::new(&path).exists(),
+        fa::exists(std::path::Path::new(&path)),
         "artifact must exist: {path}"
     );
     // (a) repeat request on unchanged source: instant cache hit, SAME path.
@@ -1612,8 +1613,8 @@ fn main() {{
         "unchanged source must yield the SAME artifact (hash-stable)"
     );
     drop(_guard);
-    let _ = std::fs::remove_file(&prog);
-    let _ = std::fs::remove_file(&err_path);
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
 }
 
 /// @PLN18 08 scenario S2 — the debugger pushes one fn to the interpreter,
@@ -1649,7 +1650,7 @@ struct S2Run {
 }
 
 fn run_s2_scenario(port: u16, interpret: bool) -> S2Run {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return S2Run {
             replies: Vec::new(),
@@ -1657,7 +1658,7 @@ fn run_s2_scenario(port: u16, interpret: bool) -> S2Run {
         };
     }
     let prog = test_tmp().join(format!("eh_s2_{port}_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             r#"
@@ -1693,7 +1694,7 @@ fn main() {{
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s2_{port}_{}.err", std::process::id()));
-    let err_file = std::fs::File::create(&err_path).unwrap();
+    let err_file = fa::create(&err_path).unwrap();
     let mut cmd = Command::new(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
@@ -1736,19 +1737,19 @@ fn main() {{
         if interpret { "interp" } else { "native+flip" }
     );
     drop(_guard); // kill now so the stderr file is complete
-    let stderr = std::fs::read_to_string(&err_path).unwrap_or_default();
-    let _ = std::fs::remove_file(&prog);
-    let _ = std::fs::remove_file(&err_path);
+    let stderr = fa::read_to_string(&err_path).unwrap_or_default();
+    let _ = fa::remove_file(&prog);
+    let _ = fa::remove_file(&err_path);
     S2Run { replies, stderr }
 }
 
 fn run_kernel_scenario(port: u16, interpret: bool) {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let prog = test_tmp().join(format!("eh_kernel_{port}_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             r#"
@@ -1806,7 +1807,7 @@ fn main() {{
         stats, "stats:events=3,ticks_pos=true",
         "captures + drift-free ticks live: {stats}"
     );
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 }
 
 /// `run_local` — the standalone windowed-host entry: the SAME client loop
@@ -1816,7 +1817,7 @@ fn main() {{
 /// the `n_kernel_local` typed twin + registration.
 #[test]
 fn run_local_ticks_and_stops_without_a_server() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -1840,7 +1841,7 @@ fn main() {
     for interpret in [true, false] {
         let prog =
             std::env::temp_dir().join(format!("eh_local_{}_{interpret}.loft", std::process::id()));
-        std::fs::write(&prog, fixture).unwrap();
+        fa::write(&prog, fixture).unwrap();
         let mut cmd = Command::new(loft_bin());
         cmd.env("LOFT_OFFLINE", "1");
         if interpret {
@@ -1860,7 +1861,7 @@ fn main() {
             "interpret={interpret}: expected 5 ticks then a clean stop, got:\n{stdout}\n{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let _ = std::fs::remove_file(&prog);
+        let _ = fa::remove_file(&prog);
     }
 }
 
@@ -1873,7 +1874,7 @@ fn main() {
 // @speed 1.3
 #[test]
 fn post_and_stop_in_both_roles() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -1918,7 +1919,7 @@ fn main() {{
                 "eh_post_{tag}_{}_{interpret}.loft",
                 std::process::id()
             ));
-            std::fs::write(&prog, src).unwrap();
+            fa::write(&prog, src).unwrap();
             let mut cmd = Command::new(loft_bin());
             cmd.env("LOFT_OFFLINE", "1");
             if interpret {
@@ -1939,7 +1940,7 @@ fn main() {{
                  then the loop must stop, got:\n{stdout}\n{}",
                 String::from_utf8_lossy(&out.stderr)
             );
-            let _ = std::fs::remove_file(&prog);
+            let _ = fa::remove_file(&prog);
         }
     }
 }
@@ -1954,7 +1955,7 @@ fn main() {{
 // @speed 2.8
 #[test]
 fn s5_local_swap_hands_over() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
@@ -1990,7 +1991,7 @@ fn main() {
 }
 "#;
     let prog = std::env::temp_dir().join(format!("eh_s5local_{}.loft", std::process::id()));
-    std::fs::write(&prog, fixture).unwrap();
+    fa::write(&prog, fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let out = Command::new(loft_bin())
         .env("LOFT_OFFLINE", "1")
@@ -2015,7 +2016,7 @@ fn main() {
         stdout.contains("exited gen=2 retired=false"),
         "the resumed incarnation must run on and exit by itself.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 }
 
 /// F11-3 regression — `parallel_ctx` is program-scoped: a re-entered
@@ -2026,13 +2027,13 @@ fn main() {
 /// kernel died.  Three pings — each runs `par_fold` inside the flipped fn.
 #[test]
 fn s2_flipped_fn_with_par_survives_repeat_dispatch() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let port = common::bind_port(18121);
     let prog = test_tmp().join(format!("eh_f11par_{port}_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             r#"
@@ -2089,7 +2090,7 @@ fn main() {{
             "dispatch {i} (par_fold inside the flipped fn) must keep working"
         );
     }
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 }
 
 // @PLN98 — the debugger driven THROUGH A GAME-SERVER SETUP: a running engine_host
@@ -2101,13 +2102,13 @@ fn main() {{
 // server-side of the browser relay, end-to-end on loopback — no browser needed.
 #[test]
 fn debugger_drives_a_running_game_server_over_websocket() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let port = common::bind_port(19312);
     let prog = test_tmp().join(format!("eh_dbg_{port}_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             r#"
@@ -2187,7 +2188,7 @@ fn main() {{
         recv_until(&ws, "got#").contains("got#7"),
         "the game continued after resume with got#7"
     );
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 }
 
 // @PLN98 P3.4 (item 2) — the SERVER per-name debug RELAY: an agent debugs a
@@ -2199,13 +2200,13 @@ fn main() {{
 // a native WS peer standing in for it).
 #[test]
 fn server_relays_debug_frames_to_a_named_client() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let port = common::bind_port(19318);
     let prog = test_tmp().join(format!("eh_relay_{port}_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             r#"
@@ -2270,7 +2271,7 @@ fn main() {{
         relayed.contains("D:ok bp tick applied-at-client"),
         "the client's reply was relayed back to the agent: {relayed}"
     );
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 }
 
 // ── The browser kernel's native registry ────────────────────────────────────
@@ -2293,10 +2294,10 @@ fn main() {{
 fn browser_kernel_sources() -> (String, String, String) {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     (
-        std::fs::read_to_string(root.join("lib/engine_host/src/engine_host.loft"))
+        fa::read_to_string(root.join("lib/engine_host/src/engine_host.loft"))
             .expect("engine_host.loft"),
-        std::fs::read_to_string(root.join("src/engine_host.rs")).expect("engine_host.rs"),
-        std::fs::read_to_string(root.join("src/native.rs")).expect("native.rs"),
+        fa::read_to_string(root.join("src/engine_host.rs")).expect("engine_host.rs"),
+        fa::read_to_string(root.join("src/native.rs")).expect("native.rs"),
     )
 }
 

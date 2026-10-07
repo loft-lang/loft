@@ -11,6 +11,7 @@
 // Self-skips when the wasm toolchain is unavailable (node / wasm32 target / release binary) —
 // same policy as tests/html_wasm.rs.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -78,18 +79,18 @@ fn run_harness(
         return None;
     }
     let loft_bin = repo_root().join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release`)");
         return None;
     }
 
     let tmp = std::env::temp_dir().join(format!("loft_deliver_{name}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create per-test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create per-test dir");
     let src = tmp.join(format!("{name}.loft"));
     let html = tmp.join(format!("{name}.html"));
     let wasm = tmp.join(format!("{name}.wasm"));
-    std::fs::write(&src, source).expect("write source");
+    fa::write(&src, source).expect("write source");
 
     let status = Command::new(&loft_bin)
         .args([
@@ -104,14 +105,14 @@ fn run_harness(
     assert!(status.success(), "loft --html failed for {name}");
 
     // Extract the embedded wasm (`const wasmB64="…"`), exactly as tests/html_wasm.rs does.
-    let page = std::fs::read_to_string(&html).expect("read html");
+    let page = fa::read_to_string(&html).expect("read html");
     let marker = "const wasmB64=\"";
     let start = page.find(marker).expect("wasmB64 marker") + marker.len();
     let end = start + page[start..].find('"').expect("wasmB64 closing quote");
-    std::fs::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
+    fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
     let harness = repo_root().join(harness_rel);
-    assert!(harness.exists(), "{harness_rel} missing");
+    assert!(fa::exists(&harness), "{harness_rel} missing");
     let out = Command::new("node")
         .arg(&harness)
         .arg(&wasm)
@@ -515,7 +516,7 @@ fn deliver_reads_by_ref_array_synthetic_in_js() {
         return;
     }
     let unit = repo_root().join("tools/reader_array_unit.mjs");
-    assert!(unit.exists(), "tools/reader_array_unit.mjs missing");
+    assert!(fa::exists(&unit), "tools/reader_array_unit.mjs missing");
     let out = Command::new("node")
         .arg(&unit)
         .output()

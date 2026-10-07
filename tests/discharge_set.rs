@@ -10,6 +10,7 @@
 //! itself keeps them (c2), a callee that sets a text into an ELEMENT of the walked vector
 //! keeps nothing (c3), and the switch (`LOFT_NO_NULL_BUFFER_HOIST=1`, which covers the mint
 //! and the set) empties c1.  Read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -35,12 +36,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(push headers, vector headers)`.
@@ -81,7 +82,7 @@ fn each_loop_keeps_exactly_the_headers_predicted() {
             "{name}: (push headers, vector headers)"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 #[test]
@@ -92,5 +93,5 @@ fn the_switch_declines_the_discharging_callees_loop() {
         got["n_c1"].0, 0,
         "with the allowance off, c1's loop holds no push header"
     );
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

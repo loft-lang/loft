@@ -17,6 +17,7 @@
 //! These are subprocess cells for the reason `tests/lease_refuse.rs` gives: the refusal switch is
 //! cached per process.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -40,7 +41,7 @@ fn run_env(tag: &str, body: &str, mode: &str, env: &[(&str, &str)]) -> String {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, format!("{PRELUDE}{body}\n")).expect("write cell");
+    fa::write(&path, format!("{PRELUDE}{body}\n")).expect("write cell");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(mode)
         .arg(&path)
@@ -48,7 +49,7 @@ fn run_env(tag: &str, body: &str, mode: &str, env: &[(&str, &str)]) -> String {
         .envs(env.iter().copied())
         .output()
         .expect("run loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

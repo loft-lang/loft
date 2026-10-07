@@ -22,6 +22,7 @@
 //! `a_refusal_that_stopped_firing_is_caught`, and it is the row that matters: a
 //! guarantee quietly stops being enforced and the suite keeps saying it holds.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -32,10 +33,10 @@ fn loft_bin() -> PathBuf {
 /// Write `src` as a single-file package and run `loft test` over it.
 fn run_file(tag: &str, src: &str) -> (i32, String) {
     let root = std::env::temp_dir().join(format!("loft_1261_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("mkdir");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir");
     let file = root.join("cells.loft");
-    std::fs::write(&file, src).expect("write cells.loft");
+    fa::write(&file, src).expect("write cells.loft");
     let out = Command::new(loft_bin())
         .current_dir(&root)
         .args(["--tests", "cells.loft"])
@@ -48,7 +49,7 @@ fn run_file(tag: &str, src: &str) -> (i32, String) {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     (out.status.code().unwrap_or(-1), text)
 }
 

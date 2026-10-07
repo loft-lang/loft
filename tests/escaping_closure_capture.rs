@@ -30,6 +30,7 @@
 //! (`v: vec<int> deps=[__vdb_1(2)]` beside `__vdb_1: ref(467) OWNS`). Both the free
 //! suppression and the adoption verdict were reading only the named local.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -48,9 +49,9 @@ fn loft_bin() -> PathBuf {
 /// so keying on that alone lets them clobber each other's source.
 fn run(src: &str, backend: &str, tag: &str) -> String {
     let dir = std::env::temp_dir().join(format!("loft1308_{}_{tag}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("p.loft");
-    std::fs::write(&file, src).expect("write probe");
+    fa::write(&file, src).expect("write probe");
     let out = Command::new(loft_bin())
         .arg(backend)
         .arg(&file)
@@ -63,7 +64,7 @@ fn run(src: &str, backend: &str, tag: &str) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     text
 }
 

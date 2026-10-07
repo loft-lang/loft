@@ -24,14 +24,15 @@
 // into a store.  It is kept here as the negative control: a "fix" that
 // regressed it would otherwise pass the vector cases.
 
+use loft::file_access as fa;
 use std::io::Write;
 use std::process::Command;
 
 fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_entry_signature");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(name);
-    std::fs::File::create(&path)
+    fa::create(&path)
         .expect("create probe")
         .write_all(src.as_bytes())
         .expect("write probe");
@@ -229,10 +230,10 @@ fn plain_entry_is_unchanged() {
         .and_then(|l| l.split_whitespace().next())
         .map(std::path::PathBuf::from)
         .expect("LOFT_KEEP_NATIVE_RS should report the generated path");
-    let src = std::fs::read_to_string(&rs).expect("read generated rust");
+    let src = fa::read_to_string(&rs).expect("read generated rust");
     assert!(
         src.contains("    n_main(&cell);\n"),
         "a plain entry must still be called with just the cell"
     );
-    let _ = std::fs::remove_file(&rs);
+    let _ = fa::remove_file(&rs);
 }

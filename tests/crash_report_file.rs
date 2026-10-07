@@ -22,6 +22,7 @@
 
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 
 /// Fault a forked child for real, with `stderr` pointed at `/dev/null`, and
@@ -66,7 +67,7 @@ fn crash_a_child() -> libc::c_int {
 #[test]
 fn crash_diagnostic_survives_a_discarded_stderr() {
     let dir = std::env::temp_dir().join(format!("loft-crash-717-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let target: PathBuf = dir.join("report.txt");
     // SAFETY: this binary is single-threaded at this point (one #[test] per
     // process under nextest, and the fork below happens after this).
@@ -84,7 +85,7 @@ fn crash_diagnostic_survives_a_discarded_stderr() {
     // A run that does not crash leaves nothing behind: the file is created by
     // the handler, not by arming it.
     assert!(
-        !target.exists(),
+        !fa::exists(&target),
         "installing the handler must not create the report file"
     );
 
@@ -104,7 +105,7 @@ fn crash_diagnostic_survives_a_discarded_stderr() {
         "and it dies of the signal that was raised"
     );
 
-    let report = std::fs::read_to_string(&target).unwrap_or_else(|e| {
+    let report = fa::read_to_string(&target).unwrap_or_else(|e| {
         panic!(
             "no crash report at {} — the diagnostic was lost exactly as in #717: {e}",
             target.display()
@@ -125,5 +126,5 @@ fn crash_diagnostic_survives_a_discarded_stderr() {
         );
     }
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

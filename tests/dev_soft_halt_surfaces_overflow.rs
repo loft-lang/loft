@@ -35,16 +35,17 @@
 //! The control tree has no `target/release`, so `have_rustc()` skips its `--native` leg
 //! there; the fixed tree runs both, and the fix is one shared `ops::` function either way.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
 /// Run `src` on `backend`, with the soft-halt flag on or off.
 fn run(backend: &str, src: &str, tag: &str, soft_halt: bool) -> (i32, String, String) {
     let dir = std::env::temp_dir().join(format!("loft_1265_{}_{tag}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("p.loft");
-    std::fs::write(&path, src).expect("write");
+    fa::write(&path, src).expect("write");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
     cmd.args([backend, path.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
@@ -55,7 +56,7 @@ fn run(backend: &str, src: &str, tag: &str, soft_halt: bool) -> (i32, String, St
         cmd.env_remove("LOFT_DEV_SOFT_HALT");
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -88,9 +89,7 @@ fn have_rustc() -> bool {
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
-        && PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target/release")
-            .exists()
+        && fa::exists(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release"))
 }
 
 fn backends() -> Vec<&'static str> {

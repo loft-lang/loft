@@ -23,6 +23,7 @@
 //! audience-demo tool, not a library — so this test stays in the loft
 //! repo, not in any extracted library chunk.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -66,8 +67,7 @@ fn update_gold() -> bool {
 
 /// Decode a PNG into an (rgba, width, height) tuple.
 fn decode_rgba8(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let file =
-        std::fs::File::open(path).unwrap_or_else(|e| panic!("opening {}: {e}", path.display()));
+    let file = fa::open(path).unwrap_or_else(|e| panic!("opening {}: {e}", path.display()));
     let decoder = png::Decoder::new(file);
     let mut reader = decoder
         .read_info()
@@ -195,7 +195,7 @@ fn crystal_editor_gl_matches_gold() {
         String::from_utf8_lossy(&check.stderr)
     );
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
-    let _ = std::fs::remove_file(&shot);
+    let _ = fa::remove_file(&shot);
     let out = Command::new("xvfb-run")
         .args([
             "-a",
@@ -234,7 +234,7 @@ fn crystal_editor_gl_matches_gold() {
         .output()
         .expect("invoke xvfb-run");
 
-    if !shot.exists() {
+    if !fa::exists(&shot) {
         // No framebuffer captured — almost always a missing software-GL
         // context in this environment, not a rendering regression.  Skip.
         skip(&format!(
@@ -247,12 +247,12 @@ fn crystal_editor_gl_matches_gold() {
 
     let gold = root.join("tests/gold").join("crystal-editor-gl.png");
     if update_gold() {
-        std::fs::copy(&shot, &gold).expect("copying new GL gold");
+        fa::copy(&shot, &gold).expect("copying new GL gold");
         eprintln!("UPDATE_GOLD=1: wrote {}", gold.display());
         return;
     }
     assert!(
-        gold.exists(),
+        fa::exists(&gold),
         "GL gold missing: {}\nrun `UPDATE_GOLD=1 cargo test --test crystal_editor_gold`",
         gold.display()
     );

@@ -13,6 +13,7 @@
 //!    tick yields exactly the newest payload, and a stale seq is discarded;
 //! 5. a silent path times out and sends revert to WS transparently.
 
+use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
@@ -162,12 +163,12 @@ fn unstamp(dgram: &str) -> (i64, String) {
 #[test]
 fn udp_sync_channel_end_to_end() {
     let port = common::bind_port(PORT_BASE);
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
     let prog = std::env::temp_dir().join(format!("eh_udp_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             r#"
@@ -321,7 +322,7 @@ fn main() {{
         assert!(Instant::now() < deadline, "beacons never reverted to WS");
     }
 
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 }
 
 /// The auto-path proof on the REAL consumer — `probe_server_kernel.loft`
@@ -334,7 +335,7 @@ fn main() {{
 /// client.
 #[test]
 fn probe_server_poses_ride_the_fastest_path_per_client() {
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("skipping: release loft not built");
         return;
     }
