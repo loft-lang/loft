@@ -4680,12 +4680,135 @@ statement neither writes nor releases p's store before the bindings' last read (
 decline); the absent arm hands up `DbRef::NULL`, which the tag read answers as "no variant",
 so a caller that matches the null variant BY NAME declines.  Profitable where the found value
 holds heap.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy
-and its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  An
-ownership decision for the owner before it is built.  Switch `LOFT_NO_VIEW_RETURN`; trace
+and its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
+ownership question it raised is settled by C122 and @C139: a representation is the compiler's
+wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
 `LOFT_TRACE_VIEW_RETURN` names the declining condition per call site.  Falsifier: the hash
 and `LOFT_NATIVE_LEAK_CHECK=1` on both backends (a view freed as if owned shows as a double
 release); a planted arm that appends to `p.entries` before reading the binding must decline;
 `LOFT_POISON=1` catches a read through a view whose record moved.
+
+### A byte-copy loop is the slice it copies
+
+```
+  (R-SliceBuild) a vector LOCAL v of a scalar element type that is bound to the
+                 empty literal and then filled by ONE loop
+                     for k in 0..n { v += [src[a + k] ?? d]; }
+                 IS the slice src[a..a+n], built by one block copy (OpSliceVector),
+                 when ALL of:
+                 (1) n and a are loop-invariant integers, and a >= 0 and
+                     a + n <= len(src) are PROVEN at the loop — a dominating test
+                     that leaves the function or skips the loop otherwise
+                     (`if a + n > len(src) { return … }`), never assumed;
+                 (2) the body is that one append and nothing else, k is the loop
+                     variable read nowhere else, and the `?? d` arm is unreachable
+                     under (1) — the proof of (1) is what lets it be dropped;
+                 (3) src is a local or a parameter that nothing writes inside the
+                     loop, and the element types of v and src are the same;
+                 (4) v is not read between its binding and the loop.
+                 Declines, keeping the loop: any of (1)-(4) unproved — an unproven
+                 bound keeps every `?? d`, which is the program's answer for an
+                 index past the end.
+```
+
+**In words.**  The decoder's `for k in 0..arg { tb += [bytes[argpos + k] ?? 0]; }` is a
+memcpy written as `arg` appends, each with a bounds test and a null test the guard above it
+already decided.  The values are the slice's exactly when every index is in range, which is
+what (1) proves; (Slice-Value)'s clamping never applies because nothing is clamped.  Reach:
+every byte-copy loop over a checked span (cbor's text and byte strings, binary readers).
+Switch `LOFT_NO_SLICE_BUILD`; trace `LOFT_TRACE_SLICE_BUILD` names the condition each loop
+failed.  Falsifier: cells on both backends with hand-computed contents — the decoder's shape;
+a guard one short (`a + n > len(src) + 1`, must decline and keep the null arm's `d` for the
+last index); src appended to inside the loop (declines); a second statement in the body
+(declines).
+
+### A text made from a span of bytes is made from the span
+
+```
+  (R-TextOfSpan) `text_from_bytes(v)` where v is a vector<u8> LOCAL whose value at
+                 the call is a span src[a..b] — a slice, or a loop (R-SliceBuild)
+                 admits — reads the span in place, and v is never built, when ALL of:
+                 (1) the call is v's only mention after its binding, besides its
+                     release — v is a temporary that exists to be converted;
+                 (2) src is not written between v's binding and the call;
+                 (3) the conversion is the same function on the same bytes:
+                     validity, replacement and the result's length are
+                     text_from_bytes's own, applied to src's bytes a..b.
+                 Declines, building v: a second mention of v, a write to src in
+                 between, a span the analysis cannot name.
+```
+
+**In words.**  The decoder copies the span into `tb` and `text_from_bytes` copies `tb` again:
+two copies and two allocations for one text.  Read from the span, the text is the only copy.
+This removes a temporary (C125) and needs no view.  With (R-SliceBuild) it is the first,
+decision-free step on cbor's `decode` and `check_request`.  Switch `LOFT_NO_TEXT_OF_SPAN`;
+trace `LOFT_TRACE_TEXT_OF_SPAN`.  Falsifier: cells with invalid UTF-8 inside the span (the
+replacement must match the built form's byte for byte), a span at the end of src, the empty
+span, and a write to src between binding and call (declines).
+
+### A decoded text or byte string is a view into the frame
+
+```
+  (R-DecodeView) (@C139) a `text` or `vector<u8>` FIELD f of a record R whose value
+                 at R's construction is a span B[a..b] of a byte vector B — built by
+                 (R-TextOfSpan), (R-SliceBuild) or a slice — holds the SPAN (B's
+                 store, a, b - a) instead of an owned copy, when ALL of:
+                 (1) B is not written from the construction of R to the last read
+                     of f through any holder: no append, assignment, clear, element
+                     write or `&` hand-off of B, and no release of B;
+                 (2) R is CONFINED to frames that hold B: every holder of R — the
+                     local it is bound to, a record or collection it is stored in,
+                     each return that hands it up — lives in a frame whose activation
+                     B outlives.  A return hands R to a caller only where that call
+                     passed B (or a value B is reached from) as an argument, and the
+                     condition is decided over EVERY call site in the unit (R-Escape);
+                     one site that cannot be shown confined declines the function, and
+                     every site keeps owned fields;
+                 (3) no holder lets R cross a boundary: a return out of the frame that
+                     owns B, a store into a collection or field that outlives B, a
+                     native or bridge call, a `par` worker, a placed library, a yield,
+                     a closure capture, a persisted or file-backed store (C135);
+                 (4) f is read only as a VALUE: an equality or ordering test, a
+                     prefix or search test, a length, a per-character or per-byte
+                     read or walk, a format, a copy into an owned slot (which builds
+                     the owned value there).  An assignment to f, an append to it, a
+                     `&f` link or an element write declines;
+                 (5) for a `text` field, the span's bytes ARE the text the owned form
+                     holds: text_from_bytes leaves them unchanged (valid UTF-8, tested
+                     once at construction).  A span that would be converted builds the
+                     owned text, so every read answers what the program as written
+                     answers.
+                 The representation is decided at COMPILE time.  R's type T is given a
+                 twin layout in which each admitted field is a span, and every function
+                 of the confined region that touches T is emitted as a twin over that
+                 layout — the way (R-Callee) emits a twin over its inputs.  No code
+                 outside the region ever sees the twin layout, so no other read of a
+                 `text` or vector field pays a test.  R's release frees no bytes for a
+                 span field; B is released by its owner as before.
+                 Declines, keeping owned fields: any of (1)-(5) unproved; a recursive
+                 type whose twin cannot be closed over the region; a generator.
+```
+
+**In words.**  The Rust reference decodes into `&str` and `&[u8]` slices of the frame; loft
+copies four texts and two byte strings out of it per request to read one key.  C139 permits
+the slice form wherever the results are kept.  Its one invariant is that a span answers what
+the owned copy would, which holds exactly when B outlives the span and does not change under
+it: (1) and (2) are those two facts, (3) lists the places the compiler cannot follow, and (4)
+keeps every use one that reads.  (5) is the one way a span and a copy can differ in content.
+A run-time tag in the field ("owned or span?") was the other representation.  It is
+declined here because every `text` field read in every program would test it (C125).
+
+The ceiling, measured on pluginabi `check_request` (over-9x.md): building no text or byte
+string at all takes the row from 3.95 to 2.54 ms (−36 %); the spans' own bookkeeping comes
+out of that.  Reach: every decoder of a frame read once (cbor's `decode`, the web stack's
+request handlers).  Switch `LOFT_NO_DECODE_VIEW`; trace `LOFT_TRACE_DECODE_VIEW` names the
+holder or site that declined.  Falsifier: `LOFT_HOIST_VERIFY=1` re-reads each span as the
+owned text and compares; cells on both backends with hand-computed values — the
+`check_request` shape; B appended to after decode and before the lookup (declines, value
+right); R stored into a vector that outlives B (declines); invalid UTF-8 in a text span (the
+converted owned text); a decoded value returned from the function that owns B (declines); and
+a planted defect that admits a site writing B must read the wrong bytes under the verify
+switch.
 
 ### Proposed clauses on existing rules
 
