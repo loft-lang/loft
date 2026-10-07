@@ -36,8 +36,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 
   A caller of `spawn` may write `fn show(u: units::Unit)` and read `u.name`; `u.hp`, a
   `units::Unit { … }` literal and a `Blob { seed }` pattern are refused, each naming its cure
-  (`tests/pub_visibility.rs`).  The field, literal and variant refusals are on under
-  `LOFT_PUB_ENFORCE=1` until the published libraries carry their `pub` (D-call-28).
+  (`tests/pub_visibility.rs`).
 - Some names are **reserved** and cannot name a program's function: the words `assert`, `panic`,
   `sizeof` and `debug_assert`, which the language keeps for meanings of its own, and the name of a
   standard-library function that is not a method (`log_info`, `parallel_for`, …).  Names the

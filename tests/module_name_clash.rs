@@ -571,7 +571,7 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     .unwrap();
     fa::write(
         dep.join("src/catalogue.loft"),
-        "pub struct Row { n: integer, tag: text }\n\
+        "pub struct Row { pub n: integer, pub tag: text }\n\
          pub fn make_row() -> Row { Row { n: 41, tag: \"dep\" } }\n",
     )
     .unwrap();
@@ -592,7 +592,7 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     // Same module name, same function name, a DIFFERENT struct behind it.
     fa::write(
         top.join("src/catalogue.loft"),
-        "pub struct Row { label: text, extra: float }\n\
+        "pub struct Row { pub label: text, pub extra: float }\n\
          pub fn make_row() -> Row { Row { label: \"top\", extra: 2.5 } }\n",
     )
     .unwrap();

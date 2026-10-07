@@ -27,8 +27,8 @@
 //! value and an element or member read; each consumer below accepts what fits the place it
 //! hands the value to and refuses what reads the representation.
 //!
-//! Enforced under `LOFT_PUB_ENFORCE=1` and counted under `LOFT_TRACE_VISIBILITY=1` (kind
-//! `abstract`), exactly like the other C140 refusals until @PLN187 step 6 turns them on.
+//! Refused on every build, like the other C140 refusals, and counted under
+//! `LOFT_TRACE_VISIBILITY=1` (kind `abstract`).
 
 use super::{DefType, Level, Parser, Type, Value, diagnostic_format};
 use crate::data::{AliasFact, Data, STD_SOURCE};
@@ -95,9 +95,7 @@ impl Parser {
     /// Is the abstract-alias check live?  Second pass only: a callee or a field may still be
     /// unresolved on the first, and the census and the refusals are the second pass's.
     pub(crate) fn abstract_on(&self) -> bool {
-        let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some());
-        let enforce = crate::env_once!(std::env::var_os("LOFT_PUB_ENFORCE").is_some());
-        !self.first_pass && (trace || enforce)
+        !self.first_pass
     }
 
     /// Is `alias` abstract HERE — a non-`pub` user alias declared in another file?  The one
@@ -892,24 +890,21 @@ impl Parser {
     /// program reads; `what` says how.
     pub(crate) fn refuse_reveal(&mut self, alias: u32, what: &str) {
         let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some());
-        let enforce = crate::env_once!(std::env::var_os("LOFT_PUB_ENFORCE").is_some());
         if alias == 0 || alias >= self.data.definitions() {
             return;
         }
         if trace {
             self.print_census_site("abstract", alias, usize::MAX);
         }
-        if enforce {
-            let def = self.data.def(alias);
-            let name = def.name.clone();
-            let lib = Self::library_of(&def.position.file);
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "`{name}` is abstract outside `{lib}`: {what}.\n  fix: go through `{lib}`'s \
-                 functions, or `{lib}` declares `pub type {name}`"
-            );
-        }
+        let def = self.data.def(alias);
+        let name = def.name.clone();
+        let lib = Self::library_of(&def.position.file);
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{name}` is abstract outside `{lib}`: {what}.\n  fix: go through `{lib}`'s \
+             functions, or `{lib}` declares `pub type {name}`"
+        );
     }
 
     /// The parameters of the function or lambda whose body is about to be parsed, seeded with

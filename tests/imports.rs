@@ -912,7 +912,7 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
     let fac = pkg(
         "fac",
         "use inner;\npub fn mk() -> inner::Thing { inner::Thing { a: 3 } }\n",
-        "pub struct Thing { a: integer }\n",
+        "pub struct Thing { pub a: integer }\n",
     );
     let fac2 = pkg(
         "fac2",
@@ -922,7 +922,7 @@ fn a_name_a_facade_keeps_names_the_facade_and_a_cure_that_compiles() {
     let facp = pkg(
         "facp",
         "use inner;\npub use inner::(Thing);\npub fn mk() -> inner::Thing { inner::Thing { a: 3 } }\n",
-        "pub struct Thing { a: integer }\n",
+        "pub struct Thing { pub a: integer }\n",
     );
     let run = |libs: &[&std::path::Path], program: &str| {
         let src = tmp.join("prog.loft");
@@ -1006,7 +1006,7 @@ fn an_unimported_type_both_constructed_and_annotated_names_the_import_cure() {
     fa::create_dir_all(&libs).expect("libs");
     fa::write(
         libs.join("lat.loft"),
-        "pub struct Hex { q: integer, r: integer }\n\
+        "pub struct Hex { pub q: integer, pub r: integer }\n\
          pub fn nb(h: Hex, d: integer) -> Hex { Hex { q: h.q + d, r: h.r } }\n",
     )
     .expect("lat");
@@ -1140,7 +1140,7 @@ fn a_name_two_imports_deep_names_the_library_that_has_it() {
         ),
         (
             "deep",
-            "pub struct Deep { d: integer }\npub struct Pair { p: integer }\n\
+            "pub struct Deep { pub d: integer }\npub struct Pair { p: integer }\n\
              pub fn make_deep(n: integer) -> Deep { Deep { d: n * 10 } }\n\
              pub const DEPTH: integer = 9;\n",
         ),

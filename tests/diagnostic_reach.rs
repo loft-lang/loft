@@ -57,7 +57,7 @@ fn write_package(root: &Path) {
         "pub struct E {\n  id: integer,\n  name: text\n}\n\
          pub struct World {\n  entities: vector<E>,\n  tick: integer,\n  \
          spawn_index: hash<E[id]>\n}\n\
-         pub struct Thing {\n  a: integer,\n  b: integer,\n  c: integer\n}\n\
+         pub struct Thing {\n  pub a: integer,\n  b: integer,\n  c: integer\n}\n\
          pub fn make() -> Thing {\n  Thing { a: 1 }\n}\n",
     )
     .expect("lib source");

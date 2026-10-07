@@ -4,45 +4,45 @@ schema_version = 1
 
 [[package]]
 name = "web"
-version = "0.4.2"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.2/web-0.4.2.tar.gz"
-sha256 = "44d0469d0ecc3ca08006b80d4c507e8c2a4005c650e01fa59ca3a866da123e25"
+version = "0.4.5"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.5/web-0.4.5.tar.gz"
+sha256 = "11beaa8103bb9fcbb8f9616ff0e4d9acbf58979a735fe9f9535489d881046944"
 source = "registry"
 
 [[package]]
 name = "server"
-version = "0.7.1"
-url = "https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.1/server-0.7.1.tar.gz"
-sha256 = "08bbdc7abcc1fc2e508de942592b3c2875d7aa06c5c6f456c74b20d65bcfd2db"
+version = "0.7.4"
+url = "https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.4/server-0.7.4.tar.gz"
+sha256 = "bd162acac31dc18a153ea4c136aadbc39291516efbc023cbc228dbb4023f6d23"
 source = "registry"
 deps = ["web"]
 
 [[package]]
 name = "gridmesh"
-version = "0.2.4"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gridmesh-v0.2.4/gridmesh-0.2.4.tar.gz"
-sha256 = "fd5dee2e8c2aba51c3e6054ab8df79f2a4d1a2066cbb8bd80fd7f37f65805f73"
+version = "0.2.6"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/gridmesh-v0.2.6/gridmesh-0.2.6.tar.gz"
+sha256 = "01c565805e3abcd94e4679356ff634b0fba042c321a252e6801ce713b96916c9"
 source = "registry"
 
 [[package]]
 name = "graphics"
-version = "0.9.6"
-url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.6/graphics-0.9.6.tar.gz"
-sha256 = "9666c29eda10ed3f66325644861c104aae76eec4692bf01c09b2216029b7154c"
+version = "0.9.10"
+url = "https://github.com/loft-lang/loft-libs-graphics/releases/download/graphics-v0.9.10/graphics-0.9.10.tar.gz"
+sha256 = "4145057b3a83e0da7bfdccca85ee266555cdb4ec2909bb26ed4196fd1d6807ff"
 source = "registry"
 deps = ["glb", "mesh3d"]
 
 [[package]]
 name = "glb"
-version = "0.1.5"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/glb-v0.1.5/glb-0.1.5.tar.gz"
-sha256 = "7bd63cea72d95be855e483287709f68d5223cd93f7342d20fc371e59933ed5d2"
+version = "0.1.6"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/glb-v0.1.6/glb-0.1.6.tar.gz"
+sha256 = "2efe8e615ff4eee689210c6567e9a18ae0b1a769472fc983ef746aff3ea7f128"
 source = "registry"
 deps = ["mesh3d"]
 
 [[package]]
 name = "mesh3d"
-version = "0.1.3"
-url = "https://github.com/loft-lang/loft-libs-assets/releases/download/mesh3d-v0.1.3/mesh3d-0.1.3.tar.gz"
-sha256 = "ee32ff3481c4272fcc1ae8781bf6668a95ba2b351dc702b91bbd8a26552520dc"
+version = "0.1.4"
+url = "https://github.com/loft-lang/loft-libs-assets/releases/download/mesh3d-v0.1.4/mesh3d-0.1.4.tar.gz"
+sha256 = "4ede4eebdf3a93e62751388a4fed31650dedf556f1f5a26b49ae16c5c12c4a2d"
 source = "registry"

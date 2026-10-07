@@ -15,6 +15,8 @@
 #
 # Usage:  scripts/pub_census.sh [out-file]
 #         PUB_CENSUS_TREES="loft" scripts/pub_census.sh   # a subset
+#         PUB_CENSUS_TREES="dir:<project>" scripts/pub_census.sh c.txt   # one project, then
+#             scripts/pub_migrate.py c.txt --tree dir --root <project>   # adds its `pub`
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${PUB_CENSUS_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tmp/loft-pub-census}
