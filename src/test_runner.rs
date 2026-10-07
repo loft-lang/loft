@@ -1928,15 +1928,15 @@ pub(crate) fn run_tests(
                                 native_utils::stage_native_dlls(dir, &native_data);
                             }
                             let run_one = |only: Option<&str>| -> Result<(), String> {
-                                let mut run_cmd = std::process::Command::new(&binary);
+                                let mut run_cmd = Spawn::new(Program::os(&binary));
                                 if let Some(name) = only {
-                                    run_cmd.arg(name);
+                                    run_cmd.push_arg(name);
                                 }
                                 // The program's own path, which the binary does not hold
                                 // (`codegen_runtime::main_file_or`).
                                 let n_main = native_data.def_nr("n_main");
                                 if n_main != u32::MAX {
-                                    run_cmd.env(
+                                    run_cmd.push_env(
                                         "LOFT_NATIVE_MAIN_FILE",
                                         native_data.def(n_main).position().file,
                                     );
@@ -1944,7 +1944,7 @@ pub(crate) fn run_tests(
                                 if std::env::var("LOFT_SOURCE_DIR").is_err()
                                     && let Some(dir) = std::path::Path::new(&abs_file).parent()
                                 {
-                                    run_cmd.env("LOFT_SOURCE_DIR", dir);
+                                    run_cmd.push_env("LOFT_SOURCE_DIR", dir);
                                 }
                                 // Run the native test binary with cwd = source_dir so its
                                 // raw `std::fs` (e.g. imaging's load_png/save_png) anchors
@@ -1956,14 +1956,14 @@ pub(crate) fn run_tests(
                                 if clean_db.program_relative
                                     && let Some(dir) = std::path::Path::new(&abs_file).parent()
                                 {
-                                    run_cmd.current_dir(dir);
+                                    run_cmd = run_cmd.cwd(&fa::PathText::from_os(dir));
                                 }
                                 // The child's output is passed on as it was; its stderr is
                                 // also read for the first `error:` line, which names why
                                 // the test failed.
-                                run_cmd.stdout(std::process::Stdio::inherit());
+                                run_cmd = run_cmd.stdout(std::process::Stdio::inherit());
                                 let out = run_cmd
-                                    .output()
+                                    .run(b"")
                                     .map_err(|e| format!("native run failed: {e}"))?;
                                 let stderr = String::from_utf8_lossy(&out.stderr);
                                 eprint!("{stderr}");

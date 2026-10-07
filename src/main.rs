@@ -4404,8 +4404,17 @@ fn exec_native_binary(
     // re-parses the same sources, so hand it the resolved paths the driver
     // already knows.  Inert unless the binary runs under LOFT_LIVE_FLIP=1;
     // explicit user-set values win.
-    let mut cmd = std::process::Command::new(binary);
-    cmd.args(user_args);
+    // The compiled program dies with this driver (`Tree::Foreground`).  A `loft
+    // prog.loft` run IS its program: when the driver is killed outright — a test harness
+    // reaping its `loft` child, a terminal closing, an OOM kill — the program must not
+    // outlive it holding a port or a terminal, which is exactly what left a listening
+    // engine host behind per test run (they were reparented to the session's `systemd
+    // --user` and so read as live to a `ppid == 1` orphan test).  The same backstop a placed
+    // library's worker arms for itself (`lib_placement::wire::serve`); SIGTERM rather than
+    // SIGKILL so a program with a handler (the profiler's report) gets to run it.  It is
+    // handed the terminal, so it stays in loft's process group: foreground, not owned.
+    let mut cmd = Spawn::new(Program::os(binary)).tree(Tree::Foreground);
+    cmd.push_args(user_args);
     // A test/semantics build bakes no path (`codegen_runtime::main_file_or`): the program's own
     // path arrives here, the one its stack traces and log-config lookup name.  It is the main
     // definition's position when there was a parse, the canonical entry path otherwise — the
@@ -4417,23 +4426,13 @@ fn exec_native_binary(
             || abs_file.to_string(),
             |n| data.expect("checked").def(n).position().file.to_string(),
         );
-    cmd.env("LOFT_NATIVE_MAIN_FILE", &main_file);
-    // The compiled program dies with this driver.  A `loft prog.loft` run IS its
-    // program: when the driver is killed outright — a test harness reaping its
-    // `loft` child, a terminal closing, an OOM kill — the program must not
-    // outlive it holding a port or a terminal, which is exactly what left a
-    // listening engine host behind per test run (they were reparented to the
-    // session's `systemd --user` and so read as live to a `ppid == 1` orphan
-    // test).  The same backstop a placed library's worker arms for itself
-    // (`lib_placement::wire::serve`); SIGTERM rather than SIGKILL so a program
-    // with a handler (the profiler's report) gets to run it.
-    loft::platform::dies_with_driver(&mut cmd, true);
+    cmd.push_env("LOFT_NATIVE_MAIN_FILE", &main_file);
     // @PLN26 follow-up — run the native binary with cwd = source_dir so its
     // raw `std::fs` anchors where its loft `file()` does (the binary bakes
     // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
     // the interpreter chdir above; gated on the same `program_relative`.
     if program_relative && let Some(dir) = std::path::Path::new(&abs_file).parent() {
-        cmd.current_dir(dir);
+        cmd = cmd.cwd(&fa::PathText::from_os(dir));
     }
     // The artifact anchors relative paths at its OWN dir (the
     // standalone-bundle rule) — in driver mode that is the cache/tmp
@@ -4442,22 +4441,22 @@ fn exec_native_binary(
     if std::env::var("LOFT_SOURCE_DIR").is_err()
         && let Some(dir) = std::path::Path::new(&abs_file).parent()
     {
-        cmd.env("LOFT_SOURCE_DIR", dir);
+        cmd.push_env("LOFT_SOURCE_DIR", dir);
     }
     if std::env::var("LOFT_LIVE_SRC").is_err() {
-        cmd.env("LOFT_LIVE_SRC", abs_file);
+        cmd.push_env("LOFT_LIVE_SRC", abs_file);
     }
     if std::env::var("LOFT_LIVE_STDLIB").is_err() {
-        cmd.env("LOFT_LIVE_STDLIB", default_str);
+        cmd.push_env("LOFT_LIVE_STDLIB", default_str);
     }
     if std::env::var("LOFT_LIVE_LIBS").is_err() && !lib_dirs.is_empty() {
-        cmd.env("LOFT_LIVE_LIBS", lib_dirs.join(":"));
+        cmd.push_env("LOFT_LIVE_LIBS", lib_dirs.join(":"));
     }
     // @PLN18 08-S4 — the background rebuild re-invokes THIS driver.
     if std::env::var("LOFT_LIVE_DRIVER").is_err()
         && let Ok(me) = std::env::current_exe()
     {
-        cmd.env("LOFT_LIVE_DRIVER", me);
+        cmd.push_env("LOFT_LIVE_DRIVER", me);
     }
     // A crate with no `main` was compile-CHECKED rather than linked, so no binary
     // exists to run.  Say what happened; reporting a missing file here would describe

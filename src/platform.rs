@@ -194,43 +194,6 @@ pub fn timing_exec<T>(
     out
 }
 
-/// Make the child `cmd` will spawn die with this process, however this process ends (loft#1699).
-///
-/// A child loft starts is part of the run: a `LOFT_TIMEOUT` exit, the watchdog's abort, an OOM
-/// kill or a harness reaping `loft` must not leave it behind.  `rustc` for a program that never
-/// finishes compiling ran on at 100 % CPU for twenty minutes after its driver had timed out.
-/// `graceful` sends `SIGTERM` (a program with a handler gets to run it) rather than `SIGKILL`.
-/// The signal reaches the child when the thread that spawned it exits, so the spawn must wait on
-/// the child from that thread (every `status()` / `output()` does).  The child's own children
-/// are not covered: a killed `rustc` leaves its linker to finish, and a killed `cargo` its
-/// in-flight `rustc` workers — each bounded by one unit of work.  Linux only; elsewhere a no-op.
-#[allow(unused_variables)]
-pub fn dies_with_driver(cmd: &mut std::process::Command, graceful: bool) {
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::process::CommandExt as _;
-        let signal = if graceful {
-            libc::SIGTERM
-        } else {
-            libc::SIGKILL
-        };
-        let driver = std::process::id() as libc::pid_t;
-        // SAFETY: the closure runs in the forked child before `exec` and calls only
-        // async-signal-safe `prctl` / `getppid` / `_exit`; it touches no allocator or lock.
-        unsafe {
-            cmd.pre_exec(move || {
-                libc::prctl(libc::PR_SET_PDEATHSIG, signal);
-                // The driver may have died before `prctl` armed; a child already handed to
-                // another parent must not start.
-                if libc::getppid() != driver {
-                    libc::_exit(0);
-                }
-                Ok(())
-            });
-        }
-    }
-}
-
 /// Print the external-invocation breakdown for `phase` — a no-op when `LOFT_TIMING` is unset
 /// or nothing ran.
 pub fn timing_report(phase: &str) {
@@ -1354,55 +1317,6 @@ mod shim_name_tests {
             !a[0].contains("/native-auto/") && !a[0].contains(".tmp"),
             "neither the staging path nor an absolute directory may survive: {a:?}"
         );
-    }
-}
-
-#[cfg(all(test, target_os = "linux"))]
-mod driver_death_tests {
-    use super::dies_with_driver;
-    use std::os::unix::process::ExitStatusExt as _;
-
-    /// loft#1699 — a build child must not outlive the driver.  The death signal reaches the
-    /// child when the thread that spawned it ends, so a thread that spawns and returns without
-    /// waiting stands in for a driver that exits: the child must end by `SIGKILL` at once,
-    /// not run its five seconds.  Without the helper the child is untouched and this reads
-    /// `exit 0` after five seconds.
-    #[test]
-    fn a_build_child_dies_with_its_driver() {
-        let started = std::time::Instant::now();
-        let mut child = std::thread::spawn(|| {
-            let mut cmd = std::process::Command::new("sleep");
-            cmd.arg("5");
-            dies_with_driver(&mut cmd, false);
-            cmd.spawn().expect("spawn sleep")
-        })
-        .join()
-        .expect("spawning thread");
-        let status = child.wait().expect("wait");
-        assert_eq!(
-            status.signal(),
-            Some(libc::SIGKILL),
-            "the child outlived its driver: {status}"
-        );
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(4),
-            "{:?}",
-            started.elapsed()
-        );
-    }
-
-    /// The program itself is asked to leave (`SIGTERM`) so a handler can run.
-    #[test]
-    fn a_graceful_child_is_asked_to_leave() {
-        let mut child = std::thread::spawn(|| {
-            let mut cmd = std::process::Command::new("sleep");
-            cmd.arg("5");
-            dies_with_driver(&mut cmd, true);
-            cmd.spawn().expect("spawn sleep")
-        })
-        .join()
-        .expect("spawning thread");
-        assert_eq!(child.wait().expect("wait").signal(), Some(libc::SIGTERM));
     }
 }
 

@@ -706,7 +706,7 @@ const REBUILD_FAILED: i64 = 3;
 enum Rebuild {
     Idle,
     Building {
-        child: std::process::Child,
+        child: crate::platform::process::Running,
         /// The loft source bytes at spawn — completion compares against the
         /// CURRENT file; a mismatch means the artifact is already stale.
         snapshot: Vec<u8>,
@@ -739,24 +739,27 @@ fn spawn_build(driver: &str, src: &str) -> Result<Rebuild, String> {
     let err_path = crate::file_access::with_extension(&base, "err");
     let out = crate::file_access::create(&out_path).map_err(|e| e.to_string())?;
     let err = crate::file_access::create(&err_path).map_err(|e| e.to_string())?;
-    let mut cmd = std::process::Command::new(driver);
-    cmd.arg("--no-warnings").arg("--check").arg("--native");
+    use crate::platform::process::{Program, Spawn};
+    let mut cmd = Spawn::new(Program::os(driver))
+        .arg("--no-warnings")
+        .arg("--check")
+        .arg("--native");
     if let Ok(libs) = std::env::var("LOFT_LIVE_LIBS") {
         for d in libs.split(':').filter(|s| !s.is_empty()) {
-            cmd.arg("--lib").arg(d);
+            cmd.push_arg("--lib").push_arg(d);
         }
     }
     // A build legitimately takes minutes — never under the run watchdog.
-    cmd.arg(src)
+    let child = cmd
+        .arg(src)
         // Ask the driver for the machine form of its ok line: "ok <src> <artifact>".
         // Without it the driver answers a person, and prints `ok` alone.
         .env("LOFT_CHECK_ARTIFACT", "1")
         .env_remove("LOFT_TIMEOUT")
-        .stdout(out)
-        .stderr(err)
-        .stdin(std::process::Stdio::null());
-    let child = cmd
-        .spawn()
+        .stdout(out.into())
+        .stderr(err.into())
+        .stdin(std::process::Stdio::null())
+        .start()
         .map_err(|e| format!("cannot spawn {driver}: {e}"))?;
     Ok(Rebuild::Building {
         child,
@@ -821,9 +824,11 @@ fn rebuild_status() -> i64 {
                 _ => REBUILD_FAILED,
             };
         };
-        let status = match child.try_wait() {
-            Ok(Some(st)) => st,
-            Ok(None) => return REBUILD_BUILDING,
+        if child.alive() {
+            return REBUILD_BUILDING;
+        }
+        let status = match child.finish() {
+            Ok(st) => st,
             Err(e) => {
                 eprintln!("loft-live: rebuild wait failed — {e}");
                 *r = Rebuild::Failed;

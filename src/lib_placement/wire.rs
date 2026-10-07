@@ -693,8 +693,8 @@ enum Link {
     Local {
         wire: Wire,
         /// Behind a `RefCell` so a call — which holds `&self` — can ask whether
-        /// the child is still running. `try_wait` reaps, which needs `&mut`.
-        child: std::cell::RefCell<std::process::Child>,
+        /// the child is still running: `Running::alive` needs `&mut`.
+        child: std::cell::RefCell<crate::platform::process::Running>,
     },
     /// A server, reachable at an address. Nothing is shared and nothing is
     /// owned: this side did not start it and does not stop it.
@@ -721,8 +721,7 @@ impl Drop for Worker {
                 }
                 // A worker that ignores the shutdown word must not wedge the run.
                 let mut child = child.borrow_mut();
-                let _ = child.kill();
-                let _ = child.wait();
+                let _ = child.stop_tree();
             }
             // A remote server outlives its callers by design — closing the
             // socket is the whole goodbye, and killing it would be someone
@@ -770,17 +769,20 @@ impl Worker {
             Some(p) => PathBuf::from(p),
             None => std::env::current_exe()?,
         };
-        let mut command = std::process::Command::new(exe);
-        command
+        use crate::platform::process::{Program, Spawn, Tree};
+        // The worker shares the terminal, as the library would in this process: it
+        // stays in loft's process group (`Tree::Foreground`), and still ends with loft.
+        let mut command = Spawn::new(Program::os(exe))
             .arg("--lib-worker")
             .arg(&path)
             .arg(pkg_dir)
             .arg("--default")
-            .arg(stdlib_dir);
+            .arg(stdlib_dir)
+            .tree(Tree::Foreground);
         if !cwd.as_os_str().is_empty() {
-            command.current_dir(cwd);
+            command = command.cwd(&crate::file_access::PathText::from_os(cwd));
         }
-        let child = command.spawn()?;
+        let child = command.start()?;
 
         let mut w = Worker {
             link: Link::Local {
@@ -889,13 +891,13 @@ impl Worker {
 
     /// Is the worker still there?
     ///
-    /// `try_wait` rather than a signal probe, because a worker that has exited
-    /// but not been reaped is a zombie — still a live pid, answering `kill(0)`
+    /// Asked of the child (`Running::alive`) rather than by a signal probe,
+    /// because a worker that has exited but not been reaped is a zombie — still a live pid, answering `kill(0)`
     /// perfectly happily, and never going to serve another call.
     fn still_running(&self) -> bool {
         match &self.link {
             Link::Local { child, .. } => match child.try_borrow_mut() {
-                Ok(mut c) => matches!(c.try_wait(), Ok(None)),
+                Ok(mut c) => c.alive(),
                 // Borrowed means `Drop` is already tearing this worker down; let
                 // the wait end rather than claim a liveness we cannot check.
                 Err(_) => false,
