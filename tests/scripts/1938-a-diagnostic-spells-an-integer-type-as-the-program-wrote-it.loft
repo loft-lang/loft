@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1938 — a diagnostic names a type in the spelling the program wrote, which the parser
+// reads back.  An integer reached the messages through the schema key's range form:
+// `vector<u8>` read `vector<integer(0, 255)>`, a bare `u8` read `integer(0, 255)`, `i32` read
+// `integer`, and a user's `type Lim = integer limit(1000, 1100) size(2)` read
+// `integer(1000, 1100)` — none of them a spelling anyone can type back in.  `Type::source_name`
+// now names every integer through `Data::integer_spec_name`: its alias, or its range written
+// `integer limit(lo, hi)` as the program wrote it.
+//
+// Axes this file MOVES:  the alias (each stdlib width · a user alias with a size · a range
+//                        written without one), the position (a bare parameter · a vector's
+//                        element · a nested vector · a nullable vector · a tuple member · a
+//                        struct field), the message (argument mismatch · field assignment).
+// Axes it HOLDS FIXED:   the value handed over is a `vector<text>` or a `text`.
+//
+// @falsified-by: tests/falsified/1938-a-diagnostic-spells-an-integer-type-as-the-program-wrote-it.patch — interpret exit 1 -> 0, interpret expectations FAIL/13 -> 0/13 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/13 -> 0/13 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control refuses every cell too, but spells the type by its key.
+//   ARMED: nothing.
+//   WITNESS: the control's first two lines read `expected integer(0, 255), got text` and
+//   `expected vector<integer(0, 255)>, got vector<text>` (loft#1938's matrix, both backends).
+//   HOLDS: the program is refused on both trees; only the spelling moved.
+// @EXPECT_ERROR: expected u8, got text on argument 1 of call to bare
+// @EXPECT_ERROR: expected vector<u8>, got vector<text> on argument 1 of call to e_u8
+// @EXPECT_ERROR: expected vector<i8>, got vector<text> on argument 1 of call to e_i8
+// @EXPECT_ERROR: expected vector<u16>, got vector<text> on argument 1 of call to e_u16
+// @EXPECT_ERROR: expected vector<i16>, got vector<text> on argument 1 of call to e_i16
+// @EXPECT_ERROR: expected vector<i32>, got vector<text> on argument 1 of call to e_i32
+// @EXPECT_ERROR: expected vector<u32>, got vector<text> on argument 1 of call to e_u32
+// @EXPECT_ERROR: expected vector<Lim>, got vector<text> on argument 1 of call to e_lim
+// @EXPECT_ERROR: expected vector<integer limit(0, 200)>, got vector<text> on argument 1 of call to e_range
+// @EXPECT_ERROR: expected vector<vector<u8>>, got vector<text> on argument 1 of call to nested
+// @EXPECT_ERROR: expected vector<u8>?, got vector<text> on argument 1 of call to maybe
+// @EXPECT_ERROR: expected (u8, text), got (text, text) on argument 1 of call to pair
+// @EXPECT_ERROR: Cannot assign vector<text> to a field of type vector<u16>
+
+type Lim = integer limit(1000, 1100) size(2);
+struct S { v: vector<u16> }
+
+fn bare(v: u8) -> integer { v }
+fn e_u8(v: vector<u8>) -> integer { v.len() }
+fn e_i8(v: vector<i8>) -> integer { v.len() }
+fn e_u16(v: vector<u16>) -> integer { v.len() }
+fn e_i16(v: vector<i16>) -> integer { v.len() }
+fn e_i32(v: vector<i32>) -> integer { v.len() }
+fn e_u32(v: vector<u32>) -> integer { v.len() }
+fn e_lim(v: vector<Lim>) -> integer { v.len() }
+fn e_range(v: vector<integer limit(0, 200)>) -> integer { v.len() }
+fn nested(v: vector<vector<u8>>) -> integer { v.len() }
+fn maybe(v: vector<u8>?) -> integer { 1 }
+fn pair(v: (u8, text)) -> integer { 1 }
+
+fn main() {
+  t: vector<text> = ["a"];
+  println("{bare("x")}");
+  println("{e_u8(t)} {e_i8(t)} {e_u16(t)} {e_i16(t)} {e_i32(t)} {e_u32(t)}");
+  println("{e_lim(t)} {e_range(t)} {nested(t)} {maybe(t)}");
+  println("{pair(("a", "b"))}");
+  s = S { v: t };
+  println("{s.v.len()}");
+}

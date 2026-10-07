@@ -23,7 +23,7 @@
 // @EXPECT_ERROR: Unknown field Fire.hit
 // @EXPECT_ERROR: no definition of `hit` takes (Rock) — declared: hit(Fire), hit(Ice)
 // @EXPECT_ERROR: `amb(Fire)` is ambiguous — it is taken by amb(Fire) and amb(Fire, integer)
-// @EXPECT_ERROR: no definition of `take` takes (Fire, vector<integer>) — declared: take(Fire, vector<integer(0, 255)>), take(Ice, vector<integer(0, 255)>)
+// @EXPECT_ERROR: no definition of `take` takes (Fire, vector<integer>) — declared: take(Fire, vector<u8>), take(Ice, vector<u8>)
 
 struct Fire { n: integer }
 struct Ice { n: integer }

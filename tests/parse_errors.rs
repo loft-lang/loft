@@ -2833,7 +2833,7 @@ fn gh253_bang_on_not_null_warns() {
     // (C127).  It was spelled `integer not null` until that flag was measured to have no
     // effect: such a local still reads null after an overflow, so `!h` on it is a real test.
     code!("fn test() { h: u8 = 3; if !h { h = 4; } }").warning(
-        "'!' on a 'not null' integer(0, 255) is always false — '!x' tests whether x \
+        "'!' on a 'not null' u8 is always false — '!x' tests whether x \
          is null, and a 'not null' value is never null at \
          gh253_bang_on_not_null_warns:1:31",
     );

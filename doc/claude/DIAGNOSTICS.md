@@ -427,7 +427,10 @@ seen is a message they cannot act on.
 | `Type::name` | **the schema key** — *which type is this?* `typedef.rs` builds wrapper types from it (`main_vector<…>`) and `state` looks stores up by it, so re-spelling a keyed type here RE-IDENTIFIES it: generated `init()` replays a different type order and the emitted Rust references a temp no line binds (rustc E0425, `tests/lazy_sql_source.rs`). |
 | `Type::source_name` | **the source spelling** — *what did they write?* This is the one a message asks for. |
 
-They differ at the keyed collections and nowhere else. `name` renders the key list with
+They differ at two leaves and nowhere else.  An INTEGER's key is its range, `integer(0, 255)`;
+its source spelling is its alias (`u8`, a program's `type Lim = …`) or the range as written,
+`integer limit(0, 255)` (`Data::integer_spec_name`).  The keyed collections:
+`name` renders the key list with
 `{:?}`, so `index<Rec[id]>` comes out `index<Rec,[("id", true)]>` — a Rust tuple and a boolean
 whose meaning (ascending) has no spelling in the language. That is not a rendering of what the
 author wrote; it is a notation they have never seen, and a refusal that names it sends its

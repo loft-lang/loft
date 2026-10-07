@@ -3559,11 +3559,10 @@ impl Type {
             // A width declared through a stdlib alias reads as the alias the author wrote
             // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
             // debugger seed annotated with it could not be evaluated (@PLN165 D10).
-            Type::Integer(spec)
-                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
-            {
-                data.integer_alias(spec).unwrap_or("integer").to_string()
-            }
+            // loft#1938 — every integer, at any depth (a vector's element, a tuple member, a
+            // parameter), by the name `integer_spec_name` gives it: its alias or its range as
+            // the parser reads it back.
+            Type::Integer(spec) if source => data.integer_spec_name(spec),
             Type::Integer(spec) if spec.source_name().is_some() => {
                 spec.source_name().unwrap_or("integer").to_string()
             }
@@ -11536,12 +11535,17 @@ impl Data {
         // alias, and the diagnostic fell back to `integer(1000, 1100)`, which is true and is
         // no spelling the parser reads (loft#1641).  The same flag caught `non_null_reads_null`
         // out the same day, from the other side (C127).
+        // The alias's WIDTH is its `size(N)`, which the definition carries beside the range it
+        // returns (`Definition::forced_size`); a use of the alias carries it in the spec.  Asked
+        // of the spec alone, `type Lim = integer limit(1000, 1100) size(2)` never named a
+        // `vector<Lim>` element (loft#1938).
         let matches_spec = |d: &Definition| {
             d.def_type == DefType::Type
                 && matches!(d.returned.base(), Type::Integer(s)
                     if s.min == spec.min
                         && s.max == spec.max
-                        && s.forced_size == spec.forced_size)
+                        && s.forced_size.map(NonZeroU8::get).or(d.forced_size)
+                            == spec.forced_size.map(NonZeroU8::get))
         };
         self.definitions
             .iter()
@@ -14044,15 +14048,20 @@ impl Data {
         // plain integer is named by its range here (@FR-N-Shape: the nullability is asked, not
         // left to a missing arm).
         let (inner, nullable) = t.peel_optional();
-        let Type::Integer(s) = inner else {
-            return t.source_name(self);
-        };
-        if nullable {
-            return t.source_name(self);
+        match inner {
+            Type::Integer(s) if !nullable => self.integer_spec_name(s),
+            _ => t.source_name(self),
         }
+    }
+
+    /// [`Self::integer_name`] for a spec — the one home of an integer's SOURCE spelling, which
+    /// every message also reads through [`Type::source_name`] (loft#1938: an element or a
+    /// parameter written `u8` read `integer(0, 255)`, a key no parser reads back).
+    #[must_use]
+    pub fn integer_spec_name(&self, s: &IntegerSpec) -> String {
         if s.forced_size.is_none() {
-            if s.is_wide_template() || s.is_signed32_template() {
-                return t.source_name(self);
+            if let Some(name) = s.source_name() {
+                return name.to_string();
             }
             return self.integer_alias_any_source(s, false).map_or_else(
                 || format!("integer limit({}, {})", s.min, s.max),
@@ -14071,10 +14080,10 @@ impl Data {
         if let Some(n) = named {
             return n.to_string();
         }
-        if let Some(name) = self.integer_alias_any_source(s, false) {
-            return name.to_string();
-        }
-        t.source_name(self)
+        self.integer_alias_any_source(s, false).map_or_else(
+            || format!("integer limit({}, {})", s.min, s.max),
+            str::to_string,
+        )
     }
 
     fn type_name_with(&self, tp: &Type, named: bool) -> String {
