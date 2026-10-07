@@ -1,0 +1,15 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index fb17ca930..198c8f5b1 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -3017,9 +3017,7 @@ impl Output<'_> {
+         let mut k = 0usize;
+         for op in &ks.body {
+             let Value::Call(d, args) = op.unspan() else {
+-                self.indent(w)?;
+-                self.output_code_inner(w, op)?;
+-                writeln!(w, ";")?;
++                writes.push((*op).clone());
+                 continue;
+             };
+             if !args
