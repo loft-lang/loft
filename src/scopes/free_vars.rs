@@ -802,6 +802,30 @@ impl Scopes<'_> {
             result.push(Value::Return(Box::new(Value::Var(buf))));
             return result;
         }
+        // @FR-F-Call / @FR-F-Block — a text value block whose tail is a local of its OWN
+        // scope (`len({ s = "x{k}"; s })`, and every `e ?? return|break|continue` over a
+        // text, whose `_ncr_N` temp is that tail) hands the value out BY COPY: the reader
+        // appends or views the bytes, nothing adopts the `String`.  As the block's
+        // `ret_var` the local is excluded from this exit's frees, and no outer scope
+        // knows it, so the interpreter never released it — one buffer per evaluation,
+        // unbounded in a loop (loft#1907's valgrind sweep).  Re-home it exactly as the
+        // `__blk_N` hoist below homes its temp: registered at the function body scope
+        // with its init lifted to the root, so the function-exit sweep frees it ONCE and
+        // every pass reuses the one buffer.  No copy is added; `--native` already drops
+        // the moved-out `String` and sees only where its `let` stands.
+        if !is_return
+            && self.scope > 1
+            && matches!(tp.base(), Type::Text(_))
+            && let Value::Var(v) = expr.unspan()
+            && self.var_scope.get(v) == Some(&self.scope)
+            && !function.is_argument(*v)
+            && !function.is_skip_free(*v)
+            && matches!(function.tp(*v).base(), Type::Text(_))
+            && !self.lift_texts.contains(v)
+        {
+            self.var_scope.insert(*v, 1);
+            self.lift_texts.push(*v);
+        }
         if ls.is_empty()
             || ((matches!(expr, Value::Null | Value::Var(_) | Value::Text(_))
                 || expr_is_null_text_sentinel)

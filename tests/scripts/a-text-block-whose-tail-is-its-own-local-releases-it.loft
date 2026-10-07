@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A text value block whose tail is a local of its OWN scope releases that local.
+// @FR-F-Block says the block yields its tail to whatever reads it, and @FR-F-Call says the
+// frame frees the locals it owns: the reader of a text block COPIES the bytes (or views them
+// for the length of one call), so the local still owns its `String` afterwards.  The scope
+// pass excluded it from the block's exit frees as the block's value and no outer scope knew
+// it, so on the interpreter every evaluation orphaned one buffer — unbounded in a loop.  The
+// values were right on both backends; the release valgrind sweep caught it as "definitely
+// lost" in a-null-can-leave-the-loop-through-a-coalesce.loft and
+// a-diverging-arm-beside-a-text-or-boolean-arm-compiles-natively.loft (loft#1907), because
+// every `e ?? return|break|continue` over a text binds `e` to a temp that IS such a tail.
+//
+// Axes this file MOVES:  how the tail local is made (a `??` exit's temp — `return`,
+//                        `continue`, `break` — or the author's own `{ s = …; s }`); what reads
+//                        the block (a local bind, a call argument, a struct field, `+=`, a
+//                        `??` over a nullable tail); where it runs (straight line, a `for`, a
+//                        `while`, a recursion, a lambda, a generator); the null path beside the
+//                        present one.
+// Axes it HOLDS FIXED:   element type `text`; single-threaded; the tail is a bare variable (a
+//                        computed tail takes the `__blk_N` hoist, a branch tail its arms).
+//
+// The controls are the shapes that were already clean: a `??` with a value default (it binds
+// the target directly) and a block whose tail local the parser declared in the enclosing
+// scope.
+//
+// Values are asserted here on both backends; the orphan count is asserted by
+// `tests/text_buffer_ledger.rs`, which runs this file under `LOFT_TEXT_TIMELINE=1` and requires
+// "NO text leak" — the exit and assertion channels cannot see a leak whose value is right.
+//
+// @falsified-at: PENDING
+
+fn name(k: integer) -> text? { if k % 2 == 0 { "n{k}" } else { null } }
+
+fn text_or_return(k: integer) -> text { t = name(k) ?? return "none"; "{t}!" }
+
+fn skip_text(n: integer) -> text { out = ""; for k in 0..n { t = name(k) ?? continue; out += t } out }
+
+fn until_null(n: integer) -> text { out = ""; for k in 0..n { t = name(k) ?? break; out += t } out }
+
+fn skip_in_while() -> integer {
+  s = 0;
+  k = 0;
+  while k < 9 { k += 1; x = name(k) ?? continue; s += x.len() }
+  s
+}
+
+fn as_arg(k: integer) -> integer { len(name(k) ?? return 0) }
+
+struct W { s: text }
+fn into_field(k: integer) -> text { w = W { s: name(k) ?? return "none" }; w.s }
+
+fn arg_block(k: integer) -> integer { len({ s = "abc{k}"; s }) }
+
+fn appended(n: integer) -> text { out = ""; for k in 0..n { out += { s = "<{k}>"; s } } out }
+
+fn rec(k: integer) -> integer { if k <= 0 { 0 } else { len({ s = "r{k}"; s }) + rec(k - 1) } }
+
+fn nullable_tail(k: integer) -> integer { len(({ s = name(k); s }) ?? "zzz") }
+
+fn via_lambda() -> text {
+  f = fn(n: integer) -> text { out = ""; for k in 0..n { t = name(k) ?? continue; out += t } out };
+  f(5)
+}
+
+fn names(n: integer) -> iterator<text> { for k in 0..n { t = name(k) ?? continue; yield t } }
+
+// Controls.
+fn coalesce_default(k: integer) -> text { t = name(k) ?? "dflt"; "{t}!" }
+fn outer_tail(k: integer) -> text { t = { s = "n{k}"; s }; "{t}!" }
+
+fn main() {
+  // `?? return` — present (2) and null (3).
+  assert(text_or_return(2) == "n2!", "?? return present: {text_or_return(2)}");
+  assert(text_or_return(3) == "none", "?? return null: {text_or_return(3)}");
+  // `?? continue` keeps k = 0, 2, 4 of 0..6; `?? break` stops at k = 1.
+  assert(skip_text(6) == "n0n2n4", "?? continue: {skip_text(6)}");
+  assert(until_null(6) == "n0", "?? break: {until_null(6)}");
+  // k = 2, 4, 6, 8 are present, each name two characters long.
+  assert(skip_in_while() == 8, "?? continue in a while: {skip_in_while()}");
+  // A call argument: "n2" is 2 long; 3 is null and returns 0.
+  assert(as_arg(2) == 2 && as_arg(3) == 0, "as an argument: {as_arg(2)} {as_arg(3)}");
+  // A struct field.
+  assert(into_field(4) == "n4" && into_field(5) == "none", "into a field: {into_field(4)} {into_field(5)}");
+  // The author's own tail local: "abc7" is 4 long.
+  assert(arg_block(7) == 4, "own tail as an argument: {arg_block(7)}");
+  assert(appended(3) == "<0><1><2>", "own tail appended per pass: {appended(3)}");
+  // "r3" + "r2" + "r1" = 6 characters, one tail local per frame.
+  assert(rec(3) == 6, "own tail under recursion: {rec(3)}");
+  // "n2" is 2 long; 3 is null and takes "zzz", 3 long.
+  assert(nullable_tail(2) == 2 && nullable_tail(3) == 3, "nullable tail: {nullable_tail(2)} {nullable_tail(3)}");
+  assert(via_lambda() == "n0n2n4", "in a lambda: {via_lambda()}");
+  gen = "";
+  for s in names(6) { gen += s }
+  assert(gen == "n0n2n4", "in a generator: {gen}");
+  assert(coalesce_default(2) == "n2!" && coalesce_default(3) == "dflt!", "control ??: {coalesce_default(3)}");
+  assert(outer_tail(4) == "n4!", "control outer tail: {outer_tail(4)}");
+  println("own text tails ok");
+}
