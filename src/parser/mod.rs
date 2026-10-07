@@ -16793,24 +16793,23 @@ impl Parser {
     ///
     /// * printed under `LOFT_TRACE_VISIBILITY=1` — the census (`scripts/pub_census.sh`), so the
     ///   census lists exactly what is still missing and is empty once everything is migrated;
-    /// * refused under `LOFT_PUB_ENFORCE=1` — the rule, with the item, its file and the cure.
+    /// * refused — the rule, with the item, its file and the cure.
     ///
     /// Building a type that is not `pub` at all is [`Self::refuse_building_a_name_only_type`]'s.
     pub(crate) fn check_visibility(&mut self, kind: &str, d_nr: u32, f_nr: usize) {
         let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some());
-        let enforce = crate::env_once!(std::env::var_os("LOFT_PUB_ENFORCE").is_some());
-        if self.first_pass || !(trace || enforce) || d_nr >= self.data.definitions() {
+        if self.first_pass || d_nr >= self.data.definitions() {
             return;
         }
         let def = self.data.def(d_nr);
         // A variant's fields and name are its enum's: the enum's file is the one that decides.
-        let owner = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
-            self.data.def(def.parent)
+        let owner_nr = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            def.parent
         } else {
-            def
+            d_nr
         };
-        // A generic INSTANCE carries the source it was minted in and its template's position:
-        // the file it was declared in is the position's.
+        // A generic instance's visibility is its template's.
+        let owner = self.data.def(self.data.visibility_def(owner_nr));
         if owner.source == self.data.source
             || owner.position.file == self.lexer.pos().file
             || owner.name.starts_with("__")
@@ -16882,9 +16881,7 @@ impl Parser {
         if trace {
             self.print_census_site(kind, d_nr, f_nr);
         }
-        if enforce {
-            diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
-        }
+        diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
     }
 
     /// @PLN187 (@C140, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
@@ -16897,11 +16894,13 @@ impl Parser {
             return;
         }
         let def = self.data.def(td_nr);
-        let owner_nr = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
-            def.parent
-        } else {
-            td_nr
-        };
+        let owner_nr = self.data.visibility_def(
+            if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+                def.parent
+            } else {
+                td_nr
+            },
+        );
         let owner = self.data.def(owner_nr);
         if owner.source == self.data.source
             || owner.source == crate::data::STD_SOURCE

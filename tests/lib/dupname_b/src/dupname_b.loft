@@ -1,5 +1,5 @@
 // loft#788 regression fixture — package B, the twin of dupname_a.
-pub struct Chunk { ck_cx: integer, ck_cz: integer, ck_base: integer }
+pub struct Chunk { pub ck_cx: integer, pub ck_cz: integer, pub ck_base: integer }
 
 pub fn b_only() -> integer { return 20 }
 pub fn shared() -> integer { return 2 }

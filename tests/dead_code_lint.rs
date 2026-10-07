@@ -529,7 +529,7 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
     // (C86), `d` is mutated, and `d` is never read — so the write is lost.
     fa::write(
         lib.join("dstore781.loft"),
-        "// 1\npub struct Data781 { items: vector<integer> }\n// 3\n\
+        "// 1\npub struct Data781 { pub items: vector<integer> }\n// 3\n\
          pub fn lose_it(s: Data781) -> integer {\n  d = s.items;\n  d[0] = 99;\n  \
          return len(s.items);\n}\n",
     )

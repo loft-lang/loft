@@ -2,16 +2,16 @@
 // All structs, then all natives, then all functions.
 
 pub struct Conn {
-  id: integer
+  pub id: integer
 }
 
 pub struct Session {
-  token: text,
-  user_id: integer
+  pub token: text,
+  pub user_id: integer
 }
 
 pub struct Request {
-  method: text,
+  pub method: text,
   path: text
 }
 

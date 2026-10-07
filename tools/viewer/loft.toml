@@ -14,20 +14,15 @@ loft    = ">=0.8"
 entry = "src/main.loft"
 
 [dependencies]
-# ⚠ `>=0.5`, not `>=0.1`: the viewer binds LOOPBACK via `server::listen_on`, which
-# 0.3.x does not have — plain `listen` binds 0.0.0.0 and would publish `/raw/<path>`
-# on every interface of the host.  The floor states the requirement so a resolver
-# cannot quietly pick a version where the safe bind does not exist; at `>=0.1` the
-# lock sat on 0.3.1 and the build failed with "Unknown function listen_on".
-# ⚠ `>=0.6` for `respond_bytes`, and `>=0.5` for `listen_on` before it — each floor
-# states a function this viewer cannot work without, so a resolver cannot pick a
-# version where the safe bind or the byte-safe image response is simply absent.
-# ⚠⚠ 0.6.0 IS NOT PUBLISHED YET (loft-libs-net `tuxedo-respond-bytes`).  Until it is,
-# build against the local checkout:
-#     server = { path = "../../../loft-libs-net/server" }
-server   = ">=0.6"
-markdown = ">=0.1"
-html     = ">=0.1"
+# Floors at the first releases that carry `pub` on what this reads: a field is private
+# to its file without it (C140).
+# ⚠ Each floor states something this viewer cannot work without, so a resolver cannot pick
+# a version where it is absent: `server::listen_on` binds LOOPBACK (plain `listen` binds
+# 0.0.0.0 and would publish `/raw/<path>` on every interface), and `respond_bytes` answers
+# an image byte-safe.
+server   = ">=0.7.4"
+markdown = ">=0.2.5"
+html     = ">=0.1.3"
 # Resolved and used transitively through `server`; declared so the manifest says so
 # (the `undeclared-dependency` advice, loft#968).
-web      = ">=0.3"
+web      = ">=0.4.5"

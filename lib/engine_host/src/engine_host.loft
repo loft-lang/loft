@@ -23,10 +23,10 @@
 // status = the HTTP status — negative on transport error / timeout —
 // payload = the response body; status is 0 for every other kind).
 pub struct Event {
-  const cid: integer,
-  const kind: integer,
-  const payload: text,
-  const status: integer,
+  pub const cid: integer,
+  pub const kind: integer,
+  pub const payload: text,
+  pub const status: integer,
 }
 
 fn kernel_listen(port: integer, tick_interval_us: integer) -> boolean;
@@ -290,12 +290,12 @@ pub fn sync_payload() -> text {
 // Everything one turn of the loop produced.
 pub struct Turn {
   // False once the kernel has stopped; the caller's `while` ends on it.
-  const running: boolean,
+  pub const running: boolean,
   // The tick came due this turn.
-  const tick: boolean,
+  pub const tick: boolean,
   // Arrival-ordered, and already including the fast-lane state that late-latches
   // to a tick — ONE receive surface, exactly as `run` gives a handler.
-  const events: vector<Event>,
+  pub const events: vector<Event>,
 }
 
 // Bind the listener.  False = the port is taken.

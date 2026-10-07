@@ -6,7 +6,7 @@
 // (`tests/scripts/a-library-carries-generics-across-the-boundary.loft`).
 
 pub interface Named { fn tag(self: Self) -> text }
-pub struct Cat { n: integer }
+pub struct Cat { pub n: integer }
 pub fn tag(self: Cat) -> text { "cat {self.n}" }
 
 pub fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text { "{k}:{v}" }

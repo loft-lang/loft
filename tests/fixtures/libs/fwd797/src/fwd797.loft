@@ -6,5 +6,5 @@
 // type named below is still a forward-reference stub there.
 pub use fwd797_inner::*;
 
-pub struct F797Roofs { r_n: integer }
-pub struct F797Walls { w_m: integer }
+pub struct F797Roofs { pub r_n: integer }
+pub struct F797Walls { pub w_m: integer }

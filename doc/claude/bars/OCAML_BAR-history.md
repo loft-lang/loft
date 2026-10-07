@@ -311,3 +311,4 @@ File these regardless of any implementation decision.
 | entry | measured | what answered |
 |---|---|---|
 | C3 field rename + as-binding | PARTIAL | rename PASS (`Rect { w: width, h }`); `whole @ Rect {…}` → *"'whole' is not a variant"* |
+| H3 abstract type | FAIL | a library's struct fields are readable by every importer: `p.x` on a `geo::Pt` compiles; no form hides a type's representation behind its functions |
