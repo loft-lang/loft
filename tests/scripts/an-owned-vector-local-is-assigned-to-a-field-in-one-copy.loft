@@ -1,0 +1,70 @@
+// A vector field assigned an OWNED local — one whose only dep is its own `__vdb_` store
+// witness — takes the direct clear-and-copy: such a local cannot alias the field, so the
+// snapshot through a temp (a second full copy) is not needed.  A local that BORROWS the
+// field (`w = o.v`) keeps the snapshot (#320).  `@FR-R-Compact` recognises the direct form
+// too, so a history truncated by a rebuild loop is still compacted in place.  Both backends;
+// every value hand-computed.
+
+struct E { k: integer, tags: vector<integer> }
+struct O { v: vector<E>, n: integer }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+/// The truncation `@FR-R-Compact` compacts: keep the first `n`.
+fn keep(o: &O, n: integer) {
+  if n >= len(o.v) { return; }
+  t: vector<E> = [];
+  for i in 0..n { t += [o.v[i]?]; }
+  o.v = t;
+}
+
+/// A rebuild the compaction does not take (every other element): the direct copy.
+fn evens(o: &O) {
+  t: vector<E> = [];
+  for i in 0..len(o.v) { if i % 2 == 0 { t += [o.v[i]?]; } }
+  o.v = t;
+}
+
+fn main() {
+  // c1 — the field holds a copy: appending to the local afterwards leaves it alone.
+  o = O { v: [], n: 0 };
+  t: vector<E> = [];
+  for i in 0..4 { t += [E { k: i * 10, tags: [i, i + 1] }]; }
+  o.v = t;
+  t += [E { k: 99, tags: [] }];
+  t[0].k = -1;
+  assert(len(o.v) == 4 && len(t) == 5 && o.v[0].k == 0 && o.v[3].k == 30 && o.v[2].tags[1] == 3, "c1");
+
+  // c2 — the borrowed local keeps the snapshot: the field ends as the view plus one.
+  w = o.v;
+  w += [E { k: 43, tags: [4] }];
+  o.v = w;
+  assert(len(o.v) == 5 && o.v[4].k == 43 && o.v[1].k == 10, "c2 {len(o.v)}");
+
+  // c3 — the compacted truncation and the direct rebuild, repeated: values, and no record
+  // left behind once warm.
+  r1 = 0;
+  r2 = 0;
+  s = 0;
+  for round in 0..60 {
+    p = O { v: [], n: 0 };
+    for i in 0..8 { p.v += [E { k: i + round, tags: [i] }]; }
+    keep(p, 5);
+    evens(p);
+    // keep 5: k = round + 0..4; evens: indices 0, 2, 4 -> k = round, round + 2, round + 4
+    assert(len(p.v) == 3 && p.v[1].k == round + 2 && p.v[2].tags[0] == 4, "c3 round {round}");
+    s += p.v[0].k + p.v[1].k + p.v[2].k;
+    if round == 9 { r1 = live_records(); }
+    if round == 59 { r2 = live_records(); }
+  }
+  // sum over round of (3 round + 6) = 3 * 1770 + 360
+  assert(s == 3 * 1770 + 360 && r1 > 0 && r2 == r1, "c3 {s} records {r1} -> {r2}");
+  println("ok");
+}
