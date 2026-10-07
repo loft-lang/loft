@@ -17,8 +17,6 @@
 //! @FR-Cap-Write consult.  @FR-Cap-Trusted is enforced by [`reachable_set`], where a
 //! trusted symbol is a leaf: its body is the host's contract and is not walked.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{Data, DefType, Position, Type, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -554,7 +552,8 @@ pub enum CapViolation {
 pub fn def_library(data: &Data, def_nr: u32) -> Option<String> {
     let def = data.def(def_nr);
     let file = &*def.position().file;
-    let base = std::path::Path::new(file).file_stem()?.to_str()?;
+    let stem = crate::file_access::file_stem(file)?;
+    let base = stem.as_str();
     // Strip a leading `\d+_` (stdlib module naming: `01_code` -> `code`).
     let name = match base.find('_') {
         Some(i) if i > 0 && base.as_bytes()[..i].iter().all(u8::is_ascii_digit) => &base[i + 1..],
