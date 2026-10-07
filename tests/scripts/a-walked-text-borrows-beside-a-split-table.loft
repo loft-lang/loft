@@ -8,9 +8,21 @@
 // server library ships (c1: rejoin, untrimmed piece, count, absent); a table bind beside a
 // REAL store write — a push into another vector (c2) and a push into a sibling field of the
 // walked vector's own record, whose store can grow and move the text a borrow points into,
-// so the walk keeps its copy (c3);
+// so the walk keeps its copy (c3), and a replacement of the walked element itself, which
+// frees the text a borrow would still read after it (c3b);
 // a table bind in a branch the walk never takes (c4); and two tables in one body (c5).
 // Every value by hand; `LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_SPLIT_TABLE=1` answer the same.
+//
+// @falsified-at: none — a widening of a rule with no earlier build to catch; the planted
+//   defect is recorded with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-walked-text-borrows-beside-a-split-table.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   The walk judges a whole statement that names a split table as no store write.
+//   CHANNEL: an assertion, on native.
+//   WITNESS: c3b — the walked line is read after its element was replaced: `Host���|X-Y:��|`
+//   where the file says `Host: a|X-Y: b|Z: c|`.  (c3's sibling-field push answers right
+//   under the defect: a grown store kept the old bytes readable.)
+//   HOLDS: LOFT_NO_TEXT_BORROW=1 and LOFT_NO_SPLIT_TABLE=1 green.
 
 struct Req { headers: vector<text>, log: vector<text> }
 
@@ -64,6 +76,19 @@ fn grow(self: Req) -> text {
   acc
 }
 
+// c3b — the walked element itself is replaced: its old text is freed under a borrow.
+fn replace(self: Req) -> text {
+  acc = "";
+  n = 0;
+  for h in self.headers {
+    parts = h.split(':');
+    self.headers[n] = "{parts[0] ?? ""}-{n}-replaced-with-a-longer-text";
+    n += 1;
+    acc += "{h}|";
+  }
+  acc
+}
+
 // c4 — the table bind sits in a branch the walk never takes.
 fn never(self: Req, flag: boolean) -> integer {
   t = 0;
@@ -100,6 +125,10 @@ fn main() {
   g = Req { headers: ["Host: a", "X-Y: b", "Z: c"], log: [] };
   gs = g.grow();
   assert(gs == "Host: a|X-Y: b|Z: c|" && "{g.log}" == "[\"Host0: xHost: a\",\"X-Y1: xX-Y: b\",\"Z2: xZ: c\"]", "c3 {gs} {g.log}");
+  // c3b: the walk reads every line as it was before its replacement.
+  g2 = Req { headers: ["Host: a", "X-Y: b", "Z: c"], log: [] };
+  rs = g2.replace();
+  assert(rs == "Host: a|X-Y: b|Z: c|" && g2.headers[2] == "Z-2-replaced-with-a-longer-text", "c3b {rs} {g2.headers}");
   // c4: lengths 10 + 7 + 18 = 35; with the branch, pieces 3 + 2 + 4 = 9 hundreds more.
   assert("{r.never(false)} {r.never(true)}" == "35 935", "c4 {r.never(false)} {r.never(true)}");
   // c5: ':' pieces 3, 2, 4; ' ' pieces 2, 2, 2.
