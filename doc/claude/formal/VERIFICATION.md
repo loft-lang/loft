@@ -239,17 +239,14 @@ not yet graduated to that oracle. Design + phase↔rule map:
 - ☐ **P-Opt** — present ⟹ bound, absent ⟹ null capture, cursor intact. *Pin: P5.*
 - ☐ **P-Rep** — `(a)*` collects a `vector<τ>` (count + values + length + leak); `+` needs ≥1; a
   separator is consumed, not captured. *Pin: P6.*
-- ✗ **P-Anchor / P-Revert / P-IterBound** — **NOT SHIPPED** (measured 2026-09-25, `D-match-6`,
-  loft#1678). The row read `☐` — which this section's legend defines as *shipped + both-backends,
-  not yet graduated to the oracle* — over three rules whose machinery does not exist:
-  `OpMatchAnchor` and `OpMatchRevert` appear nowhere in `src/`, and `max_lookahead` only in one
-  doc comment. An iterator subject is MATERIALISED into a vector instead
-  (`Parser::collect_iterator_subject`), so there is no memo, no backtracking over the stream and
-  no bound: an endless source reaches 696 MB in 13 s on `--interpret` and 2.13 GB in 18 s on
-  `--native`, where `(P-IterBound)` promises a defined runtime error and never a hang. A finite
-  200 000-element source is correct on both backends in 0.45 s, so the defect is the absent
-  ceiling and not the materialisation. *No pin — P7 covers `35p-iterator-match.loft`, which tests
-  the materialising design these three rules do not describe.*
+- ✗ **P-Anchor / P-Revert** — **NOT SHIPPED**: `OpMatchAnchor` and `OpMatchRevert` appear
+  nowhere in `src/`.  An iterator subject is MATERIALISED into a vector instead
+  (`Parser::collect_iterator_subject`), which agrees with the memoising cursor on every
+  observable of a side-effect-free source.  *No pin — no machinery to pin.*
+- ✓ **P-IterBound** — an endless iterator subject stops with the defined `max_lookahead` error,
+  never a hang, on both backends; `LOFT_MAX_LOOKAHEAD` moves the bound and a source at the bound
+  still matches.  *Guard: `tests/exit_codes.rs` `a_match_over_an_iterator_stops_at_max_lookahead`;
+  control: `a-match-over-an-iterator-materialises-its-whole-source.loft` (D-match-6, closed).*
 - ☐ **Capture typing (types.md § Pattern captures)** — alternation-unify (`⊔`), optional / absent
   (`τ?`), repetition / rest (`vector<τ>`) — NO new type former. *Pin: P4–P6 typecheck cases.*
 
