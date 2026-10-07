@@ -155,8 +155,10 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 
 - **`(R-ViewReturn)`** (S8) is an ownership decision: a result that is a view of the caller's
   own argument, consumed inside the binding statement.
-- **`(R-Destination)`** (S4): the ok-false path's answer is drafted in rewrites.md § Proposed
-  (an element minted and not finished is no member; the callee releases what it placed).
+- **`(R-Destination)`** (S4): DECIDED — an element minted and not finished is no member, and
+  the CALLER releases what the failed child placed (the release walk the plain form's
+  discarded result runs).  Identical in values, members and live records; spare capacity is
+  not part of the contract (owner).
 - **A decoded value whose texts and byte strings are views into the input frame** — the only
   form the analysis names that reaches even 6× on `check_request` against an aligned twin; a
   borrowed field inside a store record does not exist (APART_VALUES.md, @PLN174).
