@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1925 — `(Disp-Applicable)`: a definition takes a call when the call's own argument
+// check would accept it.  A lone `fn g(a: float)` takes an `integer` through the stdlib's
+// implicit conversion; selection over an overload set asked only the conversions that emit no
+// op, so the same member in a set was not applicable: a free set `g(float), g(text)` refused an
+// integer its lone twin takes, and an operator set refused `v * 2` its `times(V, float)` member
+// takes.  Every cell here is reached by exactly ONE member, so the set's answer is that member's.
+//
+// Axes this file MOVES:  the converted source (an integer local and literal · a nullable
+//                        integer · a `u8` · a character · a plain enum), the spelling (free
+//                        call · operator), and
+//                        an EXACT member beside a converting one (the exact one still wins).
+// Axes it HOLDS FIXED:   one argument position converts; dense results.
+//
+// @falsified-by: tests/falsified/1925-a-set-member-takes-the-conversions-its-lone-twin-takes.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file at its first converting
+//   cell (*no definition of `g` takes (integer) — declared: g(float), g(text)*), so it scores
+//   the refusal only; every cell's VALUE was hand-computed and checked on both backends.
+//   ARMED: nothing.
+//   WITNESS: with the `g` cells removed the control still refuses, at `v * 2` (*No matching
+//   operator '*' on 'V' and 'integer'*), which `times(V, float)` takes.
+//   HOLDS: `f(i)`, `f(2.5)` and `g("t")` answer the same on both trees.
+
+enum Co { Red, Green }
+
+fn g(a: float) -> text { "GF {a}" }
+fn g(a: text) -> text { "GT {a}" }
+
+fn f(a: integer) -> text { "I {a}" }
+fn f(a: float) -> text { "F {a}" }
+
+fn c(a: integer) -> text { "CI {a}" }
+fn c(a: text) -> text { "CT {a}" }
+
+struct V { x: float }
+operator times(self: V, o: float) -> V { V { x: self.x * o } }
+operator times(self: V, o: V) -> V { V { x: self.x * o.x } }
+
+fn main() {
+  i: integer = 3;
+  n: integer? = 4;
+  u: u8 = 5;
+  ch: character = 'A';
+  assert(g(i) == "GF 3", "integer into the float member: {g(i)}");
+  assert(g(6) == "GF 6", "an integer literal into the float member: {g(6)}");
+  assert(g(n) == "GF 4", "nullable integer into the float member: {g(n)}");
+  assert(g(u) == "GF 5", "u8 into the float member: {g(u)}");
+  assert(g("t") == "GT t", "the text member is exact: {g(\"t\")}");
+  assert(c(ch) == "CI 65", "character into the integer member: {c(ch)}");
+  assert(f(Co.Green) == "I 2", "a plain enum converts to integer only: {f(Co.Green)}");
+  assert(f(i) == "I 3", "the exact integer member beats the converting float one: {f(i)}");
+  assert(f(2.5) == "F 2.5", "a float reaches the float member: {f(2.5)}");
+  v = V { x: 1.5 };
+  w = v * 2;
+  assert(w.x == 3.0, "an integer operand reaches times(V, float): {w.x}");
+  println("ok");
+}

@@ -99,7 +99,7 @@ impl Parser {
         {
             // @FR-C-Var — a variant satisfies its enum: the one widening the enum lattice has.
             WIDENED
-        } else if self.can_convert(a, p) {
+        } else if self.can_convert(a, p) || self.converts_implicitly(a, p) {
             CONVERTED
         } else {
             return None;
@@ -110,6 +110,28 @@ impl Parser {
             _ => EXACT,
         };
         Some(base.saturating_add(step))
+    }
+
+    /// `@FR-Disp-Applicable` — does a call's argument of type `arg` reach a `param` slot through
+    /// one of the stdlib's implicit conversions (`integer` into `float`, `single` or
+    /// `character`, a value into `boolean`, …)?  [`Parser::can_convert`] answers the
+    /// conversions that emit nothing; these are the ones `convert` emits an `OpConv…` for, and a
+    /// lone definition takes them, so a member of a set must too.  Asked through the same
+    /// predicate `convert` scans with ([`crate::data::Data::converts_with`]), the handle and
+    /// plain-enum flattening included, so the two cannot disagree about which conversion exists.
+    fn converts_implicitly(&self, arg: &Type, param: &Type) -> bool {
+        let check = match arg.base() {
+            Type::Reference(_, _) => Type::Reference(self.data.def_nr("reference"), Deps::none()),
+            Type::Enum(_, false, _) => Type::Enum(0, false, Deps::none()),
+            _ => arg.clone(),
+        };
+        self.data
+            .get_possible("OpConv", &self.lexer)
+            .iter()
+            .any(|&d| {
+                !self.data.def(d).name().ends_with("FromNull")
+                    && self.data.converts_with(d, &check, arg, param)
+            })
     }
 
     /// Every overload of `name` that takes the routed argument types, with its rank vector,
@@ -642,6 +664,9 @@ impl Parser {
         at: Option<&crate::lexer::Position>,
     ) {
         let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
+        // `@FR-Disp-Ambiguous` is the one refusal of the two with a frozen code: a tie is
+        // where a program that compiled under a coarser rule meets this one.
+        let ambiguous = matches!(sel, Selection::Ambiguous(_));
         let text = match sel {
             Selection::Ambiguous(taken) => {
                 let by: Vec<String> = taken
@@ -675,11 +700,29 @@ impl Parser {
             }
             _ => return,
         };
-        match at {
-            Some(pos) => {
-                crate::diagnostic_at!(self.lexer, pos, crate::diagnostics::Level::Error, "{text}")
+        let level = crate::diagnostics::Level::Error;
+        match (at, ambiguous) {
+            (Some(pos), true) => {
+                crate::diagnostic_at!(self.lexer, pos, level, code = "ambiguous-call", "{text}");
             }
-            None => crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}"),
+            (None, true) => {
+                crate::diagnostic!(self.lexer, level, code = "ambiguous-call", "{text}")
+            }
+            (Some(pos), false) => crate::diagnostic_at!(self.lexer, pos, level, "{text}"),
+            (None, false) => crate::diagnostic!(self.lexer, level, "{text}"),
+        }
+        if ambiguous {
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "convert the argument to the type one definition declares (`i as float`)"
+                    .to_string(),
+                condition: Some(
+                    "that definition is the one meant — the compiler cannot tell which".to_string(),
+                ),
+                edit: None,
+                concept: "multiple dispatch",
+                concept_ref: "@F122",
+            });
         }
     }
 }

@@ -6978,11 +6978,7 @@ impl Parser {
                         return true;
                     }
                 }
-            } else if self.data.attributes(dnr) > 0
-                && (self.data.attr_type(dnr, 0).is_equal(check_type)
-                    || self.data.attr_type(dnr, 0).is_equal(is_type))
-                && self.data.def(dnr).returned().is_equal(should)
-            {
+            } else if self.data.converts_with(dnr, check_type, is_type, should) {
                 // @PLN99 Arc C — for a `Reference` source, `check_type` was flattened to the
                 // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
                 // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),
