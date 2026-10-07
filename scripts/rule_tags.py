@@ -1202,6 +1202,15 @@ def main():
                     print(f"    {t} is written OPEN here ({', '.join(iss) or 'no issue'}) but "
                           f"another entry of that tag outranks it CLOSED — record the closure, "
                           f"or renumber a reused tag")
+        # README.md's area table restates each chapter's count — a FOURTH decoder of the one
+        # number, and the one a reader meets first.  It read `calls.md … **0 open**` over a
+        # register stating and listing `D-call-28`.
+        open_by = collections.Counter(f for f, *_ in live)
+        for line in open(os.path.join(FORMAL, "README.md"), encoding="utf-8"):
+            row = re.match(r"\| \[([\w-]+\.md)\]\([\w-]+\.md\) \|[^|]*\| \*\*(\d+) (?:open|own)", line)
+            if row and int(row.group(2)) != open_by.get(row.group(1), 0):
+                print(f"  README.md: {row.group(1)} reads {row.group(2)} open, the register "
+                      f"lists {open_by.get(row.group(1), 0)}")
         untracked = [(f, t) for f, t, iss, unres in live if not iss and not unres]
         unresolvable = [(f, t) for f, t, iss, unres in live if unres]
         print(f"{len(live) - len(untracked) - len(unresolvable)} open entr(y/ies) tracked by an "
