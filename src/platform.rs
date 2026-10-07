@@ -4,8 +4,6 @@
 
 //! Platform-specific helpers shared across the crate.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::sync::OnceLock;
 
 /// Process-scoped native-compile timing — a gated singleton.  The expensive
@@ -82,17 +80,16 @@ impl Timing {
             None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
         }
         if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && std::fs::create_dir_all(&dir).is_ok()
+            && crate::file_access::create_dir_all(&dir).is_ok()
         {
             use std::io::Write;
             let path =
                 std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
             let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
                 let _ = writeln!(f, "{kind}\t{name}\t{cache}\t{secs_s}");
             }
         }
@@ -108,16 +105,15 @@ impl Timing {
     pub fn record_exec(&self, tool: &'static str, subject: &str, reason: &str, secs: f64) {
         eprintln!("[loft-build] {tool} {subject} secs={secs:.2} reason={reason}");
         if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && std::fs::create_dir_all(&dir).is_ok()
+            && crate::file_access::create_dir_all(&dir).is_ok()
         {
             use std::io::Write;
             let path =
                 std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
                 let _ = writeln!(f, "exec\t{tool}\t{subject}\t{reason}\t{secs:.2}");
             }
         }
@@ -293,7 +289,7 @@ pub fn other_sep() -> &'static str {
 #[must_use]
 pub fn scratch_dir() -> std::path::PathBuf {
     let dir = scratch_from(std::env::var_os("LOFT_TMPDIR"), std::env::temp_dir());
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::file_access::create_dir_all(&dir);
     dir
 }
 
@@ -334,7 +330,7 @@ fn scratch_from(
 #[must_use]
 pub fn build_scratch_dir(tag: &str) -> std::path::PathBuf {
     let dir = scratch_dir().join(format!("loft_{tag}_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::file_access::create_dir_all(&dir);
     dir
 }
 
@@ -351,7 +347,7 @@ pub fn native_cache_dir(owner: &str) -> std::path::PathBuf {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     let dir = scratch_dir().join(format!("loft_native_cache_{h:016x}"));
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = crate::file_access::create_dir_all(&dir);
     dir
 }
 
@@ -366,17 +362,23 @@ pub fn native_cache_dir(owner: &str) -> std::path::PathBuf {
 /// [`native_cache_dir`], never a shared directory.  Answers the bytes freed.
 pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
     let marker = dir.join(".build");
-    if std::fs::read_to_string(&marker).is_ok_and(|s| s.trim() == stamp) {
+    if crate::file_access::read_to_string(&marker).is_ok_and(|s| s.trim() == stamp) {
         return 0;
     }
     let mut freed = 0u64;
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if !name.to_string_lossy().starts_with("loft_native_") {
+    if let Ok(entries) = crate::file_access::read_dir(dir) {
+        for entry in entries {
+            if !entry
+                .file_name()
+                .unwrap_or_default()
+                .starts_with("loft_native_")
+            {
                 continue;
             }
-            let Ok(meta) = entry.metadata() else { continue };
+            // The entry itself, as a listing reports it: a link is not followed.
+            let Ok(meta) = crate::file_access::symlink_metadata(&entry) else {
+                continue;
+            };
             let fresh = meta
                 .modified()
                 .ok()
@@ -385,15 +387,15 @@ pub fn sweep_own_native_cache(dir: &std::path::Path, stamp: &str) -> u64 {
             if fresh || !meta.is_file() {
                 continue;
             }
-            if std::fs::remove_file(entry.path()).is_ok() {
+            if crate::file_access::remove_file(&entry).is_ok() {
                 freed += meta.len();
             }
         }
     }
     // Written last and atomically: a crash between the sweep and the marker only sweeps again.
     let tmp = dir.join(format!(".build.{}", std::process::id()));
-    if std::fs::write(&tmp, stamp).is_ok() {
-        let _ = std::fs::rename(&tmp, &marker);
+    if crate::file_access::write(&tmp, stamp).is_ok() {
+        let _ = crate::file_access::rename(&tmp, &marker);
     }
     freed
 }
@@ -679,23 +681,22 @@ pub fn reclaim_dead_native_scratch(dir: &std::path::Path) -> u64 {
 fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
     let own_pid = std::process::id();
     let mut freed = 0u64;
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    let Ok(entries) = crate::file_access::read_dir(dir) else {
         return 0;
     };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
+    for entry in entries {
+        let name = entry.file_name().unwrap_or_default();
         if !(name.starts_with("loft_native_") || name.starts_with("loft_test_native_")) {
             continue;
         }
         // Provably stale only through the strict shapes; the looser parse below serves the
         // age fallback's "is anyone alive behind this name" question and nothing else.
-        let proven_stale = match runtime_scratch_pid(&name) {
+        let proven_stale = match runtime_scratch_pid(name) {
             Some(p) if p == own_pid => false,
             Some(p) => pid_alive(p) == Some(false),
             None => false,
         };
-        let pid = scratch_owner_pid(&name);
+        let pid = scratch_owner_pid(name);
         if !proven_stale {
             if !aged_too {
                 continue;
@@ -706,8 +707,8 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
             if pid.is_some_and(|p| p == own_pid || pid_alive(p) == Some(true)) {
                 continue;
             }
-            let old_enough = entry
-                .metadata()
+            // The entry itself, as a listing reports it: a link is not followed.
+            let old_enough = crate::file_access::symlink_metadata(&entry)
                 .and_then(|m| m.modified())
                 .ok()
                 .and_then(|t| t.elapsed().ok())
@@ -716,8 +717,8 @@ fn reclaim_native_scratch_by(dir: &std::path::Path, aged_too: bool) -> u64 {
                 continue;
             }
         }
-        let len = entry.metadata().map_or(0, |m| m.len());
-        if std::fs::remove_file(entry.path()).is_ok() {
+        let len = crate::file_access::symlink_metadata(&entry).map_or(0, |m| m.len());
+        if crate::file_access::remove_file(&entry).is_ok() {
             freed = freed.saturating_add(len);
         }
     }
@@ -820,17 +821,15 @@ mod reclaim_tests {
     fn a_new_build_sweeps_only_the_old_entries_of_its_own_cache() {
         let dir =
             std::env::temp_dir().join(format!("loft_native_cache_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let _ = crate::file_access::remove_dir_all(&dir);
+        crate::file_access::create_dir_all(&dir).unwrap();
         let old = |name: &str| {
             let p = dir.join(name);
-            std::fs::write(&p, b"x").unwrap();
+            crate::file_access::write(&p, b"x").unwrap();
             let t = std::time::SystemTime::now() - std::time::Duration::from_hours(1);
             // Open for WRITE before set_modified: Windows `SetFileTime` needs write access
             // (Unix `futimens` works on a read-only fd), as `cache::touch_now` does.
-            std::fs::OpenOptions::new()
-                .write(true)
-                .open(&p)
+            crate::file_access::open_with(&p, std::fs::OpenOptions::new().write(true))
                 .unwrap()
                 .set_modified(t)
                 .unwrap();
@@ -840,25 +839,25 @@ mod reclaim_tests {
         let stale_key = old("loft_native_a_bin.key");
         let foreign = old("other_tool_output");
         let fresh = dir.join("loft_native_b_bin");
-        std::fs::write(&fresh, b"y").unwrap();
-        std::fs::write(dir.join(".build"), "old-build").unwrap();
+        crate::file_access::write(&fresh, b"y").unwrap();
+        crate::file_access::write(dir.join(".build"), "old-build").unwrap();
 
         let freed = sweep_own_native_cache(&dir, "new-build");
         assert_eq!(freed, 2, "the two stale entries, one byte each");
         assert!(
-            !stale_bin.exists() && !stale_key.exists(),
+            !crate::file_access::exists(&stale_bin) && !crate::file_access::exists(&stale_key),
             "the older build's entries go"
         );
         assert!(
-            fresh.exists(),
+            crate::file_access::exists(&fresh),
             "a fresh entry is a concurrent shard's and stays"
         );
         assert!(
-            foreign.exists(),
+            crate::file_access::exists(&foreign),
             "a name that is not the harness's is never touched"
         );
         assert_eq!(
-            std::fs::read_to_string(dir.join(".build")).unwrap(),
+            crate::file_access::read_to_string(dir.join(".build")).unwrap(),
             "new-build"
         );
 
@@ -868,8 +867,8 @@ mod reclaim_tests {
             0,
             "the same build sweeps nothing"
         );
-        assert!(again.exists());
-        let _ = std::fs::remove_dir_all(&dir);
+        assert!(crate::file_access::exists(&again));
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 
     /// `evict_own_native_cache`: under pressure it takes the idle binaries with their keys,
@@ -977,7 +976,7 @@ mod reclaim_tests {
     #[test]
     fn reclaim_spares_live_and_fresh_files() {
         let dir = std::env::temp_dir().join(format!("loft_reclaim_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::file_access::create_dir_all(&dir).unwrap();
         let own = dir.join(format!("loft_native_{}.rs", std::process::id()));
         // u32::MAX-1 — no real pid (Linux pid_max caps far below); provably dead.
         let dead = dir.join("loft_native_4294967294.rs");
@@ -985,10 +984,10 @@ mod reclaim_tests {
         // The native suite's stem-named source, whose stem happens to end in digits: not a
         // pid, and not the runtime's to sweep however dead "795" is.
         let stem_named = dir.join("loft_native_discard_slot_per_type_795.rs");
-        std::fs::write(&own, "live").unwrap();
-        std::fs::write(&dead, "stale").unwrap();
-        std::fs::write(&fresh_no_pid, "fresh").unwrap();
-        std::fs::write(&stem_named, "live source of a sibling worker").unwrap();
+        crate::file_access::write(&own, "live").unwrap();
+        crate::file_access::write(&dead, "stale").unwrap();
+        crate::file_access::write(&fresh_no_pid, "fresh").unwrap();
+        crate::file_access::write(&stem_named, "live source of a sibling worker").unwrap();
         // The dead-only sweep (every compile): the dead pid goes, the fresh no-pid entry
         // stays whatever its age — it is the test runner's cache, not a leftover.
         //
@@ -1009,11 +1008,11 @@ mod reclaim_tests {
         // process-group id — so a macOS run that disagrees names its own cause instead of
         // leaving the next reader another hypothesis.
         let evidence = |freed: u64| {
-            let mut names: Vec<String> = std::fs::read_dir(&dir).map_or_else(
+            let mut names: Vec<String> = crate::file_access::read_dir(&dir).map_or_else(
                 |e| vec![format!("<read_dir failed: {e}>")],
                 |es| {
-                    es.flatten()
-                        .map(|e| e.file_name().to_string_lossy().into_owned())
+                    es.iter()
+                        .map(|e| e.file_name().unwrap_or_default().to_string())
                         .collect()
                 },
             );
@@ -1028,16 +1027,16 @@ mod reclaim_tests {
         };
         let dead_only = reclaim_dead_native_scratch(&dir);
         assert!(
-            !dead.exists(),
+            !crate::file_access::exists(&dead),
             "dead-pid file must go in the dead-only sweep ({})",
             evidence(dead_only)
         );
         assert!(
-            own.exists() && fresh_no_pid.exists(),
+            crate::file_access::exists(&own) && crate::file_access::exists(&fresh_no_pid),
             "own-pid and no-pid entries survive the dead-only sweep"
         );
         assert!(
-            stem_named.exists(),
+            crate::file_access::exists(&stem_named),
             "a stem-named suite file survives the dead-only sweep"
         );
         // The byte count is asserted where it is DETERMINATE, which is the same platform
@@ -1052,18 +1051,24 @@ mod reclaim_tests {
                 evidence(dead_only)
             );
         }
-        std::fs::write(&dead, "stale").unwrap();
+        crate::file_access::write(&dead, "stale").unwrap();
         let freed = reclaim_native_scratch(&dir);
-        assert!(own.exists(), "own-pid file must survive the reclaim");
         assert!(
-            fresh_no_pid.exists(),
+            crate::file_access::exists(&own),
+            "own-pid file must survive the reclaim"
+        );
+        assert!(
+            crate::file_access::exists(&fresh_no_pid),
             "a fresh file without a parseable pid must survive (age floor)"
         );
         if cfg!(target_os = "linux") {
-            assert!(!dead.exists(), "dead-pid file must be reclaimed");
+            assert!(
+                !crate::file_access::exists(&dead),
+                "dead-pid file must be reclaimed"
+            );
             assert_eq!(freed, 5);
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = crate::file_access::remove_dir_all(&dir);
     }
 }
 
@@ -1130,7 +1135,7 @@ pub fn host_library_loadable(name: &str) -> bool {
         .iter()
         // SAFETY: loading a library runs its initialisers, which is exactly what
         // asking "can this be loaded" means. The handle drops immediately.
-        .any(|n| unsafe { libloading::Library::new(n) }.is_ok())
+        .any(|n| unsafe { crate::file_access::load_library(n) }.is_ok())
 }
 
 /// Which naming convention THIS host uses. The single `cfg!` read, so the
@@ -1159,7 +1164,7 @@ pub fn host_lib_os() -> LibOs {
 pub fn existing_lib_beside(dir: &std::path::Path, name: &str, os: LibOs) -> Option<String> {
     lib_variants(name, os)
         .into_iter()
-        .find(|cand| dir.join(cand).exists())
+        .find(|cand| crate::file_access::exists(dir.join(cand)))
 }
 
 /// Linker flags that pin a freshly built shared library's own name.
