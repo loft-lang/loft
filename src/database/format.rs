@@ -1193,14 +1193,21 @@ impl ShowDb<'_> {
             }
         } else if self.known_type == 2 {
             let v = self.store().get_single(self.rec, self.pos);
-            if self.loft {
+            // `@FR-F-Render` — a float or single null (its NaN) renders as the word `null`, in
+            // an element or a field exactly as in a hole (`ops::format_float`).  Written raw it
+            // was `NaN`, which `:j` then put on the wire as invalid JSON (loft#1921).
+            if v.is_nan() {
+                s.push_str("null");
+            } else if self.loft {
                 s.push_str(&ensure_decimal(&format!("{v}")));
             } else {
                 write!(s, "{v}").unwrap();
             }
         } else if self.known_type == 3 {
             let v = self.store().get_float(self.rec, self.pos);
-            if self.loft {
+            if v.is_nan() {
+                s.push_str("null");
+            } else if self.loft {
                 s.push_str(&ensure_decimal(&format!("{v}")));
             } else {
                 write!(s, "{v}").unwrap();

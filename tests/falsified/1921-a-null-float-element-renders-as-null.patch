@@ -1,0 +1,28 @@
+diff --git a/src/database/format.rs b/src/database/format.rs
+index 96855be6b..fbf3c9619 100644
+--- a/src/database/format.rs
++++ b/src/database/format.rs
+@@ -1193,21 +1193,14 @@ impl ShowDb<'_> {
+             }
+         } else if self.known_type == 2 {
+             let v = self.store().get_single(self.rec, self.pos);
+-            // `@FR-F-Render` — a float or single null (its NaN) renders as the word `null`, in
+-            // an element or a field exactly as in a hole (`ops::format_float`).  Written raw it
+-            // was `NaN`, which `:j` then put on the wire as invalid JSON (loft#1921).
+-            if v.is_nan() {
+-                s.push_str("null");
+-            } else if self.loft {
++            if self.loft {
+                 s.push_str(&ensure_decimal(&format!("{v}")));
+             } else {
+                 write!(s, "{v}").unwrap();
+             }
+         } else if self.known_type == 3 {
+             let v = self.store().get_float(self.rec, self.pos);
+-            if v.is_nan() {
+-                s.push_str("null");
+-            } else if self.loft {
++            if self.loft {
+                 s.push_str(&ensure_decimal(&format!("{v}")));
+             } else {
+                 write!(s, "{v}").unwrap();
