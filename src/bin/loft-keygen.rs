@@ -33,13 +33,12 @@
 //! call home, doesn't log anything beyond stdout/stderr, and
 //! doesn't keep the key in memory beyond the one stack frame.
 
-// @PLN184 A1: not yet through `file_access` — a crate root's allow covers the whole binary,
-// so this binary is checked once its root is clean (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+// @PLN184 A1: compiler code reaches the file system only through `file_access` (clippy.toml).
+#![warn(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 #![allow(clippy::missing_docs_in_private_items)]
 
-use std::fs;
+use loft::file_access;
 use std::io::{self, Read};
 use std::path::Path;
 
@@ -127,7 +126,7 @@ fn cmd_generate(extra: &[String]) {
     let priv_path = Path::new("registry-signing-key.bin");
     let pub_path = Path::new("registry-signing-key.pub");
 
-    if priv_path.exists() || pub_path.exists() {
+    if file_access::exists(priv_path) || file_access::exists(pub_path) {
         eprintln!(
             "loft-keygen: refusing to overwrite existing key files in cwd.\n  \
              Move or delete `registry-signing-key.bin` / `registry-signing-key.pub` first."
@@ -135,10 +134,9 @@ fn cmd_generate(extra: &[String]) {
         std::process::exit(1);
     }
 
-    fs::write(priv_path, priv_bytes)
-        .unwrap_or_else(|e| die(&format!("write {}: {e}", priv_path.display())));
-    fs::write(pub_path, hex_encode(&pub_bytes))
-        .unwrap_or_else(|e| die(&format!("write {}: {e}", pub_path.display())));
+    file_access::write(priv_path, priv_bytes).unwrap_or_else(|e| die(&format!("write {e}")));
+    file_access::write(pub_path, hex_encode(&pub_bytes))
+        .unwrap_or_else(|e| die(&format!("write {e}")));
     chmod_600(priv_path);
 
     println!("Generated keypair:");
@@ -172,7 +170,7 @@ fn cmd_format(extra: &[String]) {
     let hex_text = if let Some(pos) = extra.iter().position(|a| a == "--in")
         && let Some(path) = extra.get(pos + 1)
     {
-        fs::read_to_string(path).unwrap_or_else(|e| die(&format!("read {path}: {e}")))
+        file_access::read_to_string(path).unwrap_or_else(|e| die(&format!("read {e}")))
     } else {
         let mut s = String::new();
         io::stdin()
@@ -238,8 +236,7 @@ fn cmd_sign(extra: &[String]) {
     let key_path = arg_value(extra, "--key").unwrap_or_else(|| die("sign: missing --key"));
     let out_path = arg_value(extra, "--out").unwrap_or_else(|| die("sign: missing --out"));
 
-    let key_bytes =
-        fs::read(&key_path).unwrap_or_else(|e| die(&format!("read key {key_path}: {e}")));
+    let key_bytes = file_access::read(&key_path).unwrap_or_else(|e| die(&format!("read key {e}")));
     if key_bytes.len() != 32 {
         die(&format!(
             "key file must be 32 bytes (raw Ed25519 private), got {}",
@@ -250,14 +247,14 @@ fn cmd_sign(extra: &[String]) {
     key_arr.copy_from_slice(&key_bytes);
     let signing_key = SigningKey::from_bytes(&key_arr);
 
-    let data = fs::read(&in_path).unwrap_or_else(|e| die(&format!("read {in_path}: {e}")));
+    let data = file_access::read(&in_path).unwrap_or_else(|e| die(&format!("read {e}")));
     let sig = signing_key.sign(&data);
     let sig_bytes = sig.to_bytes();
 
     // Atomic write so a half-written sig file can't briefly serve.
     let tmp = format!("{out_path}.tmp");
-    fs::write(&tmp, sig_bytes).unwrap_or_else(|e| die(&format!("write {tmp}: {e}")));
-    fs::rename(&tmp, &out_path)
+    file_access::write(&tmp, sig_bytes).unwrap_or_else(|e| die(&format!("write {e}")));
+    file_access::rename(&tmp, &out_path)
         .unwrap_or_else(|e| die(&format!("rename {tmp} -> {out_path}: {e}")));
     println!(
         "signed {in_path} ({} bytes) -> {out_path} (64-byte Ed25519 signature)",
@@ -278,8 +275,8 @@ fn cmd_verify(extra: &[String]) {
     let pub_hex = if let Some(h) = arg_value(extra, "--pub") {
         h
     } else if let Some(p) = arg_value(extra, "--pub-file") {
-        fs::read_to_string(&p)
-            .unwrap_or_else(|e| die(&format!("read {p}: {e}")))
+        file_access::read_to_string(&p)
+            .unwrap_or_else(|e| die(&format!("read {e}")))
             .trim()
             .to_string()
     } else {
@@ -298,8 +295,8 @@ fn cmd_verify(extra: &[String]) {
     let verifying_key = VerifyingKey::from_bytes(&pub_arr)
         .unwrap_or_else(|e| die(&format!("invalid public key bytes: {e}")));
 
-    let data = fs::read(&in_path).unwrap_or_else(|e| die(&format!("read {in_path}: {e}")));
-    let sig_bytes = fs::read(&sig_path).unwrap_or_else(|e| die(&format!("read {sig_path}: {e}")));
+    let data = file_access::read(&in_path).unwrap_or_else(|e| die(&format!("read {e}")));
+    let sig_bytes = file_access::read(&sig_path).unwrap_or_else(|e| die(&format!("read {e}")));
     if sig_bytes.len() != 64 {
         die(&format!(
             "signature file must be 64 bytes (raw Ed25519), got {}",
@@ -333,10 +330,10 @@ fn arg_value(args: &[String], name: &str) -> Option<String> {
 #[cfg(unix)]
 fn chmod_600(path: &Path) {
     use std::os::unix::fs::PermissionsExt as _;
-    if let Ok(metadata) = fs::metadata(path) {
+    if let Ok(metadata) = file_access::metadata(path) {
         let mut perms = metadata.permissions();
         perms.set_mode(0o600);
-        let _ = fs::set_permissions(path, perms);
+        let _ = file_access::set_permissions(path, perms);
     }
 }
 
@@ -355,7 +352,7 @@ fn getrandom_fill(buf: &mut [u8]) -> io::Result<()> {
     // machine is Linux/macOS this code path is what runs.
     #[cfg(unix)]
     {
-        let mut f = fs::File::open("/dev/urandom")?;
+        let mut f = file_access::open("/dev/urandom")?;
         f.read_exact(buf)?;
         Ok(())
     }
