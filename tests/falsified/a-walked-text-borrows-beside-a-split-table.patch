@@ -1,0 +1,14 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 153f4c0c6..8d2934c87 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -4050,6 +4050,9 @@ fn as_emitted_by_tables(stmt: &Value, tables: &BTreeMap<u16, SplitTable>, data:
+         return out;
+     }
+     let dead: HashSet<u16> = tables.values().filter_map(|t| t.dead_buf).collect();
++    if stmt.any_node(&mut |n| matches!(n, Value::Var(v) if tables.contains_key(v))) {
++        return Value::Null;
++    }
+     out.map_nodes(&mut |n| {
+         let lowered = match n {
+             Value::Set(v, _) => tables.contains_key(v),
