@@ -415,6 +415,7 @@
 17_consumer_moros_dryopea	-	R-GuardedChain/operators	86
 17_consumer_moros_dryopea	-	R-Header	15
 17_consumer_moros_dryopea	-	R-InPlaceLiteral	2
+17_consumer_moros_dryopea	-	R-InPlaceLiteral/keyed	3
 17_consumer_moros_dryopea	-	R-InlineLeaf	35
 17_consumer_moros_dryopea	-	R-Invariant	36
 17_consumer_moros_dryopea	-	R-KernelSum	1
