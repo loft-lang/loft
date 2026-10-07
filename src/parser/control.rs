@@ -1,8 +1,6 @@
 // Copyright (c) 2022-2025 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::Deps;
 use crate::data::IntegerSpec;
 use std::collections::HashSet;
@@ -1524,11 +1522,10 @@ impl Parser {
             // drop) — a deterministic channel: loft's `eprintln!` stderr races
             // with `process::exit` and truncates unreliably.
             use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-            {
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
                 let _ = writeln!(f, "TRA {fname} => {}", verdict.label());
             }
         }
@@ -19704,7 +19701,7 @@ impl Parser {
                     .to_string();
             }
         }
-        if let Ok(content) = std::fs::read_to_string(file) {
+        if let Ok(content) = crate::file_access::read_to_string(file) {
             content
                 .lines()
                 .nth(line as usize - 1)

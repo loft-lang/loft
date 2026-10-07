@@ -5,8 +5,6 @@
 //! Parse scripts and create internal code from it.
 //! Including type checking.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::data::{
     Argument, Context, Data, DefType, Deps, I32, IntegerSpec, Type, Value, to_default, v_block,
     v_if, v_loop, v_set,
@@ -19,7 +17,6 @@ use crate::variables::{Function, size as var_size};
 use crate::{manifest, scopes, typedef};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
-use std::fs::{File, metadata, read_dir};
 use std::io::Write;
 use std::string::ToString;
 use typedef::complete_definition;
@@ -2666,11 +2663,10 @@ impl Parser {
                 .parent()
                 .and_then(std::path::Path::parent)
                 .map(|root| root.join("loft.toml"))
-                .filter(|m| m.exists())
+                .filter(|m| crate::file_access::exists(m))
                 .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
                 .and_then(|m| m.name);
-            self.own_lib = from_manifest
-                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()));
+            self.own_lib = from_manifest.or_else(|| crate::file_access::file_stem(path));
         }
         self.vars.logging = false;
         Self::load_main_file(&mut self.lexer, filename, content);
@@ -3928,11 +3924,10 @@ impl Parser {
                 .parent()
                 .and_then(std::path::Path::parent)
                 .map(|root| root.join("loft.toml"))
-                .filter(|m| m.exists())
+                .filter(|m| crate::file_access::exists(m))
                 .and_then(|m| crate::manifest::read_manifest(&m.to_string_lossy()))
                 .and_then(|m| m.name);
-            self.own_lib = from_manifest
-                .or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()));
+            self.own_lib = from_manifest.or_else(|| crate::file_access::file_stem(path));
         }
         self.default = default;
         self.vars.logging = false;
@@ -4062,7 +4057,7 @@ impl Parser {
     /// # Errors
     /// As [`Self::parse_dir`]; and `InvalidData` if the embedded stdlib does not parse.
     pub fn parse_stdlib(&mut self, dir: &str) -> std::io::Result<()> {
-        if std::path::Path::new(dir).is_dir() {
+        if crate::file_access::is_dir(dir) {
             return self.parse_dir(dir, true, false);
         }
         for (name, content) in crate::stdlib_sources::STDLIB_SOURCES {
@@ -4093,23 +4088,27 @@ impl Parser {
     }
 
     fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
-        let paths = read_dir(dir)?;
+        let paths = crate::file_access::read_dir(dir)?;
         let mut files: BTreeSet<String> = BTreeSet::new();
-        for path in paths {
-            let p = path?;
+        for p in &paths {
+            let name = p.file_name().unwrap_or_default();
             // A hidden entry is no part of the library: `.loft/` is the cache and log a run
             // writes beside its sources, `.git/` a checkout's history.  Walking one would make
             // what a load reads — and what it costs — depend on what earlier runs left in the
             // directory (loft#1761).
-            if p.file_name().to_string_lossy().starts_with('.') {
+            if name.starts_with('.') {
                 continue;
             }
             let own_file = p
-                .path()
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("loft"));
-            let file_name = p.path().to_string_lossy().to_string();
-            let data = metadata(&file_name)?;
+            // Spelled as `dir` was given (`./lib/x.loft` stays `./lib/x.loft`): it becomes the
+            // source position every diagnostic names.
+            let file_name = std::path::Path::new(dir)
+                .join(name)
+                .to_string_lossy()
+                .to_string();
+            let data = crate::file_access::metadata(&file_name)?;
             if own_file || data.is_dir() {
                 files.insert(file_name);
             }
@@ -4117,7 +4116,7 @@ impl Parser {
         for f in files {
             let types = self.database.types.len();
             let from = self.data.definitions();
-            let data = metadata(&f)?;
+            let data = crate::file_access::metadata(&f)?;
             if data.is_dir() {
                 self.parse_dir_inner(&f, default, debug)?;
             } else {
@@ -4153,8 +4152,8 @@ impl Parser {
         let f_norm = f.replace(other_sep(), sep_str());
         let file = f_norm.rsplit(sep()).next().unwrap_or(f);
         let to = format!("tests/dumps/{file}.txt");
-        let _ = std::fs::create_dir_all("tests/dumps");
-        if let Ok(mut w) = File::create(to.clone()) {
+        let _ = crate::file_access::create_dir_all("tests/dumps");
+        if let Ok(mut w) = crate::file_access::create(&to) {
             let to = self.database.types.len();
             for tp in types..to {
                 writeln!(w, "Type {tp}:{}", self.database.show_type(tp as u16, true))?;
@@ -18764,7 +18763,7 @@ impl Parser {
                     let f = self.lib_path(&id);
                     let refused = self.lexer.diagnostics().level() == Level::Fatal
                         && level_before != Level::Fatal;
-                    let f_exists = std::path::Path::new(&f).exists() || {
+                    let f_exists = crate::file_access::exists(&f) || {
                         #[cfg(feature = "wasm")]
                         {
                             crate::wasm::virt_fs_get(&f).is_some()
@@ -18839,7 +18838,7 @@ impl Parser {
                 } else {
                     self.lib_path(&dep_id)
                 };
-                if std::path::Path::new(&f).exists() {
+                if crate::file_access::exists(&f) {
                     let cur = &self.lexer.pos().file;
                     self.todo_files.push((cur.to_string(), self.data.source));
                     self.data.use_add(&dep_id);
@@ -18951,7 +18950,7 @@ impl Parser {
                     self.record_use_path(&n, &f);
                     continue;
                 }
-                if std::path::Path::new(&f).exists() {
+                if crate::file_access::exists(&f) {
                     resolved.push((n, f));
                 }
             }
@@ -19158,7 +19157,7 @@ impl Parser {
         if let Some(c) = crate::wasm::virt_fs_get(filename) {
             return c;
         }
-        std::fs::read_to_string(filename).unwrap_or_default()
+        crate::file_access::read_to_string(filename).unwrap_or_default()
     }
 
     /// Tier-1: build (once, cached) the `method name -> providing package` map
@@ -19176,7 +19175,7 @@ impl Parser {
             .map(std::path::Path::to_path_buf);
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
-            if toml.exists() {
+            if crate::file_access::exists(&toml) {
                 Self::add_pkg_triggers(&toml, &d, &mut map);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
                     for (dep, _ver) in &man.dependencies {
@@ -19212,7 +19211,7 @@ impl Parser {
         }
         let Some(name) = man.name else { return };
         let entry = man.entry.unwrap_or_else(|| format!("src/{name}.loft"));
-        let src = std::fs::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
+        let src = crate::file_access::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
         for mt in crate::triggers::derive_triggers(&src).methods {
             map.entry(mt.name).or_insert_with(|| name.clone());
         }
@@ -19345,7 +19344,7 @@ impl Parser {
         // declares, a `--lib` directory it was given, a sidecar lock it pinned.  What
         // follows resolves from the registry, which is a property of the BOX.  So this is
         // the one line where the two can be told apart.
-        let mut named_by_the_project = std::path::Path::new(&f).exists();
+        let mut named_by_the_project = crate::file_access::exists(&f);
         // @PLN143 arc B — the scope is a property of the PROGRAM, so it is answered ONCE,
         // here, and handed to each probe that needs it.  Re-deriving it inside a probe
         // would put the old three-sites-must-agree brittleness back with one extra step
@@ -19373,7 +19372,7 @@ impl Parser {
         }
         self.probe_auto_install(id, &mut f, &cur_script, &scope);
         self.probe_cache_newest(id, &mut f, &cur_script, &scope);
-        if !named_by_the_project && std::path::Path::new(&f).exists() {
+        if !named_by_the_project && crate::file_access::exists(&f) {
             self.undeclared_registry_dep(id, &cur_script);
         }
         Self::probe_cur_dir_flat(id, cur_dir, &mut f);
@@ -19408,11 +19407,10 @@ impl Parser {
         if self.lib_dirs.is_empty() || std::env::var_os("LOFT_NO_LIB_OUTRANKED").is_some() {
             return;
         }
-        if !std::path::Path::new(resolved).exists() {
+        if !crate::file_access::exists(resolved) {
             return;
         }
-        let canon =
-            |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| std::path::PathBuf::from(p));
+        let canon = |p: &str| crate::file_access::plain_canonical(std::path::Path::new(p));
         let winner = canon(resolved);
         let lib_dirs = self.lib_dirs.clone();
         let Some((dir, provided)) = lib_dirs.iter().find_map(|l| {
@@ -19420,7 +19418,7 @@ impl Parser {
             let packaged = format!("{l}{0}{id}{0}src{0}{id}.loft", sep_str());
             let provided = [flat, packaged]
                 .into_iter()
-                .find(|c| std::path::Path::new(c).exists())?;
+                .find(|c| crate::file_access::exists(c))?;
             if winner.starts_with(canon(l)) {
                 return None;
             }
@@ -19874,7 +19872,7 @@ impl Parser {
         };
         files
             .filter(|f| {
-                std::fs::metadata(f)
+                crate::file_access::metadata(f)
                     .and_then(|m| m.modified())
                     // A clock that cannot answer is not evidence of a change: say no.
                     .is_ok_and(|m| m > started)
@@ -19943,7 +19941,7 @@ impl Parser {
             format!("{cur_dir}{sep}lib{sep}{id}.loft"),
         ]
         .into_iter()
-        .find(|c| std::path::Path::new(c).exists())
+        .find(|c| crate::file_access::exists(c))
     }
 
     /// The `[package] name` of the package the current file belongs to (loft#949).
@@ -20181,11 +20179,11 @@ impl Parser {
     fn same_package(a: &str, b: &str) -> bool {
         let root = |p: &str| -> Option<std::path::PathBuf> {
             let mut dir = crate::file_access::try_plain_canonical(std::path::Path::new(p))?;
-            if dir.is_file() {
+            if crate::file_access::is_file(&dir) {
                 dir = dir.parent()?.to_path_buf();
             }
             loop {
-                if dir.join("loft.toml").exists() {
+                if crate::file_access::exists(dir.join("loft.toml")) {
                     return Some(dir);
                 }
                 dir = dir.parent()?.to_path_buf();
@@ -20212,7 +20210,7 @@ impl Parser {
         let mut search = crate::file_access::try_plain_canonical(std::path::Path::new(start));
         while let Some(dir) = search {
             let manifest_path = dir.join("loft.toml");
-            if manifest_path.exists() {
+            if crate::file_access::exists(&manifest_path) {
                 if let Some(manifest) =
                     crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                 {
@@ -20267,7 +20265,7 @@ impl Parser {
     /// `<id>.loft` in the current working directory.
     fn probe_project_lib(id: &str) -> String {
         let f = format!("lib{0}{id}.loft", sep_str());
-        if std::path::Path::new(&f).exists() {
+        if crate::file_access::exists(&f) {
             f
         } else {
             format!("{id}.loft")
@@ -20278,7 +20276,7 @@ impl Parser {
     /// (called for the script's own dir, then for the base dir when the
     /// script lives inside a `/tests/` tree).
     fn probe_dir_lib(id: &str, dir: &str, f: &mut String) {
-        if !dir.is_empty() && !std::path::Path::new(f).exists() {
+        if !dir.is_empty() && !crate::file_access::exists(f.as_str()) {
             *f = format!("{dir}{0}lib{0}{id}.loft", sep_str());
         }
     }
@@ -20306,7 +20304,7 @@ impl Parser {
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
         loop {
             let manifest_path = search_dir.join("loft.toml");
-            if manifest_path.exists() {
+            if crate::file_access::exists(&manifest_path) {
                 let rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
@@ -20324,13 +20322,13 @@ impl Parser {
     }
 
     fn probe_manifest_path_dep(&mut self, id: &str, cur_dir: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() || cur_dir.is_empty() {
+        if crate::file_access::exists(f.as_str()) || cur_dir.is_empty() {
             return;
         }
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
         loop {
             let manifest_path = search_dir.join("loft.toml");
-            if manifest_path.exists() {
+            if crate::file_access::exists(&manifest_path) {
                 let dep_rel = crate::manifest::read_manifest(&manifest_path.to_string_lossy())
                     .and_then(|m| {
                         m.dependencies.iter().find_map(|(name, value)| {
@@ -20343,16 +20341,15 @@ impl Parser {
                 if let Some(rel) = dep_rel {
                     let pkg_root = search_dir.join(rel);
                     let dep_manifest = pkg_root.join("loft.toml");
-                    let entry = dep_manifest
-                        .exists()
+                    let entry = crate::file_access::exists(&dep_manifest)
                         .then(|| crate::manifest::read_manifest(&dep_manifest.to_string_lossy()))
                         .flatten()
                         .and_then(|m| m.entry)
                         .unwrap_or_else(|| format!("src{}{id}.loft", sep_str()));
                     let file = pkg_root.join(entry);
-                    if file.exists() {
+                    if crate::file_access::exists(&file) {
                         *f = file.to_string_lossy().to_string();
-                        if dep_manifest.exists() {
+                        if crate::file_access::exists(&dep_manifest) {
                             self.register_native_manifest(&dep_manifest, &pkg_root);
                         }
                     }
@@ -20381,7 +20378,7 @@ impl Parser {
     /// it does not, the two declarations disagree and the program is refused, naming both
     /// ([`Self::loaded_copy_meets_declaring_range`]).
     fn probe_root_path_dep(&mut self, id: &str, cur_script: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let Some(root) = crate::resolution_scope::project_root(&self.database.source_dir) else {
@@ -20389,7 +20386,7 @@ impl Parser {
         };
         let root_dir = root.to_string_lossy().to_string();
         self.probe_manifest_path_dep(id, &root_dir, f);
-        if std::path::Path::new(f).exists()
+        if crate::file_access::exists(f.as_str())
             && let Some(pkg_root) = Self::declared_path_dep_root(id, &root_dir)
         {
             self.loaded_copy_meets_declaring_range(id, cur_script, &pkg_root);
@@ -20449,19 +20446,19 @@ impl Parser {
     /// found directly (not via `lib_path_manifest`), the sibling's own
     /// `loft.toml` must be registered so its `#native` symbols resolve.
     fn probe_sibling_package(&mut self, id: &str, cur_dir: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() || cur_dir.is_empty() {
+        if crate::file_access::exists(f.as_str()) || cur_dir.is_empty() {
             return;
         }
         let mut search_dir = std::path::Path::new(cur_dir).to_path_buf();
         loop {
-            if search_dir.join("loft.toml").exists() {
+            if crate::file_access::exists(search_dir.join("loft.toml")) {
                 if let Some(parent) = search_dir.parent()
                     && let Some(path) = Self::find_sibling_file(parent, id)
                 {
                     *f = path.to_string_lossy().to_string();
                     let pkg_root = parent.join(id);
                     let manifest = pkg_root.join("loft.toml");
-                    if manifest.exists() {
+                    if crate::file_access::exists(&manifest) {
                         self.register_native_manifest(&manifest, &pkg_root);
                     }
                 }
@@ -20478,16 +20475,16 @@ impl Parser {
     /// flat `<parent>/<id>.loft`.
     fn find_sibling_file(parent: &std::path::Path, id: &str) -> Option<std::path::PathBuf> {
         let nested = parent.join(id).join("src").join(format!("{id}.loft"));
-        if nested.exists() {
+        if crate::file_access::exists(&nested) {
             return Some(nested);
         }
         let flat = parent.join(format!("{id}.loft"));
-        flat.exists().then_some(flat)
+        crate::file_access::exists(&flat).then_some(flat)
     }
 
     /// A directory named after the current script (minus the `.loft` suffix).
     fn probe_script_sibling_dir(id: &str, cur_script: &str, f: &mut String) {
-        if !std::path::Path::new(f).exists() && cur_script.len() >= 5 {
+        if !crate::file_access::exists(f.as_str()) && cur_script.len() >= 5 {
             *f = format!(
                 "{}{}{id}.loft",
                 &cur_script[0..cur_script.len() - 5],
@@ -20499,13 +20496,13 @@ impl Parser {
     /// `--lib` / `--project` command-line flag directories, flat layout.
     /// Registers any discovered `loft.toml` in the file's ancestry.
     fn probe_cmdline_lib_dirs(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let lib_dirs = self.lib_dirs.clone();
         for l in &lib_dirs {
             let candidate = format!("{l}{}{id}.loft", sep_str());
-            if std::path::Path::new(&candidate).exists() {
+            if crate::file_access::exists(&candidate) {
                 f.clone_from(&candidate);
                 self.register_manifest_in_ancestors(&candidate);
                 break;
@@ -20523,7 +20520,7 @@ impl Parser {
             .map(std::path::Path::to_path_buf);
         while let Some(dir) = search {
             let manifest = dir.join("loft.toml");
-            if manifest.exists() {
+            if crate::file_access::exists(&manifest) {
                 self.register_native_manifest(&manifest, &dir);
                 return;
             }
@@ -20534,7 +20531,7 @@ impl Parser {
     /// `--lib` / `--project` directories, packaged layout
     /// (`<dir>/<id>/src/<id>.loft`).
     fn probe_cmdline_lib_dirs_manifest(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let lib_dirs = self.lib_dirs.clone();
@@ -20548,7 +20545,7 @@ impl Parser {
 
     /// `LOFT_LIB` env var, flat layout (`<dir>/<id>.loft`).
     fn probe_loft_lib_flat(id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let Some(v) = env::var_os("LOFT_LIB") else {
@@ -20556,7 +20553,7 @@ impl Parser {
         };
         for l in env::split_paths(&v) {
             let candidate = l.join(format!("{id}.loft"));
-            if candidate.exists() {
+            if crate::file_access::exists(&candidate) {
                 *f = candidate.to_string_lossy().replace(other_sep(), sep_str());
                 return;
             }
@@ -20565,7 +20562,7 @@ impl Parser {
 
     /// `LOFT_LIB` env var, packaged layout (via `lib_path_manifest`).
     fn probe_loft_lib_manifest(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let Some(v) = env::var_os("LOFT_LIB") else {
@@ -20582,7 +20579,7 @@ impl Parser {
 
     /// `~/.loft/lib/<id>/src/<id>.loft` — packages installed via `loft install`.
     fn probe_user_installed(&mut self, id: &str, f: &mut String) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let home = env::var("HOME")
@@ -20765,7 +20762,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) -> bool {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return false;
         }
         // `None` is `Bare` scope: nothing is declared, so nothing pins this run.  There
@@ -20776,7 +20773,7 @@ impl Parser {
             return false;
         };
         self.resolve_registry_installed(id, &version, f);
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             self.pin_behind_notice(id, &version, cur_script, scope);
             return true;
         }
@@ -20831,7 +20828,7 @@ impl Parser {
     /// would leave `use <dep>` unresolved even though the package is installed.
     #[cfg(feature = "registry")]
     fn resolve_registry_installed(&mut self, id: &str, version: &str, f: &mut String) {
-        if !f.is_empty() && std::path::Path::new(f).exists() {
+        if !f.is_empty() && crate::file_access::exists(f.as_str()) {
             return;
         }
         let install_dir = crate::registry_index::extract_dir(id, version);
@@ -20839,11 +20836,7 @@ impl Parser {
             return;
         };
         let parent = parent.to_string();
-        let Some(versioned_name) = install_dir
-            .file_name()
-            .and_then(std::ffi::OsStr::to_str)
-            .map(str::to_string)
-        else {
+        let Some(versioned_name) = crate::file_access::file_name(&install_dir) else {
             return;
         };
         if let Some(entry) = self.lib_path_manifest(&parent, &versioned_name) {
@@ -20879,7 +20872,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         // Off-switches.
@@ -21079,7 +21072,7 @@ impl Parser {
         cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
-        if std::path::Path::new(f).exists() {
+        if crate::file_access::exists(f.as_str()) {
             return;
         }
         let mut constraints: Vec<String> =
@@ -21146,14 +21139,14 @@ impl Parser {
 
     /// Final fallback: beside the parsed file itself.
     fn probe_cur_dir_flat(id: &str, cur_dir: &str, f: &mut String) {
-        if !cur_dir.is_empty() && !std::path::Path::new(f).exists() {
+        if !cur_dir.is_empty() && !crate::file_access::exists(f.as_str()) {
             *f = format!("{cur_dir}{0}{id}.loft", sep_str());
         }
     }
 
     /// Final fallback for scripts inside a `/tests/` tree.
     fn probe_base_dir_flat(id: &str, base_dir: &str, f: &mut String) {
-        if !base_dir.is_empty() && !std::path::Path::new(f).exists() {
+        if !base_dir.is_empty() && !crate::file_access::exists(f.as_str()) {
             *f = format!("{base_dir}{0}{id}.loft", sep_str());
         }
     }
@@ -21232,12 +21225,10 @@ impl Parser {
         let Some(m) = manifest::read_manifest(manifest_path.to_str().unwrap_or("")) else {
             return;
         };
-        let id = m.name.clone().unwrap_or_else(|| {
-            pkg_dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default()
-        });
+        let id = m
+            .name
+            .clone()
+            .unwrap_or_else(|| crate::file_access::file_name(pkg_dir).unwrap_or_default());
         if !self.loft_floor_holds(&id, &m) {
             return;
         }
@@ -21412,14 +21403,14 @@ impl Parser {
         // the shadowing that made a local lib's `[wasm.bridge]` routes unreachable
         // in `--html`. Falls back to `<dir>/<id>` for the normal parent-dir search.
         let dir_pb = std::path::Path::new(dir);
-        let pkg_dir_pb = if dir_pb.file_name() == Some(std::ffi::OsStr::new(id))
-            && dir_pb.join("loft.toml").is_file()
+        let pkg_dir_pb = if crate::file_access::file_name(dir_pb).as_deref() == Some(id)
+            && crate::file_access::is_file(dir_pb.join("loft.toml"))
         {
             dir_pb.to_path_buf()
         } else {
             dir_pb.join(id)
         };
-        if !pkg_dir_pb.is_dir() {
+        if !crate::file_access::is_dir(&pkg_dir_pb) {
             return None;
         }
         let pkg_dir = pkg_dir_pb.to_string_lossy().into_owned();
@@ -21431,7 +21422,7 @@ impl Parser {
                 .to_string_lossy()
                 .into_owned()
         };
-        let (entry, manifest) = if manifest_pb.exists() {
+        let (entry, manifest) = if crate::file_access::exists(&manifest_pb) {
             let manifest_path = manifest_pb.to_string_lossy().into_owned();
             let m = manifest::read_manifest(&manifest_path)?;
             if !self.loft_floor_holds(id, &m) {
@@ -21495,7 +21486,7 @@ impl Parser {
         } else {
             (nested_entry(), None)
         };
-        if std::path::Path::new(&entry).exists() {
+        if crate::file_access::exists(&entry) {
             Some(ResolvedPkg {
                 pkg_dir,
                 entry,
@@ -21985,10 +21976,7 @@ impl Parser {
         let d_nr = self.data.declared_by_importer(storage_name)?;
         let bare = storage_name.strip_prefix("n_").unwrap_or(storage_name);
         let pos = self.data.def(d_nr).position();
-        let file = std::path::Path::new(&*pos.file).file_name().map_or_else(
-            || pos.file.to_string(),
-            |f| f.to_string_lossy().into_owned(),
-        );
+        let file = crate::file_access::name_of(&pos.file);
         // When this file ALSO has a bare `use` of that file, the two files already `use`
         // each other, and a mutual import resolves both ways (the p173 cycle): the cure is
         // to import the name, `use errand::*;` or `use errand::(Errand);`, with no file moved.
@@ -24061,9 +24049,9 @@ mod plan86_sandbox_designation_tests {
         ));
         let dir = std::env::temp_dir();
         let path = dir.join(format!("plan86_designation_{}.loft", std::process::id()));
-        std::fs::write(&path, "fn scripted() { }\nfn host() { }\n").unwrap();
+        crate::file_access::write(&path, "fn scripted() { }\nfn host() { }\n").unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         assert!(
             p.diagnostics.level() < crate::diagnostics::Level::Error,
             "unexpected parse errors: {:?}",
@@ -24100,9 +24088,9 @@ mod plan86_nesting_guard_tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
     }
 
     #[test]
@@ -24245,9 +24233,9 @@ mod plan86_reachable_set_tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         p
     }
 
@@ -24407,9 +24395,9 @@ mod plan86_admission_tests {
             std::process::id(),
             SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         ));
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         p
     }
 
@@ -24431,9 +24419,9 @@ mod plan86_admission_tests {
             &stem,
         )));
         p.parse_dir("default", true, true).unwrap();
-        std::fs::write(&path, src).unwrap();
+        crate::file_access::write(&path, src).unwrap();
         p.parse(path.to_str().unwrap(), false);
-        let _ = std::fs::remove_file(&path);
+        let _ = crate::file_access::remove_file(&path);
         p
     }
 
@@ -26215,7 +26203,7 @@ mod h5_changed_source_tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_nanos())
         ));
-        std::fs::write(&p, body).expect("write probe file");
+        crate::file_access::write(&p, body).expect("write probe file");
         p.to_string_lossy().into_owned()
     }
 
@@ -26227,13 +26215,13 @@ mod h5_changed_source_tests {
         // mtime resolution is finer than this everywhere loft builds, but a rewrite in the
         // same instant would make the cell vacuous rather than wrong — so step past it.
         std::thread::sleep(std::time::Duration::from_millis(20));
-        std::fs::write(&f, "after").expect("rewrite probe file");
+        crate::file_access::write(&f, "after").expect("rewrite probe file");
         assert_eq!(
             p.sources_changed_during_parse(std::iter::once(f.as_str())),
             vec![f.clone()],
             "a source rewritten under the two passes must be named"
         );
-        let _ = std::fs::remove_file(&f);
+        let _ = crate::file_access::remove_file(&f);
     }
 
     #[test]
@@ -26248,7 +26236,7 @@ mod h5_changed_source_tests {
             "an untouched source must not be named — reporting it would point the reader at \
              a file nobody wrote"
         );
-        let _ = std::fs::remove_file(&f);
+        let _ = crate::file_access::remove_file(&f);
     }
 
     #[test]
@@ -26275,6 +26263,6 @@ mod h5_changed_source_tests {
                 .is_empty(),
             "with no instant to compare against there is no answer, and silence is the honest one"
         );
-        let _ = std::fs::remove_file(&f);
+        let _ = crate::file_access::remove_file(&f);
     }
 }
