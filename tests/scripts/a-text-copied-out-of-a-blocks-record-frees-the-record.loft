@@ -20,7 +20,9 @@
 // Every value is hand-computed; the leak is the exit's "stores not freed" report, which the
 // corpus leak gate and `make falsify`'s leak channel read.
 //
-// @falsified-at: PENDING
+// @falsified-at: 653383a5a — measured by hand on both backends: interpret leaked kt=96 R×12,
+//   kt=97 H×6 -> clean, native leaked kt=96 R×12, kt=97 H×6 -> clean
+// @falsified-by: tests/falsified/a-text-copied-out-of-a-blocks-record-frees-the-record.patch — interpret leaked kt=96 R×12, kt=97 H×6 -> clean, native leaked kt=96 R×12, kt=97 H×6 -> clean
 
 struct R { name: text }
 struct H { r: R, n: integer }
