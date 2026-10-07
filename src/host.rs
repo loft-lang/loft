@@ -22,8 +22,6 @@
 
 // @I85 — Engine-host kernel natives (the controlled loft ↔ host boundary; this is
 // the Rust-host side of it: a host program calling into a loaded loft program).
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile;
 use crate::data::{Data, Type};
 use crate::parser;
@@ -223,7 +221,7 @@ impl Program {
             ))
         })?;
         let src = pkg_dir.join("src");
-        let dir = if src.is_dir() {
+        let dir = if crate::file_access::is_dir(&src) {
             src
         } else {
             pkg_dir.to_path_buf()
@@ -594,7 +592,7 @@ fn default_stdlib_dir() -> String {
         && let Some(dir) = exe.parent()
     {
         let cand = dir.join("../default");
-        if cand.exists() {
+        if crate::file_access::exists(&cand) {
             return cand.to_string_lossy().into_owned();
         }
     }
