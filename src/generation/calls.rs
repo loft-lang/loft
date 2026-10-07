@@ -448,11 +448,12 @@ impl Output<'_> {
         let raw_param = idx < def_fn.attributes().len()
             && crate::generation::is_raw_scalar_ref(&def_fn.attributes()[idx].typedef);
         if let Some(vr) = self.create_stack_var(v) {
-            let name = sanitize(self.data.def(self.def_nr).variables().name(vr));
+            // The variable's PLACE: a generator's local is its struct field (loft#1899).
+            let place = self.var_place(vr);
             if raw_param {
-                write!(w, "std::ptr::addr_of_mut!(var_{name})")?;
+                write!(w, "std::ptr::addr_of_mut!({place})")?;
             } else {
-                write!(w, "&mut var_{name}")?;
+                write!(w, "&mut {place}")?;
             }
         } else if raw_param
             && let Value::Call(d_nr, _) = v.unspan()

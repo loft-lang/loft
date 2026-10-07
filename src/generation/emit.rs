@@ -397,6 +397,10 @@ impl Output<'_> {
                     if matches!(variables.tp(var), Type::Text(_)) {
                         return write!(w, "&self.var_{field}");
                     }
+                    // @PLN167 decision 1 — a LINKED narrow field reads as its decoded value.
+                    if let Some(slot) = variables.linked_narrow_slot(var) {
+                        return write!(w, "{}", slot.decode_rust(&format!("self.var_{field}")));
+                    }
                     return write!(w, "self.var_{field}");
                 } else if self.text_borrowed(var) {
                     // A borrowed text reads as the `&str` it holds.
