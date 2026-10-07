@@ -319,6 +319,11 @@ pub struct Lexer {
     /// missing restore to the one diagnostic it was made for.
     seek_return: Option<(u32, u32)>,
     tokens: HashSet<String>,
+    /// [`token_tables`] of `tokens`: which ASCII characters are a token alone, and which
+    /// begin a two-character token — so a punctuation character costs an index, not a
+    /// `HashSet<String>` lookup, and the two-character lookup runs only where one can match.
+    tok1: [bool; 128],
+    tok2: [bool; 128],
     keywords: HashSet<String>,
     /// The comment marker (from it to end-of-line is skipped); loft `//`.  See
     /// [`LexConfig`].
@@ -622,6 +627,8 @@ impl Default for Lexer {
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
             iter: LINE.chars().collect::<Vec<_>>().into_iter().peekable(),
+            tok1: token_tables(&cfg.tokens).0,
+            tok2: token_tables(&cfg.tokens).1,
             tokens: cfg.tokens,
             keywords: cfg.keywords,
             comment: cfg.comment,
@@ -695,6 +702,8 @@ impl Lexer {
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
             iter: LINE.chars().collect::<Vec<_>>().into_iter().peekable(),
+            tok1: token_tables(&config.tokens).0,
+            tok2: token_tables(&config.tokens).1,
             tokens: config.tokens,
             keywords: config.keywords,
             comment: config.comment,
@@ -863,14 +872,20 @@ impl Lexer {
                     let one = c.len_utf8();
                     c.encode_utf8(&mut spelled);
                     let single = std::str::from_utf8(&spelled[..one]).unwrap_or_default();
-                    if self.tokens.contains(single) {
+                    let is_token = if c.is_ascii() {
+                        self.tok1[c as usize]
+                    } else {
+                        self.tokens.contains(single)
+                    };
+                    if is_token {
                         let single = single.to_string();
                         self.next_char();
+                        let may_pair = !c.is_ascii() || self.tok2[c as usize];
                         if let Some(&d) = self.iter.peek() {
                             d.encode_utf8(&mut spelled[one..]);
                             let double = std::str::from_utf8(&spelled[..one + d.len_utf8()])
                                 .unwrap_or_default();
-                            if self.tokens.contains(double) {
+                            if may_pair && self.tokens.contains(double) {
                                 let double = double.to_string();
                                 self.next_char();
                                 LexResult::new(LexItem::Token(double), pos)
@@ -3508,4 +3523,25 @@ mod test {
             ],
         );
     }
+}
+
+/// The ASCII halves of a token set: which characters are a token on their own, and which
+/// begin a two-character token.  A character outside ASCII is asked of the set itself.
+fn token_tables(tokens: &HashSet<String>) -> ([bool; 128], [bool; 128]) {
+    let mut one = [false; 128];
+    let mut two = [false; 128];
+    for t in tokens {
+        let mut cs = t.chars();
+        let (Some(a), second, None) = (cs.next(), cs.next(), cs.next()) else {
+            continue;
+        };
+        if a.is_ascii() {
+            if second.is_some() {
+                two[a as usize] = true;
+            } else {
+                one[a as usize] = true;
+            }
+        }
+    }
+    (one, two)
 }
