@@ -41,6 +41,13 @@ impl PathText {
     /// place it names; any other path parsed under the other flavor (a test's Windows path on
     /// Linux) is not a file here.
     fn os(&self) -> io::Result<PathBuf> {
+        if self.is_empty() {
+            // As `std`: an empty path names no file, where `.` is the current directory.
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "an empty path names no file",
+            ));
+        }
         if self.flavor() == Flavor::HOST {
             Ok(self.os_spelling())
         } else if self.flavor() == Flavor::program_host() {
@@ -300,8 +307,10 @@ pub fn read_dir(path: impl HostPath) -> io::Result<Vec<PathText>> {
     run(path, |p| {
         let mut out = Vec::new();
         let mut unspellable = false;
-        for entry in std::fs::read_dir(p)? {
-            let entry = entry?.path();
+        // An entry the OS cannot hand over is left out: one bad entry degrades itself, never
+        // the listing.
+        for entry in std::fs::read_dir(p)?.flatten() {
+            let entry = entry.path();
             // `@FR-Path-Utf8` — listed, shown with U+FFFD, kept in the OS's own spelling.
             unspellable |= entry.file_name().and_then(|n| n.to_str()).is_none();
             if path.flavor() != Flavor::HOST && emulated::is_stream(&entry) {
@@ -981,7 +990,8 @@ mod tests {
                 let real = PathText::host(&text);
                 let program = real.for_program();
                 assert_eq!(program.flavor(), Flavor::program_host(), "{text}");
-                assert_eq!(program.os().unwrap(), real.os().unwrap(), "{text}");
+                // The empty text names nothing on either side (`os` refuses both).
+                assert_eq!(program.os().ok(), real.os().ok(), "{text}");
             }
             if Flavor::emulating() {
                 assert_eq!(given("/tmp/x/"), "L:/tmp/x");
@@ -1044,6 +1054,19 @@ mod tests {
         assert!(twin != p, "and are two names");
         assert!(!exists(&twin));
         remove_dir_all(&dir).unwrap();
+    }
+
+    /// As `std`: an empty path names nothing, and `.` is the current directory.  The parent of
+    /// a lone relative name is the empty path, so a probe built from it finds nothing.
+    #[test]
+    fn an_empty_path_names_nothing_and_dot_is_here() {
+        assert!(!exists(""), "an empty path");
+        assert!(!is_dir("") && metadata("").is_err());
+        assert!(exists(".") && is_dir("."));
+        let lone = PathText::host("a.loft").parent().unwrap();
+        assert!(lone.is_empty() && lone.native_or_empty().is_empty() && !exists(&lone));
+        assert_eq!(lone.join("b.loft").native(), "b.loft");
+        assert!(!PathText::host("x/").join("").is_empty());
     }
 
     #[test]

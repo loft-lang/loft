@@ -116,6 +116,10 @@ pub struct PathText {
     /// are not UTF-8, an unpaired UTF-16 half), beside that name's lossy text in `parts`.
     /// Empty when every name is text, which is nearly always; otherwise one entry per part.
     raw: Vec<Option<std::ffi::OsString>>,
+    /// The path names nothing: the empty text, or what `std` answers for the parent of a
+    /// lone relative name.  It renders as `""`, and no operation reaches the file system with
+    /// it — where `.` (also no parts) is the current directory.
+    empty: bool,
 }
 
 impl PathText {
@@ -163,6 +167,16 @@ impl PathText {
     }
 
     fn parse_with(text: &str, flavor: Flavor, backslash: bool) -> PathText {
+        if text.is_empty() {
+            return PathText {
+                flavor,
+                prefix: String::new(),
+                rooted: false,
+                parts: Vec::new(),
+                raw: Vec::new(),
+                empty: true,
+            };
+        }
         let is_sep = |c: char| flavor.is_separator(c) || (backslash && c == '\\');
         let mut rest = text;
         let mut prefix = String::new();
@@ -238,6 +252,7 @@ impl PathText {
             rooted: self.rooted,
             parts: self.parts.clone(),
             raw: self.raw.clone(),
+            empty: self.empty,
         }
     }
 
@@ -255,6 +270,7 @@ impl PathText {
                 rooted: self.rooted,
                 parts: self.parts.clone(),
                 raw: self.raw.clone(),
+                empty: self.empty,
             })
         } else {
             Err(format!(
@@ -291,7 +307,14 @@ impl PathText {
             rooted,
             parts,
             raw: Vec::new(),
+            empty: false,
         }
+    }
+
+    /// Does the path name nothing (see the `empty` field)?
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.empty
     }
 
     #[must_use]
@@ -338,6 +361,7 @@ impl PathText {
         let mut p = self.clone();
         p.parts.pop();
         p.raw.pop();
+        p.empty = p.prefix.is_empty() && !p.rooted && p.parts.is_empty();
         Some(p)
     }
 
@@ -386,6 +410,7 @@ impl PathText {
             rooted: false,
             parts: self.parts[base.parts.len()..].to_vec(),
             raw: self.raw.get(base.parts.len()..).unwrap_or(&[]).to_vec(),
+            empty: self.parts.len() == base.parts.len(),
         })
     }
 
@@ -411,6 +436,7 @@ impl PathText {
         // Appended part by part, as `from_parts` folds them, so a name kept in the OS's own
         // spelling (`raw`) survives the join.
         let mut p = self.clone();
+        p.empty = p.empty && other.empty;
         for part in other.parts {
             if part == ".." && p.parts.last().is_some_and(|l| l != "..") {
                 p.parts.pop();
@@ -573,7 +599,7 @@ impl PathText {
             }
             out.push_str(part);
         }
-        if out.is_empty() {
+        if out.is_empty() && !self.empty {
             out.push('.');
         }
         out
