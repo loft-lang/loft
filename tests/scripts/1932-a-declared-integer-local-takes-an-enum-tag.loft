@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1932, `@FR-T-Sub` / `@FR-C-Var` — a plain enum converts to its integer TAG at every
+// checking position (variants are numbered from 1).  The argument, return, field, element, `??`
+// and tuple positions took `Colour.Green` as 2; a local DECLARED `integer` refused it as a
+// re-type ("cannot change type from integer to Colour"), in the declaration, a reassignment and
+// an `if` joining into it.  The declared local now takes the same conversion.
+//
+// Axes it MOVES: the spelling of the store (declaration, reassignment, an `if` join), and the
+// position as control (an argument, which always converted).  Values hand-computed: Red 1,
+// Green 2, Blue 3.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Colour1932 { Red, Green, Blue }
+
+fn tag1932(a: integer) -> integer { a }
+
+fn test_every_store_takes_the_tag() {
+  y: integer = Colour1932.Green;
+  z: integer = 1;
+  before = z;
+  z = Colour1932.Blue;
+  c = z > 0;
+  w: integer = if c { Colour1932.Red } else { Colour1932.Blue };
+  assert(y == 2 && before == 1 && z == 3 && w == 1, "declared {y}, reassigned {before} -> {z}, joined {w}");
+  assert(tag1932(Colour1932.Green) == y, "the argument position agrees: {tag1932(Colour1932.Green)}");
+}
+
+fn main() {
+  test_every_store_takes_the_tag();
+}
