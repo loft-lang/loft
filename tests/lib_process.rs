@@ -4,10 +4,12 @@
 // @PLN179 strand 4 — `lib/process`, on both backends.  The library's own test files carry
 // the cells and their hand-computed values: `command.loft` the composition matrix (a value
 // can never become syntax), `run.loft` the drain gate (a stream is never left without a
-// reader) and the contract of a finished run.  Each must print `ok` on the interpreter AND
-// the compiled backend: the native is one body behind two calling conventions, and this is
-// what keeps the second one honest.  The composition matrix spawns nothing and runs on every
-// host; the drain gate spawns `sh`, `cat` and `printf`.
+// reader) and the contract of a finished run, `start.loft` a program running beside this one
+// and the tree a stop or a timeout takes with it, and path holes (@PLN184 P7) — that one
+// also under the emulated Windows host, where a path hole must still reach its file.  Each
+// must print `ok` on the interpreter AND the compiled backend: the native is one body behind
+// two calling conventions, and this is what keeps the second one honest.  The composition
+// matrix spawns nothing and runs on every host; the drain gate and `start.loft` spawn `sh`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,7 +19,12 @@ fn root() -> PathBuf {
 }
 
 fn run(backend: &str, file: &str) {
+    run_on(backend, file, "");
+}
+
+fn run_on(backend: &str, file: &str, host: &str) {
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        .env("LOFT_POISON_HOST", host)
         .arg(backend)
         .arg("--lib")
         .arg(root().join("lib"))
@@ -28,7 +35,7 @@ fn run(backend: &str, file: &str) {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         out.status.success() && stdout.trim_end().ends_with("ok"),
-        "{file} on {backend}:\n{stdout}\n{}",
+        "{file} on {backend} (host {host:?}):\n{stdout}\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
@@ -56,5 +63,27 @@ mod drain {
     #[test]
     fn no_stream_is_left_without_a_reader_compiled() {
         run("--native", "run.loft");
+    }
+}
+
+// @PLN184 C2 approved exemption (owner, 2026-10-07): `start.loft` drives `sh -c`, `sleep` and `wait`; Windows substitute: `windows_rules::a_loft_programs_stop_takes_what_its_child_started`
+#[cfg(unix)]
+mod start {
+    use super::{run, run_on};
+
+    #[test]
+    fn a_started_program_and_its_tree_interpreted() {
+        run("--interpret", "start.loft");
+    }
+
+    #[test]
+    fn a_started_program_and_its_tree_compiled() {
+        run("--native", "start.loft");
+    }
+
+    #[test]
+    fn a_started_program_and_its_tree_under_the_emulated_windows_host() {
+        run_on("--interpret", "start.loft", "windows");
+        run_on("--native", "start.loft", "windows");
     }
 }

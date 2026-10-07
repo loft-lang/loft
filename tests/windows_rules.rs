@@ -163,3 +163,122 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
     let _ = fa::remove_dir_all(&dir);
     let _ = fa::remove_file(&program);
 }
+
+/// @PLN184 P7 — P0's tree-stop cell written as a loft program: the program `start()`s a
+/// child (`loft` running [`INNER`]) whose own `run()` started the grandchild, then `stop()`s
+/// it.  The grandchild is this binary as `beat_role`, beating into a file; the test watches
+/// it, tells the program when it beats (`go`), and asserts it stops with the stop.  Both
+/// backends, under the emulated Windows host — so every path the program hands its child
+/// goes through a `path(…)` hole — and on windows-latest against the Job Object.
+#[test]
+fn a_loft_programs_stop_takes_what_its_child_started() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for backend in ["--interpret", "--native"] {
+        let dir = std::env::temp_dir().join(format!(
+            "loft_winrules_tree_{}_{}",
+            std::process::id(),
+            backend.trim_start_matches('-')
+        ));
+        let _ = fa::remove_dir_all(&dir);
+        fa::create_dir_all(&dir).expect("scratch dir");
+        let inner = dir.join("inner.loft");
+        let outer = dir.join("outer.loft");
+        fa::write(&inner, INNER).expect("inner program");
+        fa::write(&outer, OUTER).expect("outer program");
+        let mut program = Command::new(env!("CARGO_BIN_EXE_loft"))
+            .env("LOFT_POISON_HOST", "windows")
+            .env("LOFT_TIMEOUT", "240")
+            .env(TREE_ROLE, "beat")
+            .env(TREE_DIR, &dir)
+            .env("TREE_EXE", std::env::current_exe().expect("this binary"))
+            .env("TREE_LOFT", env!("CARGO_BIN_EXE_loft"))
+            .env("TREE_LIB", root.join("lib"))
+            .env("TREE_INNER", &inner)
+            .args([backend, "--lib", &root.join("lib").to_string_lossy()])
+            .arg(&outer)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("run loft");
+        let beat = || fa::read_to_string(dir.join("beat")).ok();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let mut first = None;
+        let mut beating = false;
+        while std::time::Instant::now() < until && !beating {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let now = beat();
+            beating = now.is_some() && first.is_some() && now != first;
+            if first.is_none() {
+                first = now;
+            }
+            if matches!(program.try_wait(), Ok(Some(_))) {
+                break;
+            }
+        }
+        let _ = fa::write(dir.join("go"), "");
+        let out = program.wait_with_output().expect("the program ends");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        // No beat for a second: the stop reached the grandchild.
+        let before = beat();
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        let after = beat();
+        let _ = fa::write(dir.join("stop"), "");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let _ = fa::remove_dir_all(&dir);
+        assert!(
+            beating,
+            "{backend}: the grandchild never beat\n{stdout}\n{stderr}"
+        );
+        assert!(
+            out.status.success() && stdout.contains("stopped"),
+            "{backend}: {stdout}\n{stderr}"
+        );
+        assert_eq!(before, after, "{backend}: the grandchild outlived the stop");
+    }
+}
+
+const TREE_ROLE: &str = "PROCESS_TREE_ROLE";
+const TREE_DIR: &str = "PROCESS_TREE_DIR";
+
+/// The program the test runs: starts the child, waits for `go`, stops it.  `wait` is the
+/// pause between looks: the child runs on, so each one waits its full 100 ms.
+const OUTER: &str = r#"use process::*;
+fn main() {
+  dir = env_variable("PROCESS_TREE_DIR");
+  c: Command = "{path(env_variable("TREE_LOFT"))} --interpret --lib {path(env_variable("TREE_LIB"))} {path(env_variable("TREE_INNER"))}";
+  p = c.start();
+  assert(p.error == "", "started: {p.error}");
+  for _ in 0..1200 {
+    if exists("{dir}/go") { break; }
+    p.wait(100);
+  }
+  p.stop();
+  println("stopped {p.code}");
+}
+"#;
+
+/// The child: its own `run()` starts the grandchild and blocks in it.
+const INNER: &str = r#"use process::*;
+fn main() {
+  c: Command = "{path(env_variable("TREE_EXE"))} beat_role --exact --nocapture --test-threads=1";
+  r = c.run();
+}
+"#;
+
+/// The grandchild: beats until the stop file appears, two minutes at most.
+#[test]
+fn beat_role() {
+    if std::env::var(TREE_ROLE).as_deref() != Ok("beat") {
+        return;
+    }
+    let dir = std::path::PathBuf::from(std::env::var_os(TREE_DIR).expect("PROCESS_TREE_DIR"));
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut n = 0u64;
+    while std::time::Instant::now() < until && !fa::exists(dir.join("stop")) {
+        n += 1;
+        let _ = fa::write(dir.join("beat"), n.to_string());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
