@@ -58,7 +58,7 @@ it.
 | F2 enum-level fallback | **PASS** | `match (a, b) { (Rock, Scissors) => true, …, _ => false }` over the plain enum |
 | H1 functional record update | PARTIAL | `Unit { hp: 0, ..u }` is refused (*"Expect token ;"*); the capability is two statements — `d = u; d.hp = 0;` copies the record, `u` keeps its value |
 | H2 immutable binding | **PASS** | `total: const integer = 5; total = 6;` → *"Cannot modify const variable 'total'"*.  The default is the opposite of OCaml's: a binding is mutable unless declared `const` |
-| H3 abstract type | **PASS** | `p.x` on a `geo::Pt` from outside `geo` → *"field `x` of `Pt` is not `pub` in `geo`"*, naming the cure (`pub x`); a field is private to its file (C140).  A non-`pub` `type` alias named by a `pub` fn is OCaml's `type t` (`tests/pub_visibility.rs`).  Re-measured after `58601f08a`, with @PLN187 step 6 |
+| H3 abstract type | **PASS** | `p.x` on a `geo::Pt` from outside `geo` → *"field `x` of `Pt` is not `pub` in `geo`"*, naming the cure (`pub x`); a field is private to its file (C140).  A non-`pub` `type` alias named by a `pub` fn is OCaml's `type t` (`tests/pub_visibility.rs`). |
 | H4 phantom type parameter | **PASS** | `Door<Closed>` into a `Door<Open>` parameter → *"expected Door<Open>, got Door<Closed>"* |
 | H5 structural equality | **PASS** | `==` on structs and on enum variants with fields compares by value |
 | H6 recursion as the loop | FAIL | a self-call in tail position still takes a frame: `count(100000, 0)` stops with *"call stack overflow — exceeded 10000 stack frames"* |
