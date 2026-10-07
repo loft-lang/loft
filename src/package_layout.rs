@@ -23,6 +23,7 @@
 //! rule it depends on must compile there too.
 
 use crate::file_access;
+use crate::platform::process::{Program, Spawn};
 use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -57,7 +58,7 @@ fn is_excluded_file(name: &str) -> bool {
 /// nothing were ignored, never as if everything were.
 pub(crate) fn git_ignored_set(root: &Path) -> HashSet<PathBuf> {
     let mut set = HashSet::new();
-    let Ok(out) = std::process::Command::new("git")
+    let Ok(out) = Spawn::new(Program::search("git"))
         .arg("-C")
         .arg(root)
         .args([
@@ -67,7 +68,7 @@ pub(crate) fn git_ignored_set(root: &Path) -> HashSet<PathBuf> {
             "--exclude-standard",
             "-z",
         ])
-        .output()
+        .run(b"")
     else {
         return set; // git not installed → behave as before
     };

@@ -42,6 +42,7 @@
 #![cfg(feature = "registry")]
 
 use crate::file_access;
+use crate::platform::process::{Program, Spawn};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -327,10 +328,10 @@ pub fn package_create(pkg_dir: &Path, out_dir: Option<&Path>) -> io::Result<Pack
 /// exist (loft#1083).
 #[must_use]
 pub fn git_remote_org_repo(pkg_path: &Path) -> Option<(String, String)> {
-    let out = std::process::Command::new("git")
+    let out = Spawn::new(Program::search("git"))
         .args(["remote", "get-url", "origin"])
-        .current_dir(pkg_path)
-        .output()
+        .cwd(&file_access::PathText::from_os(pkg_path))
+        .run(b"")
         .ok()?;
     if !out.status.success() {
         return None;
@@ -828,7 +829,7 @@ mod tests {
 
         // Needs a git repo so git can resolve the ignore rules.  If git is
         // unavailable the fix degrades to a no-op, so skip rather than fail.
-        let git_ok = std::process::Command::new("git")
+        let git_ok = Spawn::new(Program::search("git"))
             .arg("-C")
             .arg(&pkg)
             .args(["init", "-q"])

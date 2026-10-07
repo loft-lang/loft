@@ -44,7 +44,7 @@ mod native_utils;
 use loft::file_access;
 use loft::parser;
 use loft::platform;
-use loft::platform::process::{Program, Spawn};
+use loft::platform::process::{Program, Spawn, Tree};
 use loft::scopes;
 use loft::state;
 mod test_runner;
@@ -692,10 +692,13 @@ fn run_dep_tests(
             }
             if fa::is_dir(dep_dir.join("tests")) {
                 tested += 1;
-                let mut cmd = std::process::Command::new(&loft_bin);
-                cmd.arg("test").current_dir(&dep_dir);
+                // A dependency's tests are handed the terminal, as `loft test` run there would be.
+                let mut cmd = Spawn::new(Program::os(&loft_bin))
+                    .arg("test")
+                    .cwd(&fa::PathText::from_os(&dep_dir))
+                    .tree(Tree::Foreground);
                 if native_mode {
-                    cmd.arg("--native");
+                    cmd.push_arg("--native");
                 }
                 // A dep's warnings are suppressed by default: a consumer should
                 // not be blocked by lint debt inside a package it does not own,
@@ -707,7 +710,7 @@ fn run_dep_tests(
                 // opt-in that was read nowhere — the flag is the opt-in, and now
                 // it exists.
                 if !strict_deps {
-                    cmd.arg("--no-warnings");
+                    cmd.push_arg("--no-warnings");
                     // `--no-warnings` only silences the PRINTING; whether a
                     // warning is fatal is decided separately, and
                     // `LOFT_DENY_WARNINGS` is read from the environment the
@@ -716,7 +719,7 @@ fn run_dep_tests(
                     // `LOFT_DENY_WARNINGS=1` set, a dep's lint debt failed the
                     // consumer's run — the exact thing the default exists to
                     // prevent.  Measured, not reasoned: exit 1 where 0 was owed.
-                    cmd.env("LOFT_DENY_WARNINGS", "0");
+                    cmd.push_env("LOFT_DENY_WARNINGS", "0");
                 }
                 let label = fa::file_name(&dep_dir).unwrap_or_else(|| dep_name.clone());
                 println!("  --deps: testing {label}");
@@ -3449,7 +3452,7 @@ fn publish_package(pkg_path: &std::path::Path, dry_run: bool) -> i32 {
 /// call fails.
 #[cfg(feature = "registry")]
 fn github_release_has_asset(org: &str, repo: &str, tag: &str, asset: &str) -> bool {
-    let out = std::process::Command::new("gh")
+    let out = Spawn::new(Program::search("gh"))
         .args([
             "release",
             "view",
@@ -3459,7 +3462,7 @@ fn github_release_has_asset(org: &str, repo: &str, tag: &str, asset: &str) -> bo
             "--json",
             "assets",
         ])
-        .output();
+        .run(b"");
     let Ok(out) = out else {
         return false;
     };
@@ -5522,15 +5525,16 @@ fn run_ship_command(args: &[String]) -> i32 {
         .map(|h| PathBuf::from(h).join(".loft/trust-root/registry-signing-key.bin"))
         .is_some_and(|p| fa::is_file(&p));
 
-    let mut cmd = std::process::Command::new("bash");
-    cmd.arg(&script);
+    // The script may prompt (a push asking for credentials): it is handed the terminal.
+    let mut cmd = Spawn::new(Program::search("bash")).tree(Tree::Foreground);
+    cmd.push_arg(&script);
     let passthrough_yes = args.iter().any(|a| a == "--yes" || a == "--dry-run");
     if key_present {
         if std::env::var_os("LOFT_REGISTRY_SIGNER").is_none() {
-            cmd.env("LOFT_REGISTRY_SIGNER", "file"); // C96: local file key is the default signer
+            cmd.push_env("LOFT_REGISTRY_SIGNER", "file"); // C96: local file key is the default signer
         }
         if !passthrough_yes {
-            cmd.arg("--yes"); // autonomous — no prompt on a key-present machine
+            cmd.push_arg("--yes"); // autonomous — no prompt on a key-present machine
         }
     } else {
         eprintln!(
@@ -5540,11 +5544,11 @@ fn run_ship_command(args: &[String]) -> i32 {
             "           Prepare a submission for a key holder to fold in (see REGISTRY_SUBMIT.md); running in review mode below."
         );
         if !passthrough_yes {
-            cmd.arg("--dry-run"); // key-absent → don't attempt to sign/push, just report
+            cmd.push_arg("--dry-run"); // key-absent → don't attempt to sign/push, just report
         }
     }
     for a in args {
-        cmd.arg(a);
+        cmd.push_arg(a);
     }
     match cmd.status() {
         Ok(s) => s.code().unwrap_or(1),
@@ -6362,16 +6366,16 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> Result<(), String>
 #[cfg(feature = "registry")]
 fn run_package_tests(dir: &std::path::Path) -> bool {
     let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("loft"));
-    std::process::Command::new(exe)
+    Spawn::new(Program::os(exe))
         .arg("--interpret")
         .arg("--tests")
         .arg("tests")
-        .current_dir(dir)
+        .cwd(&fa::PathText::from_os(dir))
         .env(
             "LOFT_TIMEOUT",
             std::env::var("LOFT_TIMEOUT").unwrap_or_else(|_| "120".into()),
         )
-        .output()
+        .run(b"")
         .is_ok_and(|o| o.status.success())
 }
 
