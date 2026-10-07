@@ -23,6 +23,9 @@ mod emulated;
 pub mod path;
 
 pub use path::{EMULATED_DRIVE, Flavor, PathText, with_program_host};
+/// The handle and the facts this module's operations answer (`open`, `metadata`), named
+/// here so a caller that only passes them on need not reach into `std::fs` (@PLN184 B2).
+pub use std::fs::{File, Metadata};
 
 use std::io;
 use std::path::{Path, PathBuf};

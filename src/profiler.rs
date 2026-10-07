@@ -666,16 +666,10 @@ pub enum Flush {
 /// 0 = nothing pending, 1 = report, 128 + signal = report and exit.
 static PENDING: AtomicU8 = AtomicU8::new(0);
 
-/// Async-signal-safe: one relaxed store, nothing else.
-#[cfg(unix)]
-extern "C" fn on_signal(sig: libc::c_int) {
-    let want = if sig == libc::SIGUSR1 {
-        1
-    } else {
-        // 128 + signal is the shell's own convention for "died of this signal", and it
-        // is what the exit code becomes.
-        u8::try_from(128 + sig).unwrap_or(129)
-    };
+/// Async-signal-safe: one relaxed store, nothing else.  `want` is 1 for a dump, or
+/// 128 + signal — the shell's own convention for "died of this signal", and what the exit
+/// code becomes (`platform::on_profile_signals`).
+fn on_signal(want: u8) {
     PENDING.store(want, Ordering::Relaxed);
 }
 
@@ -690,29 +684,11 @@ extern "C" fn on_signal(sig: libc::c_int) {
 /// what it was.  `SA_RESETHAND` on the two terminating signals is the escape hatch: the
 /// report is rendered from the execute loop, so a process that is idle in a blocking
 /// read has no operation to render it at, and the SECOND signal is then the ordinary
-/// kill rather than a hang.
-#[cfg(unix)]
+/// kill rather than a hang.  A no-op where the host has no such signals
+/// (`platform::on_profile_signals`).
 pub fn install_signal_flush() {
-    // SAFETY: `sigaction` with a handler that performs one relaxed atomic store.
-    unsafe {
-        for &(sig, reset) in &[
-            (libc::SIGUSR1, false),
-            (libc::SIGINT, true),
-            (libc::SIGTERM, true),
-        ] {
-            let mut act: libc::sigaction = std::mem::zeroed();
-            act.sa_sigaction = on_signal as *const () as libc::sighandler_t;
-            // No `SA_RESTART`: a blocking read returns `EINTR` instead of resuming, so a
-            // waiting program comes back to the loop and can render.
-            act.sa_flags = if reset { libc::SA_RESETHAND } else { 0 };
-            libc::sigemptyset(&raw mut act.sa_mask);
-            libc::sigaction(sig, &raw const act, std::ptr::null_mut());
-        }
-    }
+    crate::platform::on_profile_signals(on_signal);
 }
-
-#[cfg(not(unix))]
-pub fn install_signal_flush() {}
 
 /// Take whatever a signal asked for, leaving nothing pending.
 #[must_use]
