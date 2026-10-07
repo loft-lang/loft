@@ -4,6 +4,11 @@
 // values are written into it, and the subscript's key is written and the record linked — the
 // plain form's order without its temporary store and its copy.  The interpreter copies as
 // before and is the oracle; every value is hand-computed.
+//
+// @falsified-at: none — the clause and this guard land together; the planted defect is recorded
+//   with `@falsified-by:` below (a value-computing statement emitted after the claim, so `bump`
+//   reads the record the claim already released).
+// @falsified-by: tests/falsified/a-keyed-literal-is-written-into-its-slot.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 
 struct P { q: integer, r: integer, n: integer }
 // The sorted and index destinations take element types of their own: two keyed fields over
