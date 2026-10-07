@@ -4,7 +4,14 @@
 // and never stored a write back, so a value written before a `yield` read as the caller's
 // argument after it, with nothing reported (loft#1899).  Each value is worked out by hand in the
 // comment beside it.
-// @falsified-at: 58c7b3c80 — measured below by `make falsify`
+// @falsified-at: 58c7b3c80 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-generator-parameter-keeps-its-writes-across-a-yield.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: native asserts — the control compiles and answers the caller's argument after a
+//   yield; its first failing cell reads `5 210 6 200`.
+// HOLDS: leak none, panic none and free-refusals 0 on both trees and both backends; the
+//   interpreter answers every cell on both, as measured by `make falsify` at 58c7b3c80.
 
 fn run(g: iterator<integer>) -> text { s = ""; for v in g { s += "{v} "; } s }
 // 5, then b = 200 + 10 = 210, 6, and 210 again two resumes later.
