@@ -219,20 +219,23 @@ fn signatures_over_every_kind() {
         has("area · fn · public · (s: Shape) -> integer"),
         "area sig:\n{s}"
     );
-    // struct fields — a public root and a sealed closure member. Fields are sorted by name
+    // struct fields — a public root and a sealed closure member, each `pub` field marked (C140:
+    // losing the marker is a break). Fields are sorted by name
     // (commit 3 canonicalisation: named construction → field order is not API), so `tag`
     // precedes `x` regardless of declaration order.
     assert!(
-        has("Public · struct · public · { v: integer }"),
+        has("Public · struct · public · { pub v: integer }"),
         "Public sig:\n{s}"
     );
     assert!(
-        has("Widget · struct · sealed · { tag: text, x: integer }"),
+        has("Widget · struct · sealed · { pub tag: text, pub x: integer }"),
         "Widget sig:\n{s}"
     );
     // enum variants, sorted by name, with the synthetic `enum` discriminant tag filtered out.
     assert!(
-        has("Shape · enum · sealed · { Circle { r: integer }, Point, Square { side: integer } }"),
+        has(
+            "Shape · enum · sealed · { Circle { pub r: integer }, Point, Square { pub side: integer } }"
+        ),
         "enum sig:\n{s}"
     );
 }
@@ -556,10 +559,10 @@ fn a_generic_library_lists_its_templates_not_its_instances() {
     assert_eq!(
         out,
         "Grid.at · method · public · (self: Grid<T>, i: integer) -> T?\n\
-         Grid<T> · struct · public · { cells: vector<T>, w: integer }\n\
+         Grid<T> · struct · public · { pub cells: vector<T>, pub w: integer }\n\
          Pair.swap · method · public · (self: Pair<K, V>) -> Pair<V, K>\n\
-         Pair<K, V> · struct · public · { k: K, v: V }\n\
-         Slot<T> · enum · public · { Full { v: T }, Hole }\n\
+         Pair<K, V> · struct · public · { pub k: K, pub v: V }\n\
+         Slot<T> · enum · public · { Full { pub v: T }, Hole }\n\
          fulls · fn · public · (v: vector<Slot<integer>>) -> integer\n\
          grid · fn · public · (cells: vector<T>, w: integer) -> Grid<T>\n"
     );

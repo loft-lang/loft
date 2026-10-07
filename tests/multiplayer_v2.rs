@@ -142,6 +142,8 @@ impl ServerGuard {
         cmd.arg("--interpret")
             .arg(examples_dir().join(server_script))
             .env("LOFT_TICTACTOE_PORT", port.to_string()) // server reads this if implemented
+            // `bind_outcome` reads the listener's banner, which `server` prints only on request.
+            .env("LOFT_NET_LISTEN_BANNER", "1")
             .current_dir(examples_dir())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -179,7 +181,8 @@ impl ServerGuard {
     /// runs its clients against a stranger's server, and the failure surfaces far away
     /// as "client hung" or "neither client observed the other".
     ///
-    /// So ask the server itself.  The native listener prints exactly one of these:
+    /// So ask the server itself.  The native listener prints exactly one of these (the first
+    /// only under `LOFT_NET_LISTEN_BANNER=1`, which `spawn` sets):
     ///   ok   — `loft server listening on 0.0.0.0:<port>`
     ///   lost — `loft_tcp_listen: cannot bind 0.0.0.0:<port>: Address already in use`
     fn bind_outcome(&self, timeout: Duration) -> BindOutcome {
