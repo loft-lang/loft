@@ -6,10 +6,10 @@
 //! answers (the two cell files, on both backends and under the hoist verifier, the
 //! strict-store and the poison switches), the view and its copy print the same lines
 //! (`LOFT_NO_FOREIGN_VIEW=1`, the A/B), and a WRITE into the mapped bytes or into a view of
-//! them halts the program with the author-facing runtime error whose advice is to copy
-//! first.  The halt is `report_and_exit`, which leaves the process, so it is asserted here
-//! on the spawned binary rather than by an `@EXPECT_FAIL` cell (which tolerates a panic,
-//! not an exit).  The EMISSION pin at the end says which binds take the view op.
+//! them is refused when the program is COMPILED, with the advice to copy first: the mapping
+//! is foreign data, value-const (`file_map` answers `const vector<u8>`, `(Const-Foreign)`,
+//! @C139), and so is a view of it.  Asserted on the spawned binary, so the refusal is what an
+//! author sees.  The EMISSION pin at the end says which binds take the view op.
 use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
@@ -146,14 +146,18 @@ fn the_view_and_the_copy_print_the_same_lines_on_both_backends() {
 }
 
 #[test]
-fn a_write_into_a_mapped_file_halts_with_the_copy_first_advice_on_both_backends() {
+fn a_write_into_a_mapped_file_is_refused_at_compile_time_with_the_copy_advice() {
     for backend in ["--interpret", "--native"] {
         let (ok, _, out) = run("refused", backend, WRITE_REFUSED, true, &[]);
-        assert!(!ok, "{backend}: the write must halt the program:\n{out}");
+        assert!(!ok, "{backend}: the write must be refused:\n{out}");
         assert!(
-            out.contains("write to bytes the program does not own")
-                && out.contains("copy them first"),
-            "{backend}: the halt must be the foreign store's own advice:\n{out}"
+            out.contains("Cannot modify 'm': it holds read-only data the program does not own")
+                && out.contains("copy it first"),
+            "{backend}: the refusal must be the compile-time one with the copy cure:\n{out}"
+        );
+        assert!(
+            !out.contains("write to bytes the program does not own"),
+            "{backend}: refused before the program runs, not at run time:\n{out}"
         );
         assert!(
             !out.contains("reached: the write landed"),
@@ -167,25 +171,25 @@ fn a_write_into_a_mapped_file_halts_with_the_copy_first_advice_on_both_backends(
 }
 
 #[test]
-fn a_write_into_a_view_halts_with_the_same_advice_and_lands_on_the_copy() {
+fn a_write_into_a_view_is_refused_at_compile_time_and_lands_on_the_copy() {
     for backend in ["--interpret", "--native"] {
         let (ok, _, out) = run("view_refused", backend, VIEW_WRITE_REFUSED, true, &[]);
         assert!(
             !ok,
-            "{backend}: a write into a view must halt the program:\n{out}"
+            "{backend}: a write into a view must be refused:\n{out}"
         );
         assert!(
-            out.contains("write to bytes the program does not own")
-                && out.contains("a slice of either")
-                && out.contains("copy them first"),
-            "{backend}: the halt must name the view's origin:\n{out}"
+            out.contains("Cannot modify 's': it holds read-only data the program does not own")
+                && out.contains("copy it first"),
+            "{backend}: the refusal must name the view and the copy cure:\n{out}"
         );
         assert!(
             !out.contains("reached: the writes landed") && !out.contains("out of bounds"),
             "{backend}: the write must neither land nor read as corrupt:\n{out}"
         );
-        // The copy is an ordinary vector: with the view off both writes land.
-        let (ok, stdout, out) = run(
+        // The refusal is the language's, not the view's: with the view off (the slice is a
+        // copy underneath) the same program is refused the same way.
+        let (ok, _, out) = run(
             "view_copy",
             backend,
             VIEW_WRITE_REFUSED,
@@ -193,8 +197,8 @@ fn a_write_into_a_view_halts_with_the_same_advice_and_lands_on_the_copy() {
             &[("LOFT_NO_FOREIGN_VIEW", "1")],
         );
         assert!(
-            ok && stdout.contains("reached: the writes landed (9 4)"),
-            "{backend}: under LOFT_NO_FOREIGN_VIEW=1 the copy takes the writes:\n{out}"
+            !ok && out.contains("Cannot modify 's': it holds read-only data"),
+            "{backend}: under LOFT_NO_FOREIGN_VIEW=1 the write is refused the same way:\n{out}"
         );
     }
 }

@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! `@FR-H-WriteLocked` in both run modes, on both backends: a write to a LOCKED store — the
-//! author's `#lock`, a constant, or bytes the program does not own (`file_map`) — never
-//! changes the store.  A development run halts with the report; a production run logs the
+//! author's `#lock` or a constant — never changes the store.  Bytes the program does not own
+//! (`file_map`) never get that far: they are value-const (`(Const-Foreign)`, @C139), so their
+//! write is refused when the program is COMPILED, in both run modes alike.  A development run halts with the report; a production run logs the
 //! write, DISCARDS it and continues on the old bytes (DESIGN_DECISIONS.md C80: nothing
 //! stops a production program).  Keeps @C80 and the lock-fault clause of @C130: a lock
 //! fault is not a dropped write, so unguarded it halts development rather than logging.
@@ -96,20 +97,12 @@ fn main() {
   d.hs[5] = null; println("hs={len(d.hs)}");
   NUMS += [3]; println("nums={NUMS}");
   NUMS[0] = 9; println("nums={NUMS}");
-  src: vector<u8> = [1, 2, 3];
-  assert(write_bytes("locked_fm.tmp", src), "write");
-  m = file_map("locked_fm.tmp") ?? [];
-  m[1] = 20 as u8; println("m={m}");
-  m += [4 as u8]; println("m={m}");
-  for i in 0..len(m) { m[i] = (i * 10) as u8? ?? 0; }
-  println("m={m}");
   println("done");
 }
 "#;
 
 const UNCHANGED: &str = "n=7\nf=1.5\nb=true\nname=abc\nname=abc\nxs=[1,2,3]\nxs=[1,2,3]\n\
-xs=[1,2,3]\nxs=[1,2,3]\nm=4\nv=10\nhs=1\nhs=1\nnums=[1,2]\nnums=[1,2]\nm=[1,2,3]\nm=[1,2,3]\n\
-m=[1,2,3]\ndone\n";
+xs=[1,2,3]\nxs=[1,2,3]\nm=4\nv=10\nhs=1\nhs=1\nnums=[1,2]\nnums=[1,2]\ndone\n";
 
 fn production_discards_every_route(backend: &str) {
     let (stdout, stderr, code, log) = run("every_route", EVERY_ROUTE, backend, true);
@@ -168,7 +161,7 @@ const DEV_CELLS: [(&str, &str, &str); 6] = [
 /// keep telling them apart.
 const DEV_PAST_END: &str = "for i in 0..len(d.xs) { d.xs[i + 7] = 9; }";
 
-/// Bytes the program does not own: a development run halts on the write too.
+/// Bytes the program does not own: the write is refused before the program runs.
 const DEV_FOREIGN: &str = r#"fn main() {
   src: vector<u8> = [1, 2, 3];
   assert(write_bytes("locked_fm.tmp", src), "write");
@@ -194,15 +187,15 @@ fn development_halts_with_the_report(backend: &str) {
     let (stdout, stderr, code, _) = run("foreign", DEV_FOREIGN, backend, false);
     assert_ne!(
         code, 0,
-        "{backend} foreign: a development run halts; stdout {stdout:?}"
+        "{backend} foreign: the write is refused; stdout {stdout:?}"
     );
     assert!(
         !stdout.contains("reached"),
         "{backend} foreign: ran past the write"
     );
     assert!(
-        stderr.contains("write to bytes the program does not own"),
-        "{backend} foreign: the report; stderr:\n{stderr}"
+        stderr.contains("Cannot modify 'm': it holds read-only data the program does not own"),
+        "{backend} foreign: the compile-time refusal; stderr:\n{stderr}"
     );
     assert!(
         !stderr.contains("panicked"),
@@ -405,9 +398,9 @@ fn development_halts_in_a_windowed_loop_native() {
 }
 
 /// The production log line gives the advice the store's lock calls for — the same advice the
-/// development report gives for that write.  A mapped file cannot be unlocked: it was told
-/// to `#lock = false`, a cure that does not exist, while the author's own `#lock` is the one
-/// lock that advice is right for.
+/// development report gives for that write.  The author's own `#lock` is the one lock that
+/// advice is right for; a mapped file cannot be unlocked, and its write is refused when the
+/// program is compiled, with the copy cure and no `#lock = false`, production or not.
 fn production_logs_the_advice_its_lock_calls_for(backend: &str) {
     let mapped = r#"
 fn main() {
@@ -418,19 +411,14 @@ fn main() {
   println("m={m}");
 }
 "#;
-    let (stdout, stderr, code, log) = run("advice_mapped", mapped, backend, true);
-    assert_eq!(
-        (stdout.as_str(), code),
-        ("m=[1,2,3]\n", 0),
-        "{backend}: {stderr}"
+    let (stdout, stderr, code, _) = run("advice_mapped", mapped, backend, true);
+    assert!(
+        code != 0 && !stdout.contains("m="),
+        "{backend}: a mapped file's write is refused before the program runs: {stderr}"
     );
     assert!(
-        log.contains("[write_to_locked_store]") && log.contains("copy them first"),
-        "{backend}: a mapped file's discarded write names the copy cure; log:\n{log}"
-    );
-    assert!(
-        !log.contains("#lock = false"),
-        "{backend}: a mapped file cannot be unlocked; log:\n{log}"
+        stderr.contains("copy it first") && !stderr.contains("#lock = false"),
+        "{backend}: the refusal names the copy cure, not an unlock; stderr:\n{stderr}"
     );
 
     let locked = r#"

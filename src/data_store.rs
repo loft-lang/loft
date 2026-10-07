@@ -345,6 +345,7 @@ pub(crate) const DEF_PUB_VISIBLE: u32 = 189;
 pub(crate) const DEF_NULL_SAFE: u32 = 190; // @PLN46 W2 #null_safe; false = unannotated
 pub(crate) const DEF_BUILTIN: u32 = 191; // @PLN165 arc E #builtin; false = an ordinary body
 pub(crate) const DEF_OPERATOR_FORM: u32 = 192; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_RETURNED_CONST: u32 = 193; // @FR-Const-Foreign `-> const T`; false = writable
 pub(crate) const DEF_C_SYMBOL: u32 = 168; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 172; // @PLN24 the declared C signature; "" = none
 pub(crate) const DEF_TYPE_PARAMS: u32 = 176; // @PLN165 D2 vector<integer>, header order
@@ -1554,6 +1555,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
         assert_eq!(pos(ids.definition, "operator_form"), DEF_OPERATOR_FORM);
         assert_eq!(pos(ids.definition, "returned_fact"), DEF_RETURNED_FACT);
+        assert_eq!(pos(ids.definition, "returned_const"), DEF_RETURNED_CONST);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

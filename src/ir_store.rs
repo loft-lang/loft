@@ -437,6 +437,7 @@ fn write_definition(stores: &mut Stores, r: &Record, d: &Definition) {
     r.set_field_bool(stores, ds::DEF_BUILTIN, d.builtin); // @PLN165 arc E
     r.set_field_bool(stores, ds::DEF_OPERATOR_FORM, d.operator_form); // @PLN182
     r.set_field_str(stores, ds::DEF_RETURNED_FACT, &d.returned_fact.encode()); // @PLN187
+    r.set_field_bool(stores, ds::DEF_RETURNED_CONST, d.returned_const); // @FR-Const-Foreign
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);

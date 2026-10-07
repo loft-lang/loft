@@ -1120,6 +1120,7 @@ fn write_definition(out: &mut String, d: &Definition) {
     let _ = write!(out, ",\"operator_form\":{}", d.operator_form);
     out.push_str(",\"returned_fact\":");
     write_str(out, &d.returned_fact.encode());
+    let _ = write!(out, ",\"returned_const\":{}", d.returned_const);
     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
     out.push_str(",\"purity\":");
@@ -1414,6 +1415,11 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
             Ok(f) => crate::data::AliasFact::decode(&as_str(f)?),
             Err(_) => crate::data::AliasFact::Plain,
         },
+        // Tolerant of older JSON without the field, as `returned_fact` is.
+        returned_const: match field(p, "returned_const") {
+            Ok(f) => as_bool(f)?,
+            Err(_) => false,
+        }, // @FR-Const-Foreign
         forced_size: if forced == 0 { None } else { Some(forced) },
         purity: purity_from_parsed(field(p, "purity")?)?,
         field_groups: field_group_list(field(p, "field_groups")?)?,
@@ -2330,6 +2336,10 @@ mod tests {
 
     /// A type-level `Definition` (a struct) with attributes + a field group,
     /// matching what `Data::add` / the parser produce for a type def.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one literal of every Definition field"
+    )]
     fn sample_struct_def() -> Definition {
         Definition {
             bound_holder: false,
@@ -2418,6 +2428,7 @@ mod tests {
             builtin: true,
             operator_form: true,
             returned_fact: crate::data::AliasFact::Alias(9),
+            returned_const: true,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: Some(4),
@@ -2503,6 +2514,7 @@ mod tests {
             builtin: false,
             operator_form: false,
             returned_fact: crate::data::AliasFact::Plain,
+            returned_const: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,

@@ -3097,9 +3097,12 @@ impl Parser {
             }
         }
         let mut returned_not_null = false;
+        let mut returned_const = false;
         self.pending_forward_return = None;
         self.type_fact = AliasFact::Plain;
         let mut result = if self.lexer.has_token("->") {
+            // `@FR-Const-Foreign` — `-> const T`: the value handed out is value-const (@C139).
+            returned_const = self.lexer.has_keyword("const");
             // Will be the correct def_nr on the second pass
             if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
                 if self.has_deprecated_not_null() {
@@ -3322,6 +3325,7 @@ impl Parser {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
             self.data.definitions[self.context as usize].returned_fact = returned_fact;
+            self.data.definitions[self.context as usize].returned_const = returned_const;
             if let Some((stub, args)) = self.pending_forward_return.take() {
                 self.forward_generic_returns
                     .push((self.context, stub, args));
@@ -3482,6 +3486,7 @@ impl Parser {
             }
             self.parse_code();
             self.literal_body_constant();
+            self.refuse_unmarked_foreign_return();
             // #314 — pass-1 sibling of the pass-2 flip above: now that
             // the whole body is parsed, `scalars_to_box` is final;
             // reject any mutated scalar that more than one closure

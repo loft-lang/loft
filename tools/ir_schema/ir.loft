@@ -277,6 +277,7 @@ struct Definition {
   builtin: boolean, // @PLN165 arc E #builtin: a call selecting it lowers through the special form of its name
   operator_form: boolean, // @PLN182 written `operator`: what an operator form on its `self` type reaches
   returned_fact: text, // @PLN187 where the declared result names a `type` alias; "" = nowhere
+  returned_const: boolean, // @FR-Const-Foreign `-> const T`: the producer's data is value-const
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can
