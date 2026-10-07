@@ -409,7 +409,7 @@ fn uncovered_jobs(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_jobs = false;
     let mut job: Option<(String, bool)> = None;
-    let mut finish = |job: &mut Option<(String, bool)>, out: &mut Vec<String>| {
+    let finish = |job: &mut Option<(String, bool)>, out: &mut Vec<String>| {
         if let Some((name, covered)) = job.take()
             && !covered
         {
