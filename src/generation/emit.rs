@@ -1065,6 +1065,12 @@ impl Output<'_> {
                 let tail = if n == 1 { "," } else { "" };
                 write!(w, "return ({}{tail})", parts.join(", "))?;
             }
+            Value::Return(val) if self.vr_twin => {
+                // `@FR-R-ViewReturn`'s twin — every exit but a view answers its own store.
+                write!(w, "return (")?;
+                self.output_code_inner(w, val)?;
+                write!(w, ", true)")?;
+            }
             Value::Return(val) => {
                 let returned = self.data.def(self.def_nr).returned();
                 // @PLN10 Phase A — a bufferless ("nwb") user text fn has a
@@ -3933,6 +3939,68 @@ impl Output<'_> {
                     }
                     _ => {}
                 }
+            }
+            // `@FR-R-ViewReturn` — the buffer prep of a call whose callee answers a view: the
+            // prep is dropped, the call takes the twin, and the result is freed only when the
+            // twin answers it owned.
+            if super::view_return::enabled()
+                && !self.in_coroutine_body
+                && let Some(vs) = {
+                    let data = self.data;
+                    let memo = &mut self.vr_memo;
+                    super::view_return::site(operators, vnr, data, self.def_nr, &mut |f| {
+                        *memo
+                            .entry(f)
+                            .or_insert_with(|| super::view_return::callee(data, f))
+                    })
+                }
+            {
+                self.dest_counter += 1;
+                let flag = format!("__vro_{}", self.dest_counter);
+                self.indent(w)?;
+                writeln!(w, "let mut {flag}: bool = true; //@FR-R-ViewReturn")?;
+                self.vr_owned.insert(vs.subject, flag.clone());
+                self.vr_flag_pending = Some(flag);
+                self.vr_site_next = Some((vs.callee, vs.args_at));
+                let _ = vs.buf;
+                continue;
+            }
+            if let Value::Call(fd, fa) = v.unspan()
+                && self.data.def(*fd).name() == "OpFreeRefIfDistinct"
+                && let Some(Value::Var(sv)) = fa.first().map(Value::unspan)
+                && let Some(flag) = self.vr_owned.get(sv).cloned()
+            {
+                self.indent(w)?;
+                write!(w, "if {flag} {{ ")?;
+                self.output_code_inner(w, v)?;
+                writeln!(w, "; }}")?;
+                continue;
+            }
+            // `@FR-R-ViewReturn`'s twin — a materialised view exit answers the view.
+            if self.vr_twin
+                && let Some(rb) =
+                    super::hoist::ret_buffer_attr(self.data.def(self.def_nr)).map(|ai| {
+                        let def = self.data.def(self.def_nr);
+                        def.variables().var(&def.attributes()[ai].name)
+                    })
+                && let Some(src) = super::view_return::view_exit(self.data, v, rb)
+                && let Value::Block(bl) = v.unspan()
+            {
+                let ops: Vec<&Value> = bl
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o, Value::Line(_)))
+                    .collect();
+                for f in &ops[2..ops.len() - 1] {
+                    self.indent(w)?;
+                    self.output_code_inner(w, f)?;
+                    writeln!(w, ";")?;
+                }
+                self.indent(w)?;
+                write!(w, "return (")?;
+                self.output_code_inner(w, src)?;
+                writeln!(w, ", false);")?;
+                continue;
             }
             // `@FR-R-InPlaceLiteral`'s keyed clause — `h[k] = R { … }` written into the record
             // the collection claims for it, not built in a store of its own and copied.
