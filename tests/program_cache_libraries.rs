@@ -22,12 +22,13 @@
 //!   The answer stays `probepkg-0.1.0 45` under both.  CHANNEL: the cache verdict (the trace
 //!   line), not the value.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A private tree with a library `probepkg` under `libs/` (the search path the run is given)
@@ -39,7 +40,7 @@ fn write(path: &Path, body: &str) {
 /// library's name and version, and `probe_sum` crosses into the dependency.
 fn home_with_package(tag: &str) -> PathBuf {
     let home = std::env::temp_dir().join(format!("loft_1684_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     write(
         &home.join("ext/probedep/loft.toml"),
         "[package]\nname = \"probedep\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
@@ -110,7 +111,7 @@ fn recorded_artifacts(home: &Path) -> Vec<String> {
     {
         let p = e.path();
         if p.extension().is_some_and(|x| x == "manifest")
-            && let Ok(text) = std::fs::read_to_string(&p)
+            && let Ok(text) = fa::read_to_string(&p)
         {
             out.extend(
                 text.lines()
@@ -147,7 +148,7 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
     );
 
     for a in &arts {
-        std::fs::remove_file(a).expect("remove the recorded cdylib");
+        fa::remove_file(a).expect("remove the recorded cdylib");
     }
     let gone = run(&home, &[]);
     assert!(
@@ -173,5 +174,5 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
         "c3: a bundle marked native must not serve a LOFT_NO_NATIVE_LIBS run:\n{nolibs}"
     );
 
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }

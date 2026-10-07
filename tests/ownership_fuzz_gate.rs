@@ -28,6 +28,7 @@
 //! (#426B), nested_field (P13) — and the self-test proves the detectors CAN
 //! fire on exactly those shapes via the preserved `LOFT_NO_JOIN_OWN=1` path.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -117,8 +118,8 @@ fn fuzz_gate_map54_full_replay() {
 
 fn tempfile_dir() -> PathBuf {
     let d = std::env::temp_dir().join(format!("loft_fuzz_gate_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).expect("create cell dir");
+    let _ = fa::remove_dir_all(&d);
+    fa::create_dir_all(&d).expect("create cell dir");
     d
 }
 

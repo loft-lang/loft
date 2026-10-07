@@ -24,6 +24,7 @@
 //! assertion in the same shape does not fail the run, then "the script printed OK"
 //! measures nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -99,9 +100,9 @@ fn harness_can_fail() {
                \x20 assert((s[0].v ?? -1) == 999, \"CONTROL: this must fail\");\n\
                }\n";
     let path = std::env::temp_dir().join(format!("loft_1044_control_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write control probe");
+    fa::write(&path, src).expect("write control probe");
     let (ok, stdout, stderr) = run(None, &path, &[("LOFT_POISON", "1")]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !ok,
         "the harness must fail a false assertion in this exact shape, or a green run \

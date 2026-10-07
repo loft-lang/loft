@@ -15,6 +15,7 @@
 //! `total == 246`); this binary drives the gate-ON path a subprocess at a time so
 //! the `LOFT_PLN25_DN1` `OnceLock` starts fresh for each run.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -183,7 +184,7 @@ fn dn1_null_local_message_names_optional_not_as() {
         ),
     ] {
         let src = dir.join(name);
-        std::fs::write(&src, format!("fn t() {{ {decl} }}\nfn main() {{ }}\n"))
+        fa::write(&src, format!("fn t() {{ {decl} }}\nfn main() {{ }}\n"))
             .expect("write temp source");
         let out = Command::new(loft_bin())
             .arg("--interpret")
@@ -212,6 +213,6 @@ fn dn1_null_local_message_names_optional_not_as() {
             !stderr.contains("or cast with"),
             "`{decl}`: must NOT suggest an `as` cast (the DN5 laundering hole); got: {stderr:?}"
         );
-        let _ = std::fs::remove_file(&src);
+        let _ = fa::remove_file(&src);
     }
 }

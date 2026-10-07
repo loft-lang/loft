@@ -23,6 +23,7 @@
 //! primitive (Step 6).
 
 use loft::compile;
+use loft::file_access as fa;
 use loft::keys::DbRef;
 use loft::parser::Parser;
 use loft::state::State;
@@ -1015,7 +1016,7 @@ fn every_value_type_survives_the_resume_image() {
             continue; // declined by the snapshot path (see the Step 3 note)
         }
         let path = image_path(&format!("heap{i}"));
-        let _ = std::fs::remove_file(&path);
+        let _ = fa::remove_file(&path);
 
         let mut s = session_with_defs();
         assert!(matches!(s.eval(&format!("v = {expr}")), Eval::Ran));
@@ -1037,7 +1038,7 @@ fn every_value_type_survives_the_resume_image() {
             Some(expected.as_str()),
             "value did not survive the resume image for `{expr}` (type {type_name})"
         );
-        let _ = std::fs::remove_file(&path);
+        let _ = fa::remove_file(&path);
         checked += 1;
     }
     assert!(checked >= 8, "only {checked} cells covered");
@@ -1048,7 +1049,7 @@ fn every_value_type_survives_the_resume_image() {
 #[test]
 fn scalars_survive_the_resume_image() {
     let path = image_path("scalars");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session();
     for input in [
         "n = 42",
@@ -1072,7 +1073,7 @@ fn scalars_survive_the_resume_image() {
         .map(|n| fresh.env_value(n))
         .collect();
     assert_eq!(before, after, "a scalar did not survive the resume image");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// THE GATE. A changed storage layout must be REFUSED, not misread: the image is
@@ -1083,7 +1084,7 @@ fn scalars_survive_the_resume_image() {
 #[test]
 fn a_changed_layout_is_refused_not_misread() {
     let path = image_path("schema");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session();
     assert!(matches!(
         s.eval("struct P { x: integer, y: integer }"),
@@ -1107,7 +1108,7 @@ fn a_changed_layout_is_refused_not_misread() {
         other.env_names().is_empty(),
         "a refused image must leave the session untouched"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A type the session has not defined at all is likewise refused (the resume
@@ -1115,7 +1116,7 @@ fn a_changed_layout_is_refused_not_misread() {
 #[test]
 fn an_unknown_type_is_refused() {
     let path = image_path("unknown");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session();
     assert!(matches!(
         s.eval("struct P { x: integer, y: integer }"),
@@ -1127,7 +1128,7 @@ fn an_unknown_type_is_refused() {
     let mut bare = session(); // no `P` defined
     assert_eq!(bare.load_session_image(&path), ImageLoad::SchemaMismatch);
     assert!(bare.env_names().is_empty());
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// Every malformed shape falls back rather than being partially applied: a
@@ -1136,12 +1137,12 @@ fn an_unknown_type_is_refused() {
 #[test]
 fn a_malformed_image_falls_back_and_never_half_applies() {
     let path = image_path("malformed");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session();
     assert!(matches!(s.eval("v = [1, 2, 3]"), Eval::Ran));
     assert!(matches!(s.eval("n = 7"), Eval::Ran));
     assert!(s.save_session_image(&path).expect("write"));
-    let good = std::fs::read(&path).expect("read back");
+    let good = fa::read(&path).expect("read back");
 
     let mut fresh = session();
     assert_eq!(
@@ -1150,12 +1151,12 @@ fn a_malformed_image_falls_back_and_never_half_applies() {
     );
 
     // A foreign file.
-    std::fs::write(&path, b"not a loft session image at all").expect("write");
+    fa::write(&path, b"not a loft session image at all").expect("write");
     assert_eq!(fresh.load_session_image(&path), ImageLoad::Malformed);
 
     // Truncation at every prefix length — none may panic.
     for cut in [0, 4, 8, 12, 20, 24, 40, good.len() / 2, good.len() - 1] {
-        std::fs::write(&path, &good[..cut.min(good.len())]).expect("write");
+        fa::write(&path, &good[..cut.min(good.len())]).expect("write");
         let got = fresh.load_session_image(&path);
         assert_ne!(
             got,
@@ -1171,7 +1172,7 @@ fn a_malformed_image_falls_back_and_never_half_applies() {
         *b = 0xAB;
     }
     let got = fresh.load_session_image(&path);
-    std::fs::write(&path, &corrupt).expect("write");
+    fa::write(&path, &corrupt).expect("write");
     let _ = got;
     let after = fresh.load_session_image(&path);
     assert!(
@@ -1181,7 +1182,7 @@ fn a_malformed_image_falls_back_and_never_half_applies() {
 
     // Whatever happened, the session is still usable and never half-applied.
     assert!(matches!(fresh.eval("z = 1"), Eval::Ran));
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A round-trip through the image preserves the FLIP's behaviour too: the
@@ -1190,7 +1191,7 @@ fn a_malformed_image_falls_back_and_never_half_applies() {
 #[test]
 fn a_restored_session_observes_from_the_store() {
     let path = image_path("observe");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session_with_defs();
     assert!(matches!(s.eval("v = [1, 2, 3]"), Eval::Ran));
     assert!(matches!(s.eval("p = P { x: 7, y: 9 }"), Eval::Ran));
@@ -1207,7 +1208,7 @@ fn a_restored_session_observes_from_the_store() {
         gens,
         "a restored session should not need to replay anything"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── Step 7 — lifetime (arc G) ───────────────────────────────────────────────

@@ -19,6 +19,7 @@
 //! On by default with the copy refusal, and switched off with it by `LOFT_NO_LEASE_REFUSE=1`.
 //! Subprocess cells, as in `tests/lease_refuse.rs`: the switch is cached in a `OnceLock`.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -34,7 +35,7 @@ fn check(source: &str, mode: &str, on: bool) -> String {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, source).expect("write probe");
+    fa::write(&path, source).expect("write probe");
     let mut cmd = Command::new(loft_bin());
     cmd.arg("--check")
         .arg(mode)
@@ -47,7 +48,7 @@ fn check(source: &str, mode: &str, on: bool) -> String {
         cmd.env("LOFT_NO_LEASE_REFUSE", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

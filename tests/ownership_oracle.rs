@@ -17,6 +17,7 @@
 //! Design + the strictness verification (why it catches the A1b class the runtime gates miss):
 //! `doc/claude/plans/94-cfg-ownership-dataflow/PHASE4_DESIGN.md`.
 
+use loft::file_access as fa;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::process::Command;
@@ -239,8 +240,8 @@ fn oracle_fact_is_backend_identical_si2() {
 fn oracle_clean_on_generated_fuzz_corpus() {
     let fuzz_dir = root().join("doc/claude/plans/85-store-lifetime-retirement/fuzz");
     let cells = std::env::temp_dir().join(format!("loft_oracle_fuzz_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&cells);
-    std::fs::create_dir_all(&cells).expect("create cell dir");
+    let _ = fa::remove_dir_all(&cells);
+    fa::create_dir_all(&cells).expect("create cell dir");
     let generated = Command::new("python3")
         .arg(fuzz_dir.join("grammar_gen.py"))
         .arg("--out")
@@ -282,7 +283,7 @@ fn oracle_clean_on_generated_fuzz_corpus() {
             ));
         }
     }
-    let _ = std::fs::remove_dir_all(&cells);
+    let _ = fa::remove_dir_all(&cells);
     assert!(count >= 54, "expected ≥54 generated cells, got {count}");
     assert!(
         offenders.is_empty(),

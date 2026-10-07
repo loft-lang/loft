@@ -16,6 +16,7 @@
 //! Without (2) the test would pass over a silent fallback to a whole-file load — which is
 //! precisely the outcome the consumer cannot afford (a phone paging a multi-GB block).
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -40,9 +41,9 @@ fn wasm32_installed() -> bool {
         .args(["--print", "target-list"])
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
-        && repo_root()
-            .join("target/loft/html/wasm32-unknown-unknown/release/libloft.rlib")
-            .exists()
+        && fa::exists(
+            repo_root().join("target/loft/html/wasm32-unknown-unknown/release/libloft.rlib"),
+        )
 }
 
 /// Entries written to the fixture store (~4.5 MB). The size is load-bearing: a keyed
@@ -67,19 +68,19 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
         eprintln!("SKIP: wasm32-unknown-unknown target/rlib not built");
         return;
     }
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
 
     let tmp = std::env::temp_dir().join("loft_paged_browser");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create test dir");
     let store = tmp.join("block.store");
 
     // 1. Write the fixture store natively.
     let writer = tmp.join("write.loft");
-    std::fs::write(
+    fa::write(
         &writer,
         format!(
             "struct Tile {{ tkey: integer not null, name: text not null }}\n\
@@ -117,7 +118,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
         "fixture store not written: {so} / {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let file_len = std::fs::metadata(&store).expect("store metadata").len();
+    let file_len = fa::metadata(&store).expect("store metadata").len();
     assert!(
         file_len > 4 * PAGE_BUDGET,
         "the fixture must be several times the page budget or the bounded-fetch \
@@ -127,7 +128,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     // 2. Build the browser bundle. The URL is inert — the harness serves the bytes —
     //    but it must be `http://` so `PageSource` selects the range provider.
     let src = tmp.join("paged.loft");
-    std::fs::write(
+    fa::write(
         &src,
         "struct Tile { tkey: integer not null, name: text not null }\n\
          fn main() {\n\
@@ -160,12 +161,12 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     );
 
     // 3. Extract the embedded wasm and run it against real ranges.
-    let page = std::fs::read_to_string(&html).expect("read html");
+    let page = fa::read_to_string(&html).expect("read html");
     let marker = "const wasmB64=\"";
     let start = page.find(marker).expect("wasmB64 marker") + marker.len();
     let end = start + page[start..].find('"').expect("wasmB64 closing quote");
     let wasm = tmp.join("paged.wasm");
-    std::fs::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
+    fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
     let run = Command::new("node")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
@@ -259,20 +260,20 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
         eprintln!("SKIP: wasm32-unknown-unknown target/rlib not built");
         return;
     }
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
 
     let tmp = std::env::temp_dir().join("loft_paged_browser_batch");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create test dir");
     let store = tmp.join("block.store");
 
     // 1. The same fixture as the single-key gate: big enough that a bounded read is a real
     //    claim rather than an artefact of a small image.
     let writer = tmp.join("write.loft");
-    std::fs::write(
+    fa::write(
         &writer,
         format!(
             "struct Tile {{ tkey: integer not null, name: text not null }}\n\
@@ -310,12 +311,12 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
         "fixture store not written: {so} / {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let file_len = std::fs::metadata(&store).expect("store metadata").len();
+    let file_len = fa::metadata(&store).expect("store metadata").len();
 
     // 2. Six keys, spread across the key space so they cannot all share a page — the point
     //    is that the loader has several INDEPENDENT ranges to issue in one call.
     let src = tmp.join("paged_keys.loft");
-    std::fs::write(
+    fa::write(
         &src,
         "struct Tile { tkey: integer not null, name: text not null }\n\
          fn main() {\n\
@@ -343,12 +344,12 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
         .expect("invoke loft --html");
     assert!(status.success(), "loft --html must build store_load_keys");
 
-    let page = std::fs::read_to_string(&html).expect("read html");
+    let page = fa::read_to_string(&html).expect("read html");
     let marker = "const wasmB64=\"";
     let start = page.find(marker).expect("wasmB64 marker") + marker.len();
     let end = start + page[start..].find('"').expect("wasmB64 closing quote");
     let wasm = tmp.join("paged_keys.wasm");
-    std::fs::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
+    fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
     // 3. Run it BOUNDED. `timeout` exits 124 when it has to kill the child, which is what
     //    the unconditional `thread::spawn` produced — and is why the assertion below names
@@ -438,18 +439,18 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
         eprintln!("SKIP: wasm32-unknown-unknown target/rlib not built");
         return;
     }
-    if !loft_bin().exists() {
+    if !fa::exists(loft_bin()) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
 
     let tmp = std::env::temp_dir().join("loft_verified_browser");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create test dir");
     let store = tmp.join("v.store");
 
     let writer = tmp.join("write.loft");
-    std::fs::write(
+    fa::write(
         &writer,
         "struct Rec { id: integer not null, val: integer not null }\n\
          fn main() {\n\
@@ -476,7 +477,7 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let bytes = std::fs::read(&store).expect("read fixture");
+    let bytes = fa::read(&store).expect("read fixture");
     let good = loft::integrity::sha256_hex(&bytes);
     let bad = "0".repeat(64);
 
@@ -544,7 +545,7 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
 /// Answers the program's stdout.
 fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String {
     let src = tmp.join(format!("{name}.loft"));
-    std::fs::write(&src, source).expect("write browser script");
+    fa::write(&src, source).expect("write browser script");
 
     let html = tmp.join(format!("{name}.html"));
     let status = Command::new(loft_bin())
@@ -564,12 +565,12 @@ fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String
          E0599 on `load_url_verified` while only the trusted twin was bridged"
     );
 
-    let page = std::fs::read_to_string(&html).expect("read html");
+    let page = fa::read_to_string(&html).expect("read html");
     let marker = "const wasmB64=\"";
     let start = page.find(marker).expect("wasmB64 marker") + marker.len();
     let end = start + page[start..].find('"').expect("wasmB64 closing quote");
     let wasm = tmp.join(format!("{name}.wasm"));
-    std::fs::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
+    fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
     let run = Command::new("node")
         .arg(repo_root().join("tools/paged_range_host.mjs"))

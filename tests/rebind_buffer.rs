@@ -4,6 +4,7 @@
 //! which rebinds hand the displaced store to the call's hidden buffer, that both switch states
 //! answer the same and leave no store behind on `--native`, and that strict stores see no
 //! reference into a released store.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -67,8 +68,8 @@ fn the_rebinds_that_hand_the_store_on() {
     let rs = std::env::temp_dir().join(format!("loft_rebind_buf_{}.rs", std::process::id()));
     let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], &[]);
     assert!(ok, "emit failed:\n{err}");
-    let src = std::fs::read_to_string(&rs).expect("emitted source");
-    let _ = std::fs::remove_file(&rs);
+    let src = fa::read_to_string(&rs).expect("emitted source");
+    let _ = fa::remove_file(&rs);
     for (f, hands) in SITES {
         assert_eq!(
             body(&src, f).contains(" = true; var_"),

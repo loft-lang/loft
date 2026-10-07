@@ -47,6 +47,7 @@
 //!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
 //!           (writes `ownership_drop_gate.baseline` and `ownership_drop_gate.native.baseline`)
 
+use loft::file_access as fa;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -988,7 +989,7 @@ fn gate_command() -> Command {
 
 fn run_cell(dir: &Path, c: &Cell, mode: &str, timeout: &str) -> Verdict {
     let path = dir.join(format!("{}.loft", c.name));
-    std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+    fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
     let mut cmd = gate_command();
     cmd.arg(mode)
         .arg(&path)
@@ -1059,7 +1060,7 @@ struct ScratchDir(PathBuf);
 
 impl Drop for ScratchDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = fa::remove_dir_all(&self.0);
     }
 }
 
@@ -1080,7 +1081,7 @@ fn for_each_cell<T: Send>(
         std::process::id(),
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::create_dir_all(&dir).expect("create the gate's scratch directory");
+    fa::create_dir_all(&dir).expect("create the gate's scratch directory");
     let scratch = ScratchDir(dir);
     let dir = scratch.0.as_path();
     let next = AtomicUsize::new(0);
@@ -1159,11 +1160,11 @@ fn parse_baseline(text: &str) -> BTreeMap<String, String> {
 fn check_baseline(verdicts: &[Verdict], path: &str, backend: &str) {
     let rendered = render(verdicts, backend);
     if std::env::var_os(BLESS).is_some() {
-        std::fs::write(path, &rendered).unwrap_or_else(|e| panic!("write {path}: {e}"));
+        fa::write(path, &rendered).unwrap_or_else(|e| panic!("write {path}: {e}"));
         eprintln!("ownership_drop_gate: blessed {path}");
         return;
     }
-    let Ok(pinned) = std::fs::read_to_string(path) else {
+    let Ok(pinned) = fa::read_to_string(path) else {
         panic!("{path} is missing — measure it with {BLESS}=1 and READ it before committing");
     };
     let want = parse_baseline(&pinned);
@@ -1294,7 +1295,7 @@ fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &st
             );
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        let pinned = std::fs::read_to_string(path).unwrap_or_default();
+        let pinned = fa::read_to_string(path).unwrap_or_default();
         let mut merged = parse_baseline(&pinned);
         merged.retain(|name, _| !names.contains(name));
         merged.extend(got);
@@ -1302,12 +1303,12 @@ fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &st
         for (name, kinds) in &merged {
             let _ = writeln!(out, "{name} {kinds}");
         }
-        std::fs::write(path, &out).unwrap_or_else(|e| panic!("write {path}: {e}"));
-        let _ = std::fs::remove_file(&lock);
+        fa::write(path, &out).unwrap_or_else(|e| panic!("write {path}: {e}"));
+        let _ = fa::remove_file(&lock);
         eprintln!("ownership_drop_gate: blessed this chunk's lines of {path}");
         return;
     }
-    let Ok(pinned) = std::fs::read_to_string(path) else {
+    let Ok(pinned) = fa::read_to_string(path) else {
         panic!("{path} is missing — measure it with {BLESS}=1 and READ it before committing");
     };
     let want: BTreeMap<String, String> = parse_baseline(&pinned)
@@ -1342,7 +1343,7 @@ fn every_cell_is_distinct_and_mints() {
 fn census(dir: &Path, c: &Cell, prelude: &str) -> Option<(Vec<String>, String)> {
     let path = dir.join(format!("{}.loft", c.name));
     let text = program(c).replacen(PRELUDE, prelude, 1);
-    std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+    fa::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
     let out = gate_command()
         .arg("--interpret")
         .arg(&path)
@@ -1748,7 +1749,7 @@ const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[];
 /// does a deviation closed in the register while a cell still measures it.
 #[test]
 fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
-    let heap = std::fs::read_to_string(concat!(
+    let heap = fa::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/doc/claude/formal/heap.md"
     ))
@@ -1780,7 +1781,7 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     }
     let cells = all_cells();
     for (path, backend) in [(BASELINE, "interpreter"), (NATIVE_BASELINE, "native")] {
-        let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let text = fa::read_to_string(path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         let measured = parse_baseline(&text);
         let mut refused = 0;
         for c in &cells {
@@ -1829,7 +1830,7 @@ fn a_refused_cell_is_a_compile_error_and_a_once_cell_is_not() {
     let cells = all_cells();
     let answers = for_each_cell(&cells, "lease_default", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
-        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
         let out = Command::new(loft_bin())
             .arg("--check")
             .arg("--interpret")
@@ -1878,7 +1879,7 @@ fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
     let cells = all_cells();
     let reports = for_each_cell(&cells, "lease_manifest", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
-        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
         let out = gate_command()
             .arg("--native-emit")
             .arg(dir.join(format!("{}.rs", c.name)))

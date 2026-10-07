@@ -26,6 +26,7 @@
 //! this binary holds — the `XDG_CACHE_HOME` override is what makes a second test here a race.
 
 use loft::database::Stores;
+use loft::file_access as fa;
 use loft::keys::DbRef;
 use loft::parser::Parser;
 
@@ -34,7 +35,7 @@ fn wasm_bridge_state_survives_warm_program_cache() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let cache_dir = tmp.join(format!("loft_p444_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_dir_all(&cache_dir);
     // SAFETY: this is the only test in this binary, so no other thread is
     // reading the environment concurrently.
     unsafe { std::env::set_var("XDG_CACHE_HOME", &cache_dir) };
@@ -42,7 +43,7 @@ fn wasm_bridge_state_survives_warm_program_cache() {
     // parsed source's content hash, so the warm load needs a real, unchanged
     // source file on disk.
     let script = tmp.join(format!("loft_p444_{pid}.loft"));
-    std::fs::write(&script, "fn main() { println(sha256(\"hi\")); }\n").expect("write script");
+    fa::write(&script, "fn main() { println(sha256(\"hi\")); }\n").expect("write script");
     let script_abs = std::fs::canonicalize(&script)
         .expect("canonicalize")
         .to_string_lossy()
@@ -147,6 +148,6 @@ fn wasm_bridge_state_survives_warm_program_cache() {
          run and panics on its second"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache_dir);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache_dir);
 }

@@ -19,6 +19,7 @@
 
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -28,8 +29,8 @@ fn scratch(name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-placement-remote").join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -39,8 +40,8 @@ fn workspace_root() -> PathBuf {
 
 fn write_library(root: &Path, mode: &str, source: &str) {
     let pkg = root.join("libs").join("svc");
-    std::fs::create_dir_all(pkg.join("src")).expect("create package");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("create package");
+    fa::write(
         pkg.join("loft.toml"),
         format!(
             "[package]\nname = \"svc\"\nversion = \"0.1.0\"\n\n\
@@ -48,7 +49,7 @@ fn write_library(root: &Path, mode: &str, source: &str) {
         ),
     )
     .expect("write manifest");
-    std::fs::write(pkg.join("src").join("svc.loft"), source).expect("write source");
+    fa::write(pkg.join("src").join("svc.loft"), source).expect("write source");
 }
 
 struct Run {
@@ -192,7 +193,7 @@ fn a_remote_library_answers_exactly_what_a_local_one_does() {
                     }\n";
     let root = scratch("matrix");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
 
     write_library(&root, "inproc", library);
     let inproc = run(&root, &consumer_path, None);
@@ -266,7 +267,7 @@ fn a_value_larger_than_the_arena_crosses_a_socket() {
                     }\n";
     let root = scratch("grow");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
 
     write_library(&root, "inproc", library);
     let inproc = run(&root, &consumer_path, None);
@@ -301,7 +302,7 @@ fn a_value_larger_than_the_arena_crosses_a_socket() {
 fn a_remote_library_with_no_address_refuses_and_says_which_variable() {
     let root = scratch("noaddr");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer_path,
         "use svc::*;\nfn main() { println(\"v = {add(2, 3)}\"); }\n",
     )
@@ -340,7 +341,7 @@ fn a_server_that_stops_answering_is_an_error_not_a_hang() {
                    pub fn ping(x: integer) -> integer { x + 1 }\n";
     let root = scratch("gone");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer_path,
         "use svc::*;\n\
          fn main() {\n\

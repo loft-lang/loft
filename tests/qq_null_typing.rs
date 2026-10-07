@@ -16,6 +16,7 @@
 //! (2) OK — a NON-null fallback still discharges to the non-null base (the common `?? default`), a
 //! `τ?` slot accepts, and an inferred bind types `τ?`; (3) both backends agree.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -29,7 +30,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// ON) vs the opt-out (`LOFT_NO_QQ_NULL=1`, the pre-fix behaviour).
 fn run(body: &str, backend: &str, qq_fix: bool, tag: &str) -> (bool, String) {
     let script = std::env::temp_dir().join(format!("loft_qq_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&script, body).expect("write script");
+    fa::write(&script, body).expect("write script");
     let mut cmd = Command::new(loft_bin());
     cmd.arg(backend)
         .arg(&script)
@@ -42,7 +43,7 @@ fn run(body: &str, backend: &str, qq_fix: bool, tag: &str) -> (bool, String) {
         cmd.env("LOFT_NO_QQ_NULL", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     (
         out.status.success(),
         format!(

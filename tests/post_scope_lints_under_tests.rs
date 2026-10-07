@@ -26,6 +26,7 @@
 //!     one `Data`, so a per-test call would report each finding N times
 //!     ([`one_finding_is_reported_once_across_many_tests`]).
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -36,7 +37,7 @@ fn loft_bin() -> PathBuf {
 /// Run `source` under `--tests`; return `(stdout+stderr, exit code)`.
 fn run_tests(tag: &str, source: &str, env: &[(&str, &str)]) -> (String, Option<i32>) {
     let path = std::env::temp_dir().join(format!("loft_985_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, source).expect("write probe");
+    fa::write(&path, source).expect("write probe");
     let mut cmd = Command::new(loft_bin());
     cmd.arg("--interpret")
         .arg("--tests")
@@ -47,7 +48,7 @@ fn run_tests(tag: &str, source: &str, env: &[(&str, &str)]) -> (String, Option<i
         cmd.env(k, v);
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     (
         format!(
             "{}{}",

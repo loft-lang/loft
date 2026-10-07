@@ -24,6 +24,7 @@
 
 #![cfg(unix)]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -32,8 +33,8 @@ fn scratch(name: &str) -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     let dir = base.join("loft-placement-parity").join(name);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -50,8 +51,8 @@ fn scratch_path(name: &str) -> PathBuf {
 /// Write the library with `placement` set to `mode`, leaving its source alone.
 fn write_library(root: &Path, mode: &str, source: &str) {
     let pkg = root.join("libs").join("parity");
-    std::fs::create_dir_all(pkg.join("src")).expect("create package");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("create package");
+    fa::write(
         pkg.join("loft.toml"),
         format!(
             "[package]\nname = \"parity\"\nversion = \"0.1.0\"\n\n\
@@ -59,7 +60,7 @@ fn write_library(root: &Path, mode: &str, source: &str) {
         ),
     )
     .expect("write manifest");
-    std::fs::write(pkg.join("src").join("parity.loft"), source).expect("write source");
+    fa::write(pkg.join("src").join("parity.loft"), source).expect("write source");
 }
 
 struct Run {
@@ -97,7 +98,7 @@ fn run(root: &Path, consumer: &Path) -> Run {
 fn both_placements(name: &str, source: &str, consumer_src: &str) -> (Run, Run) {
     let root = scratch(name);
     let consumer = root.join("consumer.loft");
-    std::fs::write(&consumer, consumer_src).expect("write consumer");
+    fa::write(&consumer, consumer_src).expect("write consumer");
 
     write_library(&root, "inproc", source);
     let inproc = run(&root, &consumer);
@@ -707,7 +708,7 @@ fn placement_does_not_change_how_many_stores_a_run_needs() {
                     }\n";
     let root = scratch("slots");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
 
     let peak_of = |mode: &str| -> (u32, String) {
         write_library(&root, mode, library);
@@ -804,7 +805,7 @@ fn a_compound_the_arena_does_not_carry_still_behaves_identically() {
 fn native_does_not_place_and_says_so_when_asked_to_insist() {
     let root = scratch("native_require");
     let consumer = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer,
         "use parity::*;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
     )
@@ -862,10 +863,10 @@ fn a_placed_library_sees_the_same_working_directory() {
                     }\n";
     let root = scratch("cwd");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
     // The marker sits beside the CONSUMER, which is where loft anchors a
     // relative path — and is not the directory the test runner is in.
-    std::fs::write(root.join("marker.txt"), "found-beside-the-program").expect("write marker");
+    fa::write(root.join("marker.txt"), "found-beside-the-program").expect("write marker");
 
     write_library(&root, "inproc", library);
     let inproc = run(&root, &consumer_path);
@@ -927,7 +928,7 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
                     }\n";
     let root = scratch("oracle");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
     for mode in ["inproc", "process"] {
         write_library(&root, mode, library);
         let out = Command::new(env!("CARGO_BIN_EXE_loft"))
@@ -1102,7 +1103,7 @@ fn a_placed_call_from_a_par_arm_is_the_same_call() {
                     }\n";
     let root = scratch("par");
     let consumer_path = root.join("consumer.loft");
-    std::fs::write(&consumer_path, consumer).expect("write consumer");
+    fa::write(&consumer_path, consumer).expect("write consumer");
     for share in ["0", "1"] {
         let go = |mode: &str| -> Run {
             write_library(&root, mode, library);
@@ -1207,7 +1208,7 @@ fn a_callee_rebinding_its_parameter_changes_nothing_either_way() {
 fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
     let root = scratch("death_compound");
     let consumer = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer,
         "use parity::*;\n\
          fn main() {\n\
@@ -1320,7 +1321,7 @@ fn the_gate_can_fail() {
     // notice — this is the control for every assertion above.
     let root = scratch("control");
     let consumer = root.join("consumer.loft");
-    std::fs::write(
+    fa::write(
         &consumer,
         "use parity::*;\nfn main() {\n    println(\"v = {add(2, 3)}\");\n}\n",
     )

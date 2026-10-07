@@ -6,6 +6,7 @@
 //! directory, so the tests cover the on-disk cache flow exactly
 //! as users hit it.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -24,7 +25,7 @@ fn tmp_subdir(name: &str) -> PathBuf {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
     ));
-    std::fs::create_dir_all(&dir).expect("create temp dir");
+    fa::create_dir_all(&dir).expect("create temp dir");
     dir
 }
 
@@ -34,7 +35,7 @@ fn tmp_subdir(name: &str) -> PathBuf {
 fn write_marker_script(dir: &std::path::Path, marker: &str) -> PathBuf {
     let script = dir.join("p254.loft");
     let body = format!("fn main() {{ println(\"{marker}\"); }}\n");
-    std::fs::write(&script, body).expect("write script");
+    fa::write(&script, body).expect("write script");
     script
 }
 
@@ -69,12 +70,12 @@ fn first_run_creates_cache_with_safe_permissions() {
     );
 
     let cache_dir = cache_dir_for(&script);
-    assert!(cache_dir.is_dir(), "cache dir missing");
+    assert!(fa::is_dir(&cache_dir), "cache dir missing");
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        let md = std::fs::metadata(&cache_dir).expect("stat cache dir");
+        let md = fa::metadata(&cache_dir).expect("stat cache dir");
         // P254 — directory must be 0o700 after first cache write.
         assert_eq!(md.mode() & 0o777, 0o700, "cache dir mode wrong");
         // P254 — every cached binary inside must also be 0o700.
@@ -82,7 +83,7 @@ fn first_run_creates_cache_with_safe_permissions() {
             .expect("read cache dir")
             .flatten()
         {
-            let cmd = std::fs::metadata(entry.path()).expect("stat cache file");
+            let cmd = fa::metadata(entry.path()).expect("stat cache file");
             assert_eq!(
                 cmd.mode() & 0o777,
                 0o700,
@@ -92,7 +93,7 @@ fn first_run_creates_cache_with_safe_permissions() {
         }
     }
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
@@ -145,7 +146,7 @@ fn second_run_reuses_safe_cache() {
         "cache file path changed across runs"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[cfg(unix)]
@@ -175,10 +176,10 @@ fn group_writable_cache_is_recompiled() {
 
     // Loosen the cache file's mode to simulate an attacker-friendly cache
     // (group + other write).  The next run must reject it and recompile.
-    std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o766))
+    fa::set_permissions(&cached, std::fs::Permissions::from_mode(0o766))
         .expect("loosen cache mode");
 
-    let mtime_before = std::fs::metadata(&cached)
+    let mtime_before = fa::metadata(&cached)
         .expect("stat before")
         .modified()
         .expect("mtime before");
@@ -213,7 +214,7 @@ fn group_writable_cache_is_recompiled() {
         .next()
         .expect("at least one cache file")
         .path();
-    let md_after = std::fs::metadata(&cached_after).expect("stat after");
+    let md_after = fa::metadata(&cached_after).expect("stat after");
     assert_eq!(
         md_after.mode() & 0o777,
         0o700,
@@ -224,7 +225,7 @@ fn group_writable_cache_is_recompiled() {
         "cache mtime should be newer after recompile"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[cfg(unix)]
@@ -257,12 +258,12 @@ fn poisoned_cache_binary_is_not_executed() {
     // writable so the safety check rejects it; the recompile path
     // overwrites it before we ever execute.
     use std::os::unix::fs::PermissionsExt;
-    std::fs::write(
+    fa::write(
         &cached,
         b"#!/bin/sh\necho P254_POISONED_BINARY_RAN\nexit 0\n",
     )
     .expect("write poison");
-    std::fs::set_permissions(&cached, std::fs::Permissions::from_mode(0o777))
+    fa::set_permissions(&cached, std::fs::Permissions::from_mode(0o777))
         .expect("loosen poison mode");
 
     let out = Command::new(loft_bin())
@@ -289,7 +290,7 @@ fn poisoned_cache_binary_is_not_executed() {
         "missing P254 reject warning; stderr={stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 #[test]
@@ -313,9 +314,9 @@ fn no_cache_env_var_skips_cache() {
 
     let cache_dir = cache_dir_for(&script);
     assert!(
-        !cache_dir.exists() || std::fs::read_dir(&cache_dir).map_or(true, |d| d.count() == 0),
+        !fa::exists(&cache_dir) || std::fs::read_dir(&cache_dir).map_or(true, |d| d.count() == 0),
         "LOFT_NATIVE_NO_CACHE=1 should not write to the cache directory"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

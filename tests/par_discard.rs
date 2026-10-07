@@ -20,6 +20,7 @@
 //! file carries the two things a script cannot state: that stdout shows every row, and
 //! that the generated Rust CALLS the runtime helper rather than an empty body.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -42,7 +43,7 @@ fn main() {\n\
 
 fn write_probe(tag: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_987_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, PROBE).expect("write probe");
+    fa::write(&path, PROBE).expect("write probe");
     path
 }
 
@@ -64,7 +65,7 @@ fn run(backend: &str, file: &PathBuf) -> (bool, String, String) {
 fn assert_every_row_ran(backend: &str) {
     let probe = write_probe(backend.trim_start_matches('-'));
     let (ok, stdout, stderr) = run(backend, &probe);
-    let _ = std::fs::remove_file(&probe);
+    let _ = fa::remove_file(&probe);
     assert!(
         ok,
         "[{backend}] an empty par body must compile and run\nstdout:\n{stdout}\nstderr:\n{stderr}"
@@ -113,9 +114,9 @@ fn the_discard_route_lowers_to_the_runtime_helper() {
         .status()
         .expect("failed to invoke loft binary");
     assert!(status.success(), "--native-emit must succeed");
-    let src = std::fs::read_to_string(&out_rs).expect("read emitted Rust");
-    let _ = std::fs::remove_file(&probe);
-    let _ = std::fs::remove_file(&out_rs);
+    let src = fa::read_to_string(&out_rs).expect("read emitted Rust");
+    let _ = fa::remove_file(&probe);
+    let _ = fa::remove_file(&out_rs);
     assert!(
         src.contains("n_parallel_discard_native(cell,"),
         "the discard route must lower to `n_parallel_discard_native`, not to the \

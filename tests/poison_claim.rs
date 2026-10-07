@@ -10,6 +10,7 @@
 //! on zeros rather than paying a memset on every claim.  The number only moves DOWN — a
 //! new dependence is a regression, and the remaining ones are named in
 //! `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § Zero-on-claim.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -27,7 +28,7 @@ fn scripts() -> Vec<PathBuf> {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().is_some_and(|x| x == "loft"))
         .filter(|p| {
-            let src = std::fs::read_to_string(p).unwrap_or_default();
+            let src = fa::read_to_string(p).unwrap_or_default();
             !src.contains("@EXPECT_ERROR") && !src.contains("@IGNORE")
         })
         .collect();

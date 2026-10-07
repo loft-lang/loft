@@ -21,6 +21,7 @@
 //! retires the rule the guard is for. `a_registry_dep_still_outranks_a_same_named_local_file`
 //! is the one that fails if the exemption is widened past path deps.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,8 +38,8 @@ fn dirs_registry() -> PathBuf {
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 const CONSUMER_MANIFEST: &str = "[package]\nname    = \"consumer\"\nversion = \"0.1.0\"\n\
@@ -77,7 +78,7 @@ fn build_tree(root: &Path, declare: bool) {
 /// Run `loft test` on the tree, optionally with `--lib lib/`. Returns the combined output.
 fn run_suite(tag: &str, declare: bool, with_lib_flag: bool) -> String {
     let root = std::env::temp_dir().join(format!("loft_963_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     build_tree(&root, declare);
 
     let mut cmd = Command::new(loft_bin());
@@ -94,7 +95,7 @@ fn run_suite(tag: &str, declare: bool, with_lib_flag: bool) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     all
 }
 
@@ -164,7 +165,7 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
         return;
     }
     let root = std::env::temp_dir().join(format!("loft_963_shadow_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     write(
         &root.join("loft.toml"),
         "[package]\nname    = \"shadowp\"\nversion = \"0.1.0\"\n\n[library]\n\
@@ -197,7 +198,7 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !all.contains("-999"),

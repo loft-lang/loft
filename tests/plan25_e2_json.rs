@@ -21,6 +21,7 @@
 //! mandatory: the warm program cache keys on source content, NOT on the gate, so
 //! a cached gate-off bundle would otherwise mask the rewrite.
 
+use loft::file_access as fa;
 use std::path::Path;
 use std::process::Command;
 
@@ -47,9 +48,9 @@ fn rustc_available() -> bool {
 /// Write `body` to a temp `.loft` file under a unique dir, returning the path.
 fn probe(name: &str, body: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_e2_json_probe");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{name}.loft"));
-    std::fs::write(&path, body).expect("write probe");
+    fa::write(&path, body).expect("write probe");
     path
 }
 
