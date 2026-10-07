@@ -15,7 +15,11 @@ use std::cmp::Ordering;
 static RB_LEFT: u32 = 0;
 static RB_RIGHT: u32 = 4;
 static RB_FLAG: u32 = 8;
-static RB_MAX_DEPTH: u32 = 30;
+// The descent bound, a guard against a corrupt (cyclic) tree and never a size limit.  A red-black
+// tree of n records is at most 2·log2(n+1) deep, and a record is a `u32` position, so no sound
+// tree passes 64.  It read 30, which a sorted insert reaches at 98,303 records — and `Put::put`
+// answers 0 past it, which `add` reads as a duplicate key: the record was dropped (loft#1910).
+static RB_MAX_DEPTH: u32 = 64;
 
 // Normally rec holds the position towards the LEFT, RiGHT, FLAG fields.
 // However, the compare functions assume pos = 0 for records outside a vector.
