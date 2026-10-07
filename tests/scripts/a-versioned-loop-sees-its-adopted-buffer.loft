@@ -1,11 +1,16 @@
 // `@FR-R-Alias`'s versioned clause, the adopted-buffer case — a loop that reads a PARAMETER's
 // elements through record views while it pushes into the local that ADOPTED the return
 // buffer runs a copy whose views read through record addresses, under a run-time test that
-// the buffer's store is not the parameter's.  Where the caller hands the parameter's own
-// record as the buffer (`v = twice(v)`, `@FR-R-Rebind`), the test fails and the plain loop
-// runs: a push there reallocates the very store the views point into.  Every value is
+// the buffer's store is not the parameter's; were the buffer in the parameter's store, a
+// push would reallocate the very store the views point into, and the plain loop runs.  Every value is
 // hand-computed; LOFT_POISON=1 poisons a reallocated block, so a stale address reads 0xA5
 // bytes instead of the old values.
+//
+// @falsified-at: none — as for `a-loop-versioned-on-distinct-stores-answers-both-ways.loft`, no
+//   road this suite knows hands a return buffer that lives in a parameter's store (`v =
+//   twice(v)` takes a buffer of its own; `s.out = f(s)` declines `(R-Place)`), so forcing the
+//   held copy (`true || …`) is INERT here.  The cells pin both copies' values on both
+//   backends; the shared-store case is the test's to answer at run time.
 //
 // @ARMED: LOFT_POISON=1
 
@@ -53,7 +58,7 @@ fn main() {
   for k in [1, 2, 3, 4, 5, 6, 5, 6, 7, 8, 7, 8, 1, 2, 3, 4] { e = e * 3 + k; e = e % 1000003; }
   assert(s == e && f[0] == 1 && f[15] == 4 && f[8] == 7, "c1 values {s} vs {e}");
 
-  // c2 — the buffer IS the parameter's record: three rounds double the vector each time,
+  // c2 — a loop over a vector parameter re-fed its own result: three rounds double it,
   // every element keeping its pair, the x of each second copy 1000 higher.
   v = [P { x: 1, y: 10 }, P { x: 2, y: 20 }];
   v = twice(v);
