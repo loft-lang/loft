@@ -16,6 +16,17 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A field is private to the file that declares it.**  Reading, writing or matching a field
+from another file needs `pub` on that field (`struct Unit { pub name: text, hp: integer }`); a
+struct literal outside its file needs every field `pub`, and an enum's variants need `pub enum`.
+A type your `pub fn` returns can still be named, passed and stored by its caller without `pub`
+— it just cannot be built there.  A `type Handle = integer` that is not `pub` but is returned by
+a `pub fn` hides its integer: callers can pass a `Handle` back and compare two, but not add to
+one.  Each refusal names the field or type, its file and the fix.  For a library you use, update
+to its release that marks its fields `pub`; for your own package of several files,
+`scripts/pub_census.sh` and `scripts/pub_migrate.py` add the `pub` the refusals ask for
+([COMPATIBILITY.md](doc/claude/COMPATIBILITY.md)).
+
 **`operator` is a keyword.**  It starts a definition an operator form reaches (below), so a
 variable, field or function named `operator` no longer compiles: rename it.
 
