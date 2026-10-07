@@ -241,6 +241,35 @@ impl Output<'_> {
         // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
         // calls the plain-bodied twin, so no other twin form applies to it.
         let dest = self.dest_call(vals);
+        // `@FR-R-ViewReturn` — the call its buffer prep was dropped for: the twin, which
+        // answers the record and whether it is owned; the flag goes to the site's local.
+        let vr = !dest
+            && self
+                .vr_site_next
+                .is_some_and(|(c, at)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        let vr_flag = if vr {
+            self.vr_site_next = None;
+            let c = self.current_call_def;
+            if !self.vr_requests.contains(&c) {
+                self.vr_requests.push(c);
+            }
+            crate::rewrite_census::fired("R-ViewReturn", 1);
+            self.vr_flag_pending.take()
+        } else {
+            None
+        };
+        if let Some(flag) = &vr_flag {
+            write!(w, "{{ let __vr = ")?;
+            write!(w, "{}__vr(cell", self.fn_ident(def_fn))?;
+            let callee_nr = self.current_call_def;
+            self.vr_drop_buf = true;
+            let r = self.emit_user_call_args(w, def_fn, vals, false);
+            self.vr_drop_buf = false;
+            r?;
+            self.current_call_def = callee_nr;
+            write!(w, "); {flag} = __vr.1; __vr.0 }}")?;
+            return Ok(());
+        }
         let append = !dest
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
@@ -359,10 +388,7 @@ impl Output<'_> {
         // signature had dropped it).  `current_call_def` is what `output_call_inner`
         // threads here for exactly this reason.
         let callee_nr = self.current_call_def;
-        let drop_buf = self
-            .value_records
-            .fns
-            .contains_key(&callee_nr)
+        let drop_buf = (self.vr_drop_buf || self.value_records.fns.contains_key(&callee_nr))
             .then(|| super::hoist::ret_buffer_attr(def_fn))
             .flatten();
         for (idx, v) in vals.iter().enumerate() {

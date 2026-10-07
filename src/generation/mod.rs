@@ -23,6 +23,7 @@ mod pre_eval;
 pub mod range;
 mod ranged_call;
 mod text;
+pub mod view_return;
 
 /// One hoisted binding produced by `collect_pre_evals`:
 /// `(name, match_code, bind_code, counter, replace_all)` — `name` is the
@@ -899,6 +900,21 @@ pub struct Output<'a> {
     /// emitted, the admission answers, the caller-side rewrite's call waiting for its `__d`
     /// name, and the counter naming each site's result tuple.
     pub dest_twin: Option<destination::Shape>,
+    /// `@FR-R-ViewReturn` — emitting a callee's `__vr` twin.
+    pub vr_twin: bool,
+    /// The callees view-return calls asked twins of, and those emitted.
+    pub vr_requests: Vec<u32>,
+    pub vr_emitted: HashSet<u32>,
+    /// Callee admission, per definition.
+    pub vr_memo: HashMap<u32, bool>,
+    /// The next call to take the twin: (callee, argument slice).
+    pub vr_site_next: Option<(u32, usize)>,
+    /// Per subject variable of the function being emitted: its ownership flag.
+    pub vr_owned: HashMap<u16, String>,
+    /// The flag the next twin call writes its ownership into.
+    pub vr_flag_pending: Option<String>,
+    /// While a twin call's arguments are emitted: its buffer argument is left out.
+    pub vr_drop_buf: bool,
     pub dest_requests: Vec<(u32, i64)>,
     pub dest_emitted: HashSet<(u32, i64)>,
     pub dest_memo: HashMap<(u32, i64), Option<destination::Shape>>,
@@ -2390,6 +2406,14 @@ impl<'a> Output<'a> {
             ap_memo: HashMap::new(),
             ap_site_next: None,
             dest_twin: None,
+            vr_twin: false,
+            vr_requests: Vec::new(),
+            vr_emitted: HashSet::new(),
+            vr_memo: HashMap::new(),
+            vr_site_next: None,
+            vr_owned: HashMap::new(),
+            vr_flag_pending: None,
+            vr_drop_buf: false,
             dest_requests: Vec::new(),
             dest_emitted: HashSet::new(),
             dest_memo: HashMap::new(),
@@ -3012,6 +3036,7 @@ impl Output<'_> {
         };
         self.group_ends.clear();
         self.declared.clear();
+        self.vr_owned.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
         self.rebind_handed.clear();
@@ -9310,7 +9335,8 @@ extern crate loft;"
         // A twin's body asks for twins of either kind; until neither kind is left.
         loop {
             self.output_append_twins(w, program_store.as_ref())?;
-            if !self.output_dest_twins(w, program_store.as_ref())? {
+            let dest = self.output_dest_twins(w, program_store.as_ref())?;
+            if !self.output_vr_twins(w, program_store.as_ref())? && !dest {
                 return Ok(());
             }
         }
@@ -9342,6 +9368,30 @@ extern crate loft;"
             any = true;
             self.output_ranged_variants(w, program_store)?;
             self.output_refill_twins(w, program_store)?;
+        }
+        Ok(any)
+    }
+
+    /// `@FR-R-ViewReturn` — the view-return twins calls asked for.  Answers whether any was
+    /// emitted.
+    fn output_vr_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        let mut any = false;
+        while let Some(at) = self
+            .vr_requests
+            .iter()
+            .position(|r| !self.vr_emitted.contains(r))
+        {
+            let dnr = self.vr_requests[at];
+            self.vr_emitted.insert(dnr);
+            self.vr_twin = true;
+            let r = self.output_function(w, dnr, program_store);
+            self.vr_twin = false;
+            r?;
+            any = true;
         }
         Ok(any)
     }
@@ -10182,6 +10232,8 @@ extern crate loft;"
                 "__ap"
             } else if self.dest_twin.is_some() {
                 "__d"
+            } else if self.vr_twin {
+                "__vr"
             } else {
                 ""
             }
@@ -10189,7 +10241,11 @@ extern crate loft;"
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
         let value_rec = self.value_records.fn_tuple(def_nr).map(str::to_owned);
-        let dropped = value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def));
+        let dropped = if self.vr_twin {
+            hoist::ret_buffer_attr(def)
+        } else {
+            value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def))
+        };
         for (i, a) in def.attributes().iter().enumerate() {
             if dropped == Some(i) {
                 continue;
@@ -10252,6 +10308,9 @@ extern crate loft;"
                 // `@FR-R-Destination` — the moved field is written into the caller's element;
                 // the scalar fields come back in registers.
                 write!(w, "-> {} ", dt.tuple())?;
+            } else if self.vr_twin {
+                // `@FR-R-ViewReturn` — the record's address and whether the caller owns it.
+                write!(w, "-> (DbRef, bool) ")?;
             } else if returns_owned_string(def) {
                 write!(w, "-> String ")?;
             } else {
@@ -10272,6 +10331,18 @@ extern crate loft;"
         // first body `Set(v, Null)` still emits `null_named` + `OpDatabase`
         // at its IR position via `predeclared`.
         let mut vdb_prologue = String::new();
+        // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
+        // every free the body names of it skips.
+        if self.vr_twin
+            && let Some(ai) = hoist::ret_buffer_attr(def)
+        {
+            use std::fmt::Write as _;
+            let _ = write!(
+                vdb_prologue,
+                "\n  let mut var_{}: DbRef = DbRef::NULL;",
+                sanitize(&def.attributes()[ai].name)
+            );
+        }
         // `@FR-R-Destination` — the twin's scalar fields, which its `return` answers.
         if let Some(dt) = &self.dest_twin {
             use std::fmt::Write as _;
