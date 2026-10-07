@@ -4,7 +4,12 @@
 // whole reassignment of the tuple, and a copy taken while it lives stays independent.  A
 // by-value parameter's member links to the callee's own copy.  Each value is worked out by hand
 // in the comment beside it.
-// @falsified-at: ffd2c6837 — measured below by `make falsify`
+// @falsified-at: ffd2c6837 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-link-to-a-text-tuple-member-writes-the-member.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the exit on both backends — the control refuses the text member link at compile
+//   time.
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends,
+//   as measured by `make falsify` at ffd2c6837.
 
 fn tb(p: &text) { p += "!"; }
 fn nb(p: &u8) { p += 1; }
