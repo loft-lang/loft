@@ -1,0 +1,79 @@
+// `(R-ExitVector)`'s record clause — a local RECORD that reaches the function's exit only
+// inside the returned literal is built in its field of the return buffer: its mint becomes
+// the buffer's ensure and a release of what the field held, its copy and its frees go.  A
+// fresh mint writes the type's defaults and the field does not, so the clause asks the
+// construction to write every field — a REFILLED buffer (the caller's, reused per turn) is
+// where a stale byte would show.  Every value is hand-computed; both backends run the rule.
+
+struct Box2 { x: integer, y: integer }
+struct Inner { at: Box2, name: text, items: vector<integer>, b: integer = 5 }
+struct Outer { head: integer, inner: Inner, tail: text }
+
+/// The assembler: a local built, then placed in the exit literal.  `b` is omitted.
+fn build(i: integer) -> Outer {
+  lb = Inner { at: Box2 { x: i, y: i * 2 }, name: "n{i}", items: [i, i + 1, i + 2] };
+  Outer { head: i * 10, inner: lb, tail: "t{i}" }
+}
+
+/// The local passed to a user function before the exit: declined, the copy kept.
+fn touch(v: Inner) -> integer { v.at.x + len(v.items) }
+fn build_touched(i: integer) -> Outer {
+  lb = Inner { at: Box2 { x: i, y: 0 }, name: "m", items: [i] };
+  k = touch(lb);
+  Outer { head: k, inner: lb, tail: "" }
+}
+
+/// Two exits: declined.
+fn build_two(i: integer) -> Outer {
+  lb = Inner { at: Box2 { x: i, y: i }, name: "two", items: [] };
+  if i < 0 { return Outer { head: -1, inner: lb, tail: "neg" }; }
+  Outer { head: 1, inner: lb, tail: "pos" }
+}
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+fn main() {
+  // c1 — one fresh call: every field as the literal wrote it, the omitted `b` its default.
+  o = build(3);
+  assert(o.head == 30 && o.tail == "t3", "c1 outer");
+  assert(o.inner.at.x == 3 && o.inner.at.y == 6 && o.inner.name == "n3", "c1 inner");
+  assert(len(o.inner.items) == 3 && o.inner.items[2] == 5 && o.inner.b == 5, "c1 items/b {o.inner.b}");
+
+  // c2 — the refilled buffer: each turn reuses the caller's buffer, after the previous
+  // turn's value was changed in place (b and the name); the new value is the literal's.
+  s = 0;
+  for i in 0..50 {
+    r = build(i);
+    assert(r.inner.b == 5 && r.inner.name == "n{i}" && len(r.inner.items) == 3, "c2 turn {i}: b={r.inner.b}");
+    s += r.head + r.inner.at.x + r.inner.at.y + r.inner.items[0] + r.inner.items[2] + r.inner.b;
+    r.inner.b = 99;
+    r.inner.name = "stale";
+    r.inner.items += [7, 7, 7];
+  }
+  // sum over i of (10i + i + 2i + i + (i+2) + 5) = 15·Σi + 7·50 = 15·1225 + 350
+  assert(s == 15 * 1225 + 350, "c2 sum {s}");
+
+  // c3 — the declined shapes answer the same values.
+  t = build_touched(4);
+  assert(t.head == 5 && t.inner.at.x == 4 && t.inner.items[0] == 4 && t.inner.b == 5, "c3 touched");
+  assert(build_two(-2).tail == "neg" && build_two(-2).inner.at.y == -2 && build_two(2).head == 1, "c3 two");
+
+  // c4 — after a warm-up (the loop's own buffer is claimed on its first turn), a thousand
+  // more calls leave the live record count where it was.
+  r1 = 0;
+  for i in 0..1000 {
+    q = build(i);
+    s += q.inner.at.y;
+    if i == 9 { r1 = live_records(); }
+  }
+  r2 = live_records();
+  assert(r1 > 0 && r2 == r1, "c4 records {r1} -> {r2}");
+  println("ok");
+}
