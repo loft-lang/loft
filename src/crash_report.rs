@@ -35,8 +35,6 @@
 //   (the op name, which is a compile-time constant from the
 //   interpreter's opcode table).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(clippy::module_name_repetitions)]
 
 use std::cell::Cell;
@@ -299,7 +297,7 @@ fn crash_file_from(setting: Option<String>) -> Option<CrashFile> {
         None => {
             let name = format!("loft-crash-{}.txt", std::process::id());
             let dot_loft = std::path::Path::new(".loft");
-            if dot_loft.is_dir() {
+            if crate::file_access::is_dir(dot_loft) {
                 dot_loft.join(name)
             } else {
                 std::env::temp_dir().join(name)
