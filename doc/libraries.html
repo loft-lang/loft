@@ -56,7 +56,7 @@
 <h2 id="encoding">Encoding</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-cbor.html"><code>cbor</code></a></td><td>0.1.11</td><td>Signable canonical CBOR (RFC 8949), pure loft — canonical map-key ordering, full decode, byte-identical encode-&gt;decode-&gt;encode, native == wasm.</td></tr>
+<tr><td><a href="lib-cbor.html"><code>cbor</code></a></td><td>0.1.12</td><td>Signable canonical CBOR (RFC 8949), pure loft — canonical map-key ordering, full decode, byte-identical encode-&gt;decode-&gt;encode, native == wasm.</td></tr>
 </table>
 <h2 id="game">Games</h2>
 <table class="lib-table">
@@ -93,7 +93,7 @@
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.4.3</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
 <tr><td><a href="lib-glb.html"><code>glb</code></a></td><td>0.1.6</td><td>glTF 2.0 binary (.glb) writer — exports Mesh / Scene as a glb file readable by Blender, three.js, gltf-validator.  Standalone (pure-loft, no GPU).</td></tr>
-<tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.9.10</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
+<tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.9.11</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
 <tr><td><a href="lib-gridmesh.html"><code>gridmesh</code></a></td><td>0.2.6</td><td>Chunk-local mesh-generation primitives for world-building algorithms.</td></tr>
 <tr><td><a href="lib-imaging.html"><code>imaging</code></a></td><td>0.4.4</td><td>PNG load/save + pixel manipulation for loft (Stage A — interpreter + native; wasm bridge deferred pending loft-host-ffi crate).</td></tr>
 <tr><td><a href="lib-lavition_ui.html"><code>lavition_ui</code></a></td><td>0.1.1</td><td>Panel layout, hit-testing and text metrics for an in-engine editor UI: rectangles and hits, with no world, no lattice, no window and no GL.</td></tr>
@@ -117,7 +117,7 @@
 <h2 id="plugins">Plugins</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-pluginabi.html"><code>pluginabi</code></a></td><td>0.1.7</td><td>Plugin call protocol — the six-operation contract (initial_state / apply_op / make_op / render / snapshot / load_snapshot) as canonical-CBOR frames over a byte channel. Not a runtime, ABI or sandbox: loft already provides those.</td></tr>
+<tr><td><a href="lib-pluginabi.html"><code>pluginabi</code></a></td><td>0.1.8</td><td>Plugin call protocol — the six-operation contract (initial_state / apply_op / make_op / render / snapshot / load_snapshot) as canonical-CBOR frames over a byte channel. Not a runtime, ABI or sandbox: loft already provides those.</td></tr>
 </table>
 <h2 id="random">Randomness</h2>
 <table class="lib-table">
@@ -131,7 +131,7 @@
 <tr><td><a href="lib-markdown.html"><code>markdown</code></a></td><td>0.2.5</td><td>Markdown-to-HTML rendering for loft — headings, inline spans, slugify, link rewriting.</td></tr>
 <tr><td><a href="lib-regex.html"><code>regex</code></a></td><td>0.4.3</td><td>Small-script regex: `search`, `matches` and a lazy `split_on`, with a thread-local pattern cache.</td></tr>
 <tr><td><a href="lib-text2d.html"><code>text2d</code></a></td><td>0.4.6</td><td>Text that always draws — a built-in face, a glyph atlas, measured metrics, wrapping and alignment, with no font file and no GL context</td></tr>
-<tr><td><a href="lib-zttext.html"><code>zttext</code></a></td><td>0.1.5</td><td>A text engine for loft: piece-table content core, transactional undo, and portable layout with measurement injected</td></tr>
+<tr><td><a href="lib-zttext.html"><code>zttext</code></a></td><td>0.1.6</td><td>A text engine for loft: piece-table content core, transactional undo, and portable layout with measurement injected</td></tr>
 </table>
 <h2 id="time">Time</h2>
 <table class="lib-table">
