@@ -1147,6 +1147,14 @@ impl Stores {
     /// `@FR-R-RefillBuffer` — keep the store a rebind exchange released (`spare_store`); the
     /// one kept before is freed, so at most one is held.
     fn park_spare(&mut self, store_nr: u16) {
+        // A parked store's content is dead: the `File`s in it release their handles here
+        // (`@FR-H-Handle`), since the leak report counts the spare as the runtime's own.
+        #[cfg(not(host_fs))]
+        self.release_file_leases(&DbRef {
+            store_nr,
+            rec: 1,
+            pos: 8,
+        });
         if let Some(old) = self.spare_store.replace(store_nr) {
             self.free(&DbRef {
                 store_nr: old,
@@ -1395,15 +1403,23 @@ impl Stores {
     fn lease_if_file(&self, _to: &DbRef, _tp: u16) {}
 
     /// A `File` record is gone: release the lease it holds on its OS handle, which closes
-    /// at the last release (`@FR-H-Lease`, `@FR-H-Drop`).  Asked of every record that dies
+    /// at the last release (`@FR-H-Handle`).  Asked of every record that dies
     /// holding one — a store's root, a member of a record, an element of a collection — by
     /// [`Self::release_file_leases`] when its store is freed and by `remove_claims` when it
     /// dies inside a store that lives on.
+    ///
+    /// The record is DETACHED as it releases — its handle field reads null afterwards — so a
+    /// second walk over the same bytes (a parked store re-minted, a reset after a clear)
+    /// releases nothing twice: a lease is returned once per record, never per walk.
     #[cfg(not(host_fs))]
     fn release_file_handle(&mut self, rec: &DbRef) {
         let file_ref = self.store(rec).get_i32_raw(rec.rec, rec.pos + 28);
-        if file_ref != i32::MIN
-            && let Some(slot) = self.files.get_mut(file_ref as usize)
+        if file_ref == i32::MIN {
+            return;
+        }
+        self.store_mut(rec)
+            .set_i32_raw(rec.rec, rec.pos + 28, i32::MIN);
+        if let Some(slot) = self.files.get_mut(file_ref as usize)
             && slot
                 .as_mut()
                 .is_some_and(super::loft_file::LoftFile::release)
@@ -1412,28 +1428,49 @@ impl Stores {
         }
     }
 
-    /// Store `store_nr` is being freed or re-initialised: release every `File` its records
+    /// The store `db` names is being freed or re-initialised: release every `File` its records
     /// hold, reached from its root (1@8) through the type that root's header names.  A raw
     /// mint names no type (`@FR-H-Claim`), and a store minted while no file was ever opened
     /// has nothing to release, so neither is walked.
+    ///
+    /// A one-field vector WRAPPER holds its vector handle in either half of its one payload
+    /// word: byte 8, where its type puts the field, or byte 12, where the interpreter's
+    /// buffer references write it (`clear_vector` names the same split).  Both backends
+    /// zero-fill a root at every mint, so the half nobody wrote reads 0 and the vector is in
+    /// the other; a word with BOTH halves set is no mint's and is skipped, which keeps its
+    /// handles open rather than follow a guess.  Any other root is walked by its type.
     ///
     /// The walk reaches what the root OWNS; a record nothing reaches from the root (a
     /// coroutine's extra snapshot records) keeps its lease, which leaves its handle open
     /// rather than closing one something may still use.
     #[cfg(not(host_fs))]
-    pub(super) fn release_file_leases(&mut self, store_nr: u16) {
-        if self.files.is_empty() || self.allocations[store_nr as usize].capacity_words() < 2 {
+    pub(super) fn release_file_leases(&mut self, db: &DbRef) {
+        let store_nr = db.store_nr;
+        if self.files.is_empty() || self.allocations[store_nr as usize].capacity_words() < 3 {
             return;
         }
-        let tp = self.allocations[store_nr as usize].get_u32_raw(1, 4) as usize;
-        if tp < self.types.len() {
-            let root = DbRef {
-                store_nr,
-                rec: 1,
-                pos: 8,
-            };
-            self.release_files_in(&root, tp as u16);
+        let store = &self.allocations[store_nr as usize];
+        let tp = store.get_u32_raw(1, 4) as usize;
+        if tp >= self.types.len() {
+            return;
         }
+        let tp = tp as u16;
+        let mut root = DbRef {
+            store_nr,
+            rec: 1,
+            pos: 8,
+        };
+        let mut walk_tp = tp;
+        if self.is_vector_wrapper(tp) {
+            root.pos = match (store.get_u32_raw(1, 8), store.get_u32_raw(1, 12)) {
+                (0, 0) => return,
+                (_, 0) => 8,
+                (0, _) => 12,
+                _ => return,
+            };
+            walk_tp = self.field_type(tp, 0);
+        }
+        self.release_files_in(&root, walk_tp);
     }
 
     /// The descent of [`Self::release_file_leases`]: a `File` releases its own lease, any
@@ -1513,7 +1550,7 @@ impl Stores {
     }
 
     /// A deep copy of a `File` record names the source's handle too, so it takes a lease on
-    /// it (`@FR-H-Lease`): the source's free then leaves the handle open for the copy, and the
+    /// it (`@FR-H-Handle`): the source's free then leaves the handle open for the copy, and the
     /// handle closes at the last release ([`Self::release_file_handle`]).  A record whose handle
     /// is not open yet names none, and opens its own on first use.
     ///
@@ -1696,9 +1733,9 @@ impl Stores {
         if store.pinned {
             return;
         }
-        // `@FR-H-Drop` — the store's death is the death of every `File` it holds.
+        // `@FR-H-Handle` — the store's death is the death of every `File` it holds.
         #[cfg(not(host_fs))]
-        self.release_file_leases(al);
+        self.release_file_leases(db);
         // Plan-57 Phase C: the Stores ref-count is removed.  Every non-pinned
         // store is single-owner (closure-captured cells are owned by the closure
         // record's cascade, not rc — see Phase B), so `free_named` always frees.
@@ -2040,7 +2077,22 @@ impl Stores {
         leaked
             .into_iter()
             .map(|((kt, tn), n)| format!("kt={kt} {tn}×{n}"))
+            .chain(self.open_file_handles_entry())
             .collect()
+    }
+
+    /// `@FR-H-FreeAll` for the resource a store does not hold: the OS handles `File` records
+    /// still name at program exit, as one more entry of the leak report (`open File
+    /// handles×N`).  Every record's death releases its lease (`@FR-H-Handle`), so a handle
+    /// open at exit is a death that did not — the report both leak gates already read.
+    #[must_use]
+    #[cfg_attr(host_fs, allow(clippy::unused_self))]
+    pub fn open_file_handles_entry(&self) -> Option<String> {
+        #[cfg(not(host_fs))]
+        let open = self.files.iter().filter(|f| f.is_some()).count();
+        #[cfg(host_fs)]
+        let open = 0;
+        (open > 0).then(|| format!("open File handles×{open}"))
     }
 
     /**
@@ -2098,12 +2150,12 @@ impl Stores {
         // the first's record (#348: a File record clobbered by a sibling
         // call's result vector).  #513: a file-backed slot is replaced, not
         // init()'d through the mmap (see reinit_reused_slot).
-        // `@FR-H-Drop` — a LIVE store re-minted in place loses every record it held, so the
+        // `@FR-H-Handle` — a LIVE store re-minted in place loses every record it held, so the
         // `File`s among them release their handles; an adopted FREED store released them at
         // its free.
         #[cfg(not(host_fs))]
         if !self.allocations[slot as usize].free {
-            self.release_file_leases(slot);
+            self.release_file_leases(db);
         }
         self.reinit_reused_slot(slot as usize);
         self.allocations[slot as usize].free = false;
@@ -4273,7 +4325,7 @@ impl Stores {
         if rec.store_nr == u16::MAX {
             return;
         }
-        // `@FR-H-Drop` — a `File` record dying inside a store that lives on (a cleared or
+        // `@FR-H-Handle` — a `File` record dying inside a store that lives on (a cleared or
         // overwritten element, a displaced field) releases its handle.  `remove_claims`'s fast
         // path never skips one that holds a handle: an open file always has its `path` text.
         #[cfg(not(host_fs))]

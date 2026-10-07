@@ -342,8 +342,9 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  danger it averts is slot REUSE: a freed slot is handed out again, so a second
                  free would release someone else's store.
   (H-FreeAll)    every store is freed exactly ONCE, by program exit.  The residue is reported
-                 (`N stores not freed at program exit`) — a warning ordinarily and an ERROR
-                 under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
+                 (`N stores not freed at program exit`; a `File` handle still open is one
+                 more entry, `open File handles×N`, (H-Handle)) — a warning ordinarily and an
+                 ERROR under `LOFT_STRICT_STORES`, which asks for exactly-once and so has to fail
                  both halves: a store used after its free, and a store never freed at all.
   (H-RootExtent) a store whose ROOT record is the one-field collection wrapper
                  `OpDatabase` mints holds NOTHING ELSE: every record in it was
@@ -689,6 +690,17 @@ installed, which the frame does own.
              `v[i] = other`), an element taken OUT (`v.remove(i)`), and a keyed
              collection's records are NOT released by the language — the author releases
              them (INTERFACES.md § `OpDrop`, the documented boundary).
+  (H-Handle) a `File` holds a resource the RUNTIME declares — the OS handle its first read
+             or write opened — and every `File` record that names the handle holds a lease
+             on it (H-Lease): the record that opened it, and each deep copy of a record
+             that names it.  A record returns its lease ONCE, at its death: its store
+             freed, re-minted in place or parked for reuse, or the record released inside
+             a store that lives on — and unlike (H-Drop-Not), that includes an overwritten
+             field or element, an element taken out and a keyed collection's record, since
+             the runtime releases the record's claims there too.  The handle closes when
+             the last lease returns, so a `File` placed where it MOVES (H-Move) keeps the
+             handle open for the structure that holds it, and a handle still open at exit
+             is a residue (H-FreeAll).
 ```
 
 **In words.** A drop is not a destructor of loft-side data — the ownership model pays for
@@ -741,18 +753,18 @@ of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed
 P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
 result is a view of the call's record.
 
-**The built-in `File`.**  A `File` declares no `OpDrop`: its resource is the OS handle the runtime
-opened, and the runtime releases it under the same rules.  The handle counts the `File` records
-that name it (`(H-Lease)`): a deep copy takes a lease (`Stores::copy_claims`), a record's death
-returns one, and the handle closes at the last.  A record dies at its store's free
-(`Stores::free_named`, walked from the root through the owned-child keystone), inside a store that
-lives on (`remove_claims`), and at an in-place reset of its store (`OpClearVector`'s root path,
-`Stores::clear` re-minting a live buffer) — so a `File` moved into a vector, a field or a yielded
-value keeps its handle (`(H-Move)`) and releases it with that structure (`(H-Drop)`).  Guards:
-`a-file-local-moved-into-a-structure-keeps-its-handle.loft` and `tests/file_handle_release.rs`
-(each death, under a handle limit, both backends).  `(H-Copy-Refuse)` and `(H-Spent)` reach
-declared droppables only, so a `File` copy whose two structures both stay in use compiles, and
-the two share one handle and one position; whether that copy is refused is with the owner.
+**The built-in `File` (`(H-Handle)`).**  A `File` declares no `OpDrop`; the runtime keeps its
+rule.  Sites: a copy leases in `Stores::copy_claims` (`lease_if_file`); a death releases in
+`Stores::free_named` and the two in-place re-mints (`Stores::clear`, `OpClearVector`'s root
+path) through `release_file_leases`, which walks the store from its root, in `park_spare`, and
+in `remove_claims` for a record dying inside a living store; `release_file_handle` detaches the
+record as it releases, so a second walk over the same bytes returns nothing twice; the exit
+residue is `open_file_handles_entry`.  Guards, both backends:
+`a-file-local-moved-into-a-structure-keeps-its-handle.loft` (a moved `File` keeps its handle)
+and `a-file-dying-anywhere-releases-its-handle.loft` (each death releases — the leak report is
+its channel).  `(H-Copy-Refuse)` and `(H-Spent)` reach declared droppables only, so a `File`
+copy whose two structures both stay in use compiles, and the two share one handle and one
+position; whether that copy is refused is with the owner.
 
 ### The soundness bridge — a well-typed program never faults a free
 

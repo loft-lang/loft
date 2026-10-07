@@ -30,16 +30,6 @@ src/trie_db.rs::warm_cache_session	measurement — run with --release --lib --ig
 tests/compiled_stdlib.rs::regen_compiled_stdlib	maintenance: regenerates src/compiled_stdlib_gen.rs — run with `--ignored` via `make compiled-stdlib`
 tests/differential_oracle.rs::oracle_corpus_agrees_across_backends	differential oracle — runs nightly in ci.yml's `test` job (the Differential oracle step); by hand: --test differential_oracle -- --ignored
 tests/doc_hygiene.rs::every_patch_receipt_still_applies	PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under
-tests/file_handle_release.rs::a_copy_and_its_source_at_their_scope_end	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_local_moved_into_a_returned_vector	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_plain_local_at_its_scope_end	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_rebind_displaces_its_file	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_record_field_at_its_scope_end	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_returned_vector_replaced_by_the_next_call	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_vector_field_at_its_scope_end	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_vector_field_cleared	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_vector_local_at_its_scope_end	no `ulimit -n` on Windows; the limit is the guard
-tests/file_handle_release.rs::a_yielded_file	no `ulimit -n` on Windows; the limit is the guard
 tests/format_width_is_bounded.rs::a_positive_width_still_pads	no `ulimit -v` on Windows; the cap is the guard
 tests/format_width_is_bounded.rs::a_width_below_zero_pads_nothing	no `ulimit -v` on Windows; the cap is the guard
 tests/frontend_counts.rs::front_end_allocations_do_not_grow	advisory: ci.yml's `front-end allocation pins (ubuntu, advisory)` job runs it with `--ignored` (both rows); a moved count shows red there, never failing a test leg or the merge

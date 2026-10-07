@@ -7993,6 +7993,7 @@ impl State {
         leaked
             .into_iter()
             .map(|((kt, tn), n)| format!("kt={kt} {tn}×{n}"))
+            .chain(self.database.open_file_handles_entry())
             .collect()
     }
 

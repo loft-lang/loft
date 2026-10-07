@@ -768,7 +768,7 @@ impl State {
             self.free_coroutine(&db);
             return;
         }
-        // A `File` the store holds releases its handle inside the free (`@FR-H-Drop`).
+        // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
         self.database.free(&db);
     }
 

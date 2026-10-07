@@ -537,7 +537,7 @@ fn free_ref_slow(cell: &std::cell::UnsafeCell<Stores>, db: DbRef, name: &str) {
     if (db.store_nr as usize) >= stores.allocations.len() {
         return;
     }
-    // A `File` the store holds releases its handle inside the free (`@FR-H-Drop`).
+    // A `File` the store holds releases its handle inside the free (`@FR-H-Handle`).
     stores.free_named(&db, name);
 }
 

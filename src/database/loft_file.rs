@@ -34,7 +34,7 @@
 //!
 //! A handle is named by a NUMBER inside the `File` record, so a copy of the record names the
 //! same handle.  The handle therefore counts the records that hold it — its LEASES — and closes
-//! only when the last one is released (`@FR-H-Lease`).  Closing it at the first release cut the
+//! only when the last one is released (`@FR-H-Handle`).  Closing it at the first release cut the
 //! handle out from under the copy: a `File` local placed in a vector and returned lost every
 //! later write through the element, silently (loft#1896).
 
