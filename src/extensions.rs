@@ -173,28 +173,13 @@ fn dlopen_diagnostic(path: &str, err: &str) -> String {
 
 /// Open the library `name` names, with the loader's own error text.
 ///
-/// A name with a separator is a FILE, relative to the current directory; a bare name asks
-/// the dynamic linker's search path.  `file_access` parses `./x.so` to `x.so`, so a
-/// relative file path is made absolute first, or `dlopen` would search for it instead.
-/// The path `file_access` puts in front of the error is taken off again: the callers name
-/// the path themselves, and `dlopen_diagnostic` reads the loader's text from its start.
+/// `file_access::load_library`: a name with a separator is a file, a bare name asks the
+/// dynamic linker's search path, and the error is the loader's own text (which
+/// `dlopen_diagnostic` reads from its start).
 #[cfg(feature = "native-extensions")]
 unsafe fn open_library(name: &str) -> Result<libloading::Library, String> {
-    let given = std::path::Path::new(name);
-    let at = if name.contains(std::path::is_separator) {
-        std::path::absolute(given).unwrap_or_else(|_| given.to_path_buf())
-    } else {
-        given.to_path_buf()
-    };
     // SAFETY: the caller's contract — loading runs the library's initialisers.
-    unsafe { crate::file_access::load_library(&at) }.map_err(|e| {
-        let named = format!(
-            "{}: ",
-            crate::file_access::PathText::from_os(&at).portable()
-        );
-        e.strip_prefix(named.as_str())
-            .map_or_else(|| e.clone(), str::to_string)
-    })
+    unsafe { crate::file_access::load_library(name) }
 }
 
 /// Load a single native extension shared library.

@@ -420,20 +420,28 @@ pub fn set_current_dir(path: impl HostPath) -> io::Result<()> {
     run(path, |p| std::env::set_current_dir(p))
 }
 
-/// Load the dynamic library at `path`.
+/// Load the dynamic library `name`.  A name with a separator is a FILE (relative to the
+/// current directory, so it is made absolute: the parsed path drops a leading `./`, and
+/// `dlopen` would then search for it); a bare name asks the dynamic linker's search path.
 ///
 /// # Safety
 /// Loading runs the library's initialisers: the caller vouches for what it loads, as with
 /// `libloading::Library::new`.
 ///
 /// # Errors
-/// The loader's error, naming the path.
+/// The loader's own text, unprefixed: the callers name the library, and a diagnostic that
+/// reads the missing dependency from the start of that text keeps working.
 #[cfg(feature = "native-extensions")]
-pub unsafe fn load_library(path: impl HostPath) -> Result<libloading::Library, String> {
-    let path = &*path.to_path_text();
-    let os = path.os().map_err(|e| e.to_string())?;
+pub unsafe fn load_library(name: impl AsRef<Path>) -> Result<libloading::Library, String> {
+    let given = name.as_ref();
+    let at = if given.to_string_lossy().contains(std::path::is_separator) {
+        let os = PathText::from_os(given).os().map_err(|e| e.to_string())?;
+        std::path::absolute(&os).unwrap_or(os)
+    } else {
+        given.to_path_buf()
+    };
     // SAFETY: the caller's contract, stated above.
-    unsafe { libloading::Library::new(&os) }.map_err(|e| format!("{}: {e}", path.portable()))
+    unsafe { libloading::Library::new(&at) }.map_err(|e| e.to_string())
 }
 
 #[must_use]
