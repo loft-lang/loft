@@ -455,17 +455,8 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 1.**
 
-- **D-bind-70 (OPEN, loft#1875)** — violates <!-- doc-lint: ok -->
-  `(B-Ref-Lvalue)` with tuples.md `(T-Record)`: a member is a field, so `&t.i` links as `&r.f`
-  does, but a TEXT member of a tuple local is refused (`c = &s.0`: stored as a `Str` borrow,
-  which a `&text` link cannot append to), by name at a bind and at a `&` argument; it is never
-  copied.  Every scalar member links: a wide one of a tuple local and of a `&(…)` alike
-  (`a-member-of-a-linked-tuple-is-a-place.loft`, `a-record-is-padded-to-its-alignment.loft`), a
-  narrow one, which holds its field encoding once a link names it
-  (`a-link-to-a-narrow-tuple-member-writes-the-member.loft`), and a stored tuple as a whole — a
-  vector element or a struct field of tuple type (`a-stored-tuple-is-a-place-a-link-names.loft`). <!-- doc-lint: ok -->
 - **D-bind-71 (OPEN, loft#1897)** — violates <!-- doc-lint: ok -->
   `(Const-Foreign)`: foreign data is typed as writable and its write is refused at RUN time.
   `file_map` answers `vector<u8>`, not

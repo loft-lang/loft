@@ -6631,6 +6631,20 @@ impl Parser {
                 let orig = std::mem::replace(code, Value::Null);
                 if let Value::Var(_) = &orig {
                     *code = self.cl("OpCreateStack", &[orig]);
+                } else if let Value::TupleGet(t, i) = orig.unspan() {
+                    // `@FR-T-Record` / `@FR-B-Ref-Lvalue` — a tuple's text member is a place: the
+                    // parameter links to it, as `&s` links to a text local, so the callee's write
+                    // reaches the tuple.  A member no link can honour is refused, never copied —
+                    // a work copy would take the write and drop it.
+                    let (t, i) = (*t, *i);
+                    if let Some(place) = self.scalar_place_ref(&orig) {
+                        *code = place;
+                    } else {
+                        if let Err(elem) = self.linkable_tuple_member(t, i) {
+                            self.refuse_tuple_member_link(&elem, i);
+                        }
+                        *code = orig;
+                    }
                 } else {
                     let wv = self.vars.work_text(&mut self.lexer);
                     let mut ls = Vec::new();

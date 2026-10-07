@@ -4773,6 +4773,17 @@ use a separate collection or add after the loop"
             };
             if let Some((t, i)) = member_src {
                 amp_unlowered = false;
+                // A link to a text member of a by-value PARAMETER can write it: the parameter
+                // takes its owned copy first (loft#1278), and on this pass the link names it.
+                let mut t = t;
+                if let Type::Tuple(elems) = self.vars.tp(t).base()
+                    && elems
+                        .get(i as usize)
+                        .is_some_and(|e| matches!(e.base(), Type::Text(_)))
+                    && let Some(shadow) = self.promote_written_tuple_param(t)
+                {
+                    t = shadow;
+                }
                 match self.linkable_tuple_member(t, i) {
                     Ok(elem) => {
                         self.vars.record_amp_link(var_nr, t);
@@ -10110,8 +10121,12 @@ use a separate collection or add after the loop"
         };
         let elem = elem.unwrap_or(Type::Unknown(0));
         let by_value = matches!(self.vars.tp(t).base(), Type::Tuple(_));
-        if crate::data::is_scalar(&elem)
-            && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none())
+        // A TEXT member is the tuple's own text where the tuple owns it (`@FR-T-Record`,
+        // `Function::tuple_owns_text`): a link names that `String` as `&s` names a text local.
+        let owned_text = matches!(elem.base(), Type::Text(_)) && self.vars.tuple_owns_text(t);
+        if owned_text
+            || (crate::data::is_scalar(&elem)
+                && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none()))
         {
             Ok(elem)
         } else {
@@ -10175,9 +10190,23 @@ use a separate collection or add after the loop"
                     || matches!(self.vars.tp(*t).base(), Type::RefVar(inner)
                         if matches!(inner.base(), Type::Tuple(_))) =>
             {
-                self.linkable_tuple_member(*t, *i)
+                // A link to a text member of a by-value PARAMETER can write it, so the parameter
+                // takes the owned copy a write to the member gives it (loft#1278); the second
+                // pass reads every mention of it as that copy.
+                // On this (first) pass the link names the copy it just created, so both passes
+                // type the link alike.
+                let mut t = *t;
+                if let Type::Tuple(elems) = self.vars.tp(t).base()
+                    && elems
+                        .get(*i as usize)
+                        .is_some_and(|e| matches!(e.base(), Type::Text(_)))
+                    && let Some(shadow) = self.promote_written_tuple_param(t)
+                {
+                    t = shadow;
+                }
+                self.linkable_tuple_member(t, *i)
                     .ok()
-                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(*t, *i)]))
+                    .map(|_| self.cl("OpCreateStack", &[Value::TupleGet(t, *i)]))
             }
             // The bare element op IS the place.  An enum element arrives in this spelling on
             // the first pass, before its enum getter wraps it; without this arm the first pass
