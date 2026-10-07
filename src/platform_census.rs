@@ -51,6 +51,13 @@ const PLATFORM_WORDS: &[&str] = &[
     "target_os = \"freebsd\"",
 ];
 
+/// A path inside a directory of generated output — a test run's `.loft/` cache (native code
+/// loft emitted), a build's `target/`, a package manager's `node_modules/` — is no source.
+fn generated(rel: &str) -> bool {
+    rel.split('/')
+        .any(|c| matches!(c, ".loft" | "target" | "node_modules"))
+}
+
 /// Is `word` at `at` in `code` a whole word (`unix`, not `unix_time`)?
 fn whole_word(code: &str, at: usize, word: &str) -> bool {
     let b = code.as_bytes();
@@ -93,7 +100,7 @@ fn measure(root: &PathText, dir: &str, into: &mut BTreeMap<String, usize>) {
                 .relative_to(root)
                 .map(|r| r.portable())
                 .unwrap_or_default();
-            if HIDES_THE_PLATFORM.contains(&rel.as_str()) {
+            if HIDES_THE_PLATFORM.contains(&rel.as_str()) || generated(&rel) {
                 continue;
             }
             if file_access::is_dir(&p) {
@@ -232,6 +239,8 @@ fn the_census_sees_a_gate_and_nothing_else() {
     ));
     assert!(!line_gates("let unix_time = now();"));
     assert!(!line_gates("cfg(unix_like_feature)"));
+    assert!(generated("tests/scripts/.loft/emitted.rs") && generated("tests/x/target/y.rs"));
+    assert!(!generated("tests/scripts/loft_x.rs"));
 }
 
 // ── D2/D3 — the scripts' Windows hazards ───────────────────────────────────────────────────
@@ -311,7 +320,7 @@ fn measure_scripts(root: &PathText) -> BTreeMap<String, usize> {
                 .relative_to(root)
                 .map(|r| r.portable())
                 .unwrap_or_default();
-            if SKIP.iter().any(|s| rel == *s) {
+            if SKIP.iter().any(|s| rel == *s) || generated(&rel) {
                 continue;
             }
             if file_access::is_dir(&p) && !file_access::is_symlink(&p) {
@@ -623,7 +632,7 @@ fn measure_scripts_all(root: &PathText) -> Vec<String> {
                 .relative_to(root)
                 .map(|r| r.portable())
                 .unwrap_or_default();
-            if SKIP.iter().any(|s| rel == *s) {
+            if SKIP.iter().any(|s| rel == *s) || generated(&rel) {
                 continue;
             }
             if file_access::is_dir(&p) && !file_access::is_symlink(&p) {
