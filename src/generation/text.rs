@@ -389,7 +389,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, false);
             write!(
                 w,
-                "ops::format_text({dest}, {val_str}, {width_expr}, {dir}, {token})"
+                "ops::format_text_with_tag({dest}, {val_str}, ops::take_format_fault(), {width_expr}, {dir}, {token})"
             )?;
             return Ok(());
         }
@@ -454,7 +454,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_float({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+                "ops::format_float_with_tag({dest}, {val_expr}, ops::take_format_fault(), {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
             )?;
             return Ok(());
         }
@@ -485,7 +485,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_single({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+                "ops::format_single_with_tag({dest}, {val_expr}, ops::take_format_fault(), {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
             )?;
             return Ok(());
         }

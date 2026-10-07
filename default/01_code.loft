@@ -160,9 +160,12 @@ fn OpConstTrue() -> boolean;
 fn OpConstFalse() -> boolean;
 #hot
 #rust"false"
+// A null boolean casts to the null TEXT (`STRING_NULL`), which a hole renders as `null` — and
+// as `null(<cause>)` when the hole's own fault produced it (`@FR-F-FaultSafe`, loft#1939).
+// The word itself would be a present text no renderer can tell from the null.
 fn OpCastTextFromBool(v1: boolean) -> text;
 #cold
-#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"null\"}} else {{\"false\"}}"
+#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"\\0\"}} else {{\"false\"}}"
 fn OpVarBool(pos: const u16) -> boolean;
 #hot
 #rust"s.get_var::<u8>(@pos)"
@@ -1019,9 +1022,10 @@ fn OpPutEnum(pos: const u16, value: enumerate);
 // variant of any enum.
 fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 #rust"@v1 != 255 && @v1 != 0"
+// The absent discriminant casts to the null TEXT, as `OpCastTextFromBool` does and for its reason.
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
-#rust"Str::new(s.database.enum_val(@enum_tp, @v1))"
+#rust"Str::new(if @v1 == 0 || @v1 == 255 {{\"\\0\"}} else {{s.database.enum_val(@enum_tp, @v1)}})"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #cold
 #rust"s.database.to_enum(@enum_tp, @v1)"

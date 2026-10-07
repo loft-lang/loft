@@ -78,8 +78,8 @@ fn main() {
   // overrun carries no tag on either backend — this is the cell that used to disagree.
   assert("[{\"hi\"[9]}]" == "[]", "a text overrun renders nothing, both backends");
   assert("{5.0 / 0.0}" == "inf", "float /0 is a representable IEEE value, not a null");
-  assert("{0.0 / 0.0}" == "null", "but 0.0/0.0 IS the float null");
-  assert("{5.0 % 0.0}" == "null", "and so is a float modulo by zero");
+  assert("{0.0 / 0.0}" == "null(/0)", "but 0.0/0.0 IS the float null, and a float hole names its cause too (loft#1939)");
+  assert("{5.0 % 0.0}" == "null(%0)", "and so is a float modulo by zero, named as one");
 
   // ── one hole, several fault-prone ops ───────────────────────────────────────
   // Only the OUTERMOST op is armed, so a peer that CLEARED on not-faulting would erase a

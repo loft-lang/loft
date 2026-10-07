@@ -1201,6 +1201,90 @@ pub fn format_single(
     format_signed(s, &res, width, dir, token);
 }
 
+/// `@FR-F-FaultSafe` — the float renderer of an interpolation hole: a null the hole's own
+/// fault produced renders `null(<cause>)`, as [`format_long_with_tag`] does for an integer.
+/// The tag is the one the hole's renderer TOOK (`take_format_fault`), so a hole that did
+/// not fault passes `None` and renders exactly as [`format_float`] (loft#1939).
+#[allow(clippy::too_many_arguments)]
+pub fn format_float_with_tag(
+    s: &mut String,
+    val: f64,
+    tag: Option<&str>,
+    width: i64,
+    precision: i64,
+    token: u8,
+    plus: bool,
+    dir: i8,
+) {
+    if val.is_nan()
+        && let Some(cause) = tag
+    {
+        format_tagged_null(s, cause, width, if dir == 2 { 1 } else { dir }, token);
+        return;
+    }
+    format_float(s, val, width, precision, token, plus, dir);
+}
+
+/// The `single` twin of [`format_float_with_tag`].
+#[allow(clippy::too_many_arguments)]
+pub fn format_single_with_tag(
+    s: &mut String,
+    val: f32,
+    tag: Option<&str>,
+    width: i64,
+    precision: i64,
+    token: u8,
+    plus: bool,
+    dir: i8,
+) {
+    if val.is_nan()
+        && let Some(cause) = tag
+    {
+        format_tagged_null(s, cause, width, if dir == 2 { 1 } else { dir }, token);
+        return;
+    }
+    format_single(s, val, width, precision, token, plus, dir);
+}
+
+/// The text twin of [`format_float_with_tag`]: a null text (`STRING_NULL`) the hole's own
+/// fault produced renders `null(<cause>)`, aligned as text is (left by default).  A boolean
+/// hole renders through here too, cast to text first.
+pub fn format_text_with_tag(
+    s: &mut String,
+    val: &str,
+    tag: Option<&str>,
+    width: i64,
+    dir: i8,
+    token: u8,
+) {
+    if val == crate::state::STRING_NULL
+        && let Some(cause) = tag
+    {
+        format_tagged_null(s, cause, width, if dir == 2 { -1 } else { dir }, token);
+        return;
+    }
+    format_text(s, val, width, dir, token);
+}
+
+/// The record walker's twin of [`format_float_with_tag`]: a record, collection or enum hole
+/// renders `null` exactly when its value is absent, so a rendered `null` the hole's own
+/// fault produced becomes `null(<cause>)`.
+pub fn tag_rendered_null(rendered: &mut String, tag: Option<&str>) {
+    if rendered == "null"
+        && let Some(cause) = tag
+    {
+        rendered.clear();
+        write!(rendered, "null({cause})").unwrap();
+    }
+}
+
+/// `null(<cause>)` in its field: `null` is a sentinel, not a number, so it takes no zero
+/// pad (`@FR-F-Spec-Zero`).
+fn format_tagged_null(s: &mut String, cause: &str, width: i64, dir: i8, token: u8) {
+    let label = format!("null({cause})");
+    format_text(s, &label, width, dir, null_pad(token));
+}
+
 /// Pad an already-rendered and already-signed number, keeping a zero pad behind its sign.
 ///
 /// @FR-F-Spec-Zero — the float twin of [`format_prefixed`]: a `-` or `+` is part of the number,

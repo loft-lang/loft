@@ -3157,6 +3157,34 @@ impl Parser {
         vec_type
     }
 
+    /// `@FR-F-FaultSafe` — does an interpolation hole of this type render through a renderer
+    /// that takes its fault's cause back and annotates its null with it?  The integer, float,
+    /// single, text and boolean renderers and the record walker (a record, a collection, an
+    /// enum) do, on both backends (loft#1939).  A CHARACTER renders a null as nothing
+    /// (`@FR-F-Render`), so it is never armed, and neither is a record whose own `to_text`
+    /// renders it: user code runs there, and its own holes would take the cause.
+    fn hole_takes_fault_cause(&self, tp: &Type) -> bool {
+        match tp.peel_link() {
+            Type::Integer(_)
+            | Type::Float
+            | Type::Single
+            | Type::Text(_)
+            | Type::Boolean
+            | Type::Vector(_, _)
+            | Type::Enum(_, _, _) => true,
+            Type::Reference(d, _) => {
+                let def = self.data.def(*d);
+                !def.name().starts_with("__tuple<")
+                    && !self.data.is_type_var_placeholder(*d)
+                    && self
+                        .data
+                        .def_nr(&crate::data::Data::mangle_method(def.name(), "to_text"))
+                        == u32::MAX
+            }
+            _ => false,
+        }
+    }
+
     // @F35 — string literals ({expr} interpolation + backtick multiline)
     //
     // @PLN124 — `target` is the struct this string BUILDS (from
@@ -3225,14 +3253,13 @@ impl Parser {
                 Self::rewrite_subtree_to_nullable_kind(&mut format, &self.data)
             };
             // `@FR-F-FaultSafe` — a hole renders ITS OWN cause, so a hole is armed only when its
-            // renderer TAKES the cause back (`ops::take_format_fault`): the integer renderer,
-            // on both backends.  The float, single, text, struct, character and target-hole
-            // (`hole_int`) renderers never take it, so arming one of those left the cause
-            // recorded and ARMED until the next integer hole took it — `{z / z}` followed by
-            // `{ni()}` printed `null` then `null(/0)` (loft#1920).
+            // renderer TAKES the cause back (`ops::take_format_fault`) — `hole_takes_fault_cause`.
+            // Arming one whose renderer never takes it left the cause recorded and ARMED until
+            // the next renderer that does took it: `{z / z}` followed by `{ni()}` printed `null`
+            // then `null(/0)` (loft#1920).
             if let Some(kind) = outer_fault_kind
                 && target == u32::MAX
-                && matches!(tp.peel_link(), Type::Integer(_))
+                && self.hole_takes_fault_cause(&tp)
                 && self.data.def_nr("OpTagFault") != u32::MAX
             {
                 let tag_call = self.cl("OpTagFault", &[Value::Int(i32::from(kind))]);
