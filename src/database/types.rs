@@ -900,11 +900,20 @@ impl Stores {
                 // where a native `&integer` link could not point.
                 let member_sa: Vec<(u16, u8)> =
                     g.field_indices.iter().map(|&i| sizes[i as usize]).collect();
-                let offsets = crate::data::LinkedFieldGroup::group_member_offsets(&member_sa);
                 let storage_alignment = crate::data::LinkedFieldGroup::group_alignment(
                     &member_sa.iter().map(|&(_, a)| a).collect::<Vec<_>>(),
                 );
-                let storage_size = crate::data::LinkedFieldGroup::group_size(&member_sa);
+                // A stored tuple packs as a record (`@FR-L-Tuple`); an index group keeps its
+                // written order.
+                let (offsets, storage_size) =
+                    if matches!(g.kind, crate::data::LinkedFieldKind::Tuple) {
+                        crate::data::LinkedFieldGroup::record_member_offsets(&member_sa)
+                    } else {
+                        (
+                            crate::data::LinkedFieldGroup::group_member_offsets(&member_sa),
+                            crate::data::LinkedFieldGroup::group_size(&member_sa),
+                        )
+                    };
                 (
                     g.field_indices.clone(),
                     storage_size,

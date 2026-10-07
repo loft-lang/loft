@@ -17397,17 +17397,16 @@ fn pln102_boolean_integer_comparison_rejected() {
 /// `forced_size`) where storage needs database widths.
 #[test]
 fn pln114_tuple_stride_matches_record() {
-    // `@C138` — every member sits on its natural boundary.  A struct reorders its fields
-    // largest-first (u32, u16, u8: 7 bytes, padded to 8); a tuple keeps its order (u8, three
-    // bytes of padding, u32 at 4, u16 at 8: 10 bytes, padded to 12).  Each stride is a multiple
-    // of its 4-byte alignment, so element 1 of either vector is aligned.
+    // `@C138` / `@FR-L-Tuple` — every member sits on its natural boundary, and a stored tuple
+    // is a record (@C139): both reorder largest-first (u32, u16, u8: 7 bytes, padded to 8), so
+    // the two strides are equal and element 1 of either vector is aligned.
     code!(
         "struct M { a: u8, b: u32, c: u16 }
 fn test() {
     vs: vector<M> = [M{a:1,b:2,c:3}, M{a:4,b:5,c:6}];
     vt: vector<(u8, u32, u16)> = [(1,2,3), (4,5,6)];
     assert(sizeof(M) == 8, \"struct stride {sizeof(M)}\");
-    assert(sizeof((u8, u32, u16)) == 12, \"tuple stride {sizeof((u8, u32, u16))}\");
+    assert(sizeof((u8, u32, u16)) == 8, \"tuple stride {sizeof((u8, u32, u16))}\");
     assert(vs[1].b == 5 && vt[1].1 == 5 && vt[1].2 == 6, \"element 1 of each\");
 }"
     );

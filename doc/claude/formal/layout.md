@@ -419,15 +419,8 @@ layout, and `f#read` infers a record count from the same width.
 
 ## Deviations
 
-**OPEN: 1.**  The closed record — `D-layout-1` to `-11` — is in
+**OPEN: 0.**  The closed record — `D-layout-1` to `-12` — is in
 [layout-history.md](layout-history.md).
-
-- **D-layout-12 (OPEN, loft#1898)** — violates <!-- doc-lint: ok -->
-  `(L-Tuple)`: a stored tuple keeps its WRITTEN member order (each member at the next position
-  its alignment divides) where the rule packs it like any record, largest alignment first.
-  `(u8, u32, u16)` is laid out at 0, 4, 8 in 12 bytes where the rule gives 8.  The golden layout
-  test pins today's order (`tests/golden/layout/`), and the stack form and the par paths restate
-  it (`data::element_storage_offsets`).
 
 ## Conformance
 

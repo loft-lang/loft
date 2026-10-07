@@ -167,6 +167,16 @@
 > store with a narrowing message.  Guard:
 > `tests/scripts/1630-a-range-wholly-below-zero-is-declarable.loft`.
 
+* **D-layout-12** *(opened 2026-10-06, CLOSED 2026-10-07; loft#1898)* — `(L-Tuple)`: a stored
+  tuple kept its WRITTEN member order, each member at the next position its alignment divides,
+  where the rule packs it like any record, largest alignment first: `(u8, u32, u16)` took 12
+  bytes at 0, 4, 8 where the struct with those members takes 8.  The tuple group's member
+  offsets are now `LinkedFieldGroup::record_member_offsets` (an index group keeps its written
+  order); the hand-computed storage view packs the same way, and both `par` readers read the
+  record's own finished positions (`data::stored_tuple_offsets`), which also cover a struct
+  member stored inline.  Guards: `tests/layout_alignment.rs` (`the_layouts_are_the_hand_computed_ones`,
+  `the_storage_view_of_a_tuple_is_its_record_layout`) and `data::tuple_stack_layout_tests`.
+
 D-layout-1 CLOSED 2026-09-21 (loft#1562): every path that reads an EXISTING image through the
 program's types now asks the `.dschema` gate before it reads a byte — `store_load`,
 `store_load_untrusted`, `store_persist_bind` on an existing file, the whole-image URL loaders

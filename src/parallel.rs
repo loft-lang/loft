@@ -1726,7 +1726,17 @@ pub(crate) fn read_tuple_at_wide(
     // coincided (every integer 8 bytes); once narrow elements got their declared
     // width (`u8` = 1) the reader walked the row at the wrong stride and returned
     // garbage — a `par` over `vector<(u8,u16)>` summed to 1012184093813119760.
-    let in_vec_offsets = crate::data::element_storage_offsets(elem_types);
+    // `@FR-L-Tuple` — the `__tuple<…>` record's own finished positions where the program's
+    // types are at hand (a stored tuple packs largest alignment first, and an inline struct
+    // member has a width the hand-computed view cannot know); that view otherwise.
+    let in_vec_offsets: Vec<usize> = stores
+        .parallel_ctx
+        .as_ref()
+        .and_then(|ctx| crate::data::stored_tuple_offsets(ctx.data(), stores, elem_types))
+        .map_or_else(
+            || crate::data::element_storage_offsets(elem_types),
+            |o| o.into_iter().map(usize::from).collect(),
+        );
     // The row's address is the store's to answer (`block_src`, bounded by the row's
     // storage width): a foreign store's rows lie outside its block.
     let row_width = elem_types
