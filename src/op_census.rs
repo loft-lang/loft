@@ -35,8 +35,6 @@
 //! `line<TAB>function<TAB>operator<TAB>count<TAB>copy<TAB>relocate<TAB>text`.  Only the thread that runs `main` is counted: a `par` worker's ops
 //! are not in the file.  Read by `scripts/interp_gap.py`.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -285,8 +283,9 @@ fn write_ngrams(data: &crate::data::Data) {
     for (n, row) in rows {
         let _ = writeln!(out, "{n}\t{row}");
     }
-    if let Err(e) = std::fs::write(path, out) {
-        crate::loft_eprintln!("loft: cannot write the op n-grams to '{path}': {e}");
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        crate::loft_eprintln!("loft: cannot write the op n-grams: {e}");
     }
 }
 
@@ -324,8 +323,9 @@ pub fn write(data: &crate::data::Data) {
             }
         }
     });
-    if let Err(e) = std::fs::write(path, out) {
-        crate::loft_eprintln!("loft: cannot write the op census to '{path}': {e}");
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        crate::loft_eprintln!("loft: cannot write the op census: {e}");
     }
     write_ngrams(data);
 }
