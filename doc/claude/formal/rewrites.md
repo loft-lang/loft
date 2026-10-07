@@ -3108,7 +3108,20 @@ on the drawing bench).
                  recursive decoder builds its whole tree in the store of the outermost
                  buffer and copies nothing on the way up.  The move is same-store and
                  into an empty slot by construction; the runtime keeps the copy for any
-                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.
+                 other pair, and `LOFT_HOIST_VERIFY=1` makes that pair fatal.  The
+                 RECORD clause: a LOCAL RECORD minted once in the body's own statement
+                 list whose one fate is the copy into an inline field of the literal
+                 of the function's ONE exit IS that field — its mint becomes the
+                 buffer's ensure, the local a VIEW of the field (typed depending on
+                 the buffer, B-View-Base) and a release of what the field held
+                 (H-ClearRelease: a refilled buffer still owns its previous value's
+                 heap); the copy and the local's frees go.  A fresh mint writes the
+                 type's defaults and the field does not, so the construction must
+                 write EVERY leaf field (an embedded record's fields flattened in)
+                 before it reads one.  Declines keep the store and the copy: the
+                 local named outside a receiver position (an argument of a user
+                 function, an alias), rebound, freed outside the exit, a second exit,
+                 a struct-enum payload, anything else writing the field's bytes.
   (R-ReturnField) the returned FIELD of an OWNED local — `p = mk(…); return p.a`, its
                  view-local spelling `v = p.a; return v`, or the natural spelling
                  `mk(…).a`, whose call the parser lifts into a local — is answered as the local's own

@@ -63,6 +63,12 @@ gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the laz
 the source is ZEROED so the next turn's clear and the callee's refill find an empty record
 — and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
 cbor decoder's bench (`--native-release`, this box): decode 42.6 ms → 34.7 ms per op.
+**`LOFT_NO_EXIT_RECORD=1`** (`(R-ExitVector)`'s record clause, the scope pass right after it,
+BOTH backends) keeps a local RECORD returned inside the exit literal (`lb = ListBox { … };
+Panel { list: lb, … }`) in a store of its own, deep-copied into the return buffer's field —
+with it off, the local is a view of that field, built there.  It is the first bisect step for
+a wrong field or a stale default out of a callee that assembled its result from locals, and
+`LOFT_TRACE_PLACE=1` names each admission and decline (`[exit-record]`).
 **`LOFT_NO_EXIT_VECTOR=1`** (`(R-ExitVector)`, decided in the scope pass after the placements,
 BOTH backends) keeps a local vector that is returned inside the exit literal (`items:
 vector<T> = []; …; return Out { items: items, … }`) minting a wrapper store of its own and

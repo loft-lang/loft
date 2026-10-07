@@ -4,6 +4,11 @@
 // fresh mint writes the type's defaults and the field does not, so the clause asks the
 // construction to write every field — a REFILLED buffer (the caller's, reused per turn) is
 // where a stale byte would show.  Every value is hand-computed; both backends run the rule.
+//
+// @falsified-at: none — the clause and this guard land together; the planted defect is recorded
+//   with `@falsified-by:` below (the local left typed as an owner: its bind of the field is a
+//   deep copy into a store nothing frees, and c4's record count grows).
+// @falsified-by: tests/falsified/a-record-local-is-built-in-its-exit-field.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct Box2 { x: integer, y: integer }
 struct Inner { at: Box2, name: text, items: vector<integer>, b: integer = 5 }
