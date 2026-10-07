@@ -1,0 +1,22 @@
+diff --git a/src/json.rs b/src/json.rs
+index db9b3a1cd..d27b10099 100644
+--- a/src/json.rs
++++ b/src/json.rs
+@@ -813,7 +813,7 @@ fn parse_lexer(input: &str, dialect: Dialect) -> Result<Parsed, ParseError> {
+             return Err(ParseError {
+                 message,
+                 byte_offset,
+-                path: render_path(&p.err_path.iter().rev().cloned().collect::<Vec<_>>()),
++                path: render_path(&p.err_path.iter().cloned().collect::<Vec<_>>()),
+             });
+         }
+     };
+@@ -824,7 +824,7 @@ fn parse_lexer(input: &str, dialect: Dialect) -> Result<Parsed, ParseError> {
+         return Err(ParseError {
+             message: format!("unexpected trailing byte at offset {end}"),
+             byte_offset: end,
+-            path: render_path(&p.err_path.iter().rev().cloned().collect::<Vec<_>>()),
++            path: render_path(&p.err_path.iter().cloned().collect::<Vec<_>>()),
+         });
+     }
+     Ok(value)
