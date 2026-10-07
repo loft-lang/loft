@@ -360,11 +360,17 @@ impl Parser {
             // A `&text` argument (parameter passed by reference) appears
             // as `Type::RefVar(Type::Text(_))` here but the OpAppend* ops
             // accept it directly via the same code path as plain `Text`.
+            //
+            // A `text?` part is a text OPERAND too, so it is APPENDED — `@FR-E-NullArg`: the
+            // append makes the concatenation null when the part is (`ops::append_text`).  It
+            // used to take the format path below, which RENDERS a null as the word, so
+            // `"a" + t` with a null `t` answered `"anull"` (loft#1924).
             let dispatch_tp: &Type = if let Type::RefVar(inner) = tp {
                 inner.as_ref()
             } else {
                 tp
             };
+            let dispatch_tp: &Type = dispatch_tp.base();
             if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
                 if *dispatch_tp == Type::Character {
                     ls.push(self.cl("OpAppendStackCharacter", &[Value::Var(var_nr), val.clone()]));

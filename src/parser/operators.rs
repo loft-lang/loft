@@ -2099,9 +2099,14 @@ impl Parser {
                             // not a bare `Value::Null` — for a buffer-backed return the bare null
                             // leaves the return buffer empty and interp reads "" back instead of
                             // null (the normal `else { null }` flow converts it the same way).
+                            // ADMITTING: this null is the compiler's propagate arm, typed
+                            // `text?` by the `Type::optional` below, not a store the author
+                            // wrote — asked through the store face, @FR-N-Store warned
+                            // *"`null` is stored into a slot of the non-null scalar type
+                            // `text`"* on every `t? + "a"`.
                             let null_arm = |this: &mut Self| {
                                 let mut n = Value::Null;
-                                this.convert(&mut n, &Type::Null, &base_text);
+                                this.convert_admitting(&mut n, &Type::Null, &base_text);
                                 n
                             };
                             if matches!(code.unspan(), Value::Var(_)) {

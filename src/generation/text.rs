@@ -305,38 +305,19 @@ impl Output<'_> {
             // raises E0502 — mutable and immutable borrows of the same
             // place.  Hoist the RHS through a fresh `String` so the
             // self-borrow never overlaps the `+=` target.
-            // @PLN25 slice (c): a nullable dest (`text?` local, an owned `String`) skips the
-            // append when it holds the null sentinel — `s += x` on a null `s` stays null
-            // (propagate). Gated on `Optional` so plain-text / `&mut String` work-buffer
-            // appends (never null, and not always owned Strings) keep the bare emission.
-            // A `&text?` parameter's nullability sits inside the reference.
-            let dest_nullable = match self.data.def(self.def_nr).variables().tp(*nr) {
-                Type::Optional(_) => true,
-                Type::RefVar(pointee) => matches!(pointee.as_ref(), Type::Optional(_)),
-                _ => false,
-            };
+            // `@FR-E-NullArg` — one append step for both backends (`ops::append_text`, the
+            // interpreter's `append_text` calls it too): a null dest stays null and a null
+            // source turns the dest null.  A bare `+=` pushed the sentinel's NUL byte, so
+            // `"a" + t` with a null `t` answered the present two-byte `"a\0"` (loft#1924), and
+            // a non-`Optional` dest holding null took `"\0x"`.
             if val.reads_var(*nr) {
-                if dest_nullable {
-                    write!(
-                        w,
-                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += &__p222_tmp; }} }}"
-                    )?;
-                } else {
-                    write!(
-                        w,
-                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); {s_nr} += &__p222_tmp; }}"
-                    )?;
-                }
-                return Ok(());
-            }
-            if dest_nullable {
                 write!(
                     w,
-                    "{{ let __app_tmp: &str = &*({val_expr}); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += __app_tmp; }} }}"
+                    "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); ops::append_text(&mut {s_nr}, &__p222_tmp); }}"
                 )?;
-            } else {
-                write!(w, "{s_nr} += &*({val_expr})")?;
+                return Ok(());
             }
+            write!(w, "ops::append_text(&mut {s_nr}, &*({val_expr}))")?;
             return Ok(());
         }
         panic!("Could not parse {vals:?}");

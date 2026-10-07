@@ -310,10 +310,8 @@ impl State {
         let v1 = self.string_mut(off);
         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
         let before = (v1.as_ptr() as usize, v1.capacity());
-        match &owned {
-            Some(o) => v1.push_str(o),
-            None => v1.push_str(text.str()),
-        }
+        // `@FR-E-NullArg` — a null SOURCE makes the concatenation null (loft#1924).
+        ops::append_text(v1, owned.as_deref().unwrap_or(text.str()));
         if let Some(fn_nr) = tl_fn {
             text_tl_grow(
                 fn_nr,
@@ -427,10 +425,8 @@ impl State {
         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
         let v1 = self.string_ref_mut(off);
         let before = (v1.as_ptr() as usize, v1.capacity());
-        match &owned {
-            Some(o) => v1.push_str(o),
-            None => v1.push_str(text.str()),
-        }
+        // `@FR-E-NullArg` — a null SOURCE makes the concatenation null (loft#1924).
+        ops::append_text(v1, owned.as_deref().unwrap_or(text.str()));
         if let Some(fn_nr) = tl_fn {
             text_tl_grow(
                 fn_nr,
