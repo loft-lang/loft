@@ -437,7 +437,21 @@ pub(crate) fn name_only_defs(data: &Data) -> HashSet<u32> {
         .collect();
     let mut seen: HashSet<u32> = work.iter().copied().collect();
     while let Some(d) = work.pop() {
-        for r in referenced_defs_of(data, d, true) {
+        // An instance stands for its template and for its type arguments: `-> Box<Secret>`
+        // names `Box` and `Secret`.
+        let mut refs = referenced_defs_of(data, d, true);
+        let mut i = 0;
+        while i < refs.len() {
+            if refs[i] < data.definitions() && data.def(refs[i]).instance_of != u32::MAX {
+                let def = data.def(refs[i]);
+                for a in &def.instance_args {
+                    collect_type_defs(a, &mut refs);
+                }
+                refs[i] = def.instance_of;
+            }
+            i += 1;
+        }
+        for r in refs {
             if r < data.definitions()
                 && same_file(d, r)
                 && classify(data, r).is_some()

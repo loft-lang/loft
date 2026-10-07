@@ -142,7 +142,7 @@ fn run(root: &Path, consumer: &Path, address: Option<&str>) -> Run {
 /// arena only outward would pass every other row here and fail this one.
 #[test]
 fn a_remote_library_answers_exactly_what_a_local_one_does() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn add(a: integer, b: integer) -> integer { a + b }\n\
                    pub fn e_i8(v: i8) -> i8 { v }\n\
                    pub fn e_u16(v: u16) -> u16 { v }\n\

@@ -9531,6 +9531,18 @@ impl Data {
         }
     }
 
+    /// The definition whose `pub` and file decide a type's visibility (@FR-F-Visible): the
+    /// template of an instance of a generic type, the type itself otherwise.  An instance is
+    /// minted wherever it is first spelled, so its own `pub_visible` says only whether a `pub`
+    /// item's parse minted it.
+    #[must_use]
+    pub fn visibility_def(&self, type_nr: u32) -> u32 {
+        match self.definitions.get(type_nr as usize) {
+            Some(d) if d.instance_of != u32::MAX => d.instance_of,
+            _ => type_nr,
+        }
+    }
+
     /// The name that KEYS a method on `type_nr`: a concrete type's own name, or a bound
     /// holder's marked spelling.
     #[must_use]

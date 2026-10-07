@@ -89,7 +89,7 @@ fn warm_store_keeps_wildcard_import_bindings() {
     fa::create_dir_all(&dir).expect("mkdir");
     fa::write(
         dir.join("importlib.loft"),
-        "pub struct Point { x: integer, y: integer }\n\
+        "pub struct Point { pub x: integer, pub y: integer }\n\
          pub fn add(a: integer, b: integer) -> integer { a + b }\n\
          pub fn mul(a: integer, b: integer) -> integer { a * b }\n",
     )

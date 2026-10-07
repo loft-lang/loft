@@ -9,7 +9,7 @@ pub const PUB_C = 11;
 HID_C = 22;
 pub fn pub_f() -> integer { 33 }
 fn hid_f() -> integer { 44 }
-pub struct PubS { a: integer }
+pub struct PubS { pub a: integer }
 struct HidS { b: integer }
 pub enum PubE { Pa, Pb }
 enum HidE { Ha, Hb }

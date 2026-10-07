@@ -414,14 +414,7 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 ## Deviations
 
-**OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
-
-- **D-call-28 (OPEN, @PLN187)** — violates `(F-Visible)`: a private field read, written or matched
-  outside its file, a literal of a `pub` type with a private field and a variant of a non-`pub`
-  enum are refused only under `LOFT_PUB_ENFORCE=1`.  The published libraries carry their `pub`
-  first (@PLN187 step 5), so no consumer of a published release breaks; then the refusal is the
-  default.  Naming and the build refusal for a name-only type already hold on every build.
-  Guard `tests/pub_visibility.rs` (`@C140`).
+**OPEN: 0.**  The closed record is in [calls-history.md](calls-history.md).
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

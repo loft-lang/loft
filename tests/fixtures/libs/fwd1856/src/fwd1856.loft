@@ -6,4 +6,4 @@
 // below alone says it is `pub`.  The private-type cell is fwd1856h.
 pub use fwd1856_inner::*;
 
-pub struct F1856Pub { p_n: integer }
+pub struct F1856Pub { pub p_n: integer }

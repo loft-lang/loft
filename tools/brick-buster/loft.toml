@@ -16,9 +16,11 @@ loft    = ">=0.8"
 entry   = "25-brick-buster.loft"
 
 [dependencies]
-graphics = ">=0.9.6"
-shapes   = ">=0.3"
-assets   = ">=0.3.0"
+# Floors at the first releases that carry `pub` on what this reads: a field is private
+# to its file without it (C140).
+graphics = ">=0.9.10"
+shapes   = ">=0.5.4"
+assets   = ">=0.4.2"
 
 # The sprite atlas is DRAWN once here, not on every launch.  `pack_atlas.loft`
 # sits beside the game so `assets/bb` names the same two files for the packer

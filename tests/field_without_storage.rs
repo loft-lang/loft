@@ -50,11 +50,11 @@ fn build_package(root: &Path) {
     );
     write(
         &root.join("fwd/src/fwd.loft"),
-        "pub use inner::*;\npub struct Roofs { items: vector<integer> }\n",
+        "pub use inner::*;\npub struct Roofs { pub items: vector<integer> }\n",
     );
     write(
         &root.join("fwd/src/inner.loft"),
-        "pub struct Sess { s_a: integer, s_roofs: Roofs, s_b: integer }\n\
+        "pub struct Sess { pub s_a: integer, s_roofs: Roofs, pub s_b: integer }\n\
          pub fn mk() -> Sess { return Sess { s_a: 1, s_roofs: Roofs { items: [] }, s_b: 2 }; }\n",
     );
 }
@@ -116,7 +116,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
     // by the time `inner`'s struct is laid out.
     write(
         &root.join("okp/src/roofs.loft"),
-        "pub struct Roofs { items: vector<integer> }\n",
+        "pub struct Roofs { pub items: vector<integer> }\n",
     );
     write(
         &root.join("okp/src/okp.loft"),
@@ -124,7 +124,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
     );
     write(
         &root.join("okp/src/inner.loft"),
-        "pub use roofs::*;\npub struct Sess { s_a: integer, s_roofs: Roofs, s_b: integer }\n\
+        "pub use roofs::*;\npub struct Sess { pub s_a: integer, s_roofs: Roofs, pub s_b: integer }\n\
          pub fn mk() -> Sess { return Sess { s_a: 1, s_roofs: Roofs { items: [] }, s_b: 2 }; }\n",
     );
     let prog = root.join("use_it.loft");

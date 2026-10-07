@@ -299,7 +299,6 @@ a change to it, so nothing emitted differs.
 **Revisit when.** A read-only field outside its file is asked for — declined (a function covers
 it).
 Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants).
-**Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; the naming and the
-build refusal hold on every build, the field, literal and variant refusals under
-`LOFT_PUB_ENFORCE=1` until the published libraries carry their `pub` (`formal/calls.md` D-call).
+**Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; every refusal
+holds on every build.
 **Catalogue:** @F2 / modules.  Extends [C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.

@@ -65,6 +65,7 @@ def field_offsets(text, span):
     open_, close = span
     out = {}
     depth, j, item_start = 0, open_ + 1, open_ + 1
+    parens = 0
     in_str = False
     while j < close:
         c = text[j]
@@ -87,9 +88,17 @@ def field_offsets(text, span):
             elif depth == 0 and text[item_start:j].strip().startswith("//"):
                 item_start = j + 1
             continue
-        if c in "{([<":
+        # `<`/`>` bracket a type's arguments only outside parentheses: inside `assert(n > 0, …)`
+        # they compare.
+        if c in "{([":
             depth += 1
-        elif c in "})]" or (c == ">" and text[j - 1] != "-"):
+            parens += 1
+        elif c in "})]":
+            depth -= 1
+            parens -= 1
+        elif parens == 0 and c == "<":
+            depth += 1
+        elif parens == 0 and c == ">" and text[j - 1] != "-":
             depth -= 1
         elif c == "," and depth == 0:
             item_start = j + 1
