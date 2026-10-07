@@ -124,9 +124,10 @@ step feeding one shared IR to both backends, generics behave identically under `
              variable through an instance's arguments as through any other former, and through
              a callback's RETURN when no argument binds it earlier (`map_grid<T, U>(g, f: fn(T) ->
              U)` with `|t| { t.height }` is `U = integer`).
-  (G-Regular) a template may name itself in its fields only at its own variables, unchanged:
-             `Tree<T>` inside `Tree<T>` (through a collection or a pointer) — `Bad<vector<T>>`
-             inside `Bad<T>` has no finite set of instances and is refused at the declaration.
+  (G-Regular) a template may name itself in its fields — an enum's are its variants' — only
+             at its own variables, unchanged: `Tree<T>` inside `Tree<T>` (through a collection
+             or a pointer) — `Bad<vector<T>>` inside `Bad<T>` has no finite set of instances
+             and is refused at the declaration.
 ```
 
 **In words.** `struct Grid<T> { w: integer, cells: vector<T> }` declares no type until it is
@@ -245,7 +246,8 @@ The record, and every closed deviation, are in the companion
   `a-library-carries-generic-types-across-the-boundary`, `the-goal-program-of-flexible-generics`
   (`tests/scripts/`).
 - **A template names itself regularly (`G-Regular`)** — `a-generic-struct-names-itself-regularly`,
-  `a-generic-struct-that-names-itself-irregularly-is-refused` (`tests/scripts/`).
+  `a-generic-struct-that-names-itself-irregularly-is-refused`,
+  `1928-a-generic-enum-that-names-itself-irregularly-is-refused` (`tests/scripts/`).
 - **Bounded generic dispatch (`G-Gen` / `G-Mono`)** — `fn total<T: Sizable>(xs: vector<T>) ->
   integer { s=0; for x in xs { s += x.size() } s }` over `[Box{2,3}, Box{4,5}]` is `26`, identical
   on both backends.

@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (D-gen-10 opened 2026-10-05 and closed 2026-10-06, loft#1872; D-gen-7 and D-gen-8 opened and closed 2026-10-05, loft#1868; D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
+OPEN: **0** (D-gen-11 and D-gen-12 opened and closed 2026-10-07, loft#1927 and loft#1928; D-gen-10 opened 2026-10-05 and closed 2026-10-06, loft#1872; D-gen-7 and D-gen-8 opened and closed 2026-10-05, loft#1868; D-gen-5 — C91's content `==` reaching `Equatable` — and D-gen-6 — a tuple bound to it, loft#1738 — both opened and closed 2026-09-29 by @PLN175 step 8 and its follow-up).  `D-gen-1` and `D-gen-2` were opened and closed on 2026-08-29, `D-gen-3` and
 `D-gen-4` on 2026-09-02.
 
 ⚠ **This line read `OPEN: 0` because *"a rules doc adds no code deviation"* — a claim about the
@@ -16,6 +16,16 @@ until the walk that first asked found four defects there.  It has now produced o
 The oracle under it (`86-interfaces.loft`, `48-generics.loft`, and the numbered scripts) is real,
 but it is an oracle for the shapes those files happen to write; `D-gen-1` is what it could not
 see.
+
+### D-gen-12 — OPENED AND CLOSED (2026-10-07, loft#1928): an enum template named itself irregularly
+
+`(G-Regular)` refuses `Bad<vector<T>>` inside `Bad<T>` at the declaration.  The check read the
+template's own attributes, which are a struct's fields but an enum's VARIANTS, so a variant's
+field naming the enum at a growing instance (`Cons { t: vector<Lst<vector<T>>> }`), at swapped
+variables (`Two<U, T>`) or at a concrete argument (`One<integer>`) was accepted where the struct
+twin is refused.  No wrong value was measured at the depths a program builds by hand; the rule
+exists for the instance chain that does not end.  The check now reads each variant's fields
+too.  Guard: `1928-a-generic-enum-that-names-itself-irregularly-is-refused.loft`.
 
 ### D-gen-11 — OPENED AND CLOSED (2026-10-07, loft#1927): a member's RETURN was compared only between named types
 
