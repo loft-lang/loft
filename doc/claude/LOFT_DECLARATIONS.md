@@ -27,6 +27,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
   every field is `pub`, an enum's variants).  A struct or variant FIELD is private to its file;
   `pub` on the field shows it:
 
+  <!-- from tests/reference/private-by-default.loft -->
   ```loft
   struct Unit { pub name: text, hp: integer }      // name only: reachable through spawn()
   pub enum Shape { Circle { pub r: float }, Blob { seed: integer } }
