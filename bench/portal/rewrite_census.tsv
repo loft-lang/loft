@@ -408,6 +408,7 @@
 17_consumer_moros_dryopea	-	R-Counter	65
 17_consumer_moros_dryopea	-	R-DischargeInto	1
 17_consumer_moros_dryopea	-	R-ExitVector	2
+17_consumer_moros_dryopea	-	R-ExitVector/record	2
 17_consumer_moros_dryopea	-	R-FormatAppend	1
 17_consumer_moros_dryopea	-	R-ForwardWalk	3
 17_consumer_moros_dryopea	-	R-GuardFree	13
