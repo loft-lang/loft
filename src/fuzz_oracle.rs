@@ -20,8 +20,6 @@
 //! own (I/O and non-UTF-8 become clean returns) and swallows no language panic
 //! (the panic-gate allowlist starts EMPTY).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::compile::byte_code;
 use crate::data::Data;
 use crate::database::Stores;
@@ -42,7 +40,7 @@ pub(crate) fn stdlib() -> (Data, Stores) {
     let (data, db) = STDLIB.get_or_init(|| {
         let mut p = Parser::new();
         // cwd is the repo root under `cargo test`, but `fuzz/` under cargo-fuzz.
-        let dir = if std::path::Path::new("default").is_dir() {
+        let dir = if crate::file_access::is_dir("default") {
             "default"
         } else {
             "../default"
@@ -124,14 +122,14 @@ pub fn classify_source_with(src: &[u8], poison: bool) -> Outcome {
         std::process::id(),
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    if std::fs::write(&tmp, text).is_err() {
+    if crate::file_access::write(&tmp, text).is_err() {
         return Outcome::IoError;
     }
     let path = tmp.to_string_lossy().to_string();
 
     // Site 5: no panic gate — a parser panic on malformed input is the finding.
     p.parse(&path, false);
-    let _ = std::fs::remove_file(&tmp);
+    let _ = crate::file_access::remove_file(&tmp);
 
     // A graceful diagnostic rejection is the common, clean case (F1 feeds
     // garbage). Warning/Debug lines are not rejections.
@@ -282,14 +280,14 @@ mod tests {
     }
 
     fn collect_loft(root: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(rd) = std::fs::read_dir(root) else {
+        let Ok(rd) = crate::file_access::read_dir(root) else {
             return;
         };
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in rd {
+            let p = e.os_spelling();
+            if crate::file_access::is_dir(&p) {
                 collect_loft(&p, out);
-            } else if p.extension().is_some_and(|x| x == "loft") {
+            } else if crate::file_access::extension(&p).is_some_and(|x| x == "loft") {
                 out.push(p);
             }
         }
@@ -378,7 +376,7 @@ mod tests {
         // target. Default off keeps the replay on F1's front-end-panic remit.
         let poison = std::env::var_os("LOFT_F1_POISON").is_some();
         for f in &files {
-            let Ok(bytes) = std::fs::read(f) else {
+            let Ok(bytes) = crate::file_access::read(f) else {
                 continue;
             };
             if trace {
