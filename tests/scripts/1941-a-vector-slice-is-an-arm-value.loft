@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1941 — `(Slice-Value)`: a vector slice is the fresh vector at every value position,
+// and the value of an `if` or `match` ARM is one.
+//
+// A slice is lowered to an iterator and materialised where a vector is wanted.  An arm was
+// not such a place, so a THEN arm `v[1..]` typed the whole `if` as an iterator and the else
+// arm's vector was refused — as a generator body's discarded tail, in a program with no
+// generator — and a `match` refused a vector arm after a slice arm.  An arm whose value is a
+// slice now answers the vector.
+//
+// Cells: a slice then-arm beside a vector else-arm, taken both ways; slices on both sides; a
+// literal's slice; the vector first and the slice second; a function's tail `if`; a `match`;
+// iterating an `if` of slices; an `if` and a `match` rebuilt every round of a loop (the
+// match's local borrows the slice's backing — `LOFT_STRICT_STORES=1` names a use after free on
+// `--native` otherwise); and the source left as it was.
+//
+// @falsified-by: tests/falsified/1941-a-vector-slice-is-an-arm-value.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file ("a generator's body
+//   produces values only through `yield`").
+//   ARMED: nothing for the receipt.  The match-in-a-loop cell's use after free is seen only
+//   under `LOFT_STRICT_STORES=1` on `--native` (measured by hand: `USE AFTER FREE … killed by
+//   the free of var_m` on a build that materialised the arm with a dep-free type).
+//   WITNESS: `x = if c { v[1..] } else { [3] }` refused; `match n { 1 => v[1..], _ => [0] }`
+//   refused as `expected iterator<integer>, got vector<integer>`.
+//   HOLDS: leak, panic and free-refusal are equal on BOTH trees.
+
+fn pick(c: boolean, v: vector<integer>) -> vector<integer> { if c { v[1..] } else { [9] } }
+
+fn by(n: integer, v: vector<integer>) -> vector<integer> {
+  match n {
+    1 => v[1..],
+    _ => [0]
+  }
+}
+
+fn test_a_slice_then_arm_beside_a_vector_else_arm() {
+  v = [1, 2];
+  c = true;
+  d = false;
+  x = if c { v[1..] } else { [3] };
+  x2 = if d { v[1..] } else { [3] };
+  assert("{x} {x2}" == "[2] [3]" && len(x) == 1, "got {x} {x2}");
+  y = if c { v[1..] } else { v[0..1] };
+  y2 = if d { v[1..] } else { v[0..1] };
+  assert("{y} {y2}" == "[2] [1]", "both slices: got {y} {y2}");
+  z = if c { [5, 6][1..] } else { [3] };
+  assert("{z}" == "[6]", "a literal's slice: got {z}");
+  w = if d { [3] } else { v[1..] };
+  assert("{w}" == "[2]", "vector first: got {w}");
+  assert("{v}" == "[1,2]", "the source: got {v}");
+}
+
+fn test_a_tail_if_and_a_match() {
+  v = [1, 2];
+  assert("{pick(true, v)} {pick(false, v)}" == "[2] [9]", "tail: got {pick(true, v)} {pick(false, v)}");
+  assert("{by(1, v)} {by(2, v)}" == "[2] [0]", "match: got {by(1, v)} {by(2, v)}");
+}
+
+fn test_iterating_and_looping() {
+  v = [1, 2, 3];
+  c = true;
+  t = 0;
+  for e in if c { v[0..2] } else { v[..1] } { t += e; }
+  assert(t == 3, "iterated: t={t}");
+  n = 0;
+  for i in 0..100 {
+    s = if i % 2 == 0 { v[1..] } else { [i] };
+    n += len(s);
+  }
+  // 50 rounds of [2, 3] and 50 of [i]: 100 + 50.
+  assert(n == 150, "if in a loop: n={n}");
+  // A match whose FIRST arm is the slice: its local must borrow the slice's backing, not
+  // own it — owned, it was freed every round while the backing still named it.
+  k = 0;
+  for i in 0..99 {
+    m = match i % 3 { 0 => v[..1], _ => [i, i] };
+    k += len(m) + m[0];
+  }
+  // 33 rounds of [1] (2 each) and 66 rounds of [i, i] (2 + i each):
+  // 66 + 132 + (sum of i in 0..99 not divisible by 3: 4851 - 3 * (0 + … + 32) = 4851 - 1584
+  // = 3267) = 3465.
+  assert(k == 3465, "match in a loop: k={k}");
+}

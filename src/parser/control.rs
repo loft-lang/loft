@@ -5670,6 +5670,14 @@ impl Parser {
         // already an error and synthesises a `null` else for recovery; the DN1 widening below must
         // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
         let had_else = self.lexer.has_token("else");
+        // `(Slice-Value)` — a THEN arm whose value is a vector slice is the fresh vector, owed
+        // at every value position (`Parser::slice_shaped` already walks `if` arms).  Left the
+        // iterator it is lowered from, it typed the whole `if` as an iterator and the else arm's
+        // vector was refused as a generator body's discarded tail (loft#1941).  Only where an
+        // else follows: an `if` without one has no value.
+        if had_else {
+            true_type = self.slice_arm_as_vector(&mut true_code, true_type);
+        }
         // Where the else arm starts: a tuple arm pair that does not join is reported there.
         let else_pos = *self.lexer.pos();
         if had_else {
@@ -7183,6 +7191,56 @@ impl Parser {
 
     /// The type a match arm is expected to answer in: what the arms have agreed on so
     /// far, or `Unknown` while nothing is settled yet.
+    /// `(Slice-Value)` — an `if` or `match` ARM whose value is a vector slice answers the fresh
+    /// vector a bind would make of it ([`Parser::iterator_as_vector`]), so its siblings join a
+    /// vector rather than the iterator the slice is lowered from (loft#1941).  Any other arm is
+    /// returned as it is.
+    fn slice_arm_as_vector(&mut self, code: &mut Value, tp: Type) -> Type {
+        if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            let vec_tp = Type::Vector(elm.clone(), crate::data::Deps::none());
+            if let Some(t) = self.iterator_as_vector(code, &tp, &vec_tp) {
+                // The arm answers the materialised LOCAL, whose store is a function-scoped
+                // backing (`["__vdb_N"]`): its type carries that dep, and the arm's must too.
+                // Typed dep-free, a `match` whose FIRST arm was the slice gave its result the
+                // dep-free type, so the bound local read as the store's OWNER and freed it at
+                // the end of every round while the backing still named it — a use after free
+                // on `--native` from the second round on.
+                if !self.first_pass
+                    && let Some(tail) = Self::block_tail_var(code)
+                {
+                    let held = self.vars.tp(tail).clone();
+                    if matches!(held.base(), Type::Vector(..)) {
+                        Self::retype_tail_blocks(code, &held);
+                        return held;
+                    }
+                }
+                return t;
+            }
+        }
+        tp
+    }
+
+    /// The variable a value's tail is, through spans and block tails.
+    fn block_tail_var(code: &Value) -> Option<u16> {
+        match code.unspan() {
+            Value::Var(v) => Some(*v),
+            Value::Block(bl) => bl.operators.last().and_then(Self::block_tail_var),
+            _ => None,
+        }
+    }
+
+    /// Give every block on the path to a value's tail the type `tp`.
+    fn retype_tail_blocks(code: &mut Value, tp: &Type) {
+        if let Value::Block(bl) = code.unspan_mut() {
+            bl.result = tp.clone();
+            if let Some(last) = bl.operators.last_mut() {
+                Self::retype_tail_blocks(last, tp);
+            }
+        }
+    }
+
     fn match_arm_expected(&self, result_type: &Type) -> Type {
         if result_type.is_unknown()
             || Self::match_result_unsettled(result_type)
@@ -7219,6 +7277,9 @@ impl Parser {
         self.vars.clear_write_state();
         let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        // `(Slice-Value)` — an arm's value is a value position, so a vector slice there is the
+        // fresh vector (loft#1941).
+        let tp = self.slice_arm_as_vector(arm_code, tp);
         if self.abstract_on() {
             let fact = std::mem::take(&mut self.operand_fact);
             self.match_arm_facts.push(fact); // @PLN187
