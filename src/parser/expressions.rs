@@ -6722,13 +6722,28 @@ use a separate collection or add after the loop"
                     // `LOFT_POISON` gate makes the loop shape a SIGSEGV instead,
                     // because `b.items = add(b.items, k)` then reads a record
                     // overwritten with 0xDEADBEEF.
-                    if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
-                        self.vars.set_skip_free(tmp);
-                    }
-                    let set_tmp = v_set(tmp, rhs_saved);
+                    //
+                    // @FR-H-CopySelf — and a PROJECTION may be the destination itself
+                    // (`o.inner.sub = o.inner.sub`) or live inside it (`n.kids =
+                    // n.kids[0].kids`), so a temp that only names it is emptied or freed by
+                    // the clear below before the append reads it (loft#1916).  A projection
+                    // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
+                    // the temp then owns its copy and frees it.
+                    let projection = !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+                    let fill_tmp = if projection {
+                        vec![
+                            v_set(tmp, Value::Null),
+                            self.cl(whole, &[Value::Var(tmp), rhs_saved, rec_tp.clone()]),
+                        ]
+                    } else {
+                        if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
+                            self.vars.set_skip_free(tmp);
+                        }
+                        vec![v_set(tmp, rhs_saved)]
+                    };
                     let clear = self.clear_vector_field(to, &lhs_parent_tp);
                     let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
-                    let mut ops = vec![set_tmp];
+                    let mut ops = fill_tmp;
                     ops.extend(clear);
                     ops.push(append);
                     *code = Value::Insert(ops);
