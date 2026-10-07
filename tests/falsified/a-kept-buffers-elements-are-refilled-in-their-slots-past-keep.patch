@@ -1,8 +1,8 @@
 diff --git a/src/generation/calls.rs b/src/generation/calls.rs
-index 57c4531b3..42722e012 100644
+index e7050622b..8db702fb9 100644
 --- a/src/generation/calls.rs
 +++ b/src/generation/calls.rs
-@@ -808,9 +808,9 @@ impl Output<'_> {
+@@ -878,9 +878,9 @@ impl Output<'_> {
              res = if matches!(vals.get(vi), Some(Value::Null)) {
                  "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
              } else if borrowed {
@@ -13,4 +13,4 @@ index 57c4531b3..42722e012 100644
 +                "{{let db = @v1; let s_val = @val.to_string(); if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if true || db.pos < __rk_end {{ store.refill_str(db.rec, fld, &s_val); }} else {{ let s_pos = store.set_str(&s_val); store.set_u32_raw(db.rec, fld, s_pos); }} }}}}"
              }
              .to_string();
-         }
+             res = with_drop_report(&res);

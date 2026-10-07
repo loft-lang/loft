@@ -1,8 +1,8 @@
-diff --git b/src/generation/emit.rs a/src/generation/emit.rs
-index 2f6431c86..481dc6016 100644
---- b/src/generation/emit.rs
-+++ a/src/generation/emit.rs
-@@ -2308,20 +2308,6 @@ impl Output<'_> {
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 0e8789138..2c40a5d4c 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -2400,20 +2400,6 @@
              }
              _ => false,
          };
@@ -23,7 +23,7 @@ index 2f6431c86..481dc6016 100644
          // For `text_string_unify` we emit `{ (<branch>).to_string() }` around
          // each arm so the if-expression unifies on `String`.  Rust requires
          // braces for if-arms regardless of inner expression form, so even if
-@@ -2399,11 +2385,11 @@ impl Output<'_> {
+@@ -2491,11 +2477,11 @@
          } else {
              write!(w, "}} else ")?;
          }
@@ -38,7 +38,7 @@ index 2f6431c86..481dc6016 100644
              (true, "({")
          } else if stmt_discard || !b_false {
              (true, "")
-@@ -2419,7 +2405,7 @@ impl Output<'_> {
+@@ -2511,7 +2497,7 @@
              None
          };
          write!(w, "{false_rest}")?;
@@ -47,7 +47,7 @@ index 2f6431c86..481dc6016 100644
          // When the else branch is Null and the true branch returns a value,
          // emit a typed null sentinel instead of () to match the true branch type.
          if matches!(false_v, Value::Null)
-@@ -2432,18 +2418,18 @@ impl Output<'_> {
+@@ -2524,18 +2510,18 @@
              self.clone_handed_tuple_local = None;
          }
          self.close_arm_pre_evals(false_pre);
@@ -70,7 +70,7 @@ index 2f6431c86..481dc6016 100644
          if wrap_block {
              write!(w, " }}")?;
          }
-@@ -3760,31 +3746,7 @@ impl Output<'_> {
+@@ -3978,31 +3964,7 @@
                      // nwb fns via the no-work-buffer arm).
                      let tail_outer_owned =
                          wrap_result && super::def_returns_owned_text(self.data.def(self.def_nr));
@@ -103,7 +103,7 @@ index 2f6431c86..481dc6016 100644
                          // Wrap the captured value in a block.  A tail call whose
                          // argument carries a store-lifetime "lift" pre-eval emits that
                          // lift as a LEADING `{ … };` statement (it reassigns the lifted
-@@ -3818,13 +3780,9 @@ impl Output<'_> {
+@@ -4036,13 +3998,9 @@
                      } else if narrow_cast.is_some() {
                          write!(w, "(")?;
                      }
@@ -120,11 +120,11 @@ index 2f6431c86..481dc6016 100644
                      if is_tail_capture_call {
                          // Close the block opened above; the call is its tail expr.
                          write!(w, " }}")?;
-diff --git b/src/parser/collections.rs a/src/parser/collections.rs
-index dbd1ac99a..8516c2138 100644
---- b/src/parser/collections.rs
-+++ a/src/parser/collections.rs
-@@ -2421,7 +2421,7 @@ use #count instead"
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index a33ee1a80..b20fa2122 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -2421,7 +2421,7 @@
              }
          } else if self.lexer.has_token("break") {
              if !self.in_loop {
@@ -133,7 +133,7 @@ index dbd1ac99a..8516c2138 100644
              }
              // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
              // is not one has no level to jump. `Value::Null` rather than a level: every
-@@ -2432,10 +2432,7 @@ use #count instead"
+@@ -2432,10 +2432,7 @@
                  Some(lv) => Value::Break(lv),
                  None => self.not_a_loop_variable(name, "break"),
              };
@@ -145,7 +145,7 @@ index dbd1ac99a..8516c2138 100644
          } else if self.lexer.has_token("continue") {
              if !self.in_loop {
                  diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
-@@ -2444,7 +2441,7 @@ use #count instead"
+@@ -2444,7 +2441,7 @@
                  Some(lv) => Value::Continue(lv),
                  None => self.not_a_loop_variable(name, "continue"),
              };
@@ -154,11 +154,11 @@ index dbd1ac99a..8516c2138 100644
          } else if self.lexer.has_keyword("count") {
              self.iter_op_count_or_first(code, name, t, false, index_var);
          } else if self.lexer.has_keyword("first") {
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 42d78bcbb..07f65a620 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -19035,7 +19035,7 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 0fbf8978a..4690c2060 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -19191,7 +19191,7 @@
          // validate if there is a defined return value
          let mut v = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
@@ -167,11 +167,11 @@ index 42d78bcbb..07f65a620 100644
              // T1.7: save the position of the first token in the return expression,
              // used to report `not null` violations at the tuple literal site.
              let expr_start = self.lexer.peek().clone();
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 4164ddf4e..17c4d6ac3 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -1192,19 +1192,6 @@ impl Parser {
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..594b2abe9 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -1193,19 +1193,6 @@
          }
      }
  
@@ -191,7 +191,7 @@ index 4164ddf4e..17c4d6ac3 100644
      // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
      /// @PLN86 step 0.1 — depth-guarded entry to expression parsing.  For trusted
      /// code (`!in_sandbox`) this is a single bool check then a tail call — zero
-@@ -1270,7 +1257,10 @@ impl Parser {
+@@ -1271,7 +1258,10 @@
              // since loft loops are currently void-typed.  Covers the common
              // find/search pattern where break-with-value exits the function.
              // TODO: implement for...else for the general case.
@@ -203,11 +203,11 @@ index 4164ddf4e..17c4d6ac3 100644
                  let mut break_val = Value::Null;
                  let break_tp = self.expression(&mut break_val);
                  let ret_tp = self.data.def(self.context).returned().clone();
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index a55afdc36..1bfb5f884 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -3322,6 +3322,30 @@ impl Parser {
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index c34b4e9c6..60e6e1b1d 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -3385,6 +3385,30 @@
              if matches!(self.data.def(*d).returned(), Type::Optional(_)))
      }
  
@@ -238,7 +238,7 @@ index a55afdc36..1bfb5f884 100644
      /// Desugar `lhs ?? ...` — both the plain-default form and the
      /// `?? return ret_expr` early-return form.  Lifted out of
      /// [`Self::handle_operator`] so each shape has its own focused helper.
-@@ -3478,14 +3502,8 @@ impl Parser {
+@@ -3541,14 +3565,8 @@
          // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
          if self.lexer.has_token("return") {
              self.build_null_coalesce_return(code, ctp, &lhs_type);
@@ -255,22 +255,22 @@ index a55afdc36..1bfb5f884 100644
          } else {
              self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
          }
-@@ -3777,7 +3795,7 @@ impl Parser {
+@@ -3840,7 +3858,7 @@
          // produces the typed null sentinel.
          let mut ret_val = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
 -        if self.control_value_follows() {
 +        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
-             let ret_pos = self.lexer.peek_pos().clone();
+             let ret_pos = *self.lexer.peek_pos();
              let t = self.expression(&mut ret_val);
              // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
-@@ -3796,21 +3814,8 @@ impl Parser {
+@@ -3859,21 +3877,8 @@
              ret_val = self.null_value(&r_type);
          }
          let ret_stmt = Value::Return(Box::new(ret_val));
 -        self.null_coalesce_exit(code, ctp, lhs_type, ret_stmt);
 -    }
- 
+-
 -    /// `lhs ?? <exit>` — the block that leaves by `exit` (a `return`, `break` or `continue`)
 -    /// when `lhs` is null and otherwise evaluates to `lhs`.  The exit is a `Never`, so the
 -    /// block's type is `lhs`'s present type whatever the exit is (@FR-C-Never, @FR-N-Coal).
@@ -283,6 +283,7 @@ index a55afdc36..1bfb5f884 100644
 -    ) {
 -        let ret_stmt = exit;
 -        // { tmp = lhs; if (tmp == null) { <exit>; }; tmp }
++
 +        // { tmp = lhs; if (tmp == null) { return ret_expr; }; tmp }
          let tmp = self.create_unique("ncr", lhs_type);
          let set_tmp = v_set(tmp, code.clone());

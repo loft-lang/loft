@@ -11,8 +11,12 @@
 //
 // @falsified-at: 2323bd41e — interpret exit 1 -> 0, native exit 1 -> 0 (the control refuses
 //   `c = &p.0`: "the tuple is itself reached through a `&` link").
-// @falsified-by: tests/falsified/a-member-of-a-linked-tuple-is-a-place.patch — interpret exit
-//   1 -> 0, native exit 1 -> 0.
+// No patch receipt: its control is gone since 763fc6179 (loft#1883).  Every `&(…)` is now the
+//   `__tuple<…>` record (`@FR-T-Ref-Rep`), so `p.0` on a linked tuple is a FIELD read
+//   (`OpGetField`) and its link is a field link; the stack-tuple member path whose refusal the
+//   patch planted (`linkable_tuple_member` declining a `&`-reached member) is no longer reached
+//   by any cell here.  Measured at 653383a5a: declining every linked member there leaves both
+//   backends green.
 // HOLDS: leak, panic and refusals are clean on both trees and both backends.
 
 fn bump(p: &integer) {

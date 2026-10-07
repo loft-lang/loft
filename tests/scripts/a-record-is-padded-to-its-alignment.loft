@@ -12,7 +12,13 @@
 //
 // @falsified-at: 3b80d5dae — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native
 //   exit 1 -> 0, native 6 assertion failures -> 0, native panicked -> clean.
-// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — the same channels.
+// @falsified-by: tests/falsified/a-record-is-padded-to-its-alignment.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+//   Re-derived at 653383a5a as the padding alone: no tail padding for a record (`calc.rs`) or
+//   a stored tuple (`record_member_offsets`), and no compile-time `alignment_violations` check.
+//   The native panic is no longer reachable from a patch: it was the link at a PACKED member
+//   offset 4, and member placement no longer depends on the tail padding (a stored tuple lays
+//   out largest alignment first, `@FR-L-Tuple`, @C139) — `test_a_record_backed_text_integer_member`
+//   passes on this control.
 // HOLDS: leak and refusals are clean on both trees and both backends.
 
 struct S9 { n: integer, b: u8 }

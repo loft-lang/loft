@@ -20,7 +20,8 @@
 //   compared instead (loft#1885), but the file stops at the first refusal.
 //   HOLDS: nothing runs; every cell is unreached.
 // @falsified-by: tests/falsified/a-struct-or-pattern-arm-links-its-bindings.patch — interpret exit 1 -> 0, native exit 1 -> 0
-//   Step 2 reverted whole (the durable receipt): the same refusal.
+//   Re-derived at 653383a5a as step 2's three pieces: `field: name` read as a value, one
+//   pattern per arm, and no `@FR-M-Wild` refusal (the arms loop stops instead).
 //   CHANNEL: a refusal, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.

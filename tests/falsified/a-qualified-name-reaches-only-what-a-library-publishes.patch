@@ -1,8 +1,9 @@
 diff --git a/src/data.rs b/src/data.rs
+index 132a6e970..a0d8019df 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -12404,66 +12404,6 @@
-         d.pub_visible || matches!(d.def_type, DefType::Unknown)
+@@ -12963,66 +12963,6 @@
+         set.contains(&d_nr)
      }
  
 -    /// @FR-F-Surface (loft#1848) — the error for a qualified `lib::name` that reaches what `lib`
@@ -69,9 +70,10 @@ diff --git a/src/data.rs b/src/data.rs
          self.private_imports
              .get(&source)
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
+index 722f5086f..37680d743 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -4353,13 +4353,6 @@
+@@ -4478,13 +4478,6 @@
              if let Some(name) = self.lexer.has_identifier() {
                  let source = self.data.get_source(type_name);
                  let nr = self.data.source_nr(source, &name);
@@ -86,12 +88,13 @@ diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
                      qualified = Some((source, name));
                  }
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 0d8896f89..aefe7597f 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -505,13 +505,6 @@
-                 source = self.data.source;
+@@ -511,13 +511,6 @@
              }
-             if let Some(id) = self.lexer.has_identifier() {
+             if let Some((id, id_pos)) = self.lexer.has_identifier_pos() {
+                 call_pos = id_pos;
 -                // loft#1848 — `lib::name` reaches only what `use lib::*` would.
 -                if source != u16::MAX
 -                    && source != self.data.source

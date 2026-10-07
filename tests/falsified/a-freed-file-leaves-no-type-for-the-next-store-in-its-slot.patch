@@ -1,8 +1,8 @@
-diff --git b/src/database/allocation.rs a/src/database/allocation.rs
-index 170f1b553..b68535030 100644
---- b/src/database/allocation.rs
-+++ a/src/database/allocation.rs
-@@ -886,16 +886,7 @@ impl Stores {
+diff --git a/src/database/allocation.rs b/src/database/allocation.rs
+index 5783a6e25..633d8eeb2 100644
+--- a/src/database/allocation.rs
++++ b/src/database/allocation.rs
+@@ -907,16 +907,7 @@
          let rec = if size == u32::MAX {
              0
          } else {
@@ -10,10 +10,10 @@ index 170f1b553..b68535030 100644
 -            // `@FR-H-Claim` — the root record's header is its size word and its TYPE TAG
 -            // (`alloc_record_into` writes both); a claim writes only the first.  A typed mint
 -            // stamps its tag over this; a raw one (`read_bytes`, a parsed vector, …) has none,
--            // and says so: left unwritten, the word kept the tag of whatever record the reused
--            // slot held, and `close_file_handle` read a freed `File`'s tag off a `vector<u8>`
--            // root — then its handle field past the record's end, closing a live file whose
--            // index the vector's length happened to name.
+-            // and says so: left unwritten, the word keeps the tag of whatever record the reused
+-            // slot held, and the free's `File` release (`release_file_leases`) reads a freed
+-            // `File`'s tag off a `vector<u8>` root — then its handle field past the record's
+-            // end, releasing a live file whose index the vector's length happens to name.
 -            store.set_u32_raw(rec, 4, u32::from(u16::MAX));
 -            rec
 +            store.claim(size)

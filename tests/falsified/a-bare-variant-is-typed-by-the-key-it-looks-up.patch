@@ -1,8 +1,8 @@
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
-index 656c1a970..c0917fbb5 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
-@@ -3348,12 +3348,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index c1b976035..4b08b6024 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
+@@ -3359,14 +3359,9 @@
          let _index_t = if open_start {
              Type::Null // from=[] → no lower bound
          } else {
@@ -11,16 +11,20 @@ index 656c1a970..c0917fbb5 100644
 -            // against the key's enum exactly as `f(Green)` does against a parameter's.
 -            let saved_expected = std::mem::replace(&mut self.expected, key_0.clone());
              let t = self.expression(&mut p);
+             let first_fact = std::mem::take(&mut self.operand_fact);
+             self.check_key_fact(0, &first_fact); // @PLN187
 -            self.expected = saved_expected;
              // @FR-N-Store — a lookup KEY is a slot like an index: a null key reads null.
              if !self.convert_store_lenient(&mut p, &t, key_0, "the key", None) && !self.first_pass {
                  // A tuple key is the one place the arity is worth naming: `h[(1, 2, 3)]` on
-@@ -3394,9 +3389,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+@@ -3407,11 +3402,9 @@
                      break;
                  }
                  let mut ex = Value::Null;
 -                let saved_expected = std::mem::replace(&mut self.expected, key_types[nr].clone());
                  let ex_t = self.expression(&mut ex);
+                 let ex_fact = std::mem::take(&mut self.operand_fact);
+                 self.check_key_fact(nr, &ex_fact); // @PLN187
 -                self.expected = saved_expected;
                  if !self.convert_store_lenient(&mut ex, &ex_t, &key_types[nr], "the key", None)
                      && !self.first_pass

@@ -1,8 +1,8 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 4361a106d..4f571c932 100644
+index 0e8789138..d0ba14aaa 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -1499,24 +1499,15 @@ impl Output<'_> {
+@@ -1557,9 +1557,7 @@
              } else {
                  None
              };
@@ -12,8 +12,11 @@ index 4361a106d..4f571c932 100644
 +            let text_link_arg = i < param_types.len()
                  && matches!(param_types[i].base(),
                      Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
-             if let Some(respelled) = tuple_place {
-                 write!(w, "let _farg_{i} = {respelled}; ")?;
+             // `@FR-R-FnRefValue` — a parameter every arm receives as a tuple takes the tuple,
+@@ -1582,17 +1580,10 @@
+                 self.emit_call_arg(&mut buf, cand, i, arg)?;
+                 let spelled = String::from_utf8(buf).unwrap_or_default();
+                 write!(w, "let _farg_{i} = {spelled}; ")?;
 -            } else if link_arg
 -                && !(text_link_arg && store_mask & (1 << i) != 0)
 -                && !candidates.is_empty()
@@ -33,10 +36,10 @@ index 4361a106d..4f571c932 100644
                  let mut buf = Vec::new();
                  self.emit_call_arg(&mut buf, cand, i, arg)?;
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index aa119db8f..a00bce30a 100644
+index 722f5086f..d6039ce56 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -4251,13 +4251,6 @@ impl Parser {
+@@ -4270,13 +4270,6 @@
              if self.lexer.peek_token(")") {
                  break;
              }
@@ -50,7 +53,7 @@ index aa119db8f..a00bce30a 100644
              // loft#1540 — `fn(const T)`: a parameter the function behind the reference may not
              // write, so a value-const value can be handed through it (C124, D-bind-45).
              let is_const = self.lexer.has_keyword("const");
-@@ -4270,7 +4263,7 @@ impl Parser {
+@@ -4289,7 +4282,7 @@
                  );
              }
              if let Some(tp) = self.parse_type_full(d_nr, false) {
@@ -60,10 +63,10 @@ index aa119db8f..a00bce30a 100644
              }
              if !self.lexer.has_token(",") {
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index ceb26144b..5ce5dd1b5 100644
+index 9f0a3619b..4bff519e7 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -22095,13 +22095,7 @@ impl Parser {
+@@ -22796,13 +22796,7 @@
          // Re-created per function-body check; small cost, avoids
          // persisting state across passes or across unrelated checks.
          let mut callee_cache = crate::fxhash::FxHashMap::default();
@@ -78,7 +81,7 @@ index ceb26144b..5ce5dd1b5 100644
          // Enhancement: when a for-loop variable is FIELD-WRITTEN (OpSet*
          // through the loop var, not just loop-advance Set), also mark the
          // collection it iterates over as written.  The dep chain is:
-@@ -22159,13 +22153,7 @@ impl Parser {
+@@ -22880,13 +22874,7 @@
              }
              let mut unbound = code.clone();
              blank(&mut unbound, &self.data, &|d, n| link_bind(d, n).is_some());
@@ -93,7 +96,7 @@ index ceb26144b..5ce5dd1b5 100644
              find_field_written_vars(&unbound, &self.data, &mut through_written);
          }
          let through: Vec<u16> = through_written
-@@ -22890,14 +22878,13 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
+@@ -23747,14 +23735,13 @@
  pub(crate) fn find_written_vars(
      code: &Value,
      data: &Data,
@@ -109,7 +112,7 @@ index ceb26144b..5ce5dd1b5 100644
          }
          Value::Call(fn_nr, args) => {
              let def = data.def(*fn_nr);
-@@ -22925,7 +22912,7 @@ pub(crate) fn find_written_vars(
+@@ -23782,7 +23769,7 @@
                  if i == 1 && second_arg_write {
                      collect_vars_in(arg, written);
                  }
@@ -118,7 +121,7 @@ index ceb26144b..5ce5dd1b5 100644
              }
              // the callee may mutate one of its by-value parameters
              // through a field write (e.g. `fn add(self: Box, x) { self.items += [x] }`).
-@@ -22946,53 +22933,35 @@ pub(crate) fn find_written_vars(
+@@ -23803,53 +23790,35 @@
                  }
              }
          }
@@ -174,16 +177,17 @@ index ceb26144b..5ce5dd1b5 100644
 -            find_written_vars(create, data, vars, written, callee_cache);
 -            find_written_vars(next, data, vars, written, callee_cache);
 -            find_written_vars(extra, data, vars, written, callee_cache);
+-        }
+-        Value::Span(b) => find_written_vars(&b.1, data, vars, written, callee_cache),
 +            find_written_vars(create, data, written, callee_cache);
 +            find_written_vars(next, data, written, callee_cache);
 +            find_written_vars(extra, data, written, callee_cache);
-         }
--        Value::Span(b) => find_written_vars(&b.1, data, vars, written, callee_cache),
++        }
 +        Value::Span(b) => find_written_vars(&b.1, data, written, callee_cache),
          _ => {}
      }
  }
-@@ -23076,7 +23045,7 @@ fn callee_param_writes(
+@@ -23933,7 +23902,7 @@
      }
      let body = def.code().clone();
      let mut written = crate::fxhash::FxHashSet::default();
@@ -193,10 +197,10 @@ index ceb26144b..5ce5dd1b5 100644
      // Monotone merge with any prior placeholder entry.
      let prev = cache.get(&fn_nr).cloned().unwrap_or_else(|| vec![false; n]);
 diff --git a/src/scopes/move_elide.rs b/src/scopes/move_elide.rs
-index edcff5722..3e59f67c6 100644
+index 72c0dbe8b..9474589fe 100644
 --- a/src/scopes/move_elide.rs
 +++ b/src/scopes/move_elide.rs
-@@ -327,7 +327,6 @@ pub(super) fn move_elide(data: &mut Data) {
+@@ -328,7 +328,6 @@
              crate::parser::find_written_vars(
                  &data.def(d_nr).code,
                  data,
@@ -205,10 +209,10 @@ index edcff5722..3e59f67c6 100644
                  &mut HashMap::default(),
              );
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index 3c55be29d..37a108b82 100644
+index 8621493d0..13b3fbc5f 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -4551,7 +4551,17 @@ impl State {
+@@ -4687,7 +4687,17 @@
          for (a_nr, a) in stack.data.def(op).attributes().iter().enumerate() {
              if a.mutable {
                  let stack_before = stack.position;
@@ -227,7 +231,7 @@ index 3c55be29d..37a108b82 100644
                      tps.push(a.typedef.clone());
                  } else if stack.data.def(op).name() == "OpSetInt4"
                      && let Value::TupleGet(tvar, tidx) = parameters[a_nr].unspan()
-@@ -5280,25 +5290,6 @@ impl State {
+@@ -5448,25 +5458,6 @@
          }
      }
  
@@ -253,7 +257,7 @@ index 3c55be29d..37a108b82 100644
      pub(super) fn generate_call_ref(
          &mut self,
          stack: &mut Stack,
-@@ -5327,13 +5318,6 @@ impl State {
+@@ -5495,13 +5486,6 @@
          for (i, arg) in args.iter().enumerate() {
              if i < param_types.len() && matches!(param_types[i].base(), Type::Function(..)) {
                  self.gen_fn_ref_value_node(arg, stack);
@@ -268,10 +272,10 @@ index 3c55be29d..37a108b82 100644
                  self.generate_node(arg, stack, false);
              }
 diff --git a/src/use_analysis.rs b/src/use_analysis.rs
-index 2a798de83..13b3149d8 100644
+index f48927db9..c0610618b 100644
 --- a/src/use_analysis.rs
 +++ b/src/use_analysis.rs
-@@ -1394,7 +1394,7 @@ fn analyze_fn_survival(
+@@ -1417,7 +1417,7 @@
      // the copy-idiom-aware walk above, which excludes `v`'s def and copy-fill.)
      let written = {
          let mut w = HashSet::default();
