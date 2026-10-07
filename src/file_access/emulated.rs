@@ -37,6 +37,11 @@ pub(super) fn os(path: &PathText) -> io::Result<PathBuf> {
             out.push(name);
             continue;
         }
+        // A name the OS handed over in its own spelling reaches that entry as it is.
+        if let Some(raw) = real.raw_at(i) {
+            out.push(raw);
+            continue;
+        }
         let name = windows_name(name, i + 1 == parts.len())
             .map_err(|why| io::Error::new(io::ErrorKind::InvalidFilename, why))?;
         let resolved = match name.split_once(':') {

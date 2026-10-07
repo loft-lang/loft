@@ -8,8 +8,6 @@ use crate::keys::DbRef;
 use crate::store::Store;
 use crate::vector;
 #[cfg(not(host_fs))]
-use std::collections::BTreeMap;
-#[cfg(not(host_fs))]
 use std::io::{Seek as _, SeekFrom, Write as _};
 
 enum Format {
@@ -608,20 +606,21 @@ impl Stores {
         let Some(resolved) = self.resolve_path(file_path) else {
             return false;
         };
-        if let Ok(entries) = crate::file_access::read_dir_utf8(&crate::file_access::at(&resolved)) {
+        if let Ok(entries) = crate::file_access::read_dir(&crate::file_access::at(&resolved)) {
             let vector = DbRef {
                 store_nr: result.store_nr,
                 rec: result.rec,
                 pos: result.pos,
             };
-            let mut res = BTreeMap::new();
-            for entry in entries {
-                // `@FR-Path-Sep` — the portable form, as every path loft gives a program:
-                // parsed by the host's rules, so a Unix filename that legitimately holds a
-                // backslash is not split into a fake two-segment path.  A non-UTF-8 name
-                // was left out by the listing: that ENTRY degrades, never the listing.
-                res.insert(entry.for_program().portable(), entry);
-            }
+            // `@FR-Path-Sep` — the portable form, as every path loft gives a program: parsed by
+            // the host's rules, so a Unix filename that legitimately holds a backslash is not
+            // split into a fake two-segment path.  `@FR-Path-Utf8` — a name that is not text
+            // is listed with U+FFFD, and two such names that show alike are two entries, so
+            // the listing is a list (already sorted), never a map keyed by the shown name.
+            let res: Vec<(String, crate::file_access::PathText)> = entries
+                .into_iter()
+                .map(|entry| (entry.for_program().portable(), entry))
+                .collect();
             for (name, entry) in res {
                 let elm =
                     vector::vector_append(&vector, self.file_record_size(), &mut self.allocations);
@@ -829,10 +828,10 @@ impl Stores {
             }
         };
         #[cfg(not(host_fs))]
-        // Only the final path component; a non-UTF-8 name is left out by the listing
-        // (that ENTRY degrades, never the whole listing).
+        // Only the final path component; `@FR-Path-Utf8` — a name that is not text is listed
+        // with U+FFFD in its place.
         let names: Option<Vec<String>> =
-            crate::file_access::read_dir_utf8(&crate::file_access::at(&resolved))
+            crate::file_access::read_dir(&crate::file_access::at(&resolved))
                 .ok()
                 .map(|entries| {
                     entries

@@ -112,6 +112,10 @@ pub struct PathText {
     /// A separator follows the prefix: the path starts at a root.
     rooted: bool,
     parts: Vec<String>,
+    /// `@FR-Path-Utf8` — the OS's own spelling of a name its text cannot hold (bytes that
+    /// are not UTF-8, an unpaired UTF-16 half), beside that name's lossy text in `parts`.
+    /// Empty when every name is text, which is nearly always; otherwise one entry per part.
+    raw: Vec<Option<std::ffi::OsString>>,
 }
 
 impl PathText {
@@ -233,6 +237,7 @@ impl PathText {
             },
             rooted: self.rooted,
             parts: self.parts.clone(),
+            raw: self.raw.clone(),
         }
     }
 
@@ -249,6 +254,7 @@ impl PathText {
                 prefix: String::new(),
                 rooted: self.rooted,
                 parts: self.parts.clone(),
+                raw: self.raw.clone(),
             })
         } else {
             Err(format!(
@@ -284,6 +290,7 @@ impl PathText {
             prefix,
             rooted,
             parts,
+            raw: Vec::new(),
         }
     }
 
@@ -330,6 +337,7 @@ impl PathText {
         }
         let mut p = self.clone();
         p.parts.pop();
+        p.raw.pop();
         Some(p)
     }
 
@@ -356,6 +364,11 @@ impl PathText {
             } else {
                 format!("{stem}.{ext}")
             };
+            if let Some(Some(raw)) = p.raw.last_mut() {
+                *raw = std::path::Path::new(raw)
+                    .with_extension(ext)
+                    .into_os_string();
+            }
         }
         p
     }
@@ -372,6 +385,7 @@ impl PathText {
             prefix: String::new(),
             rooted: false,
             parts: self.parts[base.parts.len()..].to_vec(),
+            raw: self.raw.get(base.parts.len()..).unwrap_or(&[]).to_vec(),
         })
     }
 
@@ -394,10 +408,21 @@ impl PathText {
         if other.rooted || !other.prefix.is_empty() {
             return other;
         }
-        let mut text = self.native();
-        text.push(self.flavor.separator());
-        text.push_str(&other.native());
-        PathText::parse(&text, self.flavor)
+        // Appended part by part, as `from_parts` folds them, so a name kept in the OS's own
+        // spelling (`raw`) survives the join.
+        let mut p = self.clone();
+        for part in other.parts {
+            if part == ".." && p.parts.last().is_some_and(|l| l != "..") {
+                p.parts.pop();
+                p.raw.pop();
+            } else if part != ".." || !p.rooted {
+                p.parts.push(part);
+                if !p.raw.is_empty() {
+                    p.raw.push(None);
+                }
+            }
+        }
+        p
     }
 
     /// Is `self` `dir` or inside it — by components, so `pkg` does not claim `pkg2/x`, a
@@ -408,11 +433,83 @@ impl PathText {
             && self.rooted == dir.rooted
             && self.flavor.name_eq(&self.prefix, &dir.prefix)
             && dir.parts.len() <= self.parts.len()
-            && dir
-                .parts
-                .iter()
-                .zip(&self.parts)
-                .all(|(a, b)| self.flavor.name_eq(a, b))
+            && (0..dir.parts.len()).all(|i| self.same_name(i, dir, i))
+    }
+
+    /// Is part `i` the same name as `other`'s part `j`?  A name kept in the OS's own spelling
+    /// equals only that spelling: two names that are not UTF-8 can share one lossy text.
+    fn same_name(&self, i: usize, other: &PathText, j: usize) -> bool {
+        match (self.raw_at(i), other.raw_at(j)) {
+            (None, None) => self.flavor.name_eq(&self.parts[i], &other.parts[j]),
+            (a, b) => a == b,
+        }
+    }
+
+    pub(crate) fn raw_at(&self, i: usize) -> Option<&std::ffi::OsString> {
+        self.raw.get(i).and_then(Option::as_ref)
+    }
+
+    /// `@FR-Path-Utf8` — is the last name one loft text cannot spell (shown with U+FFFD)?
+    #[must_use]
+    pub fn last_is_unspellable(&self) -> bool {
+        self.raw.last().is_some_and(Option::is_some)
+    }
+
+    /// The spelling handed to the OS: [`PathText::native`], except that a name kept in the
+    /// OS's own spelling is handed over as it was received.
+    #[must_use]
+    pub fn os_spelling(&self) -> std::path::PathBuf {
+        if self.raw.iter().all(Option::is_none) {
+            return std::path::PathBuf::from(self.native());
+        }
+        let head = PathText {
+            parts: Vec::new(),
+            raw: Vec::new(),
+            ..self.clone()
+        };
+        let mut out = if head.prefix.is_empty() && !head.rooted {
+            std::path::PathBuf::new()
+        } else {
+            std::path::PathBuf::from(head.native())
+        };
+        for (i, part) in self.parts.iter().enumerate() {
+            match self.raw_at(i) {
+                Some(raw) => out.push(raw),
+                None => out.push(part),
+            }
+        }
+        out
+    }
+
+    /// A path the OS handed over, keeping each name its text cannot hold in the OS's own
+    /// spelling.  `lossy` is its text parsed under `flavor`; `os` is the same path.
+    pub(crate) fn keeping_os_names(mut lossy: PathText, os: &std::path::Path) -> PathText {
+        if os.to_str().is_some() {
+            return lossy;
+        }
+        let mut parts = Vec::new();
+        let mut raw = Vec::new();
+        for c in os.components() {
+            match c {
+                std::path::Component::Normal(n) => {
+                    parts.push(n.to_string_lossy().into_owned());
+                    raw.push(n.to_str().is_none().then(|| n.to_os_string()));
+                }
+                std::path::Component::ParentDir => {
+                    if parts.last().is_some_and(|l: &String| l != "..") {
+                        parts.pop();
+                        raw.pop();
+                    } else if !lossy.rooted {
+                        parts.push("..".to_string());
+                        raw.push(None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lossy.parts = parts;
+        lossy.raw = raw;
+        lossy
     }
 
     /// Does the path END with these components (`["database", "mod.rs"]`)?  The way to

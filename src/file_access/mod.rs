@@ -28,11 +28,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 impl PathText {
-    /// A host path the OS handed over (`current_exe`, a directory listing, a home dir).
-    /// Lossy for a name that is not UTF-8, which the compiler's sources never are.
+    /// A host path the OS handed over (`current_exe`, a directory listing, a home dir).  A
+    /// name that is not UTF-8 is shown with U+FFFD and kept in the OS's own spelling, so the
+    /// path still reaches the file it came from (`@FR-Path-Utf8`).
     #[must_use]
     pub fn from_os(path: &Path) -> PathText {
-        PathText::host(&path.to_string_lossy())
+        PathText::keeping_os_names(PathText::host(&path.to_string_lossy()), path)
     }
 
     /// The spelling the OS is handed.  A HOST path reaches the OS as it is, and under the
@@ -41,7 +42,7 @@ impl PathText {
     /// Linux) is not a file here.
     fn os(&self) -> io::Result<PathBuf> {
         if self.flavor() == Flavor::HOST {
-            Ok(PathBuf::from(self.native()))
+            Ok(self.os_spelling())
         } else if self.flavor() == Flavor::program_host() {
             emulated::os(self)
         } else {
@@ -230,32 +231,29 @@ pub fn metadata(path: &PathText) -> io::Result<std::fs::Metadata> {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read_dir(path: &PathText) -> io::Result<Vec<PathText>> {
-    list(path, false)
-}
-
-/// [`read_dir`] without the entries whose name is not UTF-8 — the listing a PROGRAM gets,
-/// where such a name could not be spelled back to the file it came from.
-///
-/// # Errors
-/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
-pub fn read_dir_utf8(path: &PathText) -> io::Result<Vec<PathText>> {
-    list(path, true)
-}
-
-fn list(path: &PathText, utf8_only: bool) -> io::Result<Vec<PathText>> {
     run(path, |p| {
         let mut out = Vec::new();
+        let mut unspellable = false;
         for entry in std::fs::read_dir(p)? {
             let entry = entry?.path();
-            if utf8_only && entry.file_name().and_then(|n| n.to_str()).is_none() {
-                continue;
-            }
+            // `@FR-Path-Utf8` — listed, shown with U+FFFD, kept in the OS's own spelling.
+            unspellable |= entry.file_name().and_then(|n| n.to_str()).is_none();
             if path.flavor() != Flavor::HOST && emulated::is_stream(&entry) {
                 continue;
             }
             out.push(PathText::from_os_as(&entry, path));
         }
         out.sort_by_key(PathText::portable);
+        if unspellable {
+            log_once(
+                &path.portable(),
+                &format!(
+                    "`{}` holds a name that is not valid text; it is listed with U+FFFD in \
+                     its place, and no path can name it (formal/paths.md)",
+                    path.portable()
+                ),
+            );
+        }
         Ok(out)
     })
 }
@@ -327,14 +325,19 @@ pub fn program_path(raw: &str) -> Result<String, String> {
 /// program operation resolves its path more than once (`file(p).write(..)` does twice), and a
 /// refusal said three times reads as three problems.
 pub fn log_refusal_once(raw: &str, why: &str) {
+    log_once(raw, &format!("the path `{raw}` is refused: {why}"));
+}
+
+/// One log line per `key` per process.
+fn log_once(key: &str, line: &str) {
     static SAID: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
         std::sync::Mutex::new(None);
     let first = SAID.lock().map_or(true, |mut said| {
         said.get_or_insert_with(Default::default)
-            .insert(raw.to_string())
+            .insert(key.to_string())
     });
     if first {
-        crate::loft_eprintln!("loft: the path `{raw}` is refused: {why}");
+        crate::loft_eprintln!("loft: {line}");
     }
 }
 
@@ -397,6 +400,17 @@ pub fn case_clash(full: &str) -> Result<(), String> {
     if let Some(name) = missing
         && let Ok(entries) = read_dir(&existing)
     {
+        // `@FR-Path-Utf8` — the name does not exist as spelled, so an entry that SHOWS as it
+        // is one whose real name is not text: the spelling reaches no file, and a write would
+        // add a second entry that lists the same.
+        if entries
+            .iter()
+            .any(|e| e.last_is_unspellable() && e.file_name() == Some(name.as_str()))
+        {
+            return Err(format!(
+                "`{name}` is how loft shows a name that is not valid text, and names no file"
+            ));
+        }
         let lower = name.to_lowercase();
         if let Some(other) = entries
             .iter()

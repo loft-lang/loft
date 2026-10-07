@@ -84,3 +84,81 @@ under_the_emulated_host! {
     one_file_handle_reads_and_writes => "one-file-handle-reads-and-writes-and-a-short-read-is-null.loft",
     the_reference_file_writes_its_widths => "the-reference-file-writes-the-widths-it-lists.loft",
 }
+
+/// `@FR-Path-Utf8` — a name loft text cannot spell is LISTED (with U+FFFD) and never REACHED.
+/// The directory holds two such names that show alike (`a?.txt`), a real name spelled with
+/// U+FFFD on disk (`c?.txt`, its own exact spelling) and a plain one.  A loft program cannot
+/// make such a name, so the fixture does (`platform::name_that_is_not_text`).  Both backends,
+/// with and without the emulated host; the expected lines are written out by hand.
+#[test]
+fn a_name_that_is_not_text_is_listed_and_never_reached() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = std::env::temp_dir().join(format!("loft_not_text_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let one = dir.join(loft::platform::name_that_is_not_text("a", ".txt"));
+    if let Err(e) = std::fs::write(&one, "one") {
+        // macOS (APFS) holds only valid UTF-8 names: there the rule has nothing to refuse.
+        eprintln!("this file system refuses a name that is not text ({e}); nothing to check");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    let two = dir.join(loft::platform::another_name_that_is_not_text("a", ".txt"));
+    std::fs::write(&two, "two").expect("second name");
+    std::fs::write(dir.join("c\u{FFFD}.txt"), "exact").expect("exact name");
+    std::fs::write(dir.join("b.txt"), "plain").expect("plain name");
+    let d = dir.to_string_lossy().replace('\\', "/");
+    let program = dir.with_extension("loft");
+    std::fs::write(
+        &program,
+        format!(
+            r#"fn main() {{
+  d = "{d}";
+  names = list_dir(d) ?? [];
+  println("listed {{len(names)}}: {{names}}");
+  paths = 0;
+  for f in file(d).files() {{ paths += 1; }}
+  println("files {{paths}}");
+  bad = "{{d}}/a\u{{FFFD}}.txt";
+  println("exists {{exists(bad)}}");
+  println("content {{file(bad).content() ?? "null"}}");
+  println("write {{file(bad).write("y").ok()}}");
+  println("delete {{delete(bad).ok()}}");
+  println("exact {{file("{{d}}/c\u{{FFFD}}.txt").content() ?? "null"}}");
+  println("plain {{file("{{d}}/b.txt").content() ?? "null"}}");
+}}
+"#
+        ),
+    )
+    .expect("program");
+    let want = "listed 4: [\"a\u{FFFD}.txt\",\"a\u{FFFD}.txt\",\"b.txt\",\"c\u{FFFD}.txt\"]\n\
+                files 4\nexists false\ncontent null\nwrite false\ndelete false\n\
+                exact exact\nplain plain\n";
+    for host in ["", "windows"] {
+        for backend in ["--interpret", "--native"] {
+            let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+                .current_dir(root)
+                .env("LOFT_POISON_HOST", host)
+                .env("LOFT_TIMEOUT", "240")
+                .args([backend, &program.to_string_lossy()])
+                .output()
+                .expect("run loft");
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert_eq!(stdout, want, "{backend} host={host:?}\n{stderr}");
+            assert_eq!(
+                stderr
+                    .matches("holds a name that is not valid text")
+                    .count(),
+                1,
+                "one line names the directory ({backend} host={host:?}):\n{stderr}"
+            );
+            // Nothing was reached: both files keep their content, and no third `a?.txt`.
+            assert_eq!(std::fs::read_to_string(&one).unwrap(), "one");
+            assert_eq!(std::fs::read_to_string(&two).unwrap(), "two");
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 4);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&program);
+}

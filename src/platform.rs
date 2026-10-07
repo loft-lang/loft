@@ -1393,3 +1393,56 @@ mod driver_death_tests {
         assert_eq!(child.wait().expect("wait").signal(), Some(libc::SIGTERM));
     }
 }
+
+/// `@FR-Path-Utf8` — `{before}<x>{after}` where `<x>` is what this platform's names can hold
+/// and loft text cannot: the byte 0xFF on Unix, an unpaired UTF-16 half on Windows.  For the
+/// guards that make such a file; a loft program can never spell one.
+#[must_use]
+pub fn name_that_is_not_text(before: &str, after: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = before.as_bytes().to_vec();
+        bytes.push(0xFF);
+        bytes.extend_from_slice(after.as_bytes());
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = before.encode_utf16().collect();
+        wide.push(0xD800);
+        wide.extend(after.encode_utf16());
+        std::ffi::OsString::from_wide(&wide)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::ffi::OsString::from(format!("{before}\u{FFFD}{after}"))
+    }
+}
+
+/// Like [`name_that_is_not_text`], with a second, different byte (0xFE / the other UTF-16
+/// half), so two such names can show alike.
+#[must_use]
+pub fn another_name_that_is_not_text(before: &str, after: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = before.as_bytes().to_vec();
+        bytes.push(0xFE);
+        bytes.extend_from_slice(after.as_bytes());
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = before.encode_utf16().collect();
+        wide.push(0xDC00);
+        wide.extend(after.encode_utf16());
+        std::ffi::OsString::from_wide(&wide)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::ffi::OsString::from(format!("{before}\u{FFFD}{after}"))
+    }
+}
