@@ -6683,6 +6683,41 @@ impl Output<'_> {
             .for_each_child(&mut |child| Self::collect_returned_vars(child, out));
     }
 
+    /// [`Self::live_entry_check`]'s arm for a destination twin (`@FR-R-Destination`).
+    fn dest_live_arm(
+        def: &crate::data::Definition,
+        dt: &destination::Shape,
+        idx: usize,
+        thunk: &str,
+        pre: &str,
+        pushes: &str,
+        post: &str,
+    ) -> String {
+        let rb = sanitize(def.variables().name(dt.rb));
+        let reads: Vec<String> = dt
+            .scalars
+            .iter()
+            .map(|sc| {
+                let off = sc.off;
+                match sc.rust {
+                    "u8" => {
+                        format!("(__s.store(&__lr).get_byte(__lr.rec, __lr.pos + {off}, 0) as u8)")
+                    }
+                    "f64" => format!("__s.store(&__lr).get_float(__lr.rec, __lr.pos + {off})"),
+                    "f32" => format!("__s.store(&__lr).get_single(__lr.rec, __lr.pos + {off})"),
+                    _ => format!("__s.store(&__lr).get_int(__lr.rec, __lr.pos + {off})"),
+                }
+            })
+            .collect();
+        let tail = if reads.len() == 1 { "," } else { "" };
+        format!(
+            "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &mut Stores = unsafe {{ &mut *cell.get() }}; __s.move_field_out(&DbRef {{ store_nr: __lr.store_nr, rec: __lr.rec, pos: __lr.pos + {vo} }}, &var_{rb}, {vt}_u16); let __t = ({}{tail}); OpFreeRef(cell, __lr, \"__lr\"); return __t; }}\n",
+            reads.join(", "),
+            vo = dt.vo,
+            vt = dt.vt
+        )
+    }
+
     fn live_entry_check(&mut self, def: &crate::data::Definition) -> Option<String> {
         if def.name() == "n_main" {
             return None;
@@ -6772,28 +6807,8 @@ impl Output<'_> {
         // `@FR-R-Destination` — the parked call answers its record; its moved field relocates
         // into the caller's element and its scalars come back as the twin's tuple.
         if let Some(dt) = &self.dest_twin {
-            let rb = sanitize(def.variables().name(dt.rb));
-            let reads: Vec<String> = dt
-                .scalars
-                .iter()
-                .map(|sc| {
-                    let off = sc.off;
-                    match sc.rust {
-                        "u8" => format!(
-                            "(__s.store(&__lr).get_byte(__lr.rec, __lr.pos + {off}, 0) as u8)"
-                        ),
-                        "f64" => format!("__s.store(&__lr).get_float(__lr.rec, __lr.pos + {off})"),
-                        "f32" => format!("__s.store(&__lr).get_single(__lr.rec, __lr.pos + {off})"),
-                        _ => format!("__s.store(&__lr).get_int(__lr.rec, __lr.pos + {off})"),
-                    }
-                })
-                .collect();
-            let tail = if reads.len() == 1 { "," } else { "" };
-            return Some(format!(
-                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &mut Stores = unsafe {{ &mut *cell.get() }}; __s.move_field_out(&DbRef {{ store_nr: __lr.store_nr, rec: __lr.rec, pos: __lr.pos + {vo} }}, &var_{rb}, {vt}_u16); let __t = ({}{tail}); OpFreeRef(cell, __lr, \"__lr\"); return __t; }}\n",
-                reads.join(", "),
-                vo = dt.vo,
-                vt = dt.vt
+            return Some(Self::dest_live_arm(
+                def, dt, idx, thunk, &pre, &pushes, &post,
             ));
         }
         if let Some(fields) = self.value_records.fn_fields(self.def_nr) {
