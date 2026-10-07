@@ -5,6 +5,7 @@
 //! declines, read off `LOFT_TRACE_REFILL_TEXT` during `--native-emit` (code generation only,
 //! no rustc).  The cells' values pass with either form, so only this pin sees a site that
 //! stops being taken or one that starts being taken for the wrong reason.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -60,7 +61,7 @@ fn emit_file(cells: &str, env: &[(&str, &str)]) -> (String, bool) {
         cmd.env(k, v);
     }
     let res = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     (
         String::from_utf8_lossy(&res.stderr).into_owned(),
         res.status.success(),

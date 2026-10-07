@@ -5,6 +5,7 @@
 //! reads a file keeps its vector header.  `LOFT_NO_WRITE_HOIST=1` turns the whole in-place
 //! tier off.  The cell corpus (`tests/scripts/158-scalar-file-read.loft`) says the VALUES
 //! hold on both backends and under `LOFT_HOIST_VERIFY=1`; this pins what is emitted.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -36,14 +37,14 @@ fn hoist_blocks(tag: &str, env: &[(&str, &str)]) -> Vec<(String, usize)> {
         cmd.env(k, v);
     }
     let status = cmd.output().expect("spawn loft");
-    let src = std::fs::read_to_string(&out).unwrap_or_else(|e| {
+    let src = fa::read_to_string(&out).unwrap_or_else(|e| {
         panic!(
             "no emission at {}: {e}\n{}",
             out.display(),
             String::from_utf8_lossy(&status.stderr)
         )
     });
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
     let mut rows: Vec<(String, usize)> = Vec::new();
     for line in src.lines() {
         if let Some(rest) = line.strip_prefix("fn ") {

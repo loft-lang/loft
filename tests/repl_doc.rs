@@ -10,6 +10,7 @@
 //! example in a scratch session.
 
 use loft::doc_catalogue::{self, GROUPS, MAINTAINERS_GROUP};
+use loft::file_access as fa;
 use loft::repl::ReplSession;
 use loft::repl_doc;
 use std::io::Write as _;
@@ -32,7 +33,7 @@ fn words(s: &str) -> Vec<String> {
 /// A page's body as published in `doc/features/<tag>.md`: the generator's header removed, and
 /// the `<!-- keys -->` comment, which is data and not text.
 fn page_body(tag: &str) -> Option<String> {
-    let page = std::fs::read_to_string(format!("doc/features/{tag}.md")).ok()?;
+    let page = fa::read_to_string(format!("doc/features/{tag}.md")).ok()?;
     let title_line = page.find("\n# ")?;
     let after_title = page[title_line + 1..].split_once('\n')?.1;
     Some(

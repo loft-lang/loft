@@ -20,6 +20,7 @@
 //! the fold's Python body is lifted from `registry_maintain.sh`, and the gate helper is
 //! invoked directly.  A restatement here would be a second list that drifts from the first.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -29,8 +30,8 @@ fn repo_root() -> PathBuf {
 
 fn work_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_regcat_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("temp dir");
     dir
 }
 
@@ -38,7 +39,7 @@ fn work_dir(tag: &str) -> PathBuf {
 /// unpacking to the heredoc terminator.  Reading the script keeps this test honest — an
 /// edit that changes the rule changes what runs here too.
 fn fold_source() -> String {
-    let script = std::fs::read_to_string(repo_root().join("scripts/registry_maintain.sh"))
+    let script = fa::read_to_string(repo_root().join("scripts/registry_maintain.sh"))
         .expect("registry_maintain.sh readable");
     let start = script
         .find("index_path, name, ver, entry_path, homepage, desc, desc_src, cats_raw")
@@ -58,9 +59,9 @@ impl Fold {
     fn new(tag: &str) -> Self {
         let dir = work_dir(tag);
         let script = dir.join("fold.py");
-        std::fs::write(&script, fold_source()).expect("write fold");
+        fa::write(&script, fold_source()).expect("write fold");
         let index = dir.join("index.json");
-        std::fs::write(
+        fa::write(
             &index,
             r#"{"schema_version": 1, "updated": "2026-08-01T00:00:00Z", "packages": {
                  "already": {"description": "an existing library",
@@ -105,7 +106,7 @@ impl Fold {
         desc: &str,
     ) -> (bool, String) {
         let entry = self.dir.join(format!("entry_{name}_{ver}.json"));
-        std::fs::write(
+        fa::write(
             &entry,
             format!(
                 r#""{ver}": {{"url": "u", "sha256": "s", "published": "2026-08-21T00:00:00Z"}}"#
@@ -114,9 +115,9 @@ impl Fold {
         .expect("write entry");
         let err_path = self.dir.join(format!("pub_{name}.err"));
         match stderr {
-            Some(text) => std::fs::write(&err_path, text).expect("write stderr log"),
+            Some(text) => fa::write(&err_path, text).expect("write stderr log"),
             None => {
-                let _ = std::fs::remove_file(&err_path);
+                let _ = fa::remove_file(&err_path);
             }
         }
         let out = Command::new("python3")
@@ -147,7 +148,7 @@ impl Fold {
     }
 
     fn categories_of(&self, name: &str) -> Vec<String> {
-        let raw = std::fs::read_to_string(&self.index).expect("read index");
+        let raw = fa::read_to_string(&self.index).expect("read index");
         // Deliberately crude: the index is a fixture, and pulling in a JSON dependency to
         // read one array would be more machinery than the assertion is worth.
         let key = format!("\"{name}\"");
@@ -180,7 +181,7 @@ fn a_new_package_without_categories_is_refused() {
         "the refusal must name the field:\n{out}"
     );
     assert!(
-        !std::fs::read_to_string(&fold.index)
+        !fa::read_to_string(&fold.index)
             .expect("read index")
             .contains("newpkg"),
         "a refused publish must not leave the package in the index"
@@ -233,7 +234,7 @@ fn an_empty_deps_carries_the_previous_versions_forward() {
     let fold = Fold::new("deps_carry");
     let (ok, out) = fold.publish("withdeps", "0.2.0", "");
     assert!(ok, "the fold refused an existing package:\n{out}");
-    let index = std::fs::read_to_string(&fold.index).expect("read index");
+    let index = fa::read_to_string(&fold.index).expect("read index");
     assert_eq!(
         index.matches("hex_field").count(),
         2,
@@ -263,7 +264,7 @@ fn a_source_dependency_in_neither_place_is_refused() {
         "the refusal must name what the source uses:\n{out}"
     );
     assert!(
-        !std::fs::read_to_string(&fold.index)
+        !fa::read_to_string(&fold.index)
             .expect("read index")
             .contains("newpkg"),
         "a refused publish must not leave the package in the index"
@@ -290,14 +291,14 @@ fn malformed_categories_are_refused() {
 /// registry's, which is exactly why the gate reads them from the checkout.
 fn registry_fixture(tag: &str, validator: Option<&str>) -> PathBuf {
     let dir = work_dir(tag);
-    std::fs::write(
+    fa::write(
         dir.join("index.json"),
         r#"{"schema_version": 1, "packages": {}}"#,
     )
     .expect("write index");
     if let Some(body) = validator {
-        std::fs::create_dir_all(dir.join("tools")).expect("tools dir");
-        std::fs::write(dir.join("tools/validate.py"), body).expect("write validator");
+        fa::create_dir_all(dir.join("tools")).expect("tools dir");
+        fa::write(dir.join("tools/validate.py"), body).expect("write validator");
     }
     dir
 }
@@ -404,19 +405,19 @@ fn a_refreshed_description_or_list_is_marked_for_the_signer() {
     let (ok, out) = fold.publish_described("already", "0.2.0", "", None, "an existing library");
     assert!(ok, "{out}");
     assert!(
-        !fold.meta_mark("already").exists(),
+        !fa::exists(fold.meta_mark("already")),
         "unchanged metadata is not marked"
     );
     let (ok, out) = fold.publish_described("already", "0.3.0", "", None, "a corrected line");
     assert!(ok, "{out}");
     assert!(
-        fold.meta_mark("already").exists(),
+        fa::exists(fold.meta_mark("already")),
         "a refreshed description is marked"
     );
     let (ok, out) = fold.publish("fresh", "0.1.0", r#"["text"]"#);
     assert!(ok, "{out}");
     assert!(
-        !fold.meta_mark("fresh").exists(),
+        !fa::exists(fold.meta_mark("fresh")),
         "a new package is not marked"
     );
 }

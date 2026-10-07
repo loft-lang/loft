@@ -13,6 +13,7 @@
 //! Every case runs against a FAKE `LOFT_HOME` holding a hand-written index, so
 //! the assertions never depend on what the developer happens to have cached.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -114,13 +115,13 @@ const INDEX: &str = r#"{
 fn diagnostics_for(tag: &str, src: &str, with_index: bool) -> String {
     let pid = std::process::id();
     let home = std::env::temp_dir().join(format!("loft_fnhint_{tag}_{pid}"));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(home.join(".loft/registry")).expect("mkdir registry");
+    let _ = fa::remove_dir_all(&home);
+    fa::create_dir_all(home.join(".loft/registry")).expect("mkdir registry");
     if with_index {
-        std::fs::write(home.join(".loft/registry/index.json"), INDEX).expect("write index");
+        fa::write(home.join(".loft/registry/index.json"), INDEX).expect("write index");
     }
     let prog = home.join("prog.loft");
-    std::fs::write(&prog, src).expect("write program");
+    fa::write(&prog, src).expect("write program");
 
     let out = Command::new(loft_bin())
         .args(["--interpret", "--errors=compact"])
@@ -130,7 +131,7 @@ fn diagnostics_for(tag: &str, src: &str, with_index: bool) -> String {
         .expect("invoke loft");
     let text =
         String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     text
 }
 
@@ -199,27 +200,27 @@ fn no_cached_index_still_reports_the_plain_error() {
 fn diagnostics_with_local_random(tag: &str, src: &str) -> String {
     let pid = std::process::id();
     let home = std::env::temp_dir().join(format!("loft_fnhint_{tag}_{pid}"));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(home.join(".loft/registry")).expect("mkdir registry");
-    std::fs::write(home.join(".loft/registry/index.json"), INDEX).expect("write index");
+    let _ = fa::remove_dir_all(&home);
+    fa::create_dir_all(home.join(".loft/registry")).expect("mkdir registry");
+    fa::write(home.join(".loft/registry/index.json"), INDEX).expect("write index");
 
     // A LOCAL `random` with a different API — no `rand`.
     let pkg = home.join("libs/random/src");
-    std::fs::create_dir_all(&pkg).expect("mkdir pkg");
-    std::fs::write(
+    fa::create_dir_all(&pkg).expect("mkdir pkg");
+    fa::write(
         home.join("libs/random/loft.toml"),
         "[package]\nname = \"random\"\nversion = \"0.0.1\"\nloft = \">=0.1\"\n\n\
          [library]\nentry = \"src/random.loft\"\n",
     )
     .expect("write manifest");
-    std::fs::write(
+    fa::write(
         pkg.join("random.loft"),
         "pub fn something_else() -> integer { return 1 }\n",
     )
     .expect("write lib");
 
     let prog = home.join("prog.loft");
-    std::fs::write(&prog, src).expect("write program");
+    fa::write(&prog, src).expect("write program");
     let out = Command::new(loft_bin())
         .args(["--interpret", "--errors=compact", "--lib"])
         .arg(home.join("libs"))
@@ -229,7 +230,7 @@ fn diagnostics_with_local_random(tag: &str, src: &str) -> String {
         .expect("invoke loft");
     let text =
         String::from_utf8_lossy(&out.stderr).into_owned() + &String::from_utf8_lossy(&out.stdout);
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
     text
 }
 

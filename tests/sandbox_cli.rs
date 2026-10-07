@@ -7,6 +7,7 @@
 //! a clean sandboxed program also runs on `--native` (admission is backend-agnostic —
 //! the forced interpret-only was dropped, an admitted script is fault-free on both).
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -20,9 +21,9 @@ fn workspace_root() -> std::path::PathBuf {
 /// stdlib is found relative to the workspace root), return `(success, stderr)`.
 fn run(name: &str, prog: &str, toml: &str, native: bool) -> (bool, String) {
     let dir = std::env::temp_dir().join(format!("loft_sbcli_{}_{name}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    std::fs::write(dir.join("prog.loft"), prog).unwrap();
-    std::fs::write(dir.join("loft.toml"), toml).unwrap();
+    let _ = fa::create_dir_all(&dir);
+    fa::write(dir.join("prog.loft"), prog).unwrap();
+    fa::write(dir.join("loft.toml"), toml).unwrap();
     let mut cmd = Command::new(loft_bin());
     if native {
         cmd.arg("--native");
@@ -32,7 +33,7 @@ fn run(name: &str, prog: &str, toml: &str, native: bool) -> (bool, String) {
         .arg(dir.join("prog.loft"))
         .current_dir(workspace_root());
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -120,11 +121,11 @@ fn sandboxed_clean_program_runs_on_native() {
 #[test]
 fn warm_program_cache_does_not_bypass_admission() {
     let dir = std::env::temp_dir().join(format!("loft_sbcache_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     let home = dir.join("home");
-    std::fs::create_dir_all(&home).unwrap();
+    fa::create_dir_all(&home).unwrap();
     let prog = dir.join("prog.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "fn scripted() -> integer { mtime(\"Cargo.toml\") }\n\
          fn main() -> integer { scripted() }\n",
@@ -132,7 +133,7 @@ fn warm_program_cache_does_not_bypass_admission() {
     .unwrap();
 
     let run = |toml: &str| -> (bool, String) {
-        std::fs::write(dir.join("loft.toml"), toml).unwrap();
+        fa::write(dir.join("loft.toml"), toml).unwrap();
         let out = Command::new(loft_bin())
             .env_remove("LOFT_NO_CACHE")
             .env("LOFT_HOME", &home)
@@ -159,7 +160,7 @@ fn warm_program_cache_does_not_bypass_admission() {
     let restrictive = "[sandbox]\nmod = [\"fn:scripted\"]\n\
                        [profile.mod]\nallow_libs = [\"code\"]\n";
     let (ok2, err2) = run(restrictive);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         !ok2,
         "the tightened policy must reject on the warm run (admission not bypassed): {err2}"
@@ -194,9 +195,9 @@ fn sandbox_check_reports_verdict_without_executing() {
     // (Admitted → stdout, Rejected → stderr) and the exit status.
     fn check(name: &str, prog: &str, toml: &str) -> (bool, String) {
         let dir = std::env::temp_dir().join(format!("loft_sccli_{}_{name}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("prog.loft"), prog).unwrap();
-        std::fs::write(dir.join("loft.toml"), toml).unwrap();
+        let _ = fa::create_dir_all(&dir);
+        fa::write(dir.join("prog.loft"), prog).unwrap();
+        fa::write(dir.join("loft.toml"), toml).unwrap();
         let out = Command::new(loft_bin())
             .arg("sandbox-check")
             .arg("--timeout")
@@ -205,7 +206,7 @@ fn sandbox_check_reports_verdict_without_executing() {
             .current_dir(workspace_root())
             .output()
             .expect("failed to invoke loft binary");
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = fa::remove_dir_all(&dir);
         let mut both = String::from_utf8_lossy(&out.stdout).into_owned();
         both.push_str(&String::from_utf8_lossy(&out.stderr));
         (out.status.success(), both)
@@ -269,20 +270,20 @@ fn sandbox_check_reports_verdict_without_executing() {
 fn a_c_binding_is_gated_by_native_ffi_not_by_a_capability_grant() {
     let dir = std::env::temp_dir().join(format!("loft_sbcli_cbind_{}", std::process::id()));
     let pkg = dir.join("lib").join("cbind").join("src");
-    std::fs::create_dir_all(&pkg).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&pkg).unwrap();
+    fa::write(
         dir.join("lib").join("cbind").join("loft.toml"),
         "[library]\nname = \"cbind\"\nversion = \"0.0.1\"\n",
     )
     .unwrap();
     // libc, so the binding needs no `[c] libs` entry and no library on disk:
     // admission runs at LOAD, and what is under test is the verdict.
-    std::fs::write(
+    fa::write(
         pkg.join("cbind.loft"),
         "pub fn c_len(s: text) -> integer db#read;   #c \"strlen\" \"size_t(const char*)\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dir.join("prog.loft"),
         "use cbind;\nfn scripted() -> integer { cbind::c_len(\"hello\") }\n\
          fn main() { println(\"len {scripted()}\") }\n",
@@ -290,7 +291,7 @@ fn a_c_binding_is_gated_by_native_ffi_not_by_a_capability_grant() {
     .unwrap();
 
     let verdict = |toml: &str| -> (bool, String) {
-        std::fs::write(dir.join("loft.toml"), toml).unwrap();
+        fa::write(dir.join("loft.toml"), toml).unwrap();
         let out = Command::new(loft_bin())
             .arg("--interpret")
             .arg("--timeout")
@@ -341,7 +342,7 @@ fn a_c_binding_is_gated_by_native_ffi_not_by_a_capability_grant() {
     assert!(ok3, "a wholesale-allowed library still admits it: {out3}");
     assert!(out3.contains("len 5"), "and the call must work: {out3}");
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// loft#1042 — a designation naming a profile that has no `[profile.<name>]`

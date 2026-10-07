@@ -21,6 +21,7 @@
 //!   - `LOFT_NO_WARN_RUNTIME=1` silences the warning entirely
 //!     (`silenced_by_env` cell).
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -35,7 +36,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// explicitly UNset and return (stdout, stderr, exit-status-code).
 fn run_with_warnings(name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_w42_{name}.loft"));
-    std::fs::write(&script_path, source).expect("write temp script");
+    fa::write(&script_path, source).expect("write temp script");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
@@ -43,7 +44,7 @@ fn run_with_warnings(name: &str, source: &str) -> (String, String, Option<i32>) 
         .env_remove("LOFT_NO_WARN_RUNTIME")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -62,7 +63,7 @@ fn run_with_w4(name: &str, source: &str) -> (String, String, Option<i32>) {
 /// clause into its fix's condition, so a test that pins it has to look there.
 fn run_with_w4_env(name: &str, source: &str, explain: bool) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_w4_{name}.loft"));
-    std::fs::write(&script_path, source).expect("write temp script");
+    fa::write(&script_path, source).expect("write temp script");
     let mut cmd = Command::new(loft_bin());
     cmd.arg("--interpret");
     if explain {
@@ -74,7 +75,7 @@ fn run_with_w4_env(name: &str, source: &str, explain: bool) -> (String, String, 
         .env("LOFT_WARN_REDUNDANT_AMP", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -315,7 +316,7 @@ fn main() {
 }
 ";
     let script_path = std::env::temp_dir().join("loft_w42_silenced.loft");
-    std::fs::write(&script_path, source).expect("write temp script");
+    fa::write(&script_path, source).expect("write temp script");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
@@ -323,7 +324,7 @@ fn main() {
         .env("LOFT_NO_WARN_RUNTIME", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     let diag = String::from_utf8_lossy(&out.stdout);
     assert!(
         !diag.contains("warning: integer division"),
@@ -454,7 +455,7 @@ fn main() {
 }
 ";
     let script_path = std::env::temp_dir().join("loft_w42_g4g_soft.loft");
-    std::fs::write(&script_path, source).expect("write");
+    fa::write(&script_path, source).expect("write");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg("--dev-soft-halt")
@@ -463,7 +464,7 @@ fn main() {
         .env_remove("LOFT_NO_WARN_RUNTIME")
         .output()
         .expect("invoke loft");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Both faults rendered to stderr.
@@ -652,7 +653,7 @@ fn main() {
             .arg("--interpret")
             .arg({
                 let p = std::env::temp_dir().join("loft_w42_hint4h_high.loft");
-                std::fs::write(&p, source).expect("write");
+                fa::write(&p, source).expect("write");
                 p
             })
             .current_dir(workspace_root())
@@ -690,7 +691,7 @@ fn main() {
 }
 ";
     let p = std::env::temp_dir().join("loft_w42_hint4h_already.loft");
-    std::fs::write(&p, source).expect("write");
+    fa::write(&p, source).expect("write");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&p)
@@ -699,7 +700,7 @@ fn main() {
         .env_remove("LOFT_NO_WARN_RUNTIME")
         .output()
         .expect("invoke loft");
-    let _ = std::fs::remove_file(&p);
+    let _ = fa::remove_file(&p);
     let diag = String::from_utf8_lossy(&out.stdout);
     assert!(
         !diag.contains("consider marking it `not null`"),
@@ -729,7 +730,7 @@ fn main() {
 }
 ";
     let p = std::env::temp_dir().join("loft_w42_hint4h_defended.loft");
-    std::fs::write(&p, source).expect("write");
+    fa::write(&p, source).expect("write");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&p)
@@ -738,7 +739,7 @@ fn main() {
         .env_remove("LOFT_NO_WARN_RUNTIME")
         .output()
         .expect("invoke loft");
-    let _ = std::fs::remove_file(&p);
+    let _ = fa::remove_file(&p);
     let diag = String::from_utf8_lossy(&out.stdout);
     assert!(
         !diag.contains("consider marking it `not null`"),
@@ -766,7 +767,7 @@ fn main() {
 }
 ";
     let p = std::env::temp_dir().join("loft_w42_hint4h_env.loft");
-    std::fs::write(&p, source).expect("write");
+    fa::write(&p, source).expect("write");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&p)
@@ -775,7 +776,7 @@ fn main() {
         .env("LOFT_NO_WARN_RUNTIME", "1")
         .output()
         .expect("invoke loft");
-    let _ = std::fs::remove_file(&p);
+    let _ = fa::remove_file(&p);
     let diag = String::from_utf8_lossy(&out.stdout);
     assert!(
         !diag.contains("consider marking it `not null`"),
@@ -792,7 +793,7 @@ fn main() {
 }
 ";
     let script_path = std::env::temp_dir().join("loft_w42_fmt43_env.loft");
-    std::fs::write(&script_path, source).expect("write temp script");
+    fa::write(&script_path, source).expect("write temp script");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
@@ -800,7 +801,7 @@ fn main() {
         .env("LOFT_FORMAT_BARE_NULL", "1")
         .output()
         .expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script_path);
+    let _ = fa::remove_file(&script_path);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("a=null"),

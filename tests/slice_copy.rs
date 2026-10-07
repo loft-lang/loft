@@ -5,6 +5,7 @@
 //! element keeps the per-element loop; `LOFT_NO_SLICE_COPY=1` keeps the loop everywhere;
 //! and the two cell files answer the same lines on both backends with the copy on and off
 //! (the A/B that falsifies the rewrite).  The VALUES are the cells' own.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -35,16 +36,16 @@ fn main() {
 
 fn introspect(src: &str, envs: &[(&str, &str)]) -> String {
     let root = std::env::temp_dir().join(format!("loft_slice_copy_{}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("scratch dir");
+    fa::create_dir_all(&root).expect("scratch dir");
     let path = root.join("probe.loft");
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     let mut cmd = Command::new(loft_bin());
     cmd.arg("introspect").arg(&path).env("RUST_BACKTRACE", "0");
     for (k, v) in envs {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("run loft introspect");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -109,7 +110,7 @@ fn run_cells(file: &str, backend: &str, envs: &[(&str, &str)]) -> String {
         std::process::id(),
         backend.trim_start_matches('-')
     ));
-    std::fs::create_dir_all(&root).expect("scratch dir");
+    fa::create_dir_all(&root).expect("scratch dir");
     let path = std::env::current_dir().expect("cwd").join(file);
     let mut cmd = Command::new(loft_bin());
     cmd.arg(backend)
@@ -121,7 +122,7 @@ fn run_cells(file: &str, backend: &str, envs: &[(&str, &str)]) -> String {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("run loft");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     assert!(
         out.status.success(),
         "{file} on {backend} with {envs:?} failed:\n{}{}",

@@ -8,12 +8,13 @@
 //! (JSON value) → continue (→ program `output` + `terminated`).  This is the surface
 //! an agent / CI drives the debugger through.
 
+use loft::file_access as fa;
 use std::io::Cursor;
 
 /// A unique temp path for a `.loft` program, keyed by tag + pid.
 fn tmp_program(tag: &str, src: &str) -> std::path::PathBuf {
     let p = std::env::temp_dir().join(format!("loft_rpc_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&p, src).expect("write temp program");
+    fa::write(&p, src).expect("write temp program");
     p
 }
 
@@ -79,7 +80,7 @@ fn rpc_launch_break_eval_continue() {
         "terminated: {out}"
     );
 
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN98 P1 — `eval`/`setValue` must work in a frame that HOLDS a heap (vector) local. Before the
@@ -130,7 +131,7 @@ fn rpc_eval_and_set_in_a_vector_local_frame() {
         out.contains("\"category\":\"stdout\",\"text\":\"len=3 x=42\""),
         "continue prints the edited x: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN98 P1b — the true live-frame eval: an expression that REFERENCES a keyed-collection
@@ -207,7 +208,7 @@ fn rpc_eval_in_a_keyed_collection_frame() {
         out.contains("\"category\":\"stdout\",\"text\":\"r=7 x=5\""),
         "continue prints correctly (paused frame intact after eval): {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // A conditional breakpoint whose condition reads a struct field: break only on the
@@ -243,7 +244,7 @@ fn rpc_conditional_breakpoint_struct_field() {
         out.contains("\"event\":\"terminated\""),
         "terminated: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // Plain (unconditional) break, then eval the whole struct — returned as a JSON object
@@ -278,7 +279,7 @@ fn rpc_eval_struct_as_json() {
         out.contains("\"event\":\"terminated\""),
         "terminated: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN16 D2 — eval of a bare *vector* local (the case the reconstruct-eval path
@@ -324,7 +325,7 @@ fn rpc_eval_bare_vector_live() {
         out.contains("\"event\":\"terminated\""),
         "terminated: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // `@FR-R-StackBase` — a step back restores the heap from a checkpoint, which REPLACES every
@@ -357,7 +358,7 @@ fn rpc_a_run_continues_on_the_restored_frame_after_a_step_back() {
         out.contains("\"category\":\"stdout\",\"text\":\"a=4\""),
         "the continued run computes from the restored a == 1: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN63 RX4 — `stepBack` REVERSES a forward step over the RPC (distinct from the edit-scoped
@@ -409,7 +410,7 @@ fn rpc_step_back_reverses_a_step() {
         !out.contains("\"event\":\"terminated\""),
         "no termination: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN63 SF — `stackTrace` returns the FULL runtime call stack (a `frames` array),
@@ -456,7 +457,7 @@ fn rpc_stack_trace_returns_full_call_stack() {
         stack_line.contains("{\"function\":\"main\","),
         "caller main is on the stack: {stack_line}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN63 DB — a `setWatch` on a BARE SCALAR LOCAL (a stack slot, previously "not a
@@ -491,7 +492,7 @@ fn rpc_watch_stack_local_fires_on_change() {
         out.contains("\"watch\":{\"label\":\"x\",\"old\":\"1\",\"new\":\"2\"}"),
         "old → new value reported: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN63 DB1 — a stack-local watch is bound to its frame: once that frame RETURNS the slot
@@ -527,7 +528,7 @@ fn rpc_watch_stack_local_drops_on_frame_exit() {
         out.contains("\"event\":\"terminated\""),
         "runs to termination: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // `setBreakpoints` answers with a per-breakpoint `verified` flag: `true` for a line
@@ -556,7 +557,7 @@ fn rpc_set_breakpoints_reports_verified() {
         out.contains("\"id\":3,\"ok\":true,\"breakpoints\":[{\"line\":2,\"verified\":false}]"),
         "unknown file never verifies: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // A tracepoint's `log` accepts a single expression as a plain string (sugar for a
@@ -591,7 +592,7 @@ fn rpc_tracepoint_log_accepts_plain_string() {
         out.contains("\"event\":\"terminated\""),
         "terminated: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN16 M5e slice 2 — `compile` checks a file (no run, no load) and emits a structured
@@ -618,7 +619,7 @@ fn rpc_compile_emits_structured_diagnostics() {
         out.contains("\"line\":2,\"col\":6,\"level\":\"advice\""),
         "structured advice at line 2:6: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // A file with an error compiles to an `error`-level diagnostic (and is not loaded).
@@ -639,7 +640,7 @@ fn rpc_compile_reports_errors() {
         out.contains("\"level\":\"error\""),
         "an error-level diagnostic: {out}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN16 M5e — bug 1: a REPL expression error must point at the user's INPUT line, not the

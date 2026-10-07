@@ -26,6 +26,7 @@
 //! the correction must still pass and an ordinary new-version publish must still pass,
 //! because a refusal that also blocks the everyday route would simply be turned off.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -36,7 +37,7 @@ fn repo_root() -> PathBuf {
 /// Lift the review block out of `registry-sign.sh` — the body of its `python3 - <<'PY'`
 /// heredoc, which is where every scope decision is made.
 fn review_source() -> String {
-    let script = std::fs::read_to_string(repo_root().join("scripts/registry-sign.sh"))
+    let script = fa::read_to_string(repo_root().join("scripts/registry-sign.sh"))
         .expect("registry-sign.sh readable");
     let open = script
         .find("python3 - \"$PREV\" \"$INDEX\" <<'PY'\n")
@@ -77,14 +78,14 @@ struct Verdict {
 /// Run the lifted review block over `prev` → `cur` with the given bound forms.
 fn review(tag: &str, prev: &str, cur: &str, expect: &str, expect_meta: &str) -> Verdict {
     let dir = std::env::temp_dir().join(format!("loft_signscope_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("temp dir");
     let script = dir.join("review.py");
-    std::fs::write(&script, review_source()).expect("write review");
+    fa::write(&script, review_source()).expect("write review");
     let p = dir.join("prev.json");
     let c = dir.join("cur.json");
-    std::fs::write(&p, prev).expect("write prev");
-    std::fs::write(&c, cur).expect("write cur");
+    fa::write(&p, prev).expect("write prev");
+    fa::write(&c, cur).expect("write cur");
     let out = Command::new("python3")
         .arg(&script)
         .arg(&p)
@@ -98,7 +99,7 @@ fn review(tag: &str, prev: &str, cur: &str, expect: &str, expect_meta: &str) -> 
         .expect("python3 runs the review block");
     let mut text = String::from_utf8_lossy(&out.stdout).to_string();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     Verdict {
         ok: out.status.success(),
         out: text,

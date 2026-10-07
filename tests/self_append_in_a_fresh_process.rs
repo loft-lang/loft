@@ -24,6 +24,7 @@
 //! leaves the wrong bytes behind, and the fixture's own assertions — which compare CONTENT, not
 //! length — are what catch that; this cell adds the channel they cannot reach from inside.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -35,7 +36,11 @@ fn loft_bin() -> PathBuf {
 fn self_append_past_the_reallocation_threshold_survives_a_fresh_process() {
     let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/1062-self-append-reallocation.loft");
-    assert!(fixture.is_file(), "fixture missing: {}", fixture.display());
+    assert!(
+        fa::is_file(&fixture),
+        "fixture missing: {}",
+        fixture.display()
+    );
 
     let out = Command::new(loft_bin())
         .arg("--interpret")

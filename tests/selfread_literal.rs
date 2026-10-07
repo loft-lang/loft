@@ -9,6 +9,7 @@
 //!
 //! The cell corpus (`bytecode-comparisons/V-w-selfread-literal-cells.loft`) can only say
 //! the VALUES hold; this pins WHICH route each cell takes, read off `--native-emit`.
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -42,12 +43,12 @@ fn emit(src: &Path, out: &Path) -> String {
         .output()
         .expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 #[test]
@@ -75,5 +76,5 @@ fn each_cell_takes_exactly_the_route_predicted() {
         assert_eq!(s, *snap, "{name}: whole-vector snapshot mentions");
         assert_eq!(t, *temps, "{name}: hoisted read-temp mentions");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

@@ -13,6 +13,7 @@
 //! program — is what proves the refusal is about the injected declaration and not about
 //! `--path` at a copy.
 
+use loft::file_access as fa;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,12 +29,12 @@ fn copy_stdlib(tag: &str) -> PathBuf {
         .join("tmp")
         .join(format!("stdlib-skew-{tag}-{}", std::process::id()));
     let dst = base.join("default");
-    let _ = fs::remove_dir_all(&base);
-    fs::create_dir_all(&dst).unwrap();
+    let _ = fa::remove_dir_all(&base);
+    fa::create_dir_all(&dst).unwrap();
     for entry in fs::read_dir(root().join("default")).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_some_and(|e| e == "loft") {
-            fs::copy(&path, dst.join(path.file_name().unwrap())).unwrap();
+            fa::copy(&path, dst.join(path.file_name().unwrap())).unwrap();
         }
     }
     base
@@ -41,7 +42,7 @@ fn copy_stdlib(tag: &str) -> PathBuf {
 
 fn run_with(stdlib_parent: &Path) -> (bool, String, String) {
     let prog = stdlib_parent.join("hello.loft");
-    fs::write(&prog, "fn main() {\n  println(\"ran {1 + 1}\");\n}\n").unwrap();
+    fa::write(&prog, "fn main() {\n  println(\"ran {1 + 1}\");\n}\n").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .args(["--path", stdlib_parent.to_str().unwrap(), "--interpret"])
         .arg(&prog)
@@ -79,14 +80,14 @@ fn the_untouched_copy_runs_the_program() {
     let (ok, out, err) = run_with(&base);
     assert!(ok, "control run failed:\n{err}");
     assert_eq!(out.trim(), "ran 2");
-    let _ = fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 }
 
 #[test]
 fn an_operator_declared_mid_table_is_refused_by_slot_and_name() {
     let base = copy_stdlib("shifted");
     let file = base.join("default").join("01_code.loft");
-    let code = fs::read_to_string(&file).unwrap();
+    let code = fa::read_to_string(&file).unwrap();
     let (at, pair) = goto_word_pair(&code);
     let mut lines: Vec<String> = code.lines().map(str::to_string).collect();
     // Right after the OpGotoWord pair.  The probe is an ordinary (not `#hot`) operator, and
@@ -95,7 +96,7 @@ fn an_operator_declared_mid_table_is_refused_by_slot_and_name() {
     // binary's table carries there.  Both are read from that table, so a renumbered table
     // moves the expectation with it.
     lines.insert(at + 1, pair.replace("OpGotoWord", "OpSkewProbe"));
-    fs::write(&file, lines.join("\n") + "\n").unwrap();
+    fa::write(&file, lines.join("\n") + "\n").unwrap();
     let names = loft::fill::OPERATOR_NAMES;
     let slot = names
         .iter()
@@ -115,7 +116,7 @@ fn an_operator_declared_mid_table_is_refused_by_slot_and_name() {
         "{err}"
     );
     assert!(out.trim().is_empty(), "nothing may run: {out}");
-    let _ = fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 }
 
 #[test]
@@ -130,9 +131,9 @@ fn an_operator_past_the_table_names_make_fill() {
         .collect();
     files.sort();
     let file = files.pop().expect("a stdlib file");
-    let mut code = fs::read_to_string(&file).unwrap();
+    let mut code = fa::read_to_string(&file).unwrap();
     let (_, pair) =
-        goto_word_pair(&fs::read_to_string(base.join("default").join("01_code.loft")).unwrap());
+        goto_word_pair(&fa::read_to_string(base.join("default").join("01_code.loft")).unwrap());
     code.push('\n');
     // `#cold`: operators are numbered hot, then ordinary, then cold, so only a cold one
     // declared last lies past the whole table — an ordinary one would take the first cold
@@ -143,7 +144,7 @@ fn an_operator_past_the_table_names_make_fill() {
         decl.replace("OpGotoWord", "OpSkewTail")
     ));
     code.push('\n');
-    fs::write(&file, code).unwrap();
+    fa::write(&file, code).unwrap();
     let (ok, out, err) = run_with(&base);
     assert!(!ok, "a stdlib with an extra operator ran:\n{out}");
     assert!(
@@ -151,5 +152,5 @@ fn an_operator_past_the_table_names_make_fill() {
         "{err}"
     );
     assert!(err.contains("make fill"), "{err}");
-    let _ = fs::remove_dir_all(&base);
+    let _ = fa::remove_dir_all(&base);
 }

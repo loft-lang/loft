@@ -10,8 +10,8 @@
 
 #![cfg(feature = "mmap")]
 
+use loft::file_access as fa;
 use loft::store::{CorruptReason, Store, StoreFormat, StoreIntegrity};
-use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -21,8 +21,8 @@ fn scratch(test_name: &str) -> PathBuf {
     let dir = std::env::temp_dir()
         .join("loft-store-durable-tests")
         .join(test_name);
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create scratch dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
 
@@ -54,7 +54,7 @@ fn build_sidecar(
 
 /// Write a synthetic main file with deterministic contents.
 fn write_main_file(path: &Path, content: &[u8]) {
-    let mut f = fs::File::create(path).expect("create main file");
+    let mut f = fa::create(path).expect("create main file");
     f.write_all(content).expect("write main file");
     f.sync_all().expect("fsync main file");
 }
@@ -90,7 +90,7 @@ fn detect_format_valid_sidecar_is_durable_tier_1() {
         payload_crc(content),
         None,
     );
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::detect_format(&main).unwrap(),
         StoreFormat::Durable(1)
@@ -114,7 +114,7 @@ fn validate_clean_when_everything_matches() {
         payload_crc(&content),
         None,
     );
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::validate_integrity(&main).unwrap(),
         StoreIntegrity::Clean
@@ -150,7 +150,7 @@ fn validate_signature_mismatch_when_wrong_signature_bytes() {
         payload_crc(content),
         None,
     );
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::validate_integrity(&main).unwrap(),
         StoreIntegrity::Corrupt(CorruptReason::SignatureMismatch)
@@ -173,7 +173,7 @@ fn validate_header_crc_mismatch_when_header_crc_field_corrupted() {
         payload_crc(content),
         Some(0xDEAD_BEEF),
     );
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::validate_integrity(&main).unwrap(),
         StoreIntegrity::Corrupt(CorruptReason::HeaderCrcMismatch)
@@ -189,7 +189,7 @@ fn validate_truncated_file_when_main_shorter_than_sidecar_claims() {
     // Sidecar claims the main file is 9999 bytes long.  CRC field is
     // arbitrary — the length check fires first.
     let sidecar = build_sidecar(b"DStoreV1", 1, 0, 0, 9999, 0, None);
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::validate_integrity(&main).unwrap(),
         StoreIntegrity::Corrupt(CorruptReason::TruncatedFile)
@@ -213,7 +213,7 @@ fn validate_tail_crc_mismatch_when_payload_byte_flipped() {
         original_crc,
         None,
     );
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     // Now flip one byte in the main file (simulates bitrot / torn write).
     content[10] ^= 0xFF;
     write_main_file(&main, &content);
@@ -229,7 +229,7 @@ fn validate_truncated_when_main_missing_but_sidecar_present() {
     let main = dir.join("data.store");
     // Don't write main file at all.
     let sidecar = build_sidecar(b"DStoreV1", 1, 0, 0, 128, 0, None);
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::validate_integrity(&main).unwrap(),
         StoreIntegrity::Corrupt(CorruptReason::TruncatedFile)
@@ -255,7 +255,7 @@ fn validate_signature_mismatch_when_tier_id_zero() {
         payload_crc(content),
         None,
     );
-    fs::write(dir.join("data.store.dmeta"), sidecar).unwrap();
+    fa::write(dir.join("data.store.dmeta"), sidecar).unwrap();
     assert_eq!(
         Store::validate_integrity(&main).unwrap(),
         StoreIntegrity::Corrupt(CorruptReason::SignatureMismatch)

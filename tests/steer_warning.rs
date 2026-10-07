@@ -15,6 +15,7 @@
 //! owned-vs-dependency provenance gate is the parser unit test
 //! `steer_fires_from_owned_source_silent_from_dependency` in `src/ir_read.rs`.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -37,7 +38,7 @@ fn main() { println(\"{old_add(2, 3)} {new_add(4, 5)}\") }
 /// return the compiler's stderr.
 fn stderr_of(name: &str, backend: &str, no_steer: bool) -> String {
     let path = std::env::temp_dir().join(format!("loft_steer_{name}.loft"));
-    std::fs::write(&path, PROG).expect("write temp script");
+    fa::write(&path, PROG).expect("write temp script");
     let mut cmd = Command::new(loft_bin());
     cmd.arg(backend)
         .arg(&path)
@@ -48,7 +49,7 @@ fn stderr_of(name: &str, backend: &str, no_steer: bool) -> String {
         cmd.env("LOFT_NO_STEER", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 

@@ -26,6 +26,7 @@
 //! Dev-mode behaviour (halt + render) is covered separately by
 //! `tests/runtime_errors.rs`.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -49,12 +50,12 @@ fn setup_prod_run(name: &str, source: &str) -> (std::path::PathBuf, std::path::P
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    fa::create_dir_all(&dir).expect("create tempdir");
     let script_path = dir.join(format!("{name}.loft"));
-    std::fs::write(&script_path, source).expect("write script");
+    fa::write(&script_path, source).expect("write script");
     let log_path = dir.join("log.txt");
     let conf = format!("[log]\nfile = {}\nlevel = info\n", log_path.display());
-    std::fs::write(dir.join("log.conf"), conf).expect("write log.conf");
+    fa::write(dir.join("log.conf"), conf).expect("write log.conf");
     (script_path, log_path)
 }
 
@@ -71,8 +72,8 @@ fn run_prod(name: &str, source: &str) -> (String, String, Option<i32>, String) {
         .expect("invoke loft binary");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(script_path.parent().unwrap());
+    let log = fa::read_to_string(&log_path).unwrap_or_default();
+    let _ = fa::remove_dir_all(script_path.parent().unwrap());
     (stdout, stderr, out.status.code(), log)
 }
 
@@ -477,8 +478,8 @@ fn run_logged(name: &str, source: &str, native: bool) -> String {
         if native { "native" } else { "interp" },
         String::from_utf8_lossy(&out.stderr)
     );
-    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
-    let _ = std::fs::remove_dir_all(script_path.parent().unwrap());
+    let log = fa::read_to_string(&log_path).unwrap_or_default();
+    let _ = fa::remove_dir_all(script_path.parent().unwrap());
     log
 }
 

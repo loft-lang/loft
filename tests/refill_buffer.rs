@@ -4,6 +4,7 @@
 //! which callees mint their return buffer with `OpDatabaseRefill` and empty its vector fields
 //! in place, that the text-holding type declines, and that both switch states answer the same
 //! and leave no store behind on `--native`.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -60,8 +61,8 @@ fn the_refillable_builders_mint_with_the_kept_store() {
     let rs = std::env::temp_dir().join(format!("loft_refill_{}.rs", std::process::id()));
     let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells()], &[]);
     assert!(ok, "emit failed:\n{err}");
-    let src = std::fs::read_to_string(&rs).expect("emitted source");
-    let _ = std::fs::remove_file(&rs);
+    let src = fa::read_to_string(&rs).expect("emitted source");
+    let _ = fa::remove_file(&rs);
     for (callee, refills) in CALLEES {
         let b = body(&src, callee);
         assert_eq!(
@@ -103,8 +104,8 @@ fn a_refilled_repeat_literal_is_overwritten_in_place() {
     let rs = std::env::temp_dir().join(format!("loft_refill_ip_{}.rs", std::process::id()));
     let (_, err, ok) = loft(&["--native-emit", &rs.to_string_lossy(), &cells], &[]);
     assert!(ok, "emit failed:\n{err}");
-    let src = std::fs::read_to_string(&rs).expect("emitted source");
-    let _ = std::fs::remove_file(&rs);
+    let src = fa::read_to_string(&rs).expect("emitted source");
+    let _ = fa::remove_file(&rs);
     for callee in ["n_bump", "n_grow", "n_tri", "n_half"] {
         assert!(
             body(&src, callee).contains("//@FR-R-RefillBuffer in place"),

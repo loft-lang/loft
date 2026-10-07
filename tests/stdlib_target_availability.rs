@@ -22,6 +22,7 @@
 //! shape that actually bit (a feature gate directly above the definition, with no
 //! fallback sibling). It is a tripwire on the known failure, not a cfg evaluator.
 
+use loft::file_access as fa;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -41,12 +42,12 @@ fn rust_sources() -> Vec<(PathBuf, String)> {
         };
         for e in entries.flatten() {
             let p = e.path();
-            if p.is_dir() {
+            if fa::is_dir(&p) {
                 walk(&p, out);
             } else if p.extension().is_some_and(|x| x == "rs") {
                 // Two source files are not valid UTF-8 throughout; lossy is fine
                 // for an attribute scan.
-                if let Ok(bytes) = std::fs::read(&p) {
+                if let Ok(bytes) = fa::read(&p) {
                     out.push((p, String::from_utf8_lossy(&bytes).into_owned()));
                 }
             }
@@ -71,7 +72,7 @@ fn stdlib_templates() -> Vec<(String, String)> {
     files.sort();
     let mut out = Vec::new();
     for f in files {
-        let text = std::fs::read_to_string(&f).expect("read stdlib file");
+        let text = fa::read_to_string(&f).expect("read stdlib file");
         let lines: Vec<&str> = text.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             if !(line.starts_with("#rust") || line.starts_with("#iterator")) {

@@ -5,6 +5,7 @@
 //! HTTP shell, then the WebSocket handshake + the debug protocol (launch → run → output →
 //! terminated).  This is the browser's path, exercised without a browser.
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
@@ -21,7 +22,7 @@ mod common;
 /// disk and is cleaned with the build tree.
 fn test_tmp() -> std::path::PathBuf {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/test-tmp");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     dir
 }
 
@@ -34,7 +35,7 @@ fn tmp_program(tag: &str, src: &str) -> std::path::PathBuf {
     // Tag-keyed: the two tests run in parallel in one process, so a pid-only name would
     // collide and one's cleanup would delete the other's file mid-`launch`.
     let p = test_tmp().join(format!("loft_serve_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&p, src).expect("write temp program");
+    fa::write(&p, src).expect("write temp program");
     p
 }
 
@@ -176,7 +177,7 @@ fn serve_http_shell_has_game_debug_strip() {
     ] {
         assert!(body.contains(needle), "shell must ship {needle:?}");
     }
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -197,7 +198,7 @@ fn serve_http_shell_embeds_file_and_run_button() {
         body.contains(&path.to_string_lossy().into_owned()),
         "shell embeds the file path for launch"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -236,7 +237,7 @@ fn serve_ws_launch_run_streams_output() {
         all.contains("\"event\":\"terminated\""),
         "run terminates: {all}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -260,7 +261,7 @@ fn serve_ws_compile_streams_diagnostics() {
         all.contains("\"event\":\"diagnostics\"") && all.contains("\"level\":\"advice\""),
         "an advice diagnostic streamed over the websocket: {all}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -314,7 +315,7 @@ fn serve_ws_repl_eval_top_level() {
         "error → <repl> diagnostics: {:?}",
         msgs
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -337,7 +338,7 @@ fn serve_ws_writefile_saves_and_sandboxes() {
     let r1 = ws_recv(&mut ws);
     assert!(r1.contains("\"id\":1,\"ok\":true"), "writeFile ok: {r1}");
     assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
+        fa::read_to_string(&path).unwrap(),
         "fn main() { print(\"new\") }\n",
         "file saved"
     );
@@ -351,7 +352,7 @@ fn serve_ws_writefile_saves_and_sandboxes() {
         r2.contains("\"ok\":false"),
         "out-of-sandbox write refused: {r2}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -377,7 +378,7 @@ fn serve_http_shell_has_editable_source() {
         body.contains("print(\"hello\")"),
         "source embedded in the editor"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -414,7 +415,7 @@ fn serve_ws_writefile_then_relaunch_runs_new_code() {
         all.contains("\"text\":\"NEW\""),
         "run executes the saved code: {all}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -468,7 +469,7 @@ fn serve_ws_breakpoint_stops_with_line_and_locals() {
         done.contains("\"event\":\"terminated\""),
         "continue runs to completion: {done}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // @PLN98 — the FULL debugger cycle THROUGH A SERVER SETUP: `loft debug --serve`
@@ -558,7 +559,7 @@ fn serve_ws_debug_cycle_eval_and_resume_through_server() {
         done.contains("\"event\":\"terminated\""),
         "terminated: {done}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -593,7 +594,7 @@ fn serve_ws_run_tests_reports_pass_and_fail() {
         all.contains("\"event\":\"testSummary\",\"passed\":1,\"failed\":1"),
         "summary counts 1 pass / 1 fail: {all}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -603,25 +604,25 @@ fn serve_ws_run_suite_runs_package_tests() {
     // import path, and run every tests/*.loft.  Each testResult carries its `file`; the
     // summary carries the file count.  A start point with no loft.toml upward is refused.
     let root = test_tmp().join(format!("loft_suitepkg_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::create_dir_all(root.join("tests")).unwrap();
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("src")).unwrap();
+    fa::create_dir_all(root.join("tests")).unwrap();
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"suitepkg\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/suitepkg.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         root.join("src/suitepkg.loft"),
         "pub fn triple(n: integer) -> integer {\n  n * 3\n}\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         root.join("tests/a_math.loft"),
         "use suitepkg::*;\nfn test_triple() {\n  assert(triple(7) == 21, \"triple\");\n}\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         root.join("tests/b_more.loft"),
         "use suitepkg::*;\nfn test_wrong() {\n  assert(triple(1) == 999, \"deliberately fails\");\n}\n",
     )
@@ -653,7 +654,7 @@ fn serve_ws_run_suite_runs_package_tests() {
         all.contains("\"event\":\"testSummary\",\"passed\":1,\"failed\":1,\"files\":2"),
         "summary counts across both files: {all}"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Variant of [`start_server`] with library import paths (a kernel game
@@ -682,7 +683,7 @@ fn serve_game_debug_control_end_to_end() {
     // bindings while a game client's reply is held, resume, and stop the game
     // over the channel (D!:quit — the editor's stop for a swapped game).
     let loft_bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("skipping: {} not built", loft_bin.display());
         return;
     }
@@ -779,7 +780,7 @@ fn serve_game_debug_control_end_to_end() {
         "the game must exit on D!:quit — {polls} polls in {:?}",
         started.elapsed()
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 #[test]
@@ -789,7 +790,7 @@ fn serve_ws_game_launch_streams_and_stops() {
     // kills a running one.  The child binary comes from LOFT_BIN (here: the built loft —
     // in production the serve process IS the loft binary, so current_exe is used).
     let loft_bin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("skipping: {} not built", loft_bin.display());
         return;
     }
@@ -865,6 +866,6 @@ fn serve_ws_game_launch_streams_and_stops() {
         ws_recv(&mut ws).contains("\"running\":false"),
         "stopped game reports not running"
     );
-    let _ = std::fs::remove_file(&path);
-    let _ = std::fs::remove_file(&loop_path);
+    let _ = fa::remove_file(&path);
+    let _ = fa::remove_file(&loop_path);
 }

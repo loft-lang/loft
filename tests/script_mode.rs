@@ -8,6 +8,7 @@
 //! desugar's unit-level shape + the 0-corpus-classification invariant are covered in
 //! `loft::script::tests`.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -118,7 +119,7 @@ fn t02_script_diagnostic_uses_source_line_and_shows_snippet() {
     let dir = std::env::temp_dir();
     let file = dir.join(format!("loft_t02_{}.loft", std::process::id()));
     // The review's repro verbatim: the misspelled call is on line 2 of 2.
-    std::fs::write(&file, "name = \"world\"\nprintt(\"Hello, {name}!\\n\")\n").expect("write");
+    fa::write(&file, "name = \"world\"\nprintt(\"Hello, {name}!\\n\")\n").expect("write");
     for backend in ["--interpret", "--native"] {
         let err = run_stderr(&[backend], &file);
         assert!(
@@ -137,7 +138,7 @@ fn t02_script_diagnostic_uses_source_line_and_shows_snippet() {
             "{backend}: the source snippet must render; got {err:?}"
         );
     }
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
 }
 
 /// A one-line script reports line 1 — the prologue must not shift it.
@@ -145,13 +146,13 @@ fn t02_script_diagnostic_uses_source_line_and_shows_snippet() {
 fn t02_one_line_script_reports_line_one() {
     let dir = std::env::temp_dir();
     let file = dir.join(format!("loft_t02_one_{}.loft", std::process::id()));
-    std::fs::write(&file, "printt(\"hi\")\n").expect("write");
+    fa::write(&file, "printt(\"hi\")\n").expect("write");
     let err = run_stderr(&["--interpret"], &file);
     assert!(
         err.contains(".loft:1:"),
         "a one-line script must report line 1; got {err:?}"
     );
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
 }
 
 // ── First-use: a mistyped path is one of the commonest first actions ─────────
@@ -162,8 +163,8 @@ fn t02_one_line_script_reports_line_one() {
 #[test]
 fn mistyped_file_path_suggests_the_neighbour() {
     let dir = std::env::temp_dir().join(format!("loft_fu_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    std::fs::write(dir.join("hello.loft"), "println(\"hi\")\n").expect("write");
+    fa::create_dir_all(&dir).expect("mkdir");
+    fa::write(dir.join("hello.loft"), "println(\"hi\")\n").expect("write");
 
     let out = Command::new(loft_bin())
         .arg(dir.join("helo.loft"))
@@ -192,7 +193,7 @@ fn mistyped_file_path_suggests_the_neighbour() {
         !err2.contains("did you mean"),
         "an unrelated name must not get a suggestion; got {err2:?}"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// A program that is NOT a script must not be desugared as one — and an escaped quote
@@ -215,10 +216,10 @@ fn mistyped_file_path_suggests_the_neighbour() {
 #[test]
 fn an_escaped_quote_in_a_hole_does_not_make_a_program_a_script() {
     let dir = std::env::temp_dir().join(format!("loft_1271_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("mkdir");
     let file = dir.join("p.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "fn shout(v: text) -> text { \"{v}!\" }\n\
          fn probe() -> text { \"got: {shout(\"a\\\"b\")}\" }\n\
@@ -244,5 +245,5 @@ fn an_escaped_quote_in_a_hole_does_not_make_a_program_a_script() {
             "[{backend}] and the escape must survive as one quote: {stdout:?}"
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

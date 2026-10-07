@@ -27,6 +27,7 @@
 //! control here is for the harness — a script whose assertion is deliberately false must
 //! fail, otherwise "the script printed OK" proves nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -163,9 +164,9 @@ fn main() {\n\
 #[test]
 fn harness_can_fail() {
     let path = std::env::temp_dir().join(format!("loft_759_control_{}.loft", std::process::id()));
-    std::fs::write(&path, WRONG_EXPECTATION).expect("write control probe");
+    fa::write(&path, WRONG_EXPECTATION).expect("write control probe");
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

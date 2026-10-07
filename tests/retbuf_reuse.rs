@@ -20,6 +20,7 @@
 //! So this is the A/B on one binary, and it asserts BOTH directions: the shipped gate is
 //! clean, and the gate removed is not. Without the second half the first proves nothing.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -83,11 +84,11 @@ fn the_buffer_reuse_gate_is_what_keeps_a_reassigned_result_alive() {
 
 fn both_directions(name: &str, probe: &str) {
     let src = std::env::temp_dir().join(format!("loft_retbuf_reuse_{name}.loft"));
-    std::fs::write(&src, probe).expect("write probe");
+    fa::write(&src, probe).expect("write probe");
 
     let shipped = run(&src, false);
     let ungated = run(&src, true);
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 
     assert!(
         !shipped.contains("strict-store"),

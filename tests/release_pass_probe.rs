@@ -8,6 +8,7 @@
 //! checked build is measured against.  This pins that the probe changes the EMISSION and
 //! only under the switch: off, the default build is untouched (the checked helpers stand);
 //! on, no sentinel-aware integer helper remains and the null test itself does.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,13 +32,13 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

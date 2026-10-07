@@ -4,6 +4,7 @@
 //! @C91 — `==` compares content for every type (`@FR-E-Eq`).  The Rust-level guards of the
 //! build (@PLN175 § C91): the identity census the flips are measured by.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -13,9 +14,9 @@ fn loft_bin() -> std::path::PathBuf {
 /// The census trace (`LOFT_TRACE_EQ_IDENTITY=1`) of a `--check` over `src`, one line per site.
 fn identity_sites(name: &str, src: &str) -> Vec<String> {
     let dir = std::env::temp_dir().join(format!("loft-c91-census-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let path = dir.join(name);
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     let out = Command::new(loft_bin())
         .arg("--check")
         .arg(&path)
@@ -23,7 +24,7 @@ fn identity_sites(name: &str, src: &str) -> Vec<String> {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("run loft --check");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         out.status.success(),
         "the probe must compile: {}",

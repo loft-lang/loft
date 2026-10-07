@@ -32,6 +32,7 @@
 //! value tests and the interpreter's poison run are green on the broken build, which is the
 //! measurement that says a value-only guard for this defect would be worthless.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -81,7 +82,7 @@ fn main() { println(\"{m1235()}\"); }\n";
 
 fn write_temp(tag: &str, src: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("loft_1235_{tag}_{}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     path
 }
 
@@ -123,7 +124,7 @@ fn the_returned_text_is_read_before_the_free() {
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("failed to invoke loft introspect");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(out.status.success(), "introspect must exit 0");
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
     let body = text
@@ -156,7 +157,7 @@ fn harness_can_fail() {
     );
     let path = write_temp("control", &src);
     let (ok, stdout, _stderr) = run("--interpret", &path, &[]);
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     assert!(
         !(ok && stdout.contains(OK)),
         "a false assertion must fail the script — the OK line is not self-validating\n{stdout}"

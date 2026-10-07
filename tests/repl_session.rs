@@ -8,6 +8,7 @@
 //! value.  Integer and text bindings both persist.
 
 use loft::debugger::StepMode;
+use loft::file_access as fa;
 use loft::repl::{Eval, ReplSession};
 use std::path::PathBuf;
 
@@ -99,7 +100,7 @@ fn text_variable_persists_across_inputs() {
 #[test]
 fn session_persists_and_resumes() {
     let path = tmp_session("resume");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     {
         let mut a = session();
         a.enable_persistence(&path).expect("enable persistence");
@@ -121,7 +122,7 @@ fn session_persists_and_resumes() {
         b.eval("assert(dbl(x) == 82, \"dbl restored\")"),
         Eval::Ran
     ));
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A stale/corrupt entry between two good ones is skipped, not fatal: the two
@@ -132,7 +133,7 @@ fn resume_skips_poison_entry() {
     let path = tmp_session("poison");
     // good binding, garbage (a parse error, same shape as `z = 1 2 3`), good
     // binding — NUL-separated exactly as the REPL writes them.
-    std::fs::write(&path, "a = 1\0c = 1 2 3\0b = 2\0").expect("write session");
+    fa::write(&path, "a = 1\0c = 1 2 3\0b = 2\0").expect("write session");
     let mut s = session();
     let stats = s.resume_from(&path);
     assert_eq!(stats.restored, 2, "two good entries restored: {stats:?}");
@@ -141,7 +142,7 @@ fn resume_skips_poison_entry() {
         s.eval("assert(a + b == 3, \"a,b survived poison\")"),
         Eval::Ran
     ));
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── REPL.C: Tab-completion candidates ────────────────────────────────────────
@@ -239,18 +240,18 @@ fn completion_model_resolves_members_from_schema() {
 #[test]
 fn observe_not_persisted() {
     let path = tmp_session("observe");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session();
     s.enable_persistence(&path).expect("enable persistence");
     assert!(matches!(s.eval("k = 9"), Eval::Ran)); // binding → persisted
     assert!(matches!(s.eval("k + 1"), Eval::Ran)); // observing → NOT persisted
     drop(s);
-    let contents = std::fs::read_to_string(&path).expect("session file exists");
+    let contents = fa::read_to_string(&path).expect("session file exists");
     assert_eq!(
         contents, "k = 9\0",
         "only the binding persisted, not the observe: {contents:?}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ── @PLN16 G1: REPL :break command ───────────────────────────────────────────
@@ -1146,7 +1147,7 @@ fn repl_file_debugger_end_to_end() {
                 n * 2\n}\nfn main() {\n  \
                 a = helper(21);\n  \
                 assert(a == 42, \"ok\")\n}\n";
-    std::fs::write(&path, prog).expect("write temp program");
+    fa::write(&path, prog).expect("write temp program");
     let file = path.to_str().unwrap();
     // Piped session: read `n` at the frame, continue to the end, quit.
     let input = std::io::Cursor::new(b"n\n:continue\n:quit\n".to_vec());
@@ -1162,7 +1163,7 @@ fn repl_file_debugger_end_to_end() {
         "pauses in helper with n = 21: {text}"
     );
     assert!(text.contains("resumed"), "continues to the end: {text}");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// @PLN16 M3 (watchpoints) — set a watch on a struct field, resume, and the run pauses
@@ -1402,7 +1403,7 @@ fn file_debugger_resolves_a_library_from_lib_dirs() {
     let lib_dirs = vec![dir.to_string_lossy().into_owned()];
 
     let path = tmp_session("filedebug_lib").with_extension("loft");
-    std::fs::write(
+    fa::write(
         &path,
         "use typeshift::*;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
     )
@@ -1422,7 +1423,7 @@ fn file_debugger_resolves_a_library_from_lib_dirs() {
         text.contains("break at"),
         "the breakpoint must be reached: {text}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// The control for the test above: with NO `lib_dirs` the same program cannot
@@ -1431,7 +1432,7 @@ fn file_debugger_resolves_a_library_from_lib_dirs() {
 #[test]
 fn file_debugger_without_lib_dirs_cannot_resolve_the_library() {
     let path = tmp_session("filedebug_nolib").with_extension("loft");
-    std::fs::write(
+    fa::write(
         &path,
         "use typeshift::*;\nfn main() {\n  v = ts_touch();\n  assert(v == 7, \"lib call\")\n}\n",
     )
@@ -1447,7 +1448,7 @@ fn file_debugger_without_lib_dirs_cannot_resolve_the_library() {
         text.contains("not found"),
         "without --lib the library must NOT resolve — else the E1 test proves nothing: {text}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// @PLN120 E3b — a call crossing into NATIVE code must work under the debugger.
@@ -1465,7 +1466,7 @@ fn file_debugger_can_call_into_a_native_library() {
     let lib_dirs = vec![dir.to_string_lossy().into_owned()];
 
     let path = tmp_session("filedebug_native").with_extension("loft");
-    std::fs::write(
+    fa::write(
         &path,
         "use native_pkg::*;\nfn main() {\n  v = ext_add_one(41);\n  \
          assert(v == 42, \"native call under the debugger\")\n}\n",
@@ -1491,7 +1492,7 @@ fn file_debugger_can_call_into_a_native_library() {
         text.contains("run finished"),
         "the run must complete past the native call: {text}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// @PLN120 B — a breakpoint condition has THREE outcomes, not two.
@@ -1509,7 +1510,7 @@ fn cond_session(cond: &str, file: &std::path::Path) -> (bool, Vec<String>) {
     let src = "fn main() {\n  total = 0;\n  for i in 0..4 {\n    k = i + 1;\n    \
                step = k * 10;\n    total = total + step;\n  }\n  \
                assert(total == 100, \"ran\")\n}\n";
-    std::fs::write(file, src).expect("write");
+    fa::write(file, src).expect("write");
     s.load_program(file.to_str().unwrap())
         .expect("read")
         .expect("parse");
@@ -1538,7 +1539,7 @@ fn an_unevaluable_breakpoint_condition_is_reported_and_stops() {
         trace.iter().any(|t| t.contains("cannot be evaluated")),
         "and must say so: {trace:?}"
     );
-    let _ = std::fs::remove_file(&f);
+    let _ = fa::remove_file(&f);
 }
 
 #[test]
@@ -1551,7 +1552,7 @@ fn a_false_breakpoint_condition_stays_silent_and_does_not_stop() {
         !trace.iter().any(|t| t.contains("cannot be evaluated")),
         "and must not be reported as unevaluable: {trace:?}"
     );
-    let _ = std::fs::remove_file(&f);
+    let _ = fa::remove_file(&f);
 }
 
 #[test]
@@ -1563,7 +1564,7 @@ fn a_true_breakpoint_condition_stops_without_a_diagnostic() {
         !trace.iter().any(|t| t.contains("cannot be evaluated")),
         "a valid condition draws no complaint: {trace:?}"
     );
-    let _ = std::fs::remove_file(&f);
+    let _ = fa::remove_file(&f);
 }
 
 /// @PLN120 A — the frame-liveness gate: the plan's three-row probe table, driven
@@ -1596,7 +1597,7 @@ fn file_debugger_frame_shows_scope_with_unset_and_reused_markers() {
                 total = total + step;\n  \
                 }\n  \
                 assert(total == 100, \"loop\")\n}\n";
-    std::fs::write(&path, prog).expect("write temp program");
+    fa::write(&path, prog).expect("write temp program");
     let file = path.to_str().unwrap();
     let at = |line: u32, cmds: &str| -> String {
         let input = std::io::Cursor::new(cmds.as_bytes().to_vec());
@@ -1650,7 +1651,7 @@ fn file_debugger_frame_shows_scope_with_unset_and_reused_markers() {
         refused.contains("can't set it:"),
         "editing an unheld local is refused, with the reason: {refused}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// @PLN120 F — the undo/redo history survives a step exactly as far as its storage
@@ -1672,7 +1673,7 @@ fn file_debugger_undo_survives_a_step_only_while_its_storage_does() {
                 total = total + step;\n  \
                 }\n  \
                 assert(total > 0, \"loop\")\n}\n";
-    std::fs::write(&path, prog).expect("write temp program");
+    fa::write(&path, prog).expect("write temp program");
     let file = path.to_str().unwrap();
     let drive = |line: u32, cmds: &str| -> String {
         let input = std::io::Cursor::new(cmds.as_bytes().to_vec());
@@ -1724,7 +1725,7 @@ fn file_debugger_undo_survives_a_step_only_while_its_storage_does() {
         c5.contains("no edits to undo at this pause") && c5.contains("stepBack"),
         "an empty stack names the edit/step boundary and the tool that does step back: {c5}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// @PLN120 F — the two classes the blanket clear discarded needlessly.
@@ -1746,7 +1747,7 @@ fn file_debugger_undo_keeps_heap_edits_and_drops_returned_frames() {
                 a = bump(pt);\n  \
                 b = pt.x + a;\n  \
                 assert(b > 0, \"ok\")\n}\n";
-    std::fs::write(&path, prog).expect("write temp program");
+    fa::write(&path, prog).expect("write temp program");
     let file = path.to_str().unwrap();
     let drive = |line: u32, cmds: &str| -> String {
         let input = std::io::Cursor::new(cmds.as_bytes().to_vec());
@@ -1777,7 +1778,7 @@ fn file_debugger_undo_keeps_heap_edits_and_drops_returned_frames() {
         c4.contains("no longer undoable") && c4.contains("frame it was made in has returned"),
         "…and returning drops it, naming the reason: {c4}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// @PLN120 A follow-up — a name that IS a local of this function but is not in scope on
@@ -1792,7 +1793,7 @@ fn file_debugger_names_an_out_of_scope_local() {
                 total = total + i;\n  \
                 }\n  \
                 assert(total == 3, \"loop\")\n}\n";
-    std::fs::write(&path, prog).expect("write temp program");
+    fa::write(&path, prog).expect("write temp program");
     let file = path.to_str().unwrap();
     let input = std::io::Cursor::new(b"i\nnosuchname\n:quit\n".to_vec());
     let mut out: Vec<u8> = Vec::new();
@@ -1808,7 +1809,7 @@ fn file_debugger_names_an_out_of_scope_local() {
         text.contains("couldn't evaluate `nosuchname`"),
         "an unknown name stays a plain failure: {text}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// moros H13's residual — a call to a `use`d LIBRARY's function inside `eval` answered
@@ -1831,7 +1832,7 @@ fn debug_eval_can_call_a_library_function_at_a_frame() {
     let lib_dirs = vec![dir.to_string_lossy().into_owned()];
 
     let path = tmp_session("eval_libcall").with_extension("loft");
-    std::fs::write(
+    fa::write(
         &path,
         "use typeshift::*;\n\
          fn local_double(n: integer) -> integer { return n * 2; }\n\
@@ -1876,7 +1877,7 @@ fn debug_eval_can_call_a_library_function_at_a_frame() {
         text.contains("v = 12"),
         "the LIBRARY call produced its value at the frame: {text}"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// The two silent resolution sites, closed by one `ResolutionContext` value.
@@ -2060,7 +2061,7 @@ fn a_nullable_local_evaluates_at_a_paused_frame() {
 #[test]
 fn a_resumed_session_does_not_continue_the_random_stream() {
     let path = tmp_session("c72");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let draw = "rand(0, 1000000000)";
     let numbers = |s: &mut ReplSession, stmts: &str, expr: &str| -> i64 {
         let r = s.eval("use random::*;");
@@ -2098,7 +2099,7 @@ fn a_resumed_session_does_not_continue_the_random_stream() {
             Some(seven_1.to_string())
         );
     }
-    let saved = std::fs::read_to_string(&path).expect("the session file");
+    let saved = fa::read_to_string(&path).expect("the session file");
     assert!(
         !saved.contains("rand_seed"),
         "a statement is not persisted: {saved:?}"
@@ -2120,7 +2121,7 @@ fn a_resumed_session_does_not_continue_the_random_stream() {
         next, other_1,
         "the draw continues the process's own generator"
     );
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A BINDING whose right-hand side calls a library's native function runs.  The binding's
@@ -2239,30 +2240,27 @@ fn successive_mutations_accumulate() {
 #[test]
 fn a_mutation_is_persisted_and_an_observe_is_not() {
     let path = tmp_session("i1853");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     {
         let mut a = session();
         a.enable_persistence(&path).expect("enable persistence");
         for line in ["w = [3, 1]", "w.sort()", "w += [9]"] {
             assert!(matches!(a.eval(line), Eval::Ran), "`{line}`");
         }
-        let before = std::fs::read_to_string(&path).expect("session file");
+        let before = fa::read_to_string(&path).expect("session file");
         // Observing — a read, and a call that reads — leave the file as it is.
         assert_eq!(
             a.eval_value("len(w) + 1").expect("len").as_deref(),
             Some("4")
         );
         assert_eq!(a.eval_value("w").expect("w").as_deref(), Some("[1,3,9]"));
-        assert_eq!(
-            std::fs::read_to_string(&path).expect("session file"),
-            before
-        );
+        assert_eq!(fa::read_to_string(&path).expect("session file"), before);
     }
     let mut b = session();
     let stats = b.resume_from(&path);
     assert_eq!(stats.skipped, 0, "{stats:?}");
     assert_eq!(b.eval_value("w").expect("w").as_deref(), Some("[1,3,9]"));
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 /// A typed binding (`x: float = 1`) is a binding: the session keeps it, at the type it
@@ -2290,7 +2288,7 @@ fn a_typed_binding_is_kept_at_its_declared_type() {
 #[test]
 fn a_hash_session_variable_keeps_its_changes() {
     let path = tmp_session("i1853h");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let mut s = session();
     s.enable_persistence(&path).expect("enable persistence");
     for line in [
@@ -2303,12 +2301,9 @@ fn a_hash_session_variable_keeps_its_changes() {
     ] {
         assert!(matches!(s.eval(line), Eval::Ran), "`{line}`");
     }
-    let before = std::fs::read_to_string(&path).expect("session file");
+    let before = fa::read_to_string(&path).expect("session file");
     assert_eq!(s.eval_value("len(h)").expect("len").as_deref(), Some("2"));
     assert_eq!(s.eval_value("x").expect("x").as_deref(), Some("2"));
-    assert_eq!(
-        std::fs::read_to_string(&path).expect("session file"),
-        before
-    );
-    let _ = std::fs::remove_file(&path);
+    assert_eq!(fa::read_to_string(&path).expect("session file"), before);
+    let _ = fa::remove_file(&path);
 }
