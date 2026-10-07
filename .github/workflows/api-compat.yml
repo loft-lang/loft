@@ -25,6 +25,7 @@ env:
 
 jobs:
   api-compat:
+    # @windows-exempt: platform-free — compares the API surface as text
     name: API compatibility (non-blocking)
     runs-on: ubuntu-latest
     steps:
@@ -54,6 +55,7 @@ jobs:
         run: make api-compat
 
   contract-goldens:
+    # @windows-exempt: platform-free — compares contract goldens as text
     # @PLN102 arc-E flip-gate (Gate 1 + Gate 2) — a change to a frozen contract golden
     # (the LAYOUT of stored data or the observable BEHAVIOUR of valid programs) is a
     # silent break, so post-freeze it must land with a CONTRACT_VERSION bump. INERT

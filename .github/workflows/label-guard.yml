@@ -65,6 +65,7 @@ env:
 
 jobs:
   guard:
+    # @windows-exempt: platform-free — checks issue labels
     runs-on: ubuntu-latest
     steps:
       # The parser is repo content, so it has to be on disk to be required.

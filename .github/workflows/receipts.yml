@@ -42,6 +42,7 @@ env:
 
 jobs:
   receipts:
+    # @windows-exempt: receipts are scored on one platform by design (GUARDS.md)
     name: Refresh and score stale patch receipts
     runs-on: ubuntu-latest
     timeout-minutes: 90

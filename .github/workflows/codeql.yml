@@ -49,6 +49,7 @@ env:
 
 jobs:
   analyze:
+    # @windows-exempt: platform-free — static analysis of the source
     name: analyze ${{ matrix.language }}
     runs-on: ubuntu-latest
     timeout-minutes: 45

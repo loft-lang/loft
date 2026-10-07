@@ -31,6 +31,7 @@ env:
 
 jobs:
   quick-suite:
+    # @windows-exempt: a Linux subset of the Test job; the full suite runs on windows-latest daily (ci.yml test)
     name: quick suite (wrap + issues, ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 30

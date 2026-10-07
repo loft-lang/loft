@@ -57,6 +57,7 @@ env:
 
 jobs:
   corpus:
+    # @windows-exempt: a macOS probe by design
     name: probe — native corpus (macos arm64)
     runs-on: macos-latest
     timeout-minutes: 90

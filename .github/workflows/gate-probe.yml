@@ -47,6 +47,7 @@ env:
 
 jobs:
   debug-assertions:
+    # @windows-exempt: a platform-independent invariant sweep (debug assertions); the corpus runs on windows-latest daily
     name: probe — debug-assertions sweep
     if: github.event_name == 'push' || inputs.legs != 'browser'
     runs-on: ubuntu-latest
@@ -102,6 +103,7 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   browser-ui-gate:
+    # @windows-exempt: platform-free — a browser UI probe
     name: probe — browser UI responsiveness
     if: github.event_name == 'push' || inputs.legs != 'da'
     runs-on: ubuntu-latest

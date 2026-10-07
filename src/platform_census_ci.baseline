@@ -1,33 +1,3 @@
 # CI jobs per workflow with no Windows leg and no exemption (@PLN184 E1).  Only
 # shrinks: see src/platform_census.rs.  Format: <jobs> <workflow>
-2 .github/workflows/advisory-failures.yml
-2 .github/workflows/api-compat.yml
-1 .github/workflows/apply-fixed-pending-merge.yml
-1 .github/workflows/branch-gates.yml
-1 .github/workflows/browser-threads.yml
-1 .github/workflows/ci-probe.yml
-27 .github/workflows/ci.yml
-1 .github/workflows/close-fixed-on-merge.yml
-1 .github/workflows/close-plans.yml
-1 .github/workflows/codeql.yml
-1 .github/workflows/consumer-main-health.yml
-1 .github/workflows/derive.yml
-2 .github/workflows/gate-probe.yml
-1 .github/workflows/label-guard.yml
-1 .github/workflows/lib-branch-report.yml
-3 .github/workflows/lib-main-health.yml
-2 .github/workflows/library-ci-reusable.yml
-1 .github/workflows/lint-sweep.yml
-1 .github/workflows/macos-probe.yml
-21 .github/workflows/miri.yml
-1 .github/workflows/post-publish-verify.yml
-1 .github/workflows/prebuild-native.yml
-1 .github/workflows/receipts.yml
-4 .github/workflows/registry-validation.yml
-1 .github/workflows/release-gate.yml
-2 .github/workflows/release.yml
-1 .github/workflows/repro-build.yml
-4 .github/workflows/revalidate-libs.yml
-1 .github/workflows/switch-ab.yml
-1 .github/workflows/unpark-next-release.yml
-2 .github/workflows/v2-validation.yml
+1 .github/workflows/ci.yml

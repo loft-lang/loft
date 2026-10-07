@@ -63,6 +63,7 @@ env:
 
 jobs:
   build:
+    # @windows-leg: the include list names x86_64-pc-windows-msvc on windows-latest
     name: cdylib ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:

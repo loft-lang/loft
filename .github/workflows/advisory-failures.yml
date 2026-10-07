@@ -58,6 +58,7 @@ env:
 
 jobs:
   digest:
+    # @windows-exempt: platform-free — reads CI results and writes an issue
     # A cancelled run was superseded (a newer push) and proves nothing either way.
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion != 'cancelled' && github.event.workflow_run.conclusion != 'skipped')
     runs-on: ubuntu-latest
@@ -80,6 +81,7 @@ jobs:
   # branch's last run — one comment, updated in place.  Reads the junit artifacts `ci.yml`
   # keeps; like the job above, it never checks out or runs the PR's code.
   timing:
+    # @windows-exempt: platform-free — reads CI timings and writes a report
     if: github.event.workflow_run.name == 'CI' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -405,9 +405,11 @@ fn the_script_census_sees_a_hazard_and_nothing_else() {
 
 // ── E1 — every CI job runs on Windows or says why it need not ─────────────────────────────
 // A job is COVERED when it runs on Windows (`runs-on` or a matrix line naming `windows`), when
-// it calls a reusable workflow (whose own jobs carry the verdict), or when the line under its
-// name is `# @windows-exempt: <why>` — a job that posts a comment or reads text is
-// platform-free; one that runs a loft program is not.  The uncovered count only falls.
+// it calls a reusable workflow (whose own jobs carry the verdict), when an inline matrix entry
+// names `os: windows-…`, or when it says so in a comment line of its own block:
+// `# @windows-leg: <where>` for a leg the text cannot show (a matrix built at run time), or
+// `# @windows-exempt: <why>` — a job that posts a comment or reads text is platform-free; one
+// that runs a loft program is not.  The uncovered count only falls.
 
 const CI_BASELINE: &str = "src/platform_census_ci.baseline";
 
@@ -442,6 +444,8 @@ fn uncovered_jobs(text: &str) -> Vec<String> {
         if let Some((_, covered)) = job.as_mut() {
             let code = t.split(" #").next().unwrap_or(t);
             *covered |= t.starts_with("# @windows-exempt:")
+                || t.starts_with("# @windows-leg:")
+                || (code.contains("os: windows") && !code.starts_with('#'))
                 || (indent == 4 && code.starts_with("uses:"))
                 || ((code.starts_with("runs-on:")
                     || code.starts_with("os:")
@@ -538,4 +542,8 @@ fn the_ci_census_reads_a_job_and_its_verdict() {
         ["a", "f", "g"],
         "a step's `uses:` is not a reusable call"
     );
+    let inline = "jobs:\n  h:\n    strategy:\n      matrix:\n        include:\n          - { target: x, os: \
+                  windows-latest }\n  i:\n    # @windows-leg: the legs come from fromJSON(needs.x)\n    \
+                  runs-on: ${{ matrix.os }}\n";
+    assert_eq!(uncovered_jobs(inline), Vec::<String>::new());
 }

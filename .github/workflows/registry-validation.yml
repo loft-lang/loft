@@ -70,6 +70,7 @@ jobs:
   # tested by NOTHING and no red night ever appears (how graphics-stack packages
   # sat untested).  Fail the night if any repo package is missing from the index.
   coverage:
+    # @windows-exempt: platform-free — reads the registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -86,6 +87,7 @@ jobs:
   # version can stop resolving: dropped from index.json (walks its history), or
   # listed but no longer downloadable.
   retention:
+    # @windows-exempt: platform-free — reads the registry
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,6 +105,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   discover:
+    # @windows-exempt: platform-free — lists packages
     runs-on: ubuntu-latest
     outputs:
       packages: ${{ steps.list.outputs.packages }}
@@ -193,6 +196,7 @@ jobs:
           fi
 
   validate:
+    # @windows-exempt: a library's platforms are its own CI's choice
     needs: discover
     runs-on: ubuntu-latest
     strategy:

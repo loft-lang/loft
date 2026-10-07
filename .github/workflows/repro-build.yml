@@ -79,6 +79,7 @@ jobs:
   # machine, one commit) and catches a strictly earlier failure: both real causes so far
   # were visible here, days before any release existed to verify.
   roundtrip:
+    # @windows-exempt: the reproducible-build check of the Linux release artefact
     name: Round trip (this commit)
     runs-on: ubuntu-latest
     timeout-minutes: 40

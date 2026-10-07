@@ -47,6 +47,7 @@ env:
 
 jobs:
   probe:
+    # @windows-exempt: a Linux timing probe of the CI itself
     name: probe (ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 45

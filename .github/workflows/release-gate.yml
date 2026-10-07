@@ -123,6 +123,7 @@ jobs:
   # counts — `cancelled` and `skipped` included: a leg that did not run proved nothing,
   # and treating it as green is how a gate stops gating without ever going red.
   verdict:
+    # @windows-exempt: platform-free — aggregates the release gate
     name: verdict
     needs: [ci, miri, libs, browser, repro, consumers]
     if: always()

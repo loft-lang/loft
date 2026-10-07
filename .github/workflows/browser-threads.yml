@@ -80,6 +80,7 @@ env:
 
 jobs:
   gates:
+    # @windows-exempt: platform-free — runs in a headless browser, which is the platform under test
     name: par on Web Workers
     runs-on: ubuntu-latest
     # Two std rebuilds with atomics (the wasm-bindgen bundle, then the --html

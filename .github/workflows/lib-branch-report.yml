@@ -24,6 +24,7 @@ env:
 
 jobs:
   report:
+    # @windows-exempt: platform-free — lists library branches
     name: Unmerged branches across loft-libs-*
     runs-on: ubuntu-latest
     steps:

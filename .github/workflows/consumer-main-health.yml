@@ -66,6 +66,7 @@ env:
 
 jobs:
   check:
+    # @windows-exempt: a consumer's platforms are the consumer's choice; it runs on its own CI
     # The consumer's name alone, so a caller (the release checklist's `A-consumers`) can
     # read the job as `consumer-main-health.yml / dryopea` instead of the matrix's five
     # values run together.

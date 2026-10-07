@@ -43,6 +43,7 @@ env:
 
 jobs:
   ab:
+    # @windows-exempt: a timing A/B on one reference machine
     runs-on: ubuntu-latest
     timeout-minutes: 150
     strategy:

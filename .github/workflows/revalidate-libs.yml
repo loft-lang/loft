@@ -49,6 +49,7 @@ jobs:
   # Read the registry index (source of truth for what is installable) and emit one
   # matrix leg per published package at its latest version → (repo, tag, subpath).
   discover:
+    # @windows-exempt: platform-free — lists libraries
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.m.outputs.matrix }}
@@ -79,6 +80,7 @@ jobs:
   # `unreleased work` job; one leg per library REPO, so each red names its repo.  The
   # consumer applications in the registry are not ours to clean up and are left out.
   unreleased:
+    # @windows-exempt: platform-free — compares library refs
     needs: discover
     runs-on: ubuntu-latest
     steps:
@@ -103,6 +105,7 @@ jobs:
           exit $red
 
   revalidate:
+    # @windows-exempt: a library's platforms are its own CI's choice
     needs: discover
     if: needs.discover.outputs.count != '0'
     runs-on: ubuntu-latest
@@ -330,6 +333,7 @@ jobs:
   # Fail the workflow if any published library broke — that is a language change
   # retro-breaking a shipped lib, which the freeze forbids.
   gate:
+    # @windows-exempt: platform-free — aggregates the revalidation
     needs: [revalidate, unreleased]
     if: always()
     runs-on: ubuntu-latest
