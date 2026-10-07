@@ -21,8 +21,6 @@
 //! on the machine, reached remotely only via an explicit SSH port-forward (the `make view`
 //! shape).
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use crate::repl::ReplSession;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -40,7 +38,7 @@ pub fn run_serve(
     file: &str,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
-    let source = std::fs::read_to_string(file).unwrap_or_default();
+    let source = crate::file_access::read_to_string(file).unwrap_or_default();
     let shell = render_shell(file, &source);
     // One session for the lifetime of the server (slice 1 is single-session); program
     // output is captured into `output` events, not printed, exactly as `--rpc` does.
