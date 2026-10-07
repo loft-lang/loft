@@ -15,8 +15,7 @@
 //! become syntax — nothing here splits or quotes.
 use crate::database::Stores;
 use crate::keys::{DbRef, Str};
-use std::io::{Read, Write};
-use std::process::{Command, Stdio};
+use crate::platform::process::{Program, Spawn};
 
 /// The words of a length-prefixed argv, or `None` when it is not one.
 fn decode_argv(enc: &str) -> Option<Vec<String>> {
@@ -41,14 +40,6 @@ pub(crate) struct Finished {
     pub stderr: Vec<u8>,
 }
 
-fn drain(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
-    std::thread::spawn(move || {
-        let mut out = Vec::new();
-        let _ = pipe.read_to_end(&mut out);
-        out
-    })
-}
-
 /// Run `argv` to completion with `input` on its stdin, collecting both streams.
 pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
     let Some((program, rest)) = argv.split_first() else {
@@ -58,63 +49,25 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
             stderr: b"an empty command: there is no program to run".to_vec(),
         };
     };
-    let spawned = Command::new(program)
-        .args(rest)
-        // No input is an empty stdin: the child reads EOF at once, with no pipe to feed.
-        .stdin(if input.is_empty() {
-            Stdio::null()
-        } else {
-            Stdio::piped()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let mut child = match spawned {
-        Ok(c) => c,
-        Err(e) => {
-            return Finished {
-                code: -1,
-                stdout: Vec::new(),
-                stderr: format!("{program}: {e}").into_bytes(),
-            };
-        }
-    };
-    // Every reader exists before a byte is written, so a child that answers while it is still
-    // being fed never blocks on a full pipe: stderr on a thread of its own, stdout on this
-    // one, below — the third thread a run would otherwise start costs as much as the read.
-    let out = child.stdout.take();
-    let err = child.stderr.take().map(drain);
-    let feed = child.stdin.take().map(|mut pipe| {
-        let input = input.to_vec();
-        // A child that exits without reading its input closes the pipe: that is its choice,
-        // not a failure of the run, so the write's error is not reported.
-        std::thread::spawn(move || {
-            let _ = pipe.write_all(&input);
-        })
-    });
-    let mut stdout = Vec::new();
-    if let Some(mut pipe) = out {
-        let _ = pipe.read_to_end(&mut stdout);
+    match Spawn::new(Program::search(program)).args(rest).run(input) {
+        Ok(ran) => Finished {
+            code: exit_code(ran.status),
+            stdout: ran.stdout,
+            stderr: ran.stderr,
+        },
+        Err(e) => Finished {
+            code: -1,
+            stdout: Vec::new(),
+            stderr: format!("{program}: {e}").into_bytes(),
+        },
     }
-    let status = child.wait();
-    if let Some(f) = feed {
-        let _ = f.join();
-    }
-    let mut stderr = err.and_then(|h| h.join().ok()).unwrap_or_default();
-    let code = match status {
-        Ok(s) => s
-            .code()
-            .map_or_else(|| signal_code(s), |c| own_code(i64::from(c))),
-        Err(e) => {
-            stderr.extend_from_slice(format!("{program}: {e}").as_bytes());
-            -1
-        }
-    };
-    Finished {
-        code,
-        stdout,
-        stderr,
-    }
+}
+
+/// The code a loft script reads for `status`: the program's own, or `128 + n` for signal `n`.
+fn exit_code(status: std::process::ExitStatus) -> i64 {
+    status
+        .code()
+        .map_or_else(|| signal_code(status), |c| own_code(i64::from(c)))
 }
 
 /// The program's own exit code, in the one form every platform can give it.  A Windows child

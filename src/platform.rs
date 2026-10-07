@@ -9,6 +9,10 @@ use crate::file_access::{File, Metadata};
 use std::os::unix::prelude::{MetadataExt as _, PermissionsExt};
 use std::sync::OnceLock;
 
+/// One way to run a process (@PLN184 Track P).
+#[path = "platform_process.rs"]
+pub mod process;
+
 /// Process-scoped native-compile timing — a gated singleton.  The expensive
 /// native work (cdylib `cargo build`s, per-fixture `rustc`) runs across
 /// SPAWNED loft processes, so a threaded object can't span the boundary: each
