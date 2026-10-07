@@ -2933,7 +2933,8 @@ impl Output<'_> {
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
-            let mut walks = hoist::borrowed_text_walks(self.data, def_nr, &sliced);
+            let mut walks =
+                hoist::borrowed_text_walks(self.data, def_nr, &sliced, &self.split_tables);
             walks.extend(hoist::borrowed_discharge_temps(
                 self.data,
                 def_nr,
