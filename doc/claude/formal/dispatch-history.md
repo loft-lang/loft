@@ -70,3 +70,25 @@ OPEN: **0**.
   `tests/live_world.rs` (`a_nullable_dynamic_site_keeps_its_null_leaf_across_a_rebuild`,
   which fails with the spelling step removed).
 
+
+## Deviations found by the formal-rule walk of 2026-10-07
+
+OPEN: **0**.
+
+- **D-disp-3 — CLOSED 2026-10-07** (opened the same day, loft#1925).  `(Disp-Applicable)` reads
+  *the call's own argument check*, and selection asked only `can_convert` — the conversions that
+  emit nothing.  The stdlib's implicit ones (`integer` into `float`, `single`, `character` or
+  `boolean`; a `single` into `float`; a value into `boolean`), which a lone definition takes
+  through `convert`'s `OpConv…` scan, made no member applicable.  Three shapes followed, on both
+  backends: a free set `g(float), g(text)` refused an integer its lone twin takes; `D-Rank`'s own
+  example, `f(x: float)` beside `f<T>(x: T)` at an integer, reached the template without a word;
+  and a `self` set none of whose members applied fell to the attribute slot's routine — its FIRST
+  member — so `m(self: P, a: integer, b: float)` beside `m(self: P, a: float, b: integer)`
+  answered `IF 1 2` or `FI 1 2` by declaration order.  `dispatch_rank` now asks the same
+  predicate `convert` scans with (`Data::converts_with`), so the converting member ranks
+  `CONVERTED` and the ties are `Disp-Ambiguous`'s, refused with the code `ambiguous-call`.  Plan
+  165's STEPS.md had recorded the missing step on 2026-09-21 as a finding, and demonstrated the
+  incomparability with an enum into an `integer` instead.  Guards:
+  `tests/scripts/1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`,
+  `tests/scripts/1925b-two-converting-members-are-ambiguous-in-either-order.loft`.
+

@@ -37,7 +37,9 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
                     redefinition.
 
   (Disp-Applicable) a definition takes a call when every argument may satisfy its parameter, as
-                    the call's own argument check (`can_convert`) decides — after (F-Recv)'s
+                    the call's own argument check decides for a lone definition — the
+                    conversions that emit nothing and the stdlib's implicit ones (`integer` into
+                    `float`, `single`, `character` or `boolean`, …) alike — after (F-Recv)'s
                     nullability routing, so a nullable argument reaches the `τ?` member where
                     one is declared.  A trailing parameter with a default may be omitted.
 
@@ -121,7 +123,7 @@ value-shaped decision, and value clauses would make coverage undecidable.
 | rule | site | guard |
 |---|---|---|
 | Disp-Key | `Parser` key building (`f_` / `t_…#…` keys) | `tests/scripts/a-library-exports-an-overload-set.loft` |
-| Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `rank_no_worse`, `select_overload`) | `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, the refusals in `tests/parse_errors.rs` |
+| Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `converts_implicitly`, `rank_no_worse`, `select_overload`) | `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, `1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`, `1925b-two-converting-members-are-ambiguous-in-either-order.loft`, the refusals in `tests/parse_errors.rs` |
 | Disp-Exhaustive | `Parser::refuse_uncovered_variants`, the call refusal | `tests/parse_errors.rs` |
 | Disp-Closed | selection at parse time | `tests/introspect_dispatch.rs` |
 | Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `tests/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `tests/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |

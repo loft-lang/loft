@@ -7887,6 +7887,25 @@ impl Data {
         &self.possible[start]
     }
 
+    /// Does the conversion `dnr` (an `OpConv…`, not a `…FromNull`) take a value of `is_type` —
+    /// flattened to `check_type` for a handle or a plain enum, as [`crate::parser::Parser`]'s
+    /// `convert` flattens it — into a slot of type `should`?  The one question both the
+    /// implicit conversion and overload selection ask (`@FR-Disp-Applicable`: a definition
+    /// takes a call when the call's own argument check would accept it).
+    #[must_use]
+    pub fn converts_with(
+        &self,
+        dnr: u32,
+        check_type: &Type,
+        is_type: &Type,
+        should: &Type,
+    ) -> bool {
+        self.attributes(dnr) > 0
+            && (self.attr_type(dnr, 0).is_equal(check_type)
+                || self.attr_type(dnr, 0).is_equal(is_type))
+            && self.def(dnr).returned().is_equal(should)
+    }
+
     /// The operator definition whose SIGNATURE matches — same candidate list the concrete
     /// path walks, asked with the arity and receiver instead of the name alone.
     ///
