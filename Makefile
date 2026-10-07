@@ -1100,6 +1100,11 @@ release-checklist:  ## Per-release checklist: what CI proved, and what is left f
 # how long files are and whether their sections are comparable subjects (file-sizes),
 # and whether a contract doc has absorbed its own history instead of splitting it into
 # an `-history.md` companion (doc_history_report).  A REPORT, never a gate.
+# @PLN184 E2 — where Windows parity stands: every census count and every exemption, one page.
+# A REPORT (`--check` exits 1 while a count is open); the release checklist reads it.
+windows-parity:
+	python3 scripts/windows_parity.py $(ARGS)
+
 file-sizes:  ## Are doc/source files too long to use, and do they hold one subject?
 	@python3 scripts/file-sizes.py $(ARGS) || true
 	@echo

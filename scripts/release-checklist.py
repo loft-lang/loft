@@ -1544,6 +1544,19 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             cadence="mid pre",
         ),
         Item(
+            "M-windows-parity",
+            "Windows parity — every count at 0 or an approved exemption (@PLN184)",
+            "make windows-parity",
+            "read the report: the call-site platform gates in src/ and tests/, the files still "
+            "opting out of the file-access lints, and the CI jobs without a Windows verdict, then "
+            "every exemption with its reason.  Each count is a census that only falls (a rise "
+            "fails a test); this row asks whether a NEW exemption appeared and whether its "
+            "reason still holds.  A script's hazards are @PLN179's (its ports run on that "
+            "plan's clock)",
+            cadence="pre",
+            report=True,
+        ),
+        Item(
             "M-liveness",
             "The liveness census — are the gates themselves still live?",
             "make release-liveness",
