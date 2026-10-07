@@ -40,6 +40,7 @@
 //! checks only ONE of those two is not either — a UAF-only assertion went green the moment
 //! gate 1 landed, while the store had simply stopped being freed at all.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -59,9 +60,9 @@ fn loft_bin() -> PathBuf {
 /// in the batch and passed when the test was run alone.
 fn run(src: &str, backend: &str, retbuf: bool, tag: &str) -> (String, String) {
     let dir = std::env::temp_dir().join(format!("loft938_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{tag}.loft"));
-    std::fs::write(&file, src).expect("write probe");
+    fa::write(&file, src).expect("write probe");
     let mut cmd = Command::new(loft_bin());
     cmd.arg(backend)
         .arg(&file)
@@ -342,9 +343,9 @@ fn main() {
 #[test]
 fn dispatch_arm_returning_a_local_delivers_into_the_buffer() {
     let dir = std::env::temp_dir().join(format!("loft938_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("two_site.loft");
-    std::fs::write(&file, TWO_SITE_DISPATCH).expect("write probe");
+    fa::write(&file, TWO_SITE_DISPATCH).expect("write probe");
     let out = Command::new(loft_bin())
         .arg("--interpret")
         .arg(&file)

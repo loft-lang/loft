@@ -36,6 +36,7 @@
 extern crate loft;
 
 use loft::diagnostics::Level;
+use loft::file_access as fa;
 use loft::parser::Parser;
 
 /// Build a two-package tree under a unique temp root:
@@ -51,44 +52,44 @@ use loft::parser::Parser;
 /// after parsing `pkg_top`'s entry file.
 fn parse_two_packages(tag: &str, extra: &[(&str, &str)], top_body: &str) -> (Level, Vec<String>) {
     let root = std::env::temp_dir().join(format!("loft_912_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dep = root.join("pkg_dep");
     let top = root.join("pkg_top");
-    std::fs::create_dir_all(dep.join("src")).expect("mkdir dep");
-    std::fs::create_dir_all(top.join("src")).expect("mkdir top");
+    fa::create_dir_all(dep.join("src")).expect("mkdir dep");
+    fa::create_dir_all(top.join("src")).expect("mkdir top");
 
-    std::fs::write(
+    fa::write(
         dep.join("loft.toml"),
         "[package]\nname = \"pkg_dep\"\nversion = \"0.1.0\"\nentry = \"src/pkg_dep.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/catalogue.loft"),
         "pub fn part_list() -> integer { 7 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/pkg_dep.loft"),
         "pub use catalogue::*;\npub fn dep_entry() -> integer { part_list() }\n",
     )
     .unwrap();
 
-    std::fs::write(
+    fa::write(
         top.join("loft.toml"),
         "[package]\nname = \"pkg_top\"\nversion = \"0.1.0\"\nentry = \"src/pkg_top.loft\"\n\n\
          [dependencies]\npkg_dep = { path = \"../pkg_dep\" }\n",
     )
     .unwrap();
     for (name, body) in extra {
-        std::fs::write(top.join("src").join(name), body).unwrap();
+        fa::write(top.join("src").join(name), body).unwrap();
     }
-    std::fs::write(top.join("src/pkg_top.loft"), top_body).unwrap();
+    fa::write(top.join("src/pkg_top.loft"), top_body).unwrap();
 
     let mut p = Parser::new();
     p.parse_dir("default", true, true).unwrap();
     p.parse(&top.join("src/pkg_top.loft").to_string_lossy(), false);
     let out = (p.diagnostics.level(), p.diagnostics.lines().to_vec());
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     out
 }
 
@@ -111,23 +112,23 @@ fn parse_two_packages(tag: &str, extra: &[(&str, &str)], top_body: &str) -> (Lev
 #[test]
 fn a_packages_own_name_means_the_package_not_a_same_named_file() {
     let root = std::env::temp_dir().join(format!("loft_976_self_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("selfpkg");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir src");
-    std::fs::create_dir_all(pkg.join("tests")).expect("mkdir tests");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+    fa::create_dir_all(pkg.join("tests")).expect("mkdir tests");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"selfpkg\"\nversion = \"0.1.0\"\n\n\
          [library]\nentry = \"src/selfpkg.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/selfpkg.loft"),
         "pub fn from_the_entry() -> integer { 42 }\n",
     )
     .unwrap();
     // The file that used to win: named after the package, and NOT the entry.
-    std::fs::write(
+    fa::write(
         pkg.join("tests/selfpkg.loft"),
         "use selfpkg::*;\nfn main() { assert(selfpkg::from_the_entry() == 42, \"entry surface\"); }\n",
     )
@@ -138,7 +139,7 @@ fn a_packages_own_name_means_the_package_not_a_same_named_file() {
     p.parse(&pkg.join("tests/selfpkg.loft").to_string_lossy(), false);
     let level = p.diagnostics.level();
     let lines = p.diagnostics.lines().to_vec();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         level < Level::Error,
@@ -309,48 +310,48 @@ fn a_file_named_like_a_declared_dependency_is_not_a_clash() {
 #[test]
 fn the_collision_no_longer_breaks_the_build() {
     let root = std::env::temp_dir().join(format!("loft_948_fatal_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dep = root.join("pkg_dep");
     let top = root.join("pkg_top");
-    std::fs::create_dir_all(dep.join("src")).expect("mkdir dep");
-    std::fs::create_dir_all(top.join("src")).expect("mkdir top");
-    std::fs::create_dir_all(top.join("tests")).expect("mkdir tests");
+    fa::create_dir_all(dep.join("src")).expect("mkdir dep");
+    fa::create_dir_all(top.join("src")).expect("mkdir top");
+    fa::create_dir_all(top.join("tests")).expect("mkdir tests");
 
-    std::fs::write(
+    fa::write(
         dep.join("loft.toml"),
         "[package]\nname = \"pkg_dep\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/pkg_dep.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/catalogue.loft"),
         "pub fn part_list() -> integer { 41 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/pkg_dep.loft"),
         "use catalogue::*;\npub fn dep_answer() -> integer { part_list() + 1 }\n",
     )
     .unwrap();
 
-    std::fs::write(
+    fa::write(
         top.join("loft.toml"),
         "[package]\nname = \"pkg_top\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/pkg_top.loft\"\n\n\
          [dependencies]\npkg_dep = { path = \"../pkg_dep\" }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         top.join("src/pkg_top.loft"),
         "use pkg_dep::*;\npub fn top_answer() -> integer { dep_answer() }\n",
     )
     .unwrap();
     // Declares something else entirely and is imported by nobody, so the dependency's
     // `part_list` simply goes missing.
-    std::fs::write(
+    fa::write(
         top.join("src/catalogue.loft"),
         "pub fn top_unrelated() -> text { \"x\" }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         top.join("tests/answer.loft"),
         "use pkg_top::*;\nfn main() { assert(top_answer() == 42, \"answer\"); }\n",
     )
@@ -373,7 +374,7 @@ fn the_collision_no_longer_breaks_the_build() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !all.contains("Unknown function part_list"),
@@ -396,22 +397,22 @@ fn the_collision_no_longer_breaks_the_build() {
 #[test]
 fn a_same_package_basename_collision_is_not_advised() {
     let root = std::env::temp_dir().join(format!("loft_948_same_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("pkg_solo");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir src");
-    std::fs::create_dir_all(pkg.join("tests")).expect("mkdir tests");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+    fa::create_dir_all(pkg.join("tests")).expect("mkdir tests");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"pkg_solo\"\nversion = \"0.1.0\"\nentry = \"src/pkg_solo.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/pkg_solo.loft"),
         "pub fn solo_answer() -> integer { 42 }\n",
     )
     .unwrap();
     // Named after its own package — the shape that used to draw a rename it must not draw.
-    std::fs::write(
+    fa::write(
         pkg.join("tests/pkg_solo.loft"),
         "use pkg_solo::*;\nfn main() { assert(solo_answer() == 42, \"solo\"); }\n",
     )
@@ -421,7 +422,7 @@ fn a_same_package_basename_collision_is_not_advised() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&pkg.join("tests/pkg_solo.loft").to_string_lossy(), false);
     let lines = p.diagnostics.lines().to_vec();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         !lines.iter().any(|l| l.contains("module-name-shadowed")),
@@ -440,43 +441,43 @@ fn a_same_package_basename_collision_is_not_advised() {
 /// its dependency has not asked for yet.
 fn use_self_tree(tag: &str, dep_entry: &str) -> String {
     let root = std::env::temp_dir().join(format!("loft_949_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dep = root.join("pkg_dep");
     let top = root.join("pkg_top");
-    std::fs::create_dir_all(dep.join("src")).expect("mkdir dep");
-    std::fs::create_dir_all(top.join("src")).expect("mkdir top");
-    std::fs::create_dir_all(top.join("tests")).expect("mkdir tests");
+    fa::create_dir_all(dep.join("src")).expect("mkdir dep");
+    fa::create_dir_all(top.join("src")).expect("mkdir top");
+    fa::create_dir_all(top.join("tests")).expect("mkdir tests");
 
-    std::fs::write(
+    fa::write(
         dep.join("loft.toml"),
         "[package]\nname = \"pkg_dep\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/pkg_dep.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/catalogue.loft"),
         "pub fn part_list() -> integer { 41 }\n",
     )
     .unwrap();
-    std::fs::write(dep.join("src/pkg_dep.loft"), dep_entry).unwrap();
+    fa::write(dep.join("src/pkg_dep.loft"), dep_entry).unwrap();
 
-    std::fs::write(
+    fa::write(
         top.join("loft.toml"),
         "[package]\nname = \"pkg_top\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/pkg_top.loft\"\n\n\
          [dependencies]\npkg_dep = { path = \"../pkg_dep\" }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         top.join("src/pkg_top.loft"),
         "use pkg_dep::*;\npub fn top_answer() -> integer { dep_answer() }\n",
     )
     .unwrap();
     // Same name, same signature — so this does not break the build, it changes the answer.
-    std::fs::write(
+    fa::write(
         top.join("src/catalogue.loft"),
         "pub fn part_list() -> integer { 99 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         top.join("tests/answer.loft"),
         "use pkg_top::*;\nfn main() { println(\"answer={top_answer()}\"); }\n",
     )
@@ -500,7 +501,7 @@ fn use_self_tree(tag: &str, dep_entry: &str) -> String {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     all
 }
 
@@ -556,25 +557,25 @@ fn use_self_binds_the_packages_own_module_not_a_consumers() {
 #[test]
 fn two_packages_same_named_self_modules_both_stay_reachable() {
     let root = std::env::temp_dir().join(format!("loft_949_coexist_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dep = root.join("pkg_dep");
     let top = root.join("pkg_top");
-    std::fs::create_dir_all(dep.join("src")).expect("mkdir dep");
-    std::fs::create_dir_all(top.join("src")).expect("mkdir top");
-    std::fs::create_dir_all(top.join("tests")).expect("mkdir tests");
+    fa::create_dir_all(dep.join("src")).expect("mkdir dep");
+    fa::create_dir_all(top.join("src")).expect("mkdir top");
+    fa::create_dir_all(top.join("tests")).expect("mkdir tests");
 
-    std::fs::write(
+    fa::write(
         dep.join("loft.toml"),
         "[package]\nname = \"pkg_dep\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/pkg_dep.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/catalogue.loft"),
         "pub struct Row { n: integer, tag: text }\n\
          pub fn make_row() -> Row { Row { n: 41, tag: \"dep\" } }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/pkg_dep.loft"),
         "pub use self::catalogue::*;\n\
          pub fn dep_answer() -> integer { make_row().n + 1 }\n\
@@ -582,27 +583,27 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     )
     .unwrap();
 
-    std::fs::write(
+    fa::write(
         top.join("loft.toml"),
         "[package]\nname = \"pkg_top\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/pkg_top.loft\"\n\n\
          [dependencies]\npkg_dep = { path = \"../pkg_dep\" }\n",
     )
     .unwrap();
     // Same module name, same function name, a DIFFERENT struct behind it.
-    std::fs::write(
+    fa::write(
         top.join("src/catalogue.loft"),
         "pub struct Row { label: text, extra: float }\n\
          pub fn make_row() -> Row { Row { label: \"top\", extra: 2.5 } }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         top.join("src/pkg_top.loft"),
         "pub use pkg_dep::*;\nuse self::catalogue as m;\n\
          pub fn top_answer() -> integer { dep_answer() }\n\
          pub fn top_label() -> text { m::make_row().label }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         top.join("tests/answer.loft"),
         "use pkg_top::*;\n\
          fn main() { println(\"dep_answer={top_answer()} dep_tag={dep_tag()} top_label={top_label()}\"); }\n",
@@ -627,7 +628,7 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         all.contains("dep_answer=42 dep_tag=dep top_label=top"),
@@ -653,14 +654,14 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
         ("rename", "use self::tools::(one as first);", "1|"),
         ("star", "use self::tools::*;", "1|2"),
     ] {
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(pkg.join("src")).expect("mkdir");
-        std::fs::write(
+        let _ = fa::remove_dir_all(&root);
+        fa::create_dir_all(pkg.join("src")).expect("mkdir");
+        fa::write(
             pkg.join("loft.toml"),
             "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\nentry = \"src/pkg.loft\"\n",
         )
         .unwrap();
-        std::fs::write(
+        fa::write(
             pkg.join("src/tools.loft"),
             "pub fn one() -> integer { 1 }\npub fn two() -> integer { 2 }\n",
         )
@@ -668,7 +669,7 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
         // `first` is bound only in the rename row; every row prints what it imported.
         let call = if tag == "rename" { "first()" } else { "one()" };
         let second = if want.ends_with('2') { "two()" } else { "\"\"" };
-        std::fs::write(
+        fa::write(
             pkg.join("src/pkg.loft"),
             format!("{body}\nfn main() {{ println(\"{{{call}}}|{{{second}}}\") }}\n"),
         )
@@ -685,19 +686,19 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
     }
 
     // The flat comma list is refused for `self::` exactly as it is for a library.
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(pkg.join("src")).expect("mkdir");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\nentry = \"src/pkg.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/tools.loft"),
         "pub fn one() -> integer { 1 }\npub fn two() -> integer { 2 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/pkg.loft"),
         "use self::tools::one, two;\nfn main() { println(\"{one()}\") }\n",
     )
@@ -706,7 +707,7 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&pkg.join("src/pkg.loft").to_string_lossy(), false);
     let all = p.diagnostics.lines().join("\n");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     assert!(
         all.contains("use self::tools::(a, b, …)"),
         "the grouping error must quote the spelling the author wrote:\n{all}"
@@ -715,18 +716,18 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
     // A bare `use self::tools;` would bind nothing: a bare `use` brings in only a
     // qualifier (@C98), and a package's own module has none (loft#976).  It is refused,
     // naming the three spellings that do bind something.
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\nentry = \"src/pkg.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/tools.loft"),
         "pub fn one() -> integer { 1 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/pkg.loft"),
         "use self::tools;\nfn main() { println(\"{tools::one()}\") }\n",
     )
@@ -735,7 +736,7 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&pkg.join("src/pkg.loft").to_string_lossy(), false);
     let all = p.diagnostics.lines().join("\n");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     assert!(
         all.contains("`use self::tools;` binds nothing")
             && all.contains("use self::tools::*;")
@@ -754,15 +755,15 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
 #[test]
 fn use_self_refuses_to_search_outside_its_own_package() {
     let root = std::env::temp_dir().join(format!("loft_949_absent_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("pkg_solo");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir src");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"pkg_solo\"\nversion = \"0.1.0\"\nentry = \"src/pkg_solo.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/pkg_solo.loft"),
         "pub use self::nope::*;\npub fn solo() -> integer { 1 }\n",
     )
@@ -772,7 +773,7 @@ fn use_self_refuses_to_search_outside_its_own_package() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&pkg.join("src/pkg_solo.loft").to_string_lossy(), false);
     let all = p.diagnostics.lines().join("\n");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert_eq!(
         p.diagnostics.level(),
@@ -791,14 +792,14 @@ fn use_self_refuses_to_search_outside_its_own_package() {
 #[test]
 fn use_self_outside_a_package_says_what_to_do_instead() {
     let root = std::env::temp_dir().join(format!("loft_949_nopkg_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("mkdir root");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir root");
+    fa::write(
         root.join("helper.loft"),
         "pub fn helper() -> integer { 1 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         root.join("bare.loft"),
         "use self::helper::*;\nfn main() { println(\"{helper()}\") }\n",
     )
@@ -808,7 +809,7 @@ fn use_self_outside_a_package_says_what_to_do_instead() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&root.join("bare.loft").to_string_lossy(), false);
     let all = p.diagnostics.lines().join("\n");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert_eq!(
         p.diagnostics.level(),
@@ -833,23 +834,23 @@ fn use_self_outside_a_package_says_what_to_do_instead() {
 #[test]
 fn the_clash_advice_outside_a_package_does_not_prescribe_self() {
     let root = std::env::temp_dir().join(format!("loft_949_advice_nopkg_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let a = root.join("dir_a");
     let b = root.join("dir_b");
-    std::fs::create_dir_all(&a).expect("mkdir a");
-    std::fs::create_dir_all(&b).expect("mkdir b");
+    fa::create_dir_all(&a).expect("mkdir a");
+    fa::create_dir_all(&b).expect("mkdir b");
     // Neither directory carries a `loft.toml`, so neither file is in a package.
-    std::fs::write(
+    fa::write(
         a.join("catalogue.loft"),
         "pub fn a_only() -> integer { 1 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         b.join("catalogue.loft"),
         "pub fn b_only() -> integer { 2 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         b.join("bare.loft"),
         "use catalogue::*;\nfn main() { println(\"{b_only()}\") }\n",
     )
@@ -876,7 +877,7 @@ fn the_clash_advice_outside_a_package_does_not_prescribe_self() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 
     assert!(
         all.contains("module 'catalogue' is declared by two files"),
@@ -986,7 +987,7 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
         ("ba", "pub use pkg_b::*;\npub use pkg_a::*;\n"),
     ] {
         let root = std::env::temp_dir().join(format!("loft_976_{tag}_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = fa::remove_dir_all(&root);
         for (pkg, fname, body, entry) in [
             (
                 "pkg_a",
@@ -1002,8 +1003,8 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
             ),
         ] {
             let dir = root.join(pkg);
-            std::fs::create_dir_all(dir.join("src")).expect("mkdir pkg");
-            std::fs::write(
+            fa::create_dir_all(dir.join("src")).expect("mkdir pkg");
+            fa::write(
                 dir.join("loft.toml"),
                 format!(
                     "[package]\nname = \"{pkg}\"\nversion = \"0.1.0\"\n\n\
@@ -1011,18 +1012,18 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
                 ),
             )
             .unwrap();
-            std::fs::write(dir.join("src").join(fname), body).unwrap();
-            std::fs::write(dir.join("src").join(format!("{pkg}.loft")), entry).unwrap();
+            fa::write(dir.join("src").join(fname), body).unwrap();
+            fa::write(dir.join("src").join(format!("{pkg}.loft")), entry).unwrap();
         }
         let app = root.join("app");
-        std::fs::create_dir_all(app.join("src")).expect("mkdir app");
-        std::fs::write(
+        fa::create_dir_all(app.join("src")).expect("mkdir app");
+        fa::write(
             app.join("loft.toml"),
             "[package]\nname = \"app976\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
              pkg_a = { path = \"../pkg_a\" }\npkg_b = { path = \"../pkg_b\" }\n",
         )
         .unwrap();
-        std::fs::write(
+        fa::write(
             app.join("src/main.loft"),
             format!(
                 "{uses}fn main() {{ \
@@ -1043,7 +1044,7 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = fa::remove_dir_all(&root);
 
         assert!(
             all.contains("a=2 b=11"),
@@ -1061,37 +1062,37 @@ fn captured_module_run(tag: &str, con_catalogue: &str, con_main: &str) -> String
     use std::process::Command;
 
     let root = std::env::temp_dir().join(format!("loft_949_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dep = root.join("dep");
     let con = root.join("con");
-    std::fs::create_dir_all(dep.join("src")).expect("mkdir dep");
-    std::fs::create_dir_all(con.join("src")).expect("mkdir con");
+    fa::create_dir_all(dep.join("src")).expect("mkdir dep");
+    fa::create_dir_all(con.join("src")).expect("mkdir con");
 
-    std::fs::write(
+    fa::write(
         dep.join("loft.toml"),
         "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/dep.loft\"\n",
     )
     .unwrap();
     // 41 + 1 = 42 when the dependency reads its OWN catalogue.
-    std::fs::write(
+    fa::write(
         dep.join("src/dep.loft"),
         "pub use catalogue::*;\npub fn dep_answer() -> integer { part_list() + 1 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dep.join("src/catalogue.loft"),
         "pub fn part_list() -> integer { 41 }\n",
     )
     .unwrap();
 
-    std::fs::write(
+    fa::write(
         con.join("loft.toml"),
         "[package]\nname = \"con\"\nversion = \"0.1.0\"\n\n[dependencies]\n\
          dep = { path = \"../dep\" }\n",
     )
     .unwrap();
-    std::fs::write(con.join("src/catalogue.loft"), con_catalogue).unwrap();
-    std::fs::write(con.join("src/main.loft"), con_main).unwrap();
+    fa::write(con.join("src/catalogue.loft"), con_catalogue).unwrap();
+    fa::write(con.join("src/main.loft"), con_main).unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", "src/main.loft"])
@@ -1108,7 +1109,7 @@ fn captured_module_run(tag: &str, con_catalogue: &str, con_main: &str) -> String
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     all
 }
 
@@ -1124,21 +1125,21 @@ fn captured_module_run(tag: &str, con_catalogue: &str, con_main: &str) -> String
 #[test]
 fn qualifying_a_self_bound_module_explains_itself() {
     let root = std::env::temp_dir().join(format!("loft_1043_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("qpkg");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir src");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"qpkg\"\nversion = \"0.1.0\"\n\n\
          [library]\nentry = \"src/qpkg.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/surfaces.loft"),
         "pub fn count() -> integer { 7 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/qpkg.loft"),
         "pub use self::surfaces::*;\npub fn n() -> integer { surfaces::count() }\n",
     )
@@ -1148,7 +1149,7 @@ fn qualifying_a_self_bound_module_explains_itself() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&pkg.join("src/qpkg.loft").to_string_lossy(), false);
     let lines = p.diagnostics.lines().to_vec();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let all = lines.join("\n");
 
     assert!(
@@ -1181,16 +1182,16 @@ fn qualifying_a_self_bound_module_explains_itself() {
 #[test]
 fn a_genuinely_unknown_library_still_says_unknown() {
     let root = std::env::temp_dir().join(format!("loft_1043c_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("qpkg");
-    std::fs::create_dir_all(pkg.join("src")).expect("mkdir src");
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).expect("mkdir src");
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"qpkg\"\nversion = \"0.1.0\"\n\n\
          [library]\nentry = \"src/qpkg.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/qpkg.loft"),
         "pub fn n() -> integer { nosuchlib::count() }\n",
     )
@@ -1200,7 +1201,7 @@ fn a_genuinely_unknown_library_still_says_unknown() {
     p.parse_dir("default", true, true).unwrap();
     p.parse(&pkg.join("src/qpkg.loft").to_string_lossy(), false);
     let lines = p.diagnostics.lines().to_vec();
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let all = lines.join("\n");
 
     assert!(

@@ -19,6 +19,7 @@
 //! public API carries the store-touching types (vector/struct/text/enum, args +
 //! returns) across the boundary.
 
+use loft::file_access as fa;
 use std::path::Path;
 use std::process::Command;
 
@@ -70,11 +71,11 @@ fn run_against(libdir: &Path, prog: &Path, env: &[(&str, &str)]) -> Run {
 /// returning its `native-auto` dir.  `dep` optionally adds a `[dependencies]` path edge.
 fn write_lib(libdir: &Path, name: &str, dep: Option<&str>, body: &str) -> std::path::PathBuf {
     let pkg = libdir.join(name);
-    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    fa::create_dir_all(pkg.join("src")).unwrap();
     let deps = dep.map_or(String::new(), |d| {
         format!("[dependencies]\n{d} = {{ path = \"../{d}\" }}\n")
     });
-    std::fs::write(
+    fa::write(
         pkg.join("loft.toml"),
         format!(
             "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
@@ -82,7 +83,7 @@ fn write_lib(libdir: &Path, name: &str, dep: Option<&str>, body: &str) -> std::p
         ),
     )
     .unwrap();
-    std::fs::write(pkg.join("src").join(format!("{name}.loft")), body).unwrap();
+    fa::write(pkg.join("src").join(format!("{name}.loft")), body).unwrap();
     pkg.join("native-auto")
 }
 
@@ -174,14 +175,14 @@ fn datalib_store_touching_types_parity() {
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_parity_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(&prog, DATALIB_PROG).unwrap();
+    fa::write(&prog, DATALIB_PROG).unwrap();
 
     // The library's auto-built cdylib lands in its package's git-ignored dir.
     let native_auto = std::path::Path::new("tests/lib/datalib/native-auto");
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(native_auto);
 
     let stdout = assert_three_mode_parity(&prog);
     // Sanity-anchor the reference so a "parity holds but all three are wrong"
@@ -191,8 +192,8 @@ fn datalib_store_touching_types_parity() {
         "reference output"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(native_auto);
 }
 
 /// @PLN11 Arc N / N3 Step 2 — the build-failure fallback.
@@ -210,7 +211,7 @@ fn datalib_store_touching_types_parity() {
 fn build_failure_with_rustc_present_hard_fails() {
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_n3_fail_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let libdir = root.join("lib");
     // Own the fixture (tmp) so the `no cdylib built` assertion can never race a
     // concurrent test building the same package's `native-auto/`.
@@ -225,7 +226,7 @@ fn build_failure_with_rustc_present_hard_fails() {
          \x20   out\n}\n",
     );
     let prog = root.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use fblib::*;\nfn main() {\n\
          \x20   println(shout(\"hi\"));\n\
@@ -247,11 +248,11 @@ fn build_failure_with_rustc_present_hard_fails() {
         forced.stderr
     );
     assert!(
-        !native_auto.exists(),
+        !fa::exists(&native_auto),
         "no cdylib should have been built when the build is forced to fail"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// A consumer of `plainlib` — a library that does **not** opt into
@@ -283,16 +284,16 @@ fn default_native_dispatches_unopted_library() {
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_plainparity_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(&prog, PLAINLIB_PROG).unwrap();
+    fa::write(&prog, PLAINLIB_PROG).unwrap();
     let native_auto = std::path::Path::new("tests/lib/plainlib/native-auto");
 
     let interp = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
 
     // ESCAPE: `LOFT_NO_NATIVE_LIBS` interprets and builds no cdylib.
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(native_auto);
     let escaped = run(&[], &[("LOFT_NO_NATIVE_LIBS", "1")], &prog);
     assert!(
         escaped.success,
@@ -300,12 +301,12 @@ fn default_native_dispatches_unopted_library() {
         escaped.stderr
     );
     assert!(
-        !native_auto.exists(),
+        !fa::exists(native_auto),
         "LOFT_NO_NATIVE_LIBS must build no cdylib"
     );
 
     // DEFAULT: plainlib never opted in, yet default-native auto-builds + dispatches.
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(native_auto);
     let dflt = run(&[], &[], &prog);
     assert!(
         dflt.success,
@@ -317,12 +318,12 @@ fn default_native_dispatches_unopted_library() {
         "PARITY DIVERGENCE: default-native (un-opted lib) != interpreted"
     );
     assert!(
-        native_auto.exists(),
+        fa::exists(native_auto),
         "default-native must auto-build the cdylib for an un-opted-in library"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(native_auto);
 }
 
 /// The single auto-built cdylib under a package's `native-auto/`, if any.
@@ -362,11 +363,11 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
 
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_n3_edit_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let libdir = root.join("lib");
     let pkg = libdir.join("edlib");
-    std::fs::create_dir_all(pkg.join("src")).unwrap();
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).unwrap();
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"edlib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
          [library]\nentry = \"src/edlib.loft\"\n",
@@ -378,9 +379,9 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
     // bridge has nowhere to put those bytes, so the gate keeps it interpreted
     // (loft#773).  This test is about the cdylib lifecycle, so its fixture has to be
     // a function that actually reaches the cdylib.
-    std::fs::write(&src, "pub fn greet() -> text { n = 1; return \"v{n}\"; }\n").unwrap();
+    fa::write(&src, "pub fn greet() -> text { n = 1; return \"v{n}\"; }\n").unwrap();
     let prog = root.join("main.loft");
-    std::fs::write(&prog, "use edlib::*;\nfn main() { println(greet()); }\n").unwrap();
+    fa::write(&prog, "use edlib::*;\nfn main() { println(greet()); }\n").unwrap();
     let native_auto = pkg.join("native-auto");
 
     // Run the binary against this editable lib dir (no `tests/lib`).
@@ -404,12 +405,12 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
     assert!(r1.success, "run 1 failed:\n{}", r1.stderr);
     assert_eq!(r1.stdout.trim(), "v1");
     let so = single_cdylib(&native_auto).expect("run 1 must eager-build the cdylib");
-    let mtime1 = std::fs::metadata(&so).unwrap().modified().unwrap();
+    let mtime1 = fa::metadata(&so).unwrap().modified().unwrap();
 
     // Edit the library (sleep first so the new source mtime is unambiguously newer
     // than the just-built cdylib, even on a coarse-granularity filesystem).
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::write(&src, "pub fn greet() -> text { n = 2; return \"v{n}\"; }\n").unwrap();
+    fa::write(&src, "pub fn greet() -> text { n = 2; return \"v{n}\"; }\n").unwrap();
 
     // 2. Edit run → interpret the NEW code, NO rebuild.
     let r2 = run_edit();
@@ -419,7 +420,7 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
         "v2",
         "an edit must take effect immediately — interpreted, not the stale cdylib"
     );
-    let mtime2 = std::fs::metadata(&so).unwrap().modified().unwrap();
+    let mtime2 = fa::metadata(&so).unwrap().modified().unwrap();
     assert_eq!(
         mtime1, mtime2,
         "the edit run must NOT rebuild the cdylib (no `rustc` per save)"
@@ -429,13 +430,13 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
     let r3 = run_edit();
     assert!(r3.success, "run 3 failed:\n{}", r3.stderr);
     assert_eq!(r3.stdout.trim(), "v2");
-    let mtime3 = std::fs::metadata(&so).unwrap().modified().unwrap();
+    let mtime3 = fa::metadata(&so).unwrap().modified().unwrap();
     assert_ne!(
         mtime2, mtime3,
         "once editing settles, the next run rebuilds the cdylib → native"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// @PLN11 N3 F2 — interdependent libraries are **fully native**.
@@ -459,7 +460,7 @@ fn interdependent_libraries_are_fully_native() {
 
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_n3_diamond_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let libdir = root.join("lib");
     let base_auto = write_lib(
         &libdir,
@@ -483,7 +484,7 @@ fn interdependent_libraries_are_fully_native() {
     );
     let prog = root.join("main.loft");
     // Diamond: consumer uses BOTH `dtop` and its dependency `dbase` directly.
-    std::fs::write(
+    fa::write(
         &prog,
         "use dtop::*;\nuse dbase::*;\nfn main() {\n\
          \x20   println(\"{top_sum([1, 2, 3])}\");\n\
@@ -513,7 +514,7 @@ fn interdependent_libraries_are_fully_native() {
         "the dependency `dbase`, used directly, must ALSO build its OWN cdylib (F2)"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// @PLN118 arc F — the shared-store bridge must not ORPHAN the fallback destination
@@ -550,9 +551,9 @@ fn shared_bridge_nested_return_no_orphan_leak() {
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_arcf_orphan_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let libdir = root.join("libs");
-    std::fs::create_dir_all(&libdir).unwrap();
+    fa::create_dir_all(&libdir).unwrap();
 
     let native_auto = write_lib(
         &libdir,
@@ -563,7 +564,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
          pub fn wrap_v3(a: integer) -> V3 { make_v3(a as float, 0.0, 0.0) }\n",
     );
     let prog = root.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use arcf::*;\nfn main() {\n\
          \x20   total = 0.0;\n\
@@ -582,7 +583,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
     // test vacuous.  Each run rebuilds the cdylib fresh so neither races a concurrent
     // suite's shared target artifacts.
     let run_interp = |env: &[(&str, &str)]| -> Run {
-        let _ = std::fs::remove_dir_all(&native_auto);
+        let _ = fa::remove_dir_all(&native_auto);
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--interpret")
             .arg("--lib")
@@ -629,7 +630,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
         control.stderr
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// loft#672 — a `boolean` library function whose body compares a field of a
@@ -653,7 +654,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
 fn boolean_compare_of_lifted_ref_field_builds_in_cdylib_672() {
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_672_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let libdir = root.join("lib");
     write_lib(
         &libdir,
@@ -671,7 +672,7 @@ fn boolean_compare_of_lifted_ref_field_builds_in_cdylib_672() {
          pub fn via_local() -> boolean { n = node_at(); return n.kind == 0; }\n",
     );
     let prog = root.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use liftlib::*;\n\
          fn main() {\n\
@@ -710,7 +711,7 @@ fn boolean_compare_of_lifted_ref_field_builds_in_cdylib_672() {
         );
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// loft#777 — a **dependency** edit must invalidate every dependent's cdylib.
@@ -775,13 +776,13 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_{tag}_dep_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let libdir = root.join("lib");
 
     let write_pkg = |name: &str, body: &str| {
         let pkg = libdir.join(name);
-        std::fs::create_dir_all(pkg.join("src")).unwrap();
-        std::fs::write(
+        fa::create_dir_all(pkg.join("src")).unwrap();
+        fa::write(
             pkg.join("loft.toml"),
             format!(
                 "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
@@ -789,7 +790,7 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
             ),
         )
         .unwrap();
-        std::fs::write(pkg.join("src").join(format!("{name}.loft")), body).unwrap();
+        fa::write(pkg.join("src").join(format!("{name}.loft")), body).unwrap();
     };
 
     // `base` holds the rule under edit; `dep` calls it, so `dep`'s cdylib inlines it.
@@ -807,7 +808,7 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
     // The consumer names ONLY `dep`, so `base` is reached transitively — and `dep`
     // is registered (and dlopened) first, which is what lets its copy shadow.
     let prog = root.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use dep::*;\nfn main() { println(\"{check(3)}\"); }\n",
     )
@@ -852,7 +853,7 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
         );
     }
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// loft#999 — an artifact that cannot be moved off its path is REBUILT, not adopted.
@@ -876,22 +877,22 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_999_probe_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("lib").join("solo");
-    std::fs::create_dir_all(pkg.join("src")).unwrap();
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).unwrap();
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"solo\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
          [library]\nentry = \"src/solo.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src").join("solo.loft"),
         "pub fn seven() -> integer { return 7; }\n",
     )
     .unwrap();
     let prog = root.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use solo::*;\nfn main() { println(\"{seven()}\"); }\n",
     )
@@ -975,5 +976,5 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
         "a fresh artifact must be adopted, not rebuilt"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

@@ -8,6 +8,7 @@
 //! MUST stay `float?` even under the flag — is the load-bearing assertion (a wrong non-null
 //! proof would store a runtime null into a non-null slot).
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -18,7 +19,7 @@ fn loft_bin() -> std::path::PathBuf {
 /// opted out via `LOFT_NO_MATH_DOMAIN`. Returns `(compiled_ok, stdout+stderr)`.
 fn compile(tag: &str, src: &str, domain_on: bool) -> (bool, String) {
     let path = std::env::temp_dir().join(format!("loft_mathdom_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&path, src).expect("write temp");
+    fa::write(&path, src).expect("write temp");
     let mut cmd = Command::new(loft_bin());
     cmd.arg("--interpret")
         .arg(&path)
@@ -29,7 +30,7 @@ fn compile(tag: &str, src: &str, domain_on: bool) -> (bool, String) {
         cmd.env("LOFT_NO_MATH_DOMAIN", "1");
     }
     let out = cmd.output().expect("invoke loft binary");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

@@ -11,6 +11,7 @@
 //! natively (the library compiles) while the script interprets — output identical
 //! to the all-interpreted run.  This is the headline of Arc N realised end-to-end.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 /// Copy `pkgs` out of `tests/lib` into a `lib/` of this test's own, and answer the
@@ -40,7 +41,7 @@ fn private_lib(dir: &std::path::Path, pkgs: &[&str]) -> std::path::PathBuf {
 
 /// Recursive copy that skips build output (`native-auto/`, `target/`).
 fn copy_pkg(from: &std::path::Path, to: &std::path::Path) {
-    std::fs::create_dir_all(to).expect("create the private package dir");
+    fa::create_dir_all(to).expect("create the private package dir");
     let Ok(entries) = std::fs::read_dir(from) else {
         return;
     };
@@ -54,7 +55,7 @@ fn copy_pkg(from: &std::path::Path, to: &std::path::Path) {
         if e.file_type().is_ok_and(|t| t.is_dir()) {
             copy_pkg(&src, &dst);
         } else {
-            std::fs::copy(&src, &dst).expect("copy a fixture file");
+            fa::copy(&src, &dst).expect("copy a fixture file");
         }
     }
 }
@@ -94,12 +95,12 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_use_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
     // A plain script: `use` the library and call its functions — NO `#native`, no
     // execution-mode declaration.  double/add/factorial are normal loft functions.
-    std::fs::write(
+    fa::write(
         &prog,
         "use mathnative::*;\n\
          fn main() {\n\
@@ -148,8 +149,8 @@ fn use_compile_native_library_dispatches_on_real_binary() {
         native_auto.display()
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(native_auto);
 }
 
 /// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where one
@@ -173,10 +174,10 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_mixed_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mathmixed::*;\n\
          fn main() {\n\
@@ -187,7 +188,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     .unwrap();
 
     let native_auto = std::path::Path::new("tests/lib/mathmixed/native-auto");
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(native_auto);
 
     let out = Command::new(env!("CARGO_BIN_EXE_loft"))
         .arg("--lib")
@@ -219,7 +220,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
                 .is_some_and(|n| n.starts_with("loft_auto_mathmixed") && n.ends_with(".rs"))
         })
         .expect("generated cdylib source should exist");
-    let lib_rs = std::fs::read_to_string(&rs_path).expect("read generated cdylib source");
+    let lib_rs = fa::read_to_string(&rs_path).expect("read generated cdylib source");
     assert!(
         lib_rs.contains("loft_shared_n_triple"),
         "triple should have a native bridge"
@@ -233,8 +234,8 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         "a synthetic lambda must NOT be a native dispatch target"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(native_auto);
 }
 
 /// A native build failure with a `rustc` toolchain present is a HARD ERROR — loft
@@ -252,10 +253,10 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
 fn native_build_failure_hard_fails_default_and_under_require() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_require_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mathnative::*;\n\
          fn main() {\n\
@@ -315,7 +316,7 @@ fn native_build_failure_hard_fails_default_and_under_require() {
         "strict error must name the env var and the reason.\nstderr:\n{strict_stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// Guards the **main-program** chokepoint of `LOFT_REQUIRE_NATIVE`.  Forces a native
@@ -328,10 +329,10 @@ fn native_build_failure_hard_fails_default_and_under_require() {
 fn require_native_errors_when_rustc_is_absent() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_norustc_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(&prog, "fn main() {\n    print(\"ran\")\n}\n").unwrap();
+    fa::write(&prog, "fn main() {\n    print(\"ran\")\n}\n").unwrap();
 
     // Empty PATH ⇒ `rustc` (invoked by bare name) is NotFound; loft itself runs
     // because it is launched by absolute path.  Cache bypass forces a compile attempt.
@@ -358,7 +359,7 @@ fn require_native_errors_when_rustc_is_absent() {
         "strict error must name the env var.\nstderr:\n{stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// #460 — the package that OWNS the entry file is the *script*, not a `use`d
@@ -385,7 +386,7 @@ fn entry_package_is_never_auto_native_compiled() {
     // [native]) run DIRECTLY via two entries that `use` disjoint local modules.
     let pkg = std::path::Path::new("tests/lib/selfpkg");
     let native_auto = pkg.join("native-auto");
-    let _ = std::fs::remove_dir_all(&native_auto);
+    let _ = fa::remove_dir_all(&native_auto);
 
     let run = |entry: &str| {
         Command::new(env!("CARGO_BIN_EXE_loft"))
@@ -429,7 +430,7 @@ fn entry_package_is_never_auto_native_compiled() {
     // The decisive invariant: the entry package is the script, so it never
     // builds a cdylib — the structural cause of the stale-export-set mismatch.
     assert!(
-        !native_auto.exists(),
+        !fa::exists(&native_auto),
         "the entry package must NOT be auto-native-compiled, but {} exists",
         native_auto.display()
     );
@@ -455,20 +456,20 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
     }
 
     let native_auto = std::path::Path::new("tests/lib/binwriter/native-auto");
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(native_auto);
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_461_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     // Bare context: only binwriter loaded — its cdylib bakes binwriter's `i32` index.
-    std::fs::write(
+    fa::write(
         tmp.join("bare.loft"),
         "use binwriter::*;\nfn main() { write_magic(arguments()[0], 2); }\n",
     )
     .unwrap();
     // Shifted context: typeshift's struct types move `i32` to a different index.
-    std::fs::write(
+    fa::write(
         tmp.join("shifted.loft"),
         "use typeshift::*;\nuse binwriter::*;\n\
          fn main() { _ = ts_touch(); write_magic(arguments()[0], 2); }\n",
@@ -509,7 +510,7 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
     // A stale-index cdylib would write 8-byte i64 fields (16 bytes, version split).
     let want: &[u8] = &[0x67, 0x6c, 0x54, 0x46, 0x02, 0x00, 0x00, 0x00];
     for (name, path) in [("bare", &bare_out), ("shifted", &shifted_out)] {
-        let bytes = std::fs::read(path).expect("read output");
+        let bytes = fa::read(path).expect("read output");
         assert_eq!(
             bytes, want,
             "{name} context wrote the wrong header — `as i32` did not narrow to 4 bytes \
@@ -517,8 +518,8 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
         );
     }
 
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(native_auto);
 }
 
 /// loft#1706 — a shared bridge mints its result record by the type's REGISTERED name.
@@ -539,17 +540,17 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_1706_bridge_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let lib = private_lib(&tmp, &["sharedname"]);
     // The program's own `Holder`, in a module `use`d first so it registers first and keeps
     // the bare name.
-    std::fs::write(
+    fa::write(
         lib.join("mine.loft"),
         "pub struct Holder { flag: boolean }\npub fn mine_new() -> Holder { Holder { flag: true } }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         tmp.join("clash.loft"),
         "use mine::*;\nuse sharedname::*;\nfn main() {\n  m = mine_new();\n  \
          h = holder_new(3, holder_pair(4));\n  \
@@ -579,7 +580,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
         .expect("the interpreted run built the library's cdylib")
         .flatten()
         .filter(|e| e.path().extension().is_some_and(|x| x == "rs"))
-        .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+        .map(|e| fa::read_to_string(e.path()).unwrap_or_default())
         .collect();
     assert!(!generated.is_empty(), "no generated bridge source");
     for src in &generated {
@@ -588,7 +589,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
             "the bridge must mint the library's `sharedname::Holder`, not the program's `Holder`"
         );
     }
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// loft#717 — an auto-built cdylib must be VERIFIED against the type layout it
@@ -621,8 +622,8 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_717_layout_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     // A PRIVATE copy: this test COUNTS the artifacts in `native-auto/`, and a
     // sibling test builds into the shared one (see `private_lib`).
     let lib = private_lib(&tmp, &["mathnative", "typeshift"]);
@@ -632,13 +633,13 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     // Two programs over the SAME library whose type tables differ: the second
     // loads another library first, which shifts every later type index.
     let bare = tmp.join("bare.loft");
-    std::fs::write(
+    fa::write(
         &bare,
         "use mathnative::*;\nfn main() { println(\"{double(21)}\"); }\n",
     )
     .unwrap();
     let shifted = tmp.join("shifted.loft");
-    std::fs::write(
+    fa::write(
         &shifted,
         "use typeshift::*;\nuse mathnative::*;\n\
          fn main() { _ = ts_touch(); println(\"{double(21)}\"); }\n",
@@ -677,7 +678,7 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
         v
     };
 
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(native_auto);
     assert!(run(&bare).status.success(), "bare context runs");
     let after_bare = sos();
     assert_eq!(after_bare.len(), 1, "the bare context built one artifact");
@@ -689,17 +690,17 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
         // Both contexts fingerprinted the same, so there is no foreign artifact to
         // plant and nothing to assert. Say so rather than passing quietly.
         eprintln!("skip: the two contexts share a type-layout fingerprint");
-        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = fa::remove_dir_all(&tmp);
         return;
     }
     let other_so = two.iter().find(|p| **p != bare_so).unwrap().clone();
 
-    let mtime = |p: &std::path::Path| std::fs::metadata(p).unwrap().modified().unwrap();
+    let mtime = |p: &std::path::Path| fa::metadata(p).unwrap().modified().unwrap();
 
     // CONTROL: the bare context's OWN artifact, re-copied over itself. Same mtime
     // churn, matching layout — it must be adopted, or the test below proves nothing.
-    let own = std::fs::read(&bare_so).unwrap();
-    std::fs::write(&bare_so, &own).unwrap();
+    let own = fa::read(&bare_so).unwrap();
+    fa::write(&bare_so, &own).unwrap();
     let before = mtime(&bare_so);
     assert!(run(&bare).status.success(), "control run succeeds");
     assert_eq!(
@@ -710,8 +711,8 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     );
 
     // TEST: the other context's artifact at this context's exact filename.
-    let foreign = std::fs::read(&other_so).unwrap();
-    std::fs::write(&bare_so, &foreign).unwrap();
+    let foreign = fa::read(&other_so).unwrap();
+    fa::write(&bare_so, &foreign).unwrap();
     let before = mtime(&bare_so);
     let out = run(&bare);
     assert!(
@@ -736,7 +737,7 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
         (b.len(), h)
     };
     assert_ne!(
-        digest(&std::fs::read(&bare_so).unwrap()),
+        digest(&fa::read(&bare_so).unwrap()),
         digest(&foreign),
         "the foreign artifact is still in place after the rebuild"
     );
@@ -745,8 +746,8 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
         "and it still computes the right answer"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
-    let _ = std::fs::remove_dir_all(native_auto);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(native_auto);
 }
 
 /// loft#1776 — an auto-native library artifact belongs to the `loft` EXECUTABLE that
@@ -768,8 +769,8 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_1776_exe_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let lib = private_lib(&tmp, &["mathnative"]);
     let native_auto = lib.join("mathnative/native-auto");
 
@@ -779,14 +780,14 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     let real_dir = real.parent().unwrap();
     let other_root = tmp.join("other");
     let other_dir = other_root.join("target").join("release");
-    std::fs::create_dir_all(&other_dir).unwrap();
+    fa::create_dir_all(&other_dir).unwrap();
     let other = other_dir.join(real.file_name().unwrap());
     // A later mtime than the original's, even on a coarse-grained filesystem.  Set on the
     // copy explicitly: macOS `fs::copy` clones the file (`clonefile`) and keeps the
     // original's timestamps, so there the copy carried the SAME mtime, the same identity,
     // and adopted the artifact — the test's premise, not the product, failed.
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    std::fs::copy(&real, &other).unwrap();
+    fa::copy(&real, &other).unwrap();
     std::fs::OpenOptions::new()
         .write(true)
         .open(&other)
@@ -794,8 +795,8 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
         .expect("give the copy its own modification time");
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
-        std::os::unix::fs::symlink(
+        fa::symlink(real_dir.join("deps"), other_dir.join("deps")).unwrap();
+        fa::symlink(
             std::fs::canonicalize("default").unwrap(),
             other_root.join("default"),
         )
@@ -809,7 +810,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     }
 
     let prog = tmp.join("p.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mathnative::*;\nfn main() { println(\"{double(21)}\"); }\n",
     )
@@ -875,7 +876,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
          its own — the code in it is another binary's (loft#1776)"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// loft#739 — a `hash<T[key]>` over a LIBRARY-IMPORTED struct shifted the
@@ -910,8 +911,8 @@ fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_i739_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
     let bin = tmp.join("probe.bin");
     let bin_path = bin.to_string_lossy().replace('\\', "/");
@@ -919,7 +920,7 @@ fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
     // `Blk` is never constructed and no store is ever bound — declaring the
     // field is the whole trigger. The four reads then prove the baked `db_tp`
     // consts still name the types the compiler chose.
-    std::fs::write(
+    fa::write(
         &prog,
         format!(
             "use keyedlib::(KTile);\n\
@@ -982,7 +983,7 @@ fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
         "the two backends disagree on the sized reads"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// loft#746 — with the same second declaration in play, INSERTING into a
@@ -1011,15 +1012,15 @@ fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_i746_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
 
     // `Blk` is never constructed — declaring the field is the whole trigger, so
     // it must stay. The keys are large and scattered because the report's were;
     // they are not load-bearing (0.. behaves the same), but keeping them costs
     // nothing and matches the shape that was filed.
-    std::fs::write(
+    fa::write(
         &prog,
         "use keyedlib::(KTile, tile_count);\n\
          \n\
@@ -1064,7 +1065,7 @@ fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
         "the two backends disagree on the keyed inserts"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// loft#715's tail — a package's `native-auto/` stays BOUNDED.
@@ -1087,13 +1088,13 @@ fn a_packages_artifact_directory_stays_bounded() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_prune_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     // A private copy, for the same reason the two tests above take one: this
     // COUNTS `native-auto/`, so it must own it.
     let lib = private_lib(&tmp, &["mathnative", "typeshift"]);
     let native_auto = lib.join("mathnative/native-auto");
-    std::fs::create_dir_all(&native_auto).unwrap();
+    fa::create_dir_all(&native_auto).unwrap();
 
     // loft#831, residual half — a stand-in for the `[c] shim` cdylib a package builds
     // into this same directory. It is seeded HERE, before the loop, because the sweep
@@ -1135,7 +1136,7 @@ fn a_packages_artifact_directory_stays_bounded() {
             .map(|i| format!("struct Pad{i} {{ p_a: integer, p_b: text }}\n"))
             .collect();
         let prog = tmp.join(format!("ctx{n}.loft"));
-        std::fs::write(
+        fa::write(
             &prog,
             format!("use mathnative::*;\n{pad}fn main() {{ println(\"{{double(21)}}\"); }}\n"),
         )
@@ -1204,11 +1205,11 @@ fn a_packages_artifact_directory_stays_bounded() {
     // And the sweep took nothing that was not its own: a `[c]` shim living in the same
     // directory would take the package's whole `#c` surface with it (loft#831).
     assert!(
-        shim.exists(),
+        fa::exists(&shim),
         "the sweep deleted a foreign library from native-auto/"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 // ── loft#831 — a cdylib that cannot be dispatched through must INTERPRET ─────
@@ -1254,7 +1255,7 @@ fn write_decoy_cdylib(at: &std::path::Path, exports: &[&str], scratch: &std::pat
     }
     // A cdylib with no exports at all still links; the marker keeps it non-empty.
     body.push_str("#[unsafe(no_mangle)] pub extern \"C\" fn loft_decoy_marker() -> u64 { 0 }\n");
-    std::fs::write(&src, body).expect("write the decoy source");
+    fa::write(&src, body).expect("write the decoy source");
     Command::new("rustc")
         .arg("--crate-type=cdylib")
         .arg("--edition")
@@ -1293,10 +1294,10 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_831_unwirable_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mathnative::*;\n\
          fn main() {\n\
@@ -1382,7 +1383,7 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
         "the refusal must name the env var.\nstderr:\n{strict_err}"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// The PARTIAL cell: an artifact exporting SOME of the export set's bridges.
@@ -1398,10 +1399,10 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_831_partial_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mathnative::*;\n\
          fn main() {\n\
@@ -1449,7 +1450,7 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
         "a marked function must be one that wires.\nstderr:\n{stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// loft#1663 — a library function served by its auto-built cdylib and called THROUGH A
@@ -1475,16 +1476,16 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_1663_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let pkg = tmp.join("lib/fwd1663");
-    std::fs::create_dir_all(pkg.join("src")).unwrap();
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src")).unwrap();
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"fwd1663\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
          [library]\nentry = \"src/fwd1663.loft\"\ncompile = \"native\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg.join("src/fwd1663.loft"),
         "pub struct St { size: float }\n\
          pub fn default_st() -> St { return St { size: 1.0 }; }\n\
@@ -1499,7 +1500,7 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
     )
     .unwrap();
     let prog = tmp.join("main.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use fwd1663::*;\n\
          fn call_it(f: fn(integer) -> fwd1663::St) -> float { b = f(0); b.size }\n\
@@ -1561,7 +1562,7 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
         !stderr.contains("leak"),
         "the fn-ref calls leaked a store:\n{stderr}"
     );
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A registry library's auto-native artifact is named by the PACKAGES compiled into it, not
@@ -1580,11 +1581,11 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_depver_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let reg = tmp.join("home/.loft/registry");
     let put = |path: std::path::PathBuf, body: &str| {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, body).unwrap();
+        fa::create_dir_all(path.parent().unwrap()).unwrap();
+        fa::write(path, body).unwrap();
     };
     for v in ["0.1.0", "0.1.2"] {
         let dir = reg.join(format!("depver-{v}"));
@@ -1650,7 +1651,7 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
     };
     // Both orders: the defect let whichever ran FIRST decide for the other.
     let first = [run(&locked), run(&newest)];
-    let _ = std::fs::remove_dir_all(chain.join("native-auto"));
+    let _ = fa::remove_dir_all(chain.join("native-auto"));
     let second = [run(&newest), run(&locked)];
     let artifacts = std::fs::read_dir(chain.join("native-auto"))
         .map(|d| {
@@ -1662,7 +1663,7 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
                 .count()
         })
         .unwrap_or(0);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     assert_eq!(
         first,
         ["via depver-0.1.0", "via depver-0.1.2"],

@@ -23,6 +23,7 @@
 //! Between those, an enclosing loop REUSES the placement (the −16.6 % fronds ceiling);
 //! a host recreated per iteration re-arms the guard at its `OpDatabase` site, whose
 //! reuse arm clears the whole store (the c21 corruption when unarmed).
+use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -76,12 +77,12 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// Per emitted function: `(placements, moves, record frees)`.
@@ -121,7 +122,7 @@ fn each_cell_pairs_exactly_the_loops_predicted() {
         assert_eq!(m, *mv, "{name}: move sites");
         assert_eq!(f, *free, "{name}: record-level frees");
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }
 
 /// loft#1535 — the emission is a function of the program.  c22's host holds TWO placed
@@ -146,7 +147,7 @@ fn two_runs_emit_the_same_text() {
                     std::process::id()
                 ));
                 let rust = emit(&cells(), &out, &[]);
-                let _ = std::fs::remove_file(&out);
+                let _ = fa::remove_file(&out);
                 rust
             })
         })
@@ -193,5 +194,5 @@ fn the_switch_restores_the_deep_copy() {
             "{name}: under LOFT_NO_MOVE_APPEND=1 every append keeps the deep copy"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

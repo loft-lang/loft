@@ -6,7 +6,7 @@
 // generated `index/tags.json` (it's gitignored), so the tests can't read the
 // repo's real one.
 
-use std::fs;
+use loft::file_access as fa;
 use std::path::PathBuf;
 
 use loft::lsp::{TagIndex, render_tag_markdown, tag_at, tag_completion_prefix, tags_in};
@@ -18,8 +18,8 @@ fn synthetic_index(slot: &str) -> PathBuf {
     let idx = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("tagidx-{slot}"))
         .join("index");
-    fs::create_dir_all(&idx).unwrap();
-    fs::write(
+    fa::create_dir_all(&idx).unwrap();
+    fa::write(
         idx.join("tags.json"),
         r#"{
           "@F1":  [{"file":"a.md","line":1,"context":"see @F1 here"}],
@@ -29,7 +29,7 @@ fn synthetic_index(slot: &str) -> PathBuf {
         }"#,
     )
     .unwrap();
-    fs::write(
+    fa::write(
         idx.join("features.json"),
         r#"[{"number":1,"title":"Keyed collections","kind":"feature",
              "body":"Look up records by a key field.\n"}]"#,

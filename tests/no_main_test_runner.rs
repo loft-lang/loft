@@ -15,6 +15,7 @@
 // shape without needing a real library; the `execute_argv` guard makes even a
 // missing entry a clean message, not a crash.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -24,17 +25,17 @@ fn loft_bin() -> std::path::PathBuf {
 #[test]
 fn no_main_runs_zero_param_fns_and_never_panics() {
     let loft = loft_bin();
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP no_main_runs_zero_param_fns: target/release/loft not built");
         return;
     }
     let dir = std::env::temp_dir().join("loft_no_main_runner");
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = fa::create_dir_all(&dir);
     let src = dir.join("t.loft");
     // A `#native` zero-param void fn (host-import shape, no body) that must be
     // SKIPPED (no crash), alongside two plain zero-param fns that must BOTH run
     // (the #358 contract — the fallback is not `test_`-gated).
-    std::fs::write(
+    fa::write(
         &src,
         "fn host_thing();\n\
          #native \"loft_test_host_thing\"\n\

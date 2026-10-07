@@ -11,6 +11,7 @@
 //! uniform hard error. See
 //! `doc/claude/plans/102-stability-contract/float-null-domain-typing.md` § Implementation plan.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -25,7 +26,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// parallel tests.
 fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, String) {
     let script = std::env::temp_dir().join(format!("loft_nf_{}_{tag}.loft", std::process::id()));
-    std::fs::write(&script, body).expect("write script");
+    fa::write(&script, body).expect("write script");
     let mut cmd = Command::new(loft_bin());
     cmd.arg(backend)
         .arg(&script)
@@ -38,7 +39,7 @@ fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, S
         cmd.env("LOFT_NO_NULLFLOW", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).into_owned(),

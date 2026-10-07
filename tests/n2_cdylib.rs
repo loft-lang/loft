@@ -20,6 +20,7 @@
 
 extern crate loft;
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -85,7 +86,7 @@ fn cdylib_name(stem: &str) -> String {
 /// rustc invocation.  Panics (keeping the source for inspection) on failure.
 fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -> PathBuf {
     let rs = tmp.join(format!("{stem}.rs"));
-    std::fs::write(&rs, src).unwrap();
+    fa::write(&rs, src).unwrap();
     let so = tmp.join(cdylib_name(stem));
     let mut args: Vec<String> = vec![
         "--edition=2024".into(),
@@ -129,7 +130,7 @@ fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&argfile, contents).unwrap();
+    fa::write(&argfile, contents).unwrap();
     let out = Command::new("rustc")
         .arg(format!("@{}", argfile.display()))
         .output()
@@ -155,7 +156,7 @@ fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -
             .collect::<Vec<_>>()
             .join("\n")
     );
-    assert!(so.exists(), "cdylib output should exist");
+    assert!(fa::exists(&so), "cdylib output should exist");
     so
 }
 
@@ -172,8 +173,8 @@ fn build_scalar_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n2_{stem}_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
 
     let (data, db) = cached_default();
     let mut p = loft::parser::Parser::new();
@@ -218,8 +219,8 @@ fn build_shared_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(
 
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n2_{stem}_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
 
     let (data, db) = cached_default();
     let mut p = loft::parser::Parser::new();
@@ -267,8 +268,8 @@ fn generated_cdylib_compiles_and_exports_scalar_symbol() {
     let Some((so, tmp)) = build_double_cdylib("loft_n2_compile") else {
         return;
     };
-    assert!(so.exists(), "cdylib output should exist");
-    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(fa::exists(&so), "cdylib output should exist");
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// @PLN26 phase 2 — a shared-store cdylib that calls a `[native] crate` package's
@@ -448,8 +449,8 @@ fn generated_shared_cdylib_compiles() {
     else {
         return;
     };
-    assert!(so.exists(), "shared cdylib output should exist");
-    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(fa::exists(&so), "shared cdylib output should exist");
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// Run a SCRIPT that declares `native_decl` (a `#native "loft_shared_…"` import
@@ -503,7 +504,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A function that ALLOCATES a `vector<integer>` and returns it — the non-scalar
@@ -545,7 +546,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A function taking a struct `reference` (schema-DEPENDENT — the native body
@@ -576,7 +577,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A function that constructs and RETURNS a struct.  Unlike a vector return,
@@ -610,7 +611,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A function taking a `text` arg (passed as `&str` — ptr+len borrowed from the
@@ -643,7 +644,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// A function RETURNING `text` — `--native` uses the `text_return` `&mut String`
@@ -673,7 +674,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// Plain (tag-only) enum: `--native` represents it as a `u8` tag (both arg and
@@ -704,7 +705,7 @@ fn dispatches_plain_enum_into_shared_cdylib() {
         decl_c,
         "fn main() { c = dir_code(South); assert(c == 2, \"dir_code(South) should be 2, got {c}\") }",
     );
-    let _ = std::fs::remove_dir_all(&tmp_c);
+    let _ = fa::remove_dir_all(&tmp_c);
 
     // dir_from: scalar arg, enum return — verify by feeding it back to dir_code.
     let Some((so_f, tmp_f)) = build_shared_lib_cdylib("loft_n2_enum_f", DIR_LIB, "dir_from") else {
@@ -716,7 +717,7 @@ fn dispatches_plain_enum_into_shared_cdylib() {
         decl_f,
         "fn main() { d = dir_from(1); r = match d { East => 1, _ => 0 }; assert(r == 1, \"dir_from(1) should be East, got tag {r}\") }",
     );
-    let _ = std::fs::remove_dir_all(&tmp_f);
+    let _ = fa::remove_dir_all(&tmp_f);
 }
 
 /// Data enum (variants carrying fields): `--native` represents it as a `DbRef`
@@ -747,7 +748,7 @@ fn dispatches_data_enum_into_shared_cdylib() {
         decl_a,
         "fn main() { s = Circle { r: 2 }; a = area(s); assert(a == 12, \"area(Circle r=2) should be 12, got {a}\") }",
     );
-    let _ = std::fs::remove_dir_all(&tmp_a);
+    let _ = fa::remove_dir_all(&tmp_a);
 
     // make_rect: data-enum RETURN (allocated in the shared store), read via area.
     let Some((so_m, tmp_m)) = build_shared_lib_cdylib("loft_n2_denum_m", SHAPE_LIB, "make_rect")
@@ -760,7 +761,7 @@ fn dispatches_data_enum_into_shared_cdylib() {
         decl_m,
         "fn main() { s = make_rect(3, 4); r = match s { Rect { w, h } => w * h, _ => 0 }; assert(r == 12, \"make_rect(3,4) area should be 12, got {r}\") }",
     );
-    let _ = std::fs::remove_dir_all(&tmp_m);
+    let _ = fa::remove_dir_all(&tmp_m);
 }
 
 /// A function taking a keyed `sorted` collection (`DbRef` to the container, like
@@ -798,7 +799,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, native_decl, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// N2 lean interface: a script drives native dispatch using ONLY the
@@ -824,8 +825,8 @@ fn lean_interface_drives_shared_dispatch() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n2_iface_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
 
     // Parse the library (Shape + area + make_rect) and pick both as the export set.
     let (data, db) = cached_default();
@@ -858,7 +859,7 @@ fn main() {
 }
 "#;
     run_shared_dispatch(&so, &interface, source);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// N3 core: a NORMAL library function (a body, NO hand-written `#native`) is
@@ -884,8 +885,8 @@ fn auto_native_marks_and_dispatches_normal_library_fn() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_auto_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
 
     // One Data: the library function + the calling script, as `use` would produce.
     // `double` is a NORMAL function — a body, `pub`, and NO `#native` annotation.
@@ -940,7 +941,7 @@ fn auto_native_marks_and_dispatches_normal_library_fn() {
     extensions::wire_shared_native_fns(&mut state, &p.data);
     state.execute_argv("main", &p.data, &[]);
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// #307 — BODY-BEARING **text-returning** library fns through the auto-native
@@ -975,8 +976,8 @@ fn auto_native_text_return_shapes() {
     }
     let pid = std::process::id();
     let tmp = std::env::temp_dir().join(format!("loft_n3_text_{pid}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).unwrap();
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
 
     let (data, db) = cached_default();
     let mut p = loft::parser::Parser::new();
@@ -1027,7 +1028,7 @@ fn auto_native_text_return_shapes() {
     // hit the "native function not loaded" stub.
     state.execute_argv("main", &p.data, &[]);
 
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// @PLN11 F3 — does a **default-native-MARKED, BODY-BEARING** library function
@@ -1062,7 +1063,7 @@ fn f3_body_bearing_marked_fn_dispatch_vs_interpret() {
     SHARED_DISPATCH_HITS.store(0, Ordering::Relaxed);
     run_shared_dispatch(&so_pc, native_decl, pc_src);
     let pc_bridge = SHARED_DISPATCH_HITS.load(Ordering::Relaxed);
-    let _ = std::fs::remove_dir_all(&tmp_pc);
+    let _ = fa::remove_dir_all(&tmp_pc);
     assert!(
         pc_bridge > 0,
         "POSITIVE CONTROL FAILED: the bridge sentinel never moved for a no-body \
@@ -1090,7 +1091,7 @@ fn f3_body_bearing_marked_fn_dispatch_vs_interpret() {
     let fn_nr = p.data.def_nr("n_vec_sum");
     let export: HashSet<u32> = std::iter::once(fn_nr).collect();
     let tmp = std::env::temp_dir().join(format!("loft_n2_f3q_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&tmp);
+    let _ = fa::create_dir_all(&tmp);
     let so = match loft::native_lib::build_shared_cdylib(
         &p.data,
         &p.database,
@@ -1100,7 +1101,7 @@ fn f3_body_bearing_marked_fn_dispatch_vs_interpret() {
     ) {
         Ok(so) => so,
         Err(e) => {
-            let _ = std::fs::remove_dir_all(&tmp);
+            let _ = fa::remove_dir_all(&tmp);
             panic!("build_shared_cdylib failed: {e}");
         }
     };
@@ -1114,7 +1115,7 @@ fn f3_body_bearing_marked_fn_dispatch_vs_interpret() {
     SHARED_DISPATCH_HITS.store(0, Ordering::Relaxed);
     state.execute_argv("main", &p.data, &[]); // inner assert == positive control the call ran
     let q_bridge = SHARED_DISPATCH_HITS.load(Ordering::Relaxed);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 
     eprintln!("F3 SENTINEL  positive-control(no-body) bridge_hits={pc_bridge}");
     eprintln!("F3 SENTINEL  question(body-bearing-marked) bridge_hits={q_bridge}");
@@ -1239,7 +1240,7 @@ fn p303_text_return_marked_fn_expression_and_dest_context() {
 
     let export: HashSet<u32> = std::iter::once(fn_nr).collect();
     let tmp = std::env::temp_dir().join(format!("loft_n2_p303_{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&tmp);
+    let _ = fa::create_dir_all(&tmp);
     let so = match loft::native_lib::build_shared_cdylib(
         &p.data,
         &p.database,
@@ -1249,7 +1250,7 @@ fn p303_text_return_marked_fn_expression_and_dest_context() {
     ) {
         Ok(so) => so,
         Err(e) => {
-            let _ = std::fs::remove_dir_all(&tmp);
+            let _ = fa::remove_dir_all(&tmp);
             panic!("build_shared_cdylib failed: {e}");
         }
     };
@@ -1263,7 +1264,7 @@ fn p303_text_return_marked_fn_expression_and_dest_context() {
     SHARED_DISPATCH_HITS.store(0, Ordering::Relaxed);
     state.execute_argv("main", &p.data, &[]); // loft asserts check the values
     let hits = SHARED_DISPATCH_HITS.load(Ordering::Relaxed);
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     assert!(
         hits >= 3,
         "all three ename calls must DISPATCH to the bridge (got bridge_hits={hits}) — \
@@ -1293,31 +1294,31 @@ fn auto_native_disambiguates_duplicate_fn_names() {
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_n3_dup_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg_src = root.join("libs/bundle/src");
-    std::fs::create_dir_all(&pkg_src).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&pkg_src).unwrap();
+    fa::write(
         root.join("libs/bundle/loft.toml"),
         "[package]\nname = \"bundle\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n[library]\nentry = \"src/bundle.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg_src.join("ra.loft"),
         "pub fn dup_name() -> integer { 1 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg_src.join("rb.loft"),
         "pub fn dup_name() -> integer { 2 }\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg_src.join("bundle.loft"),
         "pub use ra::*;\npub use rb::*;\n\npub fn both() -> integer { ra::dup_name() * 10 + rb::dup_name() }\n",
     )
     .unwrap();
     let prog = root.join("prog.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use bundle::*;\n\nfn main() {\n    print(\"both={both()}\\n\");\n}\n",
     )
@@ -1345,7 +1346,7 @@ fn auto_native_disambiguates_duplicate_fn_names() {
         "cdylib build fell back to interpret (#305 regression):\n{stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// #311 — a vector-returning auto-native call must write its result into the
@@ -1366,21 +1367,21 @@ fn auto_native_vector_return_uses_caller_dest() {
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_n3_vdest_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg_src = root.join("libs/vlib/src");
-    std::fs::create_dir_all(&pkg_src).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&pkg_src).unwrap();
+    fa::write(
         root.join("libs/vlib/loft.toml"),
         "[package]\nname = \"vlib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n[library]\nentry = \"src/vlib.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         pkg_src.join("vlib.loft"),
         "pub fn pair(a: text) -> vector<text> { [a, a] }\n",
     )
     .unwrap();
     let prog = root.join("prog.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use vlib::*;\n\nfn main() {\n    v = pair(\"ab\");\n    print(\"[{v[0]}|{v[1]}]\\n\");\n}\n",
     )
@@ -1407,5 +1408,5 @@ fn auto_native_vector_return_uses_caller_dest() {
         "caller's hidden dest leaked (#311 regression):\n{stderr}"
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

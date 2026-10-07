@@ -29,6 +29,7 @@
 
 #![allow(clippy::too_many_lines)]
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
@@ -595,7 +596,7 @@ fn v2_two_clients_with_spectator_routing() {
     // A previous run killed between create and cleanup would leave the file
     // behind and let this run's clients sail straight past the barrier —
     // which would silently restore the old flake.
-    let _ = std::fs::remove_file(&go_path);
+    let _ = fa::remove_file(&go_path);
 
     let a = spawn_client_with_go_file("A", port, &go_name);
     let b = spawn_client_with_go_file("B", port, &go_name);
@@ -608,11 +609,11 @@ fn v2_two_clients_with_spectator_routing() {
     let b_ready = b.wait_for("handlers learned", ready);
     // Release the barrier even if a client never reported, so neither hangs on
     // its 30 s spin and the assertions below report real output.
-    std::fs::write(&go_path, b"go").expect("write the rendezvous file");
+    fa::write(&go_path, b"go").expect("write the rendezvous file");
 
     let (a_out, a_status) = a.finish(budget(60));
     let (b_out, b_status) = b.finish(budget(60));
-    let _ = std::fs::remove_file(&go_path);
+    let _ = fa::remove_file(&go_path);
     assert!(
         a_ready,
         "A never handshaked within {ready:?}; stdout=\n{a_out}"

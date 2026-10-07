@@ -28,6 +28,7 @@
 //! What this file still earns its 1.4s for is the end-to-end shape the unit test cannot
 //! see: concurrent `--native` runs of one source each exec a COMPLETE binary.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -41,7 +42,7 @@ const WANT: &str = "cache publish OK 2";
 /// One round: wipe the cache beside the source, then start `n` runs at once.
 /// Returns the failures as `(exit, stdout, stderr)` so an empty output block is visible.
 fn race_round(dir: &std::path::Path, src: &std::path::Path, n: usize) -> Vec<String> {
-    let _ = std::fs::remove_dir_all(dir.join(".loft"));
+    let _ = fa::remove_dir_all(dir.join(".loft"));
     let children: Vec<_> = (0..n)
         .map(|_| {
             Command::new(loft_bin())
@@ -74,9 +75,9 @@ fn race_round(dir: &std::path::Path, src: &std::path::Path, n: usize) -> Vec<Str
 #[test]
 fn concurrent_cold_cache_runs_all_succeed() {
     let dir = std::env::temp_dir().join(format!("loft_cache_race_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
     let src = dir.join("racer.loft");
-    std::fs::write(&src, PROG).expect("write");
+    fa::write(&src, PROG).expect("write");
 
     let mut failures = Vec::new();
     for round in 0..3 {
@@ -84,7 +85,7 @@ fn concurrent_cold_cache_runs_all_succeed() {
             failures.push(format!("round {round}: {f}"));
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 
     assert!(
         failures.is_empty(),
@@ -99,11 +100,11 @@ fn concurrent_cold_cache_runs_all_succeed() {
 #[test]
 fn harness_can_fail() {
     let dir = std::env::temp_dir().join(format!("loft_cache_race_neg_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("mkdir");
+    fa::create_dir_all(&dir).expect("mkdir");
     let src = dir.join("racer.loft");
-    std::fs::write(&src, "fn main() {\n  println(\"something else\");\n}\n").expect("write");
+    fa::write(&src, "fn main() {\n  println(\"something else\");\n}\n").expect("write");
     let bad = race_round(&dir, &src, 2);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert_eq!(
         bad.len(),
         2,

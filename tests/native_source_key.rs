@@ -16,6 +16,7 @@
 // only those cells use are dead on Windows.
 #![cfg_attr(windows, allow(dead_code))]
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -30,8 +31,8 @@ fn workspace_root() -> PathBuf {
 /// under it, so cells never share a sidecar.
 fn fresh_root(tag: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("loft_nsk_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("root");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("root");
     root
 }
 
@@ -161,7 +162,7 @@ fn cached_binary_of(root: &Path) -> PathBuf {
     );
     found
         .into_iter()
-        .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .max_by_key(|p| fa::metadata(p).and_then(|m| m.modified()).ok())
         .unwrap()
 }
 
@@ -177,13 +178,13 @@ const PROG_100: &str = "fn main() {\n  v = [5, 10, 85];\n  println(\"sum={v[0]+v
 fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_misses() {
     let root = fresh_root("unchanged");
     let script = root.join("prog.loft");
-    std::fs::write(&script, PROG_30).expect("script");
+    fa::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
 
     // Cell 3 — a comment-only edit: the sources moved, so the source key misses and the
     // run re-keys.  (Whether the binary cache then hits is the live tier's question, not
     // this key's: a `--native` build embeds the program's source, so it recompiles.)
-    std::fs::write(&script, format!("{PROG_30}// a comment\n")).expect("edit");
+    fa::write(&script, format!("{PROG_30}// a comment\n")).expect("edit");
     let r = run(&root, &script);
     assert!(
         r.ok && r.stdout.contains("sum=30"),
@@ -206,7 +207,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
     );
 
     // Cell 9 — the binary the sidecar names is gone.
-    std::fs::remove_file(cached_binary_of(&root)).expect("remove binary");
+    fa::remove_file(cached_binary_of(&root)).expect("remove binary");
     let r = run(&root, &script);
     assert!(
         r.ok && r.stdout.contains("sum=30"),
@@ -231,9 +232,9 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
 
     // Cell 10 — garbage, then a truncated sidecar.
     let sidecar = sidecar_of(&root);
-    let good = std::fs::read_to_string(&sidecar).expect("sidecar");
+    let good = fa::read_to_string(&sidecar).expect("sidecar");
     assert_eq!(good.lines().count(), 4, "sig / fp / bin / man: {good}");
-    std::fs::write(&sidecar, "not a sidecar\n").expect("garbage");
+    fa::write(&sidecar, "not a sidecar\n").expect("garbage");
     let r = run(&root, &script);
     assert!(
         r.ok && r.stdout.contains("sum=30"),
@@ -250,7 +251,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
         r.stderr
     );
     let two_lines: String = good.lines().take(3).map(|l| format!("{l}\n")).collect();
-    std::fs::write(&sidecar, two_lines).expect("truncate");
+    fa::write(&sidecar, two_lines).expect("truncate");
     let r = run(&root, &script);
     assert_eq!(
         r.source_key(),
@@ -262,10 +263,10 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
     // Cell 11 — the fingerprint line altered by hand: another flag set's binary.
     let r = run(&root, &script);
     assert_eq!(r.source_key(), "hit", "{}", r.stderr);
-    let good = std::fs::read_to_string(&sidecar).expect("sidecar");
+    let good = fa::read_to_string(&sidecar).expect("sidecar");
     let altered = good.replace("\nfp ", "\nfp 0");
     assert_ne!(altered, good);
-    std::fs::write(&sidecar, altered).expect("alter");
+    fa::write(&sidecar, altered).expect("alter");
     let r = run(&root, &script);
     assert_eq!(
         r.source_key(),
@@ -280,7 +281,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
         r.stderr
     );
 
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cell 2 — THE cell: an edit that changes the program is never answered by the old binary.
@@ -289,9 +290,9 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
 fn an_edit_that_changes_the_program_is_never_served_stale() {
     let root = fresh_root("edit");
     let script = root.join("prog.loft");
-    std::fs::write(&script, PROG_30).expect("script");
+    fa::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
-    std::fs::write(&script, PROG_100).expect("edit");
+    fa::write(&script, PROG_100).expect("edit");
     let r = run(&root, &script);
     assert!(r.ok, "{}{}", r.stdout, r.stderr);
     assert!(
@@ -314,7 +315,7 @@ fn an_edit_that_changes_the_program_is_never_served_stale() {
         r.stdout,
         r.stderr
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cell 2b — the program manifest is SHARED with the interpreter: an `--interpret` run of
@@ -326,9 +327,9 @@ fn an_edit_that_changes_the_program_is_never_served_stale() {
 fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
     let root = fresh_root("interleave");
     let script = root.join("prog.loft");
-    std::fs::write(&script, PROG_30).expect("script");
+    fa::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
-    std::fs::write(&script, PROG_100).expect("edit");
+    fa::write(&script, PROG_100).expect("edit");
     let i = run_with(&root, &script, &["--interpret"], &[]);
     assert!(
         i.ok && i.stdout.contains("sum=100"),
@@ -351,7 +352,7 @@ fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
         r.stdout,
         r.stderr
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cell 12 — a source-key hit says what the cold run said: the parse did not run, so its
@@ -361,7 +362,7 @@ fn an_interpret_run_between_two_native_runs_never_serves_the_old_binary() {
 fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
     let root = fresh_root("diag");
     let script = root.join("prog.loft");
-    std::fs::write(
+    fa::write(
         &script,
         "struct DfPlayer { name: text, health: integer }\nfn main() {\n  p = DfPlayer { name: \"Bob\" };\n  println(\"{p.name}\");\n}\n",
     )
@@ -391,7 +392,7 @@ fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
         strip(&warm.stderr),
         "a source-key hit must render what the cold run rendered"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cell 5 — a flag that changes the binary is a different key: `--native-release` after
@@ -402,7 +403,7 @@ fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
 fn a_flag_that_changes_the_binary_is_a_different_key() {
     let root = fresh_root("flag");
     let script = root.join("prog.loft");
-    std::fs::write(&script, PROG_30).expect("script");
+    fa::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
     let r = run_with(&root, &script, &["--native-release"], &[]);
     assert!(
@@ -438,7 +439,7 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
         "back to the semantics build: {}",
         r.stderr
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// The same program at a second path in the same directory is the same binary: a
@@ -453,8 +454,8 @@ fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
     let prog = "fn main() {\n  println(\"v=7\");\n  assert(1 == 2, \"boom\");\n}\n";
     let a = root.join("first.loft");
     let b = root.join("second.loft");
-    std::fs::write(&a, prog).expect("script a");
-    std::fs::write(&b, prog).expect("script b");
+    fa::write(&a, prog).expect("script a");
+    fa::write(&b, prog).expect("script b");
     let ra = run(&root, &a);
     assert!(
         ra.stdout.contains("v=7") && ra.stderr.contains("first.loft:3"),
@@ -486,7 +487,7 @@ fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
         1,
         "one binary for both paths"
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cells 7, 8 — a `LOFT_*` switch outside the inert list declines the path (a codegen
@@ -496,7 +497,7 @@ fn the_same_program_at_two_paths_is_one_binary_naming_its_own_file() {
 fn a_switch_in_the_environment_declines_the_fast_path() {
     let root = fresh_root("env");
     let script = root.join("prog.loft");
-    std::fs::write(&script, PROG_30).expect("script");
+    fa::write(&script, PROG_30).expect("script");
     warm_to_a_hit(&root, &script, "sum=30");
     let default_binary = cached_binary_of(&root);
     let r = run_with(
@@ -580,7 +581,7 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
         "a run-time bound is inert: {}",
         r.stderr
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cell 4 — an edited stdlib is never served from the source key.  A scratch copy of
@@ -591,17 +592,17 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
 fn an_edited_stdlib_is_never_served_from_the_source_key() {
     let root = fresh_root("stdlib");
     let dflt = root.join("default");
-    std::fs::create_dir_all(&dflt).expect("scratch default/");
+    fa::create_dir_all(&dflt).expect("scratch default/");
     for e in std::fs::read_dir(workspace_root().join("default")).expect("default/") {
         let p = e.expect("entry").path();
         if p.extension().and_then(|x| x.to_str()) == Some("loft") {
-            std::fs::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
+            fa::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
         }
     }
     let probe = dflt.join("99_b3_probe.loft");
-    std::fs::write(&probe, "pub fn b3probe() -> integer { 1 }\n").expect("probe");
+    fa::write(&probe, "pub fn b3probe() -> integer { 1 }\n").expect("probe");
     let script = root.join("prog.loft");
-    std::fs::write(&script, "fn main() { println(\"v={b3probe()}\"); }\n").expect("script");
+    fa::write(&script, "fn main() { println(\"v={b3probe()}\"); }\n").expect("script");
     let path = root.to_string_lossy().into_owned();
     let args = ["--path", path.as_str(), "--native"];
     let cold = run_with(&root, &script, &args, &[]);
@@ -613,7 +614,7 @@ fn an_edited_stdlib_is_never_served_from_the_source_key() {
     );
     let warm = run_with(&root, &script, &args, &[]);
     assert_eq!(warm.source_key(), "hit", "{}", warm.stderr);
-    std::fs::write(&probe, "pub fn b3probe() -> integer { 2 }\n").expect("edit");
+    fa::write(&probe, "pub fn b3probe() -> integer { 2 }\n").expect("edit");
     let r = run_with(&root, &script, &args, &[]);
     assert!(r.ok, "{}{}", r.stdout, r.stderr);
     assert!(
@@ -623,7 +624,7 @@ fn an_edited_stdlib_is_never_served_from_the_source_key() {
         r.stderr
     );
     assert_eq!(r.source_key(), "miss", "{}", r.stderr);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// Cell 6 — an edited `--lib` dependency is never served from the source key.
@@ -632,11 +633,11 @@ fn an_edited_stdlib_is_never_served_from_the_source_key() {
 fn an_edited_library_is_never_served_from_the_source_key() {
     let root = fresh_root("lib");
     let lib = root.join("lib");
-    std::fs::create_dir_all(&lib).expect("lib dir");
+    fa::create_dir_all(&lib).expect("lib dir");
     let dep = lib.join("b3dep.loft");
-    std::fs::write(&dep, "pub fn dep_value() -> integer { 28 }\n").expect("dep");
+    fa::write(&dep, "pub fn dep_value() -> integer { 28 }\n").expect("dep");
     let script = root.join("prog.loft");
-    std::fs::write(
+    fa::write(
         &script,
         "use b3dep::*;\nfn main() { println(\"d={dep_value()}\"); }\n",
     )
@@ -652,7 +653,7 @@ fn an_edited_library_is_never_served_from_the_source_key() {
     );
     let warm = run_with(&root, &script, &args, &[]);
     assert_eq!(warm.source_key(), "hit", "{}", warm.stderr);
-    std::fs::write(&dep, "pub fn dep_value() -> integer { 777 }\n").expect("edit");
+    fa::write(&dep, "pub fn dep_value() -> integer { 777 }\n").expect("edit");
     let r = run_with(&root, &script, &args, &[]);
     assert!(r.ok, "{}{}", r.stdout, r.stderr);
     assert!(
@@ -662,7 +663,7 @@ fn an_edited_library_is_never_served_from_the_source_key() {
         r.stderr
     );
     assert_eq!(r.source_key(), "miss", "{}", r.stderr);
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 /// On Windows the fast path declines — it answers `off`, never `hit` — and the program still

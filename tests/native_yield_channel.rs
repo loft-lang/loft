@@ -15,6 +15,7 @@
 //! alone, and that was the state of the first attempt at this fix — the message arrived
 //! buried under an `E0605` from the producer and an `E0308` from the consumer.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -27,7 +28,7 @@ fn emit(tag: &str, src: &str) -> String {
     let dir = std::env::temp_dir();
     let lf = dir.join(format!("loft_1132_{tag}_{}.loft", std::process::id()));
     let rf = dir.join(format!("loft_1132_{tag}_{}.rs", std::process::id()));
-    std::fs::write(&lf, src).expect("write probe");
+    fa::write(&lf, src).expect("write probe");
     let st = Command::new(loft_bin())
         .args(["--native-emit", rf.to_str().expect("path")])
         .arg(&lf)
@@ -35,9 +36,9 @@ fn emit(tag: &str, src: &str) -> String {
         .status()
         .expect("spawn loft");
     assert!(st.success(), "--native-emit must succeed for {tag}");
-    let rs = std::fs::read_to_string(&rf).expect("read emitted Rust");
-    let _ = std::fs::remove_file(&lf);
-    let _ = std::fs::remove_file(&rf);
+    let rs = fa::read_to_string(&rf).expect("read emitted Rust");
+    let _ = fa::remove_file(&lf);
+    let _ = fa::remove_file(&rf);
     rs
 }
 
@@ -231,7 +232,7 @@ fn a_by_value_tuple_from_a_loop_body_is_not_refused() {
 fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
     let dir = std::env::temp_dir();
     let lf = dir.join(format!("loft_1467_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &lf,
         "struct Ck1467 { k: integer, v: integer }\n\
          fn g(n: integer) -> iterator<(Ck1467, integer)> {\n\
@@ -246,7 +247,7 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&lf);
+    let _ = fa::remove_file(&lf);
     let err = String::from_utf8_lossy(&out.stderr).to_string();
 
     assert!(
@@ -284,7 +285,7 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
 fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
     let dir = std::env::temp_dir();
     let lf = dir.join(format!("loft_1467_ok_{}.loft", std::process::id()));
-    std::fs::write(
+    fa::write(
         &lf,
         "fn g(n: integer) -> iterator<(integer, integer)> {\n\
          \x20 for i in 0..n { yield (i, i * 11); }\n\
@@ -297,7 +298,7 @@ fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("spawn loft");
-    let _ = std::fs::remove_file(&lf);
+    let _ = fa::remove_file(&lf);
     assert!(
         out.status.success(),
         "a by-value tuple yield from a loop body must still COMPILE on --native:\n{}",

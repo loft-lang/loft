@@ -10,6 +10,7 @@
 // reply (a JSON-RPC error) from a success — so a green handshake test is
 // meaningful, not vacuous.
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -476,13 +477,13 @@ fn formatting_returns_a_whole_document_edit_and_noops_when_tidy() {
 fn tag_hover_and_document_link() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("tagws");
     let idx = root.join("index");
-    std::fs::create_dir_all(&idx).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&idx).unwrap();
+    fa::write(
         idx.join("tags.json"),
         r#"{"@F1":[{"file":"a.md","line":1,"context":"@F1"}]}"#,
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         idx.join("features.json"),
         r#"[{"number":1,"title":"Keyed collections","kind":"feature","body":"Look up records by key.\n"}]"#,
     )
@@ -548,13 +549,13 @@ fn tag_hover_and_document_link() {
 fn broken_tag_publishes_a_warning() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("t3ws");
     let idx = root.join("index");
-    std::fs::create_dir_all(&idx).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&idx).unwrap();
+    fa::write(
         idx.join("tags.json"),
         r#"{"@P99":[{"file":"z","line":1,"context":"@P99 <!--noindex-->"}],"broken":[{"tag":"@P99","refs":["z:1"]}]}"#,
     )
     .unwrap();
-    std::fs::write(idx.join("features.json"), "[]").unwrap();
+    fa::write(idx.join("features.json"), "[]").unwrap();
 
     let mut s = Session::start();
     s.request(
@@ -602,13 +603,13 @@ fn broken_tag_publishes_a_warning() {
 #[test]
 fn find_references_spans_the_workspace() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("refws2");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&root).unwrap();
+    fa::write(
         root.join("a.loft"),
         "fn area(w: integer) -> integer {\n  w * w\n}\n",
     )
     .unwrap();
-    std::fs::write(root.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
+    fa::write(root.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
 
     let mut s = Session::start();
     let caps = {
@@ -668,14 +669,14 @@ fn did_save_refreshes_the_workspace_index() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("savews");
     // Clean slate — the test ADDS c.loft mid-run, so a leftover copy from a prior
     // run would poison the first (pre-c.loft) reference count.
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).unwrap();
+    fa::write(
         root.join("a.loft"),
         "fn area(w: integer) -> integer {\n  w * w\n}\n",
     )
     .unwrap();
-    std::fs::write(root.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
+    fa::write(root.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
 
     let mut s = Session::start();
     s.request(
@@ -715,7 +716,7 @@ fn did_save_refreshes_the_workspace_index() {
     assert_eq!(count_refs(&mut s, 2), 2, "def in a.loft + call in b.loft");
 
     // A NEW file appears on disk; without invalidation the cached index misses it.
-    std::fs::write(root.join("c.loft"), "fn other() {\n  print(area(4))\n}\n").unwrap();
+    fa::write(root.join("c.loft"), "fn other() {\n  print(area(4))\n}\n").unwrap();
     assert_eq!(
         count_refs(&mut s, 3),
         2,
@@ -743,14 +744,14 @@ fn did_save_refreshes_the_workspace_index() {
 fn tag_index_reloads_when_the_index_changes() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("tagws-mtime");
     let idx = root.join("index");
-    std::fs::create_dir_all(&idx).unwrap();
+    fa::create_dir_all(&idx).unwrap();
     // Start with an index that does NOT know @P321. <!--noindex-->
-    std::fs::write(
+    fa::write(
         idx.join("tags.json"),
         r#"{"@F1":[{"file":"a.md","line":1,"context":"@F1"}]}"#,
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         idx.join("features.json"),
         r#"[{"number":1,"title":"Keyed collections","kind":"feature","body":"x\n"}]"#,
     )
@@ -783,7 +784,7 @@ fn tag_index_reloads_when_the_index_changes() {
     // Regenerate the index (a mid-session `make index`); sleep first so the mtime
     // is guaranteed to differ from the loaded one.
     std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(
+    fa::write(
         idx.join("tags.json"),
         r#"{"@F1":[{"file":"a.md","line":1,"context":"@F1"}],"@P321":[{"file":"P.md","line":3,"context":"@P321 a bug"}]}"#, // <!--noindex-->
     )
@@ -809,13 +810,13 @@ fn tag_index_reloads_when_the_index_changes() {
 #[test]
 fn method_references_span_the_workspace_by_receiver_type() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("methrefws");
-    std::fs::create_dir_all(&root).unwrap();
+    fa::create_dir_all(&root).unwrap();
     // a.loft: a text.len call AND a vector.len call (same spelling, other type).
     let a_text =
         "fn main() {\n  s = \"hi\";\n  x = s.len();\n  v = [1, 2, 3];\n  w = v.len();\n}\n";
-    std::fs::write(root.join("a.loft"), a_text).unwrap();
+    fa::write(root.join("a.loft"), a_text).unwrap();
     // b.loft: another text.len call, in a different file.
-    std::fs::write(
+    fa::write(
         root.join("b.loft"),
         "fn other() {\n  t = \"yo\";\n  y = t.len();\n}\n",
     )
@@ -868,13 +869,13 @@ fn method_references_span_the_workspace_by_receiver_type() {
 #[test]
 fn rename_produces_a_cross_file_workspace_edit() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("renws3");
-    std::fs::create_dir_all(&root).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&root).unwrap();
+    fa::write(
         root.join("a.loft"),
         "fn area(w: integer) -> integer {\n  w * w\n}\n",
     )
     .unwrap();
-    std::fs::write(root.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
+    fa::write(root.join("b.loft"), "fn main() {\n  print(area(3))\n}\n").unwrap();
 
     let mut s = Session::start();
     s.request(
@@ -1240,13 +1241,13 @@ fn completion_offers_members_after_a_dot() {
 fn tag_completion_offers_tracker_tags() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("tagws-complete");
     let idx = root.join("index");
-    std::fs::create_dir_all(&idx).unwrap();
-    std::fs::write(
+    fa::create_dir_all(&idx).unwrap();
+    fa::write(
         idx.join("tags.json"),
         r#"{"@F1":[{"file":"a.md","line":1,"context":"@F1"}]}"#,
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         idx.join("features.json"),
         r#"[{"number":1,"title":"Keyed collections","kind":"feature","body":"Look up records by key.\n"}]"#,
     )
@@ -1461,10 +1462,10 @@ fn inlay_hints_annotate_local_declaration_types() {
 #[test]
 fn rename_a_local_scopes_to_its_function() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("fscopews");
-    std::fs::create_dir_all(&root).unwrap();
+    fa::create_dir_all(&root).unwrap();
     // fn a (lines 0..3) has three `x`; fn b (lines 4..6) has its own `x`.
     let prog = "fn a() {\n  x = 1\n  x = x + 1\n}\nfn b() {\n  x = 9\n}\n";
-    std::fs::write(root.join("m.loft"), prog).unwrap();
+    fa::write(root.join("m.loft"), prog).unwrap();
 
     let mut s = Session::start();
     s.request(
@@ -1518,12 +1519,12 @@ fn rename_a_local_scopes_to_its_function() {
 #[test]
 fn rename_a_parameter_edits_the_signature_and_excludes_a_field() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("paramrename");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).unwrap();
     // `w` is a param AND the name of a field of Q; `q.w` must NOT be renamed.
     let prog =
         "struct Q { w: integer }\nfn f(w: integer, q: Q) -> integer {\n  return w + q.w\n}\n";
-    std::fs::write(root.join("m.loft"), prog).unwrap();
+    fa::write(root.join("m.loft"), prog).unwrap();
 
     let mut s = Session::start();
     s.request(
@@ -1585,10 +1586,10 @@ fn rename_a_parameter_edits_the_signature_and_excludes_a_field() {
 #[test]
 fn rename_a_local_excludes_a_same_named_field() {
     let root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("fieldexclws");
-    std::fs::create_dir_all(&root).unwrap();
+    fa::create_dir_all(&root).unwrap();
     // Local `x` (decl L3, read in `{x}` L4) alongside field `p.x` (also L4, spelled `x`).
     let prog = "struct P { x: integer }\nfn h(p: P) {\n  x = 5;\n  print(\"{p.x} {x}\");\n}\n";
-    std::fs::write(root.join("m.loft"), prog).unwrap();
+    fa::write(root.join("m.loft"), prog).unwrap();
 
     let mut s = Session::start();
     s.request(

@@ -8,6 +8,7 @@
 
 extern crate loft;
 
+use loft::file_access as fa;
 use loft::manifest::{Manifest, read_manifest};
 use loft::parser::Parser;
 use std::sync::Mutex;
@@ -31,12 +32,12 @@ fn manifest_parses_native_field() {
     use std::io::Write;
     let dir = std::env::temp_dir();
     let path = dir.join(format!("loft_a72_test_{}.toml", std::process::id()));
-    let mut f = std::fs::File::create(&path).unwrap();
+    let mut f = fa::create(&path).unwrap();
     f.write_all(b"[package]\nloft = \">=0.8\"\n\n[library]\nnative = \"loft_myext\"\n")
         .unwrap();
     let m: Manifest = read_manifest(path.to_str().unwrap()).unwrap();
     assert_eq!(m.native.as_deref(), Some("loft_myext"));
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +86,11 @@ fn fixture_lib_path() -> Option<String> {
         "tests/lib/native_pkg/native/target/release/libloft_native_test.so"
     };
     let p = std::path::Path::new(path);
-    if !p.exists() {
+    if !fa::exists(p) {
         return None;
     }
     let src = std::path::Path::new("tests/lib/native_pkg/native/src/lib.rs");
-    if let (Ok(art_md), Ok(src_md)) = (p.metadata(), src.metadata())
+    if let (Ok(art_md), Ok(src_md)) = (fa::metadata(p), fa::metadata(src))
         && let (Ok(art_mtime), Ok(src_mtime)) = (art_md.modified(), src_md.modified())
         && src_mtime > art_mtime
     {
@@ -247,7 +248,7 @@ fn ffi_returned_vector_survives_in_place_append_409() {
     // does NOT propagate out of an in-process `execute_argv`, so an in-process
     // check would pass vacuously (the positive-control trap).
     let prog = std::env::temp_dir().join("loft_409_ffi_vec_append.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use native_pkg::*;\n\
          fn make(n: integer) -> vector<u8> { ext_make_bytes(n) }\n\
@@ -262,7 +263,7 @@ fn ffi_returned_vector_survives_in_place_append_409() {
         .arg(&prog)
         .output()
         .expect("run loft binary");
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     // len 4 returned + 1 appended = 5; first byte of [0,1,2,3] survives; appended = 99.
@@ -298,7 +299,7 @@ fn ffi_returned_vector_direct_decl_survives_in_place_append_410() {
 
     // No wrapper fn — `ext_make_bytes` (the `#native` decl) is called directly.
     let prog = std::env::temp_dir().join("loft_410_ffi_vec_direct.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use native_pkg::*;\n\
          fn main() { v = ext_make_bytes(4); v += [99 as u8]; println(\"R={len(v)} {v[0]} {v[4]}\"); }\n",
@@ -312,7 +313,7 @@ fn ffi_returned_vector_direct_decl_survives_in_place_append_410() {
         .arg(&prog)
         .output()
         .expect("run loft binary");
-    let _ = std::fs::remove_file(&prog);
+    let _ = fa::remove_file(&prog);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);

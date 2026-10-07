@@ -6,6 +6,7 @@
 //! JSON-RPC transport, each session with its own `LOFT_HOME`, so the site, the absent registry
 //! index and the stamp are this test's alone.
 
+use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -107,8 +108,8 @@ fn text_of(v: Option<&Parsed>) -> String {
 
 fn home(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("loft_overview_{tag}_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
+    let _ = fa::remove_dir_all(&d);
+    fa::create_dir_all(&d).unwrap();
     d
 }
 
@@ -200,13 +201,13 @@ fn the_server_offers_the_overview_and_opens_it() {
     assert!(root.ends_with("/index.md"), "{root}");
     let root_path = path_of(&root);
     assert!(root_path.starts_with(&home), "under LOFT_HOME: {root}");
-    let index = std::fs::read_to_string(&root_path).unwrap();
+    let index = fa::read_to_string(&root_path).unwrap();
     assert!(index.contains("[@F2 — "), "lists the features: {index}");
     assert!(
         index.contains("(libraries.md)") && index.contains("(inside.md)"),
         "{index}"
     );
-    let libs = std::fs::read_to_string(root_path.with_file_name("libraries.md")).unwrap();
+    let libs = fa::read_to_string(root_path.with_file_name("libraries.md")).unwrap();
     assert!(
         libs.contains("no registry index on this machine yet"),
         "says what is missing: {libs}"
@@ -215,7 +216,7 @@ fn the_server_offers_the_overview_and_opens_it() {
     // On the type name `Money` (line 0, char 8): that type's own page.
     let ty = overview_at(&mut s, 6, uri, 0, 8);
     assert!(ty.ends_with("/type-Money.md"), "{ty}");
-    let page = std::fs::read_to_string(path_of(&ty)).unwrap();
+    let page = fa::read_to_string(path_of(&ty)).unwrap();
     assert!(page.contains("# What `Money` can do"), "{page}");
     assert!(
         page.contains("`+  +=` — `operator plus"),
@@ -223,12 +224,12 @@ fn the_server_offers_the_overview_and_opens_it() {
     );
 
     // Nothing the site depends on changed: a second request rewrites nothing.
-    let before = std::fs::metadata(&root_path).unwrap().modified().unwrap();
+    let before = fa::metadata(&root_path).unwrap().modified().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     let again = overview_at(&mut s, 7, uri, 2, 0);
     assert_eq!(again, root);
     assert_eq!(
-        std::fs::metadata(&root_path).unwrap().modified().unwrap(),
+        fa::metadata(&root_path).unwrap().modified().unwrap(),
         before,
         "rewritten"
     );
@@ -242,7 +243,7 @@ fn the_server_offers_the_overview_and_opens_it() {
     );
     s.notify("exit", "null");
     let _ = s.child.wait();
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// The whole-catalogue guard: every entry has exactly one page whose words are the entry's own
@@ -290,7 +291,7 @@ fn a_session_with_nothing_open_still_ends_cleanly() {
     s.request(1, "initialize", "{}");
     let _ = s.recv();
     s.end();
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// Hover over the hover text of `(line, ch)` (0-based).
@@ -312,19 +313,19 @@ fn hover_at(s: &mut Session, id: i64, uri: &str, line: i64, ch: i64) -> String {
 /// a guide.
 fn install_demo(home: &std::path::Path) {
     let dir = home.join(".loft").join("registry").join("demo-1.2.0");
-    std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::create_dir_all(dir.join("docs")).unwrap();
-    std::fs::write(
+    fa::create_dir_all(dir.join("src")).unwrap();
+    fa::create_dir_all(dir.join("docs")).unwrap();
+    fa::write(
         dir.join("loft.toml"),
         "[package]\nname = \"demo\"\nversion = \"1.2.0\"\n\n[library]\nentry = \"src/demo.loft\"\n",
     )
     .unwrap();
-    std::fs::write(
+    fa::write(
         dir.join("src").join("demo.loft"),
         "/// Twice the value.\npub fn dbl(x: integer) -> integer { x * 2 }\n",
     )
     .unwrap();
-    std::fs::write(dir.join("docs").join("01-start.loft"), "fn main() {}\n").unwrap();
+    fa::write(dir.join("docs").join("01-start.loft"), "fn main() {}\n").unwrap();
 }
 
 #[test]
@@ -395,7 +396,7 @@ fn hover_names_the_construct_the_operator_and_the_library() {
     let name = format!("{:?}", s.recv());
     assert!(name.contains("Whole units in an amount."), "{name}");
     s.end();
-    let _ = std::fs::remove_dir_all(&home);
+    let _ = fa::remove_dir_all(&home);
 }
 
 /// P5's guard over the libraries half: every library in the index has a line on

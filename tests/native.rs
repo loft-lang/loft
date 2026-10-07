@@ -12,6 +12,7 @@
 extern crate loft;
 
 use loft::compile::byte_code;
+use loft::file_access as fa;
 use loft::generation::Output;
 use loft::parser::Parser;
 use loft::scopes;
@@ -334,7 +335,7 @@ fn rlib_content_hash(path: &Path) -> u64 {
     if let Some(&h) = guard.get(path) {
         return h;
     }
-    let h = std::fs::read(path).map(|b| fnv64(&b)).unwrap_or(0);
+    let h = fa::read(path).map(|b| fnv64(&b)).unwrap_or(0);
     guard.insert(path.to_path_buf(), h);
     h
 }
@@ -362,7 +363,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // wrap.rs's loft_suite (e.g. tests/lib/importlib.loft for
     // 88-imports.loft).  Only `--lib <dir>` is recognised; other
     // CLI-side flags are ignored at this layer.
-    if let Ok(src) = std::fs::read_to_string(entry) {
+    if let Ok(src) = fa::read_to_string(entry) {
         for line in src.lines().take(20) {
             if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
                 let mut tokens = args.split_whitespace();
@@ -477,7 +478,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // Skip functions marked with @EXPECT_FAIL in the source.
     if !has_main && !test_fns.is_empty() {
         use std::io::Write;
-        let src = std::fs::read_to_string(entry).unwrap_or_default();
+        let src = fa::read_to_string(entry).unwrap_or_default();
         // The SAME parser the interpreter runner reads the annotation with, so the two
         // cannot disagree about which functions a file excuses.  A second parser here
         // keyed on words-on-the-line could not see the documented
@@ -536,15 +537,15 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // small /tmp tmpfs; all of these must agree on the same directory.
     let scratch = native_scratch();
     let tmp_rs = scratch.join(format!("loft_native_{stem}.rs"));
-    let existing = std::fs::read(&tmp_rs).unwrap_or_default();
+    let existing = fa::read(&tmp_rs).unwrap_or_default();
     if existing != buf {
         // Atomic publish: write to a per-process temp then rename into place,
         // so a concurrent process (nextest runs each test in its own process)
         // compiling the same stem never reads a half-written source.  See the
         // shared-output collision note in `compile_native_job`.
         let tmp = scratch.join(format!("loft_native_{stem}_{}.rs.tmp", std::process::id()));
-        std::fs::write(&tmp, &buf)?;
-        std::fs::rename(&tmp, &tmp_rs)?;
+        fa::write(&tmp, &buf)?;
+        fa::rename(&tmp, &tmp_rs)?;
     } else {
         // Reused unchanged, so its timestamp says when it was last WRITTEN — possibly hours
         // ago.  `run_native_jobs` sweeps entries older than two minutes when the loft build
@@ -570,16 +571,16 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
 /// time — immune to clock skew and cross-machine binary copies.
 fn binary_cache_valid(job: &NativeJob, rlib_info: &Option<(PathBuf, PathBuf)>) -> bool {
     // Binary must exist.
-    if !job.binary.exists() {
+    if !fa::exists(&job.binary) {
         return false;
     }
     // Read the stored key from the sidecar.
-    let stored = match std::fs::read_to_string(&job.key_file) {
+    let stored = match fa::read_to_string(&job.key_file) {
         Ok(s) => s.trim().to_string(),
         Err(_) => return false,
     };
     // Recompute the key from the current .rs content and rlib.
-    let rs_content = match std::fs::read(&job.tmp_rs) {
+    let rs_content = match fa::read(&job.tmp_rs) {
         Ok(b) => b,
         Err(_) => return false,
     };
@@ -710,7 +711,7 @@ fn compile_native_job(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&argfile_path, argfile_contents)?;
+    fa::write(&argfile_path, argfile_contents)?;
     let compile_out = match std::process::Command::new("rustc")
         .arg(format!("@{}", argfile_path.display()))
         .output()
@@ -718,21 +719,21 @@ fn compile_native_job(
         Ok(o) => o,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             println!("  rustc not found — skipping native test for {}", job.stem);
-            let _ = std::fs::remove_file(&argfile_path);
+            let _ = fa::remove_file(&argfile_path);
             return Ok(false);
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&argfile_path);
+            let _ = fa::remove_file(&argfile_path);
             return Err(e);
         }
     };
-    let _ = std::fs::remove_file(&argfile_path);
+    let _ = fa::remove_file(&argfile_path);
     if !compile_out.status.success() {
         let stderr = String::from_utf8_lossy(&compile_out.stderr);
         eprintln!("rustc failed for {}:\n{stderr}", job.stem);
-        let _ = std::fs::remove_file(&binary_tmp);
-        let _ = std::fs::remove_file(&job.binary);
-        let _ = std::fs::remove_file(&job.key_file);
+        let _ = fa::remove_file(&binary_tmp);
+        let _ = fa::remove_file(&job.binary);
+        let _ = fa::remove_file(&job.key_file);
         return Err(Error::from(std::io::ErrorKind::Other));
     }
     // Publish the freshly-linked binary atomically: rename the per-process temp
@@ -740,15 +741,15 @@ fn compile_native_job(
     // concurrent process executing or linking the old binary keeps its inode
     // (no in-place truncation → no SIGBUS) and the cache path is always a
     // complete binary.
-    std::fs::rename(&binary_tmp, &job.binary)?;
+    fa::rename(&binary_tmp, &job.binary)?;
     // Write the cache key so future runs can skip recompilation when nothing
     // changed — also via temp + rename so a concurrent `binary_cache_valid`
     // reader never sees a half-written key.
-    let rs_content = std::fs::read(&job.tmp_rs).unwrap_or_default();
+    let rs_content = fa::read(&job.tmp_rs).unwrap_or_default();
     let key = cache_key(&rs_content, rlib_info);
     let key_tmp = scratch.join(format!("loft_native_{}_{pid}_bin.key.tmp", job.stem));
-    if std::fs::write(&key_tmp, format!("{key:016x}")).is_ok() {
-        let _ = std::fs::rename(&key_tmp, &job.key_file);
+    if fa::write(&key_tmp, format!("{key:016x}")).is_ok() {
+        let _ = fa::rename(&key_tmp, &job.key_file);
     }
     Ok(true)
 }
@@ -864,11 +865,11 @@ fn run_native_jobs(
         // cache only while a whole chunk's compiles still fit.  The generated `.rs` stays.
         if !keep_after_run(&scratch, concurrency) {
             for job in &ready {
-                if let Ok(meta) = std::fs::metadata(&job.binary)
-                    && std::fs::remove_file(&job.binary).is_ok()
+                if let Ok(meta) = fa::metadata(&job.binary)
+                    && fa::remove_file(&job.binary).is_ok()
                 {
                     freed_after_run += meta.len();
-                    let _ = std::fs::remove_file(&job.key_file);
+                    let _ = fa::remove_file(&job.key_file);
                 }
             }
         }
@@ -1017,7 +1018,7 @@ fn native_reference() -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
-        let src = std::fs::read_to_string(&entry)?;
+        let src = fa::read_to_string(&entry)?;
         if src.contains("@EXPECT_ERROR") {
             println!("skip {entry:?} (expected error — the interpreter proves the refusal)");
             continue;
@@ -1079,7 +1080,7 @@ fn native_comparisons() -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
-        let src = std::fs::read_to_string(&entry)?;
+        let src = fa::read_to_string(&entry)?;
         if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
                 .arg("--native")
@@ -1131,7 +1132,7 @@ fn native_features() -> std::io::Result<()> {
         // by this file's emit path, which cannot link one — see `run_via_loft_binary`.
         // Selected by the `use` RULE, not by filename, so the next library example is
         // covered without an edit here.
-        let imports_library = std::fs::read_to_string(&entry)
+        let imports_library = fa::read_to_string(&entry)
             .map(|src| src.lines().any(|l| l.trim_start().starts_with("use ")))
             .unwrap_or(false);
         if imports_library {
@@ -1213,7 +1214,7 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         // "this file used to be an @EXPECT_ERROR case" — declares nothing, and skipping
         // on the mention silently dropped five scripts from this suite, including
         // `93-vector-advanced.loft` and its forty-nine assertions.
-        if let Ok(src) = std::fs::read_to_string(&entry) {
+        if let Ok(src) = fa::read_to_string(&entry) {
             if common::declares_expect_error(&src) {
                 println!("skip {entry:?} (has @EXPECT_ERROR)");
                 continue;
@@ -1339,7 +1340,7 @@ fn native_script_chunks_cover_the_corpus() {
         NATIVE_SCRIPT_CHUNKS,
         "one generated test per chunk"
     );
-    let src = std::fs::read_to_string(file!()).expect("read tests/native.rs");
+    let src = fa::read_to_string(file!()).expect("read tests/native.rs");
     for n in names {
         assert!(src.contains(&format!("{n} = ")), "{n} is generated");
     }
@@ -1438,7 +1439,7 @@ fn native_c_binding_calls_libc() -> std::io::Result<()> {
         .unwrap_or_else(|p| p.into_inner());
     let rlib_info = find_loft_rlib();
     let path = std::env::temp_dir().join("loft_pln24_c_binding.loft");
-    std::fs::write(
+    fa::write(
         &path,
         for_host(
             "pub fn c_strlen(s: text) -> integer;   #c \"strlen\" \"size_t(const char*)\"\n\
@@ -1505,7 +1506,7 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let path = std::env::temp_dir().join("loft_pln24_c_parity.loft");
-    std::fs::write(
+    fa::write(
         &path,
         for_host(
             "pub fn c_strlen(s: text) -> integer;   #c \"strlen\" \"size_t(const char*)\"\n\
@@ -1593,7 +1594,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
     );
 
     let prog = std::env::temp_dir().join("loft_pln24_matrix.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcabi::*;\n\
          fn main() {\n\
@@ -1743,7 +1744,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let max = loft::c_signature::MAX_C_ARITY;
     let dir = std::env::temp_dir().join("loft_pln128_arity");
     let src = dir.join("pkg/arity/src");
-    std::fs::create_dir_all(&src)?;
+    fa::create_dir_all(&src)?;
 
     // One C function at the ceiling and one past it, each weighting argument i
     // by i+1 so a dropped or reordered argument gives a different number rather
@@ -1760,7 +1761,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             .join(" + ");
         csrc.push_str(&format!("long long ar{n}({params}) {{ return {body}; }}\n"));
     }
-    std::fs::write(dir.join("arity.c"), &csrc)?;
+    fa::write(dir.join("arity.c"), &csrc)?;
     // The manifest keeps the LINUX spelling on every host: `platform::lib_variants`
     // translates `libarity.so` to `arity.dll` for Windows and `libarity.dylib` for
     // macOS, and both backends resolve it through that one home.  Only what gets
@@ -1795,7 +1796,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             String::from_utf8_lossy(&cc.stderr)
         );
         assert!(
-            implib.exists(),
+            fa::exists(&implib),
             "`cc -shared` must also write the import library {} — without it the \
              --native link cannot resolve `-l arity`",
             implib.display()
@@ -1812,7 +1813,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
             String::from_utf8_lossy(&cc.stderr)
         );
     }
-    std::fs::write(
+    fa::write(
         dir.join("pkg/arity/loft.toml"),
         format!(
             "[library]\nname = \"arity\"\nversion = \"0.1.0\"\n\n[c]\nlibs = \"../../{libname}\"\n"
@@ -1845,10 +1846,10 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // it. At the ceiling both backends must call it and agree on the value; one
     // past it, both must refuse.
     for (n, expect_ok) in [(max, true), (max + 1, false)] {
-        std::fs::write(src.join("arity.loft"), sig(n))?;
+        fa::write(src.join("arity.loft"), sig(n))?;
         let call = (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
         let prog = dir.join(format!("call{n}.loft"));
-        std::fs::write(
+        fa::write(
             &prog,
             format!("use arity::*;\nfn main() {{ println(\"R {{ar{n}({call})}}\") }}\n"),
         )?;
@@ -1883,7 +1884,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // puts the error in front of the person who can fix it; before arc C the
     // only check was at the call site, so the author never saw it at all.
     let owned = dir.join("owned.loft");
-    std::fs::write(
+    fa::write(
         &owned,
         format!(
             "{}fn main() {{ println(\"declared, never called\") }}\n",
@@ -1906,7 +1907,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     // ...but a DEPENDENCY declaring one the program never calls must still load:
     // a consumer cannot edit someone else's declaration, so it must not fail
     // their build. Mirrors how `superseded_fold_diagnostics` scopes itself.
-    std::fs::write(
+    fa::write(
         src.join("arity.loft"),
         format!("{}{}", sig(max), sig(max + 1)),
     )?;
@@ -1915,7 +1916,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
         .collect::<Vec<_>>()
         .join(",");
     let prog = dir.join("dep_ok.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         format!("use arity::*;\nfn main() {{ println(\"R {{ar{max}({call})}}\") }}\n"),
     )?;
@@ -1970,7 +1971,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
     );
 
     let prog = std::env::temp_dir().join("loft_pln128_numeric.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcabi::*;\n\
          fn main() {\n\
@@ -2138,7 +2139,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
 #[test]
 fn a_c_string_return_crosses_identically_on_both_backends() -> std::io::Result<()> {
     let path = std::env::temp_dir().join("loft_pln24_c_textret.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "pub fn c_strerror(n: integer) -> text;   #c \"strerror\" \"char*(int)\"\n\
          pub fn c_strlen(s: text) -> integer;     #c \"strlen\" \"size_t(const char*)\"\n\
@@ -2208,9 +2209,9 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     }
     let dir = std::env::temp_dir().join(format!("loft_skew_{}", std::process::id()));
     let pkg = dir.join("pkg/skewlib/src");
-    std::fs::create_dir_all(&pkg)?;
+    fa::create_dir_all(&pkg)?;
     let src = dir.join("old.c");
-    std::fs::write(&src, "long sk_present(long v) { return v + 1; }\n")?;
+    fa::write(&src, "long sk_present(long v) { return v + 1; }\n")?;
     let so = dir.join("libskew.so");
     let built = std::process::Command::new("cc")
         .args(["-O2", "-fPIC", "-shared", "-o"])
@@ -2227,13 +2228,13 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     // special is simpler, and Windows accepts `/` everywhere loft passes this on
     // (`lib_variants` already splits a directory off on either separator).
     let so_str = so.to_string_lossy().replace('\\', "/");
-    std::fs::write(
+    fa::write(
         dir.join("pkg/skewlib/loft.toml"),
         format!(
             "[library]\nname = \"skewlib\"\nversion = \"0.1.0\"\n\n[c]\noptional-libs = \"{so_str}\"\n"
         ),
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("skewlib.loft"),
         format!(
             "pub fn sk_present(v: integer) -> integer;  #c \"sk_present\" \"long(long)\"\n\
@@ -2244,7 +2245,7 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
         ),
     )?;
     let script = dir.join("probe.loft");
-    std::fs::write(
+    fa::write(
         &script,
         "pub use skewlib::*;\nfn go() {\n  println(\"ok={skew_ok()}\");\n  println(\"call={sk_present(41)}\");\n}\ngo();\n",
     )?;
@@ -2272,7 +2273,7 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
             "{backend}: a loadable library missing a declared symbol is NOT available:\n{s}"
         );
     }
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     Ok(())
 }
 
@@ -3511,7 +3512,7 @@ fn a_sql_cursor_walks_real_rows_and_keeps_null_apart_from_empty() -> std::io::Re
         "/usr/lib/libmariadb.so.3",
     ]
     .iter()
-    .any(|p| std::path::Path::new(p).exists());
+    .any(|p| fa::exists(std::path::Path::new(p)));
     if !present
         || std::process::Command::new("cc")
             .arg("--version")
@@ -3606,18 +3607,18 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
         "/usr/lib/libmariadb.so.3",
     ]
     .iter()
-    .any(|p| std::path::Path::new(p).exists());
+    .any(|p| fa::exists(std::path::Path::new(p)));
     if !present {
         return Ok(());
     }
     let dir = std::env::temp_dir().join("loft_pln23_s2");
     let pkg = dir.join("mariadb").join("src");
-    std::fs::create_dir_all(&pkg)?;
-    std::fs::write(
+    fa::create_dir_all(&pkg)?;
+    fa::write(
         dir.join("mariadb").join("loft.toml"),
         "[library]\nname = \"mariadb\"\nversion = \"0.0.1\"\n\n[c]\nlibs = \"libmariadb.so.3\"\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("mariadb.loft"),
         // `unix_socket` is `integer`, not `text`: it has to be able to be NULL,
         // and loft text is non-null with no way to spell a null pointer.
@@ -3629,7 +3630,7 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
          #c \"mysql_real_connect\" \"void*(void*, const char*, const char*, const char*, const char*, int, const char*, long)\"\n",
     )?;
     let prog = dir.join("s2.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mariadb::*;\n\
          fn main() {\n\
@@ -3703,24 +3704,24 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
         "/usr/lib/libmariadb.so.3",
     ]
     .iter()
-    .any(|p| std::path::Path::new(p).exists());
+    .any(|p| fa::exists(std::path::Path::new(p)));
     if !present {
         return Ok(());
     }
     let dir = std::env::temp_dir().join("loft_pln23_s1");
     let pkg = dir.join("mariadb").join("src");
-    std::fs::create_dir_all(&pkg)?;
-    std::fs::write(
+    fa::create_dir_all(&pkg)?;
+    fa::write(
         dir.join("mariadb").join("loft.toml"),
         "[library]\nname = \"mariadb\"\nversion = \"0.0.1\"\n\n[c]\nlibs = \"libmariadb.so.3\"\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("mariadb.loft"),
         "pub fn client_info() -> text;       #c \"mysql_get_client_info\" \"const char*(void)\"\n\
          pub fn client_version() -> integer; #c \"mysql_get_client_version\" \"long(void)\"\n",
     )?;
     let prog = dir.join("s1.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use mariadb::*;\nfn main() { println(\"{client_info()} {client_version()}\") }\n",
     )?;
@@ -3791,9 +3792,9 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
 #[test]
 fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
     let dir = std::env::temp_dir().join(format!("loft_pln24_arce_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let src_path = dir.join("arce.loft");
-    std::fs::write(
+    fa::write(
         &src_path,
         // `used` is called; `unused` is only declared.  Both are `#c`.
         "fn used(s: text) -> integer;    #c \"strlen\" \"size_t(const char*)\"\n\
@@ -3855,7 +3856,7 @@ fn a_c_binding_is_refused_by_name_on_a_wasm_target() {
         "the availability tables stay on every target — `c_library_available` \
          reads them, and it used to fail to compile under --html for want of them"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
 
 /// @PLN24 arc D — loft compiles the ANSI-C shim itself, with `cc` and no rustc.
@@ -3887,10 +3888,10 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi");
     let libdir = root.join("pkg");
     // Start from no artifact, so the build itself is what is under test.
-    let _ = std::fs::remove_dir_all(libdir.join("lcshim").join("native-auto"));
+    let _ = fa::remove_dir_all(libdir.join("lcshim").join("native-auto"));
 
     let prog = std::env::temp_dir().join("loft_pln24_shim.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcshim::*;\n\
          fn main() {\n\
@@ -3979,7 +3980,7 @@ fn a_text_return_must_say_it_is_a_c_string() -> std::io::Result<()> {
     ];
     for (decl, want) in cases {
         let path = std::env::temp_dir().join("loft_pln24_c_textret_refuse.loft");
-        std::fs::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
+        fa::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
         let mut seen = Vec::new();
         for backend in ["--interpret", "--native"] {
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
@@ -4056,7 +4057,7 @@ fn a_vector_element_must_match_the_c_pointee() -> std::io::Result<()> {
     ];
     for (decl, want) in cases {
         let path = std::env::temp_dir().join("loft_pln128_elem_refuse.loft");
-        std::fs::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
+        fa::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
         let mut seen = Vec::new();
         for backend in ["--interpret", "--native"] {
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
@@ -4083,7 +4084,7 @@ fn a_vector_element_must_match_the_c_pointee() -> std::io::Result<()> {
     // `void*` is the opaque escape hatch and stays open: it is how `write(2)`
     // takes a `vector<u8>`, and it is the author saying "these are bytes".
     let path = std::env::temp_dir().join("loft_pln128_elem_opaque.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "pub fn f(v: vector<float>);   #c \"lc_x\" \"void(const void*, int64_t)\"\n\
          fn main() { println(\"x\") }\n",
@@ -4148,7 +4149,7 @@ fn a_retaining_c_api_binds_over_a_c_owned_buffer() -> std::io::Result<()> {
     );
 
     let prog = std::env::temp_dir().join("loft_pln128_retain.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         "use lcabi::*;\n\
          fn main() {\n\
@@ -4250,7 +4251,7 @@ fn a_float_return_binds_and_a_float_argument_still_does_not() -> std::io::Result
     ];
     for (decl, want) in cases {
         let path = std::env::temp_dir().join("loft_pln128_float_return.loft");
-        std::fs::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
+        fa::write(&path, format!("{decl}\nfn main() {{ println(\"x\") }}\n"))?;
         let mut seen = Vec::new();
         for backend in ["--interpret", "--native"] {
             let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
@@ -4299,7 +4300,7 @@ fn native_deep_recursion_reports_clean_stack_overflow() -> std::io::Result<()> {
     // Write to a temp file, NOT tests/scripts/ (which the success-runners sweep —
     // an infinitely-recursing script would break them).
     let path = std::env::temp_dir().join("loft_native_stack_overflow_guard.loft");
-    std::fs::write(
+    fa::write(
         &path,
         "fn recur(n: integer) -> integer { m = recur(n + 1); return m + 1; }\n\
          fn main() { x = recur(0); print(\"{x}\"); }\n",
@@ -4427,17 +4428,17 @@ fn run_lib_test_in_temp_cwd(
             std::process::id(),
             CTR.fetch_add(1, Ordering::Relaxed)
         ));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir(&tmp)?;
+        let _ = fa::remove_dir_all(&tmp);
+        fa::create_dir(&tmp)?;
         for entry in std::fs::read_dir(pkg_dir)?.filter_map(|e| e.ok()) {
             let target = entry.path().canonicalize().unwrap_or_else(|_| entry.path());
-            let _ = std::os::unix::fs::symlink(&target, tmp.join(entry.file_name()));
+            let _ = fa::symlink(&target, tmp.join(entry.file_name()));
         }
         let out = std::process::Command::new(loft_bin)
             .current_dir(&tmp)
             .args(&args)
             .output();
-        let _ = std::fs::remove_dir_all(&tmp);
+        let _ = fa::remove_dir_all(&tmp);
         out
     }
     #[cfg(not(unix))]
@@ -4482,16 +4483,16 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     }
     let pid = std::process::id();
     let root = std::env::temp_dir().join(format!("loft_878_{pid}"));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let pkg = root.join("shadowlib");
-    std::fs::create_dir_all(pkg.join("src"))?;
-    std::fs::create_dir_all(pkg.join("tests"))?;
-    std::fs::write(
+    fa::create_dir_all(pkg.join("src"))?;
+    fa::create_dir_all(pkg.join("tests"))?;
+    fa::write(
         pkg.join("loft.toml"),
         "[package]\nname = \"shadowlib\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\
          [library]\nentry = \"src/shadowlib.loft\"\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("src/shadowlib.loft"),
         "pub struct W { w_n: integer, w_tag: text }\n\
          pub struct H { h_q: integer, h_r: integer }\n\
@@ -4506,7 +4507,7 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
          \x20 return H { h_q: q, h_r: 1 };\n\
          }\n",
     )?;
-    std::fs::write(
+    fa::write(
         pkg.join("tests/probe.loft"),
         "use shadowlib::*;\n\
          fn defaulted(h: integer) -> W {\n\
@@ -4538,7 +4539,7 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
             "loft test {extra:?} on a package whose test file shadows a library fn name:\n{combined}"
         );
     }
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     Ok(())
 }
 
@@ -4569,7 +4570,7 @@ fn native_library_suite() -> std::io::Result<()> {
             continue;
         }
         let tests_dir = pkg.path().join("tests");
-        if !tests_dir.is_dir() {
+        if !fa::is_dir(&tests_dir) {
             continue;
         }
         for f in std::fs::read_dir(&tests_dir)?.filter_map(|e| e.ok()) {
@@ -4918,10 +4919,10 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
 
     let scratch = loft::platform::scratch_dir();
     let entry = scratch.join("loft1311_fn_level_expect_fail.loft");
-    std::fs::write(&entry, src).expect("write the probe script");
+    fa::write(&entry, src).expect("write the probe script");
 
     let job = prepare_native_test(&entry).expect("a fn-level @EXPECT_FAIL must still prepare");
-    let generated = std::fs::read_to_string(&job.tmp_rs).expect("read the generated Rust");
+    let generated = fa::read_to_string(&job.tmp_rs).expect("read the generated Rust");
 
     assert!(
         generated.contains("// skipped (EXPECT_FAIL): n_test_1311_excused"),
@@ -4934,7 +4935,7 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
         );
     }
 
-    let _ = std::fs::remove_file(&entry);
+    let _ = fa::remove_file(&entry);
 }
 
 /// A generation run's per-definition facts are about ONE program.
@@ -4953,10 +4954,10 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
 #[test]
 fn a_generation_run_does_not_read_the_previous_programs_facts() {
     let dir = std::env::temp_dir().join(format!("loft_gen_memo_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    fa::create_dir_all(&dir).unwrap();
     let emit = |name: &str, body: &str| -> (u32, String) {
         let src = dir.join(name);
-        std::fs::write(
+        fa::write(
             &src,
             format!("fn f() -> integer? {{ {body} }}\nfn main() {{ x = f() ?? 99; println(\"{{x}}\"); }}\n"),
         )
@@ -4996,5 +4997,5 @@ fn a_generation_run_does_not_read_the_previous_programs_facts() {
         second.contains("op_conv_bool_from_int((var___ncc"),
         "the second program's `f` returns null, so `f() ?? 99` must keep its null test — it was folded from the first program's fact"
     );
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }
