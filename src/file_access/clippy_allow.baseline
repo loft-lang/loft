@@ -1,8 +1,6 @@
 # Files still reaching the file system around file_access, each with a marked #![allow] (@PLN184 A1).
 # Only shrinks: see src/file_access/guard.rs.
-src/bin/loft-keygen.rs
 src/crash_report.rs
-src/create.rs
 src/database/allocation.rs
 src/database/journal.rs
 src/database/spans.rs
@@ -13,31 +11,22 @@ src/fuzz_oracle.rs
 src/gendoc.rs
 src/host.rs
 src/html_embed.rs
-src/install.rs
 src/introspect.rs
 src/lib_placement/arena.rs
 src/lib_placement/wire.rs
 src/live_dispatch.rs
 src/live_reload.rs
-src/lockfile.rs
 src/logger.rs
 src/lsp.rs
-src/manifest.rs
 src/migrate_long.rs
 src/op_census.rs
-src/package.rs
-src/package_layout.rs
 src/paged_reader.rs
 src/platform.rs
 src/radix_db/pages.rs
-src/registry.rs
-src/registry_advisories.rs
-src/registry_index.rs
 src/repl.rs
 src/rewrite_census.rs
 src/sandbox.rs
 src/script.rs
-src/self_update.rs
 src/serve.rs
 src/store.rs
 src/store_census.rs
