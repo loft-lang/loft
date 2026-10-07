@@ -46,10 +46,12 @@ reaches the generic scalar-range branch). This split is the doc's spine.
 
 ```
   (Col-Vec)     vector<τ>                     ordered, 0-based integer index; the only value-sliceable collection.
-  (Col-Hash)    hash<T[k…]>                   O(1) point lookup by key; UNSORTED (bucket) order.
-  (Col-Sorted)  sorted<T[k…]>                 red-black tree; KEY-ORDERED iteration + range slices.
-  (Col-Index)   index<T[k…]>                  BOTH — a red-black tree AND a hash table over the same records
-                                              (O(1) lookup AND ordered/range).  (DATABASE.md:704)
+  (Col-Hash)    hash<T[k…]>                   O(1) point lookup by key; iterates in KEY order (Col-Order);
+                                              no range slice.
+  (Col-Sorted)  sorted<T[k…]>                 a sorted vector of records; KEY-ORDERED iteration + range slices.
+  (Col-Index)   index<T[k…]>                  a red-black tree linked through the records themselves:
+                                              O(log n) lookup, KEY-ORDERED iteration + range slices, and no
+                                              copy of a record on insert or removal.
   (Col-Spatial) spatial<T[a]> / [a,b] / [a,b,c]   1–3 coordinate axes (MAX_AXES=3), Morton/Z-order radix tree;
                                               the runtime Parts variant is `Radix`.  integer-not-null coord keys;
                                               negative coords via offset-binary (signed axes order like sorted).
@@ -105,6 +107,10 @@ owns their *operations + order*).
 ```
   (Col-Cons)    c: <kind><…> = []             empty-literal construction (all kinds).
   (Col-Insert)  c += [ rec, … ]               append/insert a record; keyed kinds place it by key.
+                A record whose key is already present REPLACES the one there at `hash`, `sorted`,
+                `index` and `trie` (C68), so a key names at most one record.  `spatial` keeps both:
+                two records may share a point, a point lookup answers one of them and a box
+                answers every one.
   (Col-Insert-Absent)  c: <kind><…>?  holding null,  c += [ rec, … ]
                 ⟹  c is first instantiated with its default — the empty collection — and the
                 records are then inserted exactly as (Col-Insert) says.  No diagnostic: to an
@@ -271,30 +277,6 @@ implementation detail is not a surface.  Stated as the COMPLEMENT of the iterati
 kind added to the language refuses by default — the cost of an omission here is a lookup that
 answers `null` from a malformed key, which no reader can tell from a genuine miss (loft#1457,
 `1457-…` and `1457b-…`).
-
-**In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
-slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the
-descriptor carries the minimum so a reader can undo it. It exists because a reader that
-re-derives the decode instead of reading `Key::start` gets a different code for the same record
-than the writer produced — which does not present as an error, but as `c[k]` answering `null` for
-a record `for x in c` yields (loft#1431, the two `spatial` readers, where `u8` and `integer`
-stayed correct because their bias is zero).
-
-`(Col-Axis)` is about the DECODE only. Which values an axis may take is `(Col-Spatial)`'s
-integer-not-null, and the 4-byte arm's signed/unsigned split is a storage-schema question one level
-down (loft#1437).
-
-### 1.3b One field, one decode — `Col-Axis`
-
-```
-  (Col-Axis)    a key or coordinate field's VALUE is the one its DECLARED type decodes — layout.md
-                `(L-Narrow-Decode)`, of which this is the KEYED refinement.  The kind of collection
-                asking does not change what the bytes mean, and neither does the storage asked
-                (resident `Store` or paged image), so a lookup answers a record for exactly the
-                keys its own iteration yields.
-```
-*Anchor:* `keys::compare_ref` / `keys::get_key` / `keys::hash_key` (`src/keys.rs`) for the
-value-keyed kinds; `radix_db::axis_i64` + `paged_reader::PagedSpatial::axis_value` for `spatial`.
 
 **In words.** A key's bytes are not its value. `(L-Narrow-Decode)` states that for every narrow
 slot; what this rule adds is that a KEY is no exception, and that `Key::start` is where the

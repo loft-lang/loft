@@ -105,7 +105,8 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
   depends on `N`, or on which thread finished first — is caught there and is, by `C-Impure`, a
   sign of an impure worker slipping the contract.
 - **The hash-order difference (`C-Order`) is a spec'd edge, not a deviation** — it is stated in
-  the rule and is consistent across backends; it is a property of hashing, not a divergence.
+  the rule; the par order follows the bucket layout, which the hash seed decides, so it is not
+  promised to repeat across runs or to agree between backends.
 
 ## Conformance
 
@@ -116,8 +117,9 @@ OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code 
 - **Deep-copied struct results (`C-Par` + `H-Copy`)** — `par(b = make(a), N)` where `make`
   returns a struct: each `b` is an independent copy; field access on `b` in the body works and no
   worker store leaks.
-- **Hash walk order (`C-Order`)** — `for x in h par(…)` may differ in order from `for x in h`;
-  both backends agree with each other on the par order (the unsorted bucket walk).
+- **Hash walk order (`C-Order`)** — `for x in h par(…)` may differ in order from `for x in h`,
+  and from one run or backend to the next (the bucket walk follows the hash seed); a body that
+  depends on it is outside `C-Det`.
 - **The SEQUENTIAL loop is `C-Det`'s oracle, and the differential one cannot replace it** —
   the check above compares the two backends, so a rule violation they SHARE is invisible to
   it however many programs the corpus grows to. loft#1060 was exactly that: `par(b = f(a.n), N)`
