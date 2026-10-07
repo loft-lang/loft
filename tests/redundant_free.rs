@@ -16,7 +16,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -29,7 +28,7 @@ fn redundant_frees(name: &str, src: &str) -> (String, usize) {
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{name}.loft"));
     fa::write(&file, src).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TRACE_DB", "1")

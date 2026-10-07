@@ -13,7 +13,7 @@
 use loft::file_access as fa;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -91,7 +91,7 @@ fn wait_until_listening(port: u16) {
 
 fn spawn_loft(prog: &PathBuf, piped: bool) -> Child {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Command::new(loft_bin())
+    loft::platform::process::harness_command(loft_bin())
         .env("LOFT_OFFLINE", "1") // hermetic fixtures
         .arg("--interpret")
         .arg("--no-warnings")
@@ -318,7 +318,7 @@ fn main() {{
     let _server = Guard(Some(spawn_loft(&server_prog, false)));
     wait_until_listening(port);
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut client = Command::new(loft_bin())
+    let mut client = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
@@ -477,7 +477,10 @@ fn s6_ws_recv(stream: &std::net::TcpStream) -> Option<String> {
 fn assert_bundle_describes_this_tree() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let script = root.join("scripts/wasm_bundle_stamp.sh");
-    let Ok(out) = Command::new(&script).current_dir(&root).output() else {
+    let Ok(out) = loft::platform::process::harness_command(&script)
+        .current_dir(&root)
+        .output()
+    else {
         eprintln!("SKIP-CHECK: cannot run {}", script.display());
         return;
     };
@@ -533,13 +536,13 @@ fn s6_browser_swap_under_living_page() {
     let chrome_ok = ["google-chrome", "chromium", "chromium-browser", "chrome"]
         .iter()
         .any(|c| {
-            Command::new("sh")
+            loft::platform::process::harness_command("sh")
                 .arg("-c")
                 .arg(format!("command -v {c}"))
                 .output()
                 .is_ok_and(|o| o.status.success())
         });
-    let node_ok = Command::new("sh")
+    let node_ok = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg("command -v node")
         .output()
@@ -593,7 +596,7 @@ fn main() {{
 
     // Serve doc/ for the page + bundle.
     let http_port = common::bind_port(18103);
-    let mut http = Command::new("python3")
+    let mut http = loft::platform::process::harness_command("python3")
         .args([
             "-m",
             "http.server",
@@ -740,7 +743,7 @@ fn main() {{
     let url = format!(
         "http://127.0.0.1:{http_port}/kernel-swap.html?port={port}&deadline_ms={page_deadline_ms}"
     );
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", &harness_wait_ms.to_string()])
@@ -781,13 +784,13 @@ fn browser_kernel_one_script_differential() {
     let chrome_ok = ["google-chrome", "chromium", "chromium-browser", "chrome"]
         .iter()
         .any(|c| {
-            Command::new("sh")
+            loft::platform::process::harness_command("sh")
                 .arg("-c")
                 .arg(format!("command -v {c}"))
                 .output()
                 .is_ok_and(|o| o.status.success())
         });
-    let node_ok = Command::new("sh")
+    let node_ok = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg("command -v node")
         .output()
@@ -871,7 +874,7 @@ fn main() {{
     {
         let _server = Guard(Some(spawn_loft(&server_prog, false)));
         wait_until_listening(port);
-        let mut client = Command::new(loft_bin())
+        let mut client = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg("--no-warnings")
             .arg("--lib")
@@ -913,7 +916,7 @@ fn main() {{
     // Serve doc/ (the page + bundle); kill the kernel server mid-run so the
     // browser client exits and the page compares its transcript.
     let http_port = common::bind_port(18106);
-    let mut http = Command::new("python3")
+    let mut http = loft::platform::process::harness_command("python3")
         .args([
             "-m",
             "http.server",
@@ -955,7 +958,7 @@ fn main() {{
         std::thread::sleep(Duration::from_secs(1));
         drop(_server);
     });
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", "9000"])

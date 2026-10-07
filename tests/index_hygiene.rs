@@ -47,7 +47,7 @@ fn idx_command(args: &[&str]) -> Command {
     // "cannot open libring-….rlib" / "crate `rustls` required to be
     // available in rlib format" cdylib-build flakes (#307; also the
     // nondeterministic half of #304).
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("tools/indexer/src/idx.loft");
     for a in args {
         cmd.arg(a);
@@ -80,7 +80,7 @@ fn idx_command(args: &[&str]) -> Command {
 /// covers nothing.
 fn check_index_matches_git() {
     let carried: std::collections::HashSet<String> = {
-        let out = Command::new("git")
+        let out = loft::platform::process::harness_command("git")
             .args(["ls-files", "--cached", "--others", "--exclude-standard"])
             .output()
             .expect("failed to spawn git ls-files");
@@ -236,7 +236,7 @@ fn check_new_decisions_are_guarded(index: &str) {
 #[test]
 fn index_hygiene_clean() {
     // 1. Refresh the index.  `make index` must exit 0.
-    let make = Command::new("make")
+    let make = loft::platform::process::harness_command("make")
         .arg("index")
         .output()
         .expect("failed to spawn `make index`");
@@ -384,7 +384,7 @@ fn index_hygiene_clean() {
     // is canonical until sub-commit H; the assertion applies regardless.
     // Use `jq -r` rather than pulling serde_json into this binary just
     // for one assertion — jq is already a CI dep used elsewhere here.
-    let sev_jq = Command::new("jq")
+    let sev_jq = loft::platform::process::harness_command("jq")
         .args(["-r", ".problems_open[] | .severity", "index/tags.json"])
         .output()
         .expect("spawn jq for severity check");

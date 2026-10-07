@@ -9,10 +9,9 @@
 // — sixteen thousand of them, 151 GB, on one box (RUN_BOUNDS.md § Scratch hygiene).
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn rustc_available() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
@@ -43,7 +42,7 @@ fn a_native_compile_sweeps_dead_process_artefacts_and_keeps_the_test_cache() {
         format!("fn main() {{ println(\"hi {}\"); }}\n", std::process::id()),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native")
         .arg(&prog)
         // Both spellings: `make ci` exports `LOFT_TMPDIR` beside `TMPDIR`, and the runtime

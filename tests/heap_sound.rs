@@ -27,7 +27,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const RB: &str = "struct Rb { name: text, n: integer }\n\
@@ -47,7 +46,7 @@ fn run_armed(tag: &str, body: &str, mode: &str, strict: bool) -> String {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fa::write(&path, format!("{body}\n")).expect("write cell");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(mode)
         .arg(&path)
         .env("LOFT_TIMEOUT", "240")
@@ -466,7 +465,7 @@ fn run_timeline(tag: &str, body: &str, mode: &str) -> (String, u64, u64) {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fa::write(&path, format!("{body}\n")).expect("write cell");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(mode)
         .arg(&path)
         .env("LOFT_TIMEOUT", "240")

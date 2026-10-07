@@ -22,13 +22,13 @@
 use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 use loft::html_fonts::{self, PageFont};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -192,7 +192,7 @@ fn check_when(
     wait_ms: u32,
     port: u16,
 ) -> Option<(bool, String)> {
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
         .args(["--wait-ms", &wait_ms.to_string()])
@@ -241,7 +241,7 @@ fn tooling() -> Option<(PathBuf, PathBuf, PathBuf)> {
 /// all).  Everything else is served at once, so the delay is on the one thing under
 /// test.
 fn spawn_server(py: &Path, dir: &Path, port: u16, delay_ms: u32) -> Option<Child> {
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .arg(repo_root().join("tests/data/slow_font_server.py"))
         .arg(dir)
         .arg(port.to_string())
@@ -439,7 +439,7 @@ fn a_declared_font_reaches_the_emitted_page() {
     .expect("write source");
 
     let html = dir.join("fontgame.html");
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().expect("utf-8 path")])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))
@@ -526,7 +526,7 @@ fn a_drifting_family_is_refused_before_the_build() {
     .expect("write source");
 
     let html = dir.join("driftgame.html");
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().expect("utf-8 path")])
         .arg("--lib")
         .arg(root.join("tests/fixtures/libs"))

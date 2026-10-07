@@ -19,7 +19,8 @@ fn guard() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "240")
         .env_remove("LOFT_NO_BUFFER_IS_PLACE");
     cmd

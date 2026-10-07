@@ -10,7 +10,7 @@
 
 use loft::file_access as fa;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ fn run(backend: &str, stdin: &str) -> String {
     fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("hi.loft");
     fa::write(&path, FIXTURE).expect("write fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args([backend, path.to_str().unwrap()])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())
@@ -111,7 +111,7 @@ fn host_output_goes_to_stderr_on_both_backends() {
         fa::create_dir_all(&dir).expect("mkdir");
         let path = dir.join("ho.loft");
         fa::write(&path, fixture).expect("write fixture");
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend, path.to_str().unwrap()])
             .current_dir(env!("CARGO_MANIFEST_DIR"))
             .stdin(Stdio::null())
@@ -169,7 +169,7 @@ fn run_with_open_stdin(
     fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("hw.loft");
     fa::write(&path, source).expect("write fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args([backend, path.to_str().unwrap()])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())

@@ -19,7 +19,6 @@
 //! run skips the pass that emits them.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 const ADVICE: &str = "upper-case-local";
 
@@ -31,7 +30,7 @@ fn loft_bin() -> std::path::PathBuf {
 fn run(name: &str, source: &str) -> (String, String) {
     let script = std::env::temp_dir().join(format!("loft_921_{name}_{}.loft", std::process::id()));
     fa::write(&script, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_NO_CACHE", "1")

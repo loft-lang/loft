@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 struct Run {
     success: bool,
@@ -31,7 +30,7 @@ struct Run {
 
 /// Run the loft binary on `prog` with extra `args` + `env`, capturing output.
 fn run(args: &[&str], env: &[(&str, &str)], prog: &Path) -> Run {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("--lib")
         .arg("tests/lib")
         .args(args)
@@ -51,7 +50,7 @@ fn run(args: &[&str], env: &[(&str, &str)], prog: &Path) -> Run {
 /// Run the loft binary on `prog` against an explicit (usually tmp, writable) `libdir`
 /// — for tests that own their fixtures so they never race on a shared `native-auto/`.
 fn run_against(libdir: &Path, prog: &Path, env: &[(&str, &str)]) -> Run {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("--lib")
         .arg(libdir)
         .arg(prog)
@@ -168,7 +167,11 @@ const DATALIB_PROG: &str = "use datalib::*;\n\
 // @speed 1.3
 #[test]
 fn datalib_store_touching_types_parity() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (mixed + native modes need it)");
         return;
     }
@@ -277,7 +280,11 @@ const PLAINLIB_PROG: &str = "use plainlib::*;\n\
 // @speed 1.2
 #[test]
 fn default_native_dispatches_unopted_library() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (default-native build needs it)");
         return;
     }
@@ -351,7 +358,11 @@ fn single_cdylib(native_auto: &Path) -> Option<std::path::PathBuf> {
 // @speed 2.8
 #[test]
 fn editing_a_library_interprets_then_rebuilds_when_stable() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (Step 4 needs the native build)");
         return;
     }
@@ -381,7 +392,7 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
 
     // Run the binary against this editable lib dir (no `tests/lib`).
     let run_edit = || -> Run {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--lib")
             .arg(&libdir)
             .arg(&prog)
@@ -448,7 +459,11 @@ fn editing_a_library_interprets_then_rebuilds_when_stable() {
 // @speed 1.7
 #[test]
 fn interdependent_libraries_are_fully_native() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (F2 needs the native build)");
         return;
     }
@@ -540,7 +555,11 @@ fn interdependent_libraries_are_fully_native() {
 // @speed 1.2
 #[test]
 fn shared_bridge_nested_return_no_orphan_leak() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (mixed mode needs it)");
         return;
     }
@@ -579,7 +598,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
     // suite's shared target artifacts.
     let run_interp = |env: &[(&str, &str)]| -> Run {
         let _ = fa::remove_dir_all(&native_auto);
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(&libdir)
@@ -684,7 +703,7 @@ fn boolean_compare_of_lifted_ref_field_builds_in_cdylib_672() {
         ("mixed", vec![]),
         ("native", vec!["--native"]),
     ] {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--lib").arg(&libdir).arg(&prog);
         for a in &args {
             cmd.arg(a);
@@ -765,7 +784,11 @@ fn a_dependency_edit_reaches_a_dependent_when_the_layout_probe_cannot_relocate()
 /// two callers' scratch trees apart (same pid, one test binary); `extra_env` is
 /// applied to every `loft` invocation.
 fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (needs the native build)");
         return;
     }
@@ -810,7 +833,7 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
     .unwrap();
 
     let run = || -> String {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(&libdir)
@@ -866,7 +889,11 @@ fn dependency_edit_reaches_a_dependent(tag: &str, extra_env: &[(&str, &str)]) {
 // @speed 1.6
 #[test]
 fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (needs the native build)");
         return;
     }
@@ -894,7 +921,7 @@ fn an_unrelocatable_layout_probe_rebuilds_instead_of_adopting() {
     .unwrap();
 
     let run = |env: &[(&str, &str)]| -> (String, String) {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(root.join("lib"))

@@ -16,7 +16,6 @@
 //! a `kind_<name>` test.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -32,7 +31,7 @@ fn workspace_root() -> std::path::PathBuf {
 fn run_loft_snippet(name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_{name}.loft"));
     fa::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())
@@ -54,7 +53,7 @@ fn run_loft_snippet(name: &str, source: &str) -> (String, String, Option<i32>) {
 fn run_loft_snippet_soft_halt(name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_{name}.loft"));
     fa::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .env("LOFT_DEV_SOFT_HALT", "1")
@@ -585,7 +584,7 @@ fn i1053_clean_par_programs_are_unaffected() {
 fn run_loft_snippet_on(backend: &str, name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_{name}.loft"));
     fa::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script_path)
         .env("LOFT_TIMEOUT", "120")

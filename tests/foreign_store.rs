@@ -12,7 +12,6 @@
 //! author sees.  The EMISSION pin at the end says which binds take the view op.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -83,7 +82,7 @@ fn run(
     } else {
         std::env::current_dir().expect("cwd").join(src)
     };
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&path)
         .current_dir(&root)
@@ -219,7 +218,7 @@ fn a_bind_into_the_locals_own_store_takes_the_view_op_and_every_other_shape_the_
     fa::create_dir_all(&root).expect("scratch dir");
     let path = root.join("probe.loft");
     fa::write(&path, PROBE).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg(&path)
         .env("RUST_BACKTRACE", "0")

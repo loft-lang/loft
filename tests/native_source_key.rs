@@ -18,7 +18,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -62,7 +61,7 @@ impl Run {
 }
 
 fn run_with(root: &Path, script: &Path, args: &[&str], env: &[(&str, &str)]) -> Run {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.args(args).arg(script).current_dir(workspace_root());
     // A switch inherited from the harness's own environment would decline the fast path
     // in every cell and read as a red.  Strip them all, then set the cell's own.

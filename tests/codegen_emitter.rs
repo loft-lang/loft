@@ -23,7 +23,6 @@
 extern crate loft;
 
 use loft::file_access as fa;
-use std::process::Command;
 
 const CORPUS: &[&str] = &[
     "tests/docs/03-integer.loft",
@@ -58,7 +57,7 @@ fn baseline_present() -> bool {
 }
 
 fn emit_native(loft_src: &str, out_path: &std::path::Path) {
-    let status = Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .args(["--native-emit", out_path.to_str().unwrap(), loft_src])
         .current_dir(project_root())
         .status()
@@ -126,7 +125,7 @@ fn p203_reproducer_passes_under_native() {
     // producing `mold: Operation not permitted` linker failures.
     // The other reproducer tests below (p204 / p200 / p244) use
     // the same direct-invocation pattern.
-    let status = Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .arg("tests/scripts/repro_p203.loft")
         .current_dir(project_root())
         .status()
@@ -199,7 +198,7 @@ fn pln118_arce_owned_reassign_emits_sentinel() {
     )
     .expect("write arc-E source");
 
-    let out = Command::new(loft_binary())
+    let out = loft::platform::process::harness_command(loft_binary())
         .args(["--introspect", src.to_str().unwrap()])
         .current_dir(project_root())
         .output()
@@ -253,7 +252,7 @@ fn nested_tuple_copy_does_not_free_its_source() {
     )
     .expect("write nested-tuple source");
 
-    let out = Command::new(loft_binary())
+    let out = loft::platform::process::harness_command(loft_binary())
         .args(["--introspect", src.to_str().unwrap()])
         .current_dir(project_root())
         .output()
@@ -496,7 +495,7 @@ fn p202_parallel_queue_emitter_registered() {
 fn p204_tail_expression_return_passes_under_native() {
     // Direct binary invocation — see p203_reproducer_passes_under_native
     // for the nested-cargo race rationale.
-    let status = std::process::Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .arg("tests/scripts/repro_p204.loft")
         .current_dir(project_root())
         .status()
@@ -520,7 +519,7 @@ fn p204_tail_expression_return_passes_under_native() {
 fn p200_binary_compiles_under_native() {
     // Direct binary invocation — see p203_reproducer_passes_under_native
     // for the nested-cargo race rationale.
-    let status = std::process::Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .arg("tests/scripts/20-binary.loft")
         .current_dir(project_root())
         .status()
@@ -592,7 +591,7 @@ fn p200_int_compare_emitter_registered() {
 fn p244_text_native_wrapper_compiles_under_native() {
     // Direct binary invocation — see p203_reproducer_passes_under_native
     // for the nested-cargo race rationale.
-    let status = std::process::Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .arg("tests/integration/p244_smoke.loft")
         .current_dir(project_root())
         .status()
@@ -621,7 +620,7 @@ fn p244_text_native_wrapper_compiles_under_native() {
 #[test]
 fn pln10_n2_cdylib_text_wrapper_returns_owned_string() {
     let out_rs = std::env::temp_dir().join(format!("loft_pln10_n2_{}.rs", std::process::id()));
-    let status = std::process::Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .arg("--native-emit")
         .arg(&out_rs)
         .arg("tests/integration/p244_smoke.loft")
@@ -682,7 +681,7 @@ fn p310_graphics_vector_ffi_checks_clean() {
     // graphics chunk's own CI matrix (per-platform builds against pinned
     // loft).  This test still pins the vector<integer> → *const i64 path
     // end-to-end against a real `graphics::save_png` consumer.
-    let out = std::process::Command::new(loft_binary())
+    let out = loft::platform::process::harness_command(loft_binary())
         .args(["--check", "tests/fixtures/p310/p310_save_png.loft"])
         .current_dir(project_root())
         .output()
@@ -730,7 +729,7 @@ fn p310_graphics_vector_ffi_checks_clean() {
 fn p205_repro_passes_under_native() {
     // Direct binary invocation — see p203_reproducer_passes_under_native
     // for the nested-cargo race rationale.
-    let status = std::process::Command::new(loft_binary())
+    let status = loft::platform::process::harness_command(loft_binary())
         .arg("tests/scripts/repro_p205.loft")
         .current_dir(project_root())
         .status()

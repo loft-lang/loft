@@ -27,7 +27,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -55,7 +54,7 @@ fn fixture(d: &Path) {
          }\n",
     )
     .expect("write mk");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "mk.loft"])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(d)
@@ -83,7 +82,7 @@ fn fixture(d: &Path) {
 }
 
 fn probe(d: &Path, path: &str) -> String {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "one.loft", path])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(d)

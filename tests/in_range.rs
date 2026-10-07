@@ -5,13 +5,13 @@
 //! that reads its own vector's record elements, with a body that cannot resize it, drops its
 //! discharges — read off `LOFT_TRACE_IN_RANGE`.  And the cells hold with the rewrite off.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft";
 
 fn loft(env: &[(&str, &str)]) -> (String, String, bool) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

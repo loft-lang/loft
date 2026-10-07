@@ -21,7 +21,8 @@ const GUARD: &str = "tests/scripts/164-view-field.loft";
 const FORWARD: &str = "tests/scripts/164-forward-tuple.loft";
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.env("LOFT_TIMEOUT", "300")
         .env_remove("LOFT_NO_VIEW_FIELD")
         .env_remove("LOFT_NO_FORWARD_TUPLE");

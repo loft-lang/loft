@@ -37,7 +37,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Run `src` on `backend`, with the soft-halt flag on or off.
 fn run(backend: &str, src: &str, tag: &str, soft_halt: bool) -> (i32, String, String) {
@@ -46,7 +45,7 @@ fn run(backend: &str, src: &str, tag: &str, soft_halt: bool) -> (i32, String, St
     fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("p.loft");
     fa::write(&path, src).expect("write");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args([backend, path.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(env!("CARGO_MANIFEST_DIR"));
@@ -85,7 +84,7 @@ fn main() {
 /// `rustc` is needed for the `--native` leg; skip cleanly where it is absent, like the
 /// other native suites.
 fn have_rustc() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())

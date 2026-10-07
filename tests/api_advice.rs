@@ -8,7 +8,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -45,7 +44,7 @@ fn advices(env: &[(&str, &str)]) -> Vec<(String, String)> {
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("api.loft");
     fa::write(&file, PROGRAM).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "60")

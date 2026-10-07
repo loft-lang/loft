@@ -27,7 +27,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const CODE: &str = "advice[function-complexity]";
 
@@ -47,7 +46,8 @@ fn probe_dir() -> PathBuf {
 }
 
 fn run(path: &PathBuf, extra: &[&str]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret");
     for a in extra {
         cmd.arg(a);

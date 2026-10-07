@@ -15,7 +15,6 @@
 //! text-returning fn (read-only; no codegen change).  This test diffs the two.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -69,7 +68,7 @@ fn text_return_analysis_matches_corpus() {
     // truncates unreliably).
     let dump = std::env::temp_dir().join(format!("loft_tra_{}.txt", std::process::id()));
     let _ = fa::remove_file(&dump);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .env("LOFT_TRA_DUMP", &dump)
         // Force a fresh parse: the program cache is content-keyed, so a warm hit
         // would skip the parse (and the dump).

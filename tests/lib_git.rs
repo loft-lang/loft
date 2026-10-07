@@ -19,7 +19,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn scratch(name: &str) -> PathBuf {
     let base = std::env::var_os("TMPDIR")
@@ -37,7 +36,7 @@ fn workspace_root() -> PathBuf {
 
 /// Run git in `dir` and answer its stdout, trimmed of the trailing newline.
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = loft::platform::process::harness_command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -49,12 +48,16 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// Build a repository whose history contains the shapes that break a naive
 /// reader, and answer its path.
 fn repo(name: &str) -> Option<PathBuf> {
-    if Command::new("git").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         return None;
     }
     let dir = scratch(name);
     let run = |args: &[&str]| {
-        let ok = Command::new("git")
+        let ok = loft::platform::process::harness_command("git")
             .arg("-C")
             .arg(&dir)
             .args(args)
@@ -70,7 +73,7 @@ fn repo(name: &str) -> Option<PathBuf> {
             String::from_utf8_lossy(&ok.stderr)
         );
     };
-    Command::new("git")
+    loft::platform::process::harness_command("git")
         .arg("init")
         .arg("-q")
         .arg("-b")
@@ -123,7 +126,7 @@ fn run_loft(dir: &Path, program: &str, placement: &str) -> (String, String) {
     // driver does.
     let path = dir.join("probe.loft");
     fa::write(&path, format!("#cwd\npub use git::*;\n{program}")).expect("write probe");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(&lib)
@@ -288,7 +291,7 @@ fn the_viewer_state_dump_reports_what_git_reports() {
     };
     fa::write(dir.join("c.txt"), "untracked\n").expect("write untracked");
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(workspace_root().join("lib"))
@@ -379,12 +382,16 @@ const NOTHING_TO_READ: &str = "fn main() {\n\
 /// reporting git's own text as data.
 #[test]
 fn a_question_with_no_answer_is_empty_not_a_failure() {
-    if Command::new("git").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("git")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: no git on this machine");
         return;
     }
     let dir = scratch("emptyrepo");
-    Command::new("git")
+    loft::platform::process::harness_command("git")
         .args(["init", "-q", "-b", "main"])
         .arg(&dir)
         .output()

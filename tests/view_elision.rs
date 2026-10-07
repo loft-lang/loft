@@ -14,7 +14,6 @@
 //! design was written on.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct Pt { ptx: float, pty: float }
@@ -30,7 +29,8 @@ fn main() {
 ";
 
 fn introspect(src: &std::path::Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect").arg(src).env("LOFT_TIMEOUT", "120");
     for (k, v) in env {
         cmd.env(k, v);

@@ -8,7 +8,6 @@
 //! with no index entry to grep to.
 
 use loft::file_access as fa;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A program with one avoidable copy: `src` is named into the struct and used again after,
@@ -31,7 +30,7 @@ fn probe(src: &str) -> std::path::PathBuf {
 /// Run `--check` on `src`, with `--explain` when asked; return stdout+stderr.
 fn run(src: &str, explain: bool) -> String {
     let path = probe(src);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args(["--interpret", "--check"]);
     if explain {
         cmd.arg("--explain");
@@ -190,7 +189,7 @@ const BRACE: &str = "fn main() {\n  println(\"a } b\");\n}\n";
 
 /// Run `loft fix` (report) or `loft fix --apply` on a file, returning stdout+stderr.
 fn fix_cmd(path: &std::path::Path, apply: bool) -> String {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("fix");
     if apply {
         cmd.arg("--apply");
@@ -262,7 +261,7 @@ fn applying_a_fix_produces_a_program_that_runs() {
         src.contains("a }} b"),
         "the brace must be doubled in place; got:\n{src}"
     );
-    let run = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret"])
         .arg(&path)
         .env("LOFT_TIMEOUT", "120")
@@ -407,7 +406,7 @@ fn a_coded_advice_does_not_fail_the_test_runner() {
          fn test_it() { assert(doubled(21) == 42, \"ok\"); }\n";
     let path = probe(steer);
     for deny in [false, true] {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.args(["--interpret", "--tests"]);
         if deny {
             cmd.arg("--deny-warnings");
@@ -436,7 +435,7 @@ fn a_coded_advice_does_not_fail_the_test_runner() {
         "fn f(v: integer) -> integer { d = v; d = 9; return v; }\n\
          fn test_w() { assert(f(1) == 1, \"ok\"); }\n",
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", "--tests", "--deny-warnings"])
         .arg(&warn)
         .env("LOFT_TIMEOUT", "120")
@@ -621,7 +620,7 @@ fn a_did_you_mean_is_applied_and_the_program_runs() {
             out.contains("[applied]"),
             "[{what}] the rename must be written; output:\n{out}"
         );
-        let run = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args(["--interpret"])
             .arg(&path)
             .env("LOFT_TIMEOUT", "120")

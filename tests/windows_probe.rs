@@ -252,7 +252,7 @@ const ROLE_PIDFILE: &str = "LOFT_WINPROBE_PIDFILE";
 /// Re-invoke this test binary as `role`, running only the helper cell.
 fn spawn_role(role: &str, port: u16) -> std::process::Child {
     let exe = std::env::current_exe().expect("current_exe");
-    let mut cmd = std::process::Command::new(exe);
+    let mut cmd = loft::platform::process::harness_command(exe);
     cmd.args(["--exact", "winprobe_role_helper", "--nocapture"])
         .env(ROLE, role)
         .env(ROLE_PORT, port.to_string())
@@ -338,7 +338,7 @@ fn probe_child_kill_reaches_the_grandchild() {
             "the grandchild wrote no pid to {} — it cannot be cleaned up",
             pidfile.display()
         );
-        let _ = std::process::Command::new("taskkill")
+        let _ = loft::platform::process::harness_command("taskkill")
             .args(["/F", "/PID", pid])
             .output();
         assert!(
@@ -366,7 +366,7 @@ fn probe_taskkill_tree_reaches_the_grandchild() {
         await_port(port, true, Duration::from_secs(30)),
         "the grandchild never took port {port} — the probe measured nothing"
     );
-    let out = std::process::Command::new("taskkill")
+    let out = loft::platform::process::harness_command("taskkill")
         .args(["/T", "/F", "/PID", &child.id().to_string()])
         .output()
         .expect("taskkill runs");

@@ -24,7 +24,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -105,7 +104,7 @@ fn wrap_to_temp(name: &str, path: &Path) -> PathBuf {
 
 /// Returns `(success, leaked, stderr)`.
 fn run(mode: &str, src: &Path, leak_env: bool) -> (bool, bool, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(mode).arg(src).current_dir(root());
     if leak_env {
         cmd.env("LOFT_NATIVE_LEAK_CHECK", "1");

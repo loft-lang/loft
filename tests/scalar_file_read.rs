@@ -7,7 +7,6 @@
 //! hold on both backends and under `LOFT_HOIST_VERIFY=1`; this pins what is emitted.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/158-scalar-file-read.loft";
 
@@ -22,7 +21,8 @@ fn hoist_blocks(tag: &str, env: &[(&str, &str)]) -> Vec<(String, usize)> {
         "loft_scalar_file_read_{}_{tag}.rs",
         std::process::id()
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args([
         "--native-emit",
         out.to_str().unwrap(),

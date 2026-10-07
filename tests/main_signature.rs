@@ -18,7 +18,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -33,7 +32,7 @@ fn run(src: &str, args: &[&str], strict: bool) -> (bool, String) {
     fa::create_dir_all(&dir).expect("mkdir");
     let file = dir.join("m.loft");
     fa::write(&file, src).expect("write");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret").arg(&file).args(args);
     if strict {
         cmd.env("LOFT_STRICT_STORES", "1");

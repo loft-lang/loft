@@ -15,7 +15,6 @@
 use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-t-record-push-cells.loft";
@@ -55,7 +54,8 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
 ];
 
 fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(out)
         .arg(src)

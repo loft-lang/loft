@@ -18,7 +18,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Instant;
 
 fn loft_bin() -> PathBuf {
@@ -69,7 +68,7 @@ fn issue854_a_vector_literal_compiles_in_linear_time() {
     fa::write(&file, &src).expect("write the fixture");
 
     let t = Instant::now();
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--check")
         .arg(&file)
@@ -118,7 +117,7 @@ fn loft_timing_phases_sum_to_the_front_end() {
         "fn main() {\n  x = 0;\n  for i in 0..10 { x += i; }\n  println(\"{x}\");\n}\n",
     )
     .expect("write fixture");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--check")
         .arg(&file)

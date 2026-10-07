@@ -22,7 +22,6 @@
 use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 fn loft_bin() -> PathBuf {
@@ -52,7 +51,7 @@ const EXPECT_NEVER_READ: [&str; 4] = [
 /// `(stdout, stderr, exit_code)`. `LOFT_NO_CACHE` forces a cold compile so the parse-time
 /// diagnostics actually fire; `LOFT_TIMEOUT` bounds the native rustc step.
 fn run_env(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (String, String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env_remove("LOFT_NO_WARN_RUNTIME")
@@ -545,7 +544,7 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
     )
     .expect("write entry");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -615,7 +614,7 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
     )
     .expect("write entry");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check"])
         .arg("--lib")
         .arg(&lib)
@@ -690,7 +689,7 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     .expect("write other lib");
 
     let run = |entry: &std::path::Path| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["--interpret", "--check"])
             .arg("--lib")
             .arg(&lib)

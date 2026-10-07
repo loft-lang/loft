@@ -17,7 +17,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -43,7 +42,7 @@ fn a_person_running_check_is_told_ok_and_nothing_else() {
         ("interpret", vec!["--interpret", "--check", "hello.loft"]),
     ] {
         let dir = case_dir(name);
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(&args)
             .current_dir(&dir)
             .env_remove("LOFT_CHECK_ARTIFACT")
@@ -62,7 +61,7 @@ fn a_person_running_check_is_told_ok_and_nothing_else() {
 #[test]
 fn the_live_host_still_gets_the_source_and_artifact_it_parses() {
     let dir = case_dir("artifact");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--check", "--native", "hello.loft"])
         .current_dir(&dir)
         .env("LOFT_CHECK_ARTIFACT", "1")
@@ -141,7 +140,7 @@ fn check_with_warnings_denied_fails_on_a_warning() {
         (&["--interpret", "--check"], Some("1"), "advice.loft", 0),
     ];
     for (args, deny, file, want) in cases {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.args(args).arg(file).current_dir(&dir);
         match deny {
             Some(v) => cmd.env("LOFT_DENY_WARNINGS", v),

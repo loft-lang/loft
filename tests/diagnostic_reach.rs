@@ -33,7 +33,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -96,7 +95,7 @@ fn diagnostics(out: &std::process::Output) -> Vec<String> {
 fn same_lint_reaches_the_library_author_who_can_fix_it() {
     let tmp = tempdir("reach-author");
     write_package(&tmp);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("test")
         .current_dir(tmp.join("mylib"))
         .output()
@@ -131,7 +130,7 @@ fn a_dependencys_lints_do_not_reach_its_consumer() {
         "use mylib;\nfn main() {\n  t = mylib::make();\n  println(\"{t.a}\");\n}\n",
     )
     .expect("app source");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args([
             "--interpret",
             "app.loft",
@@ -168,7 +167,7 @@ fn a_consumers_own_code_still_lints() {
          fn main() {\n  o = Own { a: 1 };\n  println(\"{o.a}\");\n}\n",
     )
     .expect("app source");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "app.loft"])
         .current_dir(&app)
         .output()
@@ -200,7 +199,7 @@ fn a_sibling_module_of_a_bare_script_still_lints() {
         "use helper1260;\nfn main() {\n  println(\"{helper1260::side().a}\");\n}\n",
     )
     .expect("entry");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "main.loft"])
         .current_dir(&tmp)
         .output()
@@ -226,7 +225,7 @@ fn an_error_is_never_dropped_by_reach() {
         "use mylib;\nfn main() {\n  println(\"{mylib::make(1, 2, 3).a}\");\n}\n",
     )
     .expect("app source");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args([
             "--interpret",
             "app.loft",

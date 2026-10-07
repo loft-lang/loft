@@ -11,7 +11,6 @@
 //! cargo build --release`); the tests skip when it is absent, as `native_loader.rs` does.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -80,7 +79,7 @@ fn run(
     } else {
         cwd.join(src)
     };
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg("--lib")
         .arg(cwd.join(PKG))

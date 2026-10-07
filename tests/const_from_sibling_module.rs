@@ -25,7 +25,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -72,7 +71,7 @@ fn run_consumer(tag: &str, import: &str) -> (String, bool) {
     let _ = fa::remove_dir_all(&root);
     build_package(&root, import);
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--lib")
         .arg(&root)

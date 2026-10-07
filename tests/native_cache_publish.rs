@@ -30,7 +30,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -45,7 +44,7 @@ fn race_round(dir: &std::path::Path, src: &std::path::Path, n: usize) -> Vec<Str
     let _ = fa::remove_dir_all(dir.join(".loft"));
     let children: Vec<_> = (0..n)
         .map(|_| {
-            Command::new(loft_bin())
+            loft::platform::process::harness_command(loft_bin())
                 .arg("--native")
                 .arg(src)
                 .env("LOFT_TIMEOUT", "180")

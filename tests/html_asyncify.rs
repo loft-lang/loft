@@ -33,7 +33,6 @@
 use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
 // The program suspends five times through loft_gl_swap_buffers, then prints
@@ -51,7 +50,7 @@ fn main() {
 ";
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -74,7 +73,7 @@ fn any_chrome() -> bool {
 }
 
 fn wasm32_target_installed() -> bool {
-    Command::new("rustup")
+    loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .ok()
@@ -121,7 +120,7 @@ fn build_html(root: &Path) -> Option<PathBuf> {
     let _guard = build_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let out = Command::new(&loft_bin)
+    let out = loft::platform::process::harness_command(&loft_bin)
         .args(["--html", html.to_str().unwrap()])
         .arg(src.to_str().unwrap())
         .output()
@@ -149,7 +148,7 @@ fn assert_resumes(root: &Path, html: &Path, mode: Option<&str>) {
     );
     let port = pick_free_port().expect("pick a free port");
 
-    let mut cmd = Command::new("node");
+    let mut cmd = loft::platform::process::harness_command("node");
     cmd.arg(&harness)
         .arg(html)
         .args(["--expect", "done"])

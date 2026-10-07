@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -54,7 +53,7 @@ fn coverage_of(name: &str, lib: &str, test: &str) -> String {
     fa::write(root.join(format!("src/{name}.loft")), lib).expect("write lib");
     fa::write(root.join("tests/t.loft"), test).expect("write test");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--tests")
         .arg("tests")

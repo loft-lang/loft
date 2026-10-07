@@ -15,7 +15,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     workspace_root().join("target/release/loft")
@@ -123,7 +122,7 @@ fn diagnostics_for(tag: &str, src: &str, with_index: bool) -> String {
     let prog = home.join("prog.loft");
     fa::write(&prog, src).expect("write program");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--errors=compact"])
         .arg(&prog)
         .env("LOFT_HOME", &home)
@@ -221,7 +220,7 @@ fn diagnostics_with_local_random(tag: &str, src: &str) -> String {
 
     let prog = home.join("prog.loft");
     fa::write(&prog, src).expect("write program");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--errors=compact", "--lib"])
         .arg(home.join("libs"))
         .arg(&prog)

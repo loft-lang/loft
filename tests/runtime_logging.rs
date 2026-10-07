@@ -27,7 +27,6 @@
 //! `tests/runtime_errors.rs`.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -63,7 +62,7 @@ fn setup_prod_run(name: &str, source: &str) -> (std::path::PathBuf, std::path::P
 /// (stdout, stderr, exit-code, captured-log).
 fn run_prod(name: &str, source: &str) -> (String, String, Option<i32>, String) {
     let (script_path, log_path) = setup_prod_run(name, source);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--production")
         .arg(&script_path)
@@ -464,7 +463,7 @@ fn main() {
 fn run_logged(name: &str, source: &str, native: bool) -> String {
     let (script_path, log_path) = setup_prod_run(name, source);
     let conf = script_path.parent().unwrap().join("log.conf");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(if native { "--native" } else { "--interpret" })
         .arg("--log-conf")
         .arg(&conf)

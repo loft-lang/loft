@@ -31,7 +31,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -71,7 +70,7 @@ fn the_reported_package_reads_its_fields_where_they_live() {
         "use fwd::*;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--lib")
         .arg(&root)
@@ -134,7 +133,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
         "use okp::*;\nfn main() { s = mk(); println(\"{s.s_a}{s.s_b}\"); }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--lib")
         .arg(&root)

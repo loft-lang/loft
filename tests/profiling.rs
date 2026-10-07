@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -31,7 +30,7 @@ fn loft_bin() -> PathBuf {
 fn run(name: &str, body: &str, envs: &[(&str, &str)]) -> String {
     let path = std::env::temp_dir().join(format!("loft_prof_{name}.loft"));
     fa::write(&path, body).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret").arg(&path);
     cmd.env("LOFT_TIMEOUT", "120");
     for (k, v) in envs {
@@ -197,7 +196,7 @@ fn main() {
 fn allocation_paths_report_both_paths_at_their_true_ratio() {
     let root =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bench/profile_oracle/alloc_paths.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&root)
         .env("LOFT_TIMEOUT", "120")
@@ -278,7 +277,7 @@ fn run_tests_dir(name: &str, envs: &[(&str, &str)], extra_args: &[&str]) -> Stri
     fa::create_dir_all(&dir).expect("create suite dir");
     fa::write(dir.join("a_file.loft"), TEST_FILE_A).expect("write a");
     fa::write(dir.join("b_file.loft"), TEST_FILE_B).expect("write b");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--tests");
     for a in extra_args {
         cmd.arg(a);
@@ -399,7 +398,7 @@ fn a_native_run_says_the_sampler_cannot_follow_it() {
     // reached without typing anything. They were silent for the identical reason, so
     // fixing only the explicit one would leave the common case broken.
     for args in [vec!["--native"], vec![]] {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         for a in &args {
             cmd.arg(a);
         }
@@ -458,7 +457,7 @@ fn a_profile_says_when_a_used_library_is_invisible_to_it() {
     .unwrap();
 
     let run = |no_native: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(&root)
@@ -537,7 +536,7 @@ fn main() {
 fn a_program_that_never_exits_still_reports_its_profile() {
     let path = std::env::temp_dir().join("loft_prof_periodic.loft");
     fa::write(&path, RUNS_UNTIL_STOPPED).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_PROFILE", "1")
@@ -580,7 +579,7 @@ fn a_program_that_never_exits_still_reports_its_profile() {
 fn an_unprofiled_run_installs_no_signal_handlers() {
     let path = std::env::temp_dir().join("loft_prof_no_handlers.loft");
     fa::write(&path, RUNS_UNTIL_STOPPED).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "3")

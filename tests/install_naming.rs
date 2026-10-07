@@ -22,7 +22,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -54,7 +53,7 @@ fn install_in_a_mismatched_directory(tag: &str) -> (String, PathBuf) {
         "pub fn hi() -> integer { 1 }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["install", "."])
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -110,7 +109,7 @@ fn the_api_hint_for_a_broken_path_dep_names_the_path() {
         "pub fn hi() -> integer { 1 }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("api")
         .env("LOFT_TIMEOUT", "90")
         .current_dir(&base)
@@ -144,7 +143,7 @@ fn bare_install(tag: &str, manifest: &str) -> (String, i32, PathBuf) {
     write(&pkg.join("loft.toml"), manifest);
     write(&pkg.join("src/proj.loft"), "pub fn hi() -> integer { 1 }\n");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("install")
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -231,7 +230,7 @@ fn a_bare_install_is_silent_when_every_path_dep_resolves() {
         "pub fn hi() -> integer { 1 }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("install")
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -282,7 +281,7 @@ fn a_bare_install_without_a_manifest_names_both_spellings() {
     let base = std::env::temp_dir().join(format!("loft_966_nomanifest_{}", std::process::id()));
     let _ = fa::remove_dir_all(&base);
     fa::create_dir_all(&base).expect("mkdir");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("install")
         .env("LOFT_TIMEOUT", "90")
         .current_dir(&base)
@@ -323,7 +322,7 @@ fn an_install_refuses_a_package_name_that_is_a_path() {
     );
     write(&pkg.join("src/pkg.loft"), "pub fn hi() -> integer { 1 }\n");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["install", "."])
         .env("HOME", &home)
         .env("USERPROFILE", &home)

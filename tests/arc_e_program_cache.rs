@@ -9,7 +9,6 @@
 //! source's content hash invalidates the bundle whenever any input changes.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -21,7 +20,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// Run the binary on `script`, optionally with the whole-program cache enabled
 /// at `cache_dir` (`XDG_CACHE_HOME`).  Returns `(success, stdout)`.
 fn run(script: &std::path::Path, cache_dir: Option<&std::path::Path>) -> (bool, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(script)
         .current_dir(workspace_root())
@@ -114,7 +113,7 @@ fn a_development_build_caches_unless_told_not_to() {
     };
     let run_in = |root: &std::path::Path, off: bool| {
         let _ = fa::remove_dir_all(root);
-        let mut cmd = Command::new(&bin);
+        let mut cmd = loft::platform::process::harness_command(&bin);
         cmd.arg("--interpret")
             .arg(&script)
             .env("XDG_CACHE_HOME", root)
@@ -303,7 +302,7 @@ fn program_cache_warm_keeps_native_libs() {
     let _ = fa::remove_dir_all(&cache_dir);
 
     let run_lib = |cache: Option<&std::path::Path>| {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg("--lib")
             .arg(workspace_root().join("tests/lib"))
@@ -371,7 +370,7 @@ fn lib_dependency_edit_invalidates_program_cache() {
     let _ = fa::remove_dir_all(&cache_dir);
 
     let run_lib = |label: &str| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg("--lib")
             .arg(&lib_dir)
@@ -443,7 +442,7 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
     .expect("write script");
 
     let stderr_of = |explain: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(&script)
             .current_dir(workspace_root())
@@ -478,7 +477,7 @@ fn a_warm_run_renders_the_same_diagnostics_including_their_fixes() {
     let _ = fa::remove_dir_all(&cache_x);
     fa::create_dir_all(&cache_x).expect("create cache dir");
     let stderr_x = |dir: &std::path::Path| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&script)
             .current_dir(workspace_root())
@@ -523,7 +522,7 @@ fn introspect_parses_fresh_under_a_warm_program_cache() {
     let cache_dir = tmp.join(format!("loft_arce_introspect_cache_{pid}"));
     let _ = fa::remove_dir_all(&cache_dir);
     let introspect = || {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("introspect")
             .arg(&script)
             .current_dir(workspace_root())
@@ -589,7 +588,7 @@ fn a_warm_run_keeps_the_owner_witness() {
     let _ = fa::remove_dir_all(&cache_dir);
     for backend in ["--interpret", "--native"] {
         let run = |warm_label: &str| -> String {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(&script)
                 .current_dir(workspace_root())
@@ -705,7 +704,7 @@ fn run_with_stdlib(
     root: &std::path::Path,
     cache_dir: &std::path::Path,
 ) -> (bool, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--path")
         .arg(root)
         .arg("--interpret")
@@ -844,7 +843,7 @@ fn a_lowering_switch_is_part_of_the_program_cache_key() {
     // `(emitted Rust, whether the parse came from the cache)`.
     let emit = |cache: &std::path::Path, tag: &str, env: &[(&str, &str)]| -> (String, bool) {
         let out_rs = root.join(format!("{tag}.rs"));
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--native-emit")
             .arg(&out_rs)
             .arg(&script)
@@ -922,7 +921,7 @@ fn every_binary_of_one_build_shares_one_stdlib_image() {
     let copy = root.join(format!("loft-copy{}", std::env::consts::EXE_SUFFIX));
     fa::copy(loft_bin(), &copy).expect("copy the binary");
     let run_with = |bin: &std::path::Path, env: &[(&str, &str)]| {
-        let mut cmd = Command::new(bin);
+        let mut cmd = loft::platform::process::harness_command(bin);
         cmd.arg("--path")
             .arg(workspace_root())
             .arg("--interpret")

@@ -20,10 +20,9 @@
 
 use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 fn run(args: &[&str], prog: &Path) -> (bool, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(args)
         .arg(prog)
         .env("LOFT_NO_CACHE", "1")
@@ -37,7 +36,10 @@ fn run(args: &[&str], prog: &Path) -> (bool, String) {
 }
 
 fn rustc_available() -> bool {
-    Command::new("rustc").arg("--version").output().is_ok()
+    loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 fn assert_both(prog: &Path, want: &str) {

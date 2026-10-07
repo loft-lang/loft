@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -33,7 +32,7 @@ const MSG: &str = "is re-evaluated at EVERY reference";
 fn stderr_of(name: &str, src: &str, extra_env: &[(&str, &str)]) -> String {
     let path = std::env::temp_dir().join(format!("loft_ce_{name}_{}.loft", std::process::id()));
     fa::write(&path, src).expect("write temp program");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")

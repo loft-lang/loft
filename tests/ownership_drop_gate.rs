@@ -982,7 +982,7 @@ fn loft_bin() -> PathBuf {
 /// shape releases, and the shapes `(H-Copy-Refuse)` and `(H-Spent)` refuse are the population
 /// @PLN163 P5 is verified against — refused, they would compile to nothing and measure nothing.
 fn gate_command() -> Command {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_NO_LEASE_REFUSE", "1");
     cmd
 }
@@ -1833,7 +1833,7 @@ fn a_refused_cell_is_a_compile_error_and_a_once_cell_is_not() {
     let answers = for_each_cell(&cells, "lease_default", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
         fa::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--check")
             .arg("--interpret")
             .arg(&path)

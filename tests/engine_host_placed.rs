@@ -20,7 +20,7 @@ use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 fn workspace_root() -> PathBuf {
@@ -211,7 +211,7 @@ fn drive(name: &str, placement: &str) -> (Vec<String>, String) {
     let consumer = dir.join("consumer.loft");
     fa::write(&consumer, consumer_source(port)).expect("write consumer");
 
-    let child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(&libs)

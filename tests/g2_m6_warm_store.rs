@@ -10,7 +10,6 @@
 //! Output must be byte-identical to native.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -18,7 +17,7 @@ fn loft_bin() -> std::path::PathBuf {
 
 /// Run `script`; `mode` selects env: native / cold-cache / warm-M6.
 fn run(script: &std::path::Path, cache: Option<&std::path::Path>, m6: bool) -> (bool, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(script)
         .env("LOFT_NO_CACHE", "1")

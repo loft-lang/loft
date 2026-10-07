@@ -5,13 +5,13 @@
 //! whose target appears in neither the read nor the default are read straight in, read off
 //! `LOFT_TRACE_DISCHARGE_INTO`.  And the cells hold with the rewrite off.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-text-discharge-reads-straight-into-its-local.loft";
 
 fn loft(env: &[(&str, &str)]) -> (String, String, bool) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

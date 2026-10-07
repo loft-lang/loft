@@ -8,7 +8,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-literal-bodied-function-is-a-constant.loft";
 
@@ -40,7 +39,8 @@ fn emit(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out =
         std::env::temp_dir().join(format!("const_fn_{}_{}.rs", std::process::id(), env.len()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

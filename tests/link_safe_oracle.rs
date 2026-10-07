@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -27,7 +26,7 @@ fn probe() -> PathBuf {
 /// `a` per cell). A cell absent from the map was not a link candidate at all (e.g. an escaping
 /// return goes through the return-buffer path) — recorded as `None` by the callers below.
 fn verdicts(backend: &str) -> HashMap<String, bool> {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(probe())
         .env("LOFT_NO_CACHE", "1")

@@ -10,7 +10,6 @@
 //! fixture packages, and name-form resolution against a fake `LOFT_HOME`.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -23,7 +22,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// and without function bodies.
 #[test]
 fn api_path_form_prints_public_surface() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["api", "tests/fixtures/libs/imaging"])
         .current_dir(workspace_root())
         .output()
@@ -69,7 +68,7 @@ fn api_name_form_resolves_installed_registry_copy() {
     }
 
     let run = |args: &[&str]| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(args)
             .current_dir(workspace_root())
             .env("LOFT_HOME", &home)

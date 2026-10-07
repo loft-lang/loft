@@ -23,7 +23,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const CODE: &str = "advice[linked-group-apart]";
 
@@ -33,7 +32,7 @@ fn diagnostics_of(name: &str, src: &str) -> String {
     fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{name}.loft"));
     fa::write(&path, src).expect("write probe");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
@@ -166,7 +165,7 @@ fn the_opt_out_silences_it() {
     fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join("optout.loft");
     fa::write(&path, body("a: vector<Ga>, tick: integer, b: hash<Ga[k]>")).expect("write probe");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")

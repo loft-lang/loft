@@ -17,7 +17,6 @@
 //! backend rather than asking both.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 const GUARD: &str = "1523-a-displaced-free-asks-the-container-it-came-from.loft";
 const OK: &str = "1523 a displaced free asks the container it came from OK";
@@ -29,7 +28,8 @@ fn script() -> PathBuf {
 }
 
 fn run(backend: &str, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg(backend)
         .arg(script())
         .env("LOFT_TIMEOUT", "300")

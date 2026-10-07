@@ -22,7 +22,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -120,7 +119,7 @@ impl Fold {
                 let _ = fa::remove_file(&err_path);
             }
         }
-        let out = Command::new("python3")
+        let out = loft::platform::process::harness_command("python3")
             .arg(&self.script)
             .arg(&self.index)
             .arg(name)
@@ -320,7 +319,9 @@ fn registry_fixture(tag: &str, validator: Option<&str>) -> PathBuf {
 fn windows_bash() -> PathBuf {
     // Beside `git.exe`: `<root>/cmd/git.exe` and `<root>/bin/bash.exe` ship together, so
     // finding one locates the other whatever drive Git was installed on.
-    if let Ok(out) = Command::new("where").arg("git").output()
+    if let Ok(out) = loft::platform::process::harness_command("where")
+        .arg("git")
+        .output()
         && let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next()
     {
         let git = PathBuf::from(first.trim());
@@ -348,13 +349,13 @@ fn run_gate(dir: &Path) -> (i32, String) {
     // @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
     #[cfg(windows)]
     let mut cmd = {
-        let mut c = Command::new(windows_bash());
+        let mut c = loft::platform::process::harness_command(windows_bash());
         c.arg(&script);
         c
     };
     // @PLN184 approved exemption (owner, 2026-10-07): needs a Git Bash resolver in platform; future work outside @PLN184
     #[cfg(not(windows))]
-    let mut cmd = Command::new(&script);
+    let mut cmd = loft::platform::process::harness_command(&script);
     let out = cmd.arg(dir).output().expect("run registry_schema_gate.sh");
     let text = format!(
         "{}{}",

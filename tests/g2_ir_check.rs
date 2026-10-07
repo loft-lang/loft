@@ -11,7 +11,6 @@
 //! later representation swap is verified against.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -32,7 +31,7 @@ fn ir_check_passes_on_real_program() {
     )
     .expect("write script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_IR_CHECK", "1")

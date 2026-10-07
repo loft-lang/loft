@@ -22,7 +22,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// The escaping shape the gate refuses: the result of a call in a loop is APPENDED to a
 /// vector, so it lands in a `__lift_N` temp whose free is a plain `OpFreeRef`. Reusing a
@@ -59,7 +58,8 @@ fn main() {
 /// to every element it does not qualify (an NRVO callee, a nullable return, a record
 /// with a collection field).
 fn run(src: &std::path::Path, ungated: bool) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(src)
         .env("LOFT_STRICT_STORES", "1")

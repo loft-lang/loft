@@ -1336,13 +1336,13 @@ fn n1_native_pipeline_trivial_program() {
         }
     }
     rustc_args.push(tmp_rs.to_str().unwrap().to_string());
-    match std::process::Command::new("rustc")
+    match loft::platform::process::harness_command("rustc")
         .args(&rustc_args)
         .status()
     {
         Ok(s) if s.success() => {
             // Binary compiled — run it to confirm correctness.
-            let run = std::process::Command::new(&binary).status();
+            let run = loft::platform::process::harness_command(&binary).status();
             match run {
                 Ok(rs) => assert!(rs.success(), "native binary exited non-zero"),
                 Err(e) => eprintln!("n1: could not run binary: {e}"),
@@ -16050,7 +16050,7 @@ fn a_private_scope_end_hook_in_a_library_runs() -> std::io::Result<()> {
             backend.trim_start_matches('-')
         ));
         let _ = fa::remove_file(&trace);
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg("--lib")
@@ -16100,7 +16100,7 @@ fn a_private_scope_end_hook_in_a_library_runs() -> std::io::Result<()> {
 fn a_delegating_producer_binds_its_companion_cleanly() -> std::io::Result<()> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(root.join("tests/scripts/pln125-a2c-companion.loft"))
@@ -16760,7 +16760,7 @@ fn main() {
         eprintln!("skipping: release loft not built");
         return;
     }
-    let out = std::process::Command::new(bin)
+    let out = loft::platform::process::harness_command(bin)
         .args(["--interpret", "--no-warnings"])
         .arg(&path)
         .current_dir(&root)
@@ -17855,7 +17855,7 @@ fn compat_full_window_budget_overrun_fails_the_release() {
     }
 
     let run = |budget: &str| {
-        std::process::Command::new(loft)
+        loft::platform::process::harness_command(loft)
             .args(["compat", "check", "--full"])
             .current_dir(&pkg)
             .env("LOFT_HOME", &root)

@@ -19,7 +19,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -33,7 +32,7 @@ fn loft_bin() -> PathBuf {
 fn run_until_deadline(name: &str, body: &str, extra: &[&str]) -> String {
     let path = std::env::temp_dir().join(format!("loft_timeout_{name}.loft"));
     fa::write(&path, body).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     for a in extra {
         cmd.arg(a);
@@ -174,7 +173,7 @@ fn a_hang_inside_a_native_is_hard_killed_and_named() {
         "fn wait952() -> text {\n  host_input()\n}\nfn main() {\n  t = wait952();\n  println(\"never {t}\");\n}\n",
     )
     .expect("write probe");
-    let mut child = Command::new(loft_bin())
+    let mut child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "3")

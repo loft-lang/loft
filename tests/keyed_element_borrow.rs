@@ -28,7 +28,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -40,7 +39,7 @@ fn probe() -> PathBuf {
 
 /// Run `file` on `backend` with extra env; return `(ok, stdout, stderr)`.
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -93,7 +92,7 @@ fn write_temp(tag: &str, src: &str) -> PathBuf {
 #[test]
 fn keyed_element_is_typed_as_a_borrow() {
     let path = write_temp("static", MINIMAL);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("introspect")
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")

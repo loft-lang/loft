@@ -20,10 +20,12 @@
 
 use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 fn typst_available() -> bool {
-    Command::new("typst").arg("--version").output().is_ok()
+    loft::platform::process::harness_command("typst")
+        .arg("--version")
+        .output()
+        .is_ok()
 }
 
 /// Compile one generated `.typ` to a throwaway PDF and report the first error.
@@ -43,7 +45,7 @@ fn compiles(source: &str) {
         std::process::id(),
         source.replace(['/', '.'], "_")
     ));
-    let result = Command::new("typst")
+    let result = loft::platform::process::harness_command("typst")
         .arg("compile")
         .arg(&src)
         .arg(&out)

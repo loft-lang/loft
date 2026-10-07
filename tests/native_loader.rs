@@ -253,7 +253,7 @@ fn ffi_returned_vector_survives_in_place_append_409() {
     )
     .expect("write program");
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--lib")
         .arg("tests/lib/native_pkg")
         .arg("--interpret")
@@ -303,7 +303,7 @@ fn ffi_returned_vector_direct_decl_survives_in_place_append_410() {
     )
     .expect("write program");
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--lib")
         .arg("tests/lib/native_pkg")
         .arg("--interpret")
@@ -422,7 +422,7 @@ fn guard_catches_unregistered_dlsym_fallback() {
     }
 
     let exe = std::env::current_exe().unwrap();
-    let out = std::process::Command::new(&exe)
+    let out = loft::platform::process::harness_command(&exe)
         .env("LOFT_TEST_GUARD_INNER", "1")
         .arg("guard_catches_unregistered_dlsym_fallback")
         .arg("--exact")

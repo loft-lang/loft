@@ -30,7 +30,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -46,7 +45,7 @@ fn fuzz_dir() -> PathBuf {
 
 /// Run the harness with the given args; return (exit_ok, combined output).
 fn run_harness(args: &[&str]) -> (bool, String) {
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(fuzz_dir().join("ownership_fuzz.py"))
         .args(args)
         .current_dir(workspace_root())
@@ -124,7 +123,7 @@ fn tempfile_dir() -> PathBuf {
 }
 
 fn generate_cells(dir: &PathBuf) {
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(fuzz_dir().join("grammar_gen.py"))
         .arg("--out")
         .arg(dir)

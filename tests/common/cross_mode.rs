@@ -20,7 +20,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -43,7 +42,7 @@ fn run_mode(mode_flag: &str, snippet_path: &PathBuf) -> ModeRun {
 }
 
 fn run_mode_env(mode_flag: &str, snippet_path: &PathBuf, env: &[(&str, &str)]) -> ModeRun {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(mode_flag)
         .arg(snippet_path)
         .current_dir(workspace_root());

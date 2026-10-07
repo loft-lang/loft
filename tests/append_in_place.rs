@@ -14,7 +14,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct Pt { x: float = 0.0, y: float = 0.0 }
@@ -26,7 +25,7 @@ fn main() { println(\"{len(in_place(3))} {len(kept(3))}\"); }
 ";
 
 fn introspect(src: &std::path::Path) -> String {
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("introspect")
         .arg(src)
         .env("LOFT_TIMEOUT", "120")

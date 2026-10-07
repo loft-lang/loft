@@ -23,7 +23,7 @@
 use loft::file_access as fa;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 
 fn scratch(name: &str) -> PathBuf {
     let base = std::env::var_os("TMPDIR")
@@ -80,7 +80,7 @@ impl Server {
     /// a hard-coded port collides with whatever else is on the machine, and the
     /// failure is a confusing "connection refused" in an unrelated test.
     fn start(root: &Path) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--lib-server")
             .arg("127.0.0.1:0")
             .arg(root.join("libs").join("svc"))
@@ -112,7 +112,7 @@ impl Server {
 
 /// Run `consumer` with the library at `mode`. `address` is set only for remote.
 fn run(root: &Path, consumer: &Path, address: Option<&str>) -> Run {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -365,7 +365,7 @@ fn a_server_that_stops_answering_is_an_error_not_a_hang() {
     // Listening, then killed with a call outstanding.
     let mut server = Server::start(&root);
     let address = server.address.clone();
-    let mut consumer = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut consumer = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))

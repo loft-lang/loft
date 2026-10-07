@@ -22,7 +22,8 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // B1 on its own: B1b (`tests/adopt_buffer_reuse.rs`) pools the buffer this file pins as null.
     // The tests run in parallel on one source file, and its program cache is shared: an
     // `introspect` that read another process's half-written entry listed a truncated program.

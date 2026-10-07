@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -42,7 +41,7 @@ fn write_probe(tag: &str, body: &str) -> PathBuf {
 
 /// Run `--tests <target>`, optionally with `--path <dir>`; return `(output, exit code)`.
 fn run_tests(path_flag: Option<&str>, target: &PathBuf) -> (String, Option<i32>) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     if let Some(p) = path_flag {
         cmd.arg("--path").arg(p);

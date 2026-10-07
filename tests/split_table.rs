@@ -12,7 +12,6 @@
 //! what is emitted.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/158-split-table.loft";
 
@@ -20,7 +19,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out =
         std::env::temp_dir().join(format!("loft_split_table_{}_{tag}.rs", std::process::id()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

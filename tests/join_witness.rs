@@ -12,7 +12,6 @@
 //! plain free and no preamble allocation — the build before the unit.
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-af-join-witness-cells.loft";
@@ -35,7 +34,8 @@ const PAIRED: &[(&str, usize, usize)] = &[
 
 fn introspect(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect").arg(&src).env("LOFT_TIMEOUT", "120");
     for (k, v) in env {
         cmd.env(k, v);

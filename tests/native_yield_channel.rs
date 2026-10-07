@@ -17,7 +17,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -29,7 +28,7 @@ fn emit(tag: &str, src: &str) -> String {
     let lf = dir.join(format!("loft_1132_{tag}_{}.loft", std::process::id()));
     let rf = dir.join(format!("loft_1132_{tag}_{}.rs", std::process::id()));
     fa::write(&lf, src).expect("write probe");
-    let st = Command::new(loft_bin())
+    let st = loft::platform::process::harness_command(loft_bin())
         .args(["--native-emit", rf.to_str().expect("path")])
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
@@ -242,7 +241,7 @@ fn a_refused_loop_body_yield_emits_the_refusal_and_no_rustc_error() {
          fn main() { s = 0; for t in g(3) { s += t.1 + t.0.v; } print(\"{s}\\n\"); }\n",
     )
     .expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .output()
@@ -293,7 +292,7 @@ fn a_by_value_tuple_from_a_loop_body_still_runs_on_native() {
          fn main() { s = 0; for t in g(3) { s += t.0 + t.1; } print(\"{s}\\n\"); }\n",
     )
     .expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(&lf)
         .env("LOFT_TIMEOUT", "300")
         .output()

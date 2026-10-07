@@ -12,14 +12,13 @@
 //! output matches.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
 fn run(script: &std::path::Path, store_backed: bool) -> (bool, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret").arg(script);
     if store_backed {
         cmd.env("LOFT_CODEGEN_STORE", "1");

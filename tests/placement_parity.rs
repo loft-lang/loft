@@ -27,7 +27,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn scratch(name: &str) -> PathBuf {
     let base = std::env::var_os("TMPDIR")
@@ -71,7 +70,7 @@ struct Run {
 }
 
 fn run(root: &Path, consumer: &Path) -> Run {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -713,7 +712,7 @@ fn placement_does_not_change_how_many_stores_a_run_needs() {
 
     let peak_of = |mode: &str| -> (u32, String) {
         write_library(&root, mode, library);
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("--lib")
             .arg(root.join("libs"))
@@ -817,7 +816,7 @@ fn native_does_not_place_and_says_so_when_asked_to_insist() {
         "pub fn add(a: integer, b: integer) -> integer { a + b }\n",
     );
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -932,7 +931,7 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
     fa::write(&consumer_path, consumer).expect("write consumer");
     for mode in ["inproc", "process"] {
         write_library(&root, mode, library);
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("--lib")
             .arg(root.join("libs"))
@@ -1108,7 +1107,7 @@ fn a_placed_call_from_a_par_arm_is_the_same_call() {
     for share in ["0", "1"] {
         let go = |mode: &str| -> Run {
             write_library(&root, mode, library);
-            let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
                 .arg("--lib")
                 .arg(root.join("libs"))
@@ -1238,7 +1237,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
          }\n",
     );
 
-    let child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -1265,7 +1264,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
     // Long enough that `grind` is past its argument walk and deep in the loop.
     std::thread::sleep(std::time::Duration::from_millis(600));
     assert!(
-        Command::new("kill")
+        loft::platform::process::harness_command("kill")
             .arg("-KILL")
             .arg(pid.to_string())
             .status()
@@ -1305,7 +1304,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
 
 /// The pid of the `--lib-worker` process `parent` started, if it has one yet.
 fn worker_child_of(parent: u32) -> Option<u32> {
-    let out = Command::new("pgrep")
+    let out = loft::platform::process::harness_command("pgrep")
         .arg("-P")
         .arg(parent.to_string())
         .output()

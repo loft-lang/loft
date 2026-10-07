@@ -18,7 +18,7 @@
 use loft::file_access as fa;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "common/mod.rs"]
@@ -29,7 +29,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn have(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -38,7 +38,7 @@ fn have(cmd: &str) -> bool {
 }
 
 fn wasm32_installed() -> bool {
-    Command::new("rustup")
+    loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .ok()
@@ -95,7 +95,7 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
     )
     .unwrap();
     let client_html = tmp.join("p98_relay_client.html");
-    let built = Command::new(&loft)
+    let built = loft::platform::process::harness_command(&loft)
         .args(["--html", client_html.to_str().unwrap(), "--path"])
         .arg(format!("{}/", root.display()))
         .args(["--debug=alice"])
@@ -116,7 +116,7 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
         ),
     )
     .unwrap();
-    let server = Command::new(&loft)
+    let server = loft::platform::process::harness_command(&loft)
         .env("LOFT_OFFLINE", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
         .arg("--no-warnings")
@@ -138,7 +138,7 @@ fn agent_debugs_a_browser_wasm_client_through_the_server_relay() {
     }
 
     // 3. Run the AGENT+CLIENT node driver against the relay.
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&e2e)
         .arg(&client_html)
         .arg(port.to_string())

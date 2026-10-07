@@ -53,7 +53,7 @@ const BASELINE: &str = "src/file_access/direct.baseline";
 /// Is byte `at` of `line` inside a string literal?  Quote parity before it, skipping
 /// escaped quotes and a `'"'` character literal — enough for the emitter's one-line
 /// `"…std::fs::…"` strings, which are generated code and not the compiler's own access.
-fn in_string(line: &str, at: usize) -> bool {
+pub(crate) fn in_string(line: &str, at: usize) -> bool {
     let b = line.as_bytes();
     let mut inside = false;
     let mut i = 0;

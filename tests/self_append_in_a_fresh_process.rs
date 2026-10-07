@@ -26,7 +26,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -42,7 +41,7 @@ fn self_append_past_the_reallocation_threshold_survives_a_fresh_process() {
         fixture.display()
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&fixture)
         .output()

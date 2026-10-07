@@ -18,7 +18,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -106,7 +105,7 @@ impl Fixture {
     }
 
     fn run(&self, backend: &str) -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args([backend, "src/main.loft"])
             .env("LOFT_HOME", &self.home)
             .env("HOME", &self.home)

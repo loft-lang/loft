@@ -32,7 +32,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -45,7 +44,7 @@ fn probe() -> PathBuf {
 
 /// Run `file` on `backend` with extra env; return `(ok, stdout, stderr)`.
 fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -109,7 +108,7 @@ fn write_temp(tag: &str, src: &str) -> PathBuf {
 
 fn var_table(tag: &str, src: &str) -> String {
     let path = write_temp(tag, src);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_VAR_TABLE", "y978_read")
@@ -257,7 +256,7 @@ fn harness_can_fail() {
 /// `LOFT_VAR_TABLE` for function `func`, the table lines only.
 fn var_table_of(tag: &str, src: &str, func: &str) -> String {
     let path = write_temp(tag, src);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_VAR_TABLE", func)

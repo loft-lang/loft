@@ -33,7 +33,7 @@ use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -138,7 +138,7 @@ struct ServerGuard {
 
 impl ServerGuard {
     fn spawn(server_script: &str, port: u16) -> Self {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(examples_dir().join(server_script))
             .env("LOFT_TICTACTOE_PORT", port.to_string()) // server reads this if implemented
@@ -373,7 +373,7 @@ fn spawn_client(label: &str, port: u16) -> Child {
 /// P231: `port` is also forwarded so the client connects to the
 /// per-test server rather than the legacy hardcoded 7878.
 fn spawn_client_with_delay(label: &str, port: u16, delay_ms: u32) -> Child {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(examples_dir().join("tictactoe_client_v2.loft"))
         .arg(label)
@@ -472,7 +472,7 @@ impl StreamingChild {
 /// connect), which no delay bounds.  The delay path stays for the scenarios that want a
 /// *lack* of overlap (late-join) or none at all (single client).
 fn spawn_client_with_go_file(label: &str, port: u16, go_file: &str) -> StreamingChild {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(examples_dir().join("tictactoe_client_v2.loft"))
         .arg(label)

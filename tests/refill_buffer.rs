@@ -6,7 +6,6 @@
 //! and leave no store behind on `--native`.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft";
 
@@ -21,7 +20,8 @@ const CALLEES: &[(&str, bool)] = &[
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")

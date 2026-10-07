@@ -21,12 +21,11 @@
 //!   Linux did.  The current guard fails 5 of 9 under the switch.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn run_under_the_emulated_host(script: &str) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .current_dir(root)
             .env("LOFT_POISON_HOST", "windows")
             .env("LOFT_TIMEOUT", "240")
@@ -137,7 +136,7 @@ fn a_name_that_is_not_text_is_listed_and_never_reached() {
                 exact exact\nplain plain\n";
     for host in ["", "windows"] {
         for backend in ["--interpret", "--native"] {
-            let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .current_dir(root)
                 .env("LOFT_POISON_HOST", host)
                 .env("LOFT_TIMEOUT", "240")
@@ -185,7 +184,7 @@ fn a_loft_programs_stop_takes_what_its_child_started() {
         let outer = dir.join("outer.loft");
         fa::write(&inner, INNER).expect("inner program");
         fa::write(&outer, OUTER).expect("outer program");
-        let mut program = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let mut program = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .env("LOFT_POISON_HOST", "windows")
             .env("LOFT_TIMEOUT", "240")
             .env(TREE_ROLE, "beat")

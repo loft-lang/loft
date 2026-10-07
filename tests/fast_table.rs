@@ -9,7 +9,6 @@
 //! direct path as on the checked one (`LOFT_STRICT_STORES=1` forces the checked path).
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROGRAM: &str = "struct P { x: float, id: integer }\n\
 fn walk(v: const vector<P>) -> float {\n  t = 0.0;\n  for p in v { t += p.x * 2.0 + p.id as float; }\n  t\n}\n\
@@ -20,7 +19,8 @@ fn main() {\n  v: vector<P> = [];\n  for i in 0..500 { v += [P { x: i as float *
 fn run(env: &[(&str, &str)]) -> (String, String) {
     let file = std::env::temp_dir().join(format!("loft_fast_table_{}.loft", std::process::id()));
     fa::write(&file, PROGRAM).expect("write program");
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "60")

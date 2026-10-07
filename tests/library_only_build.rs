@@ -17,7 +17,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -41,7 +40,7 @@ fn a_file_with_no_main_compiles_and_reports_nothing_to_run() {
     )
     .expect("write");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--native", file.to_str().unwrap()])
         .output()
         .expect("run loft --native");
@@ -80,7 +79,7 @@ fn a_file_with_main_still_links_and_runs() {
     let file = dir.join("hello.loft");
     fa::write(&file, "fn main() {\n  println(\"ran\");\n}\n").expect("write");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--native", file.to_str().unwrap()])
         .output()
         .expect("run loft --native");

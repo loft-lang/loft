@@ -28,7 +28,7 @@
 use loft::file_access as fa;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Every local here is named by a `&`, so every one holds its field encoding; `h` is the
 /// unlinked control and keeps the full-width slot.
@@ -49,14 +49,15 @@ fn main() {
 fn debug_session(dir: &std::path::Path, line: u32, cmds: &str) -> String {
     let prog = dir.join("frame_readers.loft");
     fa::write(&prog, PROG).expect("write the probe");
-    let mut child = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("debug")
-        .arg(format!("{}:{line}", prog.display()))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn loft debug");
+    let mut child =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("debug")
+            .arg(format!("{}:{line}", prog.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn loft debug");
     child
         .stdin
         .as_mut()
@@ -119,14 +120,15 @@ fn a_watch_on_a_linked_narrow_local_reports_values() {
         "fn main() {\n  b: i8 = -1; q = &b;\n  n = 0;\n  q = 5;\n  n = n + 1;\n  q = -7;\n  println(\"{b} {n}\");\n}\n",
     )
     .expect("write");
-    let mut child = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("debug")
-        .arg(format!("{}:3", prog.display()))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn");
+    let mut child =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("debug")
+            .arg(format!("{}:3", prog.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn");
     child
         .stdin
         .as_mut()

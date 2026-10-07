@@ -16,13 +16,13 @@
 //!   operation, so it sees a wrong comparison that happens not to change a cell's answer.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/158-keyed-fast-paths.loft";
 
 fn run(backend: &str, env: &[(&str, &str)]) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg(backend)
         .arg("--tests")
         .arg(&src)
@@ -79,7 +79,8 @@ fn every_fast_answer_verifies_against_the_general_one_on_native() {
 fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = std::env::temp_dir().join(format!("loft_keyed_{}_{tag}.rs", std::process::id()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

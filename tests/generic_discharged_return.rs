@@ -30,7 +30,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -63,7 +62,7 @@ fn write_minimal(name: &str) -> PathBuf {
 
 /// Run `loft` with `args` plus extra env; return `(exit-ok, stdout, stderr)`.
 fn run(args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1");

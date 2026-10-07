@@ -222,7 +222,6 @@ impl Spawn {
     }
 
     /// The arguments so far, for a diagnostic that shows the invocation.
-    #[must_use]
     pub fn get_args(&self) -> std::process::CommandArgs<'_> {
         self.cmd.get_args()
     }
@@ -608,6 +607,10 @@ pub fn die_with_parent() {
         }
     });
 }
+
+#[cfg(test)]
+#[path = "platform_process_guard.rs"]
+mod guard;
 
 #[cfg(test)]
 mod exit_code_tests {

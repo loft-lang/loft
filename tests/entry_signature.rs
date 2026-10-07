@@ -26,7 +26,6 @@
 
 use loft::file_access as fa;
 use std::io::Write;
-use std::process::Command;
 
 fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_entry_signature");
@@ -50,7 +49,7 @@ fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
 fn both_backends(name: &str, src: &str, expect: &str) {
     let path = write_probe(name, src);
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")
@@ -193,7 +192,7 @@ fn entry_declaring_argv_both_backends() {
         "fn main(args: vector<text>) {\n  println(\"argc={len(args)}\");\n}\n",
     );
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
             .args(["one", "two"])
@@ -215,7 +214,7 @@ fn entry_declaring_argv_both_backends() {
 #[test]
 fn plain_entry_is_unchanged() {
     let path = write_probe("plain.loft", "fn main() {\n  println(\"plain\");\n}\n");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--native"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")

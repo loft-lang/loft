@@ -42,7 +42,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     let mut p = std::env::current_exe().expect("test binary path");
@@ -63,7 +62,7 @@ fn run(src: &str, backend: &str, retbuf: bool, tag: &str) -> (String, String) {
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{tag}.loft"));
     fa::write(&file, src).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&file)
         .env("LOFT_TIMEOUT", "300")
@@ -232,7 +231,7 @@ fn the_boundary_matrix_passes_on_both_backends() {
     let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/probes/938-nullable-collection-return-buffer.loft");
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_TIMEOUT", "300")
@@ -255,7 +254,7 @@ fn native_optional_unify_compiles_correctly() {
     let script =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/pln133-optional-unify.loft");
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_TIMEOUT", "300")
@@ -346,7 +345,7 @@ fn dispatch_arm_returning_a_local_delivers_into_the_buffer() {
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("two_site.loft");
     fa::write(&file, TWO_SITE_DISPATCH).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "300")

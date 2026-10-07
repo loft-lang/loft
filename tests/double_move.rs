@@ -48,7 +48,7 @@ fn loft_bin() -> std::path::PathBuf {
 /// Measured with them off, these cells are what the release machinery the errors replace is
 /// held to, as the drop gate's are.
 fn lint_command() -> Command {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_NO_LEASE_REFUSE", "1");
     cmd
 }
@@ -63,7 +63,7 @@ fn the_lease_errors_refuse_a_double_move_first() {
     );
     let path = std::env::temp_dir().join("loft_pln139_dm_default.loft");
     fa::write(&path, &src).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--check")
         .arg("--interpret")
         .arg(&path)

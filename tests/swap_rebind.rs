@@ -6,7 +6,6 @@
 //! kept instead of freeing reads as a leak here and nowhere else.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft";
 
@@ -23,7 +22,8 @@ const SITES: &[(&str, usize)] = &[
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> (String, String, bool) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .env("LOFT_TIMEOUT", "300")
         .env("LOFT_NO_CACHE", "1")

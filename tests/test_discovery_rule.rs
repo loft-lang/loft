@@ -23,7 +23,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -41,7 +40,7 @@ fn run_tests_env(case: &str, source: &str, extra: &[&str], env: &[(&str, &str)])
     fa::create_dir_all(&dir).expect("case dir");
     let file = dir.join("subject.loft");
     fa::write(&file, source).expect("source");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--tests")
         .args(extra)
         .arg("subject.loft")
@@ -158,7 +157,7 @@ fn the_native_entry_point_runs_the_same_set() {
 }
 
 fn rustc_available() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())

@@ -22,7 +22,6 @@ extern crate loft;
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 
 mod common;
@@ -125,7 +124,7 @@ fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -
         .collect::<Vec<_>>()
         .join("\n");
     fa::write(&argfile, contents).unwrap();
-    let out = Command::new("rustc")
+    let out = loft::platform::process::harness_command("rustc")
         .arg(format!("@{}", argfile.display()))
         .output()
         .expect("invoke rustc");
@@ -160,7 +159,11 @@ fn compile_cdylib(src: &str, stem: &str, tmp: &Path, rlib: &Path, deps: &Path) -
 /// (test skips).
 fn build_scalar_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(PathBuf, PathBuf)> {
     let (rlib, deps) = find_loft_rlib()?;
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         println!("skip: rustc unavailable");
         return None;
     }
@@ -206,7 +209,11 @@ fn build_scalar_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(
 /// Returns (so_path, tmp_dir), or None when the toolchain isn't available.
 fn build_shared_lib_cdylib(stem: &str, lib_src: &str, fn_name: &str) -> Option<(PathBuf, PathBuf)> {
     let (rlib, deps) = find_loft_rlib()?;
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         println!("skip: rustc unavailable");
         return None;
     }
@@ -814,7 +821,11 @@ fn lean_interface_drives_shared_dispatch() {
     let Some((rlib, deps)) = find_loft_rlib() else {
         return;
     };
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         return;
     }
     let pid = std::process::id();
@@ -873,7 +884,10 @@ fn auto_native_marks_and_dispatches_normal_library_fn() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if loft::native_lib::find_loft_rlib().is_none()
-        || Command::new("rustc").arg("--version").output().is_err()
+        || loft::platform::process::harness_command("rustc")
+            .arg("--version")
+            .output()
+            .is_err()
     {
         return;
     }
@@ -964,7 +978,10 @@ fn auto_native_text_return_shapes() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if loft::native_lib::find_loft_rlib().is_none()
-        || Command::new("rustc").arg("--version").output().is_err()
+        || loft::platform::process::harness_command("rustc")
+            .arg("--version")
+            .output()
+            .is_err()
     {
         return;
     }
@@ -1282,7 +1299,10 @@ fn auto_native_disambiguates_duplicate_fn_names() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if loft::native_lib::find_loft_rlib().is_none()
-        || Command::new("rustc").arg("--version").output().is_err()
+        || loft::platform::process::harness_command("rustc")
+            .arg("--version")
+            .output()
+            .is_err()
     {
         return;
     }
@@ -1318,7 +1338,7 @@ fn auto_native_disambiguates_duplicate_fn_names() {
     )
     .unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))
@@ -1355,7 +1375,10 @@ fn auto_native_vector_return_uses_caller_dest() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if loft::native_lib::find_loft_rlib().is_none()
-        || Command::new("rustc").arg("--version").output().is_err()
+        || loft::platform::process::harness_command("rustc")
+            .arg("--version")
+            .output()
+            .is_err()
     {
         return;
     }
@@ -1381,7 +1404,7 @@ fn auto_native_vector_return_uses_caller_dest() {
     )
     .unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg("--lib")
         .arg(root.join("libs"))

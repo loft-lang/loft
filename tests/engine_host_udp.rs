@@ -17,7 +17,7 @@ use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "common/mod.rs"]
@@ -199,7 +199,7 @@ fn main() {{
     )
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child = Command::new(loft_bin())
+    let child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
@@ -347,7 +347,7 @@ fn probe_server_poses_ride_the_fastest_path_per_client() {
     // `free_port()` — which checks TCP *and* UDP, because the kernel binds both.
     let port = free_port();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child = Command::new(loft_bin())
+    let child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")

@@ -5,7 +5,6 @@
 //! build (@PLN175 § C91): the identity census the flips are measured by.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -17,7 +16,7 @@ fn identity_sites(name: &str, src: &str) -> Vec<String> {
     fa::create_dir_all(&dir).expect("temp dir");
     let path = dir.join(name);
     fa::write(&path, src).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--check")
         .arg(&path)
         .env("LOFT_TRACE_EQ_IDENTITY", "1")

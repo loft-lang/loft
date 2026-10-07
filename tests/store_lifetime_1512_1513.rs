@@ -24,7 +24,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -55,7 +54,7 @@ fn run(backend: &str, file: &PathBuf, env: &[(&str, &str)], tag: &str) -> (bool,
         tag
     ));
     fa::create_dir_all(&cwd).expect("create per-run cwd");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(file)
         .current_dir(&cwd)

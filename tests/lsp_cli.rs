@@ -5,12 +5,10 @@
 // `hover`), the shell frontend to the same `loft::lsp` accessors the LSP server
 // gives editors.  Drives the real `loft` binary and asserts the `--json` output.
 
-use std::process::Command;
-
 use loft::json::{self, Parsed};
 
 fn run(args: &[&str]) -> (String, bool) {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(args)
         .output()
         .expect("spawn loft");

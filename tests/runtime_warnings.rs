@@ -22,7 +22,6 @@
 //!     (`silenced_by_env` cell).
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -37,7 +36,7 @@ fn workspace_root() -> std::path::PathBuf {
 fn run_with_warnings(name: &str, source: &str) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_w42_{name}.loft"));
     fa::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())
@@ -64,7 +63,7 @@ fn run_with_w4(name: &str, source: &str) -> (String, String, Option<i32>) {
 fn run_with_w4_env(name: &str, source: &str, explain: bool) -> (String, String, Option<i32>) {
     let script_path = std::env::temp_dir().join(format!("loft_w4_{name}.loft"));
     fa::write(&script_path, source).expect("write temp script");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     if explain {
         cmd.arg("--explain");
@@ -317,7 +316,7 @@ fn main() {
 ";
     let script_path = std::env::temp_dir().join("loft_w42_silenced.loft");
     fa::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())
@@ -456,7 +455,7 @@ fn main() {
 ";
     let script_path = std::env::temp_dir().join("loft_w42_g4g_soft.loft");
     fa::write(&script_path, source).expect("write");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--dev-soft-halt")
         .arg(&script_path)
@@ -649,7 +648,7 @@ fn main() {
 ";
     let (_stdout, _stderr, code) = run_with_warnings("hint4h_high", source);
     let diag = String::from_utf8_lossy(
-        &Command::new(loft_bin())
+        &loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg({
                 let p = std::env::temp_dir().join("loft_w42_hint4h_high.loft");
@@ -692,7 +691,7 @@ fn main() {
 ";
     let p = std::env::temp_dir().join("loft_w42_hint4h_already.loft");
     fa::write(&p, source).expect("write");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&p)
         .current_dir(workspace_root())
@@ -731,7 +730,7 @@ fn main() {
 ";
     let p = std::env::temp_dir().join("loft_w42_hint4h_defended.loft");
     fa::write(&p, source).expect("write");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&p)
         .current_dir(workspace_root())
@@ -768,7 +767,7 @@ fn main() {
 ";
     let p = std::env::temp_dir().join("loft_w42_hint4h_env.loft");
     fa::write(&p, source).expect("write");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&p)
         .current_dir(workspace_root())
@@ -794,7 +793,7 @@ fn main() {
 ";
     let script_path = std::env::temp_dir().join("loft_w42_fmt43_env.loft");
     fa::write(&script_path, source).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())

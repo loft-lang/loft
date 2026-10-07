@@ -12,7 +12,6 @@
 //! `doc/claude/plans/102-stability-contract/float-null-domain-typing.md` § Implementation plan.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -27,7 +26,7 @@ fn workspace_root() -> std::path::PathBuf {
 fn run(body: &str, backend: &str, nullflow: bool, tag: &str) -> (bool, String, String) {
     let script = std::env::temp_dir().join(format!("loft_nf_{}_{tag}.loft", std::process::id()));
     fa::write(&script, body).expect("write script");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .current_dir(workspace_root())

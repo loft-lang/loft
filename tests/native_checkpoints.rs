@@ -36,7 +36,7 @@ fn write_src(dir: &std::path::Path) -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut c = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut c = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     c.env("LOFT_TIMEOUT", "180");
     c
 }

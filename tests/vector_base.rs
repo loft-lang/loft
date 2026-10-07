@@ -11,7 +11,6 @@
 //! backends; this pins what is emitted.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ak-vector-base-cells.loft";
@@ -22,7 +21,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // pid alone made them delete each other's emission.
     let out =
         std::env::temp_dir().join(format!("loft_vector_base_{}_{tag}.rs", std::process::id()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

@@ -12,14 +12,13 @@
 //! is checked over the source, so a new raise site cannot bypass it.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn run(name: &str, src: &str) -> (String, String, bool) {
     let dir = std::env::temp_dir().join(format!("loft_dispatch_stop_{}", std::process::id()));
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join(format!("{name}.loft"));
     fa::write(&file, src).expect("write program");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "60")

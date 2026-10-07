@@ -12,7 +12,6 @@
 use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-w-selfread-literal-cells.loft";
@@ -35,13 +34,14 @@ fn cells() -> PathBuf {
 }
 
 fn emit(src: &Path, out: &Path) -> String {
-    let status = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--native-emit")
-        .arg(out)
-        .arg(src)
-        .env("LOFT_TIMEOUT", "120")
-        .output()
-        .expect("spawn loft --native-emit");
+    let status =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--native-emit")
+            .arg(out)
+            .arg(src)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("spawn loft --native-emit");
     assert!(
         fa::exists(out),
         "no Rust emitted (exit {:?}): {}",

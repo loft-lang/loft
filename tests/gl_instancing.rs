@@ -25,11 +25,11 @@
 use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -73,7 +73,7 @@ impl Drop for ServerGuard<'_> {
 /// drift from it.
 fn spawn_root_server(port: u16) -> Option<Child> {
     let py = which("python3").or_else(|| which("python"))?;
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
         .arg(repo_root())
         .stdout(std::process::Stdio::null())
@@ -118,7 +118,7 @@ fn instancing_bridge_draws_every_instance() {
     let _guard = ServerGuard(&mut server);
 
     let url = format!("http://127.0.0.1:{port}/tests/data/gl_instancing_probe.html");
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", "3000"])

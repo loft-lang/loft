@@ -14,7 +14,6 @@
 //! as it ran before) is pinned beside the refusal.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const UNITS: &str = "\
 struct Seed { v: integer }
@@ -63,7 +62,7 @@ fn run(tag: &str, program: &str, enforce: bool) -> (String, String, bool) {
     let dir = scratch(tag);
     let src = dir.join("main.loft");
     loft::file_access::write(&src, program).expect("program");
-    let mut c = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut c = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     c.arg("--interpret")
         .arg("--lib")
         .arg(dir.join("lib"))

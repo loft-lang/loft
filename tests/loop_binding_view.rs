@@ -32,7 +32,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -50,7 +49,7 @@ fn run(backend: &str) -> String {
     // under the iteration loop the release binary is rebuilt only for the suites that
     // spawn it (@PLN159 I), so spawning it here cost `--subject scopes` a 95 s
     // non-incremental build for one test.
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     if !backend.is_empty() {
         cmd.arg(backend);
     }

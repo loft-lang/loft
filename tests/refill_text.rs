@@ -7,7 +7,6 @@
 //! stops being taken or one that starts being taken for the wrong reason.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft";
 
@@ -40,7 +39,8 @@ fn emit_file(cells: &str, env: &[(&str, &str)]) -> (String, bool) {
         "loft_refill_text_{}_{stem}_{tag}.rs",
         std::process::id()
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(root.join(cells))

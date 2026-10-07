@@ -7,7 +7,6 @@
 //! (the A/B that falsifies the rewrite).  The VALUES are the cells' own.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -39,7 +38,7 @@ fn introspect(src: &str, envs: &[(&str, &str)]) -> String {
     fa::create_dir_all(&root).expect("scratch dir");
     let path = root.join("probe.loft");
     fa::write(&path, src).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("introspect").arg(&path).env("RUST_BACKTRACE", "0");
     for (k, v) in envs {
         cmd.env(k, v);
@@ -112,7 +111,7 @@ fn run_cells(file: &str, backend: &str, envs: &[(&str, &str)]) -> String {
     ));
     fa::create_dir_all(&root).expect("scratch dir");
     let path = std::env::current_dir().expect("cwd").join(file);
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&path)
         .current_dir(&root)

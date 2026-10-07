@@ -7,11 +7,11 @@
 //! evaluated results print; the prompt + errors go to stderr, discarded here).
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Run `loft <args>` feeding `input` on stdin, return captured stdout.
 fn repl(args: &[&str], input: &str) -> String {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(args)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())
@@ -217,7 +217,7 @@ fn unknown_command_is_safe() {
 
 /// Run `loft <args>` feeding `input`, return (stdout, stderr).
 fn repl_full(args: &[&str], input: &str) -> (String, String) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(args)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .stdin(Stdio::piped())

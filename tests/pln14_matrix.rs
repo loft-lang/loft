@@ -958,7 +958,7 @@ fn a_real_repl_session_prints_identically_with_the_flip() {
          n\nf\nw\ng\nsg\nb\nc\nt\nu\nv\nvt\np\nd\n:vars\n:quit\n";
 
     let run = |flip: bool| -> String {
-        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("repl")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

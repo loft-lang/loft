@@ -8,7 +8,6 @@
 //! says the VALUES hold on both backends; this pins what is emitted.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-al-loop-buffer-cells.loft";
@@ -18,7 +17,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     // One file per TEST: the tests run on threads of one process.
     let out =
         std::env::temp_dir().join(format!("loft_loop_buffer_{}_{tag}.rs", std::process::id()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

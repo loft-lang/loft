@@ -943,7 +943,7 @@ pub fn plain_canonical_str(path: &str) -> String {
 }
 
 #[cfg(test)]
-mod guard;
+pub(crate) mod guard;
 
 #[cfg(test)]
 mod tests {

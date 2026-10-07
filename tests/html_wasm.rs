@@ -22,7 +22,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 // `loft --html` now writes every build intermediate to a per-PROCESS scratch dir
 // (`platform::build_scratch_dir` — `scratch/loft_html_<pid>/`), so concurrent
@@ -31,7 +30,7 @@ use std::process::Command;
 // gone; parallel_html_builds_do_not_cross_contaminate is the regression guard.
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -55,7 +54,7 @@ fn wasm32_target_installed() -> bool {
 /// skips rather than fails without it — a machine that cannot cross-compile says
 /// nothing about the code under test.
 fn rustup_target_installed(triple: &str) -> bool {
-    Command::new("rustup")
+    loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .ok()
@@ -155,7 +154,7 @@ fn run_html_wasm_full(
     // No build serialisation: `loft --html` isolates its intermediates per
     // process (per-PID scratch dir), so parallel invocations can't clobber
     // each other's emitted Rust or wasm output.
-    let mut cmd = Command::new(&loft_bin);
+    let mut cmd = loft::platform::process::harness_command(&loft_bin);
     cmd.args([
         "--html",
         html.to_str().unwrap(),
@@ -184,7 +183,7 @@ fn run_html_wasm_full(
     let harness = repo_root().join(harness_rel);
     assert!(fa::exists(&harness), "{harness_rel} missing");
 
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&wasm)
         .output()
@@ -695,7 +694,7 @@ fn parallel_html_builds_do_not_cross_contaminate() {
     let mut children: Vec<_> = srcs
         .iter()
         .map(|src| {
-            Command::new(&loft_bin)
+            loft::platform::process::harness_command(&loft_bin)
                 .arg("--html")
                 .arg(src)
                 .env("LOFT_TIMEOUT", "120")
@@ -896,7 +895,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     let wasm = tmp.join(format!("{name}_wasip2.wasm"));
     fa::write(&src, source).ok()?;
 
-    let mut emit = Command::new(&loft_bin);
+    let mut emit = loft::platform::process::harness_command(&loft_bin);
     emit.args([
         "--native-emit",
         rs.to_str()?,
@@ -913,7 +912,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
 
     // wasip2 print() now lowers to std `print!` (WASI stdout) directly — the
     // generated source is self-contained, no host-import shim needed (#268).
-    let compile = Command::new("rustc")
+    let compile = loft::platform::process::harness_command("rustc")
         .args([
             "--edition=2024",
             "--target",
@@ -959,7 +958,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     if let Ok(cwd) = std::env::current_dir() {
         add(cwd);
     }
-    let mut cmd = Command::new(&wasmtime);
+    let mut cmd = loft::platform::process::harness_command(&wasmtime);
     for dir in &preopens {
         cmd.arg("--dir").arg(dir);
     }
@@ -1209,7 +1208,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
         eprintln!("skip: wasmtime not installed");
         return;
     };
-    let have_wasip2 = Command::new("rustup")
+    let have_wasip2 = loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .ok()
@@ -1243,7 +1242,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
     let _ =
         fa::remove_dir_all(root.join("tests/lib/native_scalar_pkg/native/target/wasm32-wasip2"));
 
-    let build = Command::new(&loft_bin)
+    let build = loft::platform::process::harness_command(&loft_bin)
         .arg("--native-wasm")
         .arg(&wasm)
         .arg("--lib")
@@ -1257,7 +1256,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
         String::from_utf8_lossy(&build.stderr)
     );
 
-    let run = Command::new(&wasmtime)
+    let run = loft::platform::process::harness_command(&wasmtime)
         .arg(&wasm)
         .output()
         .expect("run wasmtime");
@@ -1509,7 +1508,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
     let build = |name: &str, program: &str| -> String {
         let src = tmp.join(format!("{name}.loft"));
         fa::write(&src, program).expect("write program");
-        let out = Command::new(&loft_bin)
+        let out = loft::platform::process::harness_command(&loft_bin)
             .current_dir(&tmp)
             .arg(&src)
             .arg("--lib")
@@ -1754,7 +1753,7 @@ fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
     .expect("write unused");
 
     let build = |flag: &str, out: &str, src: &std::path::Path| -> (bool, String) {
-        let o = Command::new(&loft_bin)
+        let o = loft::platform::process::harness_command(&loft_bin)
             .args([flag, tmp.join(out).to_str().unwrap()])
             .arg(src)
             .output()
@@ -1820,7 +1819,7 @@ fn html_page_filesystem_unit_checks() {
         eprintln!("SKIP: node not installed");
         return;
     }
-    let out = std::process::Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/loft_fs_unit.mjs"))
         .current_dir(repo_root())
         .output()
@@ -2284,7 +2283,7 @@ fn html_a_trap_is_reported_to_the_page() {
          fn main() { print(\"depth={rec1059(8000)}\\n\") }\n",
     )
     .expect("write source");
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().unwrap()])
         .arg(&src)
         .output()
@@ -2324,7 +2323,7 @@ fn html_a_trap_is_reported_to_the_page() {
         ),
     )
     .expect("write probe");
-    let run = Command::new("node")
+    let run = loft::platform::process::harness_command("node")
         .arg(&probe)
         .output()
         .expect("run the reporter under node");
@@ -2364,7 +2363,7 @@ fn html_a_trap_is_reported_to_the_page() {
         ),
     )
     .expect("write control probe");
-    let run2 = Command::new("node")
+    let run2 = loft::platform::process::harness_command("node")
         .arg(&probe2)
         .output()
         .expect("run the control under node");
@@ -2403,7 +2402,7 @@ fn a_browser_build_builds_no_host_native_library() {
     let src = tmp.join("uses_random.loft");
     let html = tmp.join("uses_random.html");
     fa::write(&src, "use random;\nfn main() {\n  println(\"ok\");\n}\n").expect("write source");
-    let out = std::process::Command::new(&loft_bin)
+    let out = loft::platform::process::harness_command(&loft_bin)
         .current_dir(&root)
         .env("LOFT_TIMING", "1")
         .env("LOFT_NO_CACHE", "1")

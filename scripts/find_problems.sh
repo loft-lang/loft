@@ -277,9 +277,9 @@ selection_needs() {
     src="$REPO_ROOT/tests/$b.rs"
     [[ -f "$src" ]] || { NEED_RELEASE=1; NEED_WASM=1; return 0; }
     # A SPAWN of the release binary — `join("target/release/loft")` or a
-    # `Command::new(…release/loft…)` on a non-comment line.  `parse_errors`,
+    # `harness_command(…release/loft…)` (or `Command::new`) on a non-comment line.  `parse_errors`,
     # `testing` and `exit_codes` only NAME the path in a comment or a string.
-    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|Command::new\([^)]*release/loft' && NEED_RELEASE=1
+    grep -vE '^[[:space:]]*//' "$src" | grep -qE 'join\("target/release/loft"\)|(Command::new|harness_command)\([^)]*release/loft' && NEED_RELEASE=1
     if [[ "$b" =~ wasm|html|deliver|browser|gl_|android ]] || grep -qE -- '"--html"|"--native-wasm"|wasm32|"--deliver"' "$src"; then
       NEED_WASM=1
     fi

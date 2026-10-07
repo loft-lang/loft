@@ -22,11 +22,11 @@
 use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -62,7 +62,7 @@ impl Drop for ServerGuard {
 }
 
 fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
         .arg(dir)
         .stdout(std::process::Stdio::null())
@@ -81,7 +81,7 @@ fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
 
 /// Read the page's `<pre>` after the wait, via the harness's `--assert`.
 fn page_output(url: &str, port: u16) -> String {
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
         .args(["--wait-ms", "4000"])
@@ -143,7 +143,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
     )
     .expect("write source");
 
-    let made = Command::new(&loft)
+    let made = loft::platform::process::harness_command(&loft)
         .arg("--interpret")
         .arg(&src)
         .current_dir(&dir)
@@ -157,7 +157,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
     );
 
     let html = dir.join("page_store.html");
-    let built = Command::new(&loft)
+    let built = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().expect("utf-8 path")])
         .arg(&src)
         .current_dir(&dir)

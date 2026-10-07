@@ -278,7 +278,7 @@ fn a_worker_killed_mid_call_is_an_error_not_a_hang() {
 
     std::thread::sleep(std::time::Duration::from_millis(400));
     // SIGKILL: the worker gets no chance to answer, which is the whole point.
-    let killed = std::process::Command::new("kill")
+    let killed = loft::platform::process::harness_command("kill")
         .arg("-KILL")
         .arg(pid.to_string())
         .status()

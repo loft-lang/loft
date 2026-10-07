@@ -7,7 +7,6 @@
 //! type and a non-`pub` fn are not in the surface).
 
 use loft::file_access as fa;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
@@ -21,7 +20,7 @@ fn api_surface(src: &str) -> String {
     fa::create_dir_all(&dir).unwrap();
     let file = dir.join("lib.loft");
     fa::write(&file, src).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg(&file)
         .output()
@@ -47,7 +46,7 @@ fn api_diff_cli(base: &str, new: &str, json: bool) -> (String, i32) {
     let fn_ = dir.join("new.loft");
     fa::write(&fb, base).unwrap();
     fa::write(&fn_, new).unwrap();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("api-surface").arg("--diff").arg(&fb).arg(&fn_);
     if json {
         cmd.arg("--json");
@@ -122,7 +121,7 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
     let current_f = dir.join("current.loft");
     fa::write(&released_f, released).unwrap();
     fa::write(&current_f, current).unwrap();
-    let emit = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let emit = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg(&released_f)
         .arg("--emit-baseline")
@@ -134,7 +133,7 @@ fn emit_and_check(released: &str, current: &str) -> (String, i32) {
         String::from_utf8_lossy(&emit.stderr)
     );
     fa::write(&baseline_f, &emit.stdout).unwrap();
-    let chk = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let chk = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg("--check")
         .arg(&baseline_f)
@@ -439,7 +438,7 @@ fn committed_dogfood_baseline_is_a_drop_in() {
     // api-compat`'s green case. Catches a `lib.loft` change that forgot to regenerate the
     // baseline, and a loft change that reshapes its layout.
     let root = env!("CARGO_MANIFEST_DIR");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("api-surface")
         .arg("--check")
         .arg(format!("{root}/tests/fixtures/api_compat/lib.api-baseline"))

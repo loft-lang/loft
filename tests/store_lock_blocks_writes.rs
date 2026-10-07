@@ -28,7 +28,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -44,7 +43,7 @@ fn write_temp(tag: &str, src: &str) -> PathBuf {
 /// Run `src` on `backend`; return `(exited_ok, stdout + stderr)`.
 fn run(backend: &str, tag: &str, src: &str) -> (bool, String) {
     let path = write_temp(&format!("{tag}_{backend}"), src);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")

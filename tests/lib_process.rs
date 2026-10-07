@@ -12,7 +12,6 @@
 // matrix spawns nothing and runs on every host; the drain gate and `start.loft` spawn `sh`.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -23,7 +22,7 @@ fn run(backend: &str, file: &str) {
 }
 
 fn run_on(backend: &str, file: &str, host: &str) {
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .env("LOFT_POISON_HOST", host)
         .arg(backend)
         .arg("--lib")

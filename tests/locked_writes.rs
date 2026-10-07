@@ -29,7 +29,6 @@
 //! the hoisted `view` cell (`v=77,77`) and the development `view` cell.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -50,7 +49,7 @@ fn run(name: &str, source: &str, backend: &str, production: bool) -> (String, St
     let log_path = dir.join("log.txt");
     let conf = format!("[log]\nfile = {}\nlevel = info\n", log_path.display());
     fa::write(dir.join("log.conf"), conf).expect("write log.conf");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     if production {
         cmd.arg("--production");
     }
@@ -319,7 +318,7 @@ fn hoisted_loops_reach_the_writers_under_test() {
     let script = dir.join("hoisted.loft");
     fa::write(&script, HOISTED).expect("write script");
     let out = dir.join("hoisted.rs");
-    let status = Command::new(loft_bin())
+    let status = loft::platform::process::harness_command(loft_bin())
         .arg("--native-emit")
         .arg(&out)
         .arg("--lean")

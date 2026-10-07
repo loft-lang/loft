@@ -25,7 +25,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -155,7 +154,7 @@ fn fixture(tag: &str) -> Fixture {
 }
 
 fn run(fx: &Fixture, args: &[&str]) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["test", "--deps"])
         .args(args)
         .current_dir(&fx.root)
@@ -280,7 +279,7 @@ fn a_deps_lint_debt_fails_the_consumer_only_under_strict_deps() {
          assert(leaf::who() == \"leaf-v1\", \"leaf-v1\");\n}\n",
     );
     let deny = |args: &[&str]| -> i32 {
-        Command::new(loft_bin())
+        loft::platform::process::harness_command(loft_bin())
             .args(["test", "--deps"])
             .args(args)
             .current_dir(&fx.root)

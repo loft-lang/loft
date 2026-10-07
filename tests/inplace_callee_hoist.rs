@@ -13,7 +13,6 @@
 //! Read off `loft introspect`, which carries the native Rust beside the IR.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct Cv { data: vector<integer>, count: integer }
@@ -35,7 +34,8 @@ fn main() { println(\"{c_setter()} {c_grower()}\"); }
 ";
 
 fn introspect(src: &std::path::Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect").arg(src).env("LOFT_TIMEOUT", "120");
     for (k, v) in env {
         cmd.env(k, v);

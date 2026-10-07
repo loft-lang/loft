@@ -32,12 +32,12 @@
 use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -171,7 +171,7 @@ fn locate_fresh_brick_buster(root: &Path) -> Option<PathBuf> {
 /// don't bite the WebGL2 / WASM imports.
 fn spawn_doc_server(root: &Path, port: u16) -> Option<Child> {
     let py = which("python3").or_else(|| which("python"))?;
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
         .arg(root.join("doc"))
         .stdout(std::process::Stdio::null())
@@ -236,7 +236,7 @@ fn brick_buster_browser_renders_without_console_errors() {
     let url = format!("http://127.0.0.1:{port}/brick-buster.html");
     let screenshot = std::env::temp_dir().join("brick_buster_render_test.png");
 
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", "6000"])
@@ -354,7 +354,7 @@ fn html_canvas_is_allocated_at_the_display_resolution() {
             && c.height === Math.round(r.height * window.devicePixelRatio); \
     })()";
 
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
         .args(["--wait-ms", "6000"])

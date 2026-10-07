@@ -98,7 +98,7 @@ fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
              z.writestr('loft-{version}-{triple}/SHA256SUMS','{triple}  default/a.loft\\n')\n\
              z.close()\n"
         );
-        let out = std::process::Command::new("python3")
+        let out = loft::platform::process::harness_command("python3")
             .args(["-c", &script])
             .arg(&zip)
             .output()
@@ -109,7 +109,7 @@ fn generated_toolchain_entry(dir: &std::path::Path, version: &str) -> String {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/gen-toolchain-entry.py"))
         .args(["--version", version])
         .arg("--dir")
@@ -230,7 +230,7 @@ fn splicing_the_toolchain_entry_never_moves_updated_backwards() {
     .unwrap();
 
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/gen-toolchain-entry.py"))
         .args(["--version", version])
         .arg("--dir")

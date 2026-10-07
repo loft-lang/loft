@@ -12,7 +12,6 @@
 //! `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § Zero-on-claim.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -40,7 +39,7 @@ fn scripts() -> Vec<PathBuf> {
 /// Does `script` fail the way a read of un-initialised words fails, with claims `poisoned`
 /// or not?
 fn fails(script: &Path, poisoned: bool) -> bool {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.arg("--interpret").arg(script).env("LOFT_TIMEOUT", "60");
     if poisoned {
         cmd.env("LOFT_POISON_CLAIM", "1");

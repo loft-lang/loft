@@ -17,7 +17,7 @@ use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::Duration;
 
 fn test_tmp() -> PathBuf {
@@ -94,7 +94,7 @@ fn run_fixture(name: &str, ws_port: u16, url: &str) -> String {
     let prog = test_tmp().join(format!("{name}_{}.loft", std::process::id()));
     fa::write(&prog, fixture(ws_port, url)).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     let child = cmd
         .arg("--interpret")
         .arg("--no-warnings")

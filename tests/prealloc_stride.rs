@@ -14,7 +14,6 @@
 //! element's handle row.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct P { a: integer, s: text }
@@ -30,7 +29,8 @@ fn main() {
 ";
 
 fn introspect(src: &std::path::Path) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect").arg(src).env("LOFT_TIMEOUT", "120");
     let out = cmd.output().expect("spawn loft introspect");
     String::from_utf8_lossy(&out.stdout).into_owned()

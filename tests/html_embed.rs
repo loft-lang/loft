@@ -29,11 +29,11 @@
 use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
 
 fn which(cmd: &str) -> Option<PathBuf> {
-    let out = Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -69,7 +69,7 @@ impl Drop for ServerGuard {
 }
 
 fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
-    let child = Command::new(py)
+    let child = loft::platform::process::harness_command(py)
         .args(["-m", "http.server", &port.to_string(), "-d"])
         .arg(dir)
         .stdout(std::process::Stdio::null())
@@ -88,7 +88,7 @@ fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
 
 /// Read the page's `<pre>` after the wait, via the harness's `--assert`.
 fn page_output(url: &str, port: u16) -> Option<String> {
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
         .args(["--wait-ms", "4000"])
@@ -140,7 +140,7 @@ fn package(loft: &Path, name: &str, manifest: &str) -> Option<PathBuf> {
     fa::create_dir_all(dir.join("assets")).expect("create package dir");
     fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
     fa::write(dir.join("embed_page.loft"), PROGRAM).expect("write source");
-    let made = Command::new(loft)
+    let made = loft::platform::process::harness_command(loft)
         .arg("--interpret")
         .arg("embed_page.loft")
         .current_dir(&dir)
@@ -148,7 +148,7 @@ fn package(loft: &Path, name: &str, manifest: &str) -> Option<PathBuf> {
         .output()
         .expect("invoke loft");
     // The desktop half of the parity claim: this is the output the page must match.
-    let desktop = Command::new(loft)
+    let desktop = loft::platform::process::harness_command(loft)
         .arg("--interpret")
         .arg("embed_page.loft")
         .current_dir(&dir)
@@ -198,7 +198,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
         return;
     };
 
-    let built = Command::new(&loft)
+    let built = loft::platform::process::harness_command(&loft)
         .args(["--html", "page.html"])
         .arg("embed_page.loft")
         .current_dir(&dir)
@@ -307,7 +307,7 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
     )
     .expect("write source");
 
-    let built = Command::new(&loft)
+    let built = loft::platform::process::harness_command(&loft)
         .args(["--html", "page.html", "src/layout.loft"])
         .current_dir(&root)
         .output()
@@ -374,7 +374,7 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
     )
     .expect("write app source");
 
-    let built = Command::new(&loft)
+    let built = loft::platform::process::harness_command(&loft)
         .args(["--html", "app.html", "--lib", "../libs", "main.loft"])
         .current_dir(&app)
         .output()
@@ -430,7 +430,7 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
     let build = |manifest: &str| -> (bool, bool, String) {
         fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
         let _ = fa::remove_file(dir.join("out.html"));
-        let out = Command::new(&loft)
+        let out = loft::platform::process::harness_command(&loft)
             .args(["--html", "out.html"])
             .arg("embed_page.loft")
             .current_dir(&dir)

@@ -17,7 +17,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -36,7 +35,7 @@ fn tmp_root(tag: &str) -> PathBuf {
 #[test]
 fn an_unresolvable_name_creates_nothing_and_fails() {
     let root = tmp_root("noresolve");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .args(["doc", "definitely_not_a_package_zzz"])
         .output()
@@ -86,7 +85,7 @@ fn a_package_directory_documents_its_own_api() {
     )
     .expect("write src");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .arg("doc")
         .arg(&pkg)
@@ -146,7 +145,7 @@ fn a_doc_comment_is_shown_as_text_on_the_api_page() {
          pub fn first_of(x: integer) -> integer { x }\n",
     )
     .expect("write src");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .arg("doc")
         .arg(&pkg)
@@ -187,7 +186,7 @@ fn out_flag_redirects_the_output() {
     .expect("write src");
     let elsewhere = root.join("elsewhere");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .arg("doc")
         .arg(&pkg)

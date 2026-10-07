@@ -11,7 +11,6 @@
 //! the defect — this test runs the CLI and reads its stderr.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "fn main() { s: sorted<integer> = [5, 1, 3]; println(\"{s[0]?}\"); }\n";
 
@@ -19,7 +18,7 @@ const PROBE: &str = "fn main() { s: sorted<integer> = [5, 1, 3]; println(\"{s[0]
 fn a_subscript_on_a_keyless_sorted_is_refused_without_an_ice() {
     let src = std::env::temp_dir().join("loft_keyless_sorted_subscript.loft");
     fa::write(&src, PROBE).expect("write probe");
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--check")
         .arg(&src)
         .env("LOFT_TIMEOUT", "60")

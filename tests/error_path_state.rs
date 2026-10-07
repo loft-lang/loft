@@ -99,7 +99,7 @@ fn f11_4_driver_mode_anchors_at_the_program_dir() {
     .unwrap();
     // Run from the REPO root (not the program dir): the marker must land
     // next to the PROGRAM, whatever backend the driver picks.
-    let status = std::process::Command::new(&loft_bin)
+    let status = loft::platform::process::harness_command(&loft_bin)
         .arg("--no-warnings")
         .arg(&prog)
         .current_dir(env!("CARGO_MANIFEST_DIR"))

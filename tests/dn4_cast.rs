@@ -12,7 +12,6 @@
 
 use loft::file_access as fa;
 use std::io::Write;
-use std::process::Command;
 
 fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_dn4");
@@ -59,7 +58,7 @@ fn main() {
 fn dn4_checked_cast_matrix_both_backends() {
     let path = write_probe("matrix.loft", MATRIX);
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")
@@ -87,7 +86,7 @@ fn dn4_rejects_non_fit_nonnull_cast() {
         ),
     ] {
         let path = write_probe(name, src);
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args(["--check"])
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")
@@ -110,7 +109,7 @@ fn dn4_no_optout_flag_is_retired() {
         "no_optout.loft",
         "fn main(){ x = 300 as u8; println(\"{x}\"); }",
     );
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--check"])
         .arg(&path)
         .env("LOFT_NO_DN4", "1")

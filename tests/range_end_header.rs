@@ -7,7 +7,6 @@
 //! all a growing loop taking the substitution, which is the one wrong answer it could give.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-length-bound-reads-the-held-header.loft";
 
@@ -29,7 +28,8 @@ fn emit(off: bool) -> String {
         std::process::id(),
         u8::from(off)
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// A cap far above what these one-line programs need and far below the runaway.
 const ADDRESS_SPACE_KIB: &str = "2000000"; // 2 GiB
@@ -51,7 +50,7 @@ fn run_capped(source: &str) -> String {
         loft_bin().display(),
         file.display()
     );
-    let out = Command::new("bash")
+    let out = loft::platform::process::harness_command("bash")
         .arg("-c")
         .arg(&script)
         .env("LOFT_TIMEOUT", "60")

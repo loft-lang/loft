@@ -23,7 +23,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -81,7 +80,7 @@ fn run_suite(tag: &str, declare: bool, with_lib_flag: bool) -> String {
     let _ = fa::remove_dir_all(&root);
     build_tree(&root, declare);
 
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("test");
     if with_lib_flag {
         cmd.arg("--lib").arg(root.join("lib"));
@@ -184,7 +183,7 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
         "use shadowp::*;\nfn main() { print(\"{probe()}\\n\"); }\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(root.join("run.loft"))
         .env("LOFT_TIMEOUT", "120")

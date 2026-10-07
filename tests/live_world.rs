@@ -19,7 +19,7 @@
 use loft::file_access as fa;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::{Duration, Instant};
 
@@ -69,7 +69,7 @@ impl Session {
         fa::create_dir_all(&dir).unwrap();
         let prog = dir.join("world.loft");
         fa::write(&prog, src).unwrap();
-        let mut child = Command::new(loft_bin())
+        let mut child = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg("--no-warnings")
             .arg(&prog)

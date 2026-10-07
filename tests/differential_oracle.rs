@@ -32,7 +32,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -53,7 +52,7 @@ struct ModeRun {
 /// `LOFT_TIMEOUT` bounds the native `rustc` compile so a runaway can't hang the
 /// suite (the native path can otherwise block indefinitely).
 fn run_mode(mode_flag: &str, path: &Path, env: &[(&str, &str)]) -> ModeRun {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(mode_flag)
         .arg(path)
         .current_dir(workspace_root())
@@ -201,12 +200,12 @@ fn driver_agreement(dump: &ModeRun, interp: &ModeRun, native: &ModeRun) -> Vec<S
 /// oracle; a wasm-capable runner (the nightly gate) exercises it. This leans on the
 /// @PLN100 build phase, which auto-builds the wasip2 loft-runtime rlib on first use.
 fn wasm_toolchain_present() -> bool {
-    let target = Command::new("rustup")
+    let target = loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-wasip2"))
         .unwrap_or(false);
-    let wasmtime = Command::new("wasmtime")
+    let wasmtime = loft::platform::process::harness_command("wasmtime")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -230,7 +229,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
     }
     let stem = fa::file_stem(path).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("loft_oracle_{stem}_{}.wasm", std::process::id()));
-    let compile = Command::new(loft_bin())
+    let compile = loft::platform::process::harness_command(loft_bin())
         .arg("--native-wasm")
         .arg(&out)
         .arg(path)
@@ -245,7 +244,7 @@ fn run_wasm(path: &Path) -> Option<ModeRun> {
             exit_code: compile.status.code(),
         });
     }
-    let run = Command::new("wasmtime")
+    let run = loft::platform::process::harness_command("wasmtime")
         .arg(&out)
         .output()
         .unwrap_or_else(|e| panic!("failed to run wasmtime: {e}"));

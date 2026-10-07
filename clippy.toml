@@ -52,6 +52,11 @@ disallowed-methods = [
   { path = "std::env::set_current_dir", reason = "the current directory is process state: a file_access operation" },
   { path = "libloading::Library::new", reason = "a library path is a file_access path", allow-invalid = true },
   { path = "mmap_storage::file::Storage::open", reason = "a store image path is a file_access path", allow-invalid = true },
+  # @PLN184 P6 — every process loft starts goes through `platform::process` (src/platform_process.rs,
+  # the one home of this call): `Spawn` owns the child's tree, its driver death and its paths.  A
+  # test harness that must hold the raw process takes `platform::process::harness_command`; an
+  # unmigrated file opts out with a marked `#![allow]`, listed in src/platform_process_clippy_allow.baseline.
+  { path = "std::process::Command::new", reason = "platform::process::Spawn (a test harness: platform::process::harness_command)" },
 ]
 disallowed-types = [
   { path = "std::fs::DirBuilder", reason = "file_access::create_dir_all" },

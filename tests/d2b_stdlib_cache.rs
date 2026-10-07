@@ -9,7 +9,6 @@
 //! byte-identical output, and the cold run must write the `.store` bundle.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -21,7 +20,7 @@ fn workspace_root() -> std::path::PathBuf {
 /// Run the binary on `script`, optionally with the stdlib cache enabled at
 /// `cache_dir` (`XDG_CACHE_HOME`).  Returns `(success, stdout)`.
 fn run(script: &std::path::Path, cache_dir: Option<&std::path::Path>) -> (bool, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(script)
         .current_dir(workspace_root());

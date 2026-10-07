@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -125,7 +124,7 @@ fn every_documented_command_runs_and_prints_what_the_page_shows() {
 
     let mut failures: Vec<String> = Vec::new();
     for t in &all {
-        let out = Command::new("sh")
+        let out = loft::platform::process::harness_command("sh")
             .arg("-c")
             .arg(&t.command)
             .current_dir(&root)

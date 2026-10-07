@@ -120,7 +120,6 @@ pub fn test() {
 /// Spawned as a subprocess so the env fault can never leak into sibling tests.
 #[test]
 fn phase4_goal_e_guard_is_falsifiable() {
-    use std::process::Command;
     let prog = "fn main() {\n\
         \x20 v = [0,1]; v = [1,2]; v = [2,3]; v = [3,4]; v = [4,5]; v = [5,6];\n\
         \x20 v = [6,7]; v = [7,8]; v = [8,9]; v = [9,10]; v = [10,11];\n\
@@ -131,7 +130,7 @@ fn phase4_goal_e_guard_is_falsifiable() {
     fa::write(&path, prog).unwrap();
 
     let run = |inject: bool| {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         cmd.arg("--interpret")
             .arg(&path)
             .env("LOFT_NO_CACHE", "1")

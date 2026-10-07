@@ -28,7 +28,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -45,7 +44,7 @@ fn write_temp(tag: &str, src: &str) -> PathBuf {
 /// Compile+run `src` and return everything it said, diagnostics included.
 fn diagnostics(tag: &str, src: &str, env: &[(&str, &str)]) -> String {
     let path = write_temp(tag, src);
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "300")

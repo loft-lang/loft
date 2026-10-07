@@ -15,7 +15,7 @@
 
 use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
 use loft::json::{self, Parsed};
 
@@ -29,7 +29,7 @@ struct Dap {
 
 impl Dap {
     fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_loft-dap"))
+        let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-dap"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

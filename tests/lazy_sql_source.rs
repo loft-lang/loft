@@ -476,7 +476,7 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/scripts/129-lazy-sql-graph.loft");
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_PERSONS", format!("sqlite:{}", persons.display()))
@@ -536,7 +536,7 @@ fn the_graph_traverses_lazily_over_sql_both_backends() {
 
 /// The refusal a lookup reports for this database, or `""` when the fetch worked.
 fn bind_and_look(db_path: &std::path::Path, program: &std::path::Path) -> String {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg(program)
         .env("LOFT_SQL_TARGET", format!("sqlite:{}", db_path.display()))
@@ -639,7 +639,7 @@ fn an_explicit_query_populates_the_collection_both_backends() {
         .join("tests/scripts/129-lazy-sql-query.loft");
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_TARGET", format!("sqlite:{}", path.display()))
@@ -716,7 +716,7 @@ fn a_key_range_is_one_query_both_backends() {
         .join("tests/scripts/129-lazy-sql-range.loft");
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_TARGET", format!("sqlite:{}", path.display()))
@@ -879,7 +879,7 @@ fn a_collection_field_is_an_owner_parameterised_query_both_backends() {
         .join("tests/scripts/129-lazy-sql-owner.loft");
 
     for backend in ["--interpret", "--native"] {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(&script)
             .env("LOFT_SQL_TARGET", format!("sqlite:{}", path.display()))
@@ -952,7 +952,7 @@ fn a_lazy_fetch_can_be_a_loft_function() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/133-lazy-loft-driver.loft");
     let run = |backend: &str| -> String {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(&script)
@@ -1076,7 +1076,7 @@ fn a_lazy_driver_serves_one_element_type_and_the_miss_finds_it() {
         let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(fixture);
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(&script)
@@ -1239,7 +1239,7 @@ fn a_contained_driver_fault_releases_what_it_held() {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/133-lazy-unwind.loft");
     let run = |backend: &str| -> String {
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg("--no-warnings")
             .arg(&script)

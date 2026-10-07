@@ -22,7 +22,6 @@
 //! before-half here and the first bisect step for a leak in a heap-returning call chain.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     let mut p = std::env::current_exe().expect("test binary path");
@@ -40,7 +39,7 @@ fn script() -> PathBuf {
 
 /// Run the script under the strict-store oracle, with the guard on or off.
 fn run_strict(guard: bool) -> String {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(script())
         .env("LOFT_TIMEOUT", "300")

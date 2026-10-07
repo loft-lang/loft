@@ -26,14 +26,13 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn run(backend: &str, src: &str, tag: &str) -> (i32, String, String) {
     let dir = std::env::temp_dir().join(format!("loft_panic_{}_{tag}", std::process::id()));
     fa::create_dir_all(&dir).expect("mkdir");
     let path = dir.join("p.loft");
     fa::write(&path, src).expect("write");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args([backend, path.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(env!("CARGO_MANIFEST_DIR"))
@@ -53,7 +52,7 @@ const SRC: &str = "fn main() {\n  println(\"before\");\n  panic(\"halt-marker\")
 /// `rustc` is needed for the `--native` leg; skip cleanly where it is absent, like the
 /// other native suites.
 fn have_rustc() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
@@ -247,7 +246,7 @@ fn log_family_writes_on_both_backends() {
         fa::create_dir_all(&dir).expect("mkdir");
         fa::write(dir.join("p.loft"), prog).expect("write prog");
         fa::write(dir.join("log.conf"), conf).expect("write conf");
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend, dir.join("p.loft").to_str().unwrap()])
             .env("LOFT_TIMEOUT", "180")
             .current_dir(&dir)
@@ -343,7 +342,7 @@ fn production_mode_logs_and_continues_on_both_backends() {
             fa::create_dir_all(&dir).expect("mkdir");
             fa::write(dir.join("p.loft"), prog).expect("write prog");
             fa::write(dir.join("log.conf"), conf).expect("write conf");
-            let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .args([backend, dir.join("p.loft").to_str().unwrap()])
                 .env("LOFT_TIMEOUT", "180")
                 .current_dir(&dir)

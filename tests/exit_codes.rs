@@ -9,7 +9,6 @@
 //! for integration tests).
 
 use loft::file_access as fa;
-use std::process::Command;
 use std::process::Stdio;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -25,7 +24,7 @@ fn workspace_root() -> std::path::PathBuf {
 #[test]
 fn warning_only_program_exits_zero() {
     let script = workspace_root().join("tests/scripts/46-caveats.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .current_dir(workspace_root())
@@ -51,7 +50,7 @@ fn parse_error_exits_nonzero() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_l7_test_parse_error.loft");
     fa::write(&path, "fn main() { x = 1\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
@@ -74,7 +73,7 @@ fn loft_test_reports_a_compile_error_instead_of_a_scope_panic() {
     fa::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("break_outside.loft");
     fa::write(&path, "fn test_wrong_break() {\n  break;\n}\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("test")
         .arg(&path)
         .current_dir(workspace_root())
@@ -139,7 +138,7 @@ fn a_match_over_an_iterator_stops_at_max_lookahead() {
     let at_bound = upto(10);
     let over_bound = upto(11);
     let run = |mode: &str, file: &std::path::Path, bound: &str| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(mode)
             .arg(file)
             .env("LOFT_MAX_LOOKAHEAD", bound)
@@ -213,7 +212,7 @@ fn unresolved_native_warns_at_load_not_at_call() {
          fn main() { print(\"ran fine\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
@@ -249,7 +248,7 @@ fn p131_cli_forwards_script_dashdash_arg() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p131_args_test.loft");
     fa::write(&path, "fn main() { println(\"ran\"); }\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .arg("--mode")
@@ -277,7 +276,7 @@ fn p131_cli_explicit_dashdash_separator() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p131_sep_test.loft");
     fa::write(&path, "fn main() { println(\"ran\"); }\n").expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .arg("--")
@@ -303,7 +302,7 @@ fn p131_arguments_returns_only_script_args() {
     // Print each argument on its own line so we can inspect them.
     fa::write(&path, "fn main() { for a in arguments() { println(a) } }\n")
         .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .arg("--mode")
@@ -356,7 +355,7 @@ fn issue684_subcommand_word_is_a_program_argument() {
     ];
 
     for (args, expected) in cells {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&path)
             .args(args)
@@ -383,7 +382,7 @@ fn issue684_subcommand_word_is_a_program_argument() {
 /// test above would pass on a CLI that had simply lost `loft layout` entirely.
 #[test]
 fn issue684_subcommand_still_works_as_first_positional() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("layout")
         .current_dir(workspace_root())
         .output()
@@ -410,7 +409,7 @@ fn w1_1_html_export_produces_file() {
     let src = dir.join("loft_w1_1_test.loft");
     let out = dir.join("loft_w1_1_test.html");
     fa::write(&src, "fn main() { println(\"html-ok\"); }\n").unwrap();
-    let result = Command::new(loft_bin())
+    let result = loft::platform::process::harness_command(loft_bin())
         .arg("--html")
         .arg(&out)
         .arg(&src)
@@ -479,7 +478,7 @@ fn p171_native_copy_record_high_bit_does_not_panic() {
     let glb_path = std::env::temp_dir().join("isolated_stair.glb");
     let _ = fa::remove_file(&glb_path);
     let path_arg = format!("{}/", workspace_root().display());
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg("--path")
         .arg(&path_arg)
@@ -553,7 +552,7 @@ fn p171_native_copy_record_high_bit_does_not_panic() {
 #[test]
 fn tail_capture_lifted_arg_compiles_native() {
     let script = workspace_root().join("tests/scripts/tail-capture-lifted-arg.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -590,7 +589,7 @@ fn tail_capture_lifted_arg_compiles_native() {
 #[test]
 fn ijoin_multiply_assigned_widens_native() {
     let script = workspace_root().join("tests/scripts/433-ijoin-multiply-assigned.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -650,7 +649,7 @@ fn p166_content_on_binary_file_warns() {
         );
         fa::write(&script_path, &script).expect("write temp script");
 
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script_path)
             .current_dir(workspace_root())
@@ -709,7 +708,7 @@ fn p168_arguments_empty_when_no_script_args() {
          }\n",
     )
     .expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
@@ -752,7 +751,7 @@ fn p169_lambda_suggestion_mentions_omitting_return_type() {
     let dir = std::env::temp_dir();
     let path = dir.join("loft_p169_lambda_types.loft");
     fa::write(&path, "fn main() {\n  _ = |x: integer| { x * 2 };\n}\n").expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .current_dir(workspace_root())
@@ -813,7 +812,7 @@ fn moros_glb_cli_end_to_end() {
 
     let script = workspace_root().join("tests/fixtures/libs/moros_render/examples/moros_glb.loft");
     let path_flag = format!("{}/", workspace_root().display());
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--path")
         .arg(&path_flag)
@@ -875,7 +874,7 @@ fn p166_content_on_text_file_no_warning() {
     );
     fa::write(&script_path, &script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script_path)
         .current_dir(workspace_root())
@@ -904,7 +903,7 @@ fn native_emit_includes_loft_source_map() {
                   fn main() { x = add(1, 2); println(\"{x}\") }\n";
     fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-rust")
         .arg(&script_path)
@@ -974,7 +973,7 @@ fn p196_native_codegen_projects_fn_ref_d_nr() {
                   fn main() { pp = build(p_dbl, 21); p = Pair { v: pp }; }\n";
     fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-rust")
         .arg(&script_path)
@@ -1015,7 +1014,7 @@ fn introspect_diff_against_baseline() {
     fa::write(&script_path, script).expect("write temp script");
 
     // Capture baseline.
-    let baseline_out = Command::new(loft_bin())
+    let baseline_out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg(&script_path)
@@ -1025,7 +1024,7 @@ fn introspect_diff_against_baseline() {
     fa::write(&baseline_path, &baseline_out.stdout).expect("write baseline");
 
     // Identical inputs → exit 0.
-    let same = Command::new(loft_bin())
+    let same = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg("--diff")
@@ -1050,7 +1049,7 @@ fn introspect_diff_against_baseline() {
     )
     .expect("rewrite temp script");
 
-    let differs = Command::new(loft_bin())
+    let differs = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg("--diff")
@@ -1087,7 +1086,7 @@ fn introspect_show_types_trace_renders_per_expression() {
                   fn main() { println(\"{first()}\") }\n";
     fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg("--trace")
@@ -1137,7 +1136,7 @@ fn introspect_show_types_renders_deps() {
                   fn main() { println(\"{first()}\") }\n";
     fa::write(&script_path, script).expect("write temp script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--introspect")
         .arg("--show-types")
         .arg(&script_path)
@@ -1177,7 +1176,7 @@ fn tests_runner_fails_on_assert_and_fault() {
          fn test_ok() { assert(1 == 1, \"fine\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--tests")
         .arg(&path)
         .current_dir(workspace_root())
@@ -1209,7 +1208,7 @@ fn tests_runner_expect_fail_still_passes() {
         "// @EXPECT_FAIL: boom\nfn test_intentional() { assert(false, \"boom\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--tests")
         .arg(&path)
         .current_dir(workspace_root())
@@ -1249,7 +1248,7 @@ fn div_by_literal_constant_no_warning() {
          fn main() { println(\"{calc(10.0, 10)}\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&safe)
         .current_dir(workspace_root())
@@ -1272,7 +1271,7 @@ fn div_by_literal_constant_no_warning() {
         "fn main() { c = 10; y = 2; d = c / y; println(\"{d}\"); }\n",
     )
     .expect("write temp file");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&unsafe_)
         .current_dir(workspace_root())
@@ -1300,7 +1299,7 @@ fn issue_333_div_zero_null_continues() {
     )
     .expect("write script");
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(mode)
             .arg(&script)
             .current_dir(workspace_root())
@@ -1335,7 +1334,7 @@ fn issue_333_div_zero_null_continues() {
 /// and are covered where one exists (`verify_self`'s own tests over `local_checks`).
 #[test]
 fn verify_self_exits_two_when_it_verified_nothing() {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("verify-self")
         .current_dir(workspace_root())
         .output()
@@ -1391,7 +1390,7 @@ const EPIPE_MANY: &str = "fn main() { for i in 0..20000 { println(\"line {i} pad
 /// the same thing `| head -3` does, without needing a shell.
 fn run_until_reader_leaves(script: &std::path::Path, dir: &std::path::Path, mode: &str) -> String {
     use std::io::{BufRead, BufReader};
-    let mut child = Command::new(loft_bin())
+    let mut child = loft::platform::process::harness_command(loft_bin())
         .arg(mode)
         .arg(script)
         .current_dir(dir)
@@ -1459,7 +1458,7 @@ fn run_with_merged_pipe(
     use std::io::{BufRead, BufReader};
     let (read_end, write_end) = std::io::pipe().expect("pipe");
     let write_dup = write_end.try_clone().expect("dup the write end");
-    let mut child = Command::new(loft_bin())
+    let mut child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(script)
         .current_dir(dir)
@@ -1536,7 +1535,7 @@ fn a_full_disk_is_still_a_failure() {
     }
     let (dir, script) = epipe_fixture("full", EPIPE_MANY);
     let full = fa::create("/dev/full").expect("open /dev/full");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .current_dir(&dir)
@@ -1584,7 +1583,7 @@ fn a_constant_handed_to_a_writing_parameter_is_copied_for_the_call() {
     )
     .expect("write");
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(mode)
             .arg(&p)
             .env("LOFT_TIMEOUT", "60")
@@ -1647,7 +1646,7 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     let prog = tmp.join("p.loft");
     fa::write(&prog, "fn main() { println(\"hello {40 + 2}\"); }\n").expect("program");
     let run = |bin: &std::path::Path, native: bool, require: bool| {
-        let mut c = Command::new(bin);
+        let mut c = loft::platform::process::harness_command(bin);
         if native {
             c.arg("--native");
         }
@@ -1748,7 +1747,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
     let run = |name: &str, body: &str| {
         let src = tmp.join(format!("{name}.loft"));
         fa::write(&src, format!("use noimpl::*;\nfn main() {{\n{body}\n}}\n")).expect("program");
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&src)
             .arg("--lib")
@@ -1788,7 +1787,7 @@ fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
 #[test]
 fn a_subcommand_answers_help_with_its_usage() {
     for sub in ["fmt", "fix"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args([sub, "--help"])
             .current_dir(workspace_root())
             .output()
@@ -1803,7 +1802,7 @@ fn a_subcommand_answers_help_with_its_usage() {
             stdout.starts_with(&format!("usage: loft {sub} ")),
             "loft {sub} --help printed {stdout:?}"
         );
-        let bogus = Command::new(loft_bin())
+        let bogus = loft::platform::process::harness_command(loft_bin())
             .args([sub, "--no-such-option"])
             .current_dir(workspace_root())
             .output()
@@ -1844,7 +1843,7 @@ fn a_copied_binary_runs_on_its_embedded_stdlib() {
     )
     .expect("program");
     let run = |args: &[&str]| {
-        let out = Command::new(&bin)
+        let out = loft::platform::process::harness_command(&bin)
             .args(args)
             .current_dir(&tmp)
             .env("LOFT_NO_CACHE", "1")

@@ -21,7 +21,8 @@ fn cells() -> PathBuf {
 }
 
 fn loft() -> Command {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // The tests run in parallel on one source file, and its program cache is shared: an
     // `introspect` that read another process's half-written entry listed a truncated program.
     cmd.env("LOFT_TIMEOUT", "120")

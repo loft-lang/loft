@@ -28,7 +28,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -52,7 +51,7 @@ fn emit(tag: &str) -> String {
     let src = std::env::temp_dir().join(format!("loft_993_{tag}_{}.loft", std::process::id()));
     let out_rs = std::env::temp_dir().join(format!("loft_993_{tag}_{}.rs", std::process::id()));
     fa::write(&src, PROBE).expect("write probe");
-    let st = Command::new(loft_bin())
+    let st = loft::platform::process::harness_command(loft_bin())
         .args(["--native-emit", out_rs.to_str().expect("path")])
         .arg(&src)
         .env("LOFT_TIMEOUT", "300")
@@ -156,7 +155,7 @@ fn yield_frame_still_runs_on_both_backends() {
             "fn main() { n = 0; while n < 3 { println(\"frame {n}\"); n += 1; yield_frame(); } }\n",
         )
         .expect("write probe");
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&src)
             .env("LOFT_TIMEOUT", "300")

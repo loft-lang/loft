@@ -22,7 +22,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -48,7 +47,7 @@ fn write_probe(tag: &str) -> PathBuf {
 }
 
 fn run(backend: &str, file: &PathBuf) -> (bool, String, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(file)
         .env("LOFT_TIMEOUT", "300")
@@ -107,7 +106,7 @@ fn an_empty_par_body_runs_its_workers_on_native() {
 fn the_discard_route_lowers_to_the_runtime_helper() {
     let probe = write_probe("emit");
     let out_rs = std::env::temp_dir().join(format!("loft_987_emit_{}.rs", std::process::id()));
-    let status = Command::new(loft_bin())
+    let status = loft::platform::process::harness_command(loft_bin())
         .args(["--native-emit", out_rs.to_str().unwrap()])
         .arg(&probe)
         .env("LOFT_TIMEOUT", "300")

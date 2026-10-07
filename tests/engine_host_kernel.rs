@@ -21,7 +21,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "common/mod.rs"]
@@ -269,7 +269,7 @@ fn run_s3_scenario(port: u16, interpret: bool) -> S2Run {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s3_{port}_{}.err", std::process::id()));
     let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_RELOAD", "1");
     if interpret {
@@ -404,7 +404,11 @@ fn ws_try_recv(stream: &TcpStream) -> Option<String> {
 /// be relied on across runs; with SO_REUSEPORT a stale orphan silently
 /// SHARES the test port and poisons every dial (probe-caught).
 fn s5_kill_stale(stem: &str) {
-    if let Ok(out) = Command::new("pgrep").arg("-f").arg(stem).output() {
+    if let Ok(out) = loft::platform::process::harness_command("pgrep")
+        .arg("-f")
+        .arg(stem)
+        .output()
+    {
         for pid in String::from_utf8_lossy(&out.stdout).split_whitespace() {
             if let Ok(pid) = pid.parse::<i32>() {
                 unsafe { libc::kill(pid, libc::SIGKILL) };
@@ -433,7 +437,7 @@ fn reap_port(port: u16) {
     for _ in 0..40 {
         // LISTENERS only: a client holding a connection to the port — the test itself, once
         // it has dialled the kernel — is not an orphan, and killing it ended the test.
-        let pids: Vec<i32> = match Command::new("lsof")
+        let pids: Vec<i32> = match loft::platform::process::harness_command("lsof")
             .arg("-ti")
             .arg(format!("tcp:{port}"))
             .arg("-sTCP:LISTEN")
@@ -551,7 +555,7 @@ fn main() {{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s5_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_FLIP_FNS", "bump_events")
@@ -651,8 +655,12 @@ fn main() {{
         }
         if Instant::now() >= reconnect_deadline {
             // Diagnostics: who exists, who listens, what the server said.
-            let ps = Command::new("pgrep").args(["-af", "eh_s5_18100"]).output();
-            let ss = Command::new("ss").args(["-tlnp"]).output();
+            let ps = loft::platform::process::harness_command("pgrep")
+                .args(["-af", "eh_s5_18100"])
+                .output();
+            let ss = loft::platform::process::harness_command("ss")
+                .args(["-tlnp"])
+                .output();
             panic!(
                 "never reconnected into the new build\n--- pgrep:\n{}\n--- ss -tlnp:\n{}\n--- server stderr tail:\n{}",
                 String::from_utf8_lossy(&ps.map(|o| o.stdout).unwrap_or_default()),
@@ -752,7 +760,7 @@ fn main() {{
         ),
     )
     .unwrap();
-    let mut scmd = Command::new(loft_bin());
+    let mut scmd = loft::platform::process::harness_command(loft_bin());
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -792,7 +800,7 @@ fn main() {{
     .unwrap();
     let out_path = test_tmp().join(format!("eh_s5c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s5c_cli_{port}.err"));
-    let mut ccmd = Command::new(loft_bin());
+    let mut ccmd = loft::platform::process::harness_command(loft_bin());
     ccmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_DEBUG_CONTROL", "1");
     ccmd.process_group(0);
@@ -941,7 +949,7 @@ fn main() {{
         ),
     )
     .unwrap();
-    let mut scmd = Command::new(loft_bin());
+    let mut scmd = loft::platform::process::harness_command(loft_bin());
     scmd.process_group(0);
     let server = scmd
         .arg("--interpret")
@@ -984,7 +992,7 @@ fn main() {{
     .unwrap();
     let out_path = test_tmp().join(format!("eh_s7c_cli_{port}.out"));
     let err_path = test_tmp().join(format!("eh_s7c_cli_{port}.err"));
-    let mut ccmd = Command::new(loft_bin());
+    let mut ccmd = loft::platform::process::harness_command(loft_bin());
     ccmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
         .env("LOFT_DISPATCH_DEBUG", "1");
@@ -1133,7 +1141,7 @@ fn main() {{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s8_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     match mode {
         "interpreted" => {
@@ -1304,7 +1312,7 @@ fn main() {{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s7_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_LIVE_RELOAD", "1")
@@ -1486,7 +1494,7 @@ fn main() {{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s4_{port}.err"));
     let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     cmd.process_group(0);
     let child = cmd
@@ -1696,7 +1704,7 @@ fn main() {{
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let err_path = test_tmp().join(format!("eh_s2_{port}_{}.err", std::process::id()));
     let err_file = fa::create(&err_path).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
@@ -1776,7 +1784,7 @@ fn main() {{
     )
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1"); // hermetic fixtures
     if interpret {
         cmd.arg("--interpret");
@@ -1843,7 +1851,7 @@ fn main() {
         let prog =
             std::env::temp_dir().join(format!("eh_local_{}_{interpret}.loft", std::process::id()));
         fa::write(&prog, fixture).unwrap();
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.env("LOFT_OFFLINE", "1");
         if interpret {
             cmd.arg("--interpret");
@@ -1921,7 +1929,7 @@ fn main() {{
                 std::process::id()
             ));
             fa::write(&prog, src).unwrap();
-            let mut cmd = Command::new(loft_bin());
+            let mut cmd = loft::platform::process::harness_command(loft_bin());
             cmd.env("LOFT_OFFLINE", "1");
             if interpret {
                 cmd.arg("--interpret");
@@ -1994,7 +2002,7 @@ fn main() {
     let prog = std::env::temp_dir().join(format!("eh_s5local_{}.loft", std::process::id()));
     fa::write(&prog, fixture).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .env("LOFT_OFFLINE", "1")
         .arg("--no-warnings")
         .arg("--lib")
@@ -2062,7 +2070,7 @@ fn main() {{
     )
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_LIVE_RELOAD", "1")
         .env("LOFT_LIVE_FLIP", "1")
@@ -2134,7 +2142,7 @@ fn main() {{
     )
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_LIVE_FLIP", "1")
         .env("LOFT_FLIP_FNS", "hit_me")
@@ -2224,7 +2232,7 @@ fn main() {{
     )
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.env("LOFT_OFFLINE", "1")
         .env("LOFT_DEBUG_CONTROL", "1")
         .process_group(0)

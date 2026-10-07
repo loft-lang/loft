@@ -93,7 +93,7 @@ fn self_update_replaces_the_running_binary() {
     write_manifest(&staged);
 
     // Run the COPY, so the process replacing `bin/loft` is running FROM `bin/loft`.
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -137,7 +137,7 @@ fn a_dry_run_leaves_the_running_binary_alone() {
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--dry-run", "--from"])
         .arg(&staged)
         .output()
@@ -179,7 +179,7 @@ fn a_bundle_that_fails_its_manifest_replaces_nothing() {
     // Corrupt AFTER the manifest is written, so the bundle disagrees with itself.
     write(&staged.join("default").join("a.loft"), b"tampered\n");
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -267,7 +267,7 @@ fn install_sh_installs_the_whole_bundle_and_it_verifies() {
     );
 
     let prefix = root.join("prefix");
-    let out = std::process::Command::new("sh")
+    let out = loft::platform::process::harness_command("sh")
         .arg("scripts/install.sh")
         .arg("--prefix")
         .arg(&prefix)
@@ -352,7 +352,7 @@ fn an_update_that_would_not_be_the_stdlib_that_loads_is_refused() {
     write_manifest(&staged);
     let before = fa::read(&running).unwrap();
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -417,7 +417,7 @@ fn the_same_update_installs_when_no_tree_shadows_it() {
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--from"])
         .arg(&staged)
         .output()
@@ -469,7 +469,7 @@ fn forcing_past_a_shadow_installs_and_names_the_state_it_leaves() {
     write(&staged.join("default").join("a.loft"), b"new\n");
     write_manifest(&staged);
 
-    let out = std::process::Command::new(&running)
+    let out = loft::platform::process::harness_command(&running)
         .args(["self-update", "--force", "--from"])
         .arg(&staged)
         .output()

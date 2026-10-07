@@ -32,7 +32,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     let mut p = std::env::current_exe().expect("test binary path");
@@ -52,7 +51,7 @@ fn run(src: &str, backend: &str, tag: &str) -> String {
     fa::create_dir_all(&dir).expect("scratch dir");
     let file = dir.join("p.loft");
     fa::write(&file, src).expect("write probe");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&file)
         .env("LOFT_STRICT_STORES", "1")

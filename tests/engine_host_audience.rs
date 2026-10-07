@@ -10,7 +10,7 @@ use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 mod common;
@@ -104,7 +104,7 @@ fn spawn_server(script: &str) -> Guard {
     fa::write(pkg.join("loft.lock"), SERVER_LOCK).expect("write lock");
     let tmp = pkg.join(format!("eh_aud_{}_{name}", std::process::id()));
     fa::write(&tmp, src).expect("write fixture copy");
-    let child = Command::new(root().join("target/release/loft"))
+    let child = loft::platform::process::harness_command(root().join("target/release/loft"))
         .env("LOFT_OFFLINE", "1") // hermetic: no registry fetches, installed-only
         .args(["--interpret", "--no-warnings", "--lib"])
         .arg(root().join("lib"))
@@ -139,7 +139,7 @@ fn server_available() -> bool {
     if fa::write(&probe, body).is_err() {
         return false;
     }
-    Command::new(root().join("target/release/loft"))
+    loft::platform::process::harness_command(root().join("target/release/loft"))
         .env("LOFT_OFFLINE", "1")
         .args(["--interpret", "--no-warnings"])
         .arg(&probe)

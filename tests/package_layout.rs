@@ -297,7 +297,7 @@ fn struct_fields_resolve_in_use_loaded_package() {
 #[test]
 fn declared_dep_beats_same_named_package_file() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let out = std::process::Command::new(root.join("target/release/loft"))
+    let out = loft::platform::process::harness_command(root.join("target/release/loft"))
         .args(["--interpret", "--no-warnings"])
         .arg(root.join("tests/fixtures/dep_shadow/consumer/shadowlib.loft"))
         .current_dir(&root)
@@ -678,7 +678,7 @@ fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
                 format!("use pkg;\nuse errand::*;\nuse spawn::*;\nfn main() {{ {body} }}\n"),
             )
             .unwrap();
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
                 .arg(root.join("tests/t.loft"))
                 .env("LOFT_NO_CACHE", "1")

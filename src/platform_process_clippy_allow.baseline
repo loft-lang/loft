@@ -1,0 +1,4 @@
+# Files still spelling std::process::Command::new outside platform::process, each with a
+# marked #![allow(clippy::disallowed_methods, …)] (@PLN184 P6).
+# Only shrinks: see src/platform_process_guard.rs.  Format: <count> <file>
+3 build.rs

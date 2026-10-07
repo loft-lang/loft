@@ -8,7 +8,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -52,7 +51,7 @@ fn first_run_creates_cache_with_safe_permissions() {
     let marker = "P254_FRESH_CACHE";
     let script = write_marker_script(&dir, marker);
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -101,7 +100,7 @@ fn second_run_reuses_safe_cache() {
     let script = write_marker_script(&dir, marker);
 
     // Prime the cache.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -119,7 +118,7 @@ fn second_run_reuses_safe_cache() {
     // Second run — should reuse the cached binary.  A reuse touches the entry (the cache
     // keeps its most recently used binaries), so the mtime is no longer the witness; the
     // run's own verdict is.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .env("LOFT_TIMING", "1")
@@ -158,7 +157,7 @@ fn group_writable_cache_is_recompiled() {
     let script = write_marker_script(&dir, marker);
 
     // Prime the cache.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -186,7 +185,7 @@ fn group_writable_cache_is_recompiled() {
     // Sleep so a recompile produces a strictly newer mtime.
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -237,7 +236,7 @@ fn poisoned_cache_binary_is_not_executed() {
     let script = write_marker_script(&dir, marker);
 
     // Prime the cache so we know the cache filename loft will look for.
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -266,7 +265,7 @@ fn poisoned_cache_binary_is_not_executed() {
     fa::set_permissions(&cached, std::fs::Permissions::from_mode(0o777))
         .expect("loosen poison mode");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .output()
@@ -299,7 +298,7 @@ fn no_cache_env_var_skips_cache() {
     let marker = "P254_NO_CACHE_ENV";
     let script = write_marker_script(&dir, marker);
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--native")
         .arg(&script)
         .env("LOFT_NATIVE_NO_CACHE", "1")

@@ -28,7 +28,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -86,7 +85,7 @@ fn review(tag: &str, prev: &str, cur: &str, expect: &str, expect_meta: &str) -> 
     let c = dir.join("cur.json");
     fa::write(&p, prev).expect("write prev");
     fa::write(&c, cur).expect("write cur");
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(&script)
         .arg(&p)
         .arg(&c)

@@ -8,7 +8,7 @@
 
 use loft::file_access as fa;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 
 use loft::json::{self, Parsed};
 
@@ -20,7 +20,7 @@ struct Session {
 
 impl Session {
     fn start(home: &std::path::Path) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_loft-lsp"))
+        let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-lsp"))
             .env("LOFT_HOME", home)
             // Resolution never reaches the network: a library the test needs is installed
             // under its own LOFT_HOME.

@@ -14,7 +14,7 @@ use loft::file_access as fa;
 use loft::repl::ReplSession;
 use loft::repl_doc;
 use std::io::Write as _;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// The words a reader sees, Markdown's punctuation and the terminal's decoration removed:
 /// backticks, emphasis and heading marks, list bullets, fences, and the underline the terminal
@@ -216,7 +216,7 @@ fn ops_and_doc_answer_from_the_session() {
 
 #[test]
 fn an_example_runs_in_a_scratch_session() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("repl")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

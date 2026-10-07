@@ -161,7 +161,7 @@ fn loft_run(
 /// [`loft_run`] as a plain process, for a cell that kills it from outside.
 fn loft_child(dir: &Path) -> Command {
     let (args, env) = loft_run(dir);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+    let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
     cmd.args(args)
         .envs(env)
         .stdin(Stdio::null())
@@ -172,7 +172,7 @@ fn loft_child(dir: &Path) -> Command {
 
 /// This binary as a driver that starts the grandchild as `role` says, then waits.
 fn driver_child(dir: &Path, role: &str) -> Command {
-    let mut cmd = Command::new(exe());
+    let mut cmd = loft::platform::process::harness_command(exe());
     cmd.args(role_args("driver_role"))
         .env(ROLE, role)
         .env(DIR, dir)
@@ -236,7 +236,7 @@ fn spawner_role() {
     if std::env::var(ROLE).as_deref() != Ok("spawner") {
         return;
     }
-    let mut grandchild = Command::new(exe())
+    let mut grandchild = loft::platform::process::harness_command(exe())
         .args(role_args("beat_role"))
         .env(ROLE, "beat")
         .stdin(Stdio::null())

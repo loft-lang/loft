@@ -20,7 +20,6 @@ use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::thread;
 
 /// Serve `bytes` over a minimal HTTP/1.1 server that honours `Range: bytes=a-b`
@@ -150,7 +149,7 @@ fn sorted_script() -> PathBuf {
 /// of `run_smoke`, parameterised by the script so the hash and sorted cases
 /// share one driver.
 fn run_mode(script: &Path, path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -177,7 +176,7 @@ fn scratch(test_name: &str) -> PathBuf {
 }
 
 fn run_smoke(path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(smoke_script())
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -196,7 +195,7 @@ fn run_smoke(path: &Path, mode: &str) -> (String, i32) {
 
 /// Run an arbitrary persist script on a chosen backend with the scratch path.
 fn run_script(script: &Path, backend: &str, path: &Path) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -258,7 +257,7 @@ fn compaction_on_load_returns_both_backends() {
             backend.trim_start_matches('-')
         ));
         let path = dir.join("pack.store");
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -444,7 +443,7 @@ fn trie_persist_lays_out_and_keeps_every_answer() {
     const KERK: &str = "kerk=kerk,kerkdijk,kerkhof,kerklaan,kerkpad,kerkplein,\
                         kerksloot,kerkstraat,kerkweg";
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -539,7 +538,7 @@ fn run_mode_backend_env(
     mode: &str,
     env: &[(&str, &str)],
 ) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -839,7 +838,7 @@ fn a_bulk_record_read_loads_exactly_what_the_word_at_a_time_read_did() {
         let (bulk, c1) = run_mode_backend(backend, &vecstruct_script(), &path, "loadkey");
         assert_eq!(c1, 0, "{backend} bulk exit: {bulk:?}");
         let wordwise = {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(vecstruct_script())
                 .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1416,7 +1415,7 @@ fn store_load_url_refuses_a_changed_layout_both_backends() {
     let http_url = serve_ranges(bytes, Some(sidecar));
 
     let run = |backend: &str, script: &Path, url: &str, pin: &str| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1525,7 +1524,7 @@ fn store_load_url_verifies_sha_before_adopting_both_backends() {
     let wrong = "0".repeat(64);
 
     let run = |backend: &str, sha_arg: &str| -> (String, i32) {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(load_script())
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1643,7 +1642,7 @@ fn store_load_url_trusted_fetches_over_http_both_backends() {
     let url = serve_ranges(fa::read(&path).unwrap(), None);
 
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(load_script())
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -1795,7 +1794,7 @@ fn handoff_text_residency_reads_on_native_backend() {
 /// `run_mode` that also hands back stderr — the refusal channel the paged
 /// loaders warn on.
 fn run_mode_with_stderr(script: &Path, path: &Path, mode: &str) -> (String, String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -1886,7 +1885,7 @@ fn persist_size(test: &str, n: u32, per: u32, mode: &str, seed: Option<&str>) ->
 fn persist_size_at(path: &Path, n: u32, per: u32, mode: &str, seed: Option<&str>) -> (u64, String) {
     let path = path.to_path_buf();
     let script = workspace_root().join("tests/scripts/store_persist_size_710.loft");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -2227,7 +2226,7 @@ fn b0_run(
     seed: Option<&str>,
 ) -> B0 {
     let script = workspace_root().join("tests/scripts/store_digest_b0.loft");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -2445,7 +2444,7 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
     let mut per_backend: Vec<Vec<Row>> = Vec::new();
     for backend in ["--interpret", "--native"] {
         let dir = scratch(&format!("b1_{}", backend.trim_start_matches('-')));
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("m"))
@@ -2572,7 +2571,7 @@ fn store_rebuild_b1_recovers_the_interior_and_is_idempotent() {
 fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
     let script = workspace_root().join("tests/scripts/store_compact_b2.loft");
     let run = |backend: &str, dir: &Path, shape: &str, compact: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("c"))
@@ -2690,7 +2689,7 @@ fn store_compact_b2_rebuilds_at_load_without_losing_anything() {
 fn store_compact_b3_shrinks_a_bound_file_across_runs() {
     let script = workspace_root().join("tests/scripts/store_compact_bound_b3.loft");
     let run = |backend: &str, path: &Path, mode: &str, compact: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", path)
@@ -2832,7 +2831,7 @@ fn store_compact_b3_shrinks_a_bound_file_across_runs() {
 fn persisted_image_keeps_its_slack_after_store_reclaim() {
     let script = workspace_root().join("tests/scripts/store_bind_slack.loft");
     let run = |backend: &str, dir: &Path, reclaim: bool| -> (i64, i64) {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("s.store"))
@@ -2907,7 +2906,7 @@ fn persisted_image_keeps_its_slack_after_store_reclaim() {
 fn reclaim_and_compaction_refuse_a_sealed_store_and_a_floor_sized_one() {
     let script = workspace_root().join("tests/scripts/store_reclaim_refusals.loft");
     let run_grow = |backend: &str, dir: &Path, mode: &str, seal: bool, n: &str, grow: bool| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("r.store"))
@@ -3057,7 +3056,7 @@ fn compaction_is_correct_for_every_collection_kind_it_accepts() {
         ("spatial", "compacted"),
     ];
     let run = |backend: &str, dir: &Path, kind: &str, reload: bool| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("k.store"))
@@ -3197,7 +3196,7 @@ fn fixed_hash_seed_makes_a_persisted_store_reproducible() {
 fn reading_a_collection_leaks_nothing_into_its_store() {
     let script = workspace_root().join("tests/scripts/store_iter_scratch.loft");
     let run = |backend: &str, dir: &Path, mode: &str, reclaim: bool| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", dir.join("s.store"))
@@ -3333,7 +3332,7 @@ fn bound_store_file_is_content_sized_when_the_binding_is_released() {
     let script = workspace_root().join("tests/scripts/store_bind_release_size.loft");
     let run = |backend: &str, dir: &Path, n: u32, reclaim: bool| -> (u64, String) {
         let path = dir.join(format!("s{n}_{}.store", u8::from(reclaim)));
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -3693,7 +3692,7 @@ fn a_refused_lazy_binding_is_visible_to_the_program_both_backends() {
 /// `run_mode_backend`'s sibling for the @PLN129 script, which reads its mode
 /// from `LOFT_LAZY_MODE` so it cannot be confused with the persist scripts'.
 fn run_lazy(backend: &str, script: &Path, path: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_PERSIST_TEST_PATH", path)
@@ -3783,7 +3782,7 @@ fn run_graph(
     companies: &Path,
     mode: &str,
 ) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(script)
         .env("LOFT_GRAPH_PERSONS", persons)
@@ -3828,7 +3827,7 @@ fn a_pointer_bearing_element_relocates_in_bulk() {
     let path = dir.join("p");
 
     let run = |mode: &str, wordwise: bool| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -3950,7 +3949,7 @@ fn a_prefetched_page_is_resident_when_it_is_read() {
     let path = dir.join("p");
 
     let run = |mode: &str, cap: Option<&str>| -> String {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret")
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -4071,7 +4070,7 @@ fn store_load_keys_round_trip_depth_is_measurable() {
     // and `depth=`, the number this test exists for — go to stderr, which that helper
     // discards.
     let started = std::time::Instant::now();
-    let raw = Command::new(loft_bin())
+    let raw = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(load_script())
         .env("LOFT_PERSIST_TEST_PATH", &url)
@@ -4150,7 +4149,7 @@ fn store_load_keys_round_trip_depth_is_measurable() {
 fn store_verify_reads_a_field_collection_as_itself_both_backends() {
     let script = workspace_root().join("tests/scripts/790-verify-field-collection.loft");
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .current_dir(workspace_root())
@@ -4216,7 +4215,7 @@ fn a_spatial_survives_the_rebuild_and_comes_out_in_morton_order() {
         let copied = dir.join("copied.store");
 
         let run = |s: &Path, mode: &str, img: &Path| -> String {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(s)
                 .env("LOFT_PERSIST_TEST_PATH", &bound)
@@ -4328,7 +4327,7 @@ fn a_trie_survives_the_rebuild_and_comes_out_in_key_order() {
         let copied = dir.join("copied.store");
 
         let run = |s: &Path, mode: &str, img: &Path| -> String {
-            let out = Command::new(loft_bin())
+            let out = loft::platform::process::harness_command(loft_bin())
                 .arg(backend)
                 .arg(s)
                 .env("LOFT_PERSIST_TEST_PATH", &bound)
@@ -4436,7 +4435,7 @@ fn store_load_keys_text_batches_what_the_loop_repeats() {
     let path = dir.join("pack");
 
     let run = |backend: &str, mode: &str| -> String {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)
@@ -4539,7 +4538,7 @@ fn store_load_keys_text_serves_a_trie() {
 
     for backend in ["--interpret", "--native"] {
         let _ = fa::remove_file(dir.join("pack.trie"));
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(&script)
             .env("LOFT_PERSIST_TEST_PATH", &path)

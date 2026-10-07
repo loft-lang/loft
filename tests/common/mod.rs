@@ -334,7 +334,7 @@ fn ephemeral_floor() -> u16 {
 /// test that is still running.
 #[allow(dead_code)]
 fn holders_owned_by_this_checkout(port: u16) -> Option<Vec<i32>> {
-    let out = std::process::Command::new("lsof")
+    let out = loft::platform::process::harness_command("lsof")
         .arg("-ti")
         .arg(format!("tcp:{port}"))
         .output()
@@ -768,7 +768,7 @@ pub fn check_learn_sample(sample: &LearnSample, mode: &str, timeout: &str) -> Re
     let name = format!("learn_loft_line_{}.loft", sample.line);
     let path = dir.join(&name);
     fa::write(&path, &sample.code).map_err(|e| e.to_string())?;
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg(mode)
         .arg(&path)
         .env("LOFT_TIMEOUT", timeout)

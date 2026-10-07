@@ -9,7 +9,6 @@
 //! proof would store a runtime null into a non-null slot).
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -20,7 +19,7 @@ fn loft_bin() -> std::path::PathBuf {
 fn compile(tag: &str, src: &str, domain_on: bool) -> (bool, String) {
     let path = std::env::temp_dir().join(format!("loft_mathdom_{}_{tag}.loft", std::process::id()));
     fa::write(&path, src).expect("write temp");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(&path)
         .current_dir(env!("CARGO_MANIFEST_DIR"));

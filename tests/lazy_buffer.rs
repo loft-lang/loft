@@ -12,7 +12,7 @@
 //! entry init is the non-allocating sentinel.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str =
     "doc/claude/plans/164-activation-arena/bytecode-comparisons/A0-lazy-buffer-cells.loft";
@@ -41,7 +41,8 @@ const REWRITTEN: [(&str, usize); 13] = [
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args).env("LOFT_TIMEOUT", "120");
     for (k, v) in env {
         cmd.env(k, v);

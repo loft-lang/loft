@@ -20,7 +20,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -50,7 +49,7 @@ impl Case {
     /// how the record-format case first reported eight lines from four calls.
     fn run(&self, backend: &str) -> (String, String) {
         let _ = fa::remove_file(self.log_path());
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg(backend)
             .arg(self.dir.join("app.loft"))
             .env("LOFT_TIMEOUT", "300")

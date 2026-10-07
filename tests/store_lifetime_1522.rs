@@ -20,7 +20,6 @@
 //! leak warning is what caught it.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 const GUARD: &str = "1522-a-rebind-releases-the-buffer-it-adopted.loft";
 const OK: &str = "1522 rebind releases the buffer it adopted OK";
@@ -33,7 +32,8 @@ fn script() -> PathBuf {
 
 /// Run the guard on `backend` with `env`; return `(exit ok, stdout, stderr)`.
 fn run(backend: &str, env: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg(backend)
         .arg(script())
         .env("LOFT_TIMEOUT", "300")

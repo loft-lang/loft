@@ -31,7 +31,7 @@ fn run(src: &str) -> String {
     fa::create_dir_all(&dir).unwrap();
     let file = dir.join(format!("extract_run_{}.loft", src.len()));
     fa::write(&file, src).unwrap();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--interpret")
         .arg(&file)
         .env("LOFT_TIMEOUT", "30")

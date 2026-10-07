@@ -25,7 +25,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -53,7 +52,7 @@ fn skip(reason: &str) {
 }
 
 fn has_cmd(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -180,7 +179,7 @@ fn crystal_editor_gl_matches_gold() {
     let root = workspace_root();
     // A program that does not compile produces no screenshot either, and the
     // screenshot check below reads that as "no software GL".  Ask first.
-    let check = Command::new(loft_bin())
+    let check = loft::platform::process::harness_command(loft_bin())
         .args(["--no-warnings", "--path"])
         .arg(format!("{}/", root.display()))
         .arg("--lib")
@@ -196,7 +195,7 @@ fn crystal_editor_gl_matches_gold() {
     );
     let shot = PathBuf::from("/tmp/crystal_editor_gold.png");
     let _ = fa::remove_file(&shot);
-    let out = Command::new("xvfb-run")
+    let out = loft::platform::process::harness_command("xvfb-run")
         .args([
             "-a",
             "-s",

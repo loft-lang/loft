@@ -12,7 +12,6 @@
 //! its rate limit by (file, line), and on `--native` the line is the running function's.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -47,7 +46,7 @@ fn run(name: &str, body: &str, backend: &str) -> (String, String) {
     let log_path = dir.join("log.txt");
     let conf = format!("[log]\nfile = {}\nlevel = info\n", log_path.display());
     fa::write(dir.join("log.conf"), conf).expect("write log.conf");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script)
         .current_dir(&dir)

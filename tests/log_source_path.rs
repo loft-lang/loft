@@ -27,7 +27,6 @@
 
 use loft::file_access as fa;
 use std::path::Path;
-use std::process::Command;
 
 /// Build a program at `<root>/sub/app.loft` with `log.conf` beside it, run it, and return
 /// the log file's contents.  `manifest` decides whether the tree is a project.
@@ -55,7 +54,7 @@ fn run(tag: &str, manifest: bool, levels: Option<&str>) -> String {
         None => "[log]\nfile = log.txt\nlevel = info\n".to_string(),
     };
     fa::write(root.join("sub/log.conf"), conf).expect("conf");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", root.join("sub/app.loft").to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
         .current_dir(&root)
@@ -149,7 +148,7 @@ fn a_diagnostic_keeps_its_full_path() {
     fa::create_dir_all(&root).expect("mkdir");
     let prog = root.join("bad.loft");
     fa::write(&prog, "fn main() {\n  panic(\"boom\");\n}\n").expect("prog");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", prog.to_str().unwrap()])
         .env("LOFT_TIMEOUT", "120")
         .output()

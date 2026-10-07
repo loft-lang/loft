@@ -6,7 +6,6 @@
 //! `LOFT_TRACE_FORWARD_WALK`, so a walk that stops being rewritten — or one rewritten where the
 //! body can resize the vector — is a red test.  It also runs the cells with the rewrite off.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft";
 
@@ -30,7 +29,8 @@ const WALKS: &[(&str, &str, bool)] = &[
 
 fn loft(env: &[(&str, &str)]) -> (String, String, bool) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

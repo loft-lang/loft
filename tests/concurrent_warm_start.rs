@@ -9,10 +9,10 @@
 //! program cache misses and the shared stdlib image is what they meet.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 fn start(dir: &std::path::Path) -> std::process::Child {
-    Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(dir.join("p.loft"))
         .current_dir(env!("CARGO_MANIFEST_DIR"))

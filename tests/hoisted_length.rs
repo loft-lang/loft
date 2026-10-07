@@ -10,7 +10,6 @@
 //! rewrite alone halves a 200 000-element sum loop (645k → 330k ns/op).
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 fn sum_hoisted(xs: const vector<integer>) -> integer { s = 0; for x in xs { s = s + x; } s }
@@ -20,14 +19,15 @@ fn main() { v: vector<integer> = [3, 5, 7]; println(\"{sum_hoisted(v)} {len(copy
 ";
 
 fn emit(src: &std::path::Path, out: &std::path::Path) -> String {
-    let status = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--native-emit")
-        .arg(out)
-        .arg("--lean")
-        .arg(src)
-        .env("LOFT_TIMEOUT", "120")
-        .status()
-        .expect("spawn loft --native-emit");
+    let status =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--native-emit")
+            .arg(out)
+            .arg("--lean")
+            .arg(src)
+            .env("LOFT_TIMEOUT", "120")
+            .status()
+            .expect("spawn loft --native-emit");
     assert!(status.success(), "loft --native-emit failed");
     fa::read_to_string(out).expect("read the emitted Rust")
 }

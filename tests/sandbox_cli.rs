@@ -8,7 +8,6 @@
 //! the forced interpret-only was dropped, an admitted script is fault-free on both).
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -24,7 +23,7 @@ fn run(name: &str, prog: &str, toml: &str, native: bool) -> (bool, String) {
     let _ = fa::create_dir_all(&dir);
     fa::write(dir.join("prog.loft"), prog).unwrap();
     fa::write(dir.join("loft.toml"), toml).unwrap();
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     if native {
         cmd.arg("--native");
     }
@@ -134,7 +133,7 @@ fn warm_program_cache_does_not_bypass_admission() {
 
     let run = |toml: &str| -> (bool, String) {
         fa::write(dir.join("loft.toml"), toml).unwrap();
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .env_remove("LOFT_NO_CACHE")
             .env("LOFT_HOME", &home)
             .arg("--timeout")
@@ -198,7 +197,7 @@ fn sandbox_check_reports_verdict_without_executing() {
         let _ = fa::create_dir_all(&dir);
         fa::write(dir.join("prog.loft"), prog).unwrap();
         fa::write(dir.join("loft.toml"), toml).unwrap();
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("sandbox-check")
             .arg("--timeout")
             .arg("60")
@@ -292,7 +291,7 @@ fn a_c_binding_is_gated_by_native_ffi_not_by_a_capability_grant() {
 
     let verdict = |toml: &str| -> (bool, String) {
         fa::write(dir.join("loft.toml"), toml).unwrap();
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg("--timeout")
             .arg("60")

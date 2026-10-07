@@ -11,7 +11,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -66,7 +65,7 @@ fn path_without_the_test_binary() -> std::ffi::OsString {
 }
 
 fn run(home: &Path, args: &[&str]) -> (String, bool) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(args)
         // `loft_home()` appends `.loft` itself, so this is the level ABOVE it.
         .env("LOFT_HOME", home)

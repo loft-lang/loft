@@ -15,7 +15,7 @@ use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::{Duration, Instant};
 
 #[path = "common/mod.rs"]
@@ -167,7 +167,7 @@ fn live_reload_swaps_a_running_fn() {
     fa::write(&prog, program(BODY_A, sig)).unwrap();
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child = Command::new(loft_bin())
+    let child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")
@@ -242,7 +242,7 @@ fn reload_installs_from_foreign_cwd_with_warnings() {
     );
     let prog = dir.join("warny.loft");
     fa::write(&prog, prog_src).unwrap();
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .env("LOFT_LIVE_RELOAD", "1")
         .env("LOFT_OFFLINE", "1")
         .args(["--interpret"])
@@ -317,7 +317,7 @@ fn main() {
     let out_path = dir.join("stdout.txt");
     let out_file = fa::create(&out_path).unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let child = Command::new(loft_bin())
+    let child = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg("--no-warnings")
         .arg("--lib")

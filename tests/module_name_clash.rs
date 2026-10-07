@@ -362,7 +362,7 @@ fn the_collision_no_longer_breaks_the_build() {
     if bin.ends_with("deps") {
         bin.pop();
     }
-    let out = std::process::Command::new(bin.join("loft"))
+    let out = loft::platform::process::harness_command(bin.join("loft"))
         .arg("test")
         .current_dir(&top)
         .env("LOFT_TIMEOUT", "300")
@@ -488,7 +488,7 @@ fn use_self_tree(tag: &str, dep_entry: &str) -> String {
     if bin.ends_with("deps") {
         bin.pop();
     }
-    let out = std::process::Command::new(bin.join("loft"))
+    let out = loft::platform::process::harness_command(bin.join("loft"))
         .arg("test")
         .current_dir(&top)
         .env("LOFT_TIMEOUT", "300")
@@ -615,7 +615,7 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     if bin.ends_with("deps") {
         bin.pop();
     }
-    let out = std::process::Command::new(bin.join("loft"))
+    let out = loft::platform::process::harness_command(bin.join("loft"))
         .arg("test")
         .current_dir(&top)
         .env("LOFT_TIMEOUT", "300")
@@ -865,7 +865,7 @@ fn the_clash_advice_outside_a_package_does_not_prescribe_self() {
     if bin.ends_with("deps") {
         bin.pop();
     }
-    let out = std::process::Command::new(bin.join("loft"))
+    let out = loft::platform::process::harness_command(bin.join("loft"))
         .args(["--interpret", "--path", env!("CARGO_MANIFEST_DIR"), "--lib"])
         .arg(&a)
         .arg(b.join("bare.loft"))
@@ -1032,7 +1032,7 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
         )
         .unwrap();
 
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args(["--interpret", "src/main.loft"])
             .env("LOFT_NO_CACHE", "1")
             .env("LOFT_TIMEOUT", "120")
@@ -1059,8 +1059,6 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
 /// Build `dep` (its own `catalogue` answering 41) + `con` (a `catalogue` of its own, and
 /// `dep` as a path dependency), run `con`'s main, and return everything it said.
 fn captured_module_run(tag: &str, con_catalogue: &str, con_main: &str) -> String {
-    use std::process::Command;
-
     let root = std::env::temp_dir().join(format!("loft_949_{tag}_{}", std::process::id()));
     let _ = fa::remove_dir_all(&root);
     let dep = root.join("dep");
@@ -1094,7 +1092,7 @@ fn captured_module_run(tag: &str, con_catalogue: &str, con_main: &str) -> String
     fa::write(con.join("src/catalogue.loft"), con_catalogue).unwrap();
     fa::write(con.join("src/main.loft"), con_main).unwrap();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--interpret", "src/main.loft"])
         // No program cache: a directory that has been run before under a different
         // arrangement of `use` lines answers from the cache, and the cached answer is the

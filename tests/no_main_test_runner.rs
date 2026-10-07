@@ -16,7 +16,6 @@
 // missing entry a clean message, not a crash.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/loft")
@@ -45,7 +44,7 @@ fn no_main_runs_zero_param_fns_and_never_panics() {
     )
     .expect("write source");
 
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--interpret"])
         .arg(&src)
         .output()

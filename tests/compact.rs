@@ -8,7 +8,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft";
@@ -33,7 +32,8 @@ const EXPECTED: &[(&str, usize)] = &[
 fn emit(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let out = std::env::temp_dir().join(format!("compact_{}_{}.rs", std::process::id(), env.len()));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

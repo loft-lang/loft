@@ -9,7 +9,6 @@
 //! must be able to FAIL, so a hand-made double holder is fed to it and must be refused.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CORPORA: &[&str] = &[
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-l-in-place-callee-cells.loft",
@@ -51,13 +50,14 @@ fn root() -> PathBuf {
 }
 
 fn emit(src: &Path, out: &Path) -> String {
-    let status = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-        .arg("--native-emit")
-        .arg(out)
-        .arg(src)
-        .env("LOFT_TIMEOUT", "180")
-        .output()
-        .expect("spawn loft --native-emit");
+    let status =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+            .arg("--native-emit")
+            .arg(out)
+            .arg(src)
+            .env("LOFT_TIMEOUT", "180")
+            .output()
+            .expect("spawn loft --native-emit");
     assert!(
         fa::exists(out),
         "no Rust emitted for {} (exit {:?}): {}",
@@ -70,7 +70,7 @@ fn emit(src: &Path, out: &Path) -> String {
 
 /// Run the audit; answers `(exit ok, summary line, full output)`.
 fn audit(rust: &Path) -> (bool, String, String) {
-    let out = Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg(root().join("scripts/emission_audit.py"))
         .arg(rust)
         .current_dir(root())

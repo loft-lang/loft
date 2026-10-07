@@ -16,7 +16,6 @@
 use loft::file_access as fa;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// THE GOLDEN: the frozen E1 code set + a minimal program that triggers each. Adding /
@@ -579,7 +578,7 @@ const EDIT_BLOCKED: &[(&str, &str)] = &[
 fn compact_output(prog: &str) -> String {
     let path = std::env::temp_dir().join(format!("loft_e1_{}.loft", std::process::id()));
     fa::write(&path, prog).unwrap();
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_ERRORS", "compact")
@@ -613,7 +612,7 @@ fn fix_output(prog: &str) -> String {
         NEXT_FIX.fetch_add(1, Ordering::Relaxed)
     ));
     fa::write(&path, prog).unwrap();
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("fix")
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
@@ -641,7 +640,7 @@ fn explain_output(prog: &str) -> String {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fa::write(&path, prog).unwrap();
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "--check", "--explain"])
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
@@ -784,7 +783,7 @@ fn main() {\n\
 }\n";
     let path = std::env::temp_dir().join(format!("loft_e1_fix1003_{}.loft", std::process::id()));
     fa::write(&path, TWO).unwrap();
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("fix")
         .arg("--apply")
         .arg(&path)
@@ -806,7 +805,7 @@ fn main() {\n\
         !rewritten.contains("??"),
         "both defaults must be gone, got:\n{rewritten}"
     );
-    let run = Command::new(loft_bin())
+    let run = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_TIMEOUT", "60")

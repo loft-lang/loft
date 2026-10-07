@@ -12,7 +12,6 @@
 //! to the all-interpreted run.  This is the headline of Arc N realised end-to-end.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 /// Copy `pkgs` out of `tests/lib` into a `lib/` of this test's own, and answer the
 /// path to pass as `--lib`.
@@ -84,7 +83,11 @@ fn cdylib_present(dir: &std::path::Path) -> bool {
 #[test]
 fn use_compile_native_library_dispatches_on_real_binary() {
     // The binary auto-builds the cdylib via rustc; skip where it isn't available.
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -115,7 +118,7 @@ fn use_compile_native_library_dispatches_on_real_binary() {
     let native_auto = lib.join("mathnative/native-auto");
     let native_auto = native_auto.as_path();
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--lib")
         .arg(&lib)
         .arg(&prog)
@@ -163,7 +166,11 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 // @speed 1.2
 #[test]
 fn mixed_library_dispatches_native_and_interprets_rest() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -186,7 +193,7 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     let native_auto = std::path::Path::new("tests/lib/mathmixed/native-auto");
     let _ = fa::remove_dir_all(native_auto);
 
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--lib")
         .arg("tests/lib")
         .arg(&prog)
@@ -261,7 +268,7 @@ fn native_build_failure_hard_fails_default_and_under_require() {
     .unwrap();
 
     let run = |require: bool| {
-        let mut c = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut c = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         c.arg("--lib")
             .arg("tests/lib")
             .arg(&prog)
@@ -331,7 +338,7 @@ fn require_native_errors_when_rustc_is_absent() {
 
     // Empty PATH ⇒ `rustc` (invoked by bare name) is NotFound; loft itself runs
     // because it is launched by absolute path.  Cache bypass forces a compile attempt.
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native")
         .arg(&prog)
         .env("PATH", "")
@@ -372,7 +379,11 @@ fn require_native_errors_when_rustc_is_absent() {
 /// entry points from the same package in sequence both succeed cleanly.
 #[test]
 fn entry_package_is_never_auto_native_compiled() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -384,7 +395,7 @@ fn entry_package_is_never_auto_native_compiled() {
     let _ = fa::remove_dir_all(&native_auto);
 
     let run = |entry: &str| {
-        Command::new(env!("CARGO_BIN_EXE_loft"))
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--lib")
             .arg("tests/lib")
             .arg(pkg.join(entry))
@@ -445,7 +456,11 @@ fn entry_package_is_never_auto_native_compiled() {
 /// must notice the layout changed and rebuild, so the write stays 4 bytes wide.
 #[test]
 fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -472,7 +487,7 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
     .unwrap();
 
     let run = |entry: &str, out: &std::path::Path| {
-        Command::new(env!("CARGO_BIN_EXE_loft"))
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("--lib")
             .arg("tests/lib")
@@ -529,7 +544,11 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
 /// generated bridge asks for — beside the answer the program must give on both backends.
 #[test]
 fn a_shared_bridge_mints_the_type_its_library_registered() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -553,7 +572,7 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     )
     .unwrap();
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(mode)
             .arg("--lib")
             .arg(&lib)
@@ -611,7 +630,11 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
 // @speed 3.3
 #[test]
 fn a_foreign_context_artifact_is_rejected_not_adopted() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -642,7 +665,7 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     .unwrap();
 
     let run = |prog: &std::path::Path| {
-        Command::new(env!("CARGO_BIN_EXE_loft"))
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--lib")
             .arg(&lib)
             .arg(prog)
@@ -757,7 +780,11 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
 /// `default/`: exactly the "same rlib, different executable" shape of the report.
 #[test]
 fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -810,7 +837,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
     )
     .unwrap();
     let run = |exe: &std::path::Path| {
-        Command::new(exe)
+        loft::platform::process::harness_command(exe)
             .arg("--lib")
             .arg(&lib)
             .arg(&prog)
@@ -897,7 +924,11 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
 /// stay; a library that only exports `KTile` does not reproduce this.
 #[test]
 fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (--native needs it)");
         return;
     }
@@ -941,7 +972,7 @@ fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
 
     let mut outputs = Vec::new();
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(mode)
             .arg("--lib")
             .arg("tests/lib")
@@ -998,7 +1029,11 @@ fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
 /// library's own API is what proves the element type survived the round trip.
 #[test]
 fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable (--native needs it)");
         return;
     }
@@ -1031,7 +1066,7 @@ fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
 
     let mut outputs = Vec::new();
     for mode in ["--interpret", "--native"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(mode)
             .arg("--lib")
             .arg("tests/lib")
@@ -1075,7 +1110,11 @@ fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
 // @speed 12.8
 #[test]
 fn a_packages_artifact_directory_stays_bounded() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -1124,7 +1163,7 @@ fn a_packages_artifact_directory_stays_bounded() {
             format!("use mathnative::*;\n{pad}fn main() {{ println(\"{{double(21)}}\"); }}\n"),
         )
         .unwrap();
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--lib")
             .arg(&lib)
             .arg(&prog)
@@ -1234,7 +1273,7 @@ fn write_decoy_cdylib(at: &std::path::Path, exports: &[&str], scratch: &std::pat
     // A cdylib with no exports at all still links; the marker keeps it non-empty.
     body.push_str("#[unsafe(no_mangle)] pub extern \"C\" fn loft_decoy_marker() -> u64 { 0 }\n");
     fa::write(&src, body).expect("write the decoy source");
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .arg("--crate-type=cdylib")
         .arg("--edition")
         .arg("2021")
@@ -1260,7 +1299,11 @@ fn sole_artifact(dir: &std::path::Path) -> std::path::PathBuf {
 
 #[test]
 fn an_unwirable_cdylib_interprets_instead_of_panicking() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -1283,7 +1326,7 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
     let native_auto = lib.join("mathnative/native-auto");
 
     let run = |extra: &[(&str, &str)]| {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
         // `--interpret`: under `--native` the library's functions compile into the
         // whole-program binary and the cdylib is never dispatched to, so the
         // interpreter is the backend that can reach the stub at all.
@@ -1365,7 +1408,11 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
 /// dispatches into the stand-in's (deliberately wrong-ABI) body.
 #[test]
 fn a_partially_exporting_cdylib_marks_only_what_resolves() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -1387,7 +1434,7 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
     let native_auto = lib.join("mathnative/native-auto");
 
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_loft"))
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("--lib")
             .arg(&lib)
@@ -1443,7 +1490,11 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
 // @speed 1.2
 #[test]
 fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -1494,7 +1545,7 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
     )
     .unwrap();
     let run = || {
-        Command::new(env!("CARGO_BIN_EXE_loft"))
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args(["--interpret", "--lib"])
             .arg(tmp.join("lib"))
             .arg(&prog)
@@ -1547,7 +1598,11 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
 /// the box.  Measured before the fix: the second run printed the first run's version.
 #[test]
 fn a_dependency_version_is_part_of_its_users_native_artifact() {
-    if Command::new("rustc").arg("--version").output().is_err() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
         eprintln!("skip: rustc unavailable");
         return;
     }
@@ -1608,7 +1663,7 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
     let locked = project("locked", &[("chainver", "0.1.0"), ("depver", "0.1.0")]);
     let newest = project("newest", &[("chainver", "0.1.0")]);
     let run = |dir: &std::path::Path| {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg("--interpret")
             .arg("src/s.loft")
             .current_dir(dir)

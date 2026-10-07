@@ -24,7 +24,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -37,7 +36,7 @@ fn run_file(tag: &str, src: &str) -> (i32, String) {
     fa::create_dir_all(&root).expect("mkdir");
     let file = root.join("cells.loft");
     fa::write(&file, src).expect("write cells.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(&root)
         .args(["--tests", "cells.loft"])
         .env("LOFT_TIMEOUT", "180")

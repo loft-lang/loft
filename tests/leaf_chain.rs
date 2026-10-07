@@ -11,13 +11,14 @@
 //! frameless helper still ends in the depth cap's report rather than a native stack crash.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/N4b-leaf-chain-cells.loft";
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     // The cells pin which FRAMES survive; `@FR-R-InlineLeaf` would replace the scalar leaves
     // (`lower_byte`) by their bodies, and then there is no function left to read a frame of.
     cmd.args(args)

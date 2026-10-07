@@ -10,7 +10,6 @@
 //! on, no sentinel-aware integer helper remains and the null test itself does.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-al-loop-buffer-cells.loft";
@@ -21,7 +20,8 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
         "loft_release_pass_probe_{}_{tag}.rs",
         std::process::id()
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(&src)

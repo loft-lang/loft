@@ -27,7 +27,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -285,7 +284,7 @@ fn scrub_thread_pid(s: &str) -> String {
 }
 
 fn run_case(case: &Case) -> String {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret");
     if let Some(dir) = &case.lib_dir {
         cmd.arg("--lib").arg(dir);
@@ -359,7 +358,7 @@ fn every_case_terminates_cleanly() {
         // is itself the no-infinite-loop assertion.  We additionally
         // require that no case crashes via SIGSEGV / SIGABRT (signal
         // exit), which would mask a regression.
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.arg("--interpret");
         if let Some(dir) = &case.lib_dir {
             cmd.arg("--lib").arg(dir);

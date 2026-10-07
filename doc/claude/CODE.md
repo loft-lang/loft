@@ -186,6 +186,22 @@ paths with `==`, `starts_with`, `ends_with` and `has_component`, never as text.
 - **A Windows run on Linux:** `LOFT_POISON_HOST=windows` puts a program on an emulated Windows
   host ([BOTH_BACKEND_SWITCHES.md § Falsifier: the emulated Windows host](BOTH_BACKEND_SWITCHES.md#falsifier-the-emulated-windows-host)).
 
+## Processes
+
+loft starts a process ONLY through `platform::process` (`src/platform_process.rs`; its module
+docs are the contract): `Spawn::new(Program::search("cargo"))…`, then `.run(b"")` where `std`
+had `.output()`, `.status()` for `.status()`, `.start()` for `.spawn()`.
+
+- **Pick the tree:** `Tree::Owned` (the default) for a child loft drives — a stop and loft's
+  end reach everything it started.  `Tree::Foreground` for a child handed the terminal (the
+  program a run is, a script that may prompt): an owned child in a group of its own that reads
+  the terminal is stopped by `SIGTTIN`.  `Tree::Detached` only for a child meant to outlive loft.
+- **Refused by Clippy:** `std::process::Command::new` is in `clippy.toml`.  A test harness that
+  must hold the raw process takes `platform::process::harness_command`, which nothing in `src/`
+  calls.  `src/platform_process_guard.rs` counts the files that still spell `Command::new`
+  (each with a marked `#![allow]`) against `src/platform_process_clippy_allow.baseline`, which
+  only shrinks (`LOFT_BLESS_PLATFORM_PROCESS=1 cargo test --lib platform::process::guard`).
+
 ## Dependencies
 
 Prefer the standard library and existing project code over adding new Cargo dependencies.

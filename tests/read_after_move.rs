@@ -21,7 +21,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 fn loft_bin() -> PathBuf {
@@ -36,7 +35,7 @@ fn check(source: &str, mode: &str, on: bool) -> String {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     fa::write(&path, source).expect("write probe");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--check")
         .arg(mode)
         .arg(&path)

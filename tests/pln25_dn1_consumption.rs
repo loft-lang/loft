@@ -16,7 +16,6 @@
 //! the `LOFT_PLN25_DN1` `OnceLock` starts fresh for each run.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -28,7 +27,7 @@ fn workspace_root() -> std::path::PathBuf {
 
 fn run_dn1(backend: &str) -> String {
     let script = workspace_root().join("tests/scripts/25-nullable-read-consumption.loft");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -74,7 +73,7 @@ fn dn1_text_read_consumption_native() {
 /// their own asserts rather than a stdout signature.
 fn dn1_script_exits_zero(backend: &str, rel_path: &str) {
     let script = workspace_root().join(rel_path);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -128,7 +127,7 @@ fn dn1_scalar_vector_element_native() {
 /// F1a slices whose value is their own asserts.
 fn index_dev_script_exits_zero(backend: &str, rel_path: &str) {
     let script = workspace_root().join(rel_path);
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(backend)
         .arg(&script)
         .current_dir(workspace_root())
@@ -186,7 +185,7 @@ fn dn1_null_local_message_names_optional_not_as() {
         let src = dir.join(name);
         fa::write(&src, format!("fn t() {{ {decl} }}\nfn main() {{ }}\n"))
             .expect("write temp source");
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .arg("--interpret")
             .arg(&src)
             .current_dir(workspace_root())

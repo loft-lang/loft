@@ -19,7 +19,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -49,7 +48,7 @@ fn fixture(tag: &str) -> PathBuf {
 }
 
 fn run(root: &PathBuf, args: &[&str]) -> (i32, String) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .current_dir(root)
         .args(args)
         .env("LOFT_TIMEOUT", "180")

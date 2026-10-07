@@ -19,7 +19,6 @@
 use loft::file_access as fa;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tls/");
@@ -91,7 +90,7 @@ fn search(ca: Option<&str>) -> (Vec<String>, String) {
     fa::create_dir_all(&home).expect("a scratch home");
     let bin = std::env::var("LOFT_TLS_TEST_BINARY")
         .unwrap_or_else(|_| env!("CARGO_BIN_EXE_loft").to_string());
-    let mut cmd = Command::new(bin);
+    let mut cmd = loft::platform::process::harness_command(bin);
     cmd.args(["search", "anything"])
         // `LOFT_HOME` too: on Windows `$HOME` is not where loft looks (registry_index::cache_dir,
         // @P332), so without it `search` read the real profile's cached index and never

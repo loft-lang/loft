@@ -16,7 +16,6 @@
 //! `steer_fires_from_owned_source_silent_from_dependency` in `src/ir_read.rs`.
 
 use loft::file_access as fa;
-use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -39,7 +38,7 @@ fn main() { println(\"{old_add(2, 3)} {new_add(4, 5)}\") }
 fn stderr_of(name: &str, backend: &str, no_steer: bool) -> String {
     let path = std::env::temp_dir().join(format!("loft_steer_{name}.loft"));
     fa::write(&path, PROG).expect("write temp script");
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg(backend)
         .arg(&path)
         .current_dir(workspace_root())

@@ -24,7 +24,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn write(path: &Path, body: &str) {
     fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
@@ -72,7 +71,8 @@ fn home_with_package(tag: &str) -> PathBuf {
 /// One `--interpret` run of the project's script with the program cache forced on (a
 /// `target/` build disables it by default) in a private cache dir, offline, traced.
 fn run(home: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(["--interpret", "--lib"])
         .arg(home.join("libs"))
         .arg("s.loft")

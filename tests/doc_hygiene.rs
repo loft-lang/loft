@@ -84,7 +84,7 @@ const QUALITY_HISTORY: &str = "doc/claude/QUALITY-history.md";
 /// receipt owes.
 #[test]
 fn every_guard_says_how_to_score_it_again() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args(["scripts/falsify-review.py", "--check"])
         .output()
         .expect("cannot run scripts/falsify-review.py");
@@ -167,7 +167,7 @@ fn every_guard_says_how_to_score_it_again() {
 fn the_falsify_scorer_reads_its_channels_on_this_platform() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // `git_bash()`: a bare `bash` on a Windows runner is the WSL launcher, with no distribution.
-    let out = std::process::Command::new(git_bash())
+    let out = loft::platform::process::harness_command(git_bash())
         .arg(root.join("scripts/falsify.sh"))
         .arg("--self-test")
         .current_dir(&root)
@@ -205,7 +205,7 @@ fn every_patch_receipt_still_applies() {
     let stale: std::collections::BTreeSet<String> = patches
         .iter()
         .filter(|p| {
-            !std::process::Command::new("git")
+            !loft::platform::process::harness_command("git")
                 .args(["apply", "--check"])
                 .arg(p)
                 .current_dir(&root)
@@ -261,7 +261,7 @@ fn every_patch_receipt_still_applies() {
 
 #[test]
 fn no_tracked_file_carries_conflict_markers() {
-    let out = std::process::Command::new("git")
+    let out = loft::platform::process::harness_command("git")
         .args(["grep", "-n", "-I", "-E", "^(<<<<<<< |>>>>>>> )"])
         .current_dir(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
         .output()
@@ -1517,7 +1517,7 @@ fn assert_generator_output_matches_committed(script: &str, output_relative: &str
     let guard = FileGuard::new(output_path.clone());
 
     let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
-    let out = std::process::Command::new(&loft_bin)
+    let out = loft::platform::process::harness_command(&loft_bin)
         .arg("--interpret")
         .arg(script)
         .current_dir(&root)
@@ -2069,7 +2069,7 @@ fn no_source_file_is_invisible_to_grep() {
 #[test]
 fn every_rule_citation_resolves() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/rule_tags.py"))
         .arg("check")
         .current_dir(root)
@@ -2108,7 +2108,7 @@ fn every_rule_citation_resolves() {
 #[test]
 fn register_entries_name_their_tracking_issue() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/rule_tags.py"))
         .arg("selftest")
         .current_dir(root)
@@ -2150,7 +2150,7 @@ fn register_entries_name_their_tracking_issue() {
 #[test]
 fn diagnostics_spell_types_as_the_author_wrote_them() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/diagnostic_spelling.py"))
         .arg("check")
         .current_dir(root)
@@ -2191,16 +2191,19 @@ fn diagnostics_spell_types_as_the_author_wrote_them() {
 #[test]
 fn ir_schema_gen_matches_its_loft_source() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new(root.join("scripts/ir_schema_check.sh"))
-        .current_dir(root)
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("SKIP ir_schema_gen_matches_its_loft_source: cannot run the script ({e})");
-            return;
-        }
-    };
+    let out =
+        match loft::platform::process::harness_command(root.join("scripts/ir_schema_check.sh"))
+            .current_dir(root)
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!(
+                    "SKIP ir_schema_gen_matches_its_loft_source: cannot run the script ({e})"
+                );
+                return;
+            }
+        };
     let stdout = String::from_utf8_lossy(&out.stdout);
     if stdout.starts_with("SKIP ") {
         eprintln!(
@@ -2231,7 +2234,7 @@ fn ir_schema_gen_matches_its_loft_source() {
 #[test]
 fn o_proxy_frees_consult_the_override() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/o_proxy_check.py"))
         .current_dir(root)
         .output()
@@ -2365,7 +2368,7 @@ fn the_nullable_swap_tables_do_not_drift() {
 #[test]
 fn quality_unspan_table_matches_the_audit() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/ir_walker_audit.py"))
         .arg("unspan")
         .current_dir(root)
@@ -2426,7 +2429,7 @@ fn quality_unspan_table_matches_the_audit() {
 #[test]
 fn quality_spellings_table_matches_the_audit() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/ir_walker_audit.py"))
         .arg("spellings")
         .current_dir(root)
@@ -2477,7 +2480,7 @@ fn quality_spellings_table_matches_the_audit() {
 #[test]
 fn quality_optional_table_matches_the_audit() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let out = match std::process::Command::new("python3")
+    let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/ir_walker_audit.py"))
         .arg("optional")
         .current_dir(root)
@@ -3165,7 +3168,7 @@ fn every_subject_claims_the_paths_it_names() {
              p=$(subject_paths \"$n\") || continue; \
              [[ \"{path}\" =~ $p ]] && echo \"$n\"; done"
         );
-        let out = std::process::Command::new(git_bash())
+        let out = loft::platform::process::harness_command(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -3186,7 +3189,7 @@ fn every_subject_claims_the_paths_it_names() {
     // path is unreachable from `--changed` by construction.
     let script = "source scripts/test_subjects.sh; \
                   for n in $SUBJECT_NAMES; do subject_paths \"$n\" >/dev/null || echo \"$n\"; done";
-    let out = std::process::Command::new(git_bash())
+    let out = loft::platform::process::harness_command(git_bash())
         .args(["-c", script])
         .current_dir(root)
         .output()
@@ -3219,7 +3222,7 @@ fn changed_selects_subjects_by_path() {
             "source scripts/test_subjects.sh; changed_paths() {{ printf '%s\\n' {list}; }}; \
              changed_filter HEAD"
         );
-        let out = std::process::Command::new(git_bash())
+        let out = loft::platform::process::harness_command(git_bash())
             .args(["-c", &script])
             .current_dir(root)
             .output()
@@ -3274,7 +3277,7 @@ fn every_test_binary_matches_a_subject() {
     // genuine finding, because a genuine finding has stdout.  The shell itself is `git_bash()`
     // — on Windows a bare `bash` is the WSL launcher, which is what failed this test twice.
     let run = || {
-        std::process::Command::new(git_bash())
+        loft::platform::process::harness_command(git_bash())
             .args([
                 "-c",
                 "source scripts/test_subjects.sh && unmatched_binaries",
@@ -3529,7 +3532,7 @@ fn nightly_gate_classes_drive_every_list_that_reads_them() {
 /// still go red rather than a sign it has gone blind.
 #[test]
 fn the_link_check_answers_its_known_cases() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args(["tools/indexer/fix_broken_links.py", "--self-test"])
         .output()
         .expect("failed to spawn tools/indexer/fix_broken_links.py --self-test");
@@ -3543,7 +3546,7 @@ fn the_link_check_answers_its_known_cases() {
 
 #[test]
 fn every_markdown_link_resolves() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .arg("tools/indexer/fix_broken_links.py")
         .output()
         .expect("failed to spawn tools/indexer/fix_broken_links.py");
@@ -3584,7 +3587,6 @@ fn every_markdown_link_resolves() {
 #[test]
 fn the_generated_pages_match_their_sources() {
     use std::path::Path;
-    use std::process::Command;
     let registry_derived =
         |p: &str| (p.starts_with("doc/lib-") && p.ends_with(".html")) || p == "doc/libraries.html";
     let without_lib_entries = |s: &str| {
@@ -3594,7 +3596,7 @@ fn the_generated_pages_match_their_sources() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let tracked = Command::new("git")
+    let tracked = loft::platform::process::harness_command("git")
         .args(["ls-files", "-z"])
         .output()
         .expect("git ls-files");
@@ -3620,7 +3622,7 @@ fn the_generated_pages_match_their_sources() {
             fa::copy(f, &to).expect("copy a tracked file");
         }
     }
-    let run = Command::new(env!("CARGO_BIN_EXE_gendoc"))
+    let run = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_gendoc"))
         .current_dir(&copy)
         .output()
         .expect("run gendoc");
@@ -3815,7 +3817,7 @@ fn the_diagnostic_tag_test_sees_each_spelling() {
 /// pin; moving the bar or the split rule does move it.
 #[test]
 fn the_outlier_report_reproduces_the_hand_count() {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args([
             "bench/portal/outliers.py",
             "tests/fixtures/portal/2026-10-02-arm64-darwin.tsv",

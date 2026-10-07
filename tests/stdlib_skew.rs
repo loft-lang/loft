@@ -15,7 +15,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -42,7 +41,7 @@ fn copy_stdlib(tag: &str) -> PathBuf {
 fn run_with(stdlib_parent: &Path) -> (bool, String, String) {
     let prog = stdlib_parent.join("hello.loft");
     fa::write(&prog, "fn main() {\n  println(\"ran {1 + 1}\");\n}\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .args(["--path", stdlib_parent.to_str().unwrap(), "--interpret"])
         .arg(&prog)
         // The stdlib cache is keyed on the path and would serve a bundle saved

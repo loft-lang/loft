@@ -29,7 +29,6 @@
 //!     which is the failure mode a false-positive fix invites.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -49,7 +48,7 @@ const PROBES: [&str; 2] = [
 
 /// Count `[uaf-gen]` reports from an `--interpret` run of `name`.
 fn reports(name: &str, inject: bool) -> (usize, String) {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     cmd.arg("--interpret")
         .arg(script(name))
         .env("LOFT_TIMEOUT", "180")

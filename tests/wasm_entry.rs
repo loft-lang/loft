@@ -57,14 +57,16 @@ fn wasm_compile_and_run_smoke() {
     }
 
     // Skip if Node.js is not in PATH.
-    let node_check = std::process::Command::new("node").arg("--version").output();
+    let node_check = loft::platform::process::harness_command("node")
+        .arg("--version")
+        .output();
     if node_check.is_err() {
         println!("SKIP wasm_compile_and_run_smoke — node not in PATH");
         return;
     }
 
     // Run the bridge test suite.
-    let result = std::process::Command::new("node")
+    let result = loft::platform::process::harness_command("node")
         .arg("tests/wasm/bridge.test.mjs")
         .status()
         .expect("failed to launch node");
@@ -173,7 +175,7 @@ fn doc_panel_session_runs_on_wasm() {
         );
         return;
     }
-    if std::process::Command::new("node")
+    if loft::platform::process::harness_command("node")
         .arg("--version")
         .output()
         .is_err()
@@ -181,7 +183,7 @@ fn doc_panel_session_runs_on_wasm() {
         println!("SKIP doc_panel_session_runs_on_wasm — node not in PATH");
         return;
     }
-    let out = std::process::Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg("tools/doc_panel_check.mjs")
         .output()
         .expect("failed to launch node");

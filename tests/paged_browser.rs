@@ -18,7 +18,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -29,7 +28,7 @@ fn loft_bin() -> PathBuf {
 }
 
 fn which(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -37,7 +36,7 @@ fn which(cmd: &str) -> bool {
 }
 
 fn wasm32_installed() -> bool {
-    Command::new("rustc")
+    loft::platform::process::harness_command("rustc")
         .args(["--print", "target-list"])
         .output()
         .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
@@ -96,7 +95,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     )
     .expect("write writer script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&writer)
         .env("LOFT_PAGED_WRITE_PATH", &store)
@@ -143,7 +142,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     .expect("write browser script");
 
     let html = tmp.join("paged.html");
-    let status = Command::new(loft_bin())
+    let status = loft::platform::process::harness_command(loft_bin())
         .args([
             "--html",
             html.to_str().unwrap(),
@@ -168,7 +167,7 @@ fn store_load_key_pages_over_the_browser_fetch_bridge() {
     let wasm = tmp.join("paged.wasm");
     fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
-    let run = Command::new("node")
+    let run = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
         .arg(&wasm)
         .env("LOFT_PAGED_FILE", &store)
@@ -289,7 +288,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     )
     .expect("write writer script");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&writer)
         .env("LOFT_PAGED_WRITE_PATH", &store)
@@ -331,7 +330,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     .expect("write browser script");
 
     let html = tmp.join("paged_keys.html");
-    let status = Command::new(loft_bin())
+    let status = loft::platform::process::harness_command(loft_bin())
         .args([
             "--html",
             html.to_str().unwrap(),
@@ -354,7 +353,7 @@ fn store_load_keys_batched_pages_over_the_browser_fetch_bridge() {
     // 3. Run it BOUNDED. `timeout` exits 124 when it has to kill the child, which is what
     //    the unconditional `thread::spawn` produced — and is why the assertion below names
     //    a stall specifically rather than reporting a generic non-zero exit.
-    let run = Command::new("timeout")
+    let run = loft::platform::process::harness_command("timeout")
         .arg("180")
         .arg("node")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
@@ -463,7 +462,7 @@ fn store_load_url_verifies_the_hash_in_the_browser() {
          }\n",
     )
     .expect("write writer script");
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(&writer)
         .env("LOFT_VERIFIED_WRITE_PATH", &store)
@@ -548,7 +547,7 @@ fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String
     fa::write(&src, source).expect("write browser script");
 
     let html = tmp.join(format!("{name}.html"));
-    let status = Command::new(loft_bin())
+    let status = loft::platform::process::harness_command(loft_bin())
         .args([
             "--html",
             html.to_str().unwrap(),
@@ -572,7 +571,7 @@ fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String
     let wasm = tmp.join(format!("{name}.wasm"));
     fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
 
-    let run = Command::new("node")
+    let run = loft::platform::process::harness_command("node")
         .arg(repo_root().join("tools/paged_range_host.mjs"))
         .arg(&wasm)
         .env("LOFT_PAGED_FILE", store)

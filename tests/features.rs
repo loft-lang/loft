@@ -11,7 +11,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 /// Collect the generated feature examples (sorted for a stable failure order).
 fn feature_examples() -> Vec<PathBuf> {
@@ -77,7 +76,7 @@ fn features_examples_interpret() {
                         break;
                     };
                     let started = std::time::Instant::now();
-                    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+                    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                         .args(["--interpret", &f.to_string_lossy()])
                         .env("LOFT_TIMEOUT", "60")
                         .env("LOFT_NO_NATIVE_LIBS", "1")

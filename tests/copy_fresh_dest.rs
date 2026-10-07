@@ -12,7 +12,6 @@
 //! Read off `loft introspect`, the instrument the design was written on.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct In { a: integer }
@@ -30,7 +29,7 @@ fn main() { println(\"{c_append()} {c_write()}\"); }
 const FRESH: i64 = 0x4000;
 
 fn introspect(src: &std::path::Path) -> String {
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("introspect")
         .arg(src)
         .env("LOFT_TIMEOUT", "120")

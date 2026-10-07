@@ -10,7 +10,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -21,7 +20,7 @@ fn workspace_root() -> PathBuf {
 
 /// Run `loft <args> <file>` and return (stdout, success).
 fn run(args: &[&str], file: &Path) -> (String, bool) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(args)
         .arg(file)
         .current_dir(workspace_root())
@@ -105,7 +104,7 @@ fn if_else_is_one_statement_at_script_scope() {
 
 /// Run `loft <args> <file>` and return stderr (where diagnostics go).
 fn run_stderr(args: &[&str], file: &Path) -> String {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(args)
         .arg(file)
         .current_dir(workspace_root())
@@ -166,7 +165,7 @@ fn mistyped_file_path_suggests_the_neighbour() {
     fa::create_dir_all(&dir).expect("mkdir");
     fa::write(dir.join("hello.loft"), "println(\"hi\")\n").expect("write");
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg(dir.join("helo.loft"))
         .current_dir(workspace_root())
         .output()
@@ -182,7 +181,7 @@ fn mistyped_file_path_suggests_the_neighbour() {
     );
 
     // A name with no near neighbour must NOT invent a suggestion.
-    let out2 = Command::new(loft_bin())
+    let out2 = loft::platform::process::harness_command(loft_bin())
         .arg(dir.join("zzzzzzzz.loft"))
         .current_dir(workspace_root())
         .output()
@@ -228,7 +227,7 @@ fn an_escaped_quote_in_a_hole_does_not_make_a_program_a_script() {
     .expect("write");
 
     for backend in ["--interpret", "--native"] {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args([backend, file.to_str().unwrap()])
             .env("LOFT_TIMEOUT", "120")
             .current_dir(workspace_root())

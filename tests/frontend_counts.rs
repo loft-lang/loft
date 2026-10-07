@@ -61,7 +61,7 @@ unsafe impl GlobalAlloc for Counting {
 static A: Counting = Counting;
 
 fn corpus(size: &str) -> String {
-    let out = std::process::Command::new("python3")
+    let out = loft::platform::process::harness_command("python3")
         .args(["bench/frontend/frontend.py", "--emit", size])
         .output()
         .expect("python3 bench/frontend/frontend.py --emit");

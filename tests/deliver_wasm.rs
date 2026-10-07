@@ -13,10 +13,9 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn which(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -25,7 +24,7 @@ fn which(cmd: &str) -> bool {
 }
 
 fn wasm32_installed() -> bool {
-    Command::new("rustup")
+    loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
@@ -92,7 +91,7 @@ fn run_harness(
     let wasm = tmp.join(format!("{name}.wasm"));
     fa::write(&src, source).expect("write source");
 
-    let status = Command::new(&loft_bin)
+    let status = loft::platform::process::harness_command(&loft_bin)
         .args([
             "--html",
             html.to_str().unwrap(),
@@ -113,7 +112,7 @@ fn run_harness(
 
     let harness = repo_root().join(harness_rel);
     assert!(fa::exists(&harness), "{harness_rel} missing");
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&wasm)
         .envs(env.iter().copied())
@@ -517,7 +516,7 @@ fn deliver_reads_by_ref_array_synthetic_in_js() {
     }
     let unit = repo_root().join("tools/reader_array_unit.mjs");
     assert!(fa::exists(&unit), "tools/reader_array_unit.mjs missing");
-    let out = Command::new("node")
+    let out = loft::platform::process::harness_command("node")
         .arg(&unit)
         .output()
         .expect("invoke node array-unit");

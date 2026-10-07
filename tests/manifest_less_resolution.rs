@@ -31,7 +31,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[path = "common/mod.rs"]
 mod common;
@@ -75,7 +74,7 @@ fn run_in(home: &Path, dir: &Path, script: &str) -> String {
 /// [`run_in`] plus `env` — `LOFT_OFFLINE=1` for the cells that must resolve with no
 /// registry at all.
 fn run_env(home: &Path, dir: &Path, script: &str, env: &[(&str, &str)]) -> String {
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -412,7 +411,7 @@ fn file_registry(home: &Path, name: &str, version: &str) -> String {
 
 /// Run the `loft` CLI in `dir` against the private home + `url` registry.
 fn cli(home: &Path, dir: &Path, url: &str, args: &[&str]) -> String {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(args)
         .env("LOFT_HOME", home)
         .env("HOME", home)
@@ -1105,7 +1104,7 @@ fn install_binds_a_transitive_package_to_the_project_declaration() {
     let run = |tag: &str, deps: &str| {
         let pkg = project(&home, tag, deps, None, "chainpkg", "chainpkg::chain_id()");
         let url = "http://127.0.0.1:1/index.json";
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["install"])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)
@@ -1199,7 +1198,7 @@ fn a_named_install_keeps_the_declared_pin_and_an_explicit_version_moves_it() {
         "probepkg::probe_id()",
     );
     let install = |arg: &str| {
-        let out = Command::new(loft_bin())
+        let out = loft::platform::process::harness_command(loft_bin())
             .args(["install", arg])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)

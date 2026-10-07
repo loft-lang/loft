@@ -6,7 +6,6 @@
 //! admitted append has no `Formatted string` block under its `OpAppendText`, a declined one
 //! keeps it.  The cells' values pass on either form, so only this pin sees an admission drift.
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft";
 
@@ -28,7 +27,8 @@ const EXPECTED: &[(&str, usize, usize)] = &[
 
 fn introspect(env: &[(&str, &str)]) -> String {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("introspect")
         .arg(&src)
         .env("LOFT_TIMEOUT", "120")

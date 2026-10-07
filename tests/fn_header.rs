@@ -9,7 +9,6 @@
 //! (`LOFT_NO_FN_HEADER=1`), read off `--native-emit`.
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const CELLS: &str = "tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft";
 
@@ -35,7 +34,8 @@ fn emit(env: &[(&str, &str)]) -> String {
         std::process::id(),
         if env.is_empty() { "on" } else { "off" }
     ));
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--native-emit")
         .arg(&out)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))

@@ -9,7 +9,7 @@
 use loft::file_access as fa;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-copy-in-place.loft";
 
@@ -48,7 +48,8 @@ const SWITCHES: [&str; 4] = [
 ];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args).env("LOFT_TIMEOUT", "300");
     for s in SWITCHES {
         cmd.env_remove(s);

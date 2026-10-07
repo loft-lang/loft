@@ -24,10 +24,9 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn which(cmd: &str) -> bool {
-    Command::new("sh")
+    loft::platform::process::harness_command("sh")
         .arg("-c")
         .arg(format!("command -v {cmd}"))
         .output()
@@ -36,7 +35,7 @@ fn which(cmd: &str) -> bool {
 }
 
 fn wasm32_installed() -> bool {
-    Command::new("rustup")
+    loft::platform::process::harness_command("rustup")
         .args(["target", "list", "--installed"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("wasm32-unknown-unknown"))
@@ -90,7 +89,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
     )
     .expect("write source");
 
-    let out = Command::new(&loft)
+    let out = loft::platform::process::harness_command(&loft)
         .args(["--html", html.to_str().unwrap()])
         .arg("--path")
         .arg(format!("{}/", root.display()))
@@ -109,7 +108,7 @@ fn dhtml_vector_arg_gl_host_import_is_emitted() {
         return;
     }
 
-    let check = Command::new("node")
+    let check = loft::platform::process::harness_command("node")
         .arg(&helper)
         .arg(&html)
         .arg("loft_gl_upload_vertices")

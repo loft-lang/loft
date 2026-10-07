@@ -45,7 +45,7 @@ static WRAP_LOCK: Mutex<()> = Mutex::new(());
 fn rustc_path() -> &'static str {
     static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
-        std::process::Command::new("rustup")
+        loft::platform::process::harness_command("rustup")
             .args(["which", "rustc"])
             .output()
             .ok()
@@ -153,7 +153,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
 
     // Compile for wasm32-wasip2
     let tmp_wasm = std::env::temp_dir().join(format!("loft_wasm_{stem}.wasm"));
-    let mut cmd = std::process::Command::new(rustc_path());
+    let mut cmd = loft::platform::process::harness_command(rustc_path());
     cmd.arg("--edition=2024")
         .arg("--target")
         .arg("wasm32-wasip2")
@@ -208,7 +208,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
     }
 
     // Run with wasmtime if available
-    match std::process::Command::new("wasmtime")
+    match loft::platform::process::harness_command("wasmtime")
         .arg(&tmp_wasm)
         .status()
     {
@@ -291,7 +291,7 @@ fn comparisons() -> std::io::Result<()> {
             .lines()
             .any(|l| l.starts_with("// @SCRIPT"))
         {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
                 .arg(&entry)
                 .output()?;
@@ -353,7 +353,7 @@ fn reference() -> std::io::Result<()> {
     for entry in files {
         let src = fa::read_to_string(&entry)?;
         if src.lines().any(|l| l.starts_with("// @SCRIPT")) {
-            let out = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+            let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
                 .arg("--interpret")
                 .arg(&entry)
                 .output()?;
@@ -881,7 +881,7 @@ pub fn run_lib_test_in_temp_cwd(
             let target = fa::try_plain_canonical(&entry).unwrap_or_else(|| entry.os_spelling());
             let _ = fa::symlink(&target, tmp.join(entry.os_name().unwrap_or_default()));
         }
-        let out = std::process::Command::new(loft_bin)
+        let out = loft::platform::process::harness_command(loft_bin)
             .current_dir(&tmp)
             .args(&args)
             .output();
@@ -891,7 +891,7 @@ pub fn run_lib_test_in_temp_cwd(
     // @PLN184 C2 approved exemption (owner, 2026-10-07): the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(not(unix))]
     {
-        std::process::Command::new(loft_bin)
+        loft::platform::process::harness_command(loft_bin)
             .current_dir(pkg_dir)
             .args(&args)
             .output()
@@ -2289,7 +2289,7 @@ fn loft_test_runs_admission_and_states_its_scope() -> std::io::Result<()> {
         )
     };
     let run = || -> std::io::Result<String> {
-        let out = std::process::Command::new(loft_bin)
+        let out = loft::platform::process::harness_command(loft_bin)
             .current_dir(&tmp)
             .args(["test"])
             .env("LOFT_TIMEOUT", "180")

@@ -19,7 +19,6 @@
 
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn loft_binary() -> &'static str {
     env!("CARGO_BIN_EXE_loft")
@@ -60,7 +59,7 @@ fn introspect(name: &str, source: &str) -> String {
     fa::create_dir_all(&dir).expect("temp dir");
     let src = dir.join(format!("{name}.loft"));
     fa::write(&src, source).expect("write source");
-    let out = Command::new(loft_binary())
+    let out = loft::platform::process::harness_command(loft_binary())
         .args(["--introspect", src.to_str().unwrap()])
         .env("LOFT_NO_CACHE", "1")
         .current_dir(project_root())
@@ -156,7 +155,7 @@ fn emitted_hit_overloads(lane: &str) -> Vec<String> {
         lane.trim_start_matches("--")
     ));
     fa::write(&src, WITH_UNCALLED).expect("write source");
-    let out = Command::new(loft_binary())
+    let out = loft::platform::process::harness_command(loft_binary())
         .args([
             lane,
             "--native-emit",

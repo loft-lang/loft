@@ -19,7 +19,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -69,7 +68,7 @@ fn run_consumer(tag: &str, manifest: &str, with_lock: bool) -> (String, i32) {
         "use probepkg::*;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "consumer.loft"])
         .env("LOFT_HOME", &home)
         .env("HOME", &home)
@@ -170,7 +169,7 @@ fn a_script_with_no_manifest_hears_nothing() {
         "use probepkg::*;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
     );
 
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .args(["--interpret", "script.loft"])
         .env("LOFT_HOME", &home)
         .env("HOME", &home)
@@ -227,7 +226,7 @@ fn the_off_switch_silences_it() {
         "use probepkg::*;\n\nfn main() {\n  println(\"answer={probe_answer()}\");\n}\n",
     );
     let run = |off: bool| {
-        let mut cmd = Command::new(loft_bin());
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
         cmd.args(["--interpret", "consumer.loft"])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)

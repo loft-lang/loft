@@ -15,7 +15,6 @@
 //! field clear on both backends (measured 2026-09-24).  The two cells pin that line.
 use loft::file_access as fa;
 use std::path::PathBuf;
-use std::process::Command;
 
 const PROBE: &str = "\
 struct Inner { v: vector<integer> }
@@ -35,7 +34,7 @@ fn run(backend: &str) -> (String, String) {
     fa::create_dir_all(&dir).unwrap();
     let src = dir.join("f.loft");
     fa::write(&src, PROBE).unwrap();
-    let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(backend)
         .arg(&src)
         .env("LOFT_TRACE_CLEAR", "1")

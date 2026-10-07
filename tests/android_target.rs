@@ -22,7 +22,6 @@
 
 use loft::file_access as fa;
 use std::io::Write;
-use std::process::Command;
 
 fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("loft_android_target");
@@ -94,7 +93,7 @@ fn main() {
         .join("loft_android_target")
         .join("prog.so");
     let _ = fa::remove_file(&out_so);
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native-android")
         .arg(&out_so)
         .arg(&probe)
@@ -129,7 +128,7 @@ fn main() {
 #[test]
 fn android_without_ndk_reports_actionable_error() {
     let probe = write_probe("noNdk.loft", "fn main() { print(\"hi\\n\"); }");
-    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--native-android")
         .arg(&probe)
         .env_remove("ANDROID_NDK_HOME")

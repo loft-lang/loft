@@ -14,7 +14,6 @@
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
@@ -43,7 +42,7 @@ fn scratch(test_name: &str) -> PathBuf {
 /// `LOFT_DURABLE_TEST_MODE=<mode>` set, returning stdout + the exit
 /// code as `(stdout, code)`.
 fn run_smoke(main: &Path, mode: &str) -> (String, i32) {
-    let out = Command::new(loft_bin())
+    let out = loft::platform::process::harness_command(loft_bin())
         .arg("--interpret")
         .arg(smoke_script())
         .env("LOFT_DURABLE_TEST_PATH", main)
