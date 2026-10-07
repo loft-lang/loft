@@ -44,9 +44,9 @@ layout contract (which pins field/enum identity + order, not byte encoding).
 - **record** — a value of type τ occupies `size(τ)` contiguous bytes; a field/element sits at a
   fixed byte offset within it. `H[r ⊕ n]` (heap.md) reads at `r.pos + n`.
 - **`DbRef`** = `(store_nr: u16, rec: u32, pos: u32)` (`src/keys.rs`) — the universal pointer. A
-  STORED reference to another record is a **4-byte record pointer** (the `rec` into the target
-  store); the full 12-byte `DbRef` is stored only where a value must round-trip its whole pointer
-  (the closure half of a fn-ref field, `Parts::DbRef`).
+  STORED `reference<T>` field holds the whole 12-byte `DbRef` (`Parts::DbRef`), because the record
+  it names may live in any store; a COLLECTION field is a **4-byte record pointer** into its own
+  store.  An embedded struct field is no pointer at all: its record sits inline (L-Struct).
 - **null is in-band** — a nullable field uses a SENTINEL inside its own bytes (`i64::MIN` for
   integer, `nullref` for a reference), not an extra byte. Nullability is therefore NOT a layout
   fact (rule `L-Null`).
@@ -85,7 +85,7 @@ store written by one build readable by another *of the same layout*.
 ```
   (L-Scalar)  width(boolean)=1  width(character)=4  width(single)=4
               width(float)=8    width(integer)=8    width(text)=4 (a Str handle)
-              align(τ) = its natural alignment (1,4,4,4,8,8,4 respectively).
+              align(τ) = its natural alignment (1,4,4,8,8,4 respectively).
   (L-Narrow)  a range-annotated integer stores in the SMALLEST width that holds its range (#399):
               u8 → 1 B, u16/i16 → 2 B, i32/u32 → 4 B, else 8 B.  The narrowing is a WIDTH change,
               so it moves offsets and record size — a layout fact the golden pins.
@@ -193,15 +193,18 @@ The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
 ### References, collections, and child records
 
 ```
-  (L-Ref)     a stored reference / collection field (Reference, Vector, Hash, Sorted, Ordered,
-              Index) is a 4-byte RECORD POINTER into the target store.  A ChildRec is a 4-byte
-              co-located rec id.  The full 12-byte DbRef is stored only for Parts::DbRef (a
-              fn-ref field's closure half).  A collection's ELEMENT stride is width(element),
-              which for a record element is its size (L-Align: a multiple of its alignment).
+  (L-Ref)     a stored COLLECTION field (Vector, Hash, Sorted, Ordered, Index, Spatial, Trie)
+              is a 4-byte RECORD POINTER into its own store.  A stored `reference<T>` field is
+              the full 12-byte DbRef (Parts::DbRef, alignment 4): it may name a record in any
+              store.  A ChildRec is a 4-byte co-located rec id; a fn-ref field is a 4-byte
+              function id followed by the ChildRec of its closure record.  An embedded struct
+              field is inline (L-Struct), not a pointer.  A collection's ELEMENT stride is
+              width(element), which for a record element is its size (L-Align: a multiple of
+              its alignment).
 ```
 
-**In words.** A field that points at other records holds a small (4-byte) pointer, not the data
-inline. The data lives in the target store; the collection's per-element stride is the element's
+**In words.** A collection field holds a small (4-byte) pointer, not the data inline, and a
+`reference<T>` field holds a whole pointer because its target may be in another store. The data lives in the target store; the collection's per-element stride is the element's
 own width — so a change to an element's width (e.g. the nested-vector stride, #477) is a layout
 change even though the field pointer is unchanged.
 
@@ -222,16 +225,18 @@ change even though the field pointer is unchanged.
   (L-Struct)  a struct record packs its fields by DESCENDING alignment; off(τ, fᵢ) is the packed
               position; size(τ) is the packed total rounded up to align(τ) (L-Align).  A field
               access is H[r ⊕ off(τ, f)].
-  (L-Enum)    an enum is a 1-byte discriminant; a data-carrying variant (EnumValue) is
-              [tag byte] followed by the variant's fields (L-Struct packing).  Variants are
+  (L-Enum)    an enum is a 1-byte discriminant; a data-carrying variant (EnumValue) is a
+              record whose first 8-byte word holds the tag at offset 0; its fields fill the
+              rest of that word and then follow it, each at an offset its alignment divides
+              (`B { s: u8 }` puts `s` at 7 and is 8 bytes; calc::calculate_positions).  Variants are
               numbered from 1: 0 is the absent value (L-Null) and 255 is the null a write
               spells, so an enum holds at most 254 variants and the parser refuses the 255th.
   (L-Tuple)   a tuple (τ₀,…,τₙ) is a record (tuples.md T-Record), stored as a synthetic
               __tuple<…> struct packed by L-Struct — largest alignment first, the size rounded
               up to the largest member alignment (L-Align) — so the ORDER of its members in the
               bytes is the record's, not the written one.  That order has no effect on a
-              member's name (`0` … `n` stay the written positions), on `t.i`, or on the text a
-              tuple prints as (`(a, b)`, written order) (@C139).  That placement is computed
+              member's name (`0` … `n` stay the written positions) or on `t.i` (@C139).  A
+              tuple has no text form: formatting one is refused (TUPLES.md § Non-goals).  That placement is computed
               by calc::calculate_positions_with_groups (read back by data::stored_tuple_offsets)
               and restated by data::element_storage_offsets / element_storage_size for the par
               paths that copy a stored row without the type table; the two must agree.  The

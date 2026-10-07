@@ -72,9 +72,9 @@ Inside a loop, the iteration variable supports several attributes using `#`:
 
 | Attribute | `vector` | `sorted` | `index` | `hash` |
 |-----------|----------|----------|---------|--------|
-| `#first`  | ✓        | ✓        | ✓       | N/A — cannot iterate directly |
-| `#count`  | ✓        | ✓        | ✓       | N/A |
-| `#index`  | ✓ (0-based) | ✓ (0-based array position) | ✗ compile error | N/A |
+| `#first`  | ✓        | ✓        | ✓       | ✓ (key order) |
+| `#count`  | ✓        | ✓        | ✓       | ✓ |
+| `#index`  | ✓ (0-based) | ✓ (0-based array position) | ✗ compile error | ✓ (0-based position in key order) |
 | `#remove` | ✓ (filtered) | ✓ (filtered) | ✓ (filtered) | use `h[key] = null` |
 
 **Gotcha — `#index` does not mean the same thing on text and vector.** On a text

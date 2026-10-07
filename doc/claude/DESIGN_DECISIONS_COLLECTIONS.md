@@ -13,8 +13,10 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 
 ## C68 — Keyed collections dedup on insert (`+=` AND `coll[key]=value`)
 
-**Decision.** On a `hash`, `sorted` or `index`, both `coll += [entry]` and `coll[key] = value`
-replace an existing entry with the same key — the latest insert wins, and `len` counts keys.
+**Decision.** On a `hash`, `sorted`, `index` or `trie`, both `coll += [entry]` and
+`coll[key] = value` replace an existing entry with the same key — the latest insert wins, and
+`len` counts keys.  A `spatial` is the exception: its key is a POINT, two records may share one,
+and a box query answers both (formal/collections.md `(Col-Insert)`).
 **Why.** A keyed collection promises key uniqueness; the world-chunk index needs an insert at an
 occupied coordinate to replace, not stack a shadowed duplicate.
 
