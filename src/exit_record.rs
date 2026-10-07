@@ -30,7 +30,7 @@ use crate::database::{Parts, Stores};
 /// own store and its copy.
 fn enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| !std::env::var("LOFT_NO_EXIT_RECORD").is_ok_and(|v| v != "0"))
+    *F.get_or_init(|| !std::env::var("LOFT_NO_EXIT_RECORD").is_ok_and(|local| local != "0"))
 }
 
 struct Ops {
@@ -44,9 +44,9 @@ struct Ops {
 
 impl Ops {
     fn lookup(data: &Data) -> Option<Self> {
-        let nr = |n: &str| {
-            let d = data.def_nr(n);
-            (d != u32::MAX).then_some(d)
+        let nr = |node: &str| {
+            let opd = data.def_nr(node);
+            (opd != u32::MAX).then_some(opd)
         };
         Some(Self {
             database: nr("OpDatabase")?,
@@ -61,7 +61,7 @@ impl Ops {
 
 /// An admitted local: its mint at body statement `mint`, its field at `off` of type `ftp`.
 struct Plan {
-    v: u16,
+    local: u16,
     tp: u16,
     mint: usize,
     off: i32,
@@ -91,14 +91,15 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     };
     let function = def.variables();
     let mut plans = Vec::new();
-    for (i, stmt) in body.operators.iter().enumerate() {
-        let Value::Call(d, a) = stmt.unspan() else {
+    for (idx, stmt) in body.operators.iter().enumerate() {
+        let Value::Call(opd, args) = stmt.unspan() else {
             continue;
         };
-        let (true, [Value::Var(v), Value::Int(tp)]) = (*d == ops.database, a.as_slice()) else {
+        let (true, [Value::Var(local), Value::Int(tp)]) = (*opd == ops.database, args.as_slice())
+        else {
             continue;
         };
-        if *v == rb || function.is_argument(*v) {
+        if *local == rb || function.is_argument(*local) {
             continue;
         }
         let Ok(tp) = u16::try_from(*tp) else {
@@ -110,8 +111,8 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
             &ops,
             def.code(),
             &body.operators,
-            i,
-            *v,
+            idx,
+            *local,
             tp,
             rb,
         ) {
@@ -120,13 +121,13 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
                     eprintln!(
                         "[exit-record] fn={} v={}: ADMITTED at +{off}",
                         def.name(),
-                        function.name(*v)
+                        function.name(*local)
                     );
                 }
                 plans.push(Plan {
-                    v: *v,
+                    local: *local,
                     tp,
-                    mint: i,
+                    mint: idx,
                     off,
                     ftp,
                 });
@@ -136,7 +137,7 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
                     eprintln!(
                         "[exit-record] fn={} v={}: DECLINED — {why}",
                         def.name(),
-                        function.name(*v)
+                        function.name(*local)
                     );
                 }
             }
@@ -145,14 +146,20 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     if plans.is_empty() {
         return;
     }
+    apply(data, d_nr, &plans, rb, &guard, &ops);
+}
+
+/// Each admitted local becomes a view of its field: the mint the buffer's ensure, the bind of
+/// the place and the release of what it held; the copy and the frees go.
+fn apply(data: &mut Data, d_nr: u32, plans: &[Plan], rb: u16, guard: &Value, ops: &Ops) {
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
-    for plan in &plans {
+    for plan in plans {
         crate::rewrite_census::fired("R-ExitVector/record", 1);
         if let Value::Block(bl) = code.unspan_mut() {
             bl.operators[plan.mint] = Value::Insert(vec![
                 guard.clone(),
                 Value::Set(
-                    plan.v,
+                    plan.local,
                     Box::new(Value::Call(
                         ops.get_field,
                         vec![Value::Var(rb), Value::Int(plan.off), Value::Int(plan.ftp)],
@@ -160,45 +167,49 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
                 ),
                 Value::Call(
                     ops.clear,
-                    vec![Value::Var(plan.v), Value::Int(i32::from(plan.tp))],
+                    vec![Value::Var(plan.local), Value::Int(i32::from(plan.tp))],
                 ),
             ]);
         }
-        drop_sites(&mut code, plan.v, &ops);
+        drop_sites(&mut code, plan.local, ops);
     }
     data.definitions[d_nr as usize].code = code;
     // Each local is now a VIEW of the buffer's field, never an owner: typed so, a bind of
     // the place is no copy (B-View-Base) and no exit releases it.
-    for plan in &plans {
+    for plan in plans {
         let vars = &mut data.definitions[d_nr as usize].variables;
-        let tp = vars.tp(plan.v).depending(rb);
-        vars.set_type(plan.v, tp);
+        let tp = vars.tp(plan.local).depending(rb);
+        vars.set_type(plan.local, tp);
     }
 }
 
-fn is_var(n: &Value, w: u16) -> bool {
-    matches!(n.unspan(), Value::Var(x) if *x == w)
+fn is_var(node: &Value, wv: u16) -> bool {
+    matches!(node.unspan(), Value::Var(arg) if *arg == wv)
 }
 
-fn int(n: Option<&Value>) -> Option<i32> {
-    match n.map(Value::unspan) {
-        Some(Value::Int(i)) => Some(*i),
+fn int(node: Option<&Value>) -> Option<i32> {
+    match node.map(Value::unspan) {
+        Some(Value::Int(idx)) => Some(*idx),
         _ => None,
     }
 }
 
 /// The copy `OpCopyRecord(v, OpGetField(rb, off, ftp), tp)`: `(off, ftp)`.
-fn exit_copy(n: &Value, v: u16, rb: u16, tp: u16, ops: &Ops) -> Option<(i32, i32)> {
-    let Value::Call(d, a) = n.unspan() else {
+fn exit_copy(node: &Value, local: u16, rb: u16, tp: u16, ops: &Ops) -> Option<(i32, i32)> {
+    let Value::Call(opd, args) = node.unspan() else {
         return None;
     };
-    if *d != ops.copy || a.len() != 3 || !is_var(&a[0], v) || int(a.get(2)) != Some(i32::from(tp)) {
+    if *opd != ops.copy
+        || args.len() != 3
+        || !is_var(&args[0], local)
+        || int(args.get(2)) != Some(i32::from(tp))
+    {
         return None;
     }
-    let Value::Call(g, ga) = a[1].unspan() else {
+    let Value::Call(inner, ga) = args[1].unspan() else {
         return None;
     };
-    if *g != ops.get_field || !ga.first().is_some_and(|x| is_var(x, rb)) {
+    if *inner != ops.get_field || !ga.first().is_some_and(|arg| is_var(arg, rb)) {
         return None;
     }
     Some((int(ga.get(1))?, int(ga.get(2))?))
@@ -212,7 +223,7 @@ fn admit(
     code: &Value,
     stmts: &[Value],
     mint: usize,
-    v: u16,
+    local: u16,
     tp: u16,
     rb: u16,
 ) -> Result<(i32, i32), &'static str> {
@@ -228,26 +239,26 @@ fn admit(
     let mut exit_frees = 0usize;
     let mut frees = 0usize;
     let mut mints = 0usize;
-    code.walk(&mut |n| match n.unspan() {
+    code.walk(&mut |node| match node.unspan() {
         Value::Return(_) => returns += 1,
         Value::Block(bl) if crate::exit_vector::is_exit_block(bl, rb) => {
-            for s in &bl.operators {
-                if let Some(at) = exit_copy(s, v, rb, tp, ops) {
+            for stmt in &bl.operators {
+                if let Some(at) = exit_copy(stmt, local, rb, tp, ops) {
                     copies.push(at);
                 }
-                if let Value::Call(d, a) = s.unspan()
-                    && (*d == ops.free_ref || *d == ops.free_if_distinct)
-                    && a.first().is_some_and(|x| is_var(x, v))
+                if let Value::Call(opd, args) = stmt.unspan()
+                    && (*opd == ops.free_ref || *opd == ops.free_if_distinct)
+                    && args.first().is_some_and(|arg| is_var(arg, local))
                 {
                     exit_frees += 1;
                 }
             }
         }
-        Value::Call(d, a) if a.first().is_some_and(|x| is_var(x, v)) => {
-            if *d == ops.free_ref || *d == ops.free_if_distinct {
+        Value::Call(opd, args) if args.first().is_some_and(|arg| is_var(arg, local)) => {
+            if *opd == ops.free_ref || *opd == ops.free_if_distinct {
                 frees += 1;
             }
-            if *d == ops.database {
+            if *opd == ops.database {
                 mints += 1;
             }
         }
@@ -269,11 +280,11 @@ fn admit(
         return Err("the field is not the local's type");
     }
     // Every mention of the local is a receiver, and it is bound only by its null init.
-    receivers_only(code, v, ops, data)?;
+    receivers_only(code, local, ops, data)?;
     let mut rebinds = 0usize;
-    code.walk(&mut |n| {
-        if let Value::Set(x, val) = n.unspan()
-            && *x == v
+    code.walk(&mut |node| {
+        if let Value::Set(arg, val) = node.unspan()
+            && *arg == local
             && !matches!(val.unspan(), Value::Null)
         {
             rebinds += 1;
@@ -284,20 +295,20 @@ fn admit(
     }
     // Nothing else writes the field's bytes.
     let size = i32::from(database.size(tp));
-    if writes_region(code, rb, *off, *off + size, v, ops, data) {
+    if writes_region(code, rb, *off, *off + size, local, ops, data) {
         return Err("something else writes the field's bytes");
     }
     // The construction writes every leaf field before it reads one.
     let mut leaves = Vec::new();
     leaf_offsets(database, tp, 0, &mut leaves, 0)?;
     let mut written: Vec<i32> = Vec::new();
-    for s in &stmts[mint + 1..] {
+    for stmt in &stmts[mint + 1..] {
         if leaves.iter().all(|l| written.contains(l)) {
             break;
         }
-        match group_write(s, v, ops, data, database) {
+        match group_write(stmt, local, ops, data, database) {
             Some(at) => written.extend(at),
-            None if on_written_field(s, v, ops, &written) => {}
+            None if on_written_field(stmt, local, ops, &written) => {}
             None => break,
         }
     }
@@ -329,7 +340,7 @@ fn leaf_offsets(
             Some(Parts::Enum(values))
                 if values.iter().any(|(t, _)| {
                     matches!(
-                        database.types.get(*t as usize).map(|x| &x.parts),
+                        database.types.get(*t as usize).map(|arg| &arg.parts),
                         Some(Parts::EnumValue(..))
                     )
                 }) =>
@@ -345,28 +356,37 @@ fn leaf_offsets(
 /// One statement of the construction: `Some(at)` the leaf offsets a write of the local
 /// covers (empty for a statement that neither reads nor writes it), `None` anything else —
 /// the end of the scan.
-fn group_write(s: &Value, v: u16, ops: &Ops, data: &Data, database: &Stores) -> Option<Vec<i32>> {
-    let names = |x: &Value| {
+fn group_write(
+    stmt: &Value,
+    local: u16,
+    ops: &Ops,
+    data: &Data,
+    database: &Stores,
+) -> Option<Vec<i32>> {
+    let names = |arg: &Value| {
         let mut hit = false;
-        x.walk(&mut |n| {
-            if is_var(n, v) {
+        arg.walk(&mut |node| {
+            if is_var(node, local) {
                 hit = true;
             }
         });
         hit
     };
-    if !names(s) {
+    if !names(stmt) {
         return Some(Vec::new());
     }
-    let Value::Call(d, a) = s.unspan() else {
+    let Value::Call(opd, args) = stmt.unspan() else {
         return None;
     };
     // A sub-record written whole by a copy into it.
-    if *d == ops.copy {
-        let Some(Value::Call(g, ga)) = a.get(1).map(Value::unspan) else {
+    if *opd == ops.copy {
+        let Some(Value::Call(inner, ga)) = args.get(1).map(Value::unspan) else {
             return None;
         };
-        if *g != ops.get_field || !ga.first().is_some_and(|x| is_var(x, v)) || names(&a[0]) {
+        if *inner != ops.get_field
+            || !ga.first().is_some_and(|arg| is_var(arg, local))
+            || names(&args[0])
+        {
             return None;
         }
         let base = int(ga.get(1))?;
@@ -375,13 +395,15 @@ fn group_write(s: &Value, v: u16, ops: &Ops, data: &Data, database: &Stores) -> 
         leaf_offsets(database, sub, base, &mut out, 1).ok()?;
         return Some(out);
     }
-    if !data.def(*d).name().starts_with("OpSet") || a.iter().skip(1).any(|x| names(x)) {
+    if !data.def(*opd).name().starts_with("OpSet") || args.iter().skip(1).any(names) {
         return None;
     }
-    let pos = int(a.get(1))?;
-    match a.first().map(Value::unspan)? {
-        Value::Var(x) if *x == v => Some(vec![pos]),
-        Value::Call(g, ga) if *g == ops.get_field && ga.first().is_some_and(|x| is_var(x, v)) => {
+    let pos = int(args.get(1))?;
+    match args.first().map(Value::unspan)? {
+        Value::Var(arg) if *arg == local => Some(vec![pos]),
+        Value::Call(inner, ga)
+            if *inner == ops.get_field && ga.first().is_some_and(|arg| is_var(arg, local)) =>
+        {
             Some(vec![int(ga.get(1))? + pos])
         }
         _ => None,
@@ -390,23 +412,23 @@ fn group_write(s: &Value, v: u16, ops: &Ops, data: &Data, database: &Stores) -> 
 
 /// A statement whose only mention of the local is the receiver `OpGetField(v, at, _)` of a
 /// native op, `at` a field the construction already wrote: an append into its vector.
-fn on_written_field(s: &Value, v: u16, ops: &Ops, written: &[i32]) -> bool {
-    let Value::Call(_, a) = s.unspan() else {
+fn on_written_field(stmt: &Value, local: u16, ops: &Ops, written: &[i32]) -> bool {
+    let Value::Call(_, args) = stmt.unspan() else {
         return false;
     };
-    let Some(Value::Call(g, ga)) = a.first().map(Value::unspan) else {
+    let Some(Value::Call(inner, ga)) = args.first().map(Value::unspan) else {
         return false;
     };
-    if *g != ops.get_field || !ga.first().is_some_and(|x| is_var(x, v)) {
+    if *inner != ops.get_field || !ga.first().is_some_and(|arg| is_var(arg, local)) {
         return false;
     }
     let Some(at) = int(ga.get(1)) else {
         return false;
     };
     let mut rest = 0usize;
-    for x in &a[1..] {
-        x.walk(&mut |n| {
-            if is_var(n, v) {
+    for arg in &args[1..] {
+        arg.walk(&mut |node| {
+            if is_var(node, local) {
                 rest += 1;
             }
         });
@@ -416,41 +438,41 @@ fn on_written_field(s: &Value, v: u16, ops: &Ops, written: &[i32]) -> bool {
 
 /// Every `Var(v)` is the first argument of a native op, or of an `OpGetField` that is itself
 /// the first argument of a native op.
-fn receivers_only(code: &Value, v: u16, ops: &Ops, data: &Data) -> Result<(), &'static str> {
+fn receivers_only(code: &Value, local: u16, ops: &Ops, data: &Data) -> Result<(), &'static str> {
     // Each `Var(v)` must be the direct first argument of a native op; each such op that is an
     // `OpGetField` must in turn be the first argument of a native op other than a copy.
     let mut total = 0usize;
     let mut direct = 0usize;
     let mut fields = 0usize;
     let mut fields_received = 0usize;
-    code.walk(&mut |n| {
-        if is_var(n, v) {
+    code.walk(&mut |node| {
+        if is_var(node, local) {
             total += 1;
         }
-        let Value::Call(d, a) = n.unspan() else {
+        let Value::Call(opd, args) = node.unspan() else {
             return;
         };
-        if !native(data, *d) {
+        if !native(data, *opd) {
             return;
         }
-        if a.first().is_some_and(|x| is_var(x, v)) {
+        if args.first().is_some_and(|arg| is_var(arg, local)) {
             direct += 1;
-            if *d == ops.get_field {
+            if *opd == ops.get_field {
                 fields += 1;
             }
         }
-        if *d != ops.copy
-            && let Some(Value::Call(g, ga)) = a.first().map(Value::unspan)
-            && *g == ops.get_field
-            && ga.first().is_some_and(|x| is_var(x, v))
+        if *opd != ops.copy
+            && let Some(Value::Call(inner, ga)) = args.first().map(Value::unspan)
+            && *inner == ops.get_field
+            && ga.first().is_some_and(|arg| is_var(arg, local))
         {
             fields_received += 1;
         }
         // A sub-record of the local written whole: `OpCopyRecord(src, OpGetField(v, …), tp)`.
-        if *d == ops.copy
-            && let Some(Value::Call(g, ga)) = a.get(1).map(Value::unspan)
-            && *g == ops.get_field
-            && ga.first().is_some_and(|x| is_var(x, v))
+        if *opd == ops.copy
+            && let Some(Value::Call(inner, ga)) = args.get(1).map(Value::unspan)
+            && *inner == ops.get_field
+            && ga.first().is_some_and(|arg| is_var(arg, local))
         {
             fields_received += 1;
         }
@@ -462,25 +484,33 @@ fn receivers_only(code: &Value, v: u16, ops: &Ops, data: &Data) -> Result<(), &'
     }
 }
 
-fn native(data: &Data, d: u32) -> bool {
-    (d as usize) < data.definitions.len() && data.def(d).name().starts_with("Op")
+fn native(data: &Data, opd: u32) -> bool {
+    (opd as usize) < data.definitions.len() && data.def(opd).name().starts_with("Op")
 }
 
 /// Does any statement other than the local's own copy write into `rb`'s bytes `lo..hi`?
-fn writes_region(code: &Value, rb: u16, lo: i32, hi: i32, v: u16, ops: &Ops, data: &Data) -> bool {
+fn writes_region(
+    code: &Value,
+    rb: u16,
+    lo: i32,
+    hi: i32,
+    local: u16,
+    ops: &Ops,
+    data: &Data,
+) -> bool {
     let mut hit = false;
-    code.walk(&mut |n| {
-        let Value::Call(d, a) = n.unspan() else {
+    code.walk(&mut |node| {
+        let Value::Call(opd, args) = node.unspan() else {
             return;
         };
-        if !native(data, *d) || *d == ops.get_field || *d == ops.database {
+        if !native(data, *opd) || *opd == ops.get_field || *opd == ops.database {
             return;
         }
-        if *d == ops.copy && a.first().is_some_and(|x| is_var(x, v)) {
+        if *opd == ops.copy && args.first().is_some_and(|arg| is_var(arg, local)) {
             return;
         }
         // Ops that only read, compare or release a handle write no field's bytes.
-        let name = data.def(*d).name();
+        let name = data.def(*opd).name();
         // `OpPlaceRecord(rb, tp)` claims a NEW record in the buffer's store.
         if [
             "OpGet",
@@ -499,13 +529,13 @@ fn writes_region(code: &Value, rb: u16, lo: i32, hi: i32, v: u16, ops: &Ops, dat
         {
             return;
         }
-        for (i, x) in a.iter().enumerate() {
-            match x.unspan() {
+        for (idx, arg) in args.iter().enumerate() {
+            match arg.unspan() {
                 // The buffer itself: as the receiver, its write position is the next argument.
-                Value::Var(w) if *w == rb => {
-                    if i == 0
+                Value::Var(wv) if *wv == rb => {
+                    if idx == 0
                         && name.starts_with("OpSet")
-                        && let Some(pos) = int(a.get(1))
+                        && let Some(pos) = int(args.get(1))
                         && (pos < lo || pos >= hi)
                     {
                         continue;
@@ -513,8 +543,9 @@ fn writes_region(code: &Value, rb: u16, lo: i32, hi: i32, v: u16, ops: &Ops, dat
                     hit = true;
                 }
                 // A field of the buffer: outside the region it is another field's.
-                Value::Call(g, ga)
-                    if *g == ops.get_field && ga.first().is_some_and(|y| is_var(y, rb)) =>
+                Value::Call(inner, ga)
+                    if *inner == ops.get_field
+                        && ga.first().is_some_and(|arg2| is_var(arg2, rb)) =>
                 {
                     match int(ga.get(1)) {
                         Some(off) if off < lo || off >= hi => {}
@@ -529,34 +560,34 @@ fn writes_region(code: &Value, rb: u16, lo: i32, hi: i32, v: u16, ops: &Ops, dat
 }
 
 /// The exit's copy of the local and its frees become nothing.
-fn drop_sites(code: &mut Value, v: u16, ops: &Ops) {
+fn drop_sites(code: &mut Value, local: u16, ops: &Ops) {
     match code {
-        Value::Call(d, a)
-            if (*d == ops.copy || *d == ops.free_ref || *d == ops.free_if_distinct)
-                && a.first().is_some_and(|x| is_var(x, v)) =>
+        Value::Call(opd, args)
+            if (*opd == ops.copy || *opd == ops.free_ref || *opd == ops.free_if_distinct)
+                && args.first().is_some_and(|arg| is_var(arg, local)) =>
         {
             *code = Value::Null;
         }
-        Value::Span(b) => drop_sites(&mut b.1, v, ops),
+        Value::Span(b) => drop_sites(&mut b.1, local, ops),
         Value::Block(bl) | Value::Loop(bl) => {
-            for s in &mut bl.operators {
-                drop_sites(s, v, ops);
+            for stmt in &mut bl.operators {
+                drop_sites(stmt, local, ops);
             }
         }
         Value::Insert(list) => {
-            for s in list {
-                drop_sites(s, v, ops);
+            for stmt in list {
+                drop_sites(stmt, local, ops);
             }
         }
         Value::If(c, t, e) => {
-            drop_sites(c, v, ops);
-            drop_sites(t, v, ops);
-            drop_sites(e, v, ops);
+            drop_sites(c, local, ops);
+            drop_sites(t, local, ops);
+            drop_sites(e, local, ops);
         }
-        Value::Set(_, x) | Value::Return(x) | Value::Drop(x) => drop_sites(x, v, ops),
-        Value::Call(_, a) => {
-            for x in a {
-                drop_sites(x, v, ops);
+        Value::Set(_, arg) | Value::Return(arg) | Value::Drop(arg) => drop_sites(arg, local, ops),
+        Value::Call(_, args) => {
+            for arg in args {
+                drop_sites(arg, local, ops);
             }
         }
         _ => {}
