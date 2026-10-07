@@ -235,7 +235,10 @@ length, a pop to empty then pushes, two stacks in one body, a pop from both ends
                  included), so the parameter's headers and those views' record addresses
                  (R-RecPtr) are kept.  The original loop runs when the test fails.  The
                  copy is emitted only when it gains a header no enclosing frame holds or
-                 a record address the plain loop declines.
+                 a record address the plain loop declines.  A local that ADOPTED the
+                 buffer (the result local IS the caller's buffer) and its witness name
+                 the buffer's store from the adoption on, so a loop growing that local
+                 is versioned on the same test.
 ```
 
 **In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
