@@ -4689,38 +4689,39 @@ guard `tests/scripts/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; 
 ### A lookup's found entry is answered as a view the caller reads in place
 
 ```
-  (R-ViewReturn) a function whose result at some exit is a VIEW V of a sub-record
-                 reached by a pure path rooted at a `const` (or never-written)
-                 PARAMETER p — `return e.value` for `e = p.entries[i]?`, or a match
-                 binding of such a view — answers that exit as V's address (the
-                 parser's materialised copy of the view is not emitted) when EVERY
-                 caller consumes the result INSIDE the statement that binds it: the
-                 result is the subject of a `match` (or a field read) whose arms
-                 read scalars, read texts as VALUES (R-TextBorrow's sense) or copy
-                 a field into their own slot, and no arm writes, grows, frees or
-                 rebinds any store reachable from p before its last read.  Every
-                 other exit keeps its form; a function with one caller that cannot
-                 be so proven is emitted as today.
+  (R-ViewReturn) a function F whose result at some exit is a VIEW V of a sub-record
+                 that the parser materialises (a buffer minted, V deep-copied into it
+                 — `return e.value` for `e` an element of a parameter's vector) is
+                 given a TWIN that answers (address, owned): a materialised exit
+                 answers V's address and `false`, every other exit the store it
+                 built and `true`.  A call takes the twin, and its caller mints no
+                 buffer and frees the result only when owned, when ALL of:
+                 (1) F writes no store but those it minted itself, calls no user
+                     function, and names its buffer only in its materialised exits;
+                 (2) the call's arguments are variables or reads — the stores V
+                     lies in are held by the caller across the call's statement;
+                 (3) the WINDOW — the statements after the call in its block —
+                     writes no store and calls no user function, and reads the
+                     result only through getters that copy (a tag, a scalar, a
+                     text);
+                 (4) the result's variable is bound once and named only in the
+                     window; the buffer only in its prep, the call and its frees.
+                 Every exit keeps the ownership it had, so a built result (a
+                 not-found literal) is freed as before.
 ```
 
-**In words.** `(R-ReturnField)` answers a field of an OWNED local as its store at a position
+**In words.**  `(R-ReturnField)` answers a field of an OWNED local as its store at a position
 and declines a parameter, because a view of a parameter's record dangles the moment the
-caller frees or grows that record; here the referent is the caller's own argument and the
-whole use of the result is the one statement around the call, so the dangling window is
-empty by construction — the check is on the caller's consuming statement.  Conditions: p is
-reached only through pure paths in the callee and never written there; the consuming
-statement neither writes nor releases p's store before the bindings' last read (an
-`OpDatabase`, an `OpFreeRef`, an append, a rebind of the argument inside an arm each
-decline); the absent arm hands up `DbRef::NULL`, which the tag read answers as "no variant",
-so a caller that matches the null variant BY NAME declines.  Profitable where the found value
-holds heap.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy
-and its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
-ownership question it raised is settled by C122 and @C139: a representation is the compiler's
-wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
-`LOFT_TRACE_VIEW_RETURN` names the declining condition per call site.  Falsifier: the hash
-and `LOFT_NATIVE_LEAK_CHECK=1` on both backends (a view freed as if owned shows as a double
-release); a planted arm that appends to `p.entries` before reading the binding must decline;
-`LOFT_POISON=1` catches a read through a view whose record moved.
+caller frees or grows that record.  Here the referent is the caller's own argument and the
+result is read only in the statements right after the call, which change nothing, so the
+dangling window is empty by construction.  The twin decides per call site, so a caller that
+holds the result longer, or writes in between (the guard's `text_then_clear`), keeps the
+copy.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy and
+its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
+ownership question it raised is settled by C122 and @C139: a representation is the
+compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
+`LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
+`src/generation/view_return.rs`; guard `tests/scripts/a-found-entry-is-read-where-it-lies.loft`.
 
 ### A decoded text or byte string is a view into the frame
 
