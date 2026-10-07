@@ -387,6 +387,20 @@ impl Parser {
             self.first_pass,
         );
         if fnr == usize::MAX {
+            // `ix.len()` — the method spelling of `len(ix)`, which no stdlib definition can
+            // carry (see `index_len`).  Both passes, so first-pass inference sees `integer`.
+            if field == "len"
+                && matches!(t.peel_optional().0, Type::Index(_, _, _))
+                && self.lexer.peek_token("(")
+            {
+                self.lexer.token("(");
+                self.lexer.token(")");
+                let recv = t.clone();
+                if let Some(tp) = self.index_len(code, &recv, vec![code.clone()], None) {
+                    return tp;
+                }
+                return crate::data::I64.clone();
+            }
             // Plan-17 phase 01 (B) — bounded-T method dispatch must run
             // on BOTH passes so the call's return type propagates into
             // first-pass type inference of the enclosing variable.
