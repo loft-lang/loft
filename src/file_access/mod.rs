@@ -167,6 +167,10 @@ pub fn write(path: impl HostPath, contents: impl AsRef<[u8]>) -> io::Result<()> 
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn create_dir_all(path: impl HostPath) -> io::Result<()> {
     let path = &*path.to_path_text();
+    if path.is_empty() {
+        // As `std`: there is nothing to create, which is not a failure.
+        return Ok(());
+    }
     run(path, |p| std::fs::create_dir_all(p))
 }
 
@@ -1087,6 +1091,10 @@ mod tests {
     #[test]
     fn an_empty_path_names_nothing_and_dot_is_here() {
         assert!(!exists(""), "an empty path");
+        assert!(
+            create_dir_all("").is_ok(),
+            "nothing to create, as std answers"
+        );
         assert!(!is_dir("") && metadata("").is_err());
         assert!(exists(".") && is_dir("."));
         let lone = PathText::host("a.loft").parent().unwrap();
