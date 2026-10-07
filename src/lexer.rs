@@ -792,7 +792,10 @@ impl Lexer {
         if self.mode != Mode::Formatting {
             loop {
                 if let Some(&c) = self.iter.peek() {
-                    if c != ' ' && c != '\t' {
+                    // A carriage return is whitespace too: text handed over whole (a JSON
+                    // document written on Windows, loft#1908) keeps its `\r\n` line ends,
+                    // where a source file's lines arrive without them.
+                    if c != ' ' && c != '\t' && c != '\r' {
                         break;
                     }
                     self.next_char();
