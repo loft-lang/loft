@@ -6164,9 +6164,9 @@ impl Output<'_> {
         // the store AT the read, so a store that grew in between answers its new buffer.
         let base = match self.active_vec_base(&path) {
             Some(b) => b.to_owned(),
-            None if !self.byte_resolve_disabled => format!(
-                "stores.allocations[{header}.store_nr as usize].elem_base({header}.rec)"
-            ),
+            None if !self.byte_resolve_disabled => {
+                format!("stores.allocations[{header}.store_nr as usize].elem_base({header}.rec)")
+            }
             None => return None,
         };
         Some(ByteRead {
