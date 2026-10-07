@@ -11,6 +11,7 @@
 //! runs a program exercising every major lowering arm both ways and asserts the
 //! output matches.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -39,7 +40,7 @@ fn store_backed_codegen_matches_native() {
     // Exercises: recursion + if-expr, struct construct + field read, for-loops
     // over ranges and vectors, text interpolation (Call + text dest), Set
     // reassignment, tuple get/put, vector indexing — i.e. most generate_inner arms.
-    std::fs::write(
+    fa::write(
         &script,
         r#"
 struct Point { x: integer, y: integer }
@@ -75,5 +76,5 @@ fn main() {
         "store-backed codegen diverged from native"
     );
 
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
 }

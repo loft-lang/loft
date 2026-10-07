@@ -9,6 +9,7 @@
 //! foreign store's own advice; the halt is `report_and_exit`, so it is asserted on the
 //! spawned binary.  The fixture cdylib must be built (`cd tests/lib/native_pkg/native &&
 //! cargo build --release`); the tests skip when it is absent, as `native_loader.rs` does.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -30,7 +31,7 @@ fn fixture_built() -> bool {
     let p = std::path::Path::new(PKG)
         .join("native/target/release")
         .join(so);
-    if !p.exists() {
+    if !fa::exists(&p) {
         eprintln!(
             "skipping: fixture cdylib not built — run: cd {PKG}/native && cargo build --release"
         );
@@ -76,11 +77,11 @@ fn run(
         backend.trim_start_matches('-'),
         std::process::id()
     ));
-    std::fs::create_dir_all(&root).expect("scratch dir");
+    fa::create_dir_all(&root).expect("scratch dir");
     let cwd = std::env::current_dir().expect("cwd");
     let path = if inline {
         let p = root.join("prog.loft");
-        std::fs::write(&p, src).expect("write program");
+        fa::write(&p, src).expect("write program");
         p
     } else {
         cwd.join(src)
@@ -99,7 +100,7 @@ fn run(
     let out = cmd.output().expect("run loft");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let text = format!("{stdout}{}", String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     (out.status.success(), stdout, text)
 }
 

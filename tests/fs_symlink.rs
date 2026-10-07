@@ -11,15 +11,16 @@
 mod common;
 
 use common::cross_mode::run_cross_mode_expect;
+use loft::file_access as fa;
 
 #[cfg(unix)]
 #[test]
 fn is_symlink_names_the_link_not_its_target() {
     let root = std::env::temp_dir().join(format!("loft_symlink_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("d")).expect("create dir");
-    std::fs::write(root.join("f"), "x").expect("create file");
-    std::os::unix::fs::symlink(root.join("d"), root.join("l")).expect("create link");
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("d")).expect("create dir");
+    fa::write(root.join("f"), "x").expect("create file");
+    fa::symlink(root.join("d"), root.join("l")).expect("create link");
     let p = |name: &str| root.join(name).display().to_string();
     let body = format!(
         r#"
@@ -42,5 +43,5 @@ fn is_symlink_names_the_link_not_its_target() {
         &body,
         "link=true dir=false file=false is_dir_through_link=true missing=false\n",
     );
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

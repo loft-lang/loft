@@ -29,6 +29,7 @@
 //! its record actually keeps it. A future change that drops a field from a layout again
 //! fails here on the answer, whichever way it then surfaces.
 
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,8 +38,8 @@ fn loft_bin() -> PathBuf {
 }
 
 fn write(path: &Path, body: &str) {
-    std::fs::create_dir_all(path.parent().unwrap()).expect("mkdir");
-    std::fs::write(path, body).expect("write");
+    fa::create_dir_all(path.parent().unwrap()).expect("mkdir");
+    fa::write(path, body).expect("write");
 }
 
 /// A package whose ENTRY declares `Roofs` and pulls in a module that uses it as a field
@@ -62,7 +63,7 @@ fn build_package(root: &Path) {
 #[test]
 fn the_reported_package_reads_its_fields_where_they_live() {
     let root = std::env::temp_dir().join("loft_796_field_storage");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     build_package(&root);
     let prog = root.join("use_it.loft");
     write(
@@ -98,7 +99,7 @@ fn the_reported_package_reads_its_fields_where_they_live() {
         "a field whose type another module declares must get a slot (loft#797).\n{all}"
     );
     assert!(out.status.success(), "the run must succeed.\n{all}");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }
 
 #[test]
@@ -107,7 +108,7 @@ fn an_ordinary_cross_module_field_still_compiles() {
     // declared before it is used must be unaffected.  Without this, a check that
     // refused every cross-module field type would pass the test above.
     let root = std::env::temp_dir().join("loft_796_field_storage_ok");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     write(
         &root.join("okp/loft.toml"),
         "[package]\nname = \"okp\"\nversion = \"0.1.0\"\n[library]\nentry = \"src/okp.loft\"\n",
@@ -152,5 +153,5 @@ fn an_ordinary_cross_module_field_still_compiles() {
         "a field whose type is declared before use must keep its slot.\n{all}"
     );
     assert!(all.contains("12"), "and the program must run.\n{all}");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
 }

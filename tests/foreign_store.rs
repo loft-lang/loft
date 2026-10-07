@@ -10,6 +10,7 @@
 //! first.  The halt is `report_and_exit`, which leaves the process, so it is asserted here
 //! on the spawned binary rather than by an `@EXPECT_FAIL` cell (which tolerates a panic,
 //! not an exit).  The EMISSION pin at the end says which binds take the view op.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -74,10 +75,10 @@ fn run(
         backend.trim_start_matches('-'),
         std::process::id()
     ));
-    std::fs::create_dir_all(&root).expect("scratch dir");
+    fa::create_dir_all(&root).expect("scratch dir");
     let path = if inline {
         let p = root.join("prog.loft");
-        std::fs::write(&p, src).expect("write program");
+        fa::write(&p, src).expect("write program");
         p
     } else {
         std::env::current_dir().expect("cwd").join(src)
@@ -94,7 +95,7 @@ fn run(
     let out = cmd.output().expect("run loft");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let text = format!("{stdout}{}", String::from_utf8_lossy(&out.stderr));
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     (out.status.success(), stdout, text)
 }
 
@@ -211,16 +212,16 @@ fn ir_of(dump: &str, name: &str) -> String {
 #[test]
 fn a_bind_into_the_locals_own_store_takes_the_view_op_and_every_other_shape_the_copy() {
     let root = std::env::temp_dir().join(format!("loft_174_probe_{}", std::process::id()));
-    std::fs::create_dir_all(&root).expect("scratch dir");
+    fa::create_dir_all(&root).expect("scratch dir");
     let path = root.join("probe.loft");
-    std::fs::write(&path, PROBE).expect("write probe");
+    fa::write(&path, PROBE).expect("write probe");
     let out = Command::new(loft_bin())
         .arg("introspect")
         .arg(&path)
         .env("RUST_BACKTRACE", "0")
         .output()
         .expect("run loft introspect");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let dump = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

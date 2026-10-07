@@ -28,6 +28,7 @@
 //! [`the_harness_can_fail`] is the control for the harness itself: a program that really is
 //! broken must be reported as broken, so a green run above means something.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -54,9 +55,9 @@ fn main() {\n\
 
 fn write_minimal(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft1026-{}-{}", name, std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("minimal.loft");
-    std::fs::write(&file, MINIMAL).expect("write probe");
+    fa::write(&file, MINIMAL).expect("write probe");
     file
 }
 
@@ -178,9 +179,9 @@ fn both_backends_answer_the_same() {
 #[test]
 fn the_harness_can_fail() {
     let dir = std::env::temp_dir().join(format!("loft1026-ctl-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    fa::create_dir_all(&dir).expect("temp dir");
     let file = dir.join("control.loft");
-    std::fs::write(
+    fa::write(
         &file,
         "pub fn gctl<T>(x: T, a: T?) -> T { _ = x; a? }\n\
          fn test_this_must_fail() {\n\

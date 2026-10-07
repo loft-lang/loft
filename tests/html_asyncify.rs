@@ -30,6 +30,7 @@
 // Skips cleanly when prerequisites (node, chrome, wasm32 toolchain, the host
 // loft binary) are missing — same shape as the sibling html_* gates.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -102,7 +103,7 @@ fn pick_free_port() -> Option<u16> {
 /// Build the program to `--html` and return its path, or `None` to skip.
 fn build_html(root: &Path) -> Option<PathBuf> {
     let loft_bin = root.join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return None;
     }
@@ -111,11 +112,11 @@ fn build_html(root: &Path) -> Option<PathBuf> {
     // wasm-bindgen-stomped rlib can no longer reach this path.
 
     let tmp = std::env::temp_dir().join("loft_html_asyncify_resume");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create per-test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create per-test dir");
     let src = tmp.join("main.loft");
     let html = tmp.join("asyncify_resume.html");
-    std::fs::write(&src, SOURCE).expect("write source");
+    fa::write(&src, SOURCE).expect("write source");
 
     let _guard = build_lock()
         .lock()
@@ -142,7 +143,10 @@ fn build_html(root: &Path) -> Option<PathBuf> {
 /// no frames); `None` is the ordinary visible page.
 fn assert_resumes(root: &Path, html: &Path, mode: Option<&str>) {
     let harness = root.join("tools/html_asyncify_check.mjs");
-    assert!(harness.exists(), "tools/html_asyncify_check.mjs missing");
+    assert!(
+        fa::exists(&harness),
+        "tools/html_asyncify_check.mjs missing"
+    );
     let port = pick_free_port().expect("pick a free port");
 
     let mut cmd = Command::new("node");

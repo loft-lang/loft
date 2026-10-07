@@ -19,6 +19,7 @@
 //!
 //! Skips cleanly without chrome / node / python3, in the shape of `tests/html_fonts.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -111,20 +112,20 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
         return;
     };
     let loft = repo_root().join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
 
     let dir = std::env::temp_dir().join("loft_html_page_store");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
 
     // One program, two jobs: write the store natively, then read it back. The page runs
     // only the reading half, so the bytes it reads were produced by the desktop — which
     // is the direction a pack actually travels.
     let src = dir.join("page_store.loft");
-    std::fs::write(
+    fa::write(
         &src,
         "struct Rec { r_key: text, r_n: integer }\n\
          fn main() {\n\
@@ -150,7 +151,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
         .output()
         .expect("invoke loft");
     assert!(
-        dir.join("page.store").exists(),
+        fa::exists(dir.join("page.store")),
         "the fixture store was not written: {}",
         String::from_utf8_lossy(&made.stdout)
     );
@@ -162,7 +163,7 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
         .current_dir(&dir)
         .output()
         .expect("invoke loft --html");
-    if !built.status.success() || !html.exists() {
+    if !built.status.success() || !fa::exists(&html) {
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
@@ -172,15 +173,15 @@ fn a_browser_page_reads_a_store_out_of_its_own_filesystem() {
 
     // The seeded variant: identical wasm, with the store handed to the page's own
     // filesystem the way `doc/loft-fs.js` documents (`globalThis.loftBaseFS`).
-    let page = std::fs::read_to_string(&html).expect("read page");
-    let bytes = std::fs::read(dir.join("page.store")).expect("read store");
+    let page = fa::read_to_string(&html).expect("read page");
+    let bytes = fa::read(dir.join("page.store")).expect("read store");
     let b64 = loft::base64::encode(&bytes);
     let seed = format!(
         "<script>globalThis.loftBaseFS={{\"/page.store\":Uint8Array.from(atob(\"{b64}\"),c=>c.charCodeAt(0))}};</script>\n"
     );
     let seeded = page.replacen("<script>", &format!("{seed}<script>"), 1);
     assert!(seeded.len() > page.len(), "the seed was not spliced in");
-    std::fs::write(dir.join("seeded.html"), &seeded).expect("write seeded page");
+    fa::write(dir.join("seeded.html"), &seeded).expect("write seeded page");
 
     let Some(port) = pick_free_port() else {
         eprintln!("SKIP: could not pick a free TCP port");

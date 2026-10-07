@@ -23,6 +23,7 @@
 //!   rows by one constant beside its own row; a growth that scales with the corpus is the
 //!   front end's.
 
+use loft::file_access as fa;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -77,9 +78,9 @@ fn front_end_allocations(src: &str, tag: &str) -> (u64, u64) {
     // moved the count by a constant between checkouts of one commit.  Relative to the crate
     // root, where the tests run, the name is identical wherever the tree lives.
     let dir = PathBuf::from(format!("target/frontend_counts/{tag}"));
-    std::fs::create_dir_all(&dir).expect("corpus dir");
+    fa::create_dir_all(&dir).expect("corpus dir");
     let file = dir.join("corpus.loft");
-    std::fs::write(&file, src).expect("write corpus");
+    fa::write(&file, src).expect("write corpus");
     let path = file.to_string_lossy().to_string();
     let stdlib_dir = pristine_stdlib(&dir);
 
@@ -96,7 +97,7 @@ fn front_end_allocations(src: &str, tag: &str) -> (u64, u64) {
     let program = ALLOCS.with(Cell::get);
 
     drop(p);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         parsed,
         "the corpus must compile — counting a failed compile counts nothing"
@@ -111,7 +112,7 @@ fn front_end_allocations(src: &str, tag: &str) -> (u64, u64) {
 /// skipped it (loft#1761).  The copy is made outside the counting window.
 fn pristine_stdlib(dir: &std::path::Path) -> String {
     let to = dir.join("default");
-    std::fs::create_dir_all(&to).expect("stdlib copy dir");
+    fa::create_dir_all(&to).expect("stdlib copy dir");
     for entry in std::fs::read_dir("default").expect("default/ is readable") {
         let from = entry.expect("default/ entry").path();
         let name = from
@@ -119,8 +120,8 @@ fn pristine_stdlib(dir: &std::path::Path) -> String {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-        if !name.starts_with('.') && name.ends_with(".loft") && from.is_file() {
-            std::fs::copy(&from, to.join(&name)).expect("copy a stdlib source");
+        if !name.starts_with('.') && name.ends_with(".loft") && fa::is_file(&from) {
+            fa::copy(&from, to.join(&name)).expect("copy a stdlib source");
         }
     }
     to.to_string_lossy().to_string()
@@ -146,7 +147,7 @@ fn key() -> String {
 }
 
 fn pinned() -> Vec<(String, String, u64)> {
-    std::fs::read_to_string(PINS)
+    fa::read_to_string(PINS)
         .unwrap_or_default()
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -172,7 +173,7 @@ fn write_pins(rows: &[(String, String, u64)]) {
     for (k, s, n) in rows {
         out.push_str(&format!("{k}\t{s}\t{n}\n"));
     }
-    std::fs::write(PINS, out).expect("write the pins");
+    fa::write(PINS, out).expect("write the pins");
 }
 
 /// **The front end allocates no more than it did** — the gate (@PLN166 C1).

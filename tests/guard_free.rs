@@ -7,6 +7,7 @@
 //! `LOFT_NO_GUARD_FREE=1` restores the guard on every non-leaf frame.  The guard
 //! (`tests/scripts/158-guard-free.loft`) scores the rule on the leak channel; this pins
 //! what is emitted, in both tiers.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -31,13 +32,13 @@ fn emit(tag: &str, lean: bool, env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let rust = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     rust
 }
 

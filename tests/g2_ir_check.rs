@@ -10,6 +10,7 @@
 //! flow, not just the stdlib round-trip unit tests — and is the bedrock every
 //! later representation swap is verified against.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -20,7 +21,7 @@ fn loft_bin() -> std::path::PathBuf {
 fn ir_check_passes_on_real_program() {
     let pid = std::process::id();
     let script = std::env::temp_dir().join(format!("loft_g2irc_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "struct Point { x: integer, y: integer }\n\
          fn dist2(p: Point) -> integer { p.x * p.x + p.y * p.y }\n\
@@ -55,5 +56,5 @@ fn ir_check_passes_on_real_program() {
         "output: {stdout}"
     );
 
-    let _ = std::fs::remove_file(&script);
+    let _ = fa::remove_file(&script);
 }

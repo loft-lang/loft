@@ -20,6 +20,7 @@
 // machines without WASM rust targets get a clear "skipped" message
 // rather than a false failure.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -119,7 +120,7 @@ fn run_html_wasm_full(
     }
 
     let loft_bin = repo_root().join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return None;
     }
@@ -133,20 +134,20 @@ fn run_html_wasm_full(
     // finds assets this test asked for — a shared /tmp/ would let
     // an earlier test's PNGs leak into a later test's bundle.
     let tmp = std::env::temp_dir().join(format!("loft_html_{name}"));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create per-test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create per-test dir");
     let src = tmp.join(format!("{name}.loft"));
     let html = tmp.join(format!("{name}.html"));
     let wasm = tmp.join(format!("{name}.wasm"));
 
-    std::fs::write(&src, source).expect("write source");
+    fa::write(&src, source).expect("write source");
 
     for asset in assets {
         let Some(fname) = asset.file_name() else {
             continue;
         };
         let dest = tmp.join(fname);
-        if let Err(e) = std::fs::copy(asset, &dest) {
+        if let Err(e) = fa::copy(asset, &dest) {
             eprintln!("warn: could not copy asset {asset:?} → {dest:?}: {e}");
         }
     }
@@ -169,7 +170,7 @@ fn run_html_wasm_full(
     let status = cmd.status().expect("invoke loft --html");
     assert!(status.success(), "loft --html failed for {name}");
 
-    let html_content = std::fs::read_to_string(&html).expect("read html");
+    let html_content = fa::read_to_string(&html).expect("read html");
     let marker = "const wasmB64=\"";
     let start = html_content.find(marker).expect("wasmB64 marker present") + marker.len();
     let end = start
@@ -178,10 +179,10 @@ fn run_html_wasm_full(
             .expect("wasmB64 closing quote");
     let b64 = &html_content[start..end];
     let bytes = base64_decode_standard(b64).expect("decode wasmB64");
-    std::fs::write(&wasm, &bytes).expect("write extracted wasm");
+    fa::write(&wasm, &bytes).expect("write extracted wasm");
 
     let harness = repo_root().join(harness_rel);
-    assert!(harness.exists(), "{harness_rel} missing");
+    assert!(fa::exists(&harness), "{harness_rel} missing");
 
     let out = Command::new("node")
         .arg(&harness)
@@ -327,7 +328,7 @@ fn html_names_flag_makes_loft_functions_resolvable_in_a_backtrace() {
     assert!(ok, "the --names page trapped.\n{all}");
     assert!(all.contains("wire=15"), "--names changed the answer: {all}");
 
-    let bytes = std::fs::read(extracted_wasm("n954_names")).expect("read extracted wasm");
+    let bytes = fa::read(extracted_wasm("n954_names")).expect("read extracted wasm");
     let names = wasm_function_names(&bytes);
     assert!(
         !names.is_empty(),
@@ -356,7 +357,7 @@ fn html_names_flag_makes_loft_functions_resolvable_in_a_backtrace() {
         return;
     };
     assert!(ok, "the control page trapped");
-    let plain = std::fs::read(extracted_wasm("n954_plain")).expect("read control wasm");
+    let plain = fa::read(extracted_wasm("n954_plain")).expect("read control wasm");
     assert!(
         wasm_function_names(&plain).is_empty(),
         "the default page must stay stripped — otherwise this test proves nothing"
@@ -668,20 +669,20 @@ fn parallel_html_builds_do_not_cross_contaminate() {
         return;
     }
     let loft_bin = repo_root().join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release`)");
         return;
     }
     const N: usize = 8;
     let dir = std::env::temp_dir().join(format!("loft_html_parallel_iso_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create dir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create dir");
 
     // One distinctively-marked program per builder.
     let srcs: Vec<PathBuf> = (0..N)
         .map(|i| {
             let src = dir.join(format!("prog_{i}.loft"));
-            std::fs::write(
+            fa::write(
                 &src,
                 format!("fn main() {{ println(\"MARKER_{i}_UNIQUE\") }}\n"),
             )
@@ -716,7 +717,7 @@ fn parallel_html_builds_do_not_cross_contaminate() {
     // Each page's embedded wasm must carry ITS OWN marker and no sibling's.
     for i in 0..N {
         let page = dir.join(".loft").join(format!("prog_{i}.html"));
-        let Ok(html) = std::fs::read_to_string(&page) else {
+        let Ok(html) = fa::read_to_string(&page) else {
             fails.push(format!("prog_{i}: no page emitted"));
             continue;
         };
@@ -740,7 +741,7 @@ fn parallel_html_builds_do_not_cross_contaminate() {
         }
     }
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
     assert!(
         fails.is_empty(),
         "parallel --html builds raced ({} issue(s)):\n{}",
@@ -873,7 +874,7 @@ fn find_wasmtime() -> Option<PathBuf> {
     }
     let home = std::env::var_os("HOME")?;
     let p = PathBuf::from(home).join(".wasmtime/bin/wasmtime");
-    p.exists().then_some(p)
+    fa::exists(&p).then_some(p)
 }
 
 /// Run `source` on `wasm32-wasip2` under wasmtime.  Emits native Rust via the
@@ -887,21 +888,20 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     which("rustc")?;
     let root = repo_root();
     let loft_bin = root.join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         return None;
     }
     // Prefer the release rlib (the Makefile-built one); fall back to debug.
     let (rlib, deps) = ["release", "debug"].iter().find_map(|prof| {
         let r = root.join(format!("target/wasm32-wasip2/{prof}/libloft.rlib"));
-        r.exists()
-            .then(|| (r, root.join(format!("target/wasm32-wasip2/{prof}/deps"))))
+        fa::exists(&r).then(|| (r, root.join(format!("target/wasm32-wasip2/{prof}/deps"))))
     })?;
 
     let tmp = std::env::temp_dir();
     let src = tmp.join(format!("{name}.loft"));
     let rs = tmp.join(format!("{name}_wasip2.rs"));
     let wasm = tmp.join(format!("{name}_wasip2.wasm"));
-    std::fs::write(&src, source).ok()?;
+    fa::write(&src, source).ok()?;
 
     let mut emit = Command::new(&loft_bin);
     emit.args([
@@ -956,7 +956,7 @@ fn run_wasip2_wasm(name: &str, source: &str, lib_dirs: &[&str]) -> Option<(Strin
     // is mapped host==guest; duplicates and missing dirs are skipped.
     let mut preopens: Vec<std::path::PathBuf> = Vec::new();
     let mut add = |d: std::path::PathBuf| {
-        if d.is_dir() && !preopens.contains(&d) {
+        if fa::is_dir(&d) && !preopens.contains(&d) {
             preopens.push(d);
         }
     };
@@ -1060,7 +1060,7 @@ fn wasm_library_suite() {
             println!("skip {pkg}/{file} (LIB_*_WASM_SKIP)");
             continue;
         }
-        let source = match std::fs::read_to_string(&entry) {
+        let source = match fa::read_to_string(&entry) {
             Ok(s) => s,
             Err(_) => continue,
         };
@@ -1230,16 +1230,16 @@ fn pln26_phase3_native_package_runs_on_wasm() {
     }
     let root = repo_root();
     let loft_bin = root.join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("skip: target/release/loft not built");
         return;
     }
     let tmp = std::env::temp_dir().join("loft_pln26_p3");
-    let _ = std::fs::create_dir_all(&tmp);
+    let _ = fa::create_dir_all(&tmp);
     let prog = tmp.join("native_pkg_wasm.loft");
     // Values, not just shapes: `native_span` returns `[100, 101, …]` deterministically,
     // so a truncated or misordered store copy is visible rather than merely "non-empty".
-    std::fs::write(
+    fa::write(
         &prog,
         "use native_scalar_pkg::*;\nfn main() {\n  answer = native_answer();\n  \
          print(\"native-answer={answer}\\n\");\n  v = native_span(4);\n  \
@@ -1247,11 +1247,10 @@ fn pln26_phase3_native_package_runs_on_wasm() {
     )
     .unwrap();
     let wasm = tmp.join("native_pkg_wasm.wasm");
-    let _ = std::fs::remove_file(&wasm);
+    let _ = fa::remove_file(&wasm);
     // Clean any prior wasm cross-build so the ON-DEMAND build path is exercised.
-    let _ = std::fs::remove_dir_all(
-        root.join("tests/lib/native_scalar_pkg/native/target/wasm32-wasip2"),
-    );
+    let _ =
+        fa::remove_dir_all(root.join("tests/lib/native_scalar_pkg/native/target/wasm32-wasip2"));
 
     let build = Command::new(&loft_bin)
         .arg("--native-wasm")
@@ -1262,7 +1261,7 @@ fn pln26_phase3_native_package_runs_on_wasm() {
         .output()
         .expect("run loft --native-wasm");
     assert!(
-        build.status.success() && wasm.exists(),
+        build.status.success() && fa::exists(&wasm),
         "loft --native-wasm of a #native-package program failed:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
@@ -1494,23 +1493,23 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
         return;
     }
     let loft_bin = repo_root().join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return;
     }
 
     let tmp = std::env::temp_dir().join("loft_html_issue623");
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
     let lib_src = tmp.join("nobridge/src");
-    std::fs::create_dir_all(&lib_src).expect("create fixture lib dir");
-    std::fs::write(
+    fa::create_dir_all(&lib_src).expect("create fixture lib dir");
+    fa::write(
         tmp.join("nobridge/loft.toml"),
         "[package]\nname = \"nobridge\"\nversion = \"0.1.0\"\n\n\
          [library]\nentry = \"src/nobridge.loft\"\nnative = \"loft_nobridge\"\n",
     )
     .expect("write fixture loft.toml");
     // A `#native` with NO [wasm.bridge].routes entry — the #623 shape.
-    std::fs::write(
+    fa::write(
         lib_src.join("nobridge.loft"),
         "pub fn hash_b64(data: text) -> text;\n#native\n",
     )
@@ -1518,7 +1517,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
 
     let build = |name: &str, program: &str| -> String {
         let src = tmp.join(format!("{name}.loft"));
-        std::fs::write(&src, program).expect("write program");
+        fa::write(&src, program).expect("write program");
         let out = Command::new(&loft_bin)
             .current_dir(&tmp)
             .arg(&src)
@@ -1574,7 +1573,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
     // Positive proof, so the two `!contains` above cannot pass on a build that
     // failed for some unrelated reason.
     assert!(
-        tmp.join("issue623_uncalled.html").exists(),
+        fa::exists(tmp.join("issue623_uncalled.html")),
         "the uncalled case must actually emit its bundle:\n{uncalled}"
     );
 
@@ -1590,7 +1589,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
     // page importing a function nothing supplies builds fine, and such a page dies at
     // instantiate with a LinkError (loft#668, which now rejects it at build time).
     // `loft_gl_key_pressed` is real, and its `integer -> integer` shape is the same.
-    std::fs::write(
+    fa::write(
         lib_src.join("nobridge.loft"),
         "pub fn scalar_op(n: integer) -> integer;\n#native \"loft_gl_key_pressed\"\n",
     )
@@ -1605,7 +1604,7 @@ fn issue623_routeless_native_reports_missing_wasm_bridge_route() {
          must not be rejected:\n{distinct}"
     );
     assert!(
-        tmp.join("issue623_distinct_symbol.html").exists(),
+        fa::exists(tmp.join("issue623_distinct_symbol.html")),
         "the distinct-symbol case must still emit its bundle:\n{distinct}"
     );
 }
@@ -1741,22 +1740,22 @@ fn pln24_html_c_library_available_compiles_and_answers_false() {
 #[test]
 fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
     let loft_bin = repo_root().join("target/release/loft");
-    if !loft_bin.exists() || !wasm32_target_installed() {
+    if !fa::exists(&loft_bin) || !wasm32_target_installed() {
         eprintln!("SKIP: release binary or wasm32 target missing");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_pln24_arce_e2e_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create per-test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create per-test dir");
     let used = tmp.join("used.loft");
     let unused = tmp.join("unused.loft");
-    std::fs::write(
+    fa::write(
         &used,
         "fn c_len(s: text) -> integer;  #c \"strlen\" \"size_t(const char*)\"\n\
          fn main() { println(\"len {c_len(\"hello\")}\") }\n",
     )
     .expect("write used");
-    std::fs::write(
+    fa::write(
         &unused,
         "fn c_len(s: text) -> integer;  #c \"strlen\" \"size_t(const char*)\"\n\
          fn main() { println(\"no c call\") }\n",
@@ -1813,7 +1812,7 @@ fn pln24_a_reachable_c_binding_is_refused_end_to_end_on_wasm() {
         let (ok2, err2) = build(flag, &format!("un_{artifact}"), &unused);
         assert!(ok2, "{flag} must build an UNUSED #c declaration: {err2}");
     }
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }
 
 /// loft#851 — the page filesystem's own unit tests (`tools/loft_fs_unit.mjs`),
@@ -2088,7 +2087,7 @@ fn the_asyncify_save_region_is_outside_the_shadow_stack() {
     let all = format!("{stdout}{stderr}");
     assert!(ok && all.contains("len 64"), "the page must run\n{all}");
 
-    let wasm = std::fs::read(extracted_wasm("asyncify_region")).expect("read extracted wasm");
+    let wasm = fa::read(extracted_wasm("asyncify_region")).expect("read extracted wasm");
     let (stack_top, canary_at) = wasm_stack_top_and_canary(&wasm);
     let stack_top = stack_top.expect("__stack_pointer initialiser present");
     let canary_at = canary_at.expect(
@@ -2159,7 +2158,7 @@ fn generated_loft_paths_survive_the_wasm_feature_set() {
     // comment (`prog.loft::main`), not a Rust path.
     let mut referenced: Vec<String> = Vec::new();
     for src in &sources {
-        let text = std::fs::read_to_string(src).expect("read generator source");
+        let text = fa::read_to_string(src).expect("read generator source");
         let bytes = text.as_bytes();
         for (at, _) in text.match_indices("loft::") {
             if at > 0 && (bytes[at - 1] == b'.' || bytes[at - 1].is_ascii_alphanumeric()) {
@@ -2181,7 +2180,7 @@ fn generated_loft_paths_survive_the_wasm_feature_set() {
          about, so an empty scan means this test stopped reading the generator"
     );
 
-    let lib_rs = std::fs::read_to_string(root.join("src/lib.rs")).expect("read src/lib.rs");
+    let lib_rs = fa::read_to_string(root.join("src/lib.rs")).expect("read src/lib.rs");
     let lines: Vec<&str> = lib_rs.lines().collect();
     let mut gated: Vec<String> = Vec::new();
     for name in &referenced {
@@ -2212,7 +2211,7 @@ fn generated_loft_paths_survive_the_wasm_feature_set() {
         // …and the module's own file can gate itself with an inner attribute, which the
         // declaration above says nothing about.
         for cand in [format!("src/{name}.rs"), format!("src/{name}/mod.rs")] {
-            let Ok(body) = std::fs::read_to_string(root.join(&cand)) else {
+            let Ok(body) = fa::read_to_string(root.join(&cand)) else {
                 continue;
             };
             if let Some(l) = body
@@ -2237,8 +2236,8 @@ fn generated_loft_paths_survive_the_wasm_feature_set() {
 
     // The exemption's enforcement, pinned: `c_call` is safe to skip only while a
     // reachable `#c` binding is REFUSED on a wasm target.
-    let gen_mod = std::fs::read_to_string(root.join("src/generation/mod.rs"))
-        .expect("read generation/mod.rs");
+    let gen_mod =
+        fa::read_to_string(root.join("src/generation/mod.rs")).expect("read generation/mod.rs");
     assert!(
         gen_mod.contains("if self.no_c_abi() {"),
         "`c_call` is exempt from the gate above because `no_c_abi()` refuses a reachable \
@@ -2276,18 +2275,18 @@ fn html_a_trap_is_reported_to_the_page() {
     }
     let root = repo_root();
     let loft = root.join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
 
     let dir = std::env::temp_dir().join("loft_html_1059");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create tempdir");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("create tempdir");
     let src = dir.join("rec1059.loft");
     let html = dir.join("rec1059.html");
     // The issue's own program: deep enough that a default engine stack dies first.
-    std::fs::write(
+    fa::write(
         &src,
         "fn rec1059(n: integer) -> integer { if n <= 0 { return 0 } return rec1059(n - 1) + 1 }\n\
          fn main() { print(\"depth={rec1059(8000)}\\n\") }\n",
@@ -2303,7 +2302,7 @@ fn html_a_trap_is_reported_to_the_page() {
         "loft --html failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let page = std::fs::read_to_string(&html).expect("read emitted page");
+    let page = fa::read_to_string(&html).expect("read emitted page");
 
     // Wired, not merely present: a handler the boot path never reaches reports nothing.
     assert!(
@@ -2321,7 +2320,7 @@ fn html_a_trap_is_reported_to_the_page() {
         + start
         + 3;
     let probe = dir.join("trap.mjs");
-    std::fs::write(
+    fa::write(
         &probe,
         format!(
             "globalThis.document={{getElementById:()=>null}};\n\
@@ -2363,7 +2362,7 @@ fn html_a_trap_is_reported_to_the_page() {
     // The control: an ordinary exception is reported WITHOUT the stack-exhaustion
     // explanation, so the cell is not passing on a reporter that says it every time.
     let probe2 = dir.join("trap2.mjs");
-    std::fs::write(
+    fa::write(
         &probe2,
         format!(
             "globalThis.document={{getElementById:()=>null}};\n\
@@ -2402,17 +2401,16 @@ fn a_browser_build_builds_no_host_native_library() {
     }
     let root = repo_root();
     let loft_bin = root.join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return;
     }
     let tmp = std::env::temp_dir().join("loft_html_no_host_native");
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).expect("create per-test dir");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create per-test dir");
     let src = tmp.join("uses_random.loft");
     let html = tmp.join("uses_random.html");
-    std::fs::write(&src, "use random;\nfn main() {\n  println(\"ok\");\n}\n")
-        .expect("write source");
+    fa::write(&src, "use random;\nfn main() {\n  println(\"ok\");\n}\n").expect("write source");
     let out = std::process::Command::new(&loft_bin)
         .current_dir(&root)
         .env("LOFT_TIMING", "1")
@@ -2435,5 +2433,5 @@ fn a_browser_build_builds_no_host_native_library() {
         "a browser build resolved a host native library:\n{}",
         host.join("\n")
     );
-    let _ = std::fs::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&tmp);
 }

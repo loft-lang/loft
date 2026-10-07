@@ -7,6 +7,7 @@
 //! the values hold on both backends and under `LOFT_HOIST_VERIFY=1`.  This pins the
 //! EMISSION per cell — which parameters earn a header, which decline — and the switch
 //! (`LOFT_NO_FN_HEADER=1`), read off `--native-emit`.
+use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -46,13 +47,13 @@ fn emit(env: &[(&str, &str)]) -> String {
     }
     let status = cmd.output().expect("spawn loft --native-emit");
     assert!(
-        out.exists(),
+        fa::exists(&out),
         "no Rust emitted (exit {:?}): {}",
         status.status,
         String::from_utf8_lossy(&status.stderr)
     );
-    let text = std::fs::read_to_string(&out).expect("read the emitted Rust");
-    let _ = std::fs::remove_file(&out);
+    let text = fa::read_to_string(&out).expect("read the emitted Rust");
+    let _ = fa::remove_file(&out);
     text
 }
 

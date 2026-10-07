@@ -20,6 +20,7 @@
 //! Skips cleanly without chrome / node / python3, in the same shape as
 //! `tests/html_render.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -100,7 +101,7 @@ fn text_and_texture_bridge_produces_real_pixels() {
     };
     let root = repo_root();
     let harness = root.join("tools/html_render_check.mjs");
-    if !harness.exists() {
+    if !fa::exists(&harness) {
         eprintln!("SKIP: tools/html_render_check.mjs missing");
         return;
     }

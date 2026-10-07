@@ -26,6 +26,7 @@
 //!
 //! Skips cleanly without chrome / node / python3, in the shape of `tests/html_fonts.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -135,10 +136,10 @@ const PROGRAM: &str = "struct Rec { r_key: text, r_n: integer }\n\
 /// the program reads. Answers the package dir, or `None` when this box cannot build.
 fn package(loft: &Path, name: &str, manifest: &str) -> Option<PathBuf> {
     let dir = std::env::temp_dir().join(format!("loft_html_embed_{name}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("assets")).expect("create package dir");
-    std::fs::write(dir.join("loft.toml"), manifest).expect("write manifest");
-    std::fs::write(dir.join("embed_page.loft"), PROGRAM).expect("write source");
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(dir.join("assets")).expect("create package dir");
+    fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
+    fa::write(dir.join("embed_page.loft"), PROGRAM).expect("write source");
     let made = Command::new(loft)
         .arg("--interpret")
         .arg("embed_page.loft")
@@ -155,7 +156,7 @@ fn package(loft: &Path, name: &str, manifest: &str) -> Option<PathBuf> {
         .expect("invoke loft");
     let desktop = String::from_utf8_lossy(&desktop.stdout).to_string();
     assert!(
-        dir.join("assets/page.store").exists() && desktop.contains("load=true a=7 b=41"),
+        fa::exists(dir.join("assets/page.store")) && desktop.contains("load=true a=7 b=41"),
         "the fixture pack was not written or does not read back on the desktop, so \
          nothing below would mean anything.\nwrite: {}\nread: {desktop}",
         String::from_utf8_lossy(&made.stdout)
@@ -181,7 +182,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
         return;
     };
     let loft = repo_root().join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
@@ -203,7 +204,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
         .current_dir(&dir)
         .output()
         .expect("invoke loft --html");
-    if !built.status.success() || !dir.join("page.html").exists() {
+    if !built.status.success() || !fa::exists(dir.join("page.html")) {
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
@@ -214,7 +215,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
     // The control, and it is the same page with ONE thing removed: the seed statement
     // that hands the pack to the page's filesystem. Everything else — the wasm, the
     // program, the path it reads — is byte-identical.
-    let page = std::fs::read_to_string(dir.join("page.html")).expect("read page");
+    let page = fa::read_to_string(dir.join("page.html")).expect("read page");
     let head = "globalThis.loftBaseFS=Object.assign(";
     let start = page
         .find(head)
@@ -228,7 +229,7 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
         control.len() + 1000 < page.len(),
         "the stripped seed carried no bytes, so the control moves nothing"
     );
-    std::fs::write(dir.join("control.html"), &control).expect("write control page");
+    fa::write(dir.join("control.html"), &control).expect("write control page");
 
     let Some(port) = pick_free_port() else {
         eprintln!("SKIP: could not pick a free TCP port");
@@ -281,26 +282,26 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
 #[test]
 fn the_embedded_file_is_the_one_the_program_would_open() {
     let loft = repo_root().join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
     let root = std::env::temp_dir().join("loft_html_embed_srclayout");
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(root.join("src/assets")).expect("create src tree");
-    std::fs::create_dir_all(root.join("assets")).expect("create decoy tree");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(root.join("src/assets")).expect("create src tree");
+    fa::create_dir_all(root.join("assets")).expect("create decoy tree");
+    fa::write(
         root.join("loft.toml"),
         "[package]\nname = \"layout\"\n\n[[embed]]\npath = \"assets/game.pack\"\n",
     )
     .expect("write manifest");
     // What the program reads, and what the page must carry.
-    std::fs::write(root.join("src/assets/game.pack"), b"BESIDE-THE-PROGRAM")
+    fa::write(root.join("src/assets/game.pack"), b"BESIDE-THE-PROGRAM")
         .expect("write program-side file");
     // The decoy: same relative name, beside the MANIFEST, which the program's own
     // `store_load` would never open.
-    std::fs::write(root.join("assets/game.pack"), b"BESIDE-THE-MANIFEST").expect("write decoy");
-    std::fs::write(
+    fa::write(root.join("assets/game.pack"), b"BESIDE-THE-MANIFEST").expect("write decoy");
+    fa::write(
         root.join("src/layout.loft"),
         "fn main() { println(\"page\") }\n",
     )
@@ -311,14 +312,14 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
         .current_dir(&root)
         .output()
         .expect("invoke loft --html");
-    if !built.status.success() || !root.join("page.html").exists() {
+    if !built.status.success() || !fa::exists(root.join("page.html")) {
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
         );
         return;
     }
-    let page = std::fs::read_to_string(root.join("page.html")).expect("read page");
+    let page = fa::read_to_string(root.join("page.html")).expect("read page");
     assert!(
         page.contains(&loft::base64::encode(b"BESIDE-THE-PROGRAM")),
         "the page does not carry the file the program's own `store_load` would open"
@@ -340,34 +341,34 @@ fn the_embedded_file_is_the_one_the_program_would_open() {
 #[test]
 fn a_librarys_declaration_brings_the_librarys_own_file() {
     let loft = repo_root().join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
     let root = std::env::temp_dir().join("loft_html_embed_lib");
-    let _ = std::fs::remove_dir_all(&root);
+    let _ = fa::remove_dir_all(&root);
     let lib = root.join("libs/embedlib");
-    std::fs::create_dir_all(lib.join("src")).expect("create lib dir");
-    std::fs::create_dir_all(lib.join("assets")).expect("create lib assets");
-    std::fs::write(
+    fa::create_dir_all(lib.join("src")).expect("create lib dir");
+    fa::create_dir_all(lib.join("assets")).expect("create lib assets");
+    fa::write(
         lib.join("loft.toml"),
         "[package]\nname = \"embedlib\"\nversion = \"0.1.0\"\n\n\
          [[embed]]\npath = \"assets/lib.pack\"\n",
     )
     .expect("write lib manifest");
-    std::fs::write(lib.join("assets/lib.pack"), b"LIBRARY-OWN-BYTES").expect("write lib pack");
-    std::fs::write(
+    fa::write(lib.join("assets/lib.pack"), b"LIBRARY-OWN-BYTES").expect("write lib pack");
+    fa::write(
         lib.join("src/embedlib.loft"),
         "pub fn lib_greeting() -> text { \"from the library\" }\n",
     )
     .expect("write lib source");
 
     let app = root.join("app");
-    std::fs::create_dir_all(app.join("assets")).expect("create app dir");
-    std::fs::write(app.join("loft.toml"), "[package]\nname = \"app\"\n").expect("write app toml");
+    fa::create_dir_all(app.join("assets")).expect("create app dir");
+    fa::write(app.join("loft.toml"), "[package]\nname = \"app\"\n").expect("write app toml");
     // The decoy: same name, different bytes, in the directory the consumer builds from.
-    std::fs::write(app.join("assets/lib.pack"), b"CONSUMER-DECOY-BYTES").expect("write decoy");
-    std::fs::write(
+    fa::write(app.join("assets/lib.pack"), b"CONSUMER-DECOY-BYTES").expect("write decoy");
+    fa::write(
         app.join("main.loft"),
         "use embedlib;\nfn main() { println(\"{embedlib::lib_greeting()}\") }\n",
     )
@@ -378,14 +379,14 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
         .current_dir(&app)
         .output()
         .expect("invoke loft --html");
-    if !built.status.success() || !app.join("app.html").exists() {
+    if !built.status.success() || !fa::exists(app.join("app.html")) {
         eprintln!(
             "SKIP: `loft --html` failed (no wasm toolchain?)\nstderr: {}",
             String::from_utf8_lossy(&built.stderr)
         );
         return;
     }
-    let page = std::fs::read_to_string(app.join("app.html")).expect("read page");
+    let page = fa::read_to_string(app.join("app.html")).expect("read page");
     assert!(
         page.contains("\"/assets/lib.pack\":"),
         "the library's [[embed]] never reached the consumer's page"
@@ -412,7 +413,7 @@ fn a_librarys_declaration_brings_the_librarys_own_file() {
 #[test]
 fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
     let loft = repo_root().join("target/release/loft");
-    if !loft.exists() {
+    if !fa::exists(&loft) {
         eprintln!("SKIP: target/release/loft not built");
         return;
     }
@@ -427,8 +428,8 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
     let abs = abs.to_string_lossy();
 
     let build = |manifest: &str| -> (bool, bool, String) {
-        std::fs::write(dir.join("loft.toml"), manifest).expect("write manifest");
-        let _ = std::fs::remove_file(dir.join("out.html"));
+        fa::write(dir.join("loft.toml"), manifest).expect("write manifest");
+        let _ = fa::remove_file(dir.join("out.html"));
         let out = Command::new(&loft)
             .args(["--html", "out.html"])
             .arg("embed_page.loft")
@@ -437,7 +438,7 @@ fn a_declaration_that_cannot_work_stops_the_build_before_the_wasm() {
             .expect("invoke loft --html");
         (
             out.status.success(),
-            dir.join("out.html").exists(),
+            fa::exists(dir.join("out.html")),
             String::from_utf8_lossy(&out.stderr).to_string(),
         )
     };

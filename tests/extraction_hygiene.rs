@@ -34,6 +34,7 @@
 //! `n_load_png` to `src/codegen_runtime.rs`, this test fails before
 //! the PR can merge.
 
+use loft::file_access as fa;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -226,7 +227,7 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        if !fa::is_dir(&path) {
             continue;
         }
         // Skip `.loft_test_tmp_*` artifact-isolation dirs (run_lib_test_in_temp_cwd)
@@ -235,7 +236,7 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
             continue;
         }
         let manifest_path = path.join("loft.toml");
-        let Ok(content) = fs::read_to_string(&manifest_path) else {
+        let Ok(content) = fa::read_to_string(&manifest_path) else {
             continue;
         };
         // @PLN18 — `[native] in_binary = true`: the library's natives are
@@ -282,7 +283,7 @@ fn forbidden_library_symbols() -> Vec<(String, String)> {
         let mut loft_files = Vec::new();
         collect_loft_files(&path, &mut loft_files);
         for lf in &loft_files {
-            let Ok(src) = fs::read_to_string(lf) else {
+            let Ok(src) = fa::read_to_string(lf) else {
                 continue;
             };
             // Track the most recent `fn <name>` so a BARE `#native`
@@ -340,7 +341,7 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if fa::is_dir(&path) {
             collect_rs_files(&path, out);
         } else if path.extension().is_some_and(|e| e == "rs") {
             out.push(path);
@@ -357,7 +358,7 @@ fn collect_loft_files(dir: &Path, out: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if fa::is_dir(&path) {
             if path.file_name().is_some_and(|n| n == "native") {
                 continue;
             }
@@ -490,7 +491,7 @@ fn forbidden_library_symbols_absent_from_src() {
 
     let mut violations: Vec<String> = Vec::new();
     for path in &files {
-        let content = match fs::read_to_string(path) {
+        let content = match fa::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -556,7 +557,7 @@ fn forbidden_library_symbols_absent_from_src() {
 #[test]
 fn forbidden_library_deps_absent_from_main_cargo() {
     let root = workspace_root();
-    let cargo = fs::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
+    let cargo = fa::read_to_string(root.join("Cargo.toml")).expect("read Cargo.toml");
     // Match a top-level dep line like `png = "0.17"` or `png = {..}` —
     // anchored at start-of-line so feature-gated lines `dep:png` are
     // ignored (the `[features]` section is its own thing).
@@ -675,7 +676,7 @@ fn native_libraries_follow_clean_binding_pattern() {
             continue;
         }
         let native_src = path.join("native").join("src");
-        if !native_src.is_dir() {
+        if !fa::is_dir(&native_src) {
             continue;
         }
         let pkg = path
@@ -683,7 +684,7 @@ fn native_libraries_follow_clean_binding_pattern() {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         // (1) no [native.functions] manifest table.
-        if let Ok(toml) = fs::read_to_string(path.join("loft.toml"))
+        if let Ok(toml) = fa::read_to_string(path.join("loft.toml"))
             && toml.lines().any(|l| l.trim() == "[native.functions]")
         {
             violations.push(format!(
@@ -697,7 +698,7 @@ fn native_libraries_follow_clean_binding_pattern() {
         let mut has_include = false;
         let mut hand_register: Option<String> = None;
         for f in &rs {
-            let s = fs::read_to_string(f).unwrap_or_default();
+            let s = fa::read_to_string(f).unwrap_or_default();
             if s.contains("loft_register_gen.rs") {
                 has_include = true;
             }

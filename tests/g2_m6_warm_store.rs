@@ -9,6 +9,7 @@
 //! mmap'd store via `def_body_node`, skipping `read_data`'s body reconstruction.
 //! Output must be byte-identical to native.
 
+use loft::file_access as fa;
 use std::process::Command;
 
 fn loft_bin() -> std::path::PathBuf {
@@ -40,7 +41,7 @@ fn warm_m6_store_matches_native() {
     let pid = std::process::id();
     let tmp = std::env::temp_dir();
     let script = tmp.join(format!("loft_m6_{pid}.loft"));
-    std::fs::write(
+    fa::write(
         &script,
         "struct Point { x: integer, y: integer }\n\
          fn fib(n: integer) -> integer { if n < 2 { n } else { fib(n-1) + fib(n-2) } }\n\
@@ -53,7 +54,7 @@ fn warm_m6_store_matches_native() {
     )
     .expect("write script");
     let cache = tmp.join(format!("loft_m6_cache_{pid}"));
-    let _ = std::fs::remove_dir_all(&cache);
+    let _ = fa::remove_dir_all(&cache);
 
     let (ok_native, out_native) = run(&script, None, false);
     assert!(ok_native, "native run failed: {out_native}");
@@ -74,8 +75,8 @@ fn warm_m6_store_matches_native() {
         "warm-M6 store codegen diverged from native"
     );
 
-    let _ = std::fs::remove_file(&script);
-    let _ = std::fs::remove_dir_all(&cache);
+    let _ = fa::remove_file(&script);
+    let _ = fa::remove_dir_all(&cache);
 }
 
 /// A MULTI-source program — `use importlib::*` beside its own definitions — survives
@@ -85,9 +86,9 @@ fn warm_m6_store_matches_native() {
 fn warm_store_keeps_wildcard_import_bindings() {
     let pid = std::process::id();
     let dir = std::env::temp_dir().join(format!("loft_m6_import_{pid}"));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    std::fs::write(
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("mkdir");
+    fa::write(
         dir.join("importlib.loft"),
         "pub struct Point { x: integer, y: integer }\n\
          pub fn add(a: integer, b: integer) -> integer { a + b }\n\
@@ -95,7 +96,7 @@ fn warm_store_keeps_wildcard_import_bindings() {
     )
     .expect("write lib");
     let script = dir.join("main.loft");
-    std::fs::write(
+    fa::write(
         &script,
         "use importlib::*;\n\
          fn main() {\n\
@@ -116,5 +117,5 @@ fn warm_store_keeps_wildcard_import_bindings() {
     assert!(ok_warm, "warm run failed: {out_warm}");
     assert_eq!(out_native, out_warm, "the warm load lost an imported name");
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fa::remove_dir_all(&dir);
 }

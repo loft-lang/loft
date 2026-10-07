@@ -25,6 +25,7 @@
 //!
 //! The controls are the shapes one step away, which were right.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -45,7 +46,7 @@ fn run_armed(tag: &str, body: &str, mode: &str, strict: bool) -> String {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, format!("{body}\n")).expect("write cell");
+    fa::write(&path, format!("{body}\n")).expect("write cell");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(mode)
         .arg(&path)
@@ -61,7 +62,7 @@ fn run_armed(tag: &str, body: &str, mode: &str, strict: bool) -> String {
         )
         .output()
         .expect("run loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -464,7 +465,7 @@ fn run_timeline(tag: &str, body: &str, mode: &str) -> (String, u64, u64) {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&path, format!("{body}\n")).expect("write cell");
+    fa::write(&path, format!("{body}\n")).expect("write cell");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg(mode)
         .arg(&path)
@@ -472,7 +473,7 @@ fn run_timeline(tag: &str, body: &str, mode: &str) -> (String, u64, u64) {
         .env("LOFT_STORES", "timeline")
         .output()
         .expect("run loft");
-    let _ = std::fs::remove_file(&path);
+    let _ = fa::remove_file(&path);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),

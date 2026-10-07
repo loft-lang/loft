@@ -8,6 +8,7 @@
 //! no store reads `__vh_N.len`; a loop that appends keeps the runtime read, because it
 //! hoisted nothing; and a length read outside any loop keeps it too.  Measured: the
 //! rewrite alone halves a 200 000-element sum loop (645k → 330k ns/op).
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -28,7 +29,7 @@ fn emit(src: &std::path::Path, out: &std::path::Path) -> String {
         .status()
         .expect("spawn loft --native-emit");
     assert!(status.success(), "loft --native-emit failed");
-    std::fs::read_to_string(out).expect("read the emitted Rust")
+    fa::read_to_string(out).expect("read the emitted Rust")
 }
 
 /// The emitted Rust of one function.
@@ -47,7 +48,7 @@ fn fn_of<'a>(rs: &'a str, name: &str) -> &'a str {
 fn a_hoisted_loop_reads_its_bound_from_the_header_and_the_others_keep_the_runtime_read() {
     let src = std::env::temp_dir().join("loft_hoisted_length_probe.loft");
     let out = std::env::temp_dir().join("loft_hoisted_length_probe.rs");
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     let rs = emit(&src, &out);
     let hoisted = fn_of(&rs, "n_sum_hoisted");
     assert!(
@@ -70,8 +71,8 @@ fn a_hoisted_loop_reads_its_bound_from_the_header_and_the_others_keep_the_runtim
         !outside.contains("__vh_") && !outside.contains(".len))"),
         "a length read outside a loop has no header to read:\n{outside}"
     );
-    let _ = std::fs::remove_file(&src);
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&src);
+    let _ = fa::remove_file(&out);
 }
 
 /// A collection's element count or byte footprint is a READ: `len` of a hash, sorted, index,
@@ -107,5 +108,5 @@ fn a_keyed_length_read_leaves_the_loops_headers_held() {
             "{name}: a loop that writes a store holds no header:\n{body}"
         );
     }
-    let _ = std::fs::remove_file(&out);
+    let _ = fa::remove_file(&out);
 }

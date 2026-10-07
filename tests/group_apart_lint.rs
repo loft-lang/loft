@@ -21,6 +21,7 @@
 //! stderr. `LOFT_NO_CACHE` because the warm program cache skips the re-parse that produces
 //! them.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -29,9 +30,9 @@ const CODE: &str = "advice[linked-group-apart]";
 /// Compile-and-run `src` on the interpreter, returning stderr.
 fn diagnostics_of(name: &str, src: &str) -> String {
     let dir = std::env::temp_dir().join("loft_group_apart_lint");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join(format!("{name}.loft"));
-    std::fs::write(&path, src).expect("write probe");
+    fa::write(&path, src).expect("write probe");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&path)
@@ -162,10 +163,9 @@ fn it_is_quiet_for_different_element_types() {
 #[test]
 fn the_opt_out_silences_it() {
     let dir = std::env::temp_dir().join("loft_group_apart_lint");
-    std::fs::create_dir_all(&dir).expect("probe dir");
+    fa::create_dir_all(&dir).expect("probe dir");
     let path = dir.join("optout.loft");
-    std::fs::write(&path, body("a: vector<Ga>, tick: integer, b: hash<Ga[k]>"))
-        .expect("write probe");
+    fa::write(&path, body("a: vector<Ga>, tick: integer, b: hash<Ga[k]>")).expect("write probe");
     let out = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
         .arg("--interpret")
         .arg(&path)

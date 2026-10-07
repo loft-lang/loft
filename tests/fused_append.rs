@@ -11,6 +11,7 @@
 //! general path, a comprehension fuses too, and the switch (`LOFT_NO_FUSED_APPEND=1`)
 //! restores the four ops — which is what makes this test red on the build before the fusion
 //! and on one that lost it.  Read off `loft introspect`.
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -49,7 +50,7 @@ fn ir_of<'a>(dump: &'a str, name: &str) -> &'a str {
 
 fn write_probe(name: &str) -> PathBuf {
     let src = std::env::temp_dir().join(format!("loft_fused_append_{name}.loft"));
-    std::fs::write(&src, PROBE).expect("write probe");
+    fa::write(&src, PROBE).expect("write probe");
     src
 }
 
@@ -84,7 +85,7 @@ fn a_scalar_append_is_one_fused_push_and_a_keyed_insert_is_not() {
             "{name}: a record element keeps the general path whatever its field count:\n{ir}"
         );
     }
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }
 
 #[test]
@@ -96,5 +97,5 @@ fn the_switch_restores_the_four_op_form() {
         !scalar.contains("OpPush") && scalar.contains("OpNewRecord("),
         "with the fusion off the scalar append must keep OpNewRecord:\n{scalar}"
     );
-    let _ = std::fs::remove_file(&src);
+    let _ = fa::remove_file(&src);
 }

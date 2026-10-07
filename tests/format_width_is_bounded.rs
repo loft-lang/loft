@@ -19,6 +19,7 @@
 //! process under a hard address-space cap, must finish.  A regression fails this test in
 //! milliseconds instead of triggering the kernel OOM killer.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -35,7 +36,7 @@ fn loft_bin() -> PathBuf {
 /// rather than a single allocation site.
 fn run_capped(source: &str) -> String {
     let dir = std::env::temp_dir().join(format!("loft-fmt-bound-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     // One file per source.  The tests here run as threads of a single process, so a
     // shared probe path lets one case overwrite the file another has not yet read.
     let mut key = std::collections::hash_map::DefaultHasher::new();
@@ -44,7 +45,7 @@ fn run_capped(source: &str) -> String {
         "probe-{:016x}.loft",
         std::hash::Hasher::finish(&key)
     ));
-    std::fs::write(&file, source).expect("write probe");
+    fa::write(&file, source).expect("write probe");
     let script = format!(
         "ulimit -v {ADDRESS_SPACE_KIB}; exec {} --interpret {}",
         loft_bin().display(),

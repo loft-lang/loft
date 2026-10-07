@@ -7,6 +7,7 @@
 //! direct one: the instrument then sees nothing, and says nothing.  So a census of stack
 //! writes must still see its accessor at work, and a program must answer the same on the
 //! direct path as on the checked one (`LOFT_STRICT_STORES=1` forces the checked path).
+use loft::file_access as fa;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -18,7 +19,7 @@ fn main() {\n  v: vector<P> = [];\n  for i in 0..500 { v += [P { x: i as float *
 
 fn run(env: &[(&str, &str)]) -> (String, String) {
     let file = std::env::temp_dir().join(format!("loft_fast_table_{}.loft", std::process::id()));
-    std::fs::write(&file, PROGRAM).expect("write program");
+    fa::write(&file, PROGRAM).expect("write program");
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.arg("--interpret")
         .arg(&file)
@@ -30,7 +31,7 @@ fn run(env: &[(&str, &str)]) -> (String, String) {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("spawn loft");
-    let _ = std::fs::remove_file(&file);
+    let _ = fa::remove_file(&file);
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),

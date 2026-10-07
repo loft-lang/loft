@@ -29,6 +29,7 @@
 // host loft binary) are not available — same shape as
 // `tests/html_wasm.rs`.
 
+use loft::file_access as fa;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -58,7 +59,7 @@ fn any_of(cmds: &[&str]) -> Option<PathBuf> {
 
 fn repo_root() -> PathBuf {
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while !p.join("Cargo.toml").exists() {
+    while !fa::exists(p.join("Cargo.toml")) {
         if !p.pop() {
             return PathBuf::from(".");
         }
@@ -103,14 +104,14 @@ fn pick_free_port() -> Option<u16> {
 /// wiring has regressed; locally it just means `make test-html-render`.
 fn locate_fresh_brick_buster(root: &Path) -> Option<PathBuf> {
     let html = root.join("doc/brick-buster.html");
-    if !html.exists() {
+    if !fa::exists(&html) {
         eprintln!(
             "SKIP: doc/brick-buster.html not built — run `make game` first \
              (or `make test-html-render` to build + test in one step)"
         );
         return None;
     }
-    let html_mtime = html.metadata().ok()?.modified().ok()?;
+    let html_mtime = fa::metadata(&html).ok()?.modified().ok()?;
     // The bundle is stale if it predates EITHER the game source OR the
     // wasm32 runtime rlib it embeds — a rlib rebuilt after the bundle
     // (a common dev-machine state: `cargo build --target
@@ -141,8 +142,7 @@ fn locate_fresh_brick_buster(root: &Path) -> Option<PathBuf> {
         root.join("target/loft/html/wasm32-unknown-unknown/release/libloft.rlib"),
     ];
     for dep in &stale_vs {
-        if dep
-            .metadata()
+        if fa::metadata(dep)
             .ok()
             .and_then(|m| m.modified().ok())
             .is_some_and(|dep_mtime| html_mtime < dep_mtime)
@@ -209,12 +209,12 @@ fn brick_buster_browser_renders_without_console_errors() {
     };
     let root = repo_root();
     let harness = root.join("tools/html_render_check.mjs");
-    if !harness.exists() {
+    if !fa::exists(&harness) {
         eprintln!("SKIP: tools/html_render_check.mjs missing");
         return;
     }
     let loft_bin = root.join("target/release/loft");
-    if !loft_bin.exists() {
+    if !fa::exists(&loft_bin) {
         eprintln!("SKIP: target/release/loft not built (run `cargo build --release` first)");
         return;
     }
@@ -327,7 +327,7 @@ fn html_canvas_is_allocated_at_the_display_resolution() {
     };
     let root = repo_root();
     let harness = root.join("tools/html_render_check.mjs");
-    if !harness.exists() {
+    if !fa::exists(&harness) {
         eprintln!("SKIP: tools/html_render_check.mjs missing");
         return;
     }
