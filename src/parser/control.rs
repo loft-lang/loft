@@ -5308,12 +5308,34 @@ impl Parser {
     /// and is exactly what `(E-Truthy)` licenses.  Read through `Type::peel_optional`, the
     /// `@FR-N-Shape` home, because a bare `matches!(tp, Type::Optional(_))` is what
     /// `ir_walker_audit.py optional` counts as an OPAQUE site.
-    fn warn_constant_condition(&mut self, tp: &Type, at: &crate::lexer::Position, kw: &str) {
+    fn warn_constant_condition(
+        &mut self,
+        tp: &Type,
+        code: &Value,
+        at: &crate::lexer::Position,
+        kw: &str,
+    ) {
         // Pass 1 parses every body a second time, so an unguarded report lands twice — measured
         // exactly 2x on every cell before this line existed.
         if self.first_pass || !crate::keys::constant_condition_enabled() {
             return;
         }
+        // Two spellings of a vector VALUE reach here typed as something else, and are the same
+        // constant (loft#1919, loft#1922): a vector slice, typed as the iterator it is lowered
+        // from until `convert_condition` materialises it (`(Slice-Value)`: a FRESH vector),
+        // and an untyped `[]`, whose element type is unknown.
+        let slice_tp;
+        let tp = if Self::is_untyped_empty_literal(code, tp) {
+            slice_tp = Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none());
+            &slice_tp
+        } else if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            slice_tp = Type::Vector(elm.clone(), crate::data::Deps::none());
+            &slice_tp
+        } else {
+            tp
+        };
         let (base, nullable) = tp.peel_optional();
         if nullable {
             return;
@@ -5348,7 +5370,10 @@ impl Parser {
         ) {
             return;
         }
-        let shown = base.source_name(&self.data);
+        let shown = match base {
+            Type::Vector(elm, _) if elm.is_unknown() => "vector".to_string(),
+            _ => base.source_name(&self.data),
+        };
         diagnostic_at!(
             self.lexer,
             at,
@@ -5542,7 +5567,7 @@ impl Parser {
         let cond_fact = std::mem::take(&mut self.operand_fact);
         self.check_subject(&cond_fact, "branching on it"); // @PLN187
         self.in_control_head = outer_head;
-        self.warn_constant_condition(&tp, &cond_at, "if");
+        self.warn_constant_condition(&tp, &test, &cond_at, "if");
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
         // the arms below, and an `else if` chain's own conditions, are past the pair.
         self.fit_in_condition = false;

@@ -433,9 +433,14 @@ impl Parser {
         precedence: usize,
         is_or: bool,
     ) {
-        // An operand of `&&`/`||` is READ as a boolean, not stored — @FR-N-Store admits it,
-        // as `convert_condition` does for the same reading in an `if`.
-        if !self.convert_admitting(code, tp, &Type::Boolean) && !self.first_pass {
+        // An operand of `&&`/`||` is a TRUTHINESS position (`@FR-E-Truthy`), the reading an
+        // `if` condition gets, so it converts through the SAME home, `convert_condition`:
+        // @FR-N-Store admits the read, and `@FR-E-Truthy-1` reads every non-null value as
+        // true.  Converted as a plain boolean, a heap operand had no `OpConv*FromX` and
+        // reached the jump as its raw `DbRef`: a vector LEFT operand read false on the
+        // interpreter (its pointer's first byte) and a RIGHT one did not compile natively
+        // (loft#1919).
+        if !self.convert_condition(code, tp) && !self.first_pass {
             self.can_convert(tp, &Type::Boolean);
         }
         let mut second_code = Value::Null;
@@ -448,9 +453,7 @@ impl Parser {
             precedence + 1,
         );
         self.known_var_or_type(&second_code, &second_pos);
-        if !self.convert_admitting(&mut second_code, &second_type, &Type::Boolean)
-            && !self.first_pass
-        {
+        if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
             self.can_convert(&second_type, &Type::Boolean);
         }
         // `&&`/`||` do not route through `call_op_as`, so its deferral counter cannot see an
@@ -640,8 +643,13 @@ impl Parser {
             // non-boolean: *"is x null?"*.  A heap handle has no `Not` operator, so
             // without this the documented spelling was refused — `!v` on a vector read
             // *"No matching operator Not on vector<integer>"* while `if v` compiled.
-            // Routed through the ONE condition coercion, so the two cannot part ways.
-            if Self::is_heap_handle(&t) {
+            // Routed through the ONE condition coercion, so the two cannot part ways.  A
+            // vector SLICE and an untyped `[]` are vector values too (loft#1922, loft#1919),
+            // typed otherwise until that coercion materialises them.
+            if Self::is_heap_handle(&t)
+                || (matches!(t.base(), Type::Iterator(..)) && Self::slice_shaped(&arg))
+                || Self::is_untyped_empty_literal(&arg, &t)
+            {
                 let mut present = arg;
                 self.convert_condition(&mut present, &t);
                 *val = self.cl("OpNot", &[present]);

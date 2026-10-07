@@ -5822,6 +5822,32 @@ impl Parser {
             }
             return false;
         }
+        // `@FR-E-Truthy-1` — an UNTYPED `[]` is a vector VALUE like any other, so a truthiness
+        // position reads it as present.  With no element type to size a store it parses to the
+        // value-less placeholder (`parse_vector`), which reached the condition as nothing at
+        // all: the interpreter's jump read a stack byte (and the next local took the damage)
+        // and `--native` emitted `if ()` (loft#1919).  The literal has no effect to keep.
+        if !self.first_pass && Self::is_untyped_empty_literal(code, tp) {
+            *code = Value::Boolean(true);
+            return true;
+        }
+        // `(Slice-Value)` — a vector slice is a FRESH vector, owed at every position a value
+        // is read, and a condition reads one: it is materialised exactly as a bind would
+        // (`iterator_as_vector`) and then tested like any vector.  Left an iterator, its
+        // `Value::Iter` reached the scopes pass outside the loop its `break` belongs to — an
+        // internal compiler error on both backends (loft#1922).
+        if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            let vec_tp = Type::Vector(elm.clone(), Deps::none());
+            if self.iterator_as_vector(code, tp, &vec_tp).is_some() {
+                if !self.first_pass {
+                    let not_null = self.coalesce_not_null(&code.clone(), &vec_tp);
+                    *code = not_null;
+                }
+                return true;
+            }
+        }
         if Self::is_heap_handle(tp) {
             if !self.first_pass {
                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
@@ -5830,6 +5856,13 @@ impl Parser {
             return true;
         }
         self.convert_admitting(code, tp, &Type::Boolean)
+    }
+
+    /// The value-less placeholder an UNTYPED standalone `[]` parses to (`parse_vector`): an
+    /// `Insert` of the incoming value, typed by an expected type that was itself unknown.
+    pub(crate) fn is_untyped_empty_literal(code: &Value, tp: &Type) -> bool {
+        tp.is_unknown()
+            && matches!(code.unspan(), Value::Insert(v) if v.len() == 1 && matches!(v[0], Value::Null))
     }
 
     /// The STORE face of [`convert`](Parser::convert) — @FR-N-Store's home for every store
@@ -5998,7 +6031,7 @@ impl Parser {
     /// Is every VALUE position of `code` a vector slice — the `Value::Iter` a range
     /// subscript builds (its step a block), reached through the arms of an `if` and the
     /// tail of a block?  The shape [`Parser::iterator_as_vector`] materialises.
-    fn slice_shaped(code: &Value) -> bool {
+    pub(crate) fn slice_shaped(code: &Value) -> bool {
         match code.unspan() {
             Value::Iter(_, _, n, _) => matches!(n.as_ref(), Value::Block(_)),
             Value::If(_, a, b) => Self::slice_shaped(a) && Self::slice_shaped(b),
