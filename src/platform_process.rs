@@ -42,32 +42,59 @@
 //! stream is never left without a reader.**  The moment the child exists, one thread drains
 //! each output pipe and another feeds its input, so no pipe fills while another is waited on.
 
-use crate::file_access::PathText;
-use std::ffi::OsStr;
+use crate::file_access::{Flavor, PathText};
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+/// The spelling a child is handed for `path`, so that it reaches the file the path names.
+///
+/// A host path is handed over as the OS spells it.  Under the emulated Windows host
+/// (`LOFT_POISON_HOST=windows`) a PROGRAM's path is in Windows' spelling (`L:\a\b`, or `/a/b`
+/// on the current drive), and the child — a real process on the real file system — is handed
+/// the real path it names (`/a/b`), as a file operation is.  Windows' name rules were applied
+/// when the program's path was made (`PathText::program`); the case-blind match of an
+/// existing name that `file_access` applies to its own operations is not applied here.
+///
+/// # Errors
+/// A path of a platform this is not (a test's Windows path on Linux), or another drive than
+/// the emulated host's.
+pub fn host_spelling(path: &PathText) -> io::Result<OsString> {
+    if path.flavor() == Flavor::HOST {
+        Ok(path.os_spelling().into_os_string())
+    } else if path.flavor() == Flavor::program_host() {
+        path.from_emulated()
+            .map(|real| real.os_spelling().into_os_string())
+            .map_err(|why| io::Error::new(io::ErrorKind::NotFound, why))
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{}: not a path on this platform", path.portable()),
+        ))
+    }
+}
+
 /// The program a [`Spawn`] runs.
-pub struct Program(std::ffi::OsString);
+pub struct Program(io::Result<OsString>);
 
 impl Program {
-    /// A program named by its path, handed over in the host's spelling.
+    /// A program named by its path, handed over in the host's spelling ([`host_spelling`]).
     #[must_use]
     pub fn path(path: &PathText) -> Program {
-        Program(path.os_spelling().into_os_string())
+        Program(host_spelling(path))
     }
 
     /// A bare tool name (`"cargo"`): not a path, so it is left to the search path.
     #[must_use]
     pub fn search(name: &str) -> Program {
-        Program(name.into())
+        Program(Ok(name.into()))
     }
 
     /// A program the caller already holds as the OS spelled it (`current_exe`, `LOFT_BIN`).
     #[must_use]
     pub fn os(path: impl AsRef<OsStr>) -> Program {
-        Program(path.as_ref().to_os_string())
+        Program(Ok(path.as_ref().to_os_string()))
     }
 }
 
@@ -84,10 +111,13 @@ pub enum Tree {
     Detached,
 }
 
-/// A process to start: the program, its arguments, where and how.
+/// A process to start: the program, its arguments, where and how.  A path that cannot be
+/// handed over is kept as the error [`Spawn::start`] answers, so a chain needs no `?` per
+/// argument.
 pub struct Spawn {
     cmd: Command,
     tree: Tree,
+    error: Option<io::Error>,
 }
 
 /// A finished run: the child's status and both streams as they arrived.  `timed_out` says the
@@ -102,9 +132,24 @@ pub struct Ran {
 impl Spawn {
     #[must_use]
     pub fn new(program: Program) -> Spawn {
+        let (cmd, error) = match program.0 {
+            Ok(p) => (Command::new(p), None),
+            Err(e) => (Command::new(""), Some(e)),
+        };
         Spawn {
-            cmd: Command::new(program.0),
+            cmd,
             tree: Tree::Owned,
+            error,
+        }
+    }
+
+    fn path_or_error(&mut self, path: &PathText) -> Option<OsString> {
+        match host_spelling(path) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                self.error.get_or_insert(e);
+                None
+            }
         }
     }
 
@@ -125,17 +170,21 @@ impl Spawn {
         self
     }
 
-    /// A path argument, handed over in the host's spelling.
+    /// A path argument, handed over in the host's spelling ([`host_spelling`]).
     #[must_use]
     pub fn arg_path(mut self, path: &PathText) -> Spawn {
-        self.cmd.arg(path.os_spelling());
+        if let Some(p) = self.path_or_error(path) {
+            self.cmd.arg(p);
+        }
         self
     }
 
     /// The child's working directory, handed over in the host's spelling.
     #[must_use]
     pub fn cwd(mut self, dir: &PathText) -> Spawn {
-        self.cmd.current_dir(dir.os_spelling());
+        if let Some(p) = self.path_or_error(dir) {
+            self.cmd.current_dir(p);
+        }
         self
     }
 
@@ -181,8 +230,12 @@ impl Spawn {
     /// Start the child and hand back its handle.
     ///
     /// # Errors
-    /// The OS's error when the program cannot be started.
+    /// The OS's error when the program cannot be started, or why a path could not be handed
+    /// over.
     pub fn start(mut self) -> io::Result<Running> {
+        if let Some(e) = self.error.take() {
+            return Err(e);
+        }
         let child = os::spawn(&mut self.cmd, self.tree)?;
         Ok(Running::new(child, self.tree))
     }
@@ -387,6 +440,54 @@ impl Drop for Running {
             let _ = self.reap();
         }
         self.os.keep();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod path_tests {
+    use super::{Program, Spawn, host_spelling};
+    use crate::file_access::{self as fa, Flavor, PathText, with_program_host};
+
+    /// W1.1's red line: under the emulated Windows host, a `/`-spelled program path, working
+    /// directory and path argument each reach their file — and a drive-spelled one too —
+    /// while a text argument holding `a/b` arrives as it is written.
+    #[test]
+    fn a_program_path_reaches_its_file_under_the_emulated_host() {
+        let dir = std::env::temp_dir().join(format!("loft_spawn_paths_{}", std::process::id()));
+        let _ = fa::remove_dir_all(&dir);
+        fa::create_dir_all(&dir).expect("scratch");
+        fa::write(dir.join("in.txt"), "found").expect("write");
+        let real = dir.to_str().expect("a text temp dir").to_string();
+        let ran = with_program_host(Flavor::Windows, || {
+            let sh = PathText::program("/bin/sh").expect("program path");
+            let cwd = PathText::program(&real).expect("working directory");
+            let arg = PathText::program(&format!("L:{real}/in.txt")).expect("argument");
+            assert_eq!(
+                sh.flavor(),
+                Flavor::Windows,
+                "the program's paths are Windows'"
+            );
+            Spawn::new(Program::path(&sh))
+                .args(["-c", "cat \"$1\"; cat in.txt; printf '|%s' \"$2\"", "sh"])
+                .arg_path(&arg)
+                .arg("a/b")
+                .cwd(&cwd)
+                .run(b"")
+                .expect("run")
+        });
+        let _ = fa::remove_dir_all(&dir);
+        assert_eq!(String::from_utf8_lossy(&ran.stdout), "foundfound|a/b");
+    }
+
+    /// A path of the other platform is refused at `start`, never handed over as text.
+    #[test]
+    fn a_path_of_another_platform_is_refused() {
+        let windows = PathText::parse("C:/x/y", Flavor::Windows);
+        assert!(host_spelling(&windows).is_err());
+        let r = Spawn::new(Program::search("true"))
+            .arg_path(&windows)
+            .start();
+        assert!(r.is_err(), "a Windows path started a child on unix");
     }
 }
 
