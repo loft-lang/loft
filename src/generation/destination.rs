@@ -138,6 +138,63 @@ pub fn shape(
     out
 }
 
+/// The callee's buffer mentions: how many there are, how many an admitted form accounts for,
+/// and whether one sits at an offset no form serves.
+fn buffer_uses(data: &Data, stores: &Stores, code: &Value, shape: &Shape) -> (usize, usize, bool) {
+    let rb = shape.rb;
+    let mut total = 0usize;
+    code.walk(&mut |n| {
+        if is_var(n, rb) {
+            total += 1;
+        }
+    });
+    let mut accounted = 0usize;
+    let mut bad = false;
+    code.walk(&mut |n| match n {
+        Value::Return(x) if is_var(x, rb) => accounted += 1,
+        Value::Call(d, args) => {
+            let op = name(data, *d);
+            if op == "OpFreeRefIfDistinct" && args.get(1).is_some_and(|a| is_var(a, rb)) {
+                accounted += 1;
+            }
+            if !args.first().is_some_and(|a| is_var(a, rb)) {
+                return;
+            }
+            match op {
+                "OpRefIsNull" | "OpConvBoolFromRef" | "OpDatabase" | "OpPlaceRecord" => {
+                    accounted += 1;
+                }
+                "OpGetField" => {
+                    if let (Some(off), Some(tp)) =
+                        (args.get(1).and_then(int), args.get(2).and_then(int))
+                        && let Ok(tp) = u16::try_from(tp)
+                        && off >= shape.vo
+                        && off + i64::from(stores.size(tp)) <= shape.vend
+                    {
+                        accounted += 1;
+                    } else {
+                        bad = true;
+                    }
+                }
+                _ if op.starts_with("OpSet") => match args.get(1).and_then(int) {
+                    Some(off) if off >= shape.vo && off < shape.vend => accounted += 1,
+                    Some(off)
+                        if shape
+                            .scalar_at(off)
+                            .is_some_and(|k| shape.scalars[k].setter == op) =>
+                    {
+                        accounted += 1;
+                    }
+                    _ => bad = true,
+                },
+                _ => {}
+            }
+        }
+        _ => {}
+    });
+    (total, accounted, bad)
+}
+
 fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Shape> {
     let def = data.def(d_nr);
     if !def.is_loft_defined() || matches!(def.returned(), Type::Iterator(_, _)) {
@@ -189,62 +246,7 @@ fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Sha
         vt,
         scalars,
     };
-    // Every mention of the buffer, then the mentions each admitted form accounts for.
-    let mut total = 0usize;
-    def.code().walk(&mut |n| {
-        if is_var(n, rb) {
-            total += 1;
-        }
-    });
-    let mut accounted = 0usize;
-    let mut bad = false;
-    def.code().walk(&mut |n| match n {
-        Value::Return(x) if is_var(x, rb) => accounted += 1,
-        Value::Call(d, args) => {
-            let op = name(data, *d);
-            let first = args.first().is_some_and(|a| is_var(a, rb));
-            if op == "OpFreeRefIfDistinct" && args.get(1).is_some_and(|a| is_var(a, rb)) {
-                accounted += 1;
-            }
-            if !first {
-                return;
-            }
-            match op {
-                "OpRefIsNull" | "OpConvBoolFromRef" | "OpDatabase" | "OpPlaceRecord" => {
-                    accounted += 1;
-                }
-                "OpGetField" => {
-                    if let (Some(off), Some(tp)) =
-                        (args.get(1).and_then(int), args.get(2).and_then(int))
-                        && let Ok(tp) = u16::try_from(tp)
-                        && off >= shape.vo
-                        && off + i64::from(stores.size(tp)) <= shape.vend
-                    {
-                        accounted += 1;
-                    } else {
-                        bad = true;
-                    }
-                }
-                _ if op.starts_with("OpSet") => {
-                    let Some(off) = args.get(1).and_then(int) else {
-                        bad = true;
-                        return;
-                    };
-                    if off >= shape.vo && off < shape.vend {
-                        accounted += 1;
-                    } else if let Some(k) = shape.scalar_at(off)
-                        && shape.scalars[k].setter == op
-                    {
-                        accounted += 1;
-                    } else {
-                        bad = true;
-                    }
-                }
-                _ => {}
-            }
-        }
-        _ => {}
-    });
+    let (total, accounted, bad) = buffer_uses(data, stores, def.code(), &shape);
     if bad || accounted != total {
         if trace() {
             eprintln!(
@@ -397,18 +399,13 @@ fn window<'a>(ops: &'a [Value], i: usize, data: &Data) -> Option<Window<'a>> {
     })
 }
 
-/// The window chain from statement `i` of `ops`, in function `d_nr`, when every call in it
-/// has a twin, the last `ok` arm mints one element and moves each call's result into it once,
-/// and the results are read otherwise only as scalars.
-pub fn site<'a>(
+/// The chain of windows from statement `i`: each level's window found inside the `ok` arm of
+/// the one before, with where in that arm it starts and ends.
+fn chain<'a>(
     ops: &'a [Value],
     i: usize,
     data: &Data,
-    stores: &Stores,
-    d_nr: u32,
-    memo: &mut HashMap<(u32, i64), Option<Shape>>,
-) -> Option<Site<'a>> {
-    // The chain: each level's window, the next one found inside its `ok` arm.
+) -> Option<(Vec<Window<'a>>, Vec<(usize, usize)>)> {
     let mut wins: Vec<Window<'a>> = vec![window(ops, i, data)?];
     let mut cuts: Vec<(usize, usize)> = Vec::new();
     loop {
@@ -420,14 +417,27 @@ pub fn site<'a>(
                 wins.push(w);
             }
             Some(_) => return None,
-            None => break,
+            None => return Some((wins, cuts)),
         }
     }
-    let rs: Vec<u16> = wins.iter().map(|w| w.r).collect();
-    // The last arm: the mint, then one move per result, through an alias or not.
-    let t_ops = wins.last()?.then_ops;
+}
+
+/// What the chain's last `ok` arm holds: the element's mint and where it stands, the element
+/// and its container, the alias locals of the results, each result's destination, and the
+/// statements the twins replace (the aliases and the moves).
+struct LastArm<'a> {
+    mint: Vec<&'a Value>,
+    mint_j: usize,
+    e: u16,
+    container: u16,
+    aliases: HashMap<u16, usize>,
+    dests: Vec<Value>,
+    drop: Vec<usize>,
+}
+
+fn last_arm<'a>(t_ops: &'a [Value], rs: &[u16], data: &Data) -> Option<LastArm<'a>> {
     let mut mint: Vec<&'a Value> = Vec::new();
-    let mut mint_at: Option<(usize, u16, u16)> = None; // (index of the Set, element, container)
+    let mut mint_at: Option<(usize, u16, u16)> = None;
     for (j, op) in t_ops.iter().enumerate() {
         if let Value::Set(e, nr) = op.unspan()
             && let Value::Call(nd, na) = nr.unspan()
@@ -450,15 +460,16 @@ pub fn site<'a>(
         }
     }
     let (mint_j, e, container) = mint_at?;
-    let mut aliases: HashMap<u16, usize> = HashMap::new(); // alias var -> chain level
-    let mut dests: Vec<Option<Value>> = vec![None; wins.len()];
+    let level_of = |v: &Value| rs.iter().position(|r| is_var(v, *r));
+    let mut aliases: HashMap<u16, usize> = HashMap::new();
+    let mut dests: Vec<Option<Value>> = vec![None; rs.len()];
     let mut drop: Vec<usize> = Vec::new();
     for (j, op) in t_ops.iter().enumerate() {
         if let Value::Set(a, g) = op.unspan()
             && let Value::Call(gd, ga) = g.unspan()
             && name(data, *gd) == "OpGetField"
             && ga.get(1).and_then(int) == Some(0)
-            && let Some(m) = rs.iter().position(|r| ga.first().is_some_and(|x| is_var(x, *r)))
+            && let Some(m) = ga.first().and_then(level_of)
         {
             aliases.insert(*a, m);
             drop.push(j);
@@ -470,8 +481,10 @@ pub fn site<'a>(
         {
             let m = match src.unspan() {
                 Value::Var(x) => aliases.get(x).copied(),
-                Value::Call(g, ga) if name(data, *g) == "OpGetField" && ga.get(1).and_then(int) == Some(0) => {
-                    rs.iter().position(|r| ga.first().is_some_and(|x| is_var(x, *r)))
+                Value::Call(g, ga)
+                    if name(data, *g) == "OpGetField" && ga.get(1).and_then(int) == Some(0) =>
+                {
+                    ga.first().and_then(level_of)
                 }
                 _ => None,
             };
@@ -486,15 +499,29 @@ pub fn site<'a>(
             drop.push(j);
         }
     }
-    let dests: Vec<Value> = dests.into_iter().collect::<Option<Vec<_>>>()?;
-    let mut shapes: Vec<Shape> = Vec::new();
-    for w in &wins {
-        shapes.push(shape(data, stores, w.callee, 0, memo)?);
-    }
-    // The byte ranges the twins fill, for the zero-inits their writes replace.
+    Some(LastArm {
+        mint,
+        mint_j,
+        e,
+        container,
+        aliases,
+        dests: dests.into_iter().collect::<Option<Vec<_>>>()?,
+        drop,
+    })
+}
+
+/// The zero-inits of the element's bytes the twins fill: their writes replace them, and left in
+/// place after the calls they would wipe what the twins built.
+fn dest_zeros(
+    t_ops: &[Value],
+    e: u16,
+    dests: &[Value],
+    shapes: &[Shape],
+    data: &Data,
+) -> Vec<usize> {
     let ranges: Vec<(i64, i64)> = dests
         .iter()
-        .zip(&shapes)
+        .zip(shapes)
         .map(|(d, sh)| {
             let lo = match d.unspan() {
                 Value::Call(_, ga) => ga.get(1).and_then(int).unwrap_or(0),
@@ -503,6 +530,7 @@ pub fn site<'a>(
             (lo, lo + (sh.vend - sh.vo))
         })
         .collect();
+    let mut out = Vec::new();
     for (j, op) in t_ops.iter().enumerate() {
         if let Value::Call(d, a) = op.unspan()
             && name(data, *d) == "OpSetInt4"
@@ -510,10 +538,92 @@ pub fn site<'a>(
             && let (Some(off), Some(0)) = (a.get(1).and_then(int), a.get(2).and_then(int))
             && ranges.iter().any(|(lo, hi)| off >= *lo && off < *hi)
         {
-            drop.push(j);
+            out.push(j);
         }
     }
-    drop.extend(mint.iter().map(|m| t_ops.iter().position(|o| std::ptr::eq(o, *m)).unwrap_or(usize::MAX)));
+    out
+}
+
+/// Does every mention of each result in the function's `code` lie in `window`?
+fn owned_by_window(window: &[Value], code: &Value, rs: &[u16]) -> bool {
+    rs.iter().all(|r| {
+        let inside: usize = window.iter().map(|op| mentions(op, *r)).sum();
+        mentions(code, *r) == inside
+    })
+}
+
+/// The chain's levels as one tree, outermost first.
+fn nest<'a>(
+    wins: &[Window<'a>],
+    shapes: Vec<Shape>,
+    args: Vec<Vec<Value>>,
+    dests: Vec<Value>,
+    levels: Vec<(Vec<Value>, Vec<Value>)>,
+) -> Option<Level<'a>> {
+    let mut top: Option<Level<'a>> = None;
+    let parts = shapes.into_iter().zip(args).zip(dests).zip(levels);
+    for (w, (((sh, call_args), dest), (pre, post))) in wins.iter().zip(parts).rev() {
+        let ok = sh.scalar_at(w.ok_off)?;
+        if sh.scalars[ok].rust != "u8" {
+            return None;
+        }
+        top = Some(Level {
+            callee: w.callee,
+            call_args,
+            at: w.at,
+            shape: sh,
+            ok,
+            dest,
+            pre,
+            inner: top.map(Box::new),
+            post,
+            else_v: w.else_v,
+        });
+    }
+    top
+}
+
+fn trace_site(data: &Data, d_nr: u32, calls: usize, callee: u32) {
+    if trace() {
+        eprintln!(
+            "destination: {} builds {calls} call(s) of {}(…) in one element",
+            data.def(d_nr).name(),
+            data.def(callee).name()
+        );
+    }
+}
+
+/// The window chain from statement `i` of `ops`, in function `d_nr`, when every call in it
+/// has a twin, the last `ok` arm mints one element and moves each call's result into it once,
+/// and the results are read otherwise only as scalars.
+pub fn site<'a>(
+    ops: &'a [Value],
+    i: usize,
+    data: &Data,
+    stores: &Stores,
+    d_nr: u32,
+    memo: &mut HashMap<(u32, i64), Option<Shape>>,
+) -> Option<Site<'a>> {
+    let (wins, cuts) = chain(ops, i, data)?;
+    let rs: Vec<u16> = wins.iter().map(|w| w.r).collect();
+    let t_ops = wins.last()?.then_ops;
+    let LastArm {
+        mint,
+        mint_j,
+        e,
+        container,
+        aliases,
+        dests,
+        mut drop,
+    } = last_arm(t_ops, &rs, data)?;
+    let shapes: Vec<Shape> = wins
+        .iter()
+        .map(|w| shape(data, stores, w.callee, 0, memo))
+        .collect::<Option<_>>()?;
+    drop.extend(dest_zeros(t_ops, e, &dests, &shapes, data));
+    drop.extend(
+        (0..t_ops.len()).filter(|&j| mint.iter().any(|m| std::ptr::eq(&raw const t_ops[j], *m))),
+    );
     // Rewrite one statement: the chain's scalar reads named, any other use of a result, an
     // alias or (before the mint) the element declines.
     let rewrite = |op: &Value, before_mint: bool| -> Option<Value> {
@@ -536,15 +646,16 @@ pub fn site<'a>(
     // Each level's arm, around the next level's window.
     let mut levels: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
     for (m, w) in wins.iter().enumerate() {
-        let (pre_src, post_src): (Vec<(usize, &Value)>, Vec<(usize, &Value)>) = if m + 1 < wins.len() {
-            let (c0, c1) = cuts[m];
-            (
-                w.then_ops.iter().enumerate().take(c0).collect(),
-                w.then_ops.iter().enumerate().skip(c1 + 1).collect(),
-            )
-        } else {
-            (w.then_ops.iter().enumerate().collect(), Vec::new())
-        };
+        let (pre_src, post_src): (Vec<(usize, &Value)>, Vec<(usize, &Value)>) =
+            if m + 1 < wins.len() {
+                let (c0, c1) = cuts[m];
+                (
+                    w.then_ops.iter().enumerate().take(c0).collect(),
+                    w.then_ops.iter().enumerate().skip(c1 + 1).collect(),
+                )
+            } else {
+                (w.then_ops.iter().enumerate().collect(), Vec::new())
+            };
         let last = m + 1 == wins.len();
         let mut pre = Vec::new();
         for (j, op) in pre_src {
@@ -581,46 +692,16 @@ pub fn site<'a>(
     }
     // The results belong to the window: every mention of them lies inside it.
     let w0 = &wins[0];
-    for r in &rs {
-        let inside: usize = ops[w0.first..=w0.last].iter().map(|op| mentions(op, *r)).sum();
-        if mentions(data.def(d_nr).code(), *r) != inside {
-            return None;
-        }
+    if !owned_by_window(&ops[w0.first..=w0.last], data.def(d_nr).code(), &rs) {
+        return None;
     }
-    let mut top: Option<Level<'a>> = None;
-    for (m, w) in wins.iter().enumerate().rev() {
-        let sh = shapes[m].clone();
-        let ok = sh.scalar_at(w.ok_off)?;
-        if sh.scalars[ok].rust != "u8" {
-            return None;
-        }
-        let (pre, post) = levels[m].clone();
-        top = Some(Level {
-            callee: w.callee,
-            call_args: args_rw[m].clone(),
-            at: w.at,
-            shape: sh,
-            ok,
-            dest: dests[m].clone(),
-            pre,
-            inner: top.map(Box::new),
-            post,
-            else_v: w.else_v,
-        });
-    }
-    if trace() {
-        eprintln!(
-            "destination: {} builds {} call(s) of {}(…) in one element",
-            data.def(d_nr).name(),
-            wins.len(),
-            data.def(wins[0].callee).name()
-        );
-    }
+    let top = nest(&wins, shapes, args_rw, dests, levels)?;
+    trace_site(data, d_nr, wins.len(), wins[0].callee);
     Some(Site {
         first: w0.first,
         last: w0.last,
         mint,
-        top: top?,
+        top,
     })
 }
 

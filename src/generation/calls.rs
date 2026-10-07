@@ -191,6 +191,22 @@ impl Output<'_> {
         true
     }
 
+    /// `@FR-R-Destination` — the caller-side rewrite's call, matched by callee and argument
+    /// slice: it calls the destination twin, which no other twin form applies to.  Records the
+    /// request for the twin.
+    fn dest_call(&mut self, vals: &[Value]) -> bool {
+        let dest = self
+            .dest_site_next
+            .is_some_and(|(c, at, _)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        if dest && let Some((c, _, vo)) = self.dest_site_next.take() {
+            if !self.dest_requests.contains(&(c, vo)) {
+                self.dest_requests.push((c, vo));
+            }
+            crate::rewrite_census::fired("R-Destination", 1);
+        }
+        dest
+    }
+
     /// Internal helper: emits the user-fn / Op-stub call body.  Reachable
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
@@ -224,17 +240,7 @@ impl Output<'_> {
         // `@FR-R-AppendTwin` — the call appends into a destination: the caller-side rewrite's
         // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
         // calls the plain-bodied twin, so no other twin form applies to it.
-        // `@FR-R-Destination` — the caller-side rewrite's call, matched by callee and argument
-        // slice: it calls the destination twin, which no other twin form applies to.
-        let dest = self
-            .dest_site_next
-            .is_some_and(|(c, at, _)| c == self.current_call_def && at == vals.as_ptr() as usize);
-        if dest && let Some((c, _, vo)) = self.dest_site_next.take() {
-            if !self.dest_requests.contains(&(c, vo)) {
-                self.dest_requests.push((c, vo));
-            }
-            crate::rewrite_census::fired("R-Destination", 1);
-        }
+        let dest = self.dest_call(vals);
         let append = !dest
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)

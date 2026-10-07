@@ -3001,10 +3001,6 @@ impl Output<'_> {
         Ok(())
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
-    /// `is_fn_body` marks the one block whose Rust type is the function's
-    /// return signature (`Context::Result`).  Only there may the tail expression
-    /// carry a narrow-integer cast — see [`block_tail_cast`].
     /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
     /// each call into its destination and its `ok` arm with the moves gone — the element
     /// finished only where the plain form moved every result, and each destination filled so
@@ -3106,6 +3102,10 @@ impl Output<'_> {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// `is_fn_body` marks the one block whose Rust type is the function's
+    /// return signature (`Context::Result`).  Only there may the tail expression
+    /// carry a narrow-integer cast — see [`block_tail_cast`].
     pub(super) fn output_block(
         &mut self,
         w: &mut dyn Write,
@@ -3813,7 +3813,10 @@ impl Output<'_> {
                 );
                 self.dest_memo = memo;
                 if let Some(site) = site
-                    && site.callees().iter().all(|c| !self.value_records.fns.contains_key(c))
+                    && site
+                        .callees()
+                        .iter()
+                        .all(|c| !self.value_records.fns.contains_key(c))
                 {
                     self.output_destination_site(w, &site)?;
                     repeat_skip = Some(site.last);

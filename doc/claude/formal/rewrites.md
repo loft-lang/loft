@@ -4584,44 +4584,56 @@ Native only; the interpreter copies and is the reference.
 
 ```
   (R-Destination) a call whose result record r the caller consumes ONLY by moving
-                 one heap-free field r.v (OpMoveField) into a fresh element e of a
+                 its one heap field r.v (OpMoveField) into a fresh element e of a
                  container the caller owns, and by reading r's remaining fields as
-                 scalars at most once each, is emitted as the callee's DESTINATION
-                 TWIN: the twin takes e's address for r.v — every write the body
-                 makes to r.v lands at e, every sub-record it places in r's store
-                 is placed in e's store — and answers the remaining fields as a
-                 tuple of scalars; the caller mints e before the call without its
-                 prefill (the twin's writes cover r.v whole, R-CompleteWrite) and
-                 makes it visible (OpFinishRecord) only on the path where it moved
-                 r.v.  Admission asks the CALLEE: on every return path r.v is
-                 written whole before r is returned, r.v's writes name no address
-                 but r's, and r is not read back by the body after a write to r.v.
-                 The twin receives e's address and no path through which the
-                 container's record can be reached, so the container's header
-                 stays valid across the call.
+                 scalars, is emitted as the callee's DESTINATION TWIN f__d: the twin
+                 is f's body with its return buffer BOUND TO e's slot — r.v must sit
+                 at offset 0 of r, so every write the body makes to r.v (its
+                 sub-records, its placements in the buffer's store) lands at e as it
+                 stands — and its scalar fields, which would land past e, written to
+                 locals the twin answers as a tuple.  The caller mints e BEFORE the
+                 call without its move (the twin's writes cover r.v whole), finishes
+                 it (OpFinishRecord) only on the path where the plain form moved, and
+                 on the failing path releases what the twin placed in e.  Admission
+                 asks the CALLEE: every mention of its buffer is its mint guard, a
+                 write or sub-record INSIDE r.v, a write to a scalar field by that
+                 field's own setter, a placement in the buffer's store, a free
+                 compared against it, or its `return` — counted mention by mention,
+                 so a use no form accounts for declines.  It asks the CALLER: r is
+                 read only by the `ok` test, the one move and scalar reads, every
+                 mention of r lies in the window, the element is minted in the `ok`
+                 arm, and no argument of the call reaches the container (the element
+                 waits unfinished across the call).  THE CHAIN CLAUSE: calls whose
+                 results fill ONE element together — a map entry's key and value,
+                 each call guarded by the one before — are a chain of such windows:
+                 each level's `ok` arm holds the next, the last holds the mint and one
+                 move per result (straight, or through an alias local `kv = kd.v`),
+                 each into its own field of e.  The mint is hoisted above the first
+                 call, a later call reads an earlier result's scalars from its tuple,
+                 and a failing level releases EVERY destination filled so far.
 ```
 
 **In words.** `sub = read_value(…); if sub.ok { items += [sub.value]; p = sub.next }` builds
-`value` in a pooled buffer, reads `ok`, mints an element, prefills it, moves `value` in and
-reads `next`, where the twin does one `push`: this is `(R-Place)` one call deeper — the
-child built where it will live.  The ok-false path is the ownership question, and the
-answer is the one `(R-PushRec)` already gives a minted element: an element minted but not
-finished is NOT a member of the container (`vector_finish` is the one visibility step), its
-slot is capacity the next append reuses, and whatever heap the failed child placed is
-released by the CALLER: where the plain form drops the failed result, the twin's caller runs
-the record's release walk over e — the same walk, over the same record shape, that freeing
-the discarded result runs — so the callee changes nothing but where it writes.  A failure is
-then identical to the plain form's in every value, member and live record; only spare
-capacity differs, which is representation (C122).  A caller that leaves e unfinished
-without releasing it, or finishes it on a failing path, is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
-D5 and D6 it takes the row 12.04 → 6.49 M ns/op, and it is the one step without which that
-ladder stops at 8.3×.  Sites: `(R-Callee)`'s admission (a second emission like
-`(R-Inputs)`' `__inv`), `Output::user_fn_call_body` for the tuple answer, the append
-lowering's mint, `src/exit_vector.rs` for the return-path analysis.  Switch
-`LOFT_NO_DESTINATION`; falsifier `LOFT_HOIST_VERIFY=1` (the twin re-reads e after each write
-and compares with the plain form's buffer).  Guard: a nested array and a map, each truncated
-at every byte position (ok=false at every depth), hand-computed on both backends, with the
-live-record count equal to the plain form's; a finish planted on the failing path must go red.
+`value` in a pooled buffer, reads `ok`, mints an element, moves `value` in and reads `next`,
+where the twin does one `push`: this is `(R-Place)` one call deeper — the child built where it
+will live.  The ok-false path is the ownership question, and the answer is the one
+`(R-PushRec)` already gives a minted element: an element minted but not finished is NOT a
+member of the container (`vector_finish` is the one visibility step), and whatever heap the
+failed child placed is released by the CALLER, the release walk freeing the discarded result
+runs; a failure is then identical to the plain form's in every value, member and live record,
+and only spare capacity differs, which is representation (C122).  The offset-0 condition is
+what binding the buffer to the element costs: a moved field anywhere else would be written
+that far past the element.  The chain clause's release is visible only in LIVE RECORDS — a
+key built into an element whose value then failed stays in the store the kept results live in,
+and neither a value nor the store-level leak check sees it.  The live-reload arm hands the
+parked interpreter call its own buffer (the element would be overrun by a whole record),
+relocates the field into e and reads the scalars back.
+
+**BUILT** (`src/generation/destination.rs` — `shape` for the callee, `site` for the chain;
+the twin's hooks in `emit.rs`, its call name in `calls.rs`, its emission and live arm in
+`mod.rs`; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
+`tests/scripts/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
+Native only; the interpreter moves as before and is the reference.
 
 ### A fn-ref whose every target answers a value record answers the tuple
 
