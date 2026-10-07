@@ -4,7 +4,14 @@
 // parameter arrives borrowed, and only the plain spelling promoted it to an owned shadow, so
 // the compound one did not compile on `--native` (E0308) (loft#1904).  Each value is worked out
 // by hand beside it.
-// @falsified-at: 320dc8a34 — measured below by `make falsify`
+// @falsified-at: 320dc8a34 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-compound-write-to-a-tuple-parameters-member-is-the-callees-copy.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the native exit — rustc refuses the control (E0308, a `String` into the borrowed
+//   parameter's `&str` member).
+// HOLDS: asserts 0, leak none, panic none and free-refusals 0 on both trees and both backends;
+//   the interpreter answers every cell on both, as measured by `make falsify` at 320dc8a34.
 
 // "x" + "!" + "?".
 fn appended(t: (text, integer)) -> text { t.0 += "!"; t.0 += "?"; t.0 }
