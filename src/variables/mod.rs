@@ -5552,7 +5552,9 @@ impl Function {
         crate::data::TUPLE_LOCAL_TEXT_OWNED
             && (v as usize) < self.variables.len()
             && !self.is_argument(v)
-            && !self.is_compiler_generated(v)
+            // A parameter's promoted copy (`__tp_<name>`) is the author's parameter, copied:
+            // it owns its text like any tuple local the author named.
+            && (!self.is_compiler_generated(v) || self.promoted_from(v) != u16::MAX)
             && matches!(self.tp(v).base(), Type::Tuple(_))
     }
 

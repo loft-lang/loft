@@ -1273,6 +1273,20 @@ refusal names it.
 
 Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), as written.
 
+* **D-bind-70** *(opened 2026-10-06, CLOSED 2026-10-07; loft#1875)* — `(B-Ref-Lvalue)` with
+  tuples.md `(T-Record)`: a member is a field, so `&t.i` links as `&r.f` does, but a NARROW
+  member and a TEXT member of a tuple local were refused by name, at a bind and at a `&`
+  argument.  The narrow member was stored at full width while a link reads at the member's own
+  width; it now holds its field encoding once a link names it, on both backends
+  (`tuple_links::linked_narrow_members`).  The text member was the interpreter's borrowed `Str`,
+  which a `&text` link cannot append to; a tuple local the author named now owns each text
+  member as a `String`, as a text local does (`Function::tuple_owns_text`), and a by-value
+  parameter whose text member a link names takes its owned copy first.  Guards
+  `a-link-to-a-narrow-tuple-member-writes-the-member.loft` and
+  `a-link-to-a-text-tuple-member-writes-the-member.loft`; the safety nets
+  `a-narrow-tuple-member-holds-its-value-everywhere.loft` and
+  `a-text-tuple-member-holds-its-value-everywhere.loft` held across each representation change.
+
 * **D-bind-69** *(opened 2026-09-30, CLOSED 2026-09-30; loft#1759)* — `(B-View-Depth)`,
   `(H-Materialise)` and `(B-Ref-Reshape)` at the KEYED kinds.  The keyed bind copied every keyed
   source but an `&` one, so `g = n.inn.h`, `g = vs[0].h` and `g = m.inn.h` off a parameter were

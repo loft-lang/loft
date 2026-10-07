@@ -10441,20 +10441,18 @@ the step may produce at a_narrow_tuple_member_link_writes_the_member:2:77",
     .result(Value::Long(16_161));
 }
 
-/// D-bind-70 (loft#1875) — a TEXT member of a tuple local is still refused by name, at a `&`
-/// bind and at a `&` argument alike, and never handed a copy that would drop the write
-/// (`@FR-B-Ref-Reshape`).
+/// `@FR-T-Record` (loft#1875) — a TEXT member of a tuple local is the tuple's own text, so a
+/// `&text` argument and a `&` bind both write it, and a by-value parameter's member links to the
+/// callee's copy.
 #[test]
-fn a_text_tuple_member_link_is_refused() {
+fn a_text_tuple_member_link_writes_the_member() {
     code!(
         "fn tb(p: &text) { p += \"!\"; }
-fn test() { s = (\"a\", 1); tb(s.0); assert(s.0 == \"a\", \"s\"); }"
+fn own(t: (text, integer)) -> text { tb(t.0); t.0 }
+fn run() -> text { s = (\"a\", 1); tb(s.0); c = &s.0; c += \"?\"; \"{s.0}/{own(s)}/{s.0}\" }"
     )
-    .error(
-        "a `&` link to a tuple member of type `text` is not supported — a link to a member names \
-a scalar place, and this member is not a scalar.  Bind the member to a local first \
-(`m = t.0; c = &m;`) and write it back at a_text_tuple_member_link_is_refused:2:35",
-    );
+    .expr("run()")
+    .result(Value::str("a!?/a!?!/a!?"));
 }
 
 /// `@FR-B-Ref-Lvalue` — a member of a tuple reached through a `&(…)` link is a place a link

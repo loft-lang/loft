@@ -1,0 +1,55 @@
+// @FR-T-Record / @FR-B-Ref-Lvalue / @C139 (a tuple IS a record) — a tuple's `text` member is the
+// tuple's own text, so a `&` link names it as `&s` names a text local: a `&text` argument and a
+// `&` bind write the member, the link can be re-pointed and assigned through, it outlives a
+// whole reassignment of the tuple, and a copy taken while it lives stays independent.  A
+// by-value parameter's member links to the callee's own copy.  Each value is worked out by hand
+// in the comment beside it.
+// @falsified-at: ffd2c6837 — measured below by `make falsify`
+
+fn tb(p: &text) { p += "!"; }
+fn nb(p: &u8) { p += 1; }
+// "ab" + "?".
+fn bind_appends() -> text { t = ("ab", 1); c = &t.0; c += "?"; t.0 }
+// "ab" + "!" + "!".
+fn argument_appends() -> text { t = ("ab", 1); tb(t.0); tb(t.0); t.0 }
+// A link re-pointed between two text members.
+fn repointed() -> text { t = ("a", "b"); c = &t.0; c += "1"; c = &t.1; c += "2"; "{t.0}/{t.1}" }
+// The copy taken between two writes holds "ab" + "z"; the member goes on to "abc".
+fn copy_while_linked() -> text { t = ("a", 1); c = &t.0; c += "b"; u = t; u.0 += "z"; c += "c"; "{t.0}/{u.0}" }
+// A whole reassignment keeps the member's place: the link writes the new "new".
+fn reassigned_under_the_link() -> text { t = ("a", 1); c = &t.0; t = ("new", 2); c += "!"; "{t.0}{t.1}" }
+// The callee's copy: "p" + "+" + "!"; the caller keeps "p".
+fn param_member(t: (text, integer)) -> text { c = &t.0; c += "+"; tb(t.0); t.0 }
+fn by_value_parameter() -> text { t = ("p", 1); r = param_member(t); "{r}/{t.0}" }
+// A nested tuple's outer text member.
+fn nested() -> text { n = (("in", 4), "out"); tb(n.1); "{n.0.0}/{n.1}" }
+// "s" + "0" + "1" + "2", a formatted append through the link.
+fn in_a_loop() -> text { t = ("s", 0); for i in 0..3 { c = &t.0; c += "{i}"; } t.0 }
+// 250 + 1 + 1 beside "w" + "x" + "!".
+fn beside_a_narrow_member() -> text { t: (u8, text) = (250, "w"); a = &t.0; b = &t.1; a += 1; b += "x"; nb(t.0); tb(t.1); "{t.0}{t.1}" }
+// An assignment through the link replaces the member.
+fn assigned_through() -> text { t = ("old", 1); c = &t.0; c = "set"; t.0 }
+// A null `text?` member set through its link.
+fn nullable_member() -> text { z: (text?, integer) = (null, 5); c = &z.0; c = "x"; z.0 ?? "null" }
+// A member of a `&(…)` parameter is the caller's: "r" + "!".
+fn via(p: &(text, integer)) { c = &p.0; c += "!"; }
+fn linked_tuple_member() -> text { t = ("r", 1); via(t); t.0 }
+// A generator's tuple member linked across a yield.
+fn gen() -> iterator<text> { t = ("g", 1); c = &t.0; yield t.0; c += "x"; tb(t.0); yield t.0; }
+
+fn main() {
+  assert(bind_appends() == "ab?", "a & bind appends");
+  assert(argument_appends() == "ab!!", "a & argument appends");
+  assert(repointed() == "a1/b2", "a link re-pointed between text members");
+  assert(copy_while_linked() == "abc/abz", "a copy taken while the link lives");
+  assert(reassigned_under_the_link() == "new!2", "a whole reassignment under the link");
+  assert(by_value_parameter() == "p+!/p", "a by-value parameter's member");
+  assert(nested() == "in/out!", "a nested tuple's text member");
+  assert(in_a_loop() == "s012", "a link in a loop");
+  assert(beside_a_narrow_member() == "252wx!", "beside a narrow member");
+  assert(assigned_through() == "set", "an assignment through the link");
+  assert(nullable_member() == "x", "a null text? member");
+  assert(linked_tuple_member() == "r!", "a member of a & tuple parameter");
+  s = ""; for v in gen() { s += "{v} "; }
+  assert(s == "g gx! ", "a generator's member linked across a yield: {s}");
+}
