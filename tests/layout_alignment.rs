@@ -82,8 +82,12 @@ fn every_field_and_every_stride_is_aligned() {
     );
 }
 
-/// `@C138` — the hand-written storage view of a tuple answers what the `__tuple<…>` record's
-/// finished layout answers: the same member offsets, and the same size.
+/// `@C138` / `@FR-L-Tuple` — the hand-written storage view of a tuple answers what the
+/// `__tuple<…>` record's finished layout answers: the same member offsets, and the same size,
+/// for every tuple whose members the view can lay out on its own — scalars, text and nested
+/// tuples of them.  A struct member is stored INLINE at the struct's own size and alignment,
+/// which only the type database knows, so a reader of such a tuple asks the record
+/// (`data::stored_tuple_offsets`, as the `par` readers do) and the view is not consulted.
 #[test]
 fn the_storage_view_of_a_tuple_is_its_record_layout() {
     let (data, db) = shapes();
@@ -104,6 +108,16 @@ fn the_storage_view_of_a_tuple_is_its_record_layout() {
             .iter()
             .map(|a| a.typedef.clone())
             .collect();
+        fn view_knows(t: &Type) -> bool {
+            match t.base() {
+                Type::Reference(..) | Type::Enum(_, true, _) => false,
+                Type::Tuple(inner) => inner.iter().all(view_knows),
+                _ => true,
+            }
+        }
+        if !elems.iter().all(view_knows) {
+            continue;
+        }
         let Some(stored) =
             loft::data::stored_tuple_offsets_for_def(&data, &db, def_nr, elems.len())
         else {
@@ -126,8 +140,8 @@ fn the_storage_view_of_a_tuple_is_its_record_layout() {
     assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
 }
 
-/// The rule's own arithmetic, hand-computed: a struct reorders largest-first and pads its tail;
-/// a tuple keeps its order and pads before each member.
+/// The rule's own arithmetic, hand-computed: a struct and a stored tuple alike reorder
+/// largest-alignment-first and pad their tail (`@FR-L-Tuple`, @C139).
 #[test]
 fn the_layouts_are_the_hand_computed_ones() {
     let (_, db) = shapes();
@@ -138,16 +152,17 @@ fn the_layouts_are_the_hand_computed_ones() {
     assert_eq!(size("IT"), 16);
     // Lab (16, aligned 8) inline at 0, integer at 16.
     assert_eq!(size("Card"), 24);
-    // (u8, u16): u8 at 0, u16 at 2 -> 4.  (u8, u32, u16): 0, 4, 8 -> 10, padded to 12.
+    // (u8, u16): u16 at 0, u8 at 2 -> 4.  (u8, u32, u16): u32 at 0, u16 at 4, u8 at 6 -> 7,
+    // padded to 8 — the size of `struct { a: u8, b: u32, c: u16 }`.
     assert_eq!(size("__tuple<integer(0, 255),integer(0, 65535)>"), 4);
     assert_eq!(
         size("__tuple<integer(0, 255),integer(0, 4294967294),integer(0, 65535)>"),
-        12
+        8
     );
-    // (text, integer): the handle at 0, the integer at 8 -> 16.
+    // (text, integer): the integer at 0, the handle at 8 -> 12, padded to 16.
     assert_eq!(size("__tuple<text,integer>"), 16);
-    // (u8, (u16, u8), integer): u8 at 0, the inner tuple (4 bytes, aligned 2) at 2, the
-    // integer at 8 -> 16.
+    // (u8, (u16, u8), integer): the integer at 0, the inner tuple (u16 at 0, u8 at 2: 4 bytes,
+    // aligned 2) at 8, the u8 at 12 -> 13, padded to 16.
     assert_eq!(
         size("__tuple<integer(0, 255),(integer(0, 65535), integer(0, 255)),integer>"),
         16

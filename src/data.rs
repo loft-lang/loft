@@ -3937,14 +3937,22 @@ pub fn element_storage_align(t: &Type) -> usize {
 /// `tests/layout_alignment.rs` holds the two to the same answer.
 #[must_use]
 pub fn element_storage_offsets(types: &[Type]) -> Vec<usize> {
-    let mut offsets = Vec::with_capacity(types.len());
-    let mut pos = 0usize;
-    for t in types {
-        pos = pos.next_multiple_of(element_storage_align(t));
-        offsets.push(pos);
-        pos += element_storage_size(t);
-    }
-    offsets
+    // `@FR-L-Tuple` — the record's own packing, largest alignment first
+    // (`LinkedFieldGroup::record_member_offsets`), so the two agree byte for byte.
+    let sa: Vec<(u16, u8)> = types
+        .iter()
+        .map(|t| {
+            (
+                element_storage_size(t) as u16,
+                element_storage_align(t) as u8,
+            )
+        })
+        .collect();
+    LinkedFieldGroup::record_member_offsets(&sa)
+        .0
+        .into_iter()
+        .map(usize::from)
+        .collect()
 }
 
 /// Byte offset of each element in a tuple-like layout.
@@ -4343,22 +4351,23 @@ mod tuple_stack_layout_tests {
     /// @PLN114 D1 — the storage view sizes elements as record FIELDS; `@C138` places each on
     /// its natural boundary.
     ///
-    /// Hand-computed: `(u8, u32, u16)` keeps its order, so the u32 waits for 4 and the u16
-    /// follows at 8 — 10 bytes, padded to 12, a multiple of the 4-byte alignment.  The
-    /// `__tuple<…>` record's layout answers the same (`tests/layout_alignment.rs`).
+    /// Hand-computed (`@FR-L-Tuple`, @C139): a stored tuple packs as a record, largest
+    /// alignment first — `(u8, u32, u16)` puts the u32 at 0, the u16 at 4 and the u8 at 6: 7
+    /// bytes, padded to 8, as `struct { a: u8, b: u32, c: u16 }`.  The `__tuple<…>` record's
+    /// layout answers the same (`tests/layout_alignment.rs`).
     #[test]
     fn storage_view_packs_like_a_record() {
         use super::{element_storage_offsets, element_storage_size};
         let elems = vec![narrow(1), narrow(4), narrow(2)];
-        assert_eq!(element_storage_offsets(&elems), vec![0, 4, 8]);
+        assert_eq!(element_storage_offsets(&elems), vec![6, 0, 4]);
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            12,
-            "u8, pad 3, u32, u16, pad 2"
+            8,
+            "u32, u16, u8, pad 1"
         );
 
         let pair = vec![narrow(1), narrow(2)];
-        assert_eq!(element_storage_offsets(&pair), vec![0, 2]);
+        assert_eq!(element_storage_offsets(&pair), vec![2, 0]);
         assert_eq!(element_storage_size(&Type::Tuple(pair)), 4);
     }
 
@@ -4376,8 +4385,8 @@ mod tuple_stack_layout_tests {
         );
         assert_eq!(
             element_storage_size(&Type::Tuple(elems)),
-            12,
-            "storage: 1, 4 and 2 on their own boundaries"
+            8,
+            "storage: 4, 2 and 1, largest alignment first"
         );
     }
 
@@ -5076,6 +5085,32 @@ impl LinkedFieldGroup {
     /// each member's position relative to the group's anchor.
     /// Mirrors `group_size`'s internal packing — first member at 0,
     /// each subsequent member at the next natural-alignment offset.
+    #[must_use]
+    pub fn record_member_offsets(member_sizes_aligns: &[(u16, u8)]) -> (Vec<u16>, u16) {
+        // `@FR-L-Tuple` / `@FR-L-Struct` (@C139) — a stored TUPLE is a record, packed as any
+        // record is: the members with the LARGEST alignment first, members of equal alignment
+        // in written order, each on its natural boundary; the size rounded up to the largest
+        // alignment.  The ORDER of the bytes changes nothing a program sees — member `i` is
+        // still `t.i`, and the tuple prints in written order.  An index group keeps
+        // [`Self::group_member_offsets`]: its consumers read `color` at `left + 8`.
+        let mut order: Vec<usize> = (0..member_sizes_aligns.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(member_sizes_aligns[i].1));
+        let mut offsets = vec![0u16; member_sizes_aligns.len()];
+        let mut pos: u16 = 0;
+        let mut max_align: u16 = 1;
+        for i in order {
+            let (size, align) = member_sizes_aligns[i];
+            let align_u16 = u16::from(align.max(1));
+            max_align = max_align.max(align_u16);
+            pos = pos.next_multiple_of(align_u16);
+            offsets[i] = pos;
+            pos += size;
+        }
+        (offsets, pos.next_multiple_of(max_align))
+    }
+
+    /// Per-member offsets inside a group in WRITTEN order — the index group's layout; a
+    /// tuple's is [`Self::record_member_offsets`].
     #[must_use]
     pub fn group_member_offsets(member_sizes_aligns: &[(u16, u8)]) -> Vec<u16> {
         let mut offsets = Vec::with_capacity(member_sizes_aligns.len());

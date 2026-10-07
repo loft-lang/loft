@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // `@C138` `(L-Align)` — every scalar in a store sits on its natural boundary: a record's size is
-// a multiple of its alignment, and a tuple keeps its member order with each member on its own
-// boundary.  So a collection's n-th element is aligned, and a `&` link to an 8-byte member of a
+// a multiple of its alignment, and a stored tuple is a record — largest alignment first
+// (`@FR-L-Tuple`, @C139), each member on its own boundary.  So a collection's n-th element is aligned, and a `&` link to an 8-byte member of a
 // record-backed `&(text, integer)` is an aligned 8-byte place, which `--native` dereferences
 // as a `*mut i64` (it panicked at the packed offset 4).  Crossed: an odd-sized record (stride
 // 9), a record nested in a tuple, a tuple whose members leave gaps, and the record-backed
@@ -67,10 +67,11 @@ fn test_a_struct_nested_in_a_tuple() {
 }
 
 fn test_a_vector_of_mixed_tuples() {
-  // (u8, integer, u16): 0, 8, 16 -> 18, padded to 24.
+  // (u8, integer, u16): a record, largest alignment first — the integer at 0, the u16 at 8,
+  // the u8 at 10 -> 11, padded to 16.
   vs: vector<(u8, integer, u16)> = [(1, 100000000000, 2), (3, -5, 65535)];
   vs += [(9, 7, 8)];
-  assert(sizeof((u8, integer, u16)) == 24 && size(vs) == 72, "mixed: {size(vs)}");
+  assert(sizeof((u8, integer, u16)) == 16 && size(vs) == 48, "mixed: {size(vs)}");
   assert(vs[0].1 == 100000000000 && vs[1].0 == 3 && vs[1].1 == -5 && vs[1].2 == 65535 && vs[2].2 == 8,
     "mixed values");
   t = 0;
