@@ -249,6 +249,23 @@ mod tests {
         });
     }
 
+    /// W1.4 — a modification time read under the emulated host has NTFS's 100 ns resolution.
+    #[test]
+    fn a_modification_time_has_windows_resolution() {
+        with_program_host(Flavor::Windows, || {
+            let d = scratch("mtime");
+            let f = d.join("t.txt");
+            write(&f, "x").unwrap();
+            let at = super::super::modified(&f).unwrap();
+            let nanos = at
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos();
+            assert_eq!(nanos % 100, 0, "{nanos}");
+            remove_dir_all(&d).unwrap();
+        });
+    }
+
     /// The control: without the switch a Unix host keeps every one of those names apart.
     #[test]
     fn off_the_switch_a_unix_host_keeps_its_own_rules() {

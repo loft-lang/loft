@@ -333,6 +333,24 @@ pub fn read_dir(path: impl HostPath) -> io::Result<Vec<PathText>> {
     })
 }
 
+/// When the file was last modified, at the resolution its platform keeps: under the emulated
+/// Windows host (`LOFT_POISON_HOST`), NTFS's 100 ns, so a comparison against a time Windows
+/// stored is not decided by digits Windows never had (@PLN184 W1.4).
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+pub fn modified(path: impl HostPath) -> io::Result<std::time::SystemTime> {
+    let path = &*path.to_path_text();
+    let at = run(path, |p| std::fs::metadata(p)?.modified())?;
+    if path.flavor() == Flavor::HOST {
+        return Ok(at);
+    }
+    let since = at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let ticks = since.as_nanos() / 100;
+    Ok(std::time::UNIX_EPOCH
+        + std::time::Duration::from_nanos(u64::try_from(ticks * 100).unwrap_or(u64::MAX)))
+}
+
 /// The entry's metadata without following a symbolic link (`std`: `fs::symlink_metadata`).
 ///
 /// # Errors
