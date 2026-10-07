@@ -573,7 +573,7 @@ fn shared_bridge_nested_return_no_orphan_leak() {
         &libdir,
         "arcf",
         None,
-        "pub struct V3 { x: float, y: float, z: float }\n\
+        "pub struct V3 { pub x: float, pub y: float, pub z: float }\n\
          pub fn make_v3(a: float, b: float, c: float) -> V3 { V3 { x: a, y: b, z: c } }\n\
          pub fn wrap_v3(a: integer) -> V3 { make_v3(a as float, 0.0, 0.0) }\n",
     );
