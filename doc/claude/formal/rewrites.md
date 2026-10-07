@@ -3164,7 +3164,17 @@ on the drawing bench).
                  field of a FRESH record — an appended element or a construction
                  temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
                  that field the same way; nothing can read a fresh record while it
-                 is built, so it needs no staging of its own.
+                 is built, so it needs no staging of its own.  The KEYED clause:
+                 `h[k] = R { … }` with a FULL subscript of pure keys is written into
+                 the record the collection claims for it — the literal's values and
+                 the statements computing them run first, in program order (a value
+                 may read the record under `k`), then that record is removed (Col-
+                 Assign), a fresh one is claimed in the collection's store and
+                 written, and the SUBSCRIPT's key is written and the record linked;
+                 the plain form's order without its temporary store and its copy.
+                 A text field declines (a staged text may borrow the store the claim
+                 mutates), as does a partial subscript (its key is the literal's
+                 own) and a literal whose buffer is named outside it.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the

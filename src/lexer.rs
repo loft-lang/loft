@@ -3002,6 +3002,27 @@ impl Lexer {
     }
 }
 
+/// The ASCII halves of a token set: which characters are a token on their own, and which
+/// begin a two-character token.  A character outside ASCII is asked of the set itself.
+fn token_tables(tokens: &HashSet<String>) -> ([bool; 128], [bool; 128]) {
+    let mut one = [false; 128];
+    let mut two = [false; 128];
+    for t in tokens {
+        let mut cs = t.chars();
+        let (Some(a), second, None) = (cs.next(), cs.next(), cs.next()) else {
+            continue;
+        };
+        if a.is_ascii() {
+            if second.is_some() {
+                two[a as usize] = true;
+            } else {
+                one[a as usize] = true;
+            }
+        }
+    }
+    (one, two)
+}
+
 #[cfg(test)]
 mod test {
     fn test_id(lexer: &Lexer, id: &str) {
@@ -3523,25 +3544,4 @@ mod test {
             ],
         );
     }
-}
-
-/// The ASCII halves of a token set: which characters are a token on their own, and which
-/// begin a two-character token.  A character outside ASCII is asked of the set itself.
-fn token_tables(tokens: &HashSet<String>) -> ([bool; 128], [bool; 128]) {
-    let mut one = [false; 128];
-    let mut two = [false; 128];
-    for t in tokens {
-        let mut cs = t.chars();
-        let (Some(a), second, None) = (cs.next(), cs.next(), cs.next()) else {
-            continue;
-        };
-        if a.is_ascii() {
-            if second.is_some() {
-                two[a as usize] = true;
-            } else {
-                one[a as usize] = true;
-            }
-        }
-    }
-    (one, two)
 }
