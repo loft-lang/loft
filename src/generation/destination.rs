@@ -197,7 +197,7 @@ fn buffer_uses(data: &Data, stores: &Stores, code: &Value, shape: &Shape) -> (us
 
 fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Shape> {
     let def = data.def(d_nr);
-    if !def.is_loft_defined() || matches!(def.returned(), Type::Iterator(_, _)) {
+    if !def.is_loft_defined() || matches!(def.returned().base(), Type::Iterator(_, _)) {
         return None;
     }
     let rb = super::hoist::retbuf_var(data, d_nr)?;
