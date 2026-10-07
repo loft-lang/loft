@@ -87,6 +87,37 @@ fn run<T>(path: &PathText, op: impl FnOnce(&Path) -> io::Result<T>) -> io::Resul
 /// rules — a name that is not text keeps the OS's own spelling (`@FR-Path-Utf8`).
 pub trait HostPath {
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText>;
+
+    /// The path itself, when handing it to the OS unparsed reaches exactly the place its
+    /// `PathText` would: see [`plain_host`].  The probes and plain reads take this route, so
+    /// a project-root walk-up allocates nothing per directory level (loft#1772).
+    fn plain_host(&self) -> Option<&Path> {
+        None
+    }
+}
+
+/// Is `p` already the spelling its [`PathText`] renders — a Unix host, no emulated platform,
+/// valid text, and no empty, `.` or `..` name and no trailing separator — so the OS can be
+/// handed `p` as it is?  Anything else takes the parsed route, with its rules.
+fn plain_host(p: &Path) -> Option<&Path> {
+    if Flavor::HOST != Flavor::Unix || Flavor::emulating() {
+        return None;
+    }
+    let s = p.to_str()?;
+    if s.is_empty() || (s.len() > 1 && s.ends_with('/')) {
+        return None;
+    }
+    let body = s.strip_prefix('/').unwrap_or(s);
+    (body.is_empty()
+        || body
+            .split('/')
+            .all(|n| !n.is_empty() && n != "." && n != ".."))
+    .then_some(p)
+}
+
+/// An error from the plain route, naming its path as the parsed route does.
+fn named_plain<T>(p: &Path, r: io::Result<T>) -> io::Result<T> {
+    r.map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", p.display())))
 }
 
 impl HostPath for PathText {
@@ -96,30 +127,50 @@ impl HostPath for PathText {
 }
 
 impl HostPath for Path {
+    fn plain_host(&self) -> Option<&Path> {
+        plain_host(self)
+    }
+
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
         std::borrow::Cow::Owned(PathText::from_os(self))
     }
 }
 
 impl HostPath for PathBuf {
+    fn plain_host(&self) -> Option<&Path> {
+        plain_host(self)
+    }
+
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
         self.as_path().to_path_text()
     }
 }
 
 impl HostPath for std::ffi::OsStr {
+    fn plain_host(&self) -> Option<&Path> {
+        plain_host(Path::new(self))
+    }
+
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
         Path::new(self).to_path_text()
     }
 }
 
 impl HostPath for str {
+    fn plain_host(&self) -> Option<&Path> {
+        plain_host(Path::new(self))
+    }
+
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
         Path::new(self).to_path_text()
     }
 }
 
 impl HostPath for String {
+    fn plain_host(&self) -> Option<&Path> {
+        plain_host(Path::new(self.as_str()))
+    }
+
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
         Path::new(self.as_str()).to_path_text()
     }
@@ -129,6 +180,10 @@ impl<T: HostPath + ?Sized> HostPath for &T {
     fn to_path_text(&self) -> std::borrow::Cow<'_, PathText> {
         (**self).to_path_text()
     }
+
+    fn plain_host(&self) -> Option<&Path> {
+        (**self).plain_host()
+    }
 }
 
 /// The file's text.
@@ -136,6 +191,9 @@ impl<T: HostPath + ?Sized> HostPath for &T {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read_to_string(path: impl HostPath) -> io::Result<String> {
+    if let Some(p) = path.plain_host() {
+        return named_plain(p, std::fs::read_to_string(p));
+    }
     let path = &*path.to_path_text();
     run(path, |p| std::fs::read_to_string(p))
 }
@@ -145,6 +203,9 @@ pub fn read_to_string(path: impl HostPath) -> io::Result<String> {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn read(path: impl HostPath) -> io::Result<Vec<u8>> {
+    if let Some(p) = path.plain_host() {
+        return named_plain(p, std::fs::read(p));
+    }
     let path = &*path.to_path_text();
     run(path, |p| std::fs::read(p))
 }
@@ -232,6 +293,9 @@ pub fn rename(from: impl HostPath, to: impl HostPath) -> io::Result<()> {
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn open(path: impl HostPath) -> io::Result<std::fs::File> {
+    if let Some(p) = path.plain_host() {
+        return named_plain(p, std::fs::File::open(p));
+    }
     let path = &*path.to_path_text();
     run(path, |p| std::fs::File::open(p))
 }
@@ -296,6 +360,9 @@ pub fn open_with(path: impl HostPath, options: &std::fs::OpenOptions) -> io::Res
 /// # Errors
 /// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
 pub fn metadata(path: impl HostPath) -> io::Result<std::fs::Metadata> {
+    if let Some(p) = path.plain_host() {
+        return named_plain(p, std::fs::metadata(p));
+    }
     let path = &*path.to_path_text();
     run(path, |p| std::fs::metadata(p))
 }
@@ -468,18 +535,27 @@ pub unsafe fn load_library(name: impl AsRef<Path>) -> Result<libloading::Library
 
 #[must_use]
 pub fn exists(path: impl HostPath) -> bool {
+    if let Some(p) = path.plain_host() {
+        return p.exists();
+    }
     let path = &*path.to_path_text();
     path.os().is_ok_and(|p| p.exists())
 }
 
 #[must_use]
 pub fn is_file(path: impl HostPath) -> bool {
+    if let Some(p) = path.plain_host() {
+        return p.is_file();
+    }
     let path = &*path.to_path_text();
     path.os().is_ok_and(|p| p.is_file())
 }
 
 #[must_use]
 pub fn is_dir(path: impl HostPath) -> bool {
+    if let Some(p) = path.plain_host() {
+        return p.is_dir();
+    }
     let path = &*path.to_path_text();
     path.os().is_ok_and(|p| p.is_dir())
 }
@@ -487,6 +563,9 @@ pub fn is_dir(path: impl HostPath) -> bool {
 /// Is the path itself a symbolic link (the link, not what it names)?
 #[must_use]
 pub fn is_symlink(path: impl HostPath) -> bool {
+    if let Some(p) = path.plain_host() {
+        return std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
+    }
     let path = &*path.to_path_text();
     path.os()
         .is_ok_and(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()))
@@ -1101,6 +1180,29 @@ mod tests {
         assert!(lone.is_empty() && lone.native_or_empty().is_empty() && !exists(&lone));
         assert_eq!(lone.join("b.loft").native(), "b.loft");
         assert!(!PathText::host("x/").join("").is_empty());
+    }
+
+    /// loft#1772 — a plain host path takes the unparsed route only when it IS its rendering;
+    /// every other spelling keeps the parsed route's rules.
+    #[test]
+    fn a_plain_host_path_is_its_own_rendering() {
+        if Flavor::HOST == Flavor::Windows {
+            return; // the plain route is a Unix host's
+        }
+        for plain in ["/a/b", "a/b.loft", "/", "x"] {
+            assert!(plain_host(Path::new(plain)).is_some(), "{plain}");
+            assert_eq!(
+                PathText::from_os(Path::new(plain)).os_spelling(),
+                Path::new(plain)
+            );
+        }
+        for parsed in ["", "a/", "a//b", "./a", "a/../b", "a/./b", ".."] {
+            assert!(plain_host(Path::new(parsed)).is_none(), "{parsed}");
+        }
+        assert!(with_program_host(Flavor::Windows, || plain_host(
+            Path::new("/a")
+        )
+        .is_none()));
     }
 
     #[test]

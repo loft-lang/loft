@@ -178,7 +178,10 @@ pub fn intern_file(name: &str) -> FileName {
         return no_file();
     }
     static NAMES: OnceLock<Mutex<std::collections::HashSet<&'static str>>> = OnceLock::new();
-    let names = NAMES.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+    // Room for every name a process meets, so a compile never pays the set's growth: a
+    // growth lands on whichever compile crosses a capacity step, and made two identical
+    // compiles allocate differently (the front-end pins, loft#1772).
+    let names = NAMES.get_or_init(|| Mutex::new(std::collections::HashSet::with_capacity(256)));
     let mut names = names
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
