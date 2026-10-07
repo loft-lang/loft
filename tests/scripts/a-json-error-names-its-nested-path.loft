@@ -3,6 +3,11 @@
 // parsed tree into a typed record (`a[1].b`).  Both paths are built while the error unwinds,
 // one segment per level, so the order is the thing to pin: a level that added its segment
 // at the wrong end would name `/b/1/a`.  Every expected value is written out by hand.
+//
+// @falsified-at: none — the change that built the paths on unwind has no earlier build to catch;
+//   the planted defect is recorded with `@falsified-by:` below (the parser's segments rendered
+//   in unwind order, leaf first).
+// @falsified-by: tests/falsified/a-json-error-names-its-nested-path.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct In { b: integer }
 struct Out { a: vector<In>, n: integer }
