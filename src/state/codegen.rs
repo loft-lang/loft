@@ -124,6 +124,14 @@ fn stored_tuple_field_offset(data: &Data, database: &Stores, elems: &[Type], idx
 ///
 /// One datum must have one derivation; the plain (non-reference) `TupleGet`/`TuplePut`
 /// branches already read `element_stack_offsets`, and these now agree with them.
+/// `@FR-T-Record` — is tuple variable `var`'s frame slot OWNED: does a `text` member hold the
+/// tuple's own text (`String`), as a text local does, rather than the `Str` a text argument
+/// borrows?  The one answer every site laying out a tuple VARIABLE's slot asks
+/// (`element_stack_offsets_in`); a tuple VALUE on the eval stack is always borrowed.
+fn tuple_slot_owned(stack: &Stack, var: u16) -> bool {
+    crate::data::TUPLE_LOCAL_TEXT_OWNED && var != u16::MAX && !stack.function.is_argument(var)
+}
+
 fn ref_tuple_field_offset(elems: &[Type], idx: usize) -> u16 {
     u16::try_from(crate::data::element_stack_offsets(elems)[idx]).unwrap_or(u16::MAX)
 }
@@ -933,7 +941,8 @@ impl State {
                 };
                 let idx = elem_idx as usize;
                 let elem_tp = elems[idx].clone();
-                let offsets = crate::data::element_stack_offsets(elems);
+                let owned = tuple_slot_owned(stack, var_nr);
+                let offsets = crate::data::element_stack_offsets_in(elems, owned);
                 let elem_offset = offsets[idx] as u16;
                 // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
                 let narrow =
@@ -952,7 +961,13 @@ impl State {
                     // from the outer var's slot + outer offset).  The
                     // helper walks inner offsets and emits one OpVar*
                     // per leaf.
-                    self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs_pos, u16::MAX);
+                    self.emit_tuple_var_push_recursive(
+                        stack,
+                        inner_elems,
+                        elem_abs_pos,
+                        u16::MAX,
+                        owned,
+                    );
                     return self.insert_types(elem_tp.clone(), code_pos, stack);
                 }
                 match elem_tp.base() {
@@ -1055,7 +1070,8 @@ impl State {
                 };
                 let idx = elem_idx as usize;
                 let elem_tp = elems[idx].clone();
-                let offsets = crate::data::element_stack_offsets(elems);
+                let owned = tuple_slot_owned(stack, var_nr);
+                let offsets = crate::data::element_stack_offsets_in(elems, owned);
                 let elem_offset = offsets[idx] as u16;
                 // `@FR-T-Record` — a narrow member a `&` names holds its field encoding.
                 let narrow =
@@ -1087,7 +1103,7 @@ impl State {
                 // `elem_abs_pos`.  Mirrors the read-side
                 // `emit_tuple_var_push_recursive` at line 394.
                 if let Type::Tuple(inner_elems) = &elem_tp {
-                    self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs_pos, u16::MAX);
+                    self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs_pos, u16::MAX, owned);
                     self.record_store_span(from, var_nr);
                     return Type::Void;
                 }
@@ -1875,7 +1891,8 @@ impl State {
             return;
         };
         let tuple_var_base = stack.function.stack(v);
-        self.emit_tuple_null_init(stack, &elems, tuple_var_base, v);
+        let owned = tuple_slot_owned(stack, v);
+        self.emit_tuple_null_init(stack, &elems, tuple_var_base, v, owned);
     }
 
     /// Recursive helper for `TupleGet` on a `Type::Tuple` element.
@@ -1888,12 +1905,13 @@ impl State {
         elems: &[Type],
         base: u16,
         var: u16,
+        owned: bool,
     ) {
-        let offsets = crate::data::element_stack_offsets(elems);
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for (i, elem) in elems.iter().enumerate() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = elem {
-                self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs, u16::MAX);
+                self.emit_tuple_var_push_recursive(stack, inner_elems, elem_abs, u16::MAX, owned);
                 continue;
             }
             let var_pos = stack.position - elem_abs;
@@ -1947,12 +1965,19 @@ impl State {
     /// most-recently-pushed leaf and writes it to the corresponding
     /// slot offset within the variable.  For nested `Type::Tuple`
     /// elements, recurses with the inner offsets added to `base`.
-    fn emit_tuple_var_pop_put(&mut self, stack: &mut Stack, elems: &[Type], base: u16, var: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_var_pop_put(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for i in (0..elems.len()).rev() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = &elems[i] {
-                self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs, u16::MAX);
+                self.emit_tuple_var_pop_put(stack, inner_elems, elem_abs, u16::MAX, owned);
                 continue;
             }
             let pos = stack.position - elem_abs;
@@ -1996,12 +2021,19 @@ impl State {
     /// and pushes/OpPut's a zero value at each leaf primitive's
     /// absolute stack slot.  For nested `Type::Tuple` elements,
     /// recurses with the inner offsets added to `base`.
-    fn emit_tuple_null_init(&mut self, stack: &mut Stack, elems: &[Type], base: u16, var: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_null_init(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for (i, elem) in elems.iter().enumerate() {
             let elem_abs = base + offsets[i] as u16;
             if let Type::Tuple(inner_elems) = elem {
-                self.emit_tuple_null_init(stack, inner_elems, elem_abs, u16::MAX);
+                self.emit_tuple_null_init(stack, inner_elems, elem_abs, u16::MAX, owned);
                 continue;
             }
             match elem.base() {
@@ -3364,12 +3396,19 @@ impl State {
     // "unsupported elem". The full set: emit_tuple_put_ops, emit_tuple_var_pop_put,
     // emit_tuple_var_push_recursive, emit_tuple_null_init, and the generate_node/generate_var
     // TupleGet/TuplePut element matches.
-    fn emit_tuple_put_ops(&mut self, stack: &mut Stack, elems: &[Type], tuple_base: u16, var: u16) {
-        let offsets = crate::data::element_stack_offsets(elems);
+    fn emit_tuple_put_ops(
+        &mut self,
+        stack: &mut Stack,
+        elems: &[Type],
+        tuple_base: u16,
+        var: u16,
+        owned: bool,
+    ) {
+        let offsets = crate::data::element_stack_offsets_in(elems, owned);
         for i in (0..elems.len()).rev() {
             let elem_abs = tuple_base + offsets[i] as u16;
             if let Type::Tuple(inner) = &elems[i] {
-                self.emit_tuple_put_ops(stack, inner, elem_abs, u16::MAX);
+                self.emit_tuple_put_ops(stack, inner, elem_abs, u16::MAX, owned);
                 continue;
             }
             // Compute pos BEFORE add_op — `stack.add_op` calls
@@ -3811,7 +3850,8 @@ impl State {
                 Type::RefVar(_) => stack.add_op("OpPutRef", self),
                 Type::Tuple(elems) => {
                     let tuple_var_base = stack.function.stack(v);
-                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base, v);
+                    let owned = tuple_slot_owned(stack, v);
+                    self.emit_tuple_put_ops(stack, &elems, tuple_var_base, v, owned);
                     return;
                 }
                 other => panic!(
@@ -4611,7 +4651,10 @@ impl State {
                     // fn-ref-element projection (`generation/calls.rs`) and the
                     // TupleGet Integer arm; the d_nr is the first 8 bytes of the
                     // element slot, so `OpVarInt` at its offset reads exactly it.
-                    let offsets = crate::data::element_stack_offsets(&elems);
+                    let offsets = crate::data::element_stack_offsets_in(
+                        &elems,
+                        tuple_slot_owned(stack, *tvar),
+                    );
                     let elem_abs = stack.function.stack(*tvar) + offsets[*tidx as usize] as u16;
                     let var_pos = stack.position - elem_abs;
                     stack.add_op("OpVarInt", self);
@@ -4829,7 +4872,9 @@ impl State {
             {
                 // `@FR-B-Ref-Lvalue` — a link to a tuple local's MEMBER: the tuple's slot at
                 // the member's offset, the address the `TupleGet` read itself uses.
-                let offset = crate::data::element_stack_offsets(elems)[*ti as usize] as u16;
+                let offset =
+                    crate::data::element_stack_offsets_in(elems, tuple_slot_owned(stack, *tv))
+                        [*ti as usize] as u16;
                 let dep_offset = stack.position - (stack.function.stack(*tv) + offset);
                 self.emit_push_create_stack(stack, dep_offset);
             } else if let Value::TupleGet(tv, ti) = parameters[0].unspan()
@@ -5593,7 +5638,8 @@ impl State {
                 // store local answering the zero initialiser on native.
                 let elems = elems.clone();
                 let tuple_base = stack.function.stack(variable);
-                self.emit_tuple_var_push_recursive(stack, &elems, tuple_base, variable);
+                let owned = tuple_slot_owned(stack, variable);
+                self.emit_tuple_var_push_recursive(stack, &elems, tuple_base, variable, owned);
                 return self.insert_types(stack.function.tp(variable).clone(), code, stack);
             }
             _ => panic!(
@@ -6443,7 +6489,8 @@ impl State {
                 // OpPut* calls at the correct sub-offsets.
                 let elems = elems.clone();
                 let tuple_var_base = stack.function.stack(var);
-                self.emit_tuple_var_pop_put(stack, &elems, tuple_var_base, var);
+                let owned = tuple_slot_owned(stack, var);
+                self.emit_tuple_var_pop_put(stack, &elems, tuple_var_base, var, owned);
                 return;
             }
             _ => panic!(
