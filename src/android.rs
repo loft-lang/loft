@@ -447,11 +447,8 @@ impl AndroidSdk {
     }
     fn apksigner(&self) -> PathBuf {
         // apksigner is a launcher script: `.bat` on Windows, extension-less elsewhere.
-        self.build_tools.join(if cfg!(windows) {
-            "apksigner.bat"
-        } else {
-            "apksigner"
-        })
+        self.build_tools
+            .join(crate::platform::launcher_script_name("apksigner"))
     }
     fn jar(&self) -> PathBuf {
         self.java_home.join("bin").join(exe("jar"))
@@ -477,11 +474,7 @@ fn run_tool(cmd: &mut std::process::Command, name: &str) -> Result<(), String> {
 
 /// `<name>.exe` on Windows, `<name>` elsewhere.
 fn exe(name: &str) -> String {
-    if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    }
+    crate::platform::exe_file_name(name)
 }
 
 /// A valid Android package/label segment derived from the APK's file stem
@@ -783,11 +776,5 @@ fn cargo_linker_var(triple: &str) -> String {
 /// NDKs since r23 ship only x86_64 host toolchains (there is no aarch64-host or
 /// 32-bit build), so every supported host maps to its `*-x86_64` tag.
 fn host_tag() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "darwin-x86_64"
-    } else if cfg!(target_os = "windows") {
-        "windows-x86_64"
-    } else {
-        "linux-x86_64"
-    }
+    crate::platform::ndk_host_tag()
 }

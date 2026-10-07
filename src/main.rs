@@ -3125,14 +3125,8 @@ echo "  external lib         -> loft publish + open a registry PR."
         write_file("tests/01-smoke.loft", &test_loft)?;
         write_file("README.md", &readme)?;
         write_file("release.sh", release_sh)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let p = pkg_dir.join("release.sh");
-            let mut perm = fa::metadata(&p)?.permissions();
-            perm.set_mode(0o755);
-            fa::set_permissions(&p, perm)?;
-        }
+        // Executable where the host keeps an execute bit; a no-op on Windows.
+        platform::set_permission_bits(&pkg_dir.join("release.sh"), 0o755)?;
         if native {
             let cargo_toml = format!(
                 "[package]\nname = \"loft-{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\nlicense = \"LGPL-3.0-or-later\"\n\n\
@@ -9219,7 +9213,7 @@ fn main() {
         && native_lib_paths.is_empty()
         && program_cache_on
         && !p.sandbox_is_active()
-        && !cfg!(windows)
+        && !platform::stages_dlls_beside_binary()
         && !native_cache_bypassed()
         && native_fast_path_env_ok();
     if native_fast_path_wanted {
@@ -9873,7 +9867,7 @@ fn main() {
     // never leave the process.
     let no_placement_because = if placed_libs.is_empty() {
         None
-    } else if cfg!(not(unix)) {
+    } else if !platform::placement_transport_available() {
         Some("out-of-process placement needs a Unix host")
     } else if native_requested {
         Some(
@@ -11697,8 +11691,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // once per occurrence, which on the `#c` shim path was three lines of
             // noise directly above the real error. Same reason as macOS: a flag
             // the host linker has no equivalent for is not passed to it.
-            #[cfg(not(any(target_os = "macos", windows)))]
-            cmd.arg("-Clink-arg=-Wl,--allow-multiple-definition");
+            cmd.args(platform::allow_multiple_definition_arg());
             // Point rustc at loft's own runtime rlib and everything it links against,
             // answering the deps dir it found.  A closure rather than straight-line code
             // because the post-compile heal below rebuilds that rlib and must ask AGAIN:

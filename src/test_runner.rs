@@ -645,12 +645,8 @@ pub(crate) fn run_tests(
         if let Some(code) = status.code() {
             return format!("native run failed (exit {code})");
         }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            if let Some(sig) = status.signal() {
-                return format!("native run killed by signal {sig}");
-            }
+        if let Some(sig) = crate::platform::exit_signal(status) {
+            return format!("native run killed by signal {sig}");
         }
         "native run failed".to_string()
     }
@@ -1784,9 +1780,8 @@ pub(crate) fn run_tests(
                             // and MSVC `link.exe` ignores it with a `LNK4044`
                             // per occurrence, so skip it on both (matching
                             // main.rs).
-                            #[cfg(not(any(target_os = "macos", windows)))]
                             if !native_data.native_packages.is_empty() {
-                                cmd.arg("-Clink-arg=-Wl,--allow-multiple-definition");
+                                cmd.args(crate::platform::allow_multiple_definition_arg());
                             }
                             if let Some(ref ld) = lib_dir {
                                 cmd.args(loft::native_lib::loft_extern_args(

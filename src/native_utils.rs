@@ -1506,27 +1506,9 @@ pub(crate) fn cache_safe_to_execute(path: &std::path::Path) -> bool {
     if lmd.file_type().is_symlink() {
         return false;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if lmd.uid() != unsafe { libc::geteuid() } {
-            return false;
-        }
-        // Reject group/other permissions — only owner may read,
-        // write, or execute.  An attacker with group access
-        // could swap the file between our stat and exec; even
-        // group-readable files leak compiled output that may
-        // contain secrets.
-        if lmd.mode() & 0o077 != 0 {
-            return false;
-        }
-        // Reject SUID/SGID — cached binaries should never carry
-        // privilege-escalation bits.
-        if lmd.mode() & 0o6000 != 0 {
-            return false;
-        }
-    }
-    true
+    // Owner-only, and no SUID/SGID: a cached binary must never carry a
+    // privilege-escalation bit (`platform::is_private_to_owner`).
+    crate::platform::is_private_to_owner(&lmd, true)
 }
 
 /// P254 — companion check for the cache directory itself.
@@ -1544,17 +1526,7 @@ pub(crate) fn cache_dir_safe(dir: &std::path::Path) -> bool {
     if lmd.file_type().is_symlink() {
         return false;
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if lmd.uid() != unsafe { libc::geteuid() } {
-            return false;
-        }
-        if lmd.mode() & 0o077 != 0 {
-            return false;
-        }
-    }
-    true
+    crate::platform::is_private_to_owner(&lmd, false)
 }
 
 /// P254 — set the cache directory's mode to `0o700` on Unix.
@@ -1564,12 +1536,7 @@ pub(crate) fn cache_dir_safe(dir: &std::path::Path) -> bool {
 /// cache write to repair pre-existing cache directories left over
 /// from earlier loft versions.
 pub(crate) fn tighten_cache_dir(dir: &std::path::Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = crate::file_access::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
-    let _ = dir;
+    let _ = crate::platform::set_permission_bits(dir, 0o700);
 }
 
 /// P254 — set a freshly written cache binary's mode to `0o700`
@@ -1577,12 +1544,7 @@ pub(crate) fn tighten_cache_dir(dir: &std::path::Path) {
 /// after `std::fs::copy(&binary, &cached_binary)`.  No-op on
 /// non-Unix.
 pub(crate) fn tighten_cache_binary(path: &std::path::Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = crate::file_access::set_permissions(path, std::fs::Permissions::from_mode(0o700));
-    }
-    let _ = path;
+    let _ = crate::platform::set_permission_bits(path, 0o700);
 }
 
 /// Publish a freshly built native binary to its shared, content-keyed cache path.
@@ -1759,12 +1721,7 @@ pub(crate) fn native_cabi_enabled() -> bool {
 /// too, where the default is 1 MiB: the same recursion must not overflow on one platform only.
 /// A no-op off Windows.
 pub(crate) fn add_main_stack_flags(cmd: &mut std::process::Command) {
-    if cfg!(all(windows, target_env = "msvc")) {
-        cmd.arg("-C").arg(format!("link-arg=/STACK:{}", 8 << 20));
-    } else if cfg!(all(windows, target_env = "gnu")) {
-        cmd.arg("-C")
-            .arg(format!("link-arg=-Wl,--stack,{}", 8 << 20));
-    }
+    cmd.args(crate::platform::main_stack_link_args());
 }
 
 pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate::data::Data) {
@@ -1833,9 +1790,8 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
             // so passing it was noise that hid the real error below it. The DLL is
             // found beside the `.exe` / on `PATH` instead, the same arrangement
             // `stage_native_dlls` already makes for a package cdylib (@PLN26 ph.4).
-            if !cfg!(windows) {
-                cmd.arg("-C")
-                    .arg(format!("link-arg=-Wl,-rpath,{}", parent.display()));
+            if let Some(rpath) = crate::platform::rpath_link_arg(parent) {
+                cmd.arg("-C").arg(rpath);
             }
         }
         // A VERSIONED soname links by exact filename, not by stem.
@@ -1910,55 +1866,35 @@ pub(crate) fn add_native_extern_flags(
                     .map_or(stem.as_str(), |s| s.strip_prefix("lib").unwrap_or(s));
                 cmd.arg("-L").arg(format!("native={}", so_dir.display()));
                 cmd.arg("-l").arg(format!("dylib={libname}"));
-                if cfg!(windows) {
-                    // @PLN26 phase 4 — Windows links a DLL through its IMPORT
-                    // LIBRARY, and there is NO RPATH: the MSVC linker rejects
-                    // `-Wl,-rpath`, and the loader finds the DLL beside the `.exe`
-                    // / on `PATH` — so the DLL is staged beside the binary at run
-                    // time (`stage_native_dlls`), the Windows form of the
-                    // `$ORIGIN` rpath used below.
-                    //
-                    // Naming bridge: a Rust cdylib's import lib is `<stem>.dll.lib`,
-                    // but `-l dylib=<stem>` makes MSVC link.exe open `<stem>.lib`
-                    // (verified: `LNK1181: cannot open input file
-                    // 'loft_native_scalar.lib'`).  Copy `<stem>.dll.lib` →
-                    // `<stem>.lib` beside it so the `-l dylib=` above resolves —
-                    // both are import libs for the same DLL, identical content.
-                    let dll_lib = so_dir.join(format!("{libname}.dll.lib"));
-                    let plain_lib = so_dir.join(format!("{libname}.lib"));
-                    if crate::file_access::exists(&dll_lib)
-                        && !crate::file_access::exists(&plain_lib)
-                    {
-                        let _ = crate::file_access::copy(&dll_lib, &plain_lib);
-                    }
-                    // Disallow-the-unverifiable-loudly: if NEITHER import-lib name
-                    // is present the link would die on an opaque `LNK1181`, so name
-                    // it rather than mis-link.
-                    if !crate::file_access::exists(&plain_lib)
-                        && !crate::file_access::exists(&dll_lib)
-                    {
-                        eprintln!(
-                            "loft: native package `{crate_name}` cdylib at {} has no import \
-                             library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-                             DLL through its import lib, not the DLL directly.  \
-                             Rebuild the package's cdylib with a toolchain that emits one.",
-                            so_dir.display()
-                        );
-                    }
-                } else {
-                    // @PLN26 phase 0.1 — two RPATH entries: the build/prebuilt dir
-                    // (run-from-build-tree: tests, dev) AND `$ORIGIN` (an installed
-                    // binary that ships the `.so` beside it — `make install` copies
-                    // it next to the binary).  `$ORIGIN` is passed literally; the
-                    // dynamic loader expands it at run time.  Windows has no RPATH
-                    // (the arm above); it stages the DLL beside the binary instead.
-                    cmd.arg(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
-                    // `$ORIGIN` is the ELF spelling and Mach-O does not know it; the dyld
-                    // form is `@loader_path`.  Both are emitted, because a linker ignores an
-                    // rpath entry it cannot parse and the cost of the spare one is a string.
-                    cmd.arg("-Clink-arg=-Wl,-rpath,$ORIGIN");
-                    if cfg!(target_os = "macos") {
-                        cmd.arg("-Clink-arg=-Wl,-rpath,@loader_path");
+                // @PLN26 phase 4 — Windows links a DLL through its IMPORT LIBRARY, and
+                // there is NO RPATH: the loader finds the DLL beside the `.exe` / on
+                // `PATH`, so the DLL is staged beside the binary at run time
+                // (`stage_native_dlls`), the Windows form of the `$ORIGIN` rpath below.
+                match crate::platform::bridge_import_lib(so_dir, libname) {
+                    // Disallow-the-unverifiable-loudly: if NEITHER import-lib name is
+                    // present the link would die on an opaque `LNK1181`, so name it
+                    // rather than mis-link.
+                    crate::platform::ImportLib::Missing => eprintln!(
+                        "loft: native package `{crate_name}` cdylib at {} has no import \
+                         library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
+                         DLL through its import lib, not the DLL directly.  \
+                         Rebuild the package's cdylib with a toolchain that emits one.",
+                        so_dir.display()
+                    ),
+                    crate::platform::ImportLib::Ready => {}
+                    crate::platform::ImportLib::NotUsed => {
+                        // @PLN26 phase 0.1 — two RPATH entries: the build/prebuilt dir
+                        // (run-from-build-tree: tests, dev) AND `$ORIGIN` (an installed
+                        // binary that ships the `.so` beside it — `make install` copies
+                        // it next to the binary).  `$ORIGIN` is passed literally; the
+                        // dynamic loader expands it at run time.
+                        cmd.arg(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
+                        // `$ORIGIN` is the ELF spelling and Mach-O does not know it; the
+                        // dyld form is `@loader_path`.  Both are emitted, because a linker
+                        // ignores an rpath entry it cannot parse and the cost of the spare
+                        // one is a string.
+                        cmd.arg("-Clink-arg=-Wl,-rpath,$ORIGIN");
+                        cmd.args(crate::platform::loader_path_rpath_arg());
                     }
                 }
             }
@@ -2138,8 +2074,8 @@ pub(crate) fn explain_windows_startup_failure(
     binary: &std::path::Path,
     data: &crate::data::Data,
 ) {
-    const STATUS_DLL_NOT_FOUND: i32 = 0xC000_0135_u32 as i32;
-    if !cfg!(windows) || status.code() != Some(STATUS_DLL_NOT_FOUND) {
+    const STATUS_DLL_NOT_FOUND: i32 = crate::platform::STATUS_DLL_NOT_FOUND;
+    if !crate::platform::is_dll_not_found(status) {
         return;
     }
     eprintln!(
@@ -2223,7 +2159,7 @@ fn stage_c_library_dlls(exe_dir: &std::path::Path, data: &crate::data::Data) {
 /// same `resolve_native_lib` the link used, so run-time and link-time agree on the
 /// file.  Best-effort: a failed copy leaves the loader's normal search to find it.
 pub(crate) fn stage_native_dlls(exe_dir: &std::path::Path, data: &crate::data::Data) {
-    if !cfg!(windows) {
+    if !crate::platform::stages_dlls_beside_binary() {
         return;
     }
     stage_c_library_dlls(exe_dir, data);
@@ -2376,10 +2312,10 @@ mod p254_cache_safety {
         let _ = crate::file_access::remove_file(&p);
     }
 
-    #[cfg(unix)]
+    /// A host without mode bits (Windows) has nothing to reject here, and answers "safe"
+    /// (`platform::is_private_to_owner`); the assertion names each platform's answer.
     #[test]
     fn group_writable_cache_is_unsafe() {
-        use std::os::unix::fs::PermissionsExt;
         let p = std::env::temp_dir().join(format!(
             "loft_p254_groupwrite_{}_{}",
             std::process::id(),
@@ -2388,8 +2324,11 @@ mod p254_cache_safety {
         let _ = crate::file_access::remove_file(&p);
         crate::file_access::write(&p, b"x").unwrap();
         // 0o766 has group write and other rwx — attacker-modifiable.
-        crate::file_access::set_permissions(&p, std::fs::Permissions::from_mode(0o766)).unwrap();
-        assert!(!cache_safe_to_execute(&p));
+        crate::platform::set_permission_bits(&p, 0o766).unwrap();
+        assert_eq!(
+            cache_safe_to_execute(&p),
+            !crate::platform::has_permission_bits()
+        );
         let _ = crate::file_access::remove_file(&p);
     }
 
@@ -2418,10 +2357,9 @@ mod p254_cache_safety {
         let _ = crate::file_access::remove_file(&target);
     }
 
-    #[cfg(unix)]
+    /// As `group_writable_cache_is_unsafe`: a host without mode bits answers "safe".
     #[test]
     fn suid_cache_is_unsafe() {
-        use std::os::unix::fs::PermissionsExt;
         let p = std::env::temp_dir().join(format!(
             "loft_p254_suid_{}_{}",
             std::process::id(),
@@ -2430,8 +2368,11 @@ mod p254_cache_safety {
         let _ = crate::file_access::remove_file(&p);
         crate::file_access::write(&p, b"x").unwrap();
         // 0o4700 — owner rwx + setuid bit.
-        crate::file_access::set_permissions(&p, std::fs::Permissions::from_mode(0o4700)).unwrap();
-        assert!(!cache_safe_to_execute(&p));
+        crate::platform::set_permission_bits(&p, 0o4700).unwrap();
+        assert_eq!(
+            cache_safe_to_execute(&p),
+            !crate::platform::has_permission_bits()
+        );
         let _ = crate::file_access::remove_file(&p);
     }
 
