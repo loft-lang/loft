@@ -2050,7 +2050,8 @@ impl Output<'_> {
         // Field by field, each getter resolved the store and bounded the read again — the
         // seven reads of `map_get_hex`'s `return chunk.hexes[idx]?`.  Nothing between the
         // address and its last use runs but loads.  A view whose block holds an address
-        // already reads through that one.
+        // already reads through that one, and a value local or a sub-record of one is a
+        // tuple with no address: its getters name tuple elements.
         let kinds: Vec<Option<(&str, &str)>> = fields
             .iter()
             .map(|(_, rt)| {
@@ -2063,7 +2064,8 @@ impl Output<'_> {
             .collect();
         let through = !self.record_ptr_disabled
             && kinds.iter().any(Option::is_some)
-            && !matches!(src.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some());
+            && !matches!(src.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
+            && !self.in_value_local(src);
         let src = if through {
             write!(w, "{{ let __rt: DbRef = ")?;
             self.output_code_inner(w, src)?;
