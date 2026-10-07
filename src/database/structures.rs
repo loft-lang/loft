@@ -113,7 +113,7 @@ enum InsertKind {
     Hash(u16),
     Index(u16),
     Ordered(u16),
-    Trie,
+    Trie(u16),
     Radix,
     Other,
 }
@@ -127,7 +127,7 @@ impl InsertKind {
             Parts::Hash(c, _) => Self::Hash(*c),
             Parts::Index(c, _, _) => Self::Index(*c),
             Parts::Ordered(c, _) => Self::Ordered(*c),
-            Parts::Trie(_, _) => Self::Trie,
+            Parts::Trie(c, _) => Self::Trie(*c),
             Parts::Radix(_, _) => Self::Radix,
             _ => Self::Other,
         }
@@ -1161,9 +1161,11 @@ impl Stores {
                     }
                 }
             }
-            InsertKind::Trie => {
-                // Same no-dedup contract as the spatial side: two records may share a
-                // key, differing in the id suffix, and land adjacent (`r8b`).
+            InsertKind::Trie(c) => {
+                // @FR-Col-Insert, C68 — a trie key names one record: the record already filed
+                // under this key is displaced first, as a hash's is.  (A spatial keeps both:
+                // its key is a point, and two records may share one.)
+                displaced = self.dedup_keyed(data, rec, tp, c, secondary);
                 let keys = self.types[tp as usize].keys.clone();
                 crate::trie_db::add(data, rec, &mut self.allocations, &keys);
             }
