@@ -9,8 +9,6 @@
 // Feature providers land here step by step: S3 diagnostics (this file), then
 // S4 outline / S5 hover / S6 go-to-definition reuse the same fresh-parse.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -396,7 +394,7 @@ fn read_def_source(buf: &str, buf_name: &str, stdlib_dir: &str, pos: &Position) 
     let root = Path::new(stdlib_dir)
         .parent()
         .map_or_else(|| Path::new("").to_path_buf(), Path::to_path_buf);
-    std::fs::read_to_string(root.join(&*pos.file)).ok()
+    crate::file_access::read_to_string(root.join(&*pos.file)).ok()
 }
 
 /// The contiguous comment block directly above the declaration on `decl_line`
@@ -734,12 +732,14 @@ impl TagIndex {
     /// Parse `<index_dir>/tags.json` (required) + `features.json` (optional).
     #[must_use]
     pub fn load(index_dir: &str) -> Option<TagIndex> {
-        let tags_txt = std::fs::read_to_string(Path::new(index_dir).join("tags.json")).ok()?;
+        let tags_txt =
+            crate::file_access::read_to_string(Path::new(index_dir).join("tags.json")).ok()?;
         let tags = crate::json::parse(&tags_txt).ok()?;
-        let features = std::fs::read_to_string(Path::new(index_dir).join("features.json"))
-            .ok()
-            .and_then(|s| crate::json::parse(&s).ok())
-            .unwrap_or(Parsed::Array(Vec::new()));
+        let features =
+            crate::file_access::read_to_string(Path::new(index_dir).join("features.json"))
+                .ok()
+                .and_then(|s| crate::json::parse(&s).ok())
+                .unwrap_or(Parsed::Array(Vec::new()));
         // The `broken` array is `[{"tag":"@P999","refs":[…]}, …]`. <!--noindex-->
 
         let broken = match pj_get(&tags, "broken") {
@@ -1067,7 +1067,7 @@ impl WorkspaceIndex {
     pub fn build(root: &str) -> WorkspaceIndex {
         let mut by_name: HashMap<String, Vec<Reference>> = HashMap::new();
         for path in loft_files(Path::new(root)) {
-            let Ok(text) = std::fs::read_to_string(&path) else {
+            let Ok(text) = crate::file_access::read_to_string(&path) else {
                 continue;
             };
             let file = canonical(&path);
@@ -1232,6 +1232,10 @@ pub fn uri_to_path(uri: &str) -> String {
 }
 
 /// Every `.loft` file under `root`, skipping build / VCS / dependency dirs.
+#[expect(
+    clippy::case_sensitive_file_extension_comparisons,
+    reason = "`.loft` is matched case-sensitively on every host, as it always was"
+)]
 fn loft_files(root: &Path) -> Vec<PathBuf> {
     const SKIP: &[&str] = &[
         "target",
@@ -1244,15 +1248,14 @@ fn loft_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+        let Ok(entries) = crate::file_access::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if path.is_dir() {
-                if !SKIP.contains(&name.as_ref()) && !name.starts_with('.') {
+        for entry in entries {
+            let path = entry.os_spelling();
+            let name = entry.file_name().unwrap_or_default();
+            if crate::file_access::is_dir(&path) {
+                if !SKIP.contains(&name) && !name.starts_with('.') {
                     stack.push(path);
                 }
             } else if name.ends_with(".loft") {
@@ -1473,7 +1476,7 @@ pub fn method_refs(
         let cpath = canonical(&path);
         if let Some((_, t)) = open.iter().find(|(op, _)| *op == cpath) {
             files.push((cpath, (*t).to_string()));
-        } else if let Ok(t) = std::fs::read_to_string(&path) {
+        } else if let Ok(t) = crate::file_access::read_to_string(&path) {
             files.push((cpath, t));
         }
     }
