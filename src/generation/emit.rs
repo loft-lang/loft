@@ -1435,10 +1435,23 @@ impl Output<'_> {
         // the value crosses a forwarding frame.  Snapshot the allocation counter here and ask
         // `cr_fnref_minted` afterwards; a CAPTURE's stamp predates this and is left alone.
         // Heap returns only — a text return crosses as an owned `String`.
-        let heap_return = matches!(
-            ret_type.base(),
-            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-        );
+        // `@FR-R-FnRefValue` — every arm of this dispatch answers the record's TUPLE: the arms
+        // are called without a buffer (each is admitted, so `emit_user_call_args` drops it),
+        // nothing is minted, and an absent fn-ref answers the null record's fields.
+        let value_fields: Option<Vec<(i64, &'static str)>> = super::hoist::fnref_value(
+            &self.value_records.fnref_sites,
+            &self.value_records.fns,
+            self.def_nr,
+            v_nr,
+        )
+        .and_then(|rec| self.value_records.types.get(&rec))
+        .map(|t| t.fields.clone());
+        crate::rewrite_census::fired("R-FnRefValue", usize::from(value_fields.is_some()));
+        let heap_return = value_fields.is_none()
+            && matches!(
+                ret_type.base(),
+                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+            );
         write!(w, "{{ ")?;
         if heap_return {
             write!(w, "let __vc_seq = codegen_runtime::cr_alloc_serial(cell); ")?;
@@ -1504,8 +1517,26 @@ impl Output<'_> {
             let text_link_arg = link_arg
                 && matches!(param_types[i].base(),
                     Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
+            // `@FR-R-FnRefValue` — a parameter every arm receives as a tuple takes the tuple,
+            // built as a direct call builds it (`emit_call_arg` against one arm).
+            let tuple_param = super::hoist::fnref_param(
+                &self.value_records.fnref_sites,
+                &self.value_records.params,
+                self.def_nr,
+                v_nr,
+                i,
+            )
+            .is_some()
+                && !candidates.is_empty();
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
+            } else if tuple_param {
+                let cand = self.data.def(candidates[0].d_nr);
+                self.current_call_def = candidates[0].d_nr;
+                let mut buf = Vec::new();
+                self.emit_call_arg(&mut buf, cand, i, arg)?;
+                let spelled = String::from_utf8(buf).unwrap_or_default();
+                write!(w, "let _farg_{i} = {spelled}; ")?;
             } else if link_arg
                 && !(text_link_arg && store_mask & (1 << i) != 0)
                 && !candidates.is_empty()
@@ -1717,6 +1748,10 @@ impl Output<'_> {
                 }
             }
             let _ = has_closure;
+            // The arm's own number, for `emit_user_call_args` (whether it drops a buffer) and
+            // the twin forms (keyed by identity): left as it was, it named whichever call the
+            // argument bindings above emitted last.
+            self.current_call_def = *d_nr;
             // Route through output_call_user_fn → emit_op → custom emitter
             // (or DefaultEmitter::user_fn_call_body when no emitter is
             // registered for this candidate).
@@ -1733,6 +1768,7 @@ impl Output<'_> {
                     )?;
                 } else {
                     let inst_def = self.data.def(inst);
+                    self.current_call_def = inst;
                     self.output_call_user_fn(w, inst_def, &synthetic)?;
                 }
             }
@@ -1770,10 +1806,14 @@ impl Output<'_> {
         // range), and the call answers the return type's null, as the interpreter's guard in
         // `generate_call_ref` does; the program continues (C80).
         write!(w, " _ => ")?;
-        match ret_type.base() {
+        if let Some(fields) = &value_fields {
+            write!(w, "{}", super::hoist::tuple_reads(fields, "DbRef::NULL", "stores"))?;
+        } else {
+            match ret_type.base() {
             Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
-            Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
-            _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+                Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
+                _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+            }
         }
         write!(w, " }}")?;
         if heap_return {

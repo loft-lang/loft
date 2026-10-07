@@ -1644,12 +1644,16 @@ impl Output<'_> {
         // unresolved.  The call's return left the minted-or-borrowed verdict; adopt the mint
         // (and take it off the hand-up list), copy a store that predates the call.  The copy
         // takes NO source-free bit: its source is a capture or an argument, owned further up.
-        if let Some(rec) = crate::use_analysis::opaque_callref_bind(
-            self.data,
-            self.def_nr,
-            variables.tp(var),
-            to_unspanned,
-        ) {
+        // A VALUE LOCAL bound from a dispatch that answers the tuple (`@FR-R-FnRefValue`)
+        // holds no store, so there is nothing to adopt or copy: it takes the plain bind.
+        if !self.value_record_locals.contains_key(&var)
+            && let Some(rec) = crate::use_analysis::opaque_callref_bind(
+                self.data,
+                self.def_nr,
+                variables.tp(var),
+                to_unspanned,
+            )
+        {
             let tp_nr = self.data.def(rec).known_type();
             let first_bind = !self.declared.contains(&var);
             if first_bind {
