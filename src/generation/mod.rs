@@ -5698,8 +5698,19 @@ impl Output<'_> {
     /// address and its last use can grow, move or free a store.  Declines (answers
     /// `false`, nothing written) when a field is a view part — its append may grow the
     /// store — when no field is a kind the address serves, when the destination is a
-    /// view whose block already holds an address (its setters use that one), and under
+    /// view whose block already holds an address (its setters use that one), when the
+    /// destination lies inside a value local (a tuple has no address), and under
     /// `LOFT_NO_RECORD_PTR`.  A field of another kind keeps its setter, to the same bytes.
+    /// Is `v` a value local or a sub-record of one (`(R-ValueLocal)`): a TUPLE, or a range of
+    /// one, with no record and so no address — its field accessors name tuple elements.
+    pub(crate) fn in_value_local(&self, v: &Value) -> bool {
+        let root = match v.unspan() {
+            Value::Var(r) => Some(*r),
+            _ => hoist::sub_record(self.data, v).map(|(r, _, _)| r),
+        };
+        root.is_some_and(|r| self.value_record_locals.contains_key(&r))
+    }
+
     fn write_tuple_through_address(
         &mut self,
         w: &mut dyn Write,
@@ -5715,6 +5726,7 @@ impl Output<'_> {
             || fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
             || kinds.iter().all(Option::is_none)
             || matches!(dst.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
+            || self.in_value_local(dst)
         {
             return Ok(false);
         }
