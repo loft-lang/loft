@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1915, `@FR-Col-Len` — every collection kind has a length, in both spellings.  An `index`
+// answered `len(ix)` and refused `ix.len()` with "Unknown field index<E[id]>.len": its length op
+// takes a constant only the parser knows, so no stdlib method carries it, and only the free
+// spelling was routed.  Both now go through `Parser::index_len`.
+//
+// Axes it MOVES: the spelling (method, free), the receiver (a local, a struct field), the count
+// (after inserts, after a removal by key, empty), and the result's use (printed, arithmetic).
+// Every value is hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct E1915 { id: integer, v: integer }
+struct B1915 { ix: index<E1915[id]> }
+
+fn test_both_spellings_agree() {
+  h: index<E1915[id]> = [E1915 { id: 5, v: 1 }, E1915 { id: 3, v: 2 }, E1915 { id: 9, v: 3 }];
+  assert(h.len() == 3 && len(h) == 3, "three records: {h.len()} {len(h)}");
+  h[3] = null;
+  assert(h.len() == 2, "after a removal: {h.len()}");
+  assert(h.len() * 10 + 1 == 21, "as an operand: {h.len() * 10 + 1}");
+}
+
+fn test_a_field_receiver_and_an_empty_index() {
+  b = B1915 { ix: [E1915 { id: 1, v: 1 }] };
+  assert(b.ix.len() == 1, "a field: {b.ix.len()}");
+  e: index<E1915[id]> = [];
+  assert(e.len() == 0, "empty: {e.len()}");
+}
+
+fn main() {
+  test_both_spellings_agree();
+  test_a_field_receiver_and_an_empty_index();
+}
