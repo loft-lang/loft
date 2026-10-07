@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install mold (loft's pinned linker)
-        run: sudo apt-get update -y && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Checkout loft (loft-lang/loft — the current org URL)
         uses: actions/checkout@v4
@@ -145,7 +145,7 @@ jobs:
                   } | tr ',' '\n' | tr -d ' ' | sed '/^$/d' | sort -u | tr '\n' ' ') || true
           if [ -n "$deps" ]; then
             echo "installing build-deps: $deps"
-            sudo apt-get install -y $deps
+            timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y $deps
           else
             echo "no build-deps declared by this package or its deps"
           fi

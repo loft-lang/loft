@@ -356,7 +356,7 @@ jobs:
 
       - name: Install mold
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -462,7 +462,7 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
       - name: Install mold
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       - name: Cache cargo registry and build
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -478,7 +478,7 @@ jobs:
       # where loft's real use lives, so they MUST be leak-gated too.
       - name: Install lib-FFI build deps (GL/ALSA)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y libgl1-mesa-dev libasound2-dev pkg-config
+        run: timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libgl1-mesa-dev libasound2-dev pkg-config
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
       # LSan suppressions match by a SYMBOLIZED frame-name substring, and the two legs need
@@ -616,7 +616,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -693,7 +693,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -752,7 +752,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -809,7 +809,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -884,7 +884,7 @@ jobs:
           components: rust-src
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -950,7 +950,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1035,7 +1035,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold + valgrind
-        run: sudo apt-get update && sudo apt-get install -y mold valgrind
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold valgrind
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1117,7 +1117,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1195,7 +1195,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1316,7 +1316,7 @@ jobs:
           toolchain: ${{ steps.tc.outputs.toolchain }}
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo registry and build
         id: cargo-cache
@@ -1406,7 +1406,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F).
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
       - name: Restore cargo registry and build (ci.yml's test job's, read-only)
@@ -1467,7 +1467,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       - name: Cache cargo registry and build
         id: cargo-cache
         uses: actions/cache/restore@v4
@@ -1502,7 +1502,7 @@ jobs:
       # a B-class false alarm, which is worse than no native tier at all.  Same
       # provisioning as registry-validation.yml, for the same reason.
       - name: Install native toolchain deps (mold + ALSA + headless GL)
-        run: sudo apt-get update -y && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
       - name: Library health audit — native tier
         # A SECOND step rather than dropping `--no-native` above: native compiles are
         # the slow, fragile part, and the interpreter sweep is the signal we already

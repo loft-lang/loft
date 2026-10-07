@@ -58,7 +58,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold + ALSA + headless GL
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
 
       # Private `probe-*` cache namespace — same PATHS + run_id-keyed structure
       # as the main test job (so it measures the real persistence + ~/.loft

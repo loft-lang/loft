@@ -34,7 +34,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       # `.cargo/config.toml` pins `-fuse-ld=mold`, so the runner needs it (as the main CI does).
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
       # Read-only, from ci.yml's `test` job cache (saved on main — CI_BUDGET.md § F).
       # The path list must stay IDENTICAL to that job's, or the restore never matches.
       - name: Restore cargo registry and build (ci.yml's test job's, read-only)

@@ -106,7 +106,7 @@ jobs:
       # Native dev libs some packages need to compile (e.g. graphics → ALSA/GL).
       - name: Install build deps (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y mold libasound2-dev libgl1-mesa-dev
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev libgl1-mesa-dev
 
       - name: Build loft (host)
         working-directory: _loft

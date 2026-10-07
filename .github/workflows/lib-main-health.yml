@@ -103,7 +103,7 @@ jobs:
           path: loft-src
 
       - name: Install mold
-        run: sudo apt-get update -y && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo + loft build
         id: cargo-cache
@@ -159,7 +159,7 @@ jobs:
                       cat ~/.loft/registry/*/loft.toml 2>/dev/null \
                         | sed -n 's/^ *build-deps *= *"\(.*\)"/\1/p'
                     } | tr ',' '\n' | tr -d ' ' | sed '/^$/d' | sort -u | tr '\n' ' ') || true
-            [ -n "$deps" ] && sudo apt-get install -y $deps >/dev/null 2>&1
+            [ -n "$deps" ] && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y $deps >/dev/null 2>&1
             entry=$(sed -n 's/^ *entry *= *"\(.*\)".*/\1/p' "$toml" | head -1)
             entry=${entry:-src/$name.loft}
 

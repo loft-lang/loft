@@ -93,7 +93,7 @@ jobs:
       # the static target; macOS ships zip; Windows takes it from chocolatey.
       - name: Install packaging tools (Linux)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools zip unzip
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools zip unzip
 
       - name: Install packaging tools (Windows)
         if: steps.want.outputs.run == 'yes' && runner.os == 'Windows'
