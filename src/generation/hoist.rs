@@ -4039,6 +4039,38 @@ pub fn char_walks(data: &Data, def_nr: u32) -> BTreeMap<u16, CharWalk> {
     out
 }
 
+/// `stmt` as the emitter writes it under the split tables `tables` (`@FR-R-SplitTable`):
+/// each table's bind, and the mint and frees of the buffer the table leaves dead, as
+/// `Null`.  The fallback keeps every other node as it stands, so a walk over the result
+/// sees exactly the statements that still run; a statement naming no table is returned
+/// as a plain clone.
+fn as_emitted_by_tables(stmt: &Value, tables: &BTreeMap<u16, SplitTable>, data: &Data) -> Value {
+    let mut out = stmt.clone();
+    if tables.is_empty() {
+        return out;
+    }
+    let dead: HashSet<u16> = tables.values().filter_map(|t| t.dead_buf).collect();
+    out.map_nodes(&mut |n| {
+        let lowered = match n {
+            Value::Set(v, _) => tables.contains_key(v),
+            Value::Call(d, args) => {
+                (*d as usize) < data.definitions.len()
+                    && matches!(
+                        data.def(*d).name(),
+                        "OpDatabase" | "OpDatabaseNP" | "OpFreeRef" | "OpFreeRefIfDistinct"
+                    )
+                    && matches!(args.first().map(Value::unspan),
+                        Some(Value::Var(b)) if dead.contains(b))
+            }
+            _ => false,
+        };
+        if lowered {
+            *n = Value::Null;
+        }
+    });
+    out
+}
+
 /// `@FR-R-TextBorrow` — the loop variables of this function's walks of texts that BORROW
 /// their element: `for p in words` where the loop's rest — the parser's two bound tests,
 /// the body and the walk's release — reads `p` only as a text value, and (for a vector the
@@ -4055,11 +4087,16 @@ pub fn char_walks(data: &Data, def_nr: u32) -> BTreeMap<u16, CharWalk> {
 /// own `OpFreeText`.  Every other mention — a rebind, a `&p` link, a `return p`, a tuple
 /// literal, a capture — declines: the failure a missed shape would produce is rustc
 /// refusing the program, but a decline costs a copy and refuses nothing.
+///
+/// The store condition reads the body AS EMITTED: a split bind `(R-SplitTable)` lowered
+/// (`tables`) is a table of slices over a copy of its source, and its dead buffer is never
+/// minted or freed — none of them writes a store ([`as_emitted_by_tables`]).
 #[must_use]
 pub fn borrowed_text_walks(
     data: &Data,
     def_nr: u32,
     sliced: &BTreeSet<u16>,
+    tables: &BTreeMap<u16, SplitTable>,
 ) -> HashMap<u16, TextBorrow> {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -4084,7 +4121,9 @@ pub fn borrowed_text_walks(
         let verdict = if !matches!(vars.tp(p).base(), Type::Text(_)) {
             Err("the loop variable is not a text")
         } else if !sliced.contains(&vec)
-            && rest.iter().any(|s| may_write_store(s, data, &mut cache))
+            && rest
+                .iter()
+                .any(|s| may_write_store(&as_emitted_by_tables(s, tables, data), data, &mut cache))
         {
             Err("the body may write a store")
         } else if let Some(why) = rest.iter().find_map(|s| text_escapes(s, p, data)) {

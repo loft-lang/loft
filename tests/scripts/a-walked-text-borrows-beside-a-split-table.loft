@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-TextBorrow` beside `@FR-R-SplitTable` — a walked text BORROWS its element when the
+// body writes no store, and the body is judged as emitted: a split the table lowered binds
+// slices of a copy of its source and never mints the buffer the call would have filled, so
+// it is no store write.  The cells cross what that judgement reads: the header lookup the
+// server library ships (c1: rejoin, untrimmed piece, count, absent); a table bind beside a
+// REAL store write — a push into another vector (c2) and a push into a sibling field of the
+// walked vector's own record, whose store can grow and move the text a borrow points into,
+// so the walk keeps its copy (c3);
+// a table bind in a branch the walk never takes (c4); and two tables in one body (c5).
+// Every value by hand; `LOFT_NO_TEXT_BORROW=1` and `LOFT_NO_SPLIT_TABLE=1` answer the same.
+
+struct Req { headers: vector<text>, log: vector<text> }
+
+// c1 — the server library's `header`, verbatim but for the name.
+fn hdr(self: Req, name: text) -> text {
+  prefix = name.to_lowercase() + ":";
+  for h in self.headers {
+    if h.to_lowercase().starts_with(prefix) {
+      parts = h.split(':');
+      value = "";
+      i = 1;
+      while i < parts.len() {
+        if i > 1 { value += ":"; }
+        value += parts[i] ?? "";
+        i += 1;
+      }
+      return value.trim();
+    }
+  }
+  ""
+}
+
+fn piece(self: Req, at: integer) -> text {
+  for h in self.headers {
+    parts = h.split(':');
+    if parts.len() > at { return parts[at] ?? ""; }
+  }
+  "-"
+}
+
+// c2 — a push into another vector beside the table.
+fn names(self: Req) -> vector<text> {
+  out: vector<text> = [];
+  for h in self.headers {
+    parts = h.split(':');
+    out += [parts[0] ?? ""];
+  }
+  out
+}
+
+// c3 — a sibling field of the walked vector's record grows inside the walk: one store.
+fn grow(self: Req) -> text {
+  acc = "";
+  n = 0;
+  for h in self.headers {
+    parts = h.split(':');
+    self.log += ["{parts[0] ?? ""}{n}: x{h}"];
+    n += 1;
+    acc += "{h}|";
+  }
+  acc
+}
+
+// c4 — the table bind sits in a branch the walk never takes.
+fn never(self: Req, flag: boolean) -> integer {
+  t = 0;
+  for h in self.headers {
+    if flag {
+      parts = h.split(':');
+      t += parts.len() * 100;
+    }
+    t += len(h);
+  }
+  t
+}
+
+// c5 — two tables in one body.
+fn both(self: Req) -> text {
+  acc = "";
+  for h in self.headers {
+    a = h.split(':');
+    b = h.split(' ');
+    acc += "{a.len()}{b.len()}";
+  }
+  acc
+}
+
+fn main() {
+  r = Req { headers: ["Host: a:80", "X-Y: zz", "Origin: http://o:8"], log: [] };
+  // c1: "Host: a:80" -> " a" + ":" + "80" trimmed; "Origin" rejoins two colons.
+  assert("{r.hdr("host")}|{r.hdr("x-y")}|{r.hdr("ORIGIN")}|{r.hdr("q")}" == "a:80|zz|http://o:8|", "c1 {r.hdr("host")}|{r.hdr("x-y")}|{r.hdr("ORIGIN")}|{r.hdr("q")}");
+  // the first header with more than `at` pieces: " a"; three pieces only in "Host"; four in "Origin".
+  assert("{r.piece(1)}|{r.piece(2)}|{r.piece(3)}|{r.piece(4)}" == " a|80|8|-", "c1 piece {r.piece(1)}|{r.piece(2)}|{r.piece(3)}|{r.piece(4)}");
+  // c2
+  assert("{r.names()}" == "[\"Host\",\"X-Y\",\"Origin\"]", "c2 {r.names()}");
+  // c3: every iteration logs the name, the count and the whole line.
+  g = Req { headers: ["Host: a", "X-Y: b", "Z: c"], log: [] };
+  gs = g.grow();
+  assert(gs == "Host: a|X-Y: b|Z: c|" && "{g.log}" == "[\"Host0: xHost: a\",\"X-Y1: xX-Y: b\",\"Z2: xZ: c\"]", "c3 {gs} {g.log}");
+  // c4: lengths 10 + 7 + 18 = 35; with the branch, pieces 3 + 2 + 4 = 9 hundreds more.
+  assert("{r.never(false)} {r.never(true)}" == "35 935", "c4 {r.never(false)} {r.never(true)}");
+  // c5: ':' pieces 3, 2, 4; ' ' pieces 2, 2, 2.
+  assert(r.both() == "322242", "c5 {r.both()}");
+  println("ok");
+}
