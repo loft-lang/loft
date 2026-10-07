@@ -363,6 +363,38 @@ impl Scopes<'_> {
                         hoisted_ref = Some(ret_v);
                     }
                 }
+                // @FR-F-Call / @FR-F-Block — the TEXT twin of the hoist above.  A text value
+                // block whose tail is a local first bound INSIDE it (`len({ s = "x{k}"; s })`,
+                // and every `e ?? return|break|continue` over a text, whose `_ncr_N` temp is
+                // that tail) hands its value out BY COPY: the reader appends or views the
+                // bytes, nothing adopts the `String`.  Registered in the block, the local was
+                // the block's `ret_var` — excluded from its exit frees — and no outer scope
+                // knew it, so the interpreter never released it: one buffer per evaluation,
+                // unbounded in a loop (loft#1907).  `--native` could not name it inside a
+                // generator either, whose locals are state fields (loft#1937).
+                //
+                // Home it at the function body scope BEFORE the block is scanned, with its
+                // init lifted to the root (the `__blk_N` hoist's home): every pass reuses the
+                // one buffer and the function-exit sweep frees it once.  Registered first, so
+                // an exit INSIDE the block (`?? continue` / `?? break`) does not free it on its
+                // way out and leave the next pass, or the function exit, a second free.
+                if hoisted_ref.is_none()
+                    && self.scope >= 1
+                    && matches!(bl.result.base(), Type::Text(_))
+                    && let Some(Value::Var(orig_ret)) = bl.operators.last().map(Value::unspan)
+                {
+                    let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
+                    if !self.var_scope.contains_key(&ret_v)
+                        && !function.is_argument(ret_v)
+                        && !function.is_skip_free(ret_v)
+                        && matches!(function.tp(ret_v).base(), Type::Text(_))
+                        && !self.lift_texts.contains(&ret_v)
+                    {
+                        self.var_scope.insert(ret_v, 1);
+                        self.var_order.push(ret_v);
+                        self.lift_texts.push(ret_v);
+                    }
+                }
                 // The function body block (scope 0 → 1) with a non-void
                 // result needs is_return=true so frees land between the
                 // tail expression and the Return, not after it.
