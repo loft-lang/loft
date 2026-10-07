@@ -13,18 +13,25 @@
 //!
 //! The cells:
 //! - **tree stop**: the child is `loft` running a program whose `process` library call
-//!   started the grandchild; the test stops the child the way a site that owns a tree does.
-//!   The grandchild must stop with it.
+//!   started the grandchild; the test starts and stops the child through
+//!   `platform::process` (`Tree::Owned`, `stop_tree`), as a site that owns a tree does.  The
+//!   grandchild must stop with it.
 //! - **driver death, a loft program**: the same child, but the test KILLS it.  Its program's
 //!   grandchild must not outlive it.
 //! - **driver death, a Rust site**: the child is this binary as `driver_role`, starting the
-//!   grandchild as the build sites start `rustc` and `cargo`; the test kills the child.
-//! - **handover**: the same driver starts the grandchild to OUTLIVE it (the engine host's
-//!   hot-swap target); the grandchild must still beat after the driver is killed.
+//!   grandchild `Tree::Owned`, as the build sites start `rustc` and `cargo`; the test kills
+//!   the child.
+//! - **handover**: the same driver starts the grandchild `Tree::Detached`, to OUTLIVE it
+//!   (the engine host's hot-swap target); the grandchild must still beat after the driver is
+//!   killed.
+//!
+//! The killing is done from outside, with a plain process handle: the test stands in for
+//! what ends a driver without asking it (a timeout, the OOM killer, a harness reaping it).
 
 use loft::file_access as fa;
+use loft::platform::process::{Program, Spawn, Tree};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const ROLE: &str = "PROCESS_TREE_ROLE";
@@ -74,15 +81,16 @@ fn beats(dir: &Path) -> bool {
     false
 }
 
-/// Wait until the grandchild beats, failing the cell when it never starts.
-fn wait_for_beat(dir: &Path, child: &mut Child) {
+/// Wait until the grandchild beats, failing the cell when it never starts.  `child_alive`
+/// asks whether the child still runs: one that ended first never started it.
+fn wait_for_beat(dir: &Path, mut child_alive: impl FnMut() -> bool) {
     let until = Instant::now() + Duration::from_secs(60);
     while Instant::now() < until {
         if beat_count(dir).is_some() && beats(dir) {
             return;
         }
-        if let Ok(Some(status)) = child.try_wait() {
-            panic!("the child ended ({status}) before the grandchild started beating");
+        if !child_alive() {
+            panic!("the child ended before the grandchild started beating");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -118,20 +126,38 @@ fn main() {
 }
 "#;
 
-/// `loft` running [`PROGRAM`], its grandchild told where to beat.
-fn loft_child(dir: &Path) -> Command {
+/// The arguments and environment of `loft` running [`PROGRAM`], its grandchild told where
+/// to beat.
+fn loft_run(
+    dir: &Path,
+) -> (
+    Vec<std::ffi::OsString>,
+    Vec<(&'static str, std::ffi::OsString)>,
+) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let script = dir.join("tree.loft");
     fa::write(&script, PROGRAM).expect("write the program");
+    let args = vec![
+        "--interpret".into(),
+        "--lib".into(),
+        root.join("lib").into_os_string(),
+        script.into_os_string(),
+    ];
+    let env = vec![
+        ("LOFT_TIMEOUT", "120".into()),
+        (ROLE, "beat".into()),
+        (DIR, dir.as_os_str().to_os_string()),
+        (EXE, exe().into_os_string()),
+    ];
+    (args, env)
+}
+
+/// [`loft_run`] as a plain process, for a cell that kills it from outside.
+fn loft_child(dir: &Path) -> Command {
+    let (args, env) = loft_run(dir);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_loft"));
-    cmd.arg("--interpret")
-        .arg("--lib")
-        .arg(root.join("lib"))
-        .arg(&script)
-        .env("LOFT_TIMEOUT", "120")
-        .env(ROLE, "beat")
-        .env(DIR, dir)
-        .env(EXE, exe())
+    cmd.args(args)
+        .envs(env)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -177,48 +203,42 @@ fn driver_role() {
     if !role.starts_with("driver-") {
         return;
     }
+    let tree = match role.as_str() {
+        // As the build sites start `rustc` and `cargo`.
+        "driver-owned" => Tree::Owned,
+        // As the engine host starts its hot-swap target.
+        "driver-detached" => Tree::Detached,
+        other => panic!("unknown role {other}"),
+    };
     // The grandchild inherits PROCESS_TREE_DIR, and beats there.
-    let mut cmd = Command::new(exe());
-    cmd.args(role_args("beat_role"))
+    let mut grandchild = Spawn::new(Program::os(exe()))
+        .args(role_args("beat_role"))
         .env(ROLE, "beat")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    match role.as_str() {
-        // As the build sites start `rustc` and `cargo` today.
-        "driver-owned" => loft::platform::dies_with_driver(&mut cmd, false),
-        // As the engine host starts its hot-swap target today.
-        "driver-detached" => {
-            #[cfg(unix)]
-            std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        }
-        other => panic!("unknown role {other}"),
-    }
-    let mut grandchild = cmd.spawn().expect("spawn the grandchild");
-    let _ = grandchild.wait();
-}
-
-/// Stop `child` the way a site that owns a tree stops it today: the repl's game server
-/// signals the process group the launch made; elsewhere the handle is all there is.
-fn stop_tree_today(child: &mut Child) {
-    #[cfg(unix)]
-    // SAFETY: `killpg` on the group this test created for `child`, which is not yet reaped.
-    unsafe {
-        libc::killpg(child.id() as i32, libc::SIGKILL);
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+        .stderr(Stdio::null())
+        .tree(tree)
+        .start()
+        .expect("spawn the grandchild");
+    let _ = grandchild.finish();
 }
 
 #[test]
 fn a_stopped_child_takes_its_programs_children_with_it() {
     let dir = scratch("tree_stop");
-    let mut cmd = loft_child(&dir);
-    #[cfg(unix)]
-    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-    let mut child = cmd.spawn().expect("spawn loft");
-    wait_for_beat(&dir, &mut child);
-    stop_tree_today(&mut child);
+    let (args, env) = loft_run(&dir);
+    let mut spawn = Spawn::new(Program::os(env!("CARGO_BIN_EXE_loft"))).args(args);
+    for (k, v) in env {
+        spawn = spawn.env(k, v);
+    }
+    let mut child = spawn
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .start()
+        .expect("spawn loft");
+    wait_for_beat(&dir, || child.alive());
+    let _ = child.stop_tree();
     let gone = stopped(&dir);
     release(&dir);
     assert!(
@@ -231,7 +251,7 @@ fn a_stopped_child_takes_its_programs_children_with_it() {
 fn a_killed_loft_takes_its_programs_children_with_it() {
     let dir = scratch("driver_death_loft");
     let mut child = loft_child(&dir).spawn().expect("spawn loft");
-    wait_for_beat(&dir, &mut child);
+    wait_for_beat(&dir, || matches!(child.try_wait(), Ok(None)));
     let _ = child.kill();
     let _ = child.wait();
     let gone = stopped(&dir);
@@ -248,7 +268,7 @@ fn a_killed_driver_takes_its_build_child_with_it() {
     let mut child = driver_child(&dir, "driver-owned")
         .spawn()
         .expect("spawn the driver");
-    wait_for_beat(&dir, &mut child);
+    wait_for_beat(&dir, || matches!(child.try_wait(), Ok(None)));
     let _ = child.kill();
     let _ = child.wait();
     let gone = stopped(&dir);
@@ -265,7 +285,7 @@ fn a_handover_target_outlives_its_driver() {
     let mut child = driver_child(&dir, "driver-detached")
         .spawn()
         .expect("spawn the driver");
-    wait_for_beat(&dir, &mut child);
+    wait_for_beat(&dir, || matches!(child.try_wait(), Ok(None)));
     let _ = child.kill();
     let _ = child.wait();
     // Give a wrongly owned target the time a stop takes before asking.

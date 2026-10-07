@@ -1891,7 +1891,7 @@ enum SessionShape {
 /// stdout/stderr are pumped by detached threads into one shared buffer (a pipe left
 /// undrained would fill and stall the game at its next print).
 struct GameProc {
-    child: std::process::Child,
+    child: crate::platform::process::Running,
     output: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
@@ -2545,7 +2545,7 @@ impl ReplSession {
     /// A message when a game is already running or the spawn fails.
     pub fn launch_game(&mut self, file: &str) -> Result<(), String> {
         if let Some(g) = &mut self.game
-            && matches!(g.child.try_wait(), Ok(None))
+            && g.child.alive()
         {
             return Err("a game is already running — stop it first".to_string());
         }
@@ -2553,41 +2553,39 @@ impl ReplSession {
             || std::env::current_exe().map_err(|e| format!("cannot locate loft binary: {e}")),
             |b| Ok(std::path::PathBuf::from(b)),
         )?;
-        let mut cmd = std::process::Command::new(bin);
-        cmd.arg(file);
+        use crate::platform::process::{Program, Spawn};
+        let mut spawn = Spawn::new(Program::os(bin)).arg(file);
         for d in &self.parser.lib_dirs {
-            cmd.arg("--lib").arg(d);
+            spawn = spawn.arg("--lib").arg(d);
         }
         // @PLN18 02 (the 6b wire-up): an IDE-launched game is live-editable
         // by default — the child's file watcher reacts to every IDE save and
         // hot-swaps the edited fn (tier 0); its `live-reload:` stderr lines
         // are the structured feedback.  LOFT_LIVE_RELOAD=0 opts out.
         if std::env::var_os("LOFT_LIVE_RELOAD").is_none() {
-            cmd.env("LOFT_LIVE_RELOAD", "1");
+            spawn = spawn.env("LOFT_LIVE_RELOAD", "1");
         }
         // @PLN18 08-S7 editor support — an IDE-launched game is DEBUGGABLE by
         // default: the D!: control channel answers on the game's port
         // (loopback-only) and a compiled game keeps the parked interpreter
         // for breakpoint flips.  Opt out with =0 (the LIVE_RELOAD pattern).
         if std::env::var_os("LOFT_DEBUG_CONTROL").is_none() {
-            cmd.env("LOFT_DEBUG_CONTROL", "1");
+            spawn = spawn.env("LOFT_DEBUG_CONTROL", "1");
         }
         if std::env::var_os("LOFT_LIVE_FLIP").is_none() {
-            cmd.env("LOFT_LIVE_FLIP", "1");
+            spawn = spawn.env("LOFT_LIVE_FLIP", "1");
         }
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
         // A `--native` game serves from a GRANDCHILD of this child (the S1
-        // process-model finding) — own group so stop_game can reach it all.
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
-        let mut child = cmd
-            .spawn()
+        // process-model finding): the tree is owned, so stop_game reaches it all.
+        let mut child = spawn
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .start()
             .map_err(|e| format!("cannot launch game: {e}"))?;
         let output = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        drain_pipe(child.stdout.take(), &output);
-        drain_pipe(child.stderr.take(), &output);
+        drain_pipe(child.take_stdout(), &output);
+        drain_pipe(child.take_stderr(), &output);
         self.game = Some(GameProc { child, output });
         Ok(())
     }
@@ -2603,17 +2601,12 @@ impl ReplSession {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
-        match g.child.try_wait() {
-            Ok(None) => Some((true, chunk, None)),
-            Ok(Some(status)) => {
-                self.game = None;
-                Some((false, chunk, status.code()))
-            }
-            Err(_) => {
-                self.game = None;
-                Some((false, chunk, None))
-            }
+        if g.child.alive() {
+            return Some((true, chunk, None));
         }
+        let code = g.child.finish().ok().and_then(|s| s.code());
+        self.game = None;
+        Some((false, chunk, code))
     }
 
     /// Stop the running game (kill the child this session spawned — never any other
@@ -2623,29 +2616,9 @@ impl ReplSession {
         let mut g = self.game.take()?;
         // Stop the whole TREE this session created, not just the handle it holds: a
         // `--native` game's real server is a GRANDCHILD (driver → compiled binary), so
-        // reaping the child alone leaves the server running and holding its port.
-        //
-        // Unix reaches the tree through the process group the launch put the child in.
-        // Windows has no process group, so it walks the tree by parent link instead —
-        // and the ordering is the whole of it: `taskkill /T` needs the child ALIVE to
-        // walk from, so it must run BEFORE the kill below, not after.  Measured on
-        // `windows-latest`: the grandchild survives a bare `child.kill()` and still
-        // holds its port, and `taskkill /T /F` terminates it ("the process with PID N
-        // (child process of PID M) has been terminated") — see WINDOWS.md § Known gaps.
-        #[cfg(unix)]
-        unsafe {
-            libc::killpg(g.child.id() as i32, libc::SIGKILL);
-        }
-        #[cfg(windows)]
-        {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &g.child.id().to_string()])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-        }
-        let _ = g.child.kill();
-        let _ = g.child.wait();
+        // reaping the child alone would leave the server running and holding its port.
+        // The launch owns the tree (`platform::process`), which stops it on every platform.
+        let _ = g.child.stop_tree();
         Some(std::mem::take(
             &mut *g
                 .output

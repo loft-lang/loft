@@ -29,6 +29,8 @@ const BASELINE: &str = "src/platform_census.baseline";
 /// gate there is the design), and the library fixtures.
 const HIDES_THE_PLATFORM: &[&str] = &[
     "src/platform.rs",
+    // `platform::process` (@PLN184 Track P): the one way to run a process.
+    "src/platform_process.rs",
     "src/file_access",
     "src/platform_census.rs",
     // Library crates the tests build: their platform code is the library's own, and a
