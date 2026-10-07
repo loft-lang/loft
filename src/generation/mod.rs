@@ -902,6 +902,9 @@ pub struct Output<'a> {
     pub refill_twin_buf: Option<u16>,
     /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
     pub byte_read_disabled: bool,
+    /// `LOFT_NO_BYTE_RESOLVE=1` — `@FR-R-Base`'s byte clause needs a held BASE again: a
+    /// header held without one keeps the template (the resolve clause off).
+    pub byte_resolve_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
     pub text_set_copy_kept: bool,
     /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
@@ -2380,6 +2383,7 @@ impl<'a> Output<'a> {
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
             byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
+            byte_resolve_disabled: std::env::var("LOFT_NO_BYTE_RESOLVE").is_ok_and(|v| v != "0"),
             refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
             refill_text: hoist::RefillTextSites::default(),
             refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
@@ -6285,7 +6289,16 @@ impl Output<'_> {
         };
         let path = hoist::vector_path(self.data, vector)?;
         let header = self.active_vec_header(&path)?.to_owned();
-        let base = self.active_vec_base(&path)?.to_owned();
+        // THE RESOLVE CLAUSE — a header held with no base (the function clause, a loop that
+        // grows a store) still proves the vector's record and length; the base is taken from
+        // the store AT the read, so a store that grew in between answers its new buffer.
+        let base = match self.active_vec_base(&path) {
+            Some(b) => b.to_owned(),
+            None if !self.byte_resolve_disabled => format!(
+                "stores.allocations[{header}.store_nr as usize].elem_base({header}.rec)"
+            ),
+            None => return None,
+        };
         Some(ByteRead {
             elem_op: *elem_op,
             elem_args,
