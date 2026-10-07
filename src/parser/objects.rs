@@ -3224,7 +3224,15 @@ impl Parser {
             } else {
                 Self::rewrite_subtree_to_nullable_kind(&mut format, &self.data)
             };
+            // `@FR-F-FaultSafe` — a hole renders ITS OWN cause, so a hole is armed only when its
+            // renderer TAKES the cause back (`ops::take_format_fault`): the integer renderer,
+            // on both backends.  The float, single, text, struct, character and target-hole
+            // (`hole_int`) renderers never take it, so arming one of those left the cause
+            // recorded and ARMED until the next integer hole took it — `{z / z}` followed by
+            // `{ni()}` printed `null` then `null(/0)` (loft#1920).
             if let Some(kind) = outer_fault_kind
+                && target == u32::MAX
+                && matches!(tp.peel_link(), Type::Integer(_))
                 && self.data.def_nr("OpTagFault") != u32::MAX
             {
                 let tag_call = self.cl("OpTagFault", &[Value::Int(i32::from(kind))]);
