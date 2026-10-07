@@ -1,0 +1,21 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index d98a10cc3..d12d91bb3 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -1807,7 +1807,15 @@ impl Output<'_> {
+         // `generate_call_ref` does; the program continues (C80).
+         write!(w, " _ => ")?;
+         if let Some(fields) = &value_fields {
+-            write!(w, "{}", super::hoist::tuple_reads(fields, "DbRef::NULL", "stores"))?;
++            let _ = fields;
++            let rec = super::hoist::fnref_value(
++                &self.value_records.fnref_sites,
++                &self.value_records.fns,
++                self.def_nr,
++                v_nr,
++            )
++            .unwrap_or(u16::MAX);
++            write!(w, "{}", self.value_tuple_zero(rec))?;
+         } else {
+             match ret_type.base() {
+             Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,

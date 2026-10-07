@@ -14,6 +14,15 @@
 // a loop and a branch joining a fn-ref call with a direct one (c9).  Every value by hand; run
 // under `LOFT_STORES=warn` / `LOFT_NATIVE_LEAK_CHECK=1` it leaks nothing, and
 // `LOFT_NO_FNREF_VALUE=1` (the buffer road) answers the same.
+//
+// @falsified-at: none — a rewrite with no earlier build to catch; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   The dispatch's `_` arm answers the tuple's zero instead of the null record's fields.
+//   CHANNEL: an assertion, on native.
+//   WITNESS: c5 — an out-of-range fn-ref's `weight` reads `0` where the file says `null`.
+//   HOLDS: LOFT_NO_FNREF_VALUE=1 green (the buffer road answers the null record).
 
 struct Style { size: float, weight: integer, italic: boolean, dir: integer }
 struct Pt { x: integer, y: integer }

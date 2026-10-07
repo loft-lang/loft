@@ -137,6 +137,16 @@ priced against too: build it first, then B (reaches every fn-ref API), then A, C
 hand price of F used `Store::delete` on a text block for the replace path; the built form
 uses the release walk's own text free, under the leak census and `LOFT_POISON=1`.
 
+**B built** as `(R-FnRefValue)` with its parameter half, re-priced first on the emission after
+`(R-RefillText)`'s collection clause: −33 % priced (`price_fnref_value.py` with the arm numbers
+of that emission, 864 / 863), −34.5 % built — 22.2 → 14.5 ms on the flow-only driver, three
+interleaved runs on one core, hash `eb888d85` unchanged.  The result half alone bought nothing:
+`token_width`'s `measure(r.str, resolve(r.style))` hands the resolved record to a second
+dispatch whose arms kept their record parameters, which consumed it as a record and declined
+the group.  And the dispatch carried an arm no value could select — the driver's own
+`bench_flow(n) -> Row` matched `fn(integer) -> Style` by Rust ABI — which would have declined it
+on the bench too; arms now match the declared record.
+
 ## graphics `draw_bezier` — 9.8× → 3.7×
 
 Lever 0 is the library: the bench pins `laptop-perf-bench`, which still pops its stacks
