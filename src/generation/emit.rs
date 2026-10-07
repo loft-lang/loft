@@ -3015,10 +3015,22 @@ impl Output<'_> {
         writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
         let mut writes: Vec<Value> = Vec::new();
         let mut k = 0usize;
-        for set in &ks.sets {
-            let Value::Call(d, args) = set.unspan() else {
+        for op in &ks.body {
+            let Value::Call(d, args) = op.unspan() else {
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
                 continue;
             };
+            if !args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(x) if *x == ks.buf))
+            {
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
+                continue;
+            }
             let mut staged: Vec<Value> = Vec::with_capacity(args.len());
             for (i, a) in args.iter().enumerate() {
                 if i == 0 {
