@@ -547,3 +547,92 @@ fn the_ci_census_reads_a_job_and_its_verdict() {
                   runs-on: ${{ matrix.os }}\n";
     assert_eq!(uncovered_jobs(inline), Vec::<String>::new());
 }
+
+// ── D4 — every script has a Windows smoke run, or is counted ──────────────────────────────
+// `scripts/windows_smoke.tsv` lists each script's cheapest invocation, run nightly on
+// windows-latest (`.github/workflows/windows-scripts.yml`).  A tracked script with no entry is
+// counted here, and the count only falls; a listed script that no longer exists is refused.
+
+const SMOKE_LIST: &str = "scripts/windows_smoke.tsv";
+const SMOKE_BASELINE: &str = "src/platform_census_smoke.baseline";
+
+fn smoke_listed(root: &PathText) -> Vec<String> {
+    file_access::read_to_string(root.join(SMOKE_LIST))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .filter_map(|l| l.split('\t').next().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn scripts_without_a_windows_smoke_only_fall() {
+    let root = PathText::host(env!("CARGO_MANIFEST_DIR"));
+    let listed = smoke_listed(&root);
+    let missing: Vec<&String> = listed
+        .iter()
+        .filter(|s| !file_access::is_file(root.join(s.as_str())))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{SMOKE_LIST} lists scripts that do not exist: {missing:?}"
+    );
+    let scripts = measure_scripts_all(&root);
+    let unlisted = scripts.iter().filter(|s| !listed.contains(s)).count();
+    let base_path = root.join(SMOKE_BASELINE);
+    let base: usize = file_access::read_to_string(&base_path)
+        .unwrap_or_default()
+        .lines()
+        .find(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .and_then(|l| l.trim().parse().ok())
+        .unwrap_or(usize::MAX);
+    if std::env::var_os("LOFT_BLESS_PLATFORM_CENSUS").is_some() {
+        let text = format!(
+            "# Tracked scripts with no Windows smoke invocation in {SMOKE_LIST} (@PLN184 D4).\n\
+             # Only shrinks: see src/platform_census.rs.\n{unlisted}\n"
+        );
+        file_access::write(&base_path, text).expect("write baseline");
+        return;
+    }
+    assert!(
+        unlisted <= base,
+        "a script was added without a Windows smoke invocation (@PLN184 D4): {unlisted} > {base} — \
+         add its cheapest invocation (`--help`) to {SMOKE_LIST}"
+    );
+    assert!(
+        unlisted == base,
+        "scripts without a Windows smoke FELL ({base} -> {unlisted}) — lock it in: \
+         LOFT_BLESS_PLATFORM_CENSUS=1 cargo test --lib platform_census"
+    );
+}
+
+/// Every tracked-looking script (`.py`, `.sh`) under `root`, as the hazard census walks them.
+fn measure_scripts_all(root: &PathText) -> Vec<String> {
+    const SKIP: &[&str] = &[
+        ".git",
+        "target",
+        ".claude/worktrees",
+        "tests/fixtures",
+        "node_modules",
+    ];
+    let mut out = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(d) = stack.pop() {
+        for p in file_access::read_dir(&d).unwrap_or_default() {
+            let rel = p
+                .relative_to(root)
+                .map(|r| r.portable())
+                .unwrap_or_default();
+            if SKIP.iter().any(|s| rel == *s) {
+                continue;
+            }
+            if file_access::is_dir(&p) && !file_access::is_symlink(&p) {
+                stack.push(p);
+            } else if has_extension(&p, "py") || has_extension(&p, "sh") {
+                out.push(rel);
+            }
+        }
+    }
+    out.sort();
+    out
+}

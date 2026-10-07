@@ -103,6 +103,10 @@ def main():
           "(the ratchet for code Clippy cannot see)")
     print(f"  report (ports are @PLN179's):   {total(scripts):5}  Windows hazards in "
           f"{len(scripts)} scripts")
+    smoke = [l for l in read("src/platform_census_smoke.baseline").splitlines()
+             if l.strip() and not l.startswith("#")]
+    print(f"  report (ports are @PLN179's):   {int(smoke[0]) if smoke else 0:5}  scripts with no "
+          "Windows smoke invocation (scripts/windows_smoke.tsv)")
 
     print("\nApproved and candidate exemptions:")
     for path, reason in outs:
