@@ -21,8 +21,6 @@
 //! generator emits (the interpreter never sees that form), `ir` for the scope pass's per-body
 //! rewrites (both backends run them), and `parse` for everything decided before either.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -143,8 +141,9 @@ pub fn write() {
     for (rule, n) in c.iter() {
         let _ = writeln!(out, "{rule}\t{n}");
     }
-    if let Err(e) = std::fs::write(path, out) {
-        eprintln!("loft: cannot write the rewrite census to '{path}': {e}");
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        eprintln!("loft: cannot write the rewrite census: {e}");
     }
 }
 
@@ -155,7 +154,8 @@ fn write_by_fn() {
     for ((phase, function, rule), n) in c.iter() {
         let _ = writeln!(out, "{phase}\t{function}\t{rule}\t{n}");
     }
-    if let Err(e) = std::fs::write(path, out) {
-        eprintln!("loft: cannot write the rewrite census to '{path}': {e}");
+    // The error names the file.
+    if let Err(e) = crate::file_access::write(path, out) {
+        eprintln!("loft: cannot write the rewrite census: {e}");
     }
 }
