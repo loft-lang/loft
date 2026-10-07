@@ -59,7 +59,7 @@ RUST_RE = re.compile(r'^#rust\s*"(.*)"\s*$', re.S)
 def extract() -> dict[str, list[str]]:
     """Map each builtin to the runtime methods its `#rust` body calls."""
     out: dict[str, list[str]] = {}
-    for path in sorted((ROOT / "default").glob("*.loft")):
+    for path in sorted(p for p in (ROOT / "default").glob("*.loft") if p.is_file()):
         # `.loft/` is a cache DIRECTORY and this glob matches it: `pathlib.glob` has no
         # leading-dot exclusion, so `default/.loft` (gitignored, created by any run in that
         # directory) arrives here and `read_text` raises IsADirectoryError.  The same guard

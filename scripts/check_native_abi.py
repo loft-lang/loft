@@ -21,7 +21,7 @@ LOFT_TO_RUST = {"integer": {"i64"}, "float": {"f64"}, "single": {"f32"},
 def loft_decls(root):
     """symbol -> (params[loft types], return loft type, file:line)"""
     out = {}
-    for f in pathlib.Path(root).rglob("*.loft"):
+    for f in (p for p in pathlib.Path(root).rglob("*.loft") if p.is_file()):
         sp = str(f)
         if "/.loft/" in sp or "/target/" in sp or not f.is_file():
             continue

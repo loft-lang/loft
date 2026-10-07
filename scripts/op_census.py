@@ -107,7 +107,7 @@ def loft_binary() -> Path:
 def declared_operators() -> list[str]:
     """The inventory, in declaration (= opcode) order."""
     out: list[str] = []
-    for f in sorted((ROOT / "default").glob("*.loft")):
+    for f in sorted(p for p in (ROOT / "default").glob("*.loft") if p.is_file()):
         if not f.is_file():  # `default/.loft` is a DIRECTORY in this tree
             continue
         out += DECL.findall(f.read_text(encoding="utf-8", errors="replace"))

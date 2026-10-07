@@ -117,7 +117,7 @@ def census(path, env_extra=None):
 def corpus_files(limit):
     files = []
     for d in CORPUS:
-        files += sorted((ROOT / d).rglob("*.loft"))
+        files += sorted(p for p in (ROOT / d).rglob("*.loft") if p.is_file())
     files = [f for f in files if f.is_file()]
     return files[:limit] if limit else files
 
