@@ -36,6 +36,8 @@ pub fn open(path: text) -> Handle { len(path) }
 pub fn close(h: Handle, d: Data, plain: integer) -> integer { h + d.0 + plain }
 pub fn data(x: integer) -> Data { (x, \"x\", true) }
 pub fn opened() -> Open { (1, \"o\") }
+pub fn many() -> vector<Handle> { [1, 2] }
+pub fn total(hs: vector<Handle>) -> integer { s = 0; for h in hs { s += h; } s }
 ";
 
 fn scratch(tag: &str) -> PathBuf {
@@ -311,5 +313,88 @@ fn main() { o = units::opened(); (n, s) = o; println(\"{o.0 + 1} {o.1} {n} {s}\"
     for enforce in [false, true] {
         let (out, err, ok) = run(&format!("pubalias{enforce}"), program, enforce);
         assert!(ok && out == "2 o 1 o\n", "enforce={enforce}: {out}{err}");
+    }
+}
+
+#[test]
+fn a_vector_of_an_abstract_alias_keeps_its_elements_abstract() {
+    // `vector<Handle>` outside `units`: its elements read as `Handle`s (an index, a loop
+    // variable, a parameter declared `units::Handle`), and the container operations that
+    // never look at an element are open — `+=` of one alias, `[]`, `len`, `insert`,
+    // `reverse`, in both spellings.  Hand-computed: [1,2] += [3] → [1,2,3]; w is a copy;
+    // insert 1 at 0 → [1,1,2,3]; reversed → [3,2,1,1]; one element equals open("abc").
+    let program = "use units;
+fn first(v: vector<units::Handle>) -> units::Handle { v[0] }
+fn main() {
+  v = units::many();
+  v += [units::open(\"abc\")];
+  w: vector<units::Handle> = [];
+  w += v;
+  insert(v, 0, units::open(\"q\"));
+  v.reverse();
+  n = 0;
+  for x in v { if x == units::open(\"abc\") { n += 1; } }
+  println(\"{len(v)} {v.len()} {first(v)} {units::total(v)} {units::total(w)} {n}\");
+}
+";
+    for enforce in [false, true] {
+        let (out, err, ok) = run(&format!("abstract-vector{enforce}"), program, enforce);
+        assert!(
+            ok && out == "4 4 3 7 6 1\n",
+            "enforce={enforce}: {out}{err}"
+        );
+    }
+    // What reads an element as `integer`, or builds a `vector<Handle>` from plain values.
+    let cells = [
+        (
+            "element",
+            "println(\"{v[0] + 1}\");",
+            "`+` reads its representation",
+        ),
+        (
+            "loop",
+            "for x in v { println(\"{x + 1}\"); }",
+            "`+` reads its representation",
+        ),
+        (
+            "sum",
+            "println(\"{sum(v)}\");",
+            "parameter `v` of `sum` takes its underlying type",
+        ),
+        (
+            "sort",
+            "sort(v); println(\"{v}\");",
+            "parameter `self` of `sort`",
+        ),
+        (
+            "sort-method",
+            "v.sort(); println(\"{v}\");",
+            "a method of the underlying type",
+        ),
+        (
+            "plain-element",
+            "v += [5]; println(\"{v}\");",
+            "`+=` reads its representation",
+        ),
+        (
+            "plain-vector",
+            "w: vector<integer> = v; println(\"{w}\");",
+            "this place takes its underlying type",
+        ),
+        (
+            "build",
+            "println(\"{units::total([1, 2])}\");",
+            "takes a `vector<Handle>`",
+        ),
+    ];
+    for (tag, body, why) in cells {
+        let program = format!("use units;\nfn main() {{\n  v = units::many();\n  {body}\n}}\n");
+        let (out, err, ok) = run(&format!("vreveal-{tag}-off"), &program, false);
+        assert!(ok, "{tag} switched off runs as before: {out}{err}");
+        let (_, err, ok) = run(&format!("vreveal-{tag}-on"), &program, true);
+        assert!(
+            !ok && err.contains("is abstract outside `units`") && err.contains(why),
+            "{tag}: {err}"
+        );
     }
 }

@@ -2267,6 +2267,9 @@ impl Parser {
             || self.lexer.peek_token("?")
         {
             let recv = std::mem::replace(&mut self.operand_alias, u32::MAX);
+            let is_index = self.lexer.peek_token("[");
+            self.last_called = u32::MAX;
+            self.postfix_member.clear();
             // @PLN116 — postfix default-fallback `x?`.  Handled first (a default-
             // fallback never faults, so it skips the `.`/`[]` span-wrapping below),
             // then re-enter the loop so a following `.`/`[]` chains onto the
@@ -2274,7 +2277,7 @@ impl Parser {
             // two-char match means `??` never reaches here as two `?` tokens.
             if self.lexer.has_token("?") {
                 self.handle_default_fallback(var_tp, code, parent_tp, &mut t);
-                self.check_postfix(recv, &Value::Null);
+                self.check_postfix(recv, false, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
             }
@@ -2779,7 +2782,7 @@ impl Parser {
                 *code = Value::with_span(chain_pos, inner);
             }
             self.settle_operand(code);
-            self.check_postfix(recv, code);
+            self.check_postfix(recv, is_index, matches!(t.base(), Type::Vector(..)), code);
             // --show-types --trace: log the resulting type after
             // each chaining step (`.field`, `.tuple_idx`, `[idx]`,
             // `(args)`).  Combined with the post-`parse_single`

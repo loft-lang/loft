@@ -286,7 +286,9 @@ names is ABSTRACT outside its file — abstract types with no new syntax (owner,
 `type Handle = integer; pub fn open(…) -> Handle` lets a caller bind a `Handle`, hand it back to
 a parameter declared `Handle`, keep it in a variable or field declared `Handle`, compare it with
 `==` and print it; an operator, a member or element read, a method or parameter of `integer`,
-destructuring, and a plain value handed where a `Handle` is declared are refused.  So
+destructuring, and a plain value handed where a `Handle` is declared are refused.  A
+`vector<Handle>` holds `Handle`s: its elements read as `Handle`, and what never looks at an
+element (`len`, `insert`, `+=`) is open while `sort` and `sum` are not.  So
 `type Data = (integer, text, boolean)` keeps a tuple's members private the way a struct's own
 fields are.  In its own file, and as a `pub type`, an alias is the substitution it always was.
 The abstraction is a fact the checker tracks beside the type (`parser::abstract_alias`), never

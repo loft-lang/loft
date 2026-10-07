@@ -505,6 +505,9 @@ pub struct Parser {
     /// @PLN187 — the user `type` alias the last outermost type was spelled with, or
     /// `u32::MAX`.  A site that wants it resets it before parsing the type.
     pub(crate) declared_alias: u32,
+    /// @PLN187 — the user alias a `vector<…>`'s element was spelled with, one level inside the
+    /// outermost type; `parse_type` turns it into `ELEM | alias` (`parser::abstract_alias`).
+    pub(crate) element_alias: u32,
     /// @PLN187 — the abstract alias of the operand just parsed, or `u32::MAX`
     /// (`parser::abstract_alias`, the protocol).
     pub(crate) operand_alias: u32,
@@ -517,6 +520,11 @@ pub struct Parser {
     /// @PLN187 — the abstract alias of a field the current postfix step read, taken by
     /// `settle_operand`.
     pub(crate) field_alias: u32,
+    /// @PLN187 — the definition the last `call_with_named` selected, or `u32::MAX`: a call
+    /// lowered to an operator (`sort` → `OpSortVector`) no longer names it.
+    pub(crate) last_called: u32,
+    /// @PLN187 — the member name the current postfix step read (`v.insert(…)`).
+    pub(crate) postfix_member: String,
     /// @PLN115 tail — a parameter's `(arg_index, name_pos, name_len)` captured while
     /// reading the signature (positions there, but the def_nr / var_nr are not yet
     /// established), ferried to `parse_function` to record each param's DECLARATION
@@ -1810,10 +1818,13 @@ impl Parser {
             pending_param_aliases: Vec::new(),
             type_nesting: 0,
             declared_alias: u32::MAX,
+            element_alias: u32::MAX,
             operand_alias: u32::MAX,
             abstract_vars: std::collections::HashMap::new(),
             plain_declared: std::collections::HashSet::new(),
             field_alias: u32::MAX,
+            last_called: u32::MAX,
+            postfix_member: String::new(),
             pending_param_positions: Vec::new(),
             amp_pending: false,
             first_bind_targets: Vec::new(),
@@ -13982,6 +13993,7 @@ impl Parser {
         // The call NAME's position, forwarded to `call_nr` for the arc-C steer caret.
         name_pos: Option<&Position>,
     ) -> Type {
+        self.last_called = d_nr;
         if named.is_empty() {
             return self.call_nr(
                 code, d_nr, positional, pos_types, is_method, arg_pos, name_pos,

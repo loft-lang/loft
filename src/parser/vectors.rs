@@ -4113,6 +4113,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         val: &mut Value,
         parent_tp: &Type,
     ) -> Type {
+        if self.lexer.peek_token("]") {
+            self.settle_vector_literal(&[]); // @PLN187 — `[]` fits a `vector<Handle>`
+        }
         let mut assign_tp = var_tp.content();
         // @PLN25 E2 — a KEYED collection's `content()` yields `Reference(__nullable<S>)`
         // (Hash/Sorted/Index wrap the content def in a Reference), but literal-element
@@ -4327,10 +4330,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         declared: bool,
         res: &mut Vec<Value>,
     ) -> Option<Type> {
+        // @PLN187 — each element's abstract alias: one alias throughout is a `vector<Handle>`.
+        let mut aliases = Vec::new();
         loop {
+            self.operand_alias = u32::MAX;
             if let Some(value) = self.parse_item(elm, in_t, declared, res) {
                 return Some(value);
             }
+            aliases.push(self.operand_alias);
             if self.lexer.has_token(";")
                 && let Some(value) = self.parse_multiply(res)
             {
@@ -4343,6 +4350,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 break;
             }
         }
+        self.settle_vector_literal(&aliases);
         None
     }
 

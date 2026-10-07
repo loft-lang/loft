@@ -239,6 +239,11 @@ impl Parser {
             }
             return t;
         };
+        // @PLN187 — a method on a `vector<Handle>` may be a special form that records no
+        // definition; its name lets `check_postfix` find the declaration.
+        if self.abstract_on() {
+            self.postfix_member.clone_from(&field);
+        }
         // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
         // its DENSE type: the mutation is admissible whatever the chain's nullability, and it
         // does nothing when a link is absent (the runtime already skips it — verified on every

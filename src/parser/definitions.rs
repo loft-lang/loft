@@ -4367,7 +4367,18 @@ impl Parser {
         returned: bool,
     ) -> Option<Type> {
         self.type_nesting += 1;
+        if self.type_nesting == 1 {
+            self.element_alias = u32::MAX;
+        }
         let t = self.parse_type_inner(on_d, type_name, returned);
+        // @PLN187 — `vector<Handle>`: the element's alias, marked as a vector of it.
+        if self.type_nesting == 1
+            && self.element_alias != u32::MAX
+            && self.declared_alias == u32::MAX
+            && matches!(t.as_ref().map(Type::base), Some(Type::Vector(..)))
+        {
+            self.declared_alias = self.element_alias | crate::parser::abstract_alias::ELEM;
+        }
         self.type_nesting -= 1;
         let t = t?;
         // @PLN125 arc A step A2b — `Self.X`, an interface's ASSOCIATED TYPE used in one
@@ -4725,11 +4736,12 @@ impl Parser {
             )
         {
             // @PLN187 — the outermost type of a declaration was spelled with a user alias.
-            if dt == DefType::Type
-                && self.type_nesting == 1
-                && self.data.def(tp_nr).source != crate::data::STD_SOURCE
-            {
-                self.declared_alias = tp_nr;
+            if dt == DefType::Type && self.data.def(tp_nr).source != crate::data::STD_SOURCE {
+                if self.type_nesting == 1 {
+                    self.declared_alias = tp_nr;
+                } else if self.type_nesting == 2 {
+                    self.element_alias = tp_nr;
+                }
             }
             if matches!(dt, DefType::EnumValue)
                 || (self.first_pass && matches!(dt, DefType::Struct))

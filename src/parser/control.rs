@@ -20081,6 +20081,7 @@ impl Parser {
                 }
             }
         }
+        self.last_called = u32::MAX;
         let ret = self.dispatch_call(
             val,
             source,
@@ -20092,6 +20093,7 @@ impl Parser {
             &arg_pos,
             name_pos,
         );
+        self.recall_vector_builtin(name, arg_aliases.first().copied());
         self.check_call_arguments(val, &arg_aliases);
         // Plan-07 phase 1, step 1.13 — wrap user-typed Call / CallRef
         // at the `(` token position so runtime errors inside the call
