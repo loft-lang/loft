@@ -175,7 +175,9 @@ fn compute_shape(data: &Data, stores: &Stores, d_nr: u32, vo: i64) -> Option<Sha
         });
     }
     let (vo, vt) = moved?;
-    if scalars.is_empty() {
+    // The twin binds the buffer TO the destination, so the moved field must start where the
+    // buffer does: at any other offset every write to it would land that far past the element.
+    if vo != 0 || scalars.is_empty() {
         return None;
     }
     scalars.sort_by_key(|s| s.off);
