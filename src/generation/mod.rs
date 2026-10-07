@@ -2791,6 +2791,7 @@ impl Output<'_> {
                 &self.value_records.fns,
                 &self.value_records.params,
                 &self.value_records.view_offs,
+                &self.value_records.fnref_sites,
             );
             self.forward_sites = hoist::forward_sites(
                 self.data,

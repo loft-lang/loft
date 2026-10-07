@@ -4513,24 +4513,39 @@ live-record count equal to the plain form's; a finish planted on the failing pat
                  (R-ValueRecord) admits, answers R's tuple when EVERY function of
                  that signature in the program — the arms of the dispatch `match`
                  the emitter writes — is (R-ValueRecord)-admitted; the `_ =>` arm
-                 answers the null tuple.  Decided per fn-ref TYPE over the whole
-                 program in a pre-pass: one unadmitted function of the signature
-                 keeps the buffer road for every call of that type, and a capture
-                 (a closure fn-ref) declines.  The interpreter is untouched: the
-                 tuple is native's representation of the same record (C122).
+                 answers the null record's fields.  Its parameter i of a record type
+                 is passed as a tuple when every arm receives parameter i as one
+                 (R-ValueLocal).  Decided per dispatch over the whole program inside
+                 (R-ValueRecord)'s fixpoint: the arms are one GROUP, so one arm the
+                 fixpoint declines — its body, a site consuming its record — takes
+                 the whole group back to the buffer road, and a group's result
+                 consumed as a record at a fn-ref call site (an argument the callee
+                 keeps as a record, a field it is not read through) declines it as a
+                 direct call's would.  A capturing arm, an optional result, a `par`
+                 worker, a `&text` argument that picks a store instance, and a fn-ref
+                 target no listed dispatch reaches keep the record outright.  An arm
+                 is a function whose RECORD matches the signature's, not only its
+                 Rust ABI: the type checker refuses any other in that slot.  The
+                 interpreter is untouched: the tuple is native's representation of
+                 the same record (C122), so the IR pass leaves every arm's signature.
 ```
 
 **In words.** `resolve(r.style)` minted a store, wrote four fields, adopted and freed it per
 call, to hand back a record `default_style` had already answered in registers (the fn-ref
 result ABI stops at the buffer road, `@FR-O-Unknown`).  The target set of a fn-ref is complete
-in the emitted binary (`src/generation/emit.rs:1766` writes the `match`), so the admission
+in the emitted binary (`src/generation/emit.rs` writes the `match`), so the admission
 `(R-ValueRecord)` proves per function lifts to the signature.  Sound where every arm is
-admitted — the pre-pass reads the fixpoint `(R-ValueRecord)` already computes; a null fn-ref
-answers the null tuple exactly as the buffer road answers a null record.  Priced on zttext
-`flow_layout_full` (over-9x.md): −27 % alone.  Switch `LOFT_NO_FNREF_VALUE`.  Falsifier: a
-program with two functions of one signature, one admitted and one answering a heap record —
-the call must take the buffer road; the switch A/B on the flow row with hand-computed boxes;
-`make rewrite-census` with `(R-ValueRecord)`'s admissions unchanged.
+admitted; a null fn-ref answers the null tuple exactly as the buffer road answers a null
+record.  The parameter half is what makes the result half reach `flow_layout_full`: its
+`measure(r.str, resolve(r.style))` hands the resolved record straight to a second dispatch,
+which consumed it as a record while `measure`'s arms kept theirs.
+
+**BUILT** (`hoist::value_records` — the site map `FnRefSites`, `close_fnref_groups`,
+`fnref_value` / `fnref_param` read by `value_shape`, `site_walk` and `local_uses_ok`; the
+dispatch's tuple mode in `emit.rs`; `fnref::dispatch_arms` narrowed to the record;
+`value_record::rewrite_program` leaves the arms; `LOFT_NO_FNREF_VALUE`, `LOFT_TRACE_VALUEREC`;
+guard `tests/scripts/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; measured in
+`bench/portal/analysis/over-9x.md` § zttext).
 
 ### A lookup's found entry is answered as a view the caller reads in place
 

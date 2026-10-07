@@ -232,12 +232,23 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         cands: HashMap::default(),
         params: HashMap::default(),
     };
+    // `@FR-R-FnRefValue` admits a dispatch's arms on `--native` alone, where the dispatch
+    // answers and passes the tuple: the interpreter calls them through the fn-ref with
+    // records, so the IR keeps their signatures, result and parameters — and an arm whose IR result became a tuple would no longer
+    // match its own dispatch (`fnref::dispatch_arms` compares result types).
+    let arms = vr.fnref_arms();
     for (&d, &tp) in &vr.fns {
+        if arms.contains(&d) {
+            continue;
+        }
         if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, d, tp) {
             w.cands.insert(d, c);
         }
     }
     for (&d, ps) in &vr.params {
+        if arms.contains(&d) {
+            continue;
+        }
         for (&idx, &tp) in ps {
             if let Some(record) = param_shape(data, stores, &mut w.layouts, d, idx, tp) {
                 w.params.insert((d, idx), record);

@@ -463,7 +463,14 @@ impl Output<'_> {
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && let Some(tp) = self.value_records.param_type(self.current_call_def, idx)
         {
-            if super::hoist::tuple_arg_ready(v, &self.value_records.fns, &self.value_record_locals)
+            // A fn-ref dispatch's arm is handed `_farg_N`, which the dispatch already bound to
+            // the tuple (`@FR-R-FnRefValue`).
+            if matches!(v.unspan(), Value::RawExpr(_))
+                || super::hoist::tuple_arg_ready(
+                    v,
+                    &self.value_records.fns,
+                    &self.value_record_locals,
+                )
             {
                 return self.output_code_inner(w, v);
             }

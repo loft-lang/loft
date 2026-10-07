@@ -105,6 +105,18 @@ pub fn dispatch_arms(
         if rust_type(def.returned(), &Context::Result) != rust_type(ret_type, &Context::Result) {
             continue;
         }
+        // Every record is a `DbRef` to Rust, so the test above admits a `fn(integer) -> Row`
+        // into the dispatch of a `fn(integer) -> Style` — an arm no value can select, since
+        // the type checker refuses that function in that slot (as an argument and as a
+        // bind).  It is not harmless: an arm returning another record keeps the whole
+        // dispatch off the tuple road (`@FR-R-FnRefValue`), so two record types are two
+        // signatures.
+        if let (Type::Reference(want, _), Type::Reference(got, _)) =
+            (ret_type.base(), def.returned().base())
+            && want != got
+        {
+            continue;
+        }
         candidates.push(Arm {
             d_nr: d,
             name: def.name().to_string(),
