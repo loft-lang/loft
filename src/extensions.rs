@@ -10,9 +10,9 @@
 //!
 //! See `EXTERNAL_LIBS.md` for the full design.
 
+use crate::platform::process::{Program, Spawn};
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
-use crate::platform::process::{Program, Spawn};
 use std::collections::HashMap;
 // Every registry this guards is itself `native-extensions`-only, so the import follows the
 // same gate — without it a `--no-default-features` build warns on an unused import, which is
