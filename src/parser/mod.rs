@@ -24451,7 +24451,7 @@ mod plan86_nesting_guard_tests {
             "capability stats\ncapability bag\n\
              struct Item { v: integer }\n\
              struct Entity { id: integer, health: integer stats#read stats#update, \
-             loot: Item bag#read bag#append }\n\
+             loot: vector<Item> bag#read bag#append }\n\
              fn main() { }\n",
         );
         let e = p.data.def_nr("Entity");
