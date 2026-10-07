@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1914, `@FR-Col-Insert` / `@FR-Col-Trie` (C68) — a `trie` insert under a key it already
+// holds REPLACES the record there, as `hash`, `sorted` and `index` do.  It used to keep both, so
+// `len` counted the duplicate, iteration and a prefix slice showed it twice, and which one a
+// lookup answered depended on the tree's shape.
+//
+// Axes it MOVES: how the repeat arrives (`+=` of one record, `+=` inside a batch, a literal that
+// repeats a key), the key's position among its neighbours (a prefix of another key, a key that
+// has a prefix, the empty key), and what is asked afterwards (len, lookup, iteration, prefix,
+// removal).  A `spatial` beside it is the CONTROL: its key is a point and two records may share
+// one, so it must still keep both.  Every value is hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct W1914 { const w: text, n: integer }
+struct P1914 { const x: integer, const y: integer, n: integer }
+
+fn walk1914(t: trie<W1914[w]>) -> text {
+  s = "";
+  for e in t { s += "{e.w}:{e.n},"; }
+  s
+}
+
+fn test_a_repeated_key_replaces() {
+  t: trie<W1914[w]> = [W1914 { w: "kerk", n: 1 }];
+  t += [W1914 { w: "kerk", n: 2 }];
+  assert(t.len() == 1, "len {t.len()}");
+  assert((t["kerk"].n ?? -1) == 2, "the latest insert wins: {t["kerk"].n ?? -1}");
+  assert(walk1914(t) == "kerk:2,", "iteration: {walk1914(t)}");
+}
+
+fn test_neighbouring_keys_stay_apart() {
+  u: trie<W1914[w]> = [W1914 { w: "ab", n: 1 }, W1914 { w: "a", n: 5 }, W1914 { w: "abc", n: 6 }, W1914 { w: "", n: 7 }];
+  u += [W1914 { w: "ab", n: 2 }, W1914 { w: "", n: 8 }, W1914 { w: "abc", n: 9 }];
+  assert(u.len() == 4, "len {u.len()}");
+  assert(walk1914(u) == ":8,a:5,ab:2,abc:9,", "iteration: {walk1914(u)}");
+  p = "";
+  for e in u["ab"..] { p += "{e.n},"; }
+  assert(p == "2,9,", "prefix ab: {p}");
+}
+
+fn test_a_literal_that_repeats_a_key() {
+  t: trie<W1914[w]> = [W1914 { w: "x", n: 1 }, W1914 { w: "y", n: 2 }, W1914 { w: "x", n: 3 }];
+  assert(t.len() == 2 && (t["x"].n ?? -1) == 3, "len {t.len()} x={t["x"].n ?? -1}");
+}
+
+fn test_removal_leaves_nothing_behind() {
+  t: trie<W1914[w]> = [W1914 { w: "kerk", n: 1 }];
+  t += [W1914 { w: "kerk", n: 2 }];
+  t["kerk"] = null;
+  assert(t.len() == 0 && t["kerk"] == null, "after removal: len {t.len()}");
+}
+
+fn test_a_spatial_point_still_holds_both() {
+  s: spatial<P1914[x, y]> = [P1914 { x: 1, y: 1, n: 1 }];
+  s += [P1914 { x: 1, y: 1, n: 2 }];
+  assert(s.len() == 2, "two records at one point: {s.len()}");
+}
+
+fn main() {
+  test_a_repeated_key_replaces();
+  test_neighbouring_keys_stay_apart();
+  test_a_literal_that_repeats_a_key();
+  test_removal_leaves_nothing_behind();
+  test_a_spatial_point_still_holds_both();
+}
