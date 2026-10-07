@@ -20,6 +20,10 @@
 //
 // Expected values by hand: every turn writes `"a"` once to each file a cell names, so each
 // holds 3 bytes; the copy cell writes through both copies, 6.
+//
+// @falsified-by: tests/falsified/a-file-dying-anywhere-releases-its-handle.patch — interpret leaked open File handles×36 -> clean, native leaked open File handles×36 -> clean
+//   CHANNEL: the LEAK report.  The patch makes a record's release a no-op, so every handle the
+//   twelve cells open over three turns is still open at exit (12 × 3 = 36), on both backends.
 
 struct Holder { h: File, tag: integer }
 struct Bag { fs: vector<File>, n: integer }
