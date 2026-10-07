@@ -32,9 +32,10 @@ generic header; a **bound** `T: I₁ + … + Iₖ` constrains it. `C ⊨ I` read
   (G-Iface)   interface I { fn m₁(self: Self, p̄₁) -> R₁  …  fn mₙ(self: Self, p̄ₙ) -> Rₙ }
               declares I as the set {m₁ … mₙ} of method SIGNATURES.  Each method's first
               parameter is `self: Self` (Self = the implementing type, filled in per instance);
-              the interface has NO bodies.  An operator method may use sugar
-              `op <tok> (self: Self, …) -> R`, met by the type's `operator` method (`<` ⟶
-              `operator compare`, formal/operators.md (Op-Bound)).
+              the interface has NO bodies.  A member requiring an operator is spelled as the
+              `operator` definition that meets it (`<` ⟶ `operator compare(self: Self, other:
+              Self) -> Ordering`, formal/operators.md (Op-Bound)); a program's `op <tok>`
+              member is refused, naming that spelling.
 ```
 
 **In words.** An interface is a named list of method shapes a type must provide — for example

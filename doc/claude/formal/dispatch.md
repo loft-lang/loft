@@ -29,9 +29,11 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
   (Disp-Key)        a definition is keyed by its parameter TYPES, never a parameter's name.  A name
                     with ONE definition keys as before (`n_<name>`, or `t_<τ>_<name>` for a method);
                     a name with several is an overload set: one dispatcher whose members are keyed
-                    by their full parameter spelling.  The key is as coarse as a type's key —
-                    `vector<integer>` and `vector<text>` spell alike, so two definitions differing
-                    only there are a redefinition.  One SOURCE is one set; a library's set reaches
+                    by their full parameter spelling.  The spelling is each type's full identity
+                    — a collection's element, an integer's width and a `τ?`'s nullability
+                    included — so `vector<integer>` and `vector<text>`, or `integer` and `u8`,
+                    key two members; two definitions differing only in a parameter's name or a
+                    dependency list are a redefinition.  One SOURCE is one set; a library's set reaches
                     every import spelling of its consumers whole, and a consumer's definition of
                     ANOTHER spelling joins it, while one the set already carries is a
                     redefinition.
