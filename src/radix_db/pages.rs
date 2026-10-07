@@ -4,8 +4,6 @@
 
 //! @PLN136 step 1 — the measurement. Module header on `mod pages` in `radix_db.rs`.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
@@ -109,7 +107,7 @@ struct Walk {
 /// Build the point index, or `None` where the host has no corpus.
 fn build() -> Option<Fixture> {
     let path = corpus_path();
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Ok(text) = crate::file_access::read_to_string(&path) else {
         println!("SKIP — no corpus at {path} (see the module header to build one)");
         return None;
     };
