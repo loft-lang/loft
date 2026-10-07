@@ -16,6 +16,7 @@ use crate::parser::Parser;
 use crate::scopes;
 use crate::state::State;
 use loft::file_access as fa;
+use loft::platform::process::{Program, Spawn};
 use std::collections::HashSet;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -1737,27 +1738,26 @@ pub(crate) fn run_tests(
                             true
                         } else {
                             // Compile with rustc.
-                            let mut cmd = std::process::Command::new("rustc");
-                            crate::platform::dies_with_driver(&mut cmd, false);
+                            let mut cmd = Spawn::new(Program::search("rustc"));
                             // Keep rustc's own intermediates in the loft
                             // scratch dir too, so the whole native compile
                             // stays off a small `/tmp` tmpfs.
-                            cmd.env("TMPDIR", &scratch)
-                                .arg("--edition=2024")
-                                .arg("-C")
-                                .arg("debuginfo=0")
-                                .arg("-C")
-                                .arg("opt-level=0")
-                                .arg("-o")
-                                .arg(&tmp_bin)
-                                .arg(&tmp_rs);
+                            cmd.push_env("TMPDIR", &scratch)
+                                .push_arg("--edition=2024")
+                                .push_arg("-C")
+                                .push_arg("debuginfo=0")
+                                .push_arg("-C")
+                                .push_arg("opt-level=0")
+                                .push_arg("-o")
+                                .push_arg(&tmp_bin)
+                                .push_arg(&tmp_rs);
                             crate::native_utils::add_main_stack_flags(&mut cmd);
                             // Layer 1: strip the linked binary (~36MB → ~1MB;
                             // the bulk is debug info from libloft.rlib + std,
                             // useless to a run-and-check test).  Opt out with
                             // LOFT_NATIVE_KEEP_SYMBOLS=1 when debugging a crash.
                             if crate::platform::native_strip_symbols() {
-                                cmd.arg("-C").arg("strip=symbols");
+                                cmd.push_arg("-C").push_arg("strip=symbols");
                             }
                             // @P389: each native package's rlib carries its own
                             // copy of `loft_register_v1` (synthesized by the
@@ -1781,13 +1781,13 @@ pub(crate) fn run_tests(
                             // per occurrence, so skip it on both (matching
                             // main.rs).
                             if !native_data.native_packages.is_empty() {
-                                cmd.args(crate::platform::allow_multiple_definition_arg());
+                                cmd.push_args(crate::platform::allow_multiple_definition_arg());
                             }
                             if let Some(ref ld) = lib_dir {
-                                cmd.args(loft::native_lib::loft_extern_args(
+                                cmd.push_args(loft::native_lib::loft_extern_args(
                                     &ld.join("libloft.rlib"),
                                 ));
-                                cmd.arg("-L").arg(native_utils::deps_dir_of(ld));
+                                cmd.push_arg("-L").push_arg(native_utils::deps_dir_of(ld));
                                 // Propagate `-L native=` for every build-script
                                 // `OUT_DIR` that bundles a native lib — the G2
                                 // mitigation main.rs already has on the standalone
@@ -1801,7 +1801,8 @@ pub(crate) fn run_tests(
                                 // `[native] crate` package brings none — so the test
                                 // path needs loft's own OUT_DIRs too.
                                 for out_dir in native_utils::build_script_native_lib_dirs(ld) {
-                                    cmd.arg("-L").arg(format!("native={}", out_dir.display()));
+                                    cmd.push_arg("-L")
+                                        .push_arg(format!("native={}", out_dir.display()));
                                 }
                                 // The C-ABI native consumer names `loft_ffi` types
                                 // (LoftStore/LoftRef/LoftStr) in its `extern "C"`
@@ -1815,8 +1816,8 @@ pub(crate) fn run_tests(
                                     &ld.join("libloft.rlib"),
                                     &native_utils::deps_dir_of(ld),
                                 ) {
-                                    cmd.arg("--extern")
-                                        .arg(format!("loft_ffi={}", ffi.display()));
+                                    cmd.push_arg("--extern")
+                                        .push_arg(format!("loft_ffi={}", ffi.display()));
                                 }
                             }
                             // LibCI: link each package's `#native` crate so tests
@@ -1831,7 +1832,7 @@ pub(crate) fn run_tests(
                                 loft_deps.as_deref(),
                             );
                             let rustc_start = std::time::Instant::now();
-                            let compile_result = cmd.output();
+                            let compile_result = cmd.run(b"");
                             crate::platform::timing_record(
                                 "fixture",
                                 &stem,

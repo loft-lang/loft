@@ -4,6 +4,8 @@
 
 //! Native compilation utilities: rlib management, cache keys, artifact paths.
 
+use crate::file_access::PathText;
+use crate::platform::process::{Program, Spawn};
 use std::env;
 pub(crate) fn with_trailing_sep(p: &std::path::Path) -> String {
     let mut s = p.to_str().unwrap_or("").to_string();
@@ -165,11 +167,10 @@ pub(crate) fn rebuild_runtime(tree: &std::path::Path, reason: &str) -> bool {
          Set LOFT_NO_AUTO_REBUILD=1 to skip this and run on the interpreter instead."
     );
     let start = std::time::Instant::now();
-    let mut cmd = std::process::Command::new("cargo");
-    cmd.args(["build", "--release", "--lib", "--bin", "loft"])
-        .current_dir(tree);
-    crate::platform::dies_with_driver(&mut cmd, false);
-    let ran = cmd.status();
+    let ran = Spawn::new(Program::search("cargo"))
+        .args(["build", "--release", "--lib", "--bin", "loft"])
+        .cwd(&PathText::from_os(tree))
+        .status();
     match ran {
         Ok(s) if s.success() => {
             eprintln!(
@@ -439,14 +440,11 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     // only `-Z build-std` produces, which only nightly accepts: run cargo through
     // `rustup run nightly`.  Every other shape runs the default toolchain's cargo.
     let mut cmd = if shape.needs_atomics_std() {
-        let mut c = std::process::Command::new("rustup");
-        c.args(["run", "nightly", "cargo"]);
-        c
+        Spawn::new(Program::search("rustup")).args(["run", "nightly", "cargo"])
     } else {
-        std::process::Command::new("cargo")
-    };
-    crate::platform::dies_with_driver(&mut cmd, false);
-    cmd.args([
+        Spawn::new(Program::search("cargo"))
+    }
+    .args([
         "build",
         "--release",
         "--target",
@@ -456,7 +454,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         "--features",
         shape.features(),
     ])
-    .current_dir(&tree)
+    .cwd(&PathText::from_os(&tree))
     // CLEAN flags: the host RUSTFLAGS/CARGO_ENCODED_RUSTFLAGS loft was built with
     // are host-target-specific (e.g. target-cpu) and would break or mis-key the
     // wasm build — this rlib is target-defined, not host-flag-defined.
@@ -469,11 +467,11 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         // with the SAME flags as loft's rlib and the final link — mixing an
         // atomics rlib with a non-atomics std does not link at all (lld: "shared
         // memory is disallowed by std ... not compiled with 'atomics'").
-        cmd.arg("-Zbuild-std=panic_abort,std")
-            .env("RUSTFLAGS", WASM_THREAD_FLAGS.join(" "));
+        cmd.push_arg("-Zbuild-std=panic_abort,std")
+            .push_env("RUSTFLAGS", WASM_THREAD_FLAGS.join(" "));
     }
     if let Some(sub) = shape.isolated_target_subdir() {
-        cmd.arg("--target-dir").arg(tree.join(sub));
+        cmd.push_arg("--target-dir").push_arg(tree.join(sub));
     }
     let subject = format!("libloft.rlib ({triple})");
     let modified = || {
@@ -520,15 +518,15 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
 /// nightly's, plus the flags that build shared-memory wasm.  Both are forced by
 /// the same fact: that sysroot's rlibs were produced by nightly, and an rlib
 /// links only with the compiler that built it.
-pub(crate) fn wasm_rustc(atomics_sysroot: Option<&std::path::Path>) -> std::process::Command {
+pub(crate) fn wasm_rustc(atomics_sysroot: Option<&std::path::Path>) -> Spawn {
     let Some(sysroot) = atomics_sysroot else {
-        return std::process::Command::new("rustc");
+        return Spawn::new(Program::search("rustc"));
     };
-    let mut cmd = std::process::Command::new("rustup");
-    cmd.args(["run", "nightly", "rustc"]);
-    cmd.arg("--sysroot").arg(sysroot);
-    cmd.args(WASM_THREAD_FLAGS);
-    cmd
+    Spawn::new(Program::search("rustup"))
+        .args(["run", "nightly", "rustc"])
+        .arg("--sysroot")
+        .arg(sysroot)
+        .args(WASM_THREAD_FLAGS)
 }
 
 /// @PLN117 — assemble the atomics-compiled sysroot the threaded `--html` link
@@ -852,7 +850,7 @@ pub(crate) fn ensure_rlib_fresh() {
     }
     let Some(lib_dir) = loft_lib_dir() else {
         // No rlib found at all — try building from scratch.
-        let _ = std::process::Command::new("cargo")
+        let _ = Spawn::new(Program::search("cargo"))
             .args(["build", "--lib"])
             .status();
         return;
@@ -868,7 +866,7 @@ pub(crate) fn ensure_rlib_fresh() {
     let newest = newest_src.max(newest_default);
     if newest.is_some_and(|t| t > rlib_mtime) {
         eprintln!("loft: rebuilding libloft.rlib (source is newer)...");
-        let _ = std::process::Command::new("cargo")
+        let _ = Spawn::new(Program::search("cargo"))
             .args(["build", "--lib"])
             .status();
     }
@@ -1720,11 +1718,11 @@ pub(crate) fn native_cabi_enabled() -> bool {
 /// @PLN184 — a native PROGRAM's main thread gets the stack a Linux one has (8 MiB) on Windows
 /// too, where the default is 1 MiB: the same recursion must not overflow on one platform only.
 /// A no-op off Windows.
-pub(crate) fn add_main_stack_flags(cmd: &mut std::process::Command) {
-    cmd.args(crate::platform::main_stack_link_args());
+pub(crate) fn add_main_stack_flags(cmd: &mut Spawn) {
+    cmd.push_args(crate::platform::main_stack_link_args());
 }
 
-pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate::data::Data) {
+pub(crate) fn add_c_library_flags(cmd: &mut Spawn, data: &crate::data::Data) {
     for lib in data.c_libraries.iter().filter(|c| !c.optional) {
         // @PLN24 arc G — an OPTIONAL library gets no flag at all. On the link
         // line it would be a BUILD dependency: measured, a declared-absent
@@ -1781,7 +1779,8 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
         if crate::file_access::exists(&beside)
             && let Some(parent) = beside.parent()
         {
-            cmd.arg("-L").arg(format!("native={}", parent.display()));
+            cmd.push_arg("-L")
+                .push_arg(format!("native={}", parent.display()));
             // The built binary has to find it at RUN time too, and a library
             // that ships beside its package is not on the system search path.
             //
@@ -1791,7 +1790,7 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
             // found beside the `.exe` / on `PATH` instead, the same arrangement
             // `stage_native_dlls` already makes for a package cdylib (@PLN26 ph.4).
             if let Some(rpath) = crate::platform::rpath_link_arg(parent) {
-                cmd.arg("-C").arg(rpath);
+                cmd.push_arg("-C").push_arg(rpath);
             }
         }
         // A VERSIONED soname links by exact filename, not by stem.
@@ -1810,16 +1809,16 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
         // library the declaration named.  Passed as a link-arg because rustc's own
         // `-l` takes a library NAME and would reject the `:file` form.
         if file.contains(".so.") {
-            cmd.arg("-C").arg(format!("link-arg=-l:{file}"));
+            cmd.push_arg("-C").push_arg(format!("link-arg=-l:{file}"));
         } else {
-            cmd.arg("-l").arg(format!("dylib={stem}"));
+            cmd.push_arg("-l").push_arg(format!("dylib={stem}"));
         }
     }
 }
 
 #[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn add_native_extern_flags(
-    cmd: &mut std::process::Command,
+    cmd: &mut Spawn,
     data: &crate::data::Data,
     target: Option<&str>,
     loft_deps_dir: Option<&std::path::Path>,
@@ -1864,8 +1863,9 @@ pub(crate) fn add_native_extern_flags(
                 let libname = file_stem
                     .as_deref()
                     .map_or(stem.as_str(), |s| s.strip_prefix("lib").unwrap_or(s));
-                cmd.arg("-L").arg(format!("native={}", so_dir.display()));
-                cmd.arg("-l").arg(format!("dylib={libname}"));
+                cmd.push_arg("-L")
+                    .push_arg(format!("native={}", so_dir.display()));
+                cmd.push_arg("-l").push_arg(format!("dylib={libname}"));
                 // @PLN26 phase 4 — Windows links a DLL through its IMPORT LIBRARY, and
                 // there is NO RPATH: the loader finds the DLL beside the `.exe` / on
                 // `PATH`, so the DLL is staged beside the binary at run time
@@ -1888,13 +1888,13 @@ pub(crate) fn add_native_extern_flags(
                         // binary that ships the `.so` beside it — `make install` copies
                         // it next to the binary).  `$ORIGIN` is passed literally; the
                         // dynamic loader expands it at run time.
-                        cmd.arg(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
+                        cmd.push_arg(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
                         // `$ORIGIN` is the ELF spelling and Mach-O does not know it; the
                         // dyld form is `@loader_path`.  Both are emitted, because a linker
                         // ignores an rpath entry it cannot parse and the cost of the spare
                         // one is a string.
-                        cmd.arg("-Clink-arg=-Wl,-rpath,$ORIGIN");
-                        cmd.args(crate::platform::loader_path_rpath_arg());
+                        cmd.push_arg("-Clink-arg=-Wl,-rpath,$ORIGIN");
+                        cmd.push_args(crate::platform::loader_path_rpath_arg());
                     }
                 }
             }
@@ -1994,22 +1994,22 @@ pub(crate) fn add_native_extern_flags(
         }
         if crate::file_access::exists(&rlib_path) {
             let extern_name = crate_name.replace('-', "_");
-            cmd.arg("--extern")
-                .arg(format!("{}={}", extern_name, rlib_path.display()));
+            cmd.push_arg("--extern")
+                .push_arg(format!("{}={}", extern_name, rlib_path.display()));
             // Add the native crate's deps directory so transitive deps (GL, glutin, etc.)
             // resolve. Use `dependency` search scope so these crates are only found as
             // transitive deps of the native crate, not as direct deps.
             let deps_dir = rlib_path.parent().unwrap().join("deps");
             if crate::file_access::is_dir(&deps_dir) {
-                cmd.arg("-L")
-                    .arg(format!("dependency={}", deps_dir.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", deps_dir.display()));
                 // Pin any crate that also exists in loft's deps to loft's copy,
                 // preventing StableCrateId collisions from duplicate rlibs.
                 if !loft_rlibs.is_empty() {
                     let pkg_crates = rlibs_in_dir(&deps_dir);
                     for (dep_name, loft_path) in &loft_rlibs {
                         if pkg_crates.contains_key(dep_name) {
-                            cmd.arg("--extern").arg(format!(
+                            cmd.push_arg("--extern").push_arg(format!(
                                 "{}={}",
                                 dep_name,
                                 loft_path.display()
@@ -2032,8 +2032,8 @@ pub(crate) fn add_native_extern_flags(
                     .join("release")
                     .join("deps");
                 if crate::file_access::is_dir(&host_deps) {
-                    cmd.arg("-L")
-                        .arg(format!("dependency={}", host_deps.display()));
+                    cmd.push_arg("-L")
+                        .push_arg(format!("dependency={}", host_deps.display()));
                 }
             }
             // @P229 (G2): harvest build-script `rustc-link-search` dirs from
@@ -2047,7 +2047,8 @@ pub(crate) fn add_native_extern_flags(
             // package's `<profile>` dir, exactly what the helper expects.
             if let Some(profile_dir) = rlib_path.parent() {
                 for nd in build_script_native_lib_dirs(profile_dir) {
-                    cmd.arg("-L").arg(format!("native={}", nd.display()));
+                    cmd.push_arg("-L")
+                        .push_arg(format!("native={}", nd.display()));
                 }
             }
         }

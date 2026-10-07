@@ -33,6 +33,7 @@
 use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
+use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashSet};
 
 /// @PLN11 Arc N / N2 (lean interface) — generate the loft-source **interface** a
@@ -1256,7 +1257,7 @@ fn loft_ffi_candidate_links(
     let src = dir.join("probe.rs");
     let ok = crate::file_access::write(&src, "extern crate loft;\nextern crate loft_ffi;\n")
         .is_ok()
-        && std::process::Command::new("rustc")
+        && Spawn::new(Program::search("rustc"))
             .arg("--edition=2024")
             .arg("--crate-type")
             .arg("rlib")
@@ -1269,7 +1270,7 @@ fn loft_ffi_candidate_links(
             .arg("-L")
             .arg(format!("dependency={}", deps.display()))
             .arg(&src)
-            .output()
+            .run(b"")
             .is_ok_and(|o| o.status.success());
     let _ = crate::file_access::remove_dir_all(&dir);
     ok
@@ -1533,17 +1534,15 @@ pub fn build_shared_cdylib(
         .collect::<Vec<_>>()
         .join("\n");
     crate::file_access::write(&argfile, contents).map_err(|e| format!("write {e}"))?;
-    let mut rustc = std::process::Command::new("rustc");
-    crate::platform::dies_with_driver(&mut rustc, false);
-    rustc.arg(format!("@{}", argfile.display()));
+    let mut rustc = Spawn::new(Program::search("rustc")).arg(format!("@{}", argfile.display()));
     // @PLN54 S9 — the ASan cdylib (above) needs nightly rustc for `-Zsanitizer`.
     if std::env::var_os("LOFT_NATIVE_ASAN").is_some()
         && std::env::var_os("RUSTUP_TOOLCHAIN").is_none()
     {
-        rustc.env("RUSTUP_TOOLCHAIN", "nightly");
+        rustc.push_env("RUSTUP_TOOLCHAIN", "nightly");
     }
     crate::timeout::blocked_on("rustc compiling a library");
-    let output = rustc.output();
+    let output = rustc.run(b"");
     crate::timeout::unblocked();
     let output =
         output.map_err(|e| format!("launch rustc: {e} (is the Rust toolchain installed?)"))?;
@@ -1577,9 +1576,9 @@ pub fn rustc_available() -> bool {
     use std::sync::OnceLock;
     static AVAIL: OnceLock<bool> = OnceLock::new();
     *AVAIL.get_or_init(|| {
-        std::process::Command::new("rustc")
+        Spawn::new(Program::search("rustc"))
             .arg("--version")
-            .output()
+            .run(b"")
             .is_ok_and(|o| o.status.success())
     })
 }

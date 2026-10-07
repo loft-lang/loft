@@ -215,6 +215,18 @@ impl Spawn {
         self
     }
 
+    /// The program as the child is handed it, for a diagnostic that shows the invocation.
+    #[must_use]
+    pub fn get_program(&self) -> &OsStr {
+        self.cmd.get_program()
+    }
+
+    /// The arguments so far, for a diagnostic that shows the invocation.
+    #[must_use]
+    pub fn get_args(&self) -> std::process::CommandArgs<'_> {
+        self.cmd.get_args()
+    }
+
     /// A path argument, handed over in the host's spelling ([`host_spelling`]).
     #[must_use]
     pub fn arg_path(mut self, path: &PathText) -> Spawn {

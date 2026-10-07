@@ -16,9 +16,10 @@
 //! `targets`, gated on `needs`, with a cached green run.  See
 //! `doc/claude/PACKAGES_BUILD.md § The build phase` and the @PLN100 plan.
 
+use crate::file_access::PathText;
 use crate::manifest::{BuildAsset, BuildTest, Manifest};
+use crate::platform::process::{Program, Spawn, Tree};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The compile action a target maps to — named by the target's `shape`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,9 +214,9 @@ pub fn missing_requires(
 /// run (so the caller skips the rustup-target gate rather than blocking).
 #[must_use]
 pub fn installed_rust_targets() -> Option<Vec<String>> {
-    let out = Command::new("rustup")
+    let out = Spawn::new(Program::search("rustup"))
         .args(["target", "list", "--installed"])
-        .output()
+        .run(b"")
         .ok()?;
     if !out.status.success() {
         return None;
@@ -309,10 +310,10 @@ pub fn run(
             );
         }
         eprintln!("loft build: building `{name}` ({}) …", describe(&target));
-        let status = Command::new(&loft_exe)
+        let status = Spawn::new(Program::os(&loft_exe))
             .args(target.shape.compile_args())
             .arg(entry)
-            .current_dir(project_dir)
+            .cwd(&PathText::from_os(project_dir))
             .status();
         match status {
             Ok(s) if s.success() => eprintln!("loft build: `{name}` ✓"),
@@ -675,23 +676,22 @@ pub fn run_asset(asset: &BuildAsset, project_dir: &Path, force: bool) -> AssetOu
 
 /// Execute an asset's `run`: a single `.loft` script runs with this loft binary;
 /// anything else runs through the platform shell (trusted-by-declaration — it is
-/// the project's own manifest, @PLN100 open question 3 / @PLN86).
+/// the project's own manifest, @PLN100 open question 3 / @PLN86).  It is handed the
+/// terminal, as a command typed there is: [`Tree::Foreground`].
 fn run_asset_command(cmd: &str, project_dir: &Path) -> std::io::Result<std::process::ExitStatus> {
     let is_loft_script = !cmd.contains(char::is_whitespace)
         && crate::file_access::extension(cmd).is_some_and(|e| e.eq_ignore_ascii_case("loft"));
-    if is_loft_script {
+    let spawn = if is_loft_script {
         let loft_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("loft"));
-        Command::new(loft_exe)
-            .arg(cmd)
-            .current_dir(project_dir)
-            .status()
+        Spawn::new(Program::os(loft_exe)).arg(cmd)
     } else {
         let (shell, args) = crate::platform::shell_invocation(cmd);
-        Command::new(shell)
-            .args(args)
-            .current_dir(project_dir)
-            .status()
-    }
+        Spawn::new(Program::os(shell)).args(args)
+    };
+    spawn
+        .cwd(&PathText::from_os(project_dir))
+        .tree(Tree::Foreground)
+        .status()
 }
 
 // ── @PLN100 Slice 4 — declared test phase ───────────────────────────────────
@@ -827,11 +827,17 @@ fn run_test_on(
     }
     eprintln!("loft check: test `{name}` [{target}] — running `{run}` …");
     let loft_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("loft"));
-    let mut cmd = Command::new(&loft_exe);
+    let mut cmd = Spawn::new(Program::os(&loft_exe));
     if *backend == TestBackend::Native {
-        cmd.arg("--native");
+        cmd = cmd.arg("--native");
     }
-    match cmd.arg(run).current_dir(project_dir).status() {
+    // The program under test is handed the terminal, as `loft <run>` typed there would be.
+    match cmd
+        .arg(run)
+        .cwd(&PathText::from_os(project_dir))
+        .tree(Tree::Foreground)
+        .status()
+    {
         Ok(s) if s.success() => {
             write_test_stamp(project_dir, name, target, fp);
             eprintln!("loft check: test `{name}` [{target}] ✓");

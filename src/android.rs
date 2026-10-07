@@ -27,6 +27,8 @@
 //! `ANDROID_NDK_HOME` (or `ANDROID_NDK_ROOT`) at it. Build the `x86_64-linux-android`
 //! triple (`LOFT_ANDROID_TARGET`) for a KVM emulator; `aarch64` is the ship target.
 
+use crate::file_access::PathText;
+use crate::platform::process::{Program, Spawn};
 use std::path::{Path, PathBuf};
 
 /// A resolved Android cross-compile descriptor: the NDK, the API level, and the
@@ -191,10 +193,9 @@ impl AndroidTarget {
         .map_err(|e| format!("loft: write {e}"))?;
 
         let linker = self.linker();
-        let mut cmd = std::process::Command::new("cargo");
-        crate::platform::dies_with_driver(&mut cmd, false);
-        cmd.args(["build", "--release", "--target", &self.triple])
-            .current_dir(&crate_dir)
+        let mut cmd = Spawn::new(Program::search("cargo"))
+            .args(["build", "--release", "--target", &self.triple])
+            .cwd(&PathText::from_os(&crate_dir))
             .env("ANDROID_NDK_ROOT", &self.ndk)
             .env("ANDROID_NDK_HOME", &self.ndk)
             .env(cargo_linker_var(&self.triple), &linker)
@@ -294,7 +295,7 @@ impl AndroidTarget {
 
         let base = work.join("base.apk");
         run_tool(
-            std::process::Command::new(sdk.aapt2())
+            Spawn::new(Program::os(sdk.aapt2()))
                 .arg("link")
                 .arg("-o")
                 .arg(&base)
@@ -317,8 +318,8 @@ impl AndroidTarget {
         // zip via the JDK `jar` (no separate `zip` dependency; `-M` keeps jar from
         // injecting a MANIFEST.MF that would collide with apksigner's signing block).
         run_tool(
-            std::process::Command::new(sdk.jar())
-                .current_dir(work.join("staging"))
+            Spawn::new(Program::os(sdk.jar()))
+                .cwd(&PathText::from_os(&work.join("staging")))
                 .arg("--update")
                 .arg("--no-manifest")
                 .arg("--file")
@@ -329,7 +330,7 @@ impl AndroidTarget {
 
         let aligned = work.join("aligned.apk");
         run_tool(
-            std::process::Command::new(sdk.zipalign())
+            Spawn::new(Program::os(sdk.zipalign()))
                 .arg("-f")
                 .arg("-p")
                 .arg("4")
@@ -340,7 +341,7 @@ impl AndroidTarget {
 
         let keystore = ensure_debug_keystore(sdk, crate_dir)?;
         run_tool(
-            std::process::Command::new(sdk.apksigner())
+            Spawn::new(Program::os(sdk.apksigner()))
                 .arg("sign")
                 .arg("--ks")
                 .arg(&keystore)
@@ -366,7 +367,7 @@ fn ensure_debug_keystore(sdk: &AndroidSdk, crate_dir: &Path) -> Result<PathBuf, 
         return Ok(keystore);
     }
     run_tool(
-        std::process::Command::new(sdk.keytool())
+        Spawn::new(Program::os(sdk.keytool()))
             .arg("-genkeypair")
             .arg("-keystore")
             .arg(&keystore)
@@ -459,9 +460,9 @@ impl AndroidSdk {
 }
 
 /// Run an SDK/JDK tool, mapping a non-zero exit to a message with the stderr tail.
-fn run_tool(cmd: &mut std::process::Command, name: &str) -> Result<(), String> {
+fn run_tool(mut cmd: Spawn, name: &str) -> Result<(), String> {
     let out = cmd
-        .output()
+        .run(b"")
         .map_err(|e| format!("loft: cannot run {name}: {e}"))?;
     if out.status.success() {
         return Ok(());

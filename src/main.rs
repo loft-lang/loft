@@ -44,6 +44,7 @@ mod native_utils;
 use loft::file_access;
 use loft::parser;
 use loft::platform;
+use loft::platform::process::{Program, Spawn};
 use loft::scopes;
 use loft::state;
 mod test_runner;
@@ -4630,9 +4631,9 @@ fn cache_warm(argv: &[String], from: usize) {
     //    A missing target is a skip, not a failure: a box without that target has no wasm test
     //    to warm for. `HtmlThreads` is deliberately absent — it needs a nightly `-Z build-std`,
     //    which is far too big a thing to start implicitly before a test run.
-    let installed = std::process::Command::new("rustup")
+    let installed = Spawn::new(Program::search("rustup"))
         .args(["target", "list", "--installed"])
-        .output()
+        .run(b"")
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
@@ -10121,9 +10122,8 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        let mut cmd = std::process::Command::new("rustc");
-        loft::platform::dies_with_driver(&mut cmd, false);
-        cmd.arg("--edition=2024")
+        let mut cmd = Spawn::new(Program::search("rustc"))
+            .arg("--edition=2024")
             .arg("--target")
             .arg("wasm32-wasip2")
             .arg("--crate-type")
@@ -10138,12 +10138,13 @@ fn main() {
         let wasm_deps_dir = if let Some(lib_dir) =
             native_utils::ensure_loft_runtime_rlib(native_utils::WasmRuntimeShape::Wasi)
         {
-            cmd.args(loft::native_lib::loft_extern_args(
+            cmd.push_args(loft::native_lib::loft_extern_args(
                 &lib_dir.join("libloft.rlib"),
             ));
             let search = native_utils::dep_search_dirs(&lib_dir);
             for d in &search {
-                cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", d.display()));
             }
             search.first().cloned()
         } else {
@@ -10393,22 +10394,22 @@ fn main() {
         // threaded runtime + its atomics std come from nightly (only `-Z
         // build-std` can produce that std).  So the link runs on nightly too.
         let mut cmd = native_utils::wasm_rustc(atomics_sysroot.as_deref());
-        loft::platform::dies_with_driver(&mut cmd, false);
-        cmd.arg("--edition=2024")
-            .arg("--target")
-            .arg("wasm32-unknown-unknown")
-            .arg("--crate-type")
-            .arg("cdylib")
-            .arg("-O")
-            .arg("-o")
-            .arg(&wasm_path)
-            .arg(&rs_path);
+        cmd.push_arg("--edition=2024")
+            .push_arg("--target")
+            .push_arg("wasm32-unknown-unknown")
+            .push_arg("--crate-type")
+            .push_arg("cdylib")
+            .push_arg("-O")
+            .push_arg("-o")
+            .push_arg(&wasm_path)
+            .push_arg(&rs_path);
         if let Some(lib_dir) = html_runtime_dir.clone() {
-            cmd.args(loft::native_lib::loft_extern_args(
+            cmd.push_args(loft::native_lib::loft_extern_args(
                 &lib_dir.join("libloft.rlib"),
             ));
             for d in native_utils::dep_search_dirs(&lib_dir) {
-                cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", d.display()));
             }
             // W1.1 env fix: libloft.rlib depends on wasm-bindgen, which pulls
             // in the proc-macro crate wasm_bindgen_macro.  Proc-macros are
@@ -10421,7 +10422,8 @@ fn main() {
             if let Some(host_lib_dir) = loft_lib_dir_for(None) {
                 for d in native_utils::dep_search_dirs(&host_lib_dir) {
                     if fa::is_dir(&d) {
-                        cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                        cmd.push_arg("-L")
+                            .push_arg(format!("dependency={}", d.display()));
                     }
                 }
             }
@@ -10505,15 +10507,14 @@ fn main() {
                 // staleness question is delegated wholesale to cargo, which is correct (it is
                 // the tool that knows) but means the cost is invisible from loft's side.  Name
                 // it in the report so a slow `--html` says which bridge is paying.
-                let mut dep_build = std::process::Command::new("cargo");
-                loft::platform::dies_with_driver(&mut dep_build, false);
+                let mut dep_build = Spawn::new(Program::search("cargo"));
                 dep_build
-                    .arg("build")
-                    .arg("--release")
-                    .arg("--target")
-                    .arg("wasm32-unknown-unknown")
-                    .arg("--manifest-path")
-                    .arg(synth_dir.join("Cargo.toml"));
+                    .push_arg("build")
+                    .push_arg("--release")
+                    .push_arg("--target")
+                    .push_arg("wasm32-unknown-unknown")
+                    .push_arg("--manifest-path")
+                    .push_arg(synth_dir.join("Cargo.toml"));
                 let cargo_ok = loft::platform::timing_exec(
                     "cargo",
                     &format!("bridge deps ({crate_ident})"),
@@ -10555,32 +10556,35 @@ fn main() {
             // gets the same compiler and the same std: an atomics rlib and a
             // non-atomics one do not link together.
             let mut build = native_utils::wasm_rustc(atomics_sysroot.as_deref());
-            loft::platform::dies_with_driver(&mut build, false);
             build
-                .arg("--edition=2024")
-                .arg("--target")
-                .arg("wasm32-unknown-unknown")
-                .arg("--crate-type")
-                .arg("rlib")
-                .arg("--crate-name")
-                .arg(&crate_ident)
-                .arg("-O")
-                .arg("-o")
-                .arg(&bridge_rlib)
-                .arg(&bridge_src);
+                .push_arg("--edition=2024")
+                .push_arg("--target")
+                .push_arg("wasm32-unknown-unknown")
+                .push_arg("--crate-type")
+                .push_arg("rlib")
+                .push_arg("--crate-name")
+                .push_arg(&crate_ident)
+                .push_arg("-O")
+                .push_arg("-o")
+                .push_arg(&bridge_rlib)
+                .push_arg(&bridge_src);
             if let Some(ref lib_dir) = loft_wasm_lib_dir {
-                build.args(loft::native_lib::loft_extern_args(
+                build.push_args(loft::native_lib::loft_extern_args(
                     &lib_dir.join("libloft.rlib"),
                 ));
                 for d in native_utils::dep_search_dirs(lib_dir) {
                     if fa::is_dir(&d) {
-                        build.arg("-L").arg(format!("dependency={}", d.display()));
+                        build
+                            .push_arg("-L")
+                            .push_arg(format!("dependency={}", d.display()));
                     }
                 }
                 if let Some(host_lib_dir) = loft_lib_dir_for(None) {
                     for d in native_utils::dep_search_dirs(&host_lib_dir) {
                         if fa::is_dir(&d) {
-                            build.arg("-L").arg(format!("dependency={}", d.display()));
+                            build
+                                .push_arg("-L")
+                                .push_arg(format!("dependency={}", d.display()));
                         }
                     }
                 }
@@ -10590,13 +10594,13 @@ fn main() {
             // `-L` the deps dir for their transitive deps.
             for (ident, rlib) in &bridge_externs {
                 build
-                    .arg("--extern")
-                    .arg(format!("{ident}={}", rlib.display()));
+                    .push_arg("--extern")
+                    .push_arg(format!("{ident}={}", rlib.display()));
             }
             if let Some(ref deps) = bridge_dep_search {
                 build
-                    .arg("-L")
-                    .arg(format!("dependency={}", deps.display()));
+                    .push_arg("-L")
+                    .push_arg(format!("dependency={}", deps.display()));
             }
             let status = build.status();
             if !matches!(status, Ok(s) if s.success()) {
@@ -10607,11 +10611,12 @@ fn main() {
                 );
                 std::process::exit(1);
             }
-            cmd.arg("--extern")
-                .arg(format!("{crate_ident}={}", bridge_rlib.display()));
+            cmd.push_arg("--extern")
+                .push_arg(format!("{crate_ident}={}", bridge_rlib.display()));
             // Build-extension: link the bridge crate's Cargo deps into the main wasm.
             if let Some(ref deps) = bridge_dep_search {
-                cmd.arg("-L").arg(format!("dependency={}", deps.display()));
+                cmd.push_arg("-L")
+                    .push_arg(format!("dependency={}", deps.display()));
             }
         }
         let status = cmd.status();
@@ -10661,12 +10666,12 @@ fn main() {
         // Asyncify lets loft_gl_swap_buffers suspend the WASM execution
         // so the browser can render the frame via requestAnimationFrame.
         let opt_path = build_dir.join("prog_opt.wasm");
-        let mut wasm_opt = std::process::Command::new("wasm-opt");
+        let mut wasm_opt = Spawn::new(Program::search("wasm-opt"));
         if threaded {
             // A threaded bundle uses atomics, shared memory and mutable globals;
             // without these wasm-opt rejects the module outright rather than
             // silently dropping anything.
-            wasm_opt.args([
+            wasm_opt.push_args([
                 "--enable-threads",
                 "--enable-bulk-memory",
                 "--enable-mutable-globals",
@@ -10684,7 +10689,7 @@ fn main() {
             ("--strip-debug", &[])
         };
         wasm_opt
-            .args([
+            .push_args([
                 // -O / -Oz plus --asyncify strips the host imports
                 // (loft_gl.*, loft_io.*) entirely — wasm goes from 25
                 // imports to 0 and every GL call runtime-panics as
@@ -10721,10 +10726,10 @@ fn main() {
                 //     only reports what the completed fetch already learned.
                 "--pass-arg=asyncify-imports@loft_gl.loft_gl_swap_buffers,loft_web.ws_yield,loft_io.loft_host_http_get,loft_io.loft_host_http_range",
             ])
-            .args(debuginfo_flags)
-            .arg("-o")
-            .arg(&opt_path)
-            .arg(&wasm_path);
+            .push_args(debuginfo_flags)
+            .push_arg("-o")
+            .push_arg(&opt_path)
+            .push_arg(&wasm_path);
         // loft#1238 — wasm-opt runs unconditionally: `--asyncify` is not an optimisation but
         // the pass that makes frame-yield work at all, so there is no staleness question and
         // nothing to skip.  Named in the report anyway, because a reader looking at a slow
@@ -11629,36 +11634,37 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             let program_has_entry = fa::read_to_string(&emit_path)
                 .map(|src| src.contains("\nfn main(") || src.starts_with("fn main("))
                 .unwrap_or(true);
-            let mut cmd = std::process::Command::new("rustc");
-            loft::platform::dies_with_driver(&mut cmd, false);
-            cmd.env("TMPDIR", &scratch).arg("--edition=2024");
+            let mut cmd = Spawn::new(Program::search("rustc"));
+            cmd.push_env("TMPDIR", &scratch).push_arg("--edition=2024");
             if program_has_entry {
-                cmd.arg("-o").arg(&binary);
+                cmd.push_arg("-o").push_arg(&binary);
             } else {
                 // No `main`: there is no program to link.  Check the crate compiles and
                 // stop — which is what a library asked to build as an executable can
                 // honestly answer, and it keeps `loft build` / `loft check` on a
                 // library-only package a clean pass instead of a raw rustc E0601.
-                cmd.arg("--crate-type=lib")
-                    .arg("--emit=metadata")
-                    .arg("-o")
-                    .arg(scratch.join(format!("loft_native_check_{}.rmeta", std::process::id())));
+                cmd.push_arg("--crate-type=lib")
+                    .push_arg("--emit=metadata")
+                    .push_arg("-o")
+                    .push_arg(
+                        scratch.join(format!("loft_native_check_{}.rmeta", std::process::id())),
+                    );
             }
-            cmd.arg(&emit_path);
+            cmd.push_arg(&emit_path);
             if native_release {
                 // A shipped binary: full optimisation.  Measured on the drawing pass
                 // over `-O`: `hash` −15–20 %, the pixel rows −3–5 %; opt-level 3 alone
                 // and `-C target-cpu=native` moved nothing, so neither is asked for on
                 // its own.  Semantics runs (`--native`, the test runner) keep the
                 // faster compile.
-                cmd.args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
+                cmd.push_args(["-C", "opt-level=3", "-C", "codegen-units=1"]);
             }
             // Layer 1: strip the linked binary (~36MB → ~1MB; the bulk is
             // debug info from libloft.rlib + std).  Skipped when the user
             // asked for debug info (--native-debug) or set
             // LOFT_NATIVE_KEEP_SYMBOLS=1.
             if !native_debug && platform::native_strip_symbols() {
-                cmd.arg("-Cstrip=symbols");
+                cmd.push_arg("-Cstrip=symbols");
             }
             // NDB.0 — when --native-debug is set, emit DWARF debug
             // info so stock GDB / LLDB can step through the native
@@ -11666,7 +11672,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // an optimised build with debug info if both flags are
             // present.
             if native_debug {
-                cmd.arg("-Cdebuginfo=2");
+                cmd.push_arg("-Cdebuginfo=2");
             }
             // P266 follow-up: each native package's rlib carries a copy
             // of `loft_register_v1` (synthesized by the `loft_ffi::loft_register!`
@@ -11695,15 +11701,15 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // once per occurrence, which on the `#c` shim path was three lines of
             // noise directly above the real error. Same reason as macOS: a flag
             // the host linker has no equivalent for is not passed to it.
-            cmd.args(platform::allow_multiple_definition_arg());
+            cmd.push_args(platform::allow_multiple_definition_arg());
             // Point rustc at loft's own runtime rlib and everything it links against,
             // answering the deps dir it found.  A closure rather than straight-line code
             // because the post-compile heal below rebuilds that rlib and must ask AGAIN:
             // the args are decided from what is on disk, and the whole point of the
             // rebuild is to change that (loft#855).
-            let attach_loft_runtime = |cmd: &mut std::process::Command| {
+            let attach_loft_runtime = |cmd: &mut Spawn| {
                 let lib_dir = loft_lib_dir()?;
-                cmd.args(loft::native_lib::loft_extern_args(
+                cmd.push_args(loft::native_lib::loft_extern_args(
                     &lib_dir.join("libloft.rlib"),
                 ));
                 // One `-L` per search dir: the classic layout yields exactly one
@@ -11711,7 +11717,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // 2026-07-29 yields one per crate.  See `dep_search_dirs`.
                 let search = native_utils::dep_search_dirs(&lib_dir);
                 for d in &search {
-                    cmd.arg("-L").arg(format!("dependency={}", d.display()));
+                    cmd.push_arg("-L")
+                        .push_arg(format!("dependency={}", d.display()));
                 }
                 let deps = search
                     .first()
@@ -11724,8 +11731,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 if let Some(ffi) =
                     loft::native_lib::loft_ffi_for_libloft(&lib_dir.join("libloft.rlib"), &deps)
                 {
-                    cmd.arg("--extern")
-                        .arg(format!("loft_ffi={}", ffi.display()));
+                    cmd.push_arg("--extern")
+                        .push_arg(format!("loft_ffi={}", ffi.display()));
                 }
                 // Propagate `-L native=` for every build-script `OUT_DIR`
                 // that bundles a native lib.  Windows-targets ships
@@ -11733,7 +11740,8 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // paths the link step fails with `LNK1181: cannot open
                 // input file 'windows.0.48.5.lib'`.
                 for out_dir in build_script_native_lib_dirs(&lib_dir) {
-                    cmd.arg("-L").arg(format!("native={}", out_dir.display()));
+                    cmd.push_arg("-L")
+                        .push_arg(format!("native={}", out_dir.display()));
                 }
                 Some(deps)
             };
@@ -11758,12 +11766,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // there is no artifact cache to invalidate.  Opt-in, off by default.
             if std::env::var_os("LOFT_NATIVE_ASAN").is_some() {
                 if std::env::var_os("RUSTUP_TOOLCHAIN").is_none() {
-                    cmd.env("RUSTUP_TOOLCHAIN", "nightly");
+                    cmd.push_env("RUSTUP_TOOLCHAIN", "nightly");
                 }
-                cmd.arg("-Zsanitizer=address");
+                cmd.push_arg("-Zsanitizer=address");
             }
             loft::timeout::blocked_on("rustc compiling the program");
-            let output = cmd.output();
+            let output = cmd.run(b"");
             loft::timeout::unblocked();
             let output = match output {
                 Ok(o) => o,
@@ -11840,7 +11848,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 if native_deps_dir.is_none() {
                     native_deps_dir = attach_loft_runtime(&mut cmd);
                 }
-                if let Ok(retry) = cmd.output() {
+                if let Ok(retry) = cmd.run(b"") {
                     output = retry;
                 }
             }

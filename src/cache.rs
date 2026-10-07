@@ -824,12 +824,14 @@ pub fn rustc_mismatch() -> Option<&'static str> {
             if stamp.is_empty() {
                 return None;
             }
-            let live = std::process::Command::new("rustc")
-                .arg("--version")
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            let live = crate::platform::process::Spawn::new(
+                crate::platform::process::Program::search("rustc"),
+            )
+            .arg("--version")
+            .run(b"")
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
             match live {
                 Some(v) if v == stamp => None,
                 Some(v) => Some(format!(

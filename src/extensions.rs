@@ -12,6 +12,7 @@
 
 /// Load all pending native extension libraries.
 #[cfg(feature = "native-extensions")]
+use crate::platform::process::{Program, Spawn};
 use std::collections::HashMap;
 // Every registry this guards is itself `native-extensions`-only, so the import follows the
 // same gate — without it a `--no-default-features` build warns on an unused import, which is
@@ -1585,10 +1586,12 @@ fn local_remap_flags() -> String {
     // The toolchain sysroot first: it lives inside the rustup home and carries
     // the toolchain's own directory NAME, so a build on `stable` and one pinned
     // to an exact version would otherwise still differ.
-    if let Ok(o) = std::process::Command::new(std::env::var("RUSTC").as_deref().unwrap_or("rustc"))
-        .arg("--print")
-        .arg("sysroot")
-        .output()
+    if let Ok(o) = Spawn::new(Program::os(
+        std::env::var("RUSTC").as_deref().unwrap_or("rustc"),
+    ))
+    .arg("--print")
+    .arg("sysroot")
+    .run(b"")
         && o.status.success()
     {
         let root = String::from_utf8_lossy(&o.stdout).trim().to_string();
@@ -2526,14 +2529,13 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     // the install dir.  Factored into a closure so a `--locked` failure can
     // retry without it (below) — the two invocations differ only in that flag.
     let make_cmd = |locked: bool| {
-        let mut cmd = std::process::Command::new("cargo");
-        crate::platform::dies_with_driver(&mut cmd, false);
-        cmd.args(["build", "--release", "--manifest-path"])
+        let mut cmd = Spawn::new(Program::search("cargo"))
+            .args(["build", "--release", "--manifest-path"])
             .arg(&cargo_toml)
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit());
         if locked {
-            cmd.arg("--locked");
+            cmd = cmd.arg("--locked");
         }
         // #274 — build the package crate with the SAME RUSTFLAGS loft's own
         // rlibs used (captured at loft build time), so a shared transitive dep
@@ -2553,17 +2555,18 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
             local_remap_flags(),
             relocatable_dylib_flags(&lib_name)
         );
-        cmd.env("RUSTFLAGS", flags.trim())
+        cmd = cmd
+            .env("RUSTFLAGS", flags.trim())
             .env_remove("CARGO_ENCODED_RUSTFLAGS");
         // No post-link `strip` on macOS — see `relocatable_dylib_flags`.
         for (key, value) in crate::platform::cdylib_build_env() {
-            cmd.env(key, value);
+            cmd = cmd.env(key, value);
         }
         if use_redirected_target {
             if let Some(parent) = target_root.parent() {
                 let _ = crate::file_access::create_dir_all(parent);
             }
-            cmd.env("CARGO_TARGET_DIR", &target_root);
+            cmd = cmd.env("CARGO_TARGET_DIR", &target_root);
         }
         cmd
     };
@@ -2722,9 +2725,8 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
         // A process we waited on just produced it.
         return true;
     }
-    let mut cmd = std::process::Command::new("cargo");
-    crate::platform::dies_with_driver(&mut cmd, false);
-    cmd.args(["build", "--release", "--target", target, "--manifest-path"])
+    let mut cmd = Spawn::new(Program::search("cargo"))
+        .args(["build", "--release", "--target", target, "--manifest-path"])
         .arg(&cargo_toml)
         // Build with CLEAN flags: the host `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS` loft was
         // built with are host-target-specific and would either break the wasm build or
