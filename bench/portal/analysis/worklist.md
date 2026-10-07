@@ -112,7 +112,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | `decode` | 3.6–3.8× | no further lever named |
 | `flow_layout_full` | 3.6× | no further lever named |
 | `draw_bezier` | 3.66× measured on x86-64 (graphics 0.9.8 with the keep-range clause) | under the bar only through S3 (2.3×) |
-| `check_request` | ≈ 5.5×, ≈ 17× aligned | a design: decoded texts and byte strings as views into the frame (§ 6) |
+| `check_request` | ≈ 5.5×, ≈ 17× aligned | decided (C139): `(R-SliceBuild)` and `(R-TextOfSpan)` first (no view, one copy instead of two), then `(R-DecodeView)` — ceiling with no text or byte string built: 3.95 → 2.54 ms (−36 %), formal/rewrites.md |
 | `build_walls` | ≈ 3.3× | no further lever named |
 
 ## 4. Named steps with no price

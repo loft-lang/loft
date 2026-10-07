@@ -252,6 +252,6 @@ stays inside C125: no program holds a view by choice, so the programmer still ne
 between two kinds of value — the compiler proves where a view is the same value.
 
 **Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c139--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
-**Holds at:** to be built — the rewrite that admits a view names `@C139` where it states its
-conditions, and its guard pins the values against the owned form.
+**Holds at:** `@C139` — the rule `(R-DecodeView)` in [formal/rewrites.md](formal/rewrites.md)
+(proposed; its guard, which pins every span's value against the owned form, lands with it).
 **Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)
