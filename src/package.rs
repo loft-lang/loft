@@ -39,11 +39,9 @@
 //! `git` rather than re-implemented; outside a git repo only the hardcoded list
 //! above applies.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 #![cfg(feature = "registry")]
 
-use std::fs;
+use crate::file_access;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
@@ -284,7 +282,7 @@ pub fn package_create(pkg_dir: &Path, out_dir: Option<&Path>) -> io::Result<Pack
     // genuinely content-addressed: the tarball bytes depend only on
     // the file *contents* and the archive paths, nothing else.
     {
-        let tar_gz = fs::File::create(&out_path)?;
+        let tar_gz = file_access::create(&out_path)?;
         let enc = GzBuilder::new()
             .mtime(0)
             .write(tar_gz, Compression::default());
@@ -365,11 +363,7 @@ pub fn git_remote_org_repo(pkg_path: &Path) -> Option<(String, String)> {
 /// `validate.py` only caught it by fetching the url and failing (loft#1083).
 #[must_use]
 pub fn release_url(out: &PackageOutput) -> Option<String> {
-    let tarball_name = out
-        .tarball
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let tarball_name = file_access::file_name(&out.tarball).unwrap_or_default();
     let owner_repo = match out.repository.as_deref() {
         Some(repo) if repo.contains('/') => repo.to_string(),
         Some(repo) => format!("loft-lang/{repo}"),
@@ -386,7 +380,7 @@ pub fn release_url(out: &PackageOutput) -> Option<String> {
 /// tarball-in-progress, so a `loft package` run targeting its own directory does not bundle
 /// the partially-written archive into itself.
 fn add_dir_contents(
-    builder: &mut tar::Builder<GzEncoder<fs::File>>,
+    builder: &mut tar::Builder<GzEncoder<std::fs::File>>,
     src_dir: &Path,
     archive_prefix: &str,
 ) -> io::Result<()> {
@@ -395,7 +389,7 @@ fn add_dir_contents(
 }
 
 fn walk(
-    builder: &mut tar::Builder<GzEncoder<fs::File>>,
+    builder: &mut tar::Builder<GzEncoder<std::fs::File>>,
     root: &Path,
     current: &Path,
     archive_prefix: &str,
@@ -404,14 +398,19 @@ fn walk(
     // Collect + sort entries so the resulting tarball is deterministic
     // across runs (same bytes → same SHA-256, which the publisher's
     // PR-validation script depends on).
-    let mut entries: Vec<fs::DirEntry> = fs::read_dir(current)?.filter_map(Result::ok).collect();
-    entries.sort_by_key(std::fs::DirEntry::file_name);
+    // `read_dir` answers its listing sorted; the names are sorted again as the OS spells
+    // them, the order this archive has always had.
+    let mut names: Vec<std::ffi::OsString> = file_access::read_dir(current)?
+        .iter()
+        .filter_map(file_access::PathText::os_name)
+        .collect();
+    names.sort();
 
-    for entry in entries {
-        let path = entry.path();
-        let file_name = entry.file_name();
+    for file_name in names {
+        // Spelled under `current` as given, so `root` strips off it below.
+        let path = current.join(&file_name);
         let name_str = file_name.to_string_lossy();
-        let file_type = entry.file_type()?;
+        let file_type = file_access::symlink_metadata(&path)?.file_type();
 
         // The shared include rule — git-ignored entries, `EXCLUDED_DIRS` at any depth, and
         // tar artefacts (the tarball being written, and any stale one).  `loft install <dir>`
@@ -435,7 +434,7 @@ fn walk(
             // which copy on-disk mtime + uid + gid — those vary
             // between checkouts (git doesn't preserve mtimes) and
             // would make the tarball non-reproducible.
-            let metadata = path.metadata()?;
+            let metadata = file_access::metadata(&path)?;
             let mut header = tar::Header::new_gnu();
             header.set_size(metadata.len());
             header.set_mode(0o644);
@@ -447,7 +446,7 @@ fn walk(
             // `set_cksum()` must be called LAST — it computes the
             // checksum over every other header byte, so any later
             // mutation invalidates it.
-            let file = fs::File::open(&path)?;
+            let file = file_access::open(&path)?;
             builder.append_data(&mut header, &archive_rel, file)?;
         }
         // Symlinks: skipped here — a symlinked file caught by
@@ -464,7 +463,7 @@ fn walk(
 /// Tarballs in the MVP are typically <100 kB; the in-memory hash is
 /// fine.  Switch to streaming if a publish target exceeds ~10 MB.
 fn hash_file(path: &Path) -> io::Result<(u64, String)> {
-    let mut file = fs::File::open(path)?;
+    let mut file = file_access::open(path)?;
     let mut buf = Vec::new();
     file.read_to_end(&mut buf)?;
     let size = buf.len() as u64;
@@ -553,18 +552,18 @@ mod tests {
     fn tmpdir(name: &str) -> PathBuf {
         let mut p = env::temp_dir();
         p.push(format!("loft_pkg_test_{}_{}", std::process::id(), name));
-        if p.exists() {
-            let _ = fs::remove_dir_all(&p);
+        if file_access::exists(&p) {
+            let _ = file_access::remove_dir_all(&p);
         }
-        fs::create_dir_all(&p).unwrap();
+        file_access::create_dir_all(&p).unwrap();
         p
     }
 
     fn write(path: &Path, content: &str) {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
+            file_access::create_dir_all(parent).unwrap();
         }
-        fs::write(path, content).unwrap();
+        file_access::write(path, content).unwrap();
     }
 
     /// Build a manifest from `[package]` body lines, so each level case differs
@@ -584,7 +583,7 @@ mod tests {
             ),
         );
         let m = crate::manifest::read_manifest(path.to_str().unwrap()).unwrap();
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
         m
     }
 
@@ -702,12 +701,12 @@ mod tests {
         let out = package_create(&pkg, None).expect("package_create");
         assert_eq!(out.name, "hello");
         assert_eq!(out.version, "0.1.0");
-        assert!(out.tarball.exists());
+        assert!(file_access::exists(&out.tarball));
         assert!(out.size > 0);
         assert_eq!(out.sha256.len(), 64);
         assert!(out.sha256.chars().all(|c| c.is_ascii_hexdigit()));
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     /// loft#1083 — `loft package` and `loft publish` must not name different
@@ -783,7 +782,7 @@ mod tests {
         let out = package_create(&pkg, None).expect("package_create");
 
         // Re-open and walk: confirm .git and target are absent.
-        let tar_gz = fs::File::open(&out.tarball).unwrap();
+        let tar_gz = file_access::open(&out.tarball).unwrap();
         let dec = flate2::read::GzDecoder::new(tar_gz);
         let mut ar = tar::Archive::new(dec);
         let mut paths: Vec<String> = Vec::new();
@@ -808,7 +807,7 @@ mod tests {
             "target leaked: {paths:?}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -836,12 +835,12 @@ mod tests {
             .status()
             .is_ok_and(|s| s.success());
         if !git_ok {
-            let _ = fs::remove_dir_all(&dir);
+            let _ = file_access::remove_dir_all(&dir);
             return;
         }
 
         let out = package_create(&pkg, None).expect("package_create");
-        let tar_gz = fs::File::open(&out.tarball).unwrap();
+        let tar_gz = file_access::open(&out.tarball).unwrap();
         let dec = flate2::read::GzDecoder::new(tar_gz);
         let mut ar = tar::Archive::new(dec);
         let mut paths: Vec<String> = Vec::new();
@@ -864,7 +863,7 @@ mod tests {
             "gitignored scratch file leaked into the package: {paths:?}"
         );
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -879,7 +878,7 @@ mod tests {
 
         let a = package_create(&pkg, None).unwrap();
         // Remove the previous tarball so the second run rebuilds.
-        fs::remove_file(&a.tarball).unwrap();
+        file_access::remove_file(&a.tarball).unwrap();
         let b = package_create(&pkg, None).unwrap();
 
         // Tarballs include mtime in headers, so byte-for-byte equality
@@ -894,17 +893,17 @@ mod tests {
         );
         assert_eq!(a.size, b.size);
 
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
     fn fails_when_manifest_missing() {
         let dir = tmpdir("fails_when_manifest_missing");
         let pkg = dir.join("empty");
-        fs::create_dir_all(&pkg).unwrap();
+        file_access::create_dir_all(&pkg).unwrap();
         let err = package_create(&pkg, None).expect_err("should fail");
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     /// loft#667 — a local `loft install <dir>` must carry EXACTLY what the published
@@ -962,7 +961,7 @@ mod tests {
 
         // The tarball path — entry names with the `<pkg>-<version>/` prefix stripped.
         let out = package_create(&pkg, Some(&dir)).expect("package_create");
-        let f = fs::File::open(&out.tarball).expect("open tarball");
+        let f = file_access::open(&out.tarball).expect("open tarball");
         let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(f));
         let mut packaged: Vec<String> = archive
             .entries()
@@ -1006,14 +1005,17 @@ mod tests {
                 "the local install must NOT carry `{unwanted}`"
             );
         }
-        let _ = fs::remove_dir_all(&dir);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     /// Relative paths of every file under `dir`, `/`-separated.
     fn collect_rel(root: &Path, dir: &Path, out: &mut Vec<String>) {
-        for e in fs::read_dir(dir).into_iter().flatten().flatten() {
-            let p = e.path();
-            if p.is_dir() {
+        for e in file_access::read_dir(dir).into_iter().flatten() {
+            let Some(name) = e.os_name() else {
+                continue;
+            };
+            let p = dir.join(name);
+            if file_access::is_dir(&p) {
                 collect_rel(root, &p, out);
             } else if let Ok(rel) = p.strip_prefix(root) {
                 out.push(crate::file_access::portable(rel));
