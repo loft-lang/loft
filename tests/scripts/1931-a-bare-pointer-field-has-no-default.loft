@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @EXPECT_ERROR: field `l: reference<Leaf1931>` is a pointer with no default
+// @EXPECT_ERROR: record `Holder1931` has no default: field `l: reference<Leaf1931>` is a pointer with no default
+//
+// loft#1931, `@FR-D-NoRef` — a bare `reference<T>` has no default: there is no "the null
+// pointer" in a language whose storage is non-null by default, so a record holding one has no
+// default either.  `Holder { n: 3 }` and `q?` both compiled and the field read back null, with
+// no diagnostic, while writing `l: null` out warned that the field is non-null.  Both are now
+// refused, as an omitted bare enum field is (`(D-NoEnumF)`).  The cure each message names,
+// `reference<Leaf>?`, defaults to null — `issue_328_reference_self_recursive_walk` and the
+// `(D-Opt)` cells pin that side.
+
+struct Leaf1931 { v: integer }
+struct Holder1931 { n: integer, l: reference<Leaf1931> }
+
+fn main() {
+  h = Holder1931 { n: 3 };
+  q: Holder1931? = null;
+  d = q?;
+  println("{h.n} {d.n}");
+}
