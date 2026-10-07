@@ -274,8 +274,9 @@ result 15 %, the palette scan 12 %.
 
 ### pluginabi `check_request` — the decode it shares, and the texts
 
-`(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  What is left is the § above:
-`pa_get` answers a deep copy of the entry it found (`(R-ViewReturn)`, −10 % priced), its key
+`(R-Destination)` took it 3.87 → 3.11 ms (12.0× → 9.4×).  **`(R-ViewReturn)` built** (211d5055e):
+the routine's total 62.6 → 53.7 ms alone on one core (−14 %, against −10 % priced).  What was
+left before it is the § above: `pa_get` answered a deep copy of the entry it found, its key
 compares copy each key, `pa_text` copies the value twice more, and `decode` still claims,
 fills and frees four texts and two byte strings per frame the twin never materialises —
 `(R-DecodeView)` (@C139), whose ceiling was measured at 3.95 → 2.54 ms (−36 %).
