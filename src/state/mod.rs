@@ -6703,7 +6703,7 @@ impl State {
         if let Some(p) = self.source_loc_for(at)
             && p.line != 0
         {
-            return Some(p.clone());
+            return Some(*p);
         }
         let line = self
             .line_numbers

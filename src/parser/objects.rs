@@ -497,7 +497,7 @@ impl Parser {
         // for a qualified `lib::f(…)` — the occurrence a hover or a rename resolves, and where
         // a diagnostic about the call points (@PLN183: hovering `dbl` in `demo::dbl(2)` found
         // nothing, the recorded span covering `dem` instead).
-        let mut call_pos = name_pos.clone();
+        let mut call_pos = *name_pos;
         let qualified = self.lexer.has_token("::");
         let nm = if qualified {
             source = self.data.get_source(name);

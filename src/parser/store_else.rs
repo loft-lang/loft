@@ -41,7 +41,7 @@ impl Parser {
     /// arm and rewrite `n` into the lowering above.  A statement that is no store is refused,
     /// naming the cure; the arm is still parsed so the block reads on.
     pub(crate) fn parse_store_else(&mut self, n: &mut Value) {
-        let at = self.lexer.pos().clone();
+        let at = *self.lexer.pos();
         self.lexer.token("else");
         let mut arm = Value::Null;
         // The arm is a branch that may not run, bracketed like an `if` with no `else`: a

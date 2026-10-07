@@ -3341,7 +3341,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             return Type::Null;
         };
         let src_id = if destructure_names.is_some() {
-            let pos = self.lexer.peek().position.clone();
+            let pos = self.lexer.peek().position;
             format!("__destructure_t_{}_{}", pos.line, pos.pos)
         } else if let Some(id) = self.lexer.has_identifier() {
             id
