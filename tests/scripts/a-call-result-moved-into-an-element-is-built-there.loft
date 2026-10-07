@@ -108,6 +108,26 @@ fn texts(v: Val) -> text {
   }
 }
 
+/// The live record count `store_memory()` reports: no value of this program depends on it,
+/// so a release a failing path skips shows here and nowhere else.
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+/// Every prefix of the map frame, every result discarded.
+fn map_sweep(m: vector<u8>, rounds: integer) -> integer {
+  ok = 0;
+  for _ in 0..rounds {
+    for l in 0..len(m) + 1 { if dv(m[0..l], 0).ok { ok += 1; } }
+  }
+  ok
+}
+
 fn main() {
   // c1 — [5, [7, 8], 9]: 29 across four integers, the whole frame read.
   b1: vector<u8> = [203, 5, 202, 7, 8, 9];
@@ -154,6 +174,15 @@ fn main() {
   ok7 = 0;
   for l in 0..11 { if dv(m6[0..l], 0).ok { ok7 += 1; } }
   assert(ok7 == 1, "c7: {ok7}");
+
+  // c8 — the failing prefixes leave nothing behind: after a warm-up the live record count
+  // stands still however many more rounds run (a key built into an element whose value then
+  // failed, and not released, would add records every round).
+  _ = map_sweep(m6, 5);
+  r1 = live_records();
+  _ = map_sweep(m6, 40);
+  r2 = live_records();
+  assert(r1 > 0 && r2 == r1, "c8: {r1} -> {r2}");
 
   // c5 — the record whose moved field is not first answers the same (and is not admitted).
   w1 = dw(b1, 0);
