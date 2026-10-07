@@ -41,8 +41,6 @@
 //! An entry that names no digest leaves question 3 **unanswered, and says so**; it is
 //! never reported as a pass.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::path::{Path, PathBuf};
 
 /// What one check found.  `Skipped` is not a failure: a dev tree legitimately has no
@@ -143,7 +141,7 @@ pub fn check_manifest(root: &Path, manifest_text: &str, label: &str) -> Check {
             continue;
         }
         let path = root.join(rel);
-        match std::fs::read(&path) {
+        match crate::file_access::read(&path) {
             Ok(bytes) => {
                 if crate::integrity::verify_sha256(&bytes, want).is_err() {
                     bad.push(rel.clone());
@@ -205,7 +203,7 @@ pub fn bundle_root(exe: &Path) -> Option<PathBuf> {
 /// or a cache, and these are the checks that work with neither.
 #[must_use]
 pub fn local_checks(root: &Path, loaded_stdlib: Option<&Path>) -> Vec<Check> {
-    let Ok(text) = std::fs::read_to_string(root.join(MANIFEST)) else {
+    let Ok(text) = crate::file_access::read_to_string(root.join(MANIFEST)) else {
         return vec![Check::Skipped(format!(
             "no {MANIFEST} beside the binary — not a release bundle"
         ))];
@@ -253,7 +251,7 @@ fn check_loaded_stdlib(root: &Path, manifest_text: &str, loaded: &Path) -> Check
         if manifest_path_escapes(rel) {
             continue;
         }
-        match std::fs::read(loaded.join(name)) {
+        match crate::file_access::read(loaded.join(name)) {
             Ok(bytes) => {
                 if crate::integrity::verify_sha256(&bytes, want).is_err() {
                     bad.push(name.to_string());
@@ -312,18 +310,20 @@ fn check_no_extra_stdlib(root: &Path, manifest_text: &str) -> Check {
     if listed.is_empty() {
         return Check::Skipped("stdlib set: the manifest lists no default/ files".to_string());
     }
-    let Ok(read) = std::fs::read_dir(root.join("default")) else {
+    let Ok(read) = crate::file_access::read_dir(root.join("default")) else {
         // `check_manifest` already reports the listed files as missing; one unreadable
         // directory should not be announced twice.
         return Check::Skipped("stdlib set: no default/ directory".to_string());
     };
     let mut extra: Vec<String> = Vec::new();
-    for entry in read.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("loft") {
+    for entry in read {
+        // A name that is not text cannot be listed in the manifest's text either.
+        if entry.last_is_unspellable()
+            || crate::file_access::extension(&entry).as_deref() != Some("loft")
+        {
             continue;
         }
-        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+        if let Some(name) = entry.file_name()
             && !listed.contains(name)
         {
             extra.push(name.to_string());
@@ -348,7 +348,7 @@ fn check_no_extra_stdlib(root: &Path, manifest_text: &str) -> Check {
 /// same for everything it lists (which [`check_manifest`] then verifies on disk).
 #[must_use]
 pub fn manifest_digest(root: &Path) -> Option<String> {
-    std::fs::read(root.join(MANIFEST))
+    crate::file_access::read(root.join(MANIFEST))
         .ok()
         .map(|b| crate::integrity::sha256_hex(&b))
 }
@@ -422,16 +422,16 @@ mod tests {
 
     fn write(dir: &Path, rel: &str, body: &str) {
         let p = dir.join(rel);
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, body).unwrap();
+        crate::file_access::create_dir_all(p.parent().unwrap()).unwrap();
+        crate::file_access::write(p, body).unwrap();
     }
 
     fn scratch(name: &str) -> PathBuf {
         let d = std::env::temp_dir()
             .join("loft-verify-self-tests")
             .join(name);
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        let _ = crate::file_access::remove_dir_all(&d);
+        crate::file_access::create_dir_all(&d).unwrap();
         d
     }
 
@@ -573,7 +573,7 @@ mod tests {
     fn bundle(name: &str) -> PathBuf {
         let d = scratch(name);
         write(&d, "default/01_code.loft", "fn a() {}\n");
-        std::fs::write(
+        crate::file_access::write(
             d.join(MANIFEST),
             format!(
                 "{}  default/01_code.loft\n",
@@ -636,7 +636,7 @@ mod tests {
         assert!(msg.contains("not traced to a signature"), "{msg}");
 
         // Non-vacuity: the digest is of the manifest, so editing it changes the answer.
-        std::fs::write(d.join(MANIFEST), "0000  default/01_code.loft\n").unwrap();
+        crate::file_access::write(d.join(MANIFEST), "0000  default/01_code.loft\n").unwrap();
         assert!(check_anchor(&d, Some(&digest)).failed());
     }
 
