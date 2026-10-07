@@ -4,8 +4,6 @@
 
 //! Native compilation utilities: rlib management, cache keys, artifact paths.
 
-// @PLN184 A1: not yet through `file_access` — this allow only goes (src/file_access/clippy_allow.baseline).
-#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 use std::env;
 pub(crate) fn with_trailing_sep(p: &std::path::Path) -> String {
     let mut s = p.to_str().unwrap_or("").to_string();
@@ -54,17 +52,17 @@ pub(crate) fn loft_lib_dir_for_shaped(
                     .join("release"),
                 None => dir.join("target").join(triple).join("release"),
             };
-            if candidate.join("libloft.rlib").exists() {
+            if crate::file_access::exists(candidate.join("libloft.rlib")) {
                 return Some(candidate);
             }
             // Installed layout: <prefix>/share/loft/[<shape>/]<triple>/
-            if dir.file_name().is_some_and(|n| n == "bin") {
+            if crate::file_access::file_name(&dir).is_some_and(|n| n == "bin") {
                 let base = dir.parent()?.join("share").join("loft");
                 let share = match shape_subdir {
                     Some(sub) => base.join(sub).join(triple),
                     None => base.join(triple),
                 };
-                if share.join("libloft.rlib").exists() {
+                if crate::file_access::exists(share.join("libloft.rlib")) {
                     return Some(share);
                 }
             }
@@ -82,16 +80,16 @@ pub(crate) fn loft_lib_dir_for_shaped(
     // failing every `--native` compile with E0433).  Keep the ordering aligned
     // with `cache::rlib_candidates` and `native_lib::find_loft_rlib`.
     let deps = exe_dir.join("deps");
-    if deps.join("libloft.rlib").exists() {
+    if crate::file_access::exists(deps.join("libloft.rlib")) {
         return Some(deps);
     }
-    if exe_dir.join("libloft.rlib").exists() {
+    if crate::file_access::exists(exe_dir.join("libloft.rlib")) {
         return Some(exe_dir.clone());
     }
     // Installed as <prefix>/bin/loft — look in <prefix>/share/loft/.
-    if exe_dir.file_name()? == "bin" {
+    if crate::file_access::file_name(&exe_dir)? == "bin" {
         let share = exe_dir.parent()?.join("share").join("loft");
-        if share.join("libloft.rlib").exists() {
+        if crate::file_access::exists(share.join("libloft.rlib")) {
             return Some(share);
         }
     }
@@ -111,7 +109,7 @@ pub(crate) fn loft_source_tree() -> Option<std::path::PathBuf> {
     loop {
         // loft's own manifest carries `name = "loft"`; a consumer crate that
         // merely depends on loft would not, so this never misfires on a user tree.
-        if std::fs::read_to_string(dir.join("Cargo.toml"))
+        if crate::file_access::read_to_string(dir.join("Cargo.toml"))
             .is_ok_and(|t| t.contains("name = \"loft\""))
         {
             return Some(dir);
@@ -355,7 +353,8 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     let rlib = profile_dir.join("libloft.rlib");
     let fp = loft::cache::loft_build_fingerprint();
     let fresh = |dir: &std::path::Path| {
-        dir.join("libloft.rlib").exists() && loft::cache::runtime_fingerprint_matches(dir, fp)
+        crate::file_access::exists(dir.join("libloft.rlib"))
+            && loft::cache::runtime_fingerprint_matches(dir, fp)
     };
     if fresh(&profile_dir) {
         crate::platform::timing_record("wasmrlib", shape.name(), true, None);
@@ -368,7 +367,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     // `loft_build_fingerprint` is a content hash of libloft.rlib / the loft executable, so this
     // is not tunable by the caller; it is the price of the correctness guarantee that a codegen
     // change reaches an already-built artifact.
-    let why = if rlib.exists() {
+    let why = if crate::file_access::exists(&rlib) {
         "loft's own build fingerprint moved (loft was rebuilt) — rlib is stale"
     } else {
         "no rlib for this shape yet — first build on this checkout"
@@ -376,18 +375,20 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
     if env::var_os("LOFT_NO_AUTO_REBUILD").is_some() {
         // Opt-out (CI / interpreter-preferring users): link whatever rlib is
         // present rather than trigger an implicit cargo build.
-        return rlib.exists().then_some(profile_dir);
+        return crate::file_access::exists(&rlib).then_some(profile_dir);
     }
     // Serialise cross-process builds on the SAME global lock the package
     // auto-build uses, so parallel `loft` invocations (e.g. the concurrent
     // html_wasm / html_asyncify test binaries) don't race cargo's shared registry
     // index/cache or each other's output dir.
-    let _build_lock = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join("loft-native-build.lock"))
-        .ok();
+    let _build_lock = crate::file_access::open_with(
+        std::env::temp_dir().join("loft-native-build.lock"),
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false),
+    )
+    .ok();
     if let Some(f) = &_build_lock {
         // loft#1238 — the wait is timed separately from the build.  Under a parallel test
         // runner every wasm-shaped process reaches this lock at once after a loft rebuild, so
@@ -420,7 +421,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
                  finished.",
                 waited.as_secs_f64()
             );
-            return rlib.exists().then_some(profile_dir);
+            return crate::file_access::exists(&rlib).then_some(profile_dir);
         }
     }
     if fresh(&profile_dir) {
@@ -475,11 +476,15 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
         cmd.arg("--target-dir").arg(tree.join(sub));
     }
     let subject = format!("libloft.rlib ({triple})");
-    let modified = || std::fs::metadata(&rlib).and_then(|m| m.modified()).ok();
+    let modified = || {
+        crate::file_access::metadata(&rlib)
+            .and_then(|m| m.modified())
+            .ok()
+    };
     let before = modified();
     let status = crate::platform::timing_exec("cargo", &subject, why, || cmd.status());
     match status {
-        Ok(s) if s.success() && rlib.exists() => {
+        Ok(s) if s.success() && crate::file_access::exists(&rlib) => {
             // An unchanged rlib means cargo found it current for this source tree: this
             // loft build joins the ones it serves rather than evicting them.
             let rebuilt = before.is_none() || modified() != before;
@@ -494,7 +499,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
             if shape.needs_atomics_std() {
                 eprintln!("{}", ATOMICS_STD_TOOLCHAIN_HINT);
             }
-            rlib.exists().then_some(profile_dir)
+            crate::file_access::exists(&rlib).then_some(profile_dir)
         }
         Err(e) => {
             eprintln!(
@@ -504,7 +509,7 @@ pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::p
             if shape.needs_atomics_std() {
                 eprintln!("{}", ATOMICS_STD_TOOLCHAIN_HINT);
             }
-            rlib.exists().then_some(profile_dir)
+            crate::file_access::exists(&rlib).then_some(profile_dir)
         }
     }
 }
@@ -603,16 +608,16 @@ fn assemble_atomics_sysroot(
         .join("rustlib")
         .join("wasm32-unknown-unknown")
         .join("lib");
-    std::fs::create_dir_all(&lib_dir)?;
+    crate::file_access::create_dir_all(&lib_dir)?;
     let mut read_any = false;
     for deps in dep_dirs {
-        let Ok(entries) = std::fs::read_dir(deps) else {
+        let Ok(entries) = crate::file_access::read_dir(deps) else {
             continue;
         };
         read_any = true;
-        for entry in entries.flatten() {
-            let src = entry.path();
-            if src.extension().is_none_or(|e| e != "rlib") {
+        for entry in entries {
+            let src = entry.os_spelling();
+            if crate::file_access::extension(&src).is_none_or(|e| e != "rlib") {
                 continue;
             }
             // The `.rmeta` beside it comes too.  A toolchain that stops embedding full
@@ -629,22 +634,22 @@ fn assemble_atomics_sysroot(
             // neighbour in the directory — so a stale `.rmeta` from another build cannot
             // be adopted by a fresh rlib.
             copy_sibling_rmeta(&src, &lib_dir)?;
-            let Some(name) = src.file_name() else {
+            let Some(name) = crate::file_access::file_name(&src) else {
                 continue;
             };
             // loft's own rlibs stay out: the link names them with `--extern` and
             // `-L dependency=`, and a third copy on the sysroot search path is how
             // rustc ends up reporting multiple candidates for one crate.
-            if name.to_string_lossy().starts_with("libloft") {
+            if name.starts_with("libloft") {
                 continue;
             }
             let dst = lib_dir.join(name);
-            let same = std::fs::metadata(&dst)
+            let same = crate::file_access::metadata(&dst)
                 .ok()
-                .zip(entry.metadata().ok())
+                .zip(crate::file_access::symlink_metadata(&entry).ok())
                 .is_some_and(|(a, b)| a.len() == b.len());
             if !same {
-                std::fs::copy(&src, &dst)?;
+                crate::file_access::copy(&src, &dst)?;
             }
         }
     }
@@ -672,20 +677,20 @@ fn assemble_atomics_sysroot(
 /// metadata in the rlib writes no separate `.rmeta`, and the sysroot is complete
 /// without it.
 fn copy_sibling_rmeta(rlib: &std::path::Path, lib_dir: &std::path::Path) -> std::io::Result<()> {
-    let meta = rlib.with_extension("rmeta");
-    let Some(name) = meta.file_name() else {
+    let meta = crate::file_access::with_extension(rlib, "rmeta");
+    let Some(name) = crate::file_access::file_name(&meta) else {
         return Ok(());
     };
-    if !meta.is_file() {
+    if !crate::file_access::is_file(&meta) {
         return Ok(());
     }
     let dst = lib_dir.join(name);
-    let same = std::fs::metadata(&dst)
+    let same = crate::file_access::metadata(&dst)
         .ok()
-        .zip(std::fs::metadata(&meta).ok())
+        .zip(crate::file_access::metadata(&meta).ok())
         .is_some_and(|(a, b)| a.len() == b.len());
     if !same {
-        std::fs::copy(&meta, &dst)?;
+        crate::file_access::copy(&meta, &dst)?;
     }
     Ok(())
 }
@@ -714,7 +719,7 @@ fn copy_sibling_rmeta(rlib: &std::path::Path, lib_dir: &std::path::Path) -> std:
 /// the fallback engages only when `deps/` is genuinely absent.
 pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let classic = deps_dir_of(lib_dir);
-    if classic.is_dir() {
+    if crate::file_access::is_dir(&classic) {
         return vec![classic];
     }
     // Per-unit: <profile>/build/<crate>/<hash>/out/.  Only directories that actually
@@ -727,22 +732,20 @@ pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathB
     // same error one crate later, which reads like the fix not working at all.
     let build_root = lib_dir.join("build");
     let mut dirs = Vec::new();
-    if let Ok(crates) = std::fs::read_dir(&build_root) {
-        for c in crates.flatten() {
-            let Ok(hashes) = std::fs::read_dir(c.path()) else {
+    if let Ok(crates) = crate::file_access::read_dir(&build_root) {
+        for c in crates {
+            let Ok(hashes) = crate::file_access::read_dir(&c) else {
                 continue;
             };
-            for h in hashes.flatten() {
-                let out = h.path().join("out");
-                if std::fs::read_dir(&out).is_ok_and(|rd| {
-                    rd.flatten().any(|f| {
-                        std::path::Path::new(&f.file_name())
-                            .extension()
-                            .is_some_and(|e| {
-                                ["rlib", "so", "dylib", "dll"]
-                                    .iter()
-                                    .any(|k| e.eq_ignore_ascii_case(k))
-                            })
+            for h in hashes {
+                let out = h.os_spelling().join("out");
+                if crate::file_access::read_dir(&out).is_ok_and(|rd| {
+                    rd.iter().any(|f| {
+                        f.extension().is_some_and(|e| {
+                            ["rlib", "so", "dylib", "dll"]
+                                .iter()
+                                .any(|k| e.eq_ignore_ascii_case(k))
+                        })
                     })
                 }) {
                     dirs.push(out);
@@ -759,7 +762,7 @@ pub(crate) fn dep_search_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathB
 }
 
 pub(crate) fn deps_dir_of(lib_dir: &std::path::Path) -> std::path::PathBuf {
-    if lib_dir.file_name().is_some_and(|n| n == "deps") {
+    if crate::file_access::file_name(lib_dir).is_some_and(|n| n == "deps") {
         lib_dir.to_path_buf()
     } else {
         lib_dir.join("deps")
@@ -783,7 +786,7 @@ pub(crate) fn deps_dir_of(lib_dir: &std::path::Path) -> std::path::PathBuf {
 /// `lib_dir` is either `target/<profile>/` or `target/<profile>/deps/`
 /// — both resolve to the same parent build root.
 pub(crate) fn build_script_native_lib_dirs(lib_dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let target_profile = if lib_dir.file_name().is_some_and(|n| n == "deps") {
+    let target_profile = if crate::file_access::file_name(lib_dir).is_some_and(|n| n == "deps") {
         match lib_dir.parent() {
             Some(p) => p,
             None => return Vec::new(),
@@ -794,12 +797,12 @@ pub(crate) fn build_script_native_lib_dirs(lib_dir: &std::path::Path) -> Vec<std
     let build_root = target_profile.join("build");
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&build_root) else {
+    let Ok(entries) = crate::file_access::read_dir(&build_root) else {
         return out;
     };
-    for entry in entries.flatten() {
-        let output_path = entry.path().join("output");
-        let Ok(text) = std::fs::read_to_string(&output_path) else {
+    for entry in entries {
+        let output_path = entry.os_spelling().join("output");
+        let Ok(text) = crate::file_access::read_to_string(&output_path) else {
             continue;
         };
         for line in text.lines() {
@@ -844,7 +847,7 @@ pub(crate) fn ensure_rlib_fresh() {
     // "could not find Cargo.toml" error.  Gate the whole thing on a
     // `Cargo.toml` in cwd: `cargo build --lib` needs one there anyway, so if
     // absent we are not in the loft source root — use the shipped rlib as-is.
-    if !std::path::Path::new("Cargo.toml").exists() {
+    if !crate::file_access::exists("Cargo.toml") {
         return;
     }
     let Some(lib_dir) = loft_lib_dir() else {
@@ -855,7 +858,7 @@ pub(crate) fn ensure_rlib_fresh() {
         return;
     };
     let rlib = lib_dir.join("libloft.rlib");
-    let Ok(rlib_mtime) = std::fs::metadata(&rlib).and_then(|m| m.modified()) else {
+    let Ok(rlib_mtime) = crate::file_access::metadata(&rlib).and_then(|m| m.modified()) else {
         return;
     };
     // Walk src/ for the newest .rs file.
@@ -874,14 +877,14 @@ pub(crate) fn ensure_rlib_fresh() {
 /// Return the newest modification time of any file under `dir` (recursive).
 pub(crate) fn newest_mtime_in(dir: &str) -> Option<std::time::SystemTime> {
     fn walk(path: &std::path::Path, best: &mut Option<std::time::SystemTime>) {
-        let Ok(entries) = std::fs::read_dir(path) else {
+        let Ok(entries) = crate::file_access::read_dir(path) else {
             return;
         };
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
+        for entry in entries {
+            let p = entry.os_spelling();
+            if crate::file_access::is_dir(&p) {
                 walk(&p, best);
-            } else if let Ok(m) = p.metadata().and_then(|m| m.modified()) {
+            } else if let Ok(m) = crate::file_access::metadata(&p).and_then(|m| m.modified()) {
                 *best = Some(best.map_or(m, |b: std::time::SystemTime| b.max(m)));
             }
         }
@@ -981,7 +984,7 @@ fn fold_file_content(key: &mut u64, path: &std::path::Path, expected: bool) {
         if let Some(&h) = guard.get(path) {
             h
         } else {
-            let h = match std::fs::read(path) {
+            let h = match crate::file_access::read(path) {
                 Ok(b) => fnv64(&b),
                 // A missing file folds to 0 (a not-yet-built PACKAGE rlib
                 // legitimately contributes nothing).  But when the caller
@@ -1011,9 +1014,7 @@ fn fold_file_content(key: &mut u64, path: &std::path::Path, expected: bool) {
 /// Return true if `s` looks like an explicit output path rather than a flag or loft source file.
 pub(crate) fn is_output_path(s: &str) -> bool {
     !s.starts_with('-')
-        && !std::path::Path::new(s)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("loft"))
+        && !crate::file_access::extension(s).is_some_and(|ext| ext.eq_ignore_ascii_case("loft"))
 }
 
 /// Return (and create) the `.loft/` artifact directory beside `script_path`.
@@ -1023,17 +1024,14 @@ pub(crate) fn loft_artifact_dir(script_path: &str) -> std::path::PathBuf {
         .parent()
         .unwrap_or(std::path::Path::new("."));
     let loft_dir = dir.join(".loft");
-    let _ = std::fs::create_dir_all(&loft_dir);
+    let _ = crate::file_access::create_dir_all(&loft_dir);
     loft_dir
 }
 
 /// Return the default output path for a compiled artifact beside `script_path`.
 /// `ext` is the file extension without leading dot (e.g. `"wasm"`, `"rs"`).
 pub(crate) fn default_artifact_path(script_path: &str, ext: &str) -> std::path::PathBuf {
-    let stem = std::path::Path::new(script_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("out");
+    let stem = crate::file_access::file_stem(script_path).unwrap_or_else(|| "out".to_string());
     loft_artifact_dir(script_path).join(format!("{stem}.{ext}"))
 }
 
@@ -1455,7 +1453,7 @@ pub(crate) fn project_root_for(dir: &std::path::Path) -> String {
         && let Some(prefix) = dir.parent()
     {
         let share_loft = prefix.join("share").join("loft");
-        if share_loft.is_dir() {
+        if crate::file_access::is_dir(&share_loft) {
             return with_trailing_sep(&share_loft);
         }
         return with_trailing_sep(prefix);
@@ -1471,7 +1469,7 @@ pub(crate) fn project_root_for(dir: &std::path::Path) -> String {
     // sweep is the one CI job that builds with `--target`).
     for ancestor in std::iter::successors(Some(dir), |d| d.parent()).take(PROJECT_ROOT_SEARCH_DEPTH)
     {
-        if ancestor.join("default").is_dir() {
+        if crate::file_access::is_dir(ancestor.join("default")) {
             return with_trailing_sep(ancestor);
         }
     }
@@ -1501,7 +1499,7 @@ pub(crate) fn cache_safe_to_execute(path: &std::path::Path) -> bool {
     // target; if the target is owned by the current uid but the
     // link itself isn't, plain metadata() would say "safe" and
     // we'd execute attacker-pointed code.
-    let lmd = match std::fs::symlink_metadata(path) {
+    let lmd = match crate::file_access::symlink_metadata(path) {
         Ok(md) => md,
         Err(_) => return false,
     };
@@ -1539,7 +1537,7 @@ pub(crate) fn cache_safe_to_execute(path: &std::path::Path) -> bool {
 /// it via `tighten_cache_dir` before writing.
 #[must_use]
 pub(crate) fn cache_dir_safe(dir: &std::path::Path) -> bool {
-    let lmd = match std::fs::symlink_metadata(dir) {
+    let lmd = match crate::file_access::symlink_metadata(dir) {
         Ok(md) => md,
         Err(_) => return false,
     };
@@ -1569,7 +1567,7 @@ pub(crate) fn tighten_cache_dir(dir: &std::path::Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        let _ = crate::file_access::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
     let _ = dir;
 }
@@ -1582,7 +1580,7 @@ pub(crate) fn tighten_cache_binary(path: &std::path::Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
+        let _ = crate::file_access::set_permissions(path, std::fs::Permissions::from_mode(0o700));
     }
     let _ = path;
 }
@@ -1610,22 +1608,18 @@ pub(crate) fn publish_cached_binary(
     cache_dir: &std::path::Path,
     source_stem: &str,
 ) {
-    let leaf = cached_binary
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
+    let leaf = crate::file_access::file_name(cached_binary).unwrap_or_default();
     // The leading `.` keeps a staged file out of the sweep's `native-` prefix.
     let staged = cache_dir.join(format!(".{leaf}.{}.tmp", std::process::id()));
-    if std::fs::copy(built, &staged).is_ok() {
+    if crate::file_access::copy(built, &staged).is_ok() {
         // P254 — tighten BEFORE the rename, so the binary is never reachable
         // under its final name with a wider mode.
         tighten_cache_binary(&staged);
-        if std::fs::rename(&staged, cached_binary).is_err() {
-            let _ = std::fs::remove_file(&staged);
+        if crate::file_access::rename(&staged, cached_binary).is_err() {
+            let _ = crate::file_access::remove_file(&staged);
         }
     } else {
-        let _ = std::fs::remove_file(&staged);
+        let _ = crate::file_access::remove_file(&staged);
     }
     // Bound the directory AFTER the publish and never touching the entry just written.
     // Sweeping first deleted the very binary a concurrent run had already accepted as
@@ -1700,14 +1694,14 @@ pub(crate) fn rlibs_in_dir(
     dir: &std::path::Path,
 ) -> std::collections::HashMap<String, std::path::PathBuf> {
     let mut map = std::collections::HashMap::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path
+    if let Ok(entries) = crate::file_access::read_dir(dir) {
+        for entry in entries {
+            if entry
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("rlib"))
             {
-                let fname = entry.file_name().to_string_lossy().to_string();
+                let path = entry.os_spelling();
+                let fname = entry.file_name().unwrap_or_default();
                 if let Some(rest) = fname.strip_prefix("lib") {
                     if let Some(dash_pos) = rest.rfind('-') {
                         map.insert(rest[..dash_pos].to_string(), path);
@@ -1807,9 +1801,8 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
         // Taken from the FILE NAME, never the declared string: a library that
         // ships beside its package is declared as a path (`../../libfoo.so`),
         // and `-l../../libfoo` is not a library name — the linker said so.
-        let file = std::path::Path::new(name)
-            .file_name()
-            .map_or(name.as_str(), |f| f.to_str().unwrap_or(name));
+        let file_name = crate::file_access::file_name(name.as_str());
+        let file = file_name.as_deref().unwrap_or(name.as_str());
         // `.dll` belongs in this chain beside `.so` / `.dylib`: `-l` names the
         // LIBRARY, not the file, and MSVC appends `.lib` to whatever it is given.
         // Leaving the extension on made `-l dylib=sqlite_shim_<hash>.dll` open
@@ -1828,7 +1821,7 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
             .next()
             .unwrap_or(file)
             .to_string();
-        if beside.exists()
+        if crate::file_access::exists(&beside)
             && let Some(parent) = beside.parent()
         {
             cmd.arg("-L").arg(format!("native={}", parent.display()));
@@ -1911,9 +1904,9 @@ pub(crate) fn add_native_extern_flags(
             if let Some(so_dir) = so_path.parent() {
                 // `-l dylib=<name>` derived from the RESOLVED file (strip the `lib`
                 // prefix + extension) so a prebuilt or non-`lib<stem>` cdylib links.
-                let libname = so_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
+                let file_stem = crate::file_access::file_stem(&so_path);
+                let libname = file_stem
+                    .as_deref()
                     .map_or(stem.as_str(), |s| s.strip_prefix("lib").unwrap_or(s));
                 cmd.arg("-L").arg(format!("native={}", so_dir.display()));
                 cmd.arg("-l").arg(format!("dylib={libname}"));
@@ -1933,13 +1926,17 @@ pub(crate) fn add_native_extern_flags(
                     // both are import libs for the same DLL, identical content.
                     let dll_lib = so_dir.join(format!("{libname}.dll.lib"));
                     let plain_lib = so_dir.join(format!("{libname}.lib"));
-                    if dll_lib.exists() && !plain_lib.exists() {
-                        let _ = std::fs::copy(&dll_lib, &plain_lib);
+                    if crate::file_access::exists(&dll_lib)
+                        && !crate::file_access::exists(&plain_lib)
+                    {
+                        let _ = crate::file_access::copy(&dll_lib, &plain_lib);
                     }
                     // Disallow-the-unverifiable-loudly: if NEITHER import-lib name
                     // is present the link would die on an opaque `LNK1181`, so name
                     // it rather than mis-link.
-                    if !plain_lib.exists() && !dll_lib.exists() {
+                    if !crate::file_access::exists(&plain_lib)
+                        && !crate::file_access::exists(&dll_lib)
+                    {
                         eprintln!(
                             "loft: native package `{crate_name}` cdylib at {} has no import \
                              library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
@@ -1982,7 +1979,7 @@ pub(crate) fn add_native_extern_flags(
                 .join("prebuilt")
                 .join(tgt)
                 .join(&rlib_name);
-            if prebuilt.exists() {
+            if crate::file_access::exists(&prebuilt) {
                 prebuilt
             } else {
                 std::path::PathBuf::from(pkg_dir)
@@ -2026,7 +2023,7 @@ pub(crate) fn add_native_extern_flags(
             profile_dir,
             loft::cache::native_artifact_cache_key(),
         );
-        if target.is_none() && (!rlib_path.exists() || stale) {
+        if target.is_none() && (!crate::file_access::exists(&rlib_path) || stale) {
             let stem = crate_name.replace('-', "_");
             let _ = crate::extensions::auto_build_native(pkg_dir, &stem);
         }
@@ -2047,11 +2044,11 @@ pub(crate) fn add_native_extern_flags(
                 .join("prebuilt")
                 .join(tgt)
                 .join(&rlib_name);
-            if !prebuilt.exists() {
+            if !crate::file_access::exists(&prebuilt) {
                 let stem = crate_name.replace('-', "_");
                 crate::extensions::auto_build_native_target(pkg_dir, &stem, tgt);
             }
-            if !rlib_path.exists() {
+            if !crate::file_access::exists(&rlib_path) {
                 eprintln!(
                     "loft: native package `{crate_name}` has no {tgt} build (no prebuilt, and \
                      cross-build unavailable or the crate is not wasm-clean) — ship a prebuilt \
@@ -2059,7 +2056,7 @@ pub(crate) fn add_native_extern_flags(
                 );
             }
         }
-        if rlib_path.exists() {
+        if crate::file_access::exists(&rlib_path) {
             let extern_name = crate_name.replace('-', "_");
             cmd.arg("--extern")
                 .arg(format!("{}={}", extern_name, rlib_path.display()));
@@ -2067,7 +2064,7 @@ pub(crate) fn add_native_extern_flags(
             // resolve. Use `dependency` search scope so these crates are only found as
             // transitive deps of the native crate, not as direct deps.
             let deps_dir = rlib_path.parent().unwrap().join("deps");
-            if deps_dir.is_dir() {
+            if crate::file_access::is_dir(&deps_dir) {
                 cmd.arg("-L")
                     .arg(format!("dependency={}", deps_dir.display()));
                 // Pin any crate that also exists in loft's deps to loft's copy,
@@ -2098,7 +2095,7 @@ pub(crate) fn add_native_extern_flags(
                     .join("target")
                     .join("release")
                     .join("deps");
-                if host_deps.is_dir() {
+                if crate::file_access::is_dir(&host_deps) {
                     cmd.arg("-L")
                         .arg(format!("dependency={}", host_deps.display()));
                 }
@@ -2151,11 +2148,10 @@ pub(crate) fn explain_windows_startup_failure(
          happens before any of your code runs, which is why nothing was printed."
     );
     if let Some(dir) = binary.parent() {
-        let mut staged: Vec<String> = std::fs::read_dir(dir)
+        let mut staged: Vec<String> = crate::file_access::read_dir(dir)
             .into_iter()
             .flatten()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .map(|e| e.file_name().unwrap_or_default().to_string())
             .filter(|n| n.to_ascii_lowercase().ends_with(".dll"))
             .collect();
         staged.sort();
@@ -2209,10 +2205,10 @@ fn stage_c_library_dlls(exe_dir: &std::path::Path, data: &crate::data::Data) {
             continue; // a bare soname — the system's to resolve, not ours to copy
         };
         let src = dir.join(&found);
-        if let Some(name) = src.file_name() {
+        if let Some(name) = crate::file_access::file_name(&src) {
             let dest = exe_dir.join(name);
             if dest != src {
-                let _ = std::fs::copy(&src, &dest);
+                let _ = crate::file_access::copy(&src, &dest);
             }
         }
     }
@@ -2240,10 +2236,10 @@ pub(crate) fn stage_native_dlls(exe_dir: &std::path::Path, data: &crate::data::D
             .unwrap_or_else(|| crate_name.replace('-', "_"));
         if let Some(so) = crate::extensions::resolve_native_lib(pkg_dir, &stem) {
             let so_path = std::path::PathBuf::from(&so);
-            if let Some(name) = so_path.file_name() {
+            if let Some(name) = crate::file_access::file_name(&so_path) {
                 let dest = exe_dir.join(name);
                 if dest != so_path {
-                    let _ = std::fs::copy(&so_path, &dest);
+                    let _ = crate::file_access::copy(&so_path, &dest);
                 }
             }
         }
@@ -2277,10 +2273,10 @@ mod project_root_layouts {
             std::process::id(),
             chrono_ish_nanos()
         ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("default")).unwrap();
+        let _ = crate::file_access::remove_dir_all(&root);
+        crate::file_access::create_dir_all(root.join("default")).unwrap();
         let bin_dir = root.join(rel);
-        std::fs::create_dir_all(&bin_dir).unwrap();
+        crate::file_access::create_dir_all(&bin_dir).unwrap();
         (root, bin_dir)
     }
 
@@ -2293,7 +2289,7 @@ mod project_root_layouts {
                 with_trailing_sep(&root),
                 "{rel} must resolve to the project root"
             );
-            let _ = std::fs::remove_dir_all(&root);
+            let _ = crate::file_access::remove_dir_all(&root);
         }
     }
 
@@ -2312,7 +2308,7 @@ mod project_root_layouts {
                 with_trailing_sep(&root),
                 "{rel} must resolve to the project root, not the binary's own dir"
             );
-            let _ = std::fs::remove_dir_all(&root);
+            let _ = crate::file_access::remove_dir_all(&root);
         }
     }
 
@@ -2327,7 +2323,7 @@ mod project_root_layouts {
                 with_trailing_sep(&root),
                 "{rel} must resolve to the project root"
             );
-            let _ = std::fs::remove_dir_all(&root);
+            let _ = crate::file_access::remove_dir_all(&root);
         }
     }
 
@@ -2337,7 +2333,7 @@ mod project_root_layouts {
     fn binary_beside_the_stdlib_resolves_to_its_own_dir() {
         let (root, _) = layout("beside", "unused");
         assert_eq!(project_root_for(&root), with_trailing_sep(&root));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// No stdlib anywhere above: unchanged fallback to the binary's own dir (the
@@ -2349,9 +2345,9 @@ mod project_root_layouts {
             std::process::id(),
             chrono_ish_nanos()
         ));
-        std::fs::create_dir_all(&dir).unwrap();
+        crate::file_access::create_dir_all(&dir).unwrap();
         assert_eq!(project_root_for(&dir), with_trailing_sep(&dir));
-        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+        let _ = crate::file_access::remove_dir_all(dir.parent().unwrap().parent().unwrap());
     }
 }
 
@@ -2362,7 +2358,7 @@ mod p254_cache_safety {
     #[test]
     fn nonexistent_cache_is_unsafe() {
         let p = std::env::temp_dir().join("loft_p254_does_not_exist_xyz_12345");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
         assert!(!cache_safe_to_execute(&p));
     }
 
@@ -2373,11 +2369,11 @@ mod p254_cache_safety {
             std::process::id(),
             chrono_ish_nanos()
         ));
-        let _ = std::fs::remove_file(&p);
-        std::fs::write(&p, b"#!/bin/sh\necho hi\n").unwrap();
+        let _ = crate::file_access::remove_file(&p);
+        crate::file_access::write(&p, b"#!/bin/sh\necho hi\n").unwrap();
         tighten_cache_binary(&p);
         assert!(cache_safe_to_execute(&p), "owner-only file should be safe");
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     #[cfg(unix)]
@@ -2389,12 +2385,12 @@ mod p254_cache_safety {
             std::process::id(),
             chrono_ish_nanos()
         ));
-        let _ = std::fs::remove_file(&p);
-        std::fs::write(&p, b"x").unwrap();
+        let _ = crate::file_access::remove_file(&p);
+        crate::file_access::write(&p, b"x").unwrap();
         // 0o766 has group write and other rwx — attacker-modifiable.
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o766)).unwrap();
+        crate::file_access::set_permissions(&p, std::fs::Permissions::from_mode(0o766)).unwrap();
         assert!(!cache_safe_to_execute(&p));
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     #[cfg(unix)]
@@ -2410,16 +2406,16 @@ mod p254_cache_safety {
             std::process::id(),
             chrono_ish_nanos()
         ));
-        let _ = std::fs::remove_file(&target);
-        let _ = std::fs::remove_file(&link);
-        std::fs::write(&target, b"x").unwrap();
+        let _ = crate::file_access::remove_file(&target);
+        let _ = crate::file_access::remove_file(&link);
+        crate::file_access::write(&target, b"x").unwrap();
         tighten_cache_binary(&target);
-        std::os::unix::fs::symlink(&target, &link).unwrap();
+        crate::file_access::symlink(&target, &link).unwrap();
         // Even though the symlink TARGET would pass, the link
         // itself routes through `symlink_metadata` and is rejected.
         assert!(!cache_safe_to_execute(&link));
-        let _ = std::fs::remove_file(&link);
-        let _ = std::fs::remove_file(&target);
+        let _ = crate::file_access::remove_file(&link);
+        let _ = crate::file_access::remove_file(&target);
     }
 
     #[cfg(unix)]
@@ -2431,12 +2427,12 @@ mod p254_cache_safety {
             std::process::id(),
             chrono_ish_nanos()
         ));
-        let _ = std::fs::remove_file(&p);
-        std::fs::write(&p, b"x").unwrap();
+        let _ = crate::file_access::remove_file(&p);
+        crate::file_access::write(&p, b"x").unwrap();
         // 0o4700 — owner rwx + setuid bit.
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o4700)).unwrap();
+        crate::file_access::set_permissions(&p, std::fs::Permissions::from_mode(0o4700)).unwrap();
         assert!(!cache_safe_to_execute(&p));
-        let _ = std::fs::remove_file(&p);
+        let _ = crate::file_access::remove_file(&p);
     }
 
     /// Lightweight nanosecond suffix to keep test temp paths
@@ -2593,11 +2589,11 @@ mod atomics_sysroot_tests {
     fn fake_profile_dir(root: &std::path::Path) -> std::path::PathBuf {
         let profile = root.join("wasm32-unknown-unknown").join("release");
         let deps = profile.join("deps");
-        std::fs::create_dir_all(&deps).expect("deps");
-        std::fs::write(deps.join("libcore-abc.rlib"), b"rlib").expect("dep rlib");
+        crate::file_access::create_dir_all(&deps).expect("deps");
+        crate::file_access::write(deps.join("libcore-abc.rlib"), b"rlib").expect("dep rlib");
         // loft's own rlib must be EXCLUDED from the sysroot (duplicate-candidate
         // errors at link time), so seed one to prove the filter still runs.
-        std::fs::write(deps.join("libloft-def.rlib"), b"rlib").expect("loft rlib");
+        crate::file_access::write(deps.join("libloft-def.rlib"), b"rlib").expect("loft rlib");
         profile
     }
 
@@ -2605,20 +2601,24 @@ mod atomics_sysroot_tests {
     #[test]
     fn assembles_next_to_the_target_dir_when_writable() {
         let root = std::env::temp_dir().join(format!("loft_sysroot_dev_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
         let profile = fake_profile_dir(&root);
         let got = ensure_atomics_sysroot(&profile).expect("sysroot assembled");
         assert_eq!(got, root.join("sysroot"), "dev layout must not move");
         let lib = got
             .join("lib/rustlib/wasm32-unknown-unknown/lib")
             .join("libcore-abc.rlib");
-        assert!(lib.exists(), "dep rlib copied into the sysroot");
         assert!(
-            !got.join("lib/rustlib/wasm32-unknown-unknown/lib/libloft-def.rlib")
-                .exists(),
+            crate::file_access::exists(&lib),
+            "dep rlib copied into the sysroot"
+        );
+        assert!(
+            !crate::file_access::exists(
+                got.join("lib/rustlib/wasm32-unknown-unknown/lib/libloft-def.rlib")
+            ),
             "loft's own rlib must stay out of the sysroot"
         );
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = crate::file_access::remove_dir_all(&root);
     }
 
     /// #619 — the installed layout is root-owned, so the derived location cannot
@@ -2629,25 +2629,29 @@ mod atomics_sysroot_tests {
     fn falls_back_to_the_user_cache_when_the_target_dir_is_read_only() {
         use std::os::unix::fs::PermissionsExt;
         let base = std::env::temp_dir().join(format!("loft_sysroot_ro_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = crate::file_access::remove_dir_all(&base);
         let root = base.join("share").join("loft");
         let profile = fake_profile_dir(&root);
         let home = base.join("home");
-        std::fs::create_dir_all(&home).expect("home");
+        crate::file_access::create_dir_all(&home).expect("home");
 
         // Make the derived sysroot parent unwritable — the installed-layout shape.
-        let mut perms = std::fs::metadata(&root).expect("meta").permissions();
+        let mut perms = crate::file_access::metadata(&root)
+            .expect("meta")
+            .permissions();
         perms.set_mode(0o555);
-        std::fs::set_permissions(&root, perms).expect("chmod ro");
+        crate::file_access::set_permissions(&root, perms).expect("chmod ro");
 
         // SAFETY: single-threaded test process; restored below.
         unsafe { std::env::set_var("LOFT_HOME", &home) };
         let got = ensure_atomics_sysroot(&profile);
         unsafe { std::env::remove_var("LOFT_HOME") };
 
-        let mut perms = std::fs::metadata(&root).expect("meta").permissions();
+        let mut perms = crate::file_access::metadata(&root)
+            .expect("meta")
+            .permissions();
         perms.set_mode(0o755);
-        let _ = std::fs::set_permissions(&root, perms);
+        let _ = crate::file_access::set_permissions(&root, perms);
 
         let got = got.expect("must fall back rather than return None");
         assert!(
@@ -2655,11 +2659,12 @@ mod atomics_sysroot_tests {
             "expected the user cache under {home:?}, got {got:?}"
         );
         assert!(
-            got.join("lib/rustlib/wasm32-unknown-unknown/lib/libcore-abc.rlib")
-                .exists(),
+            crate::file_access::exists(
+                got.join("lib/rustlib/wasm32-unknown-unknown/lib/libcore-abc.rlib")
+            ),
             "dep rlib copied into the fallback sysroot"
         );
-        let _ = std::fs::remove_dir_all(&base);
+        let _ = crate::file_access::remove_dir_all(&base);
     }
 }
 
@@ -2821,14 +2826,14 @@ mod dep_search_dirs_tests {
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join("loft-dep-search").join(name);
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        let _ = crate::file_access::remove_dir_all(&d);
+        crate::file_access::create_dir_all(&d).unwrap();
         d
     }
 
     fn touch(p: &std::path::Path) {
-        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        std::fs::write(p, b"x").unwrap();
+        crate::file_access::create_dir_all(p.parent().unwrap()).unwrap();
+        crate::file_access::write(p, b"x").unwrap();
     }
 
     /// The classic layout must keep yielding exactly ONE search dir — the per-unit
@@ -2891,10 +2896,10 @@ mod dep_search_dirs_tests {
 
         super::assemble_atomics_sysroot(&[a, b], &out).expect("assembles from both dirs");
         let lib = out.join("lib/rustlib/wasm32-unknown-unknown/lib");
-        assert!(lib.join("libcore-h1.rlib").is_file());
-        assert!(lib.join("liballoc-h2.rlib").is_file());
+        assert!(crate::file_access::is_file(lib.join("libcore-h1.rlib")));
+        assert!(crate::file_access::is_file(lib.join("liballoc-h2.rlib")));
         assert!(
-            !lib.join("libloft.rlib").exists(),
+            !crate::file_access::exists(lib.join("libloft.rlib")),
             "loft's own rlib must not reach the sysroot"
         );
 
@@ -2922,8 +2927,8 @@ mod publish_cached_binary_tests {
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let d = std::env::temp_dir().join("loft-publish-cache").join(name);
-        let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(&d).unwrap();
+        let _ = crate::file_access::remove_dir_all(&d);
+        crate::file_access::create_dir_all(&d).unwrap();
         d
     }
 
@@ -2936,7 +2941,7 @@ mod publish_cached_binary_tests {
     /// `dead_code`.
     #[cfg(unix)]
     fn publish_by_copy(built: &std::path::Path, cached: &std::path::Path) {
-        let _ = std::fs::copy(built, cached);
+        let _ = crate::file_access::copy(built, cached);
     }
 
     /// A publish REPLACES the destination rather than rewriting it in place.
@@ -2962,28 +2967,28 @@ mod publish_cached_binary_tests {
         let dir = scratch("inode");
         let a = dir.join("built-a");
         let b = dir.join("built-b");
-        std::fs::write(&a, vec![0xAAu8; 4096]).unwrap();
-        std::fs::write(&b, vec![0xBBu8; 8192]).unwrap();
+        crate::file_access::write(&a, vec![0xAAu8; 4096]).unwrap();
+        crate::file_access::write(&b, vec![0xBBu8; 8192]).unwrap();
         let dest = dir.join("prog-deadbeef");
 
         publish_cached_binary(&a, &dest, &dir, "prog");
-        let first = std::fs::metadata(&dest).unwrap().ino();
+        let first = crate::file_access::metadata(&dest).unwrap().ino();
         publish_cached_binary(&b, &dest, &dir, "prog");
-        let second = std::fs::metadata(&dest).unwrap().ino();
+        let second = crate::file_access::metadata(&dest).unwrap().ino();
 
         assert_ne!(
             first, second,
             "a publish must swap a new inode in, never rewrite the live one"
         );
-        assert_eq!(std::fs::read(&dest).unwrap(), vec![0xBBu8; 8192]);
+        assert_eq!(crate::file_access::read(&dest).unwrap(), vec![0xBBu8; 8192]);
 
         // The control: the copy this replaced keeps the inode, so the same assertion
         // fails on it — the probe discriminates.
         let dest2 = dir.join("ctl-deadbeef");
         publish_by_copy(&a, &dest2);
-        let c1 = std::fs::metadata(&dest2).unwrap().ino();
+        let c1 = crate::file_access::metadata(&dest2).unwrap().ino();
         publish_by_copy(&b, &dest2);
-        let c2 = std::fs::metadata(&dest2).unwrap().ino();
+        let c2 = crate::file_access::metadata(&dest2).unwrap().ino();
         assert_eq!(
             c1, c2,
             "control: a plain copy rewrites the live inode in place"
@@ -2996,34 +3001,33 @@ mod publish_cached_binary_tests {
     fn the_sweep_takes_other_hashes_and_spares_the_published_entry() {
         let dir = scratch("sweep");
         let built = dir.join("built");
-        std::fs::write(&built, vec![0xCCu8; 2048]).unwrap();
+        crate::file_access::write(&built, vec![0xCCu8; 2048]).unwrap();
         let stale = dir.join("prog-0000000000000000");
-        std::fs::write(&stale, b"stale").unwrap();
+        crate::file_access::write(&stale, b"stale").unwrap();
         let other = dir.join("elsewhere-1111111111111111");
-        std::fs::write(&other, b"other source").unwrap();
+        crate::file_access::write(&other, b"other source").unwrap();
         let dest = dir.join("prog-ffffffffffffffff");
 
         publish_cached_binary(&built, &dest, &dir, "prog");
 
         assert!(
-            dest.exists(),
+            crate::file_access::exists(&dest),
             "the entry just published must survive its own sweep"
         );
-        assert_eq!(std::fs::read(&dest).unwrap(), vec![0xCCu8; 2048]);
-        assert!(!stale.exists(), "a stale hash for this source is swept");
+        assert_eq!(crate::file_access::read(&dest).unwrap(), vec![0xCCu8; 2048]);
         assert!(
-            other.exists(),
+            !crate::file_access::exists(&stale),
+            "a stale hash for this source is swept"
+        );
+        assert!(
+            crate::file_access::exists(&other),
             "another source's entry is not this sweep's business"
         );
-        let staging: Vec<_> = std::fs::read_dir(&dir)
+        let staging: Vec<_> = crate::file_access::read_dir(&dir)
             .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| {
-                std::path::Path::new(n)
-                    .extension()
-                    .is_some_and(|e| e == "tmp")
-            })
+            .into_iter()
+            .filter(|e| e.extension() == Some("tmp"))
+            .map(|e| e.file_name().unwrap_or_default().to_string())
             .collect();
         assert!(
             staging.is_empty(),
