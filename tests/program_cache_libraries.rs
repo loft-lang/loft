@@ -108,7 +108,7 @@ fn ir_images(home: &Path) -> Vec<String> {
     let mut out: Vec<String> = fa::read_dir(home.join("cache/loft"))
         .into_iter()
         .flatten()
-        .filter_map(|e| fa::file_name(&e.os_spelling()))
+        .filter_map(|e| fa::file_name(e.os_spelling()))
         .filter(|n| n.ends_with(".store"))
         .collect();
     out.sort();
