@@ -18979,9 +18979,15 @@ fn a_reference_self_field_is_not_a_cycle() {
     code!(
         "struct RefNode { val: integer, next: reference<RefNode> }
 fn test() {
-    n = RefNode { val: 7 };
+    n = RefNode { val: 7, next: null };
     assert(n.val == 7, \"reference<Self> field is legal\");
 }"
+    )
+    // `@FR-D-NoRef` — the bare pointer has no default, so its null is written out (loft#1931).
+    .warning(
+        "`null` is stored into the field of the non-null type `reference<RefNode>` — the slot \
+         holds null; declare it `reference<RefNode>?` to make that explicit at \
+         a_reference_self_field_is_not_a_cycle:3:39",
     )
     .result(Value::Null);
 }
