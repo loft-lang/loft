@@ -31,7 +31,12 @@ the second (finding 019: a never-returning call is not a `??` default), and noth
 either names the library: the TYPE trigger the design rests on fires now (finding 018 — derived from the
 start, never read).  What a port still carries is the path dependency in `scripts/loft.toml`,
 the manifest that makes `scripts/` one package so a bare script finds the repo-local
-library from any working directory; it leaves when the library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day, and
+library from any working directory; it leaves when the library is published.  **Strand 8's `script` library exists (2026-10-08):** `script` 0.1.0 —
+`dir.walk(suffix)`, `src.copy_to(dst)`, `pattern.glob()`, `glob_match` — merged to
+loft-libs-core (#42), released at `script-v0.1.0`, staged for the registry as
+loft-lang/registry#32; the maintainer's signing run folds it, and the three ports that wrote
+these by hand (findings 004, 005, 008) switch to it the day `loft install script` answers.
+Finding 009 closed with `exit(code)` in the stdlib the same day, and
 016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
 `lib/process/tests/command.loft`).
 Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,

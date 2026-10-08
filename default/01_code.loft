@@ -2202,6 +2202,16 @@ fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
 #cold
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
 // --- Vector aggregates ---
+/// Does the vector hold `value`?  Compared by content, as `==` compares every type (@C91);
+/// the empty vector holds nothing.  The membership test a script asks of a list of names —
+/// `changed.contains(path)` — beside `text`'s own `contains` (@PLN179 finding 017).
+pub fn contains < T: Equatable > (self: const vector<T>, value: T) -> boolean {
+  for x in self {
+    if x == value { return true }
+  };
+  false
+}
+#pure
 /// Smallest element in a vector, or null when the vector is empty (the type is
 /// honest about the empty case).  Works on any Ordered type (op <).
 /// Example: @STD-004

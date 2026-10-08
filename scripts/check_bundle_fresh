@@ -40,11 +40,6 @@ fn mapping() -> vector<Bundle> {
   [Bundle { artefact: "doc/brick-buster.html", sources: ["tools/brick-buster/25-brick-buster.loft"] }]
 }
 
-fn is_changed(self: vector<text>, path: text) -> boolean {
-  for c in self { if c == path { return true; } }
-  false
-}
-
 fn main() {
   args = arguments();
   base = "origin/main";
@@ -64,8 +59,8 @@ fn main() {
   fail = false;
   for b in mapping() {
     touched = "";
-    for s in b.sources { if changed.is_changed(s) { touched = s; } }
-    if touched != "" && !changed.is_changed(b.artefact) {
+    for s in b.sources { if changed.contains(s) { touched = s; } }
+    if touched != "" && !changed.contains(b.artefact) {
       println("::error file={touched}::'{touched}' changed in this change set but '{b.artefact}' was NOT rebuilt. Rebuild the bundle (`make game` for Brick Buster, `make gallery` for the gallery) and commit '{b.artefact}' in the same change so the deployed website is not stale.");
       fail = true;
     }

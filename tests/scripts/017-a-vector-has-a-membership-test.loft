@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN179 finding 017 — `v.contains(x)` on a vector of any Equatable element, compared by
+// content (@C91), both call spellings, and the empty vector holding nothing.  Every value by
+// hand; a struct cell because `Equatable` is every type.
+// @falsified-at: none — the stdlib function is new with this guard; before it every cell was "Unknown field vector<…>.contains"
+struct Pt { x: integer, y: integer }
+fn main() {
+  changed = ["tools/brick-buster/25-brick-buster.loft", "doc/brick-buster.html"];
+  assert(changed.contains("doc/brick-buster.html"), "a text it holds");
+  assert(!changed.contains("doc/brick-buster.htm"), "a text it does not hold");
+  assert(contains(changed, "doc/brick-buster.html"), "the free spelling");
+  assert([1, 2, 3].contains(3) && ![1, 2, 3].contains(4), "integers");
+  assert([1.5, 2.5].contains(2.5) && ![1.5].contains(1.0), "floats");
+  assert([true].contains(true) && ![true].contains(false), "booleans");
+  pts = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  assert(pts.contains(Pt { x: 3, y: 4 }) && !pts.contains(Pt { x: 4, y: 3 }), "records by content");
+  e: vector<text> = [];
+  assert(!e.contains(""), "the empty vector holds nothing, not even the empty text");
+  assert("abc".contains("b"), "text's own contains is untouched");
+  println("ok");
+}

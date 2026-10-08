@@ -141,13 +141,8 @@ fn tokens(line: text, lang: text) -> vector<text> {
   lex.result
 }
 
-fn has(words: vector<text>, w: text) -> boolean {
-  for x in words { if x == w { return true; } }
-  false
-}
-
 fn add_unique(list: vector<text>, w: text) -> vector<text> {
-  if has(list, w) { return list; }
+  if list.contains(w) { return list; }
   r = list;
   r += [w];
   r
@@ -233,7 +228,7 @@ fn never(name: text) -> boolean {
 // (`"$@"`), an `exec`, or a command held in a variable (`"$LOFT" --native f`,
 // `$cmd`).  Strand 4's `run` is what such a script needs before anything else.
 fn runs_a_program(line: text, w: vector<text>) -> boolean {
-  if has(w, "exec") || line.contains("\"$@\"") { return true; }
+  if w.contains("exec") || line.contains("\"$@\"") { return true; }
   if line.starts_with("\"$") || (line.starts_with("$") && !line.starts_with("$(")) {
     return !line.contains("=") || line.contains(" ");
   }
@@ -270,12 +265,12 @@ fn is_write(lang: text, line: text) -> boolean {
 fn tranche_of(lang: text, name: text, t: vector<text>, m: vector<text>) -> text {
   if lang == "loft" { return "T0"; }
   if never(name) { return "T9"; }
-  if has(t, "run") { return "T5"; }
-  if has(m, "sibling") { return "T7"; }
-  if has(t, "cargo") || has(t, "rustc") { return "T4"; }
-  if has(t, "git") || has(t, "gh") || has(t, "curl") { return "T3"; }
-  if has(m, "re") || has(m, "tomllib") || has(m, "toml") || has(m, "json") || has(m, "argparse")
-     || has(m, "subprocess") || has(t, "grep") || has(t, "sed") || has(t, "awk") || has(t, "jq") {
+  if t.contains("run") { return "T5"; }
+  if m.contains("sibling") { return "T7"; }
+  if t.contains("cargo") || t.contains("rustc") { return "T4"; }
+  if t.contains("git") || t.contains("gh") || t.contains("curl") { return "T3"; }
+  if m.contains("re") || m.contains("tomllib") || m.contains("toml") || m.contains("json") || m.contains("argparse")
+     || m.contains("subprocess") || t.contains("grep") || t.contains("sed") || t.contains("awk") || t.contains("jq") {
     return "T2";
   }
   "T1"
@@ -294,11 +289,11 @@ fn classify(path: text) -> Row {
     if line.starts_with("#") || line.starts_with("//") { continue; }
     w = tokens(line, lang);
     for tool in ["gh", "git", "cargo", "rustc", "jq", "curl", "grep", "sed", "awk", "python3"] {
-      if has(w, tool) { t = add_unique(t, tool); }
+      if w.contains(tool) { t = add_unique(t, tool); }
     }
     if lang == "py" && (line.starts_with("import ") || line.starts_with("from ")) {
       for mod in ["re", "json", "tomllib", "toml", "argparse", "subprocess"] {
-        if has(w, mod) { m = add_unique(m, mod); }
+        if w.contains(mod) { m = add_unique(m, mod); }
       }
       // `import x` / `from x import` where x.py sits beside this script: a sibling module.
       second = "";
@@ -409,7 +404,7 @@ fn main() {
     port = port_path(rows[i].path);
     // The port is a file beside the original, wherever the original lives — not only the
     // loft rows the walk lists under scripts/.
-    if port == "" || (!has(ports, port) && !is_file(port)) { continue; }
+    if port == "" || (!ports.contains(port) && !is_file(port)) { continue; }
     ported += 1;
     rows[i].status = "ported";
     n = twin_cases(port.basename());

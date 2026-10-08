@@ -359,6 +359,7 @@ and inside a generic all six comparisons work anyway:
 Each derivation evaluates every operand exactly once, and each agrees with the concrete
 operator on every value the bound's types can hold.
 
+| `contains<T: Equatable>(self: vector<T>, value: T) -> boolean` | Does the vector hold `value`?  Compared by content, as `==` compares every type (@C91); `changed.contains(path)` or `contains(changed, path)`; the empty vector holds nothing. |
 | `min_of<T: Ordered>(v: vector<T>) -> T?` | Smallest element, or **null** when the vector is empty (the type is honest about the empty case — @PLN102). |
 | `max_of<T: Ordered>(v: vector<T>) -> T?` | Largest element, or **null** when the vector is empty (@PLN102). |
 | `v.sort_by(key: fn(T) -> K)` | Sort in place by a key, ascending and stable; `K` is any `Ordered` value — a number, a `text`, or a type with an `operator compare` — so a struct sorts by whatever key one call names. |
