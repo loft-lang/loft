@@ -1307,6 +1307,24 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.
 
+* **D-types-31** *(opened 2026-10-07, CLOSED 2026-10-08; loft#1944)* — `(I-Join)`: a COMPOUND
+  step did not widen an inferred narrow integer local (`b = x % 7; b += 1000` answered 0 with
+  only an advice, where `b = b + 1000` widened `b` to 1005).  The compound path widens as the
+  `=` path does.  Guard `1944-a-compound-step-widens-an-inferred-local.loft`.
+* **D-types-30** *(opened 2026-10-07, CLOSED 2026-10-08; loft#1933)* — `(N-Arith)`: `+ - *` over
+  bounded integers was typed the full `integer`, so `z: u16 = x + y` (both `u8`) was refused.
+  The result now carries the interval of the operand ranges, and the arms of an `if` / `match`
+  join to the union of their ranges (`(I-Join)`) rather than holding later arms to the first
+  arm's computed range.  Guard `1933-arithmetic-over-bounded-integers-is-typed-by-its-range.loft`.
+* **D-types-29** *(opened 2026-10-07, CLOSED 2026-10-07; loft#1932)* — `(T-Sub)` / `(C-Var)`:
+  plain Enum ⤳ Integer was accepted at ten checking positions and refused at a local DECLARED
+  `integer`.  The declared local takes the same conversion.  Guard
+  `1932-a-declared-integer-local-takes-an-enum-tag.loft`.
+* **D-types-28** *(opened 2026-10-07, CLOSED 2026-10-07; loft#1931)* — `(D-NoRef)`: a record with a
+  bare `reference<T>` field took `S{}` and `x?` silently, the field reading null — #328's pointer
+  layout keeps the field's `nullable` flag set, which the default walk read as "defaults to
+  null".  Both are refused; `reference<T>?` defaults to null.  Guard
+  `1931-a-bare-pointer-field-has-no-default.loft`.
 * **D-types-27** *(opened 2026-10-06, CLOSED 2026-10-06)* — `(P-Cap-Ty)` on `--native`: a
   slice capture (or bare binding) of a `(integer, text)` element, handed whole to a tuple
   parameter, emitted a member list over the binding's raw name — the name carries a numbered
