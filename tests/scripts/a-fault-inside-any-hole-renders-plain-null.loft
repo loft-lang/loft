@@ -13,7 +13,15 @@
 // zero pad); a target string's hole; and the controls — present values render unchanged, the
 // hole after a fault renders its own value, and a `??` discharge of a fault still works.
 //
-// @falsified-at: PENDING
+// @falsified-at: 1ee22b1c0 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0, native 10 assertion failures -> 0
+//   CHANNEL: value — each cell asserts the rendered string, on both backends.
+//   WITNESS: on the control the faulting holes render `null(oob)`, `null(/0)` and `null(%0)`
+//   (`[{vi[id(9)]}]` is `[null(oob)]`, `[{a / z}]` is `[null(/0)]`), and a width pads the
+//   tagged form (`[{a / z:<6}]` is `[null(/0)]`).
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees; the character,
+//   target-hole and present-value controls pass on both.  No patch receipt: the control is
+//   the parent of the C142 commit, whose source diff (fill.rs and the compiled stdlib
+//   included) is over the 800-line bound `falsify.sh` writes a patch for.
 
 struct P { x: integer }
 enum E { A, B }
