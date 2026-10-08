@@ -1,0 +1,50 @@
+// A text written into a record field is copied first only when it may borrow STORE memory —
+// the write's claim can move the store a borrowed text points into.  A literal, an owned text
+// local, or a block that answers one (a format string or a decoded text, built into a work
+// string outside any store) is read where it lies.  A field read still copies (t3, t4).
+//
+// @falsified-at: pending
+
+struct T { name: text, k: integer }
+
+fn names(v: const vector<T>) -> text {
+  out = "";
+  for t in v { out += "{t.name}/{t.k};"; }
+  out
+}
+
+fn main() {
+  // t1 — format strings built into the work string, in a loop.
+  v: vector<T> = [];
+  for i in 0..4 { v += [T { name: "{i}-{i * 2}", k: i }]; }
+  t1 = names(v);
+  assert(t1 == "0-0/0;1-2/1;2-4/2;3-6/3;", "t1: {t1}");
+
+  // t2 — a decoded text (`text_from_bytes`) written into a literal's field.
+  bytes: vector<u8> = [104 as u8, 105 as u8, 33 as u8];
+  d = T { name: text_from_bytes(bytes), k: len(bytes) };
+  bytes[0] = 72 as u8;
+  t2 = "{d.name}:{d.k}";
+  assert(t2 == "hi!:3", "t2: {t2}");
+
+  // t3 — a plain field read of the SAME store, written while that store grows: the copy stays.
+  // Each round grows w[0] by 300 characters and copies it into w[1]: 2000 + 6 * 300 = 3800.
+  long = "";
+  for i in 0..200 { long += "abcdefghij"; }
+  w: vector<T> = [T { name: long, k: 1 }, T { name: "short", k: 2 }];
+  pad = "";
+  for i in 0..30 { pad += "0123456789"; }
+  for j in 0..6 {
+    w[0].name += pad;
+    w[1].name = w[0].name;
+  }
+  t3 = len(w[0].name) * 10000 + len(w[1].name);
+  assert(t3 == 38003800, "t3: {t3}");
+  assert(w[1].name.starts_with("abcdefghij") && w[1].name.ends_with("789"), "t3 text");
+
+  // t4 — a record's text field replaced by a format of itself.
+  r = T { name: "a", k: 0 };
+  for j in 0..5 { r.name = "{r.name}{j}"; }
+  assert(r.name == "a01234", "t4: {r.name}");
+  println("text ok");
+}

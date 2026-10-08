@@ -883,11 +883,7 @@ impl Output<'_> {
         if def_fn.name() == "OpSetText"
             && !self.text_set_copy_kept
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
-            && match vals.get(vi).map(Value::unspan) {
-                Some(Value::Text(_)) => true,
-                Some(Value::Var(v)) => self.text_owned(*v),
-                _ => false,
-            }
+            && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v))
         {
             res = "{{let db = @v1; let s_val = AsRef::<str>::as_ref(&*@val); if db.rec != 0 {{ let store = stores.store_mut(&db); let s_pos = store.set_str(s_val); store.set_u32_raw(db.rec, db.pos + u32::from(@fld), s_pos); }}}}".to_string();
         }
@@ -904,11 +900,7 @@ impl Output<'_> {
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
             let borrowed = !self.text_set_copy_kept
-                && match vals.get(vi).map(Value::unspan) {
-                    Some(Value::Text(_)) => true,
-                    Some(Value::Var(v)) => self.text_owned(*v),
-                    _ => false,
-                };
+                && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v));
             res = if matches!(vals.get(vi), Some(Value::Null)) {
                 "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
             } else if borrowed {
@@ -927,11 +919,7 @@ impl Output<'_> {
             && let Some(vi) = def_fn.attributes().iter().position(|a| a.name == "val")
         {
             let borrowed = !self.text_set_copy_kept
-                && match vals.get(vi).map(Value::unspan) {
-                    Some(Value::Text(_)) => true,
-                    Some(Value::Var(v)) => self.text_owned(*v),
-                    _ => false,
-                };
+                && vals.get(vi).is_some_and(|v| self.text_value_unborrowed(v));
             res = if matches!(vals.get(vi), Some(Value::Null)) {
                 "{{let db = @v1; if db.rec != 0 {{ let store = stores.store_mut(&db); let fld = db.pos + u32::from(@fld); if db.pos < __rk_end {{ let old = store.get_u32_raw(db.rec, fld); if old != 0 {{ store.delete(old); }} }} store.set_u32_raw(db.rec, fld, 0u32); }}}}"
             } else if borrowed {
