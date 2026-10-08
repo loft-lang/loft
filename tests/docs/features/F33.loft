@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F33 — GENERATED from loft-lang/features#33 by tools/features/gen.loft — DO NOT EDIT.
+fn square(n: integer) -> integer {
+    n * n
+}
+
+fn main() {
+    // Each number is squared on a worker thread; b holds the result.
+    total = 0;
+    for a in 1..=5 par(b = square(a), 4) {
+        total += b;
+    }
+    println("sum of squares 1..5: {total}");   // sum of squares 1..5: 55
+}

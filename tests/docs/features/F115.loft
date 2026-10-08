@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F115 — GENERATED from loft-lang/features#115 by tools/features/gen.loft — DO NOT EDIT.
+struct Lease {
+    id: integer,
+}
+
+fn take(id: integer) -> Lease {
+    println("take {id}");
+    return Lease { id: id };
+}
+
+// Runs when a scope that OWNS a Lease lets it die.
+fn OpDrop(self: Lease) { println("release {self.id}"); }
+
+fn hold() {
+    a = take(1);
+    b = take(2);
+    println("working");
+}
+
+fn main() {
+    hold();
+    println("done");
+}

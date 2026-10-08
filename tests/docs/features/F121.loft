@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F121 — GENERATED from loft-lang/features#121 by tools/features/gen.loft — DO NOT EDIT.
+use parser;
+
+fn main() {
+    // `{{` and `}}` are how a brace survives a loft text literal — the source you
+    // hand the parser is ordinary text.
+    clean = parser::parse("snippet", "fn add(a: integer, b: integer) -> integer {{ a + b }}");
+    println("errors in a good snippet: {clean}");   // errors in a good snippet: 0
+
+    // A malformed snippet is counted, not thrown — the diagnostic goes to the log
+    // and the caller decides what to do about it.
+    broken = parser::parse("snippet", "fn add(a: integer -> integer {{ a }}");
+    println("a malformed one is counted: {broken > 0}");   // a malformed one is counted: true
+}

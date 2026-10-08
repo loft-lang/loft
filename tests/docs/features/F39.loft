@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F39 — GENERATED from loft-lang/features#39 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    println("abs: {abs(-7)}");            // abs: 7
+    println("min/max: {min(3, 9)} {max(3, 9)}");  // min/max: 3 9
+    println("sqrt: {sqrt(144.0)}");       // sqrt: 12
+    println("pow: {pow(2.0, 10.0)}");     // pow: 1024
+    println("cos(0): {cos(0.0)}");        // cos(0): 1
+    println("pi: {PI}");                  // pi: 3.141592653589793
+}

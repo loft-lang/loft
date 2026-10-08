@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F30 — GENERATED from loft-lang/features#30 by tools/features/gen.loft — DO NOT EDIT.
+enum Shape {
+    Circle { radius: integer },
+    Square { side: integer }
+}
+
+fn describe(s: Shape) -> text {
+    if s is Circle { radius } {
+        return "circle of radius {radius}";
+    }
+    if s is Square { side } {
+        return "square of side {side}";
+    }
+    "unknown"
+}
+
+fn main() {
+    println(describe(Circle { radius: 5 }));  // circle of radius 5
+    println(describe(Square { side: 3 }));    // square of side 3
+}

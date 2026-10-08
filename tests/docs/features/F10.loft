@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F10 — GENERATED from loft-lang/features#10 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    total = 0;
+    for i in 1..5 {          // steps through 1, 2, 3, 4 one at a time
+        total += i;
+    }
+    println("total={total}");
+    // total=10
+}

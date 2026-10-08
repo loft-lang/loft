@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F8 — GENERATED from loft-lang/features#8 by tools/features/gen.loft — DO NOT EDIT.
+struct Item { name: text, score: integer }
+struct Board { items: sorted<Item[-score]> }
+fn main() {
+    b = Board { items: [
+        Item { name: "Ada", score: 30 },
+        Item { name: "Bo", score: 90 },
+        Item { name: "Cy", score: 60 }
+    ] };
+    for it in b.items {
+        println("{it.name}: {it.score}");
+    }
+    // Bo: 90
+    // Cy: 60
+    // Ada: 30
+}

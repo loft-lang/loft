@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F114 — GENERATED from loft-lang/features#114 by tools/features/gen.loft — DO NOT EDIT.
+struct Ring {
+    data: vector<integer>,
+    start: integer,
+}
+
+// A ring's element read is whatever this says it is.
+fn at(self: Ring, i: integer) -> integer {
+    n = len(self.data);
+    if n == 0 { return 0; }
+    return self.data[(self.start + i) % n] ?? 0;
+}
+
+fn main() {
+    r = Ring { data: [10, 20, 30], start: 1 };
+    println("{r.at(0)} {r.at(1)} {r.at(2)}");    // 20 30 10
+}

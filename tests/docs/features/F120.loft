@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F120 — GENERATED from loft-lang/features#120 by tools/features/gen.loft — DO NOT EDIT.
+use lexer;
+
+fn main() {
+    l = lexer::Lexer { };
+    l.set_tokens(["+=", "==", "->"]);        // scanned as ONE token each
+    l.set_keywords(["let", "in"]);           // reported as themselves, never as names
+
+    l.parse_string("snippet", "let total += 12");
+    println("keyword: {l.matches(\"let\")}");   // keyword: true
+    println("name: {l.identifier()}");          // name: total
+    println("operator: {l.matches(\"+=\")}");   // operator: true
+    println("number: {l.int()}");               // number: 12
+}

@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F34 — GENERATED from loft-lang/features#34 by tools/features/gen.loft — DO NOT EDIT.
+// A generator: its return type is iterator<T>, and it produces
+// values one at a time with yield.
+fn count_up(start: integer, stop: integer) -> iterator<integer> {
+    for i in start..stop {
+        yield i;
+    }
+}
+
+fn main() {
+    for n in count_up(1, 4) {
+        println("{n}");   // 1, then 2, then 3
+    }
+}

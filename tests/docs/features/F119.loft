@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F119 — GENERATED from loft-lang/features#119 by tools/features/gen.loft — DO NOT EDIT.
+struct Counter { value: integer }
+
+fn main() {
+    c = Counter { value: 5 };
+    println("starts unlocked: {!c#lock}");   // starts unlocked: true
+
+    c#lock = true;
+    println("locked: {c#lock}");             // locked: true
+    println("still readable: {c.value}");    // still readable: 5
+    // `c.value = 6` would panic here, and so would a write inside any function
+    // handed `c` — the guard travels with the store.
+
+    c#lock = false;                          // lift the guard
+    c.value = 6;
+    println("written once unlocked: {c.value}");   // written once unlocked: 6
+}

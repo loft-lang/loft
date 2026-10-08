@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F88 — GENERATED from loft-lang/features#88 by tools/features/gen.loft — DO NOT EDIT.
+fn inner() {
+    for frame in stack_trace() {
+        println(frame.function);   // outermost first: main, then outer, then inner
+    }
+}
+fn outer() { inner(); }
+fn main() { outer(); }

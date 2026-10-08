@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F111 — GENERATED from loft-lang/features#111 by tools/features/gen.loft — DO NOT EDIT.
+struct Row { id: integer, name: text?, active: boolean }
+
+fn main() {
+    row = Row { id: 7, name: "ada", active: true };
+
+    // One block per field, generated at compile time; `v` arrives already typed.
+    for f in row#fields {
+        if f.value is FvInt  { v } { println("{f.name}: integer = {v}") }
+        if f.value is FvText { v } { println("{f.name}: text = {v}") }
+        if f.value is FvBool { v } { println("{f.name}: boolean = {v}") }
+    }
+}

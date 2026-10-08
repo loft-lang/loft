@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F17 — GENERATED from loft-lang/features#17 by tools/features/gen.loft — DO NOT EDIT.
+fn connect(host: text, port: integer = 8080, tls: boolean = true) -> text {
+    "{host}:{port} tls={tls}"
+}
+fn main() {
+    println(connect("example.com"));              // example.com:8080 tls=true
+    println(connect("example.com", tls: false));  // example.com:8080 tls=false
+    println(connect(host: "db", port: 5432));     // db:5432 tls=true
+}

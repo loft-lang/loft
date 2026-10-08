@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F19 — GENERATED from loft-lang/features#19 by tools/features/gen.loft — DO NOT EDIT.
+struct Circle {
+    radius: float
+}
+fn area(self: Circle) -> float {
+    3.14159 * self.radius * self.radius
+}
+fn main() {
+    c = Circle { radius: 2.0 };
+    println("area = {c.area()}");    // area = 12.56636
+}

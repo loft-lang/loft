@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F36 — GENERATED from loft-lang/features#36 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    n: integer = 255;
+    pi: float = 3.14159;
+    label: text = "hi";
+    println("{n:#x} {n:05} {pi:6.2} {label:>6}");   // 0xff 00255   3.14     hi
+}

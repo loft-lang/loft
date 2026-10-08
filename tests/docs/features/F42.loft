@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F42 — GENERATED from loft-lang/features#42 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    raw = "{{\"name\": \"loft\", \"version\": 2, \"tags\": [\"fast\", \"typed\"]}}";
+    doc = json_parse(raw);
+    println("name: {doc.field("name").as_text()}");        // name: loft
+    println("version: {doc.field("version").as_long()}");  // version: 2
+    println("first tag: {doc.field("tags").item(0).as_text()}");  // first tag: fast
+    println("tag count: {doc.field("tags").len()}");       // tag count: 2
+}

@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F94 — GENERATED from loft-lang/features#94 by tools/features/gen.loft — DO NOT EDIT.
+struct Query { text: text, values: vector<text> }
+
+pub fn lit(self: Query, s: text) { self.text += s; }
+pub fn hole_text(self: Query, v: text) {
+    self.text += "?";
+    self.values += [v];
+}
+pub fn hole_int(self: Query, v: integer) {
+    self.text += "?";
+    self.values += ["{v}"];
+}
+
+fn main() {
+    name = "ada; DROP TABLE users; --";
+    q: Query = "SELECT id FROM people WHERE name = {name} AND age > {30}";
+    println("sql:    {q.text}");
+    println("values: {q.values[0]}");
+    println("count:  {len(q.values)}");
+}

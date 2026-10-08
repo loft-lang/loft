@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F98 — GENERATED from loft-lang/features#98 by tools/features/gen.loft — DO NOT EDIT.
+struct Mob { x: integer, y: integer, name: text }
+
+fn main() {
+    mobs: spatial<Mob[x, y]> = [];
+    mobs += [Mob { x: 10, y: 10, name: "goblin" }];
+    mobs += [Mob { x: 12, y: 11, name: "rat" }];
+    mobs += [Mob { x: 90, y: 90, name: "dragon" }];
+
+    println("point {mobs[10, 10].name}");        // point goblin
+
+    seen = "";
+    for m in mobs[(10, 10)..:2] { seen = seen + m.name + " " }
+    println("nearest two: {seen}");              // nearest two: goblin rat
+}

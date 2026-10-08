@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F109 — GENERATED from loft-lang/features#109 by tools/features/gen.loft — DO NOT EDIT.
+// The successor — the form to use now.
+fn scaled(v: integer, by: integer) -> integer { v * by }
+
+// The old form. It keeps working, and its body is a shim over the successor.
+fn doubled(v: integer) -> integer { scaled(v, 2) }  #superseded "scaled"
+
+fn main() {
+    println("{doubled(21)}");    // 42 — the old form still works, unchanged
+    println("{scaled(21, 2)}");  // 42 — and the successor gives the same answer
+}

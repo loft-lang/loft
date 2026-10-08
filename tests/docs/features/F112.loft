@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F112 — GENERATED from loft-lang/features#112 by tools/features/gen.loft — DO NOT EDIT.
+struct Tile { const key: integer, const points: vector<integer> }
+
+fn main() {
+    // A generator streaming more data than you want resident, into a store bound
+    // FIRST — the file is the arena, so what it writes lands in file-backed pages.
+    tiles: hash<Tile[key]> = [];
+    store_persist_bind(tiles, "tiles.store");
+
+    dropped = 0;
+    for k in 0..2000 {
+        tiles += Tile { key: k, points: [] };
+        t = tiles[k];
+        for i in 0..40 { t.points += [k * 100 + i] }
+        dropped += store_release(tiles);          // this tile is finished
+    }
+    println("held: {tiles.len()}, dropped from memory: {dropped > 0}");
+
+    // Nothing about the data changed. A released record is read back from the
+    // file — same value, one page fault later.
+    println("tile 7 still reads {tiles[7].points[39]}");
+
+    delete("tiles.store");
+    delete("tiles.store.dschema");
+}

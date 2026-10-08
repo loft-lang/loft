@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F29 — GENERATED from loft-lang/features#29 by tools/features/gen.loft — DO NOT EDIT.
+fn grade(score: integer) -> text {
+    match score {
+        null     => "absent",
+        90..=100 => "A",
+        80..90   => "B",
+        _        => "other"
+    }
+}
+fn main() {
+    println(grade(95));  // A
+    println(grade(85));  // B
+    println(grade(50));  // other
+}

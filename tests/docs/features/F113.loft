@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F113 — GENERATED from loft-lang/features#113 by tools/features/gen.loft — DO NOT EDIT.
+interface Cursor {
+    fn width(self: Self) -> integer
+}
+
+interface Source {
+    type Rows: Cursor                   // the companion type
+    fn open(self: Self) -> Self.Rows    // named in a signature as `Self.<Name>`
+}
+
+struct FileRows { w: integer }
+struct FileSource { path: text }
+
+fn width(self: FileRows) -> integer { return self.w; }
+fn open(self: FileSource) -> FileRows { return FileRows { w: len(self.path) }; }
+
+// The generic holds the companion and calls the bound's methods on it. Two of
+// them coexist, which is what a cursor kept ON the connection could never do.
+fn total_width<S: Source>(s: S) -> integer {
+    a = s.open();
+    b = s.open();
+    return a.width() + b.width();
+}
+
+fn main() {
+    println("{total_width(FileSource { path: "abcd" })}");   // 8
+}

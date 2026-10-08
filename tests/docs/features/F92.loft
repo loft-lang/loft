@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F92 — GENERATED from loft-lang/features#92 by tools/features/gen.loft — DO NOT EDIT.
+fn c_abs(v: integer) -> integer;      #c "abs" "int(int)"
+fn c_strlen(s: text) -> integer;      #c "strlen" "size_t(const char*)"
+fn c_atof(s: text) -> float;          #c "atof" "double(const char*)"
+
+fn main() {
+    println("abs: {c_abs(-7)}");           // abs: 7
+    println("strlen: {c_strlen("loft")}"); // strlen: 4
+    // A float RETURN crosses; a float ARGUMENT would need an ANSI-C shim.
+    println("atof: {c_atof("2.5")}");      // atof: 2.5
+}

@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F99 — GENERATED from loft-lang/features#99 by tools/features/gen.loft — DO NOT EDIT.
+enum Tok { Kw { k: integer }, Num { n: integer } }
+
+fn main() {
+    v: vector<Tok> = [Kw { k: 1 }, Num { n: 5 }];
+    total = match v {
+        [Kw { k }, Num { n }] => k + n,
+        _ => -1,
+    };
+    println("matched {total}");   // matched 6
+}

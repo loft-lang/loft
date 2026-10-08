@@ -1,0 +1,7 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F97 — GENERATED from loft-lang/features#97 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    s = "café";
+    println("len {len(s)} size {size(s)}");   // len 4 size 5
+}

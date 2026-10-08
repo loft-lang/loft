@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F12 — GENERATED from loft-lang/features#12 by tools/features/gen.loft — DO NOT EDIT.
+struct Account {
+    const id: integer,
+    name: text = "unnamed",
+    balance: integer limit(0, 1000000),
+}
+
+fn main() {
+    a = Account { id: 7, balance: 250 };
+    println("{a.id} {a.name} {a.balance}");   // 7 unnamed 250
+    a.balance = 300;                          // an ordinary field changes
+    println("balance {a.balance}");           // balance 300
+}

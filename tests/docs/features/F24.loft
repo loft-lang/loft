@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F24 — GENERATED from loft-lang/features#24 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    nums = [1, 2, 3, 4, 5];
+    doubled = map(nums, |x| { x * 2 });
+    evens = filter(nums, |x| { x % 2 == 0 });
+    total = reduce(nums, 0, |acc, x| { acc + x });
+    println("{doubled}");          // [2,4,6,8,10]
+    println("{evens}");            // [2,4]
+    println("total = {total}");    // total = 15
+}

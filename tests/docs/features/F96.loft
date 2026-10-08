@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F96 — GENERATED from loft-lang/features#96 by tools/features/gen.loft — DO NOT EDIT.
+struct Config { retries: integer?, name: text? }
+
+fn main() {
+    c = Config { retries: null, name: null };
+    println("retries {c.retries?}");   // retries 0
+    println("name [{c.name?}]");       // name []
+}

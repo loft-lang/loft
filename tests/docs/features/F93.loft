@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F93 — GENERATED from loft-lang/features#93 by tools/features/gen.loft — DO NOT EDIT.
+struct Part { const id: integer, name: text }
+
+fn main() {
+    all: hash<Part[id]> = [];
+    store_persist_bind(all, "parts.store");
+    all += Part { id: 7, name: "bolt" };
+    all += Part { id: 91, name: "washer" };
+
+    // Read back ONE entry — over HTTP this fetches only the pages it needs.
+    one: hash<Part[id]> = [];
+    if store_load_key(one, "parts.store", 91) {
+        for p in one { println("found: {p.id} {p.name}"); }   // found: 91 washer
+    }
+    delete("parts.store");
+    delete("parts.store.dschema");
+}

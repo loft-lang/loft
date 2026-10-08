@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F40 — GENERATED from loft-lang/features#40 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    note = file("greeting.txt");
+    note.write("hello from loft");
+    reloaded = file("greeting.txt");
+    println("read back: {reloaded.content()}");   // read back: hello from loft
+    println("exists: {exists("greeting.txt")}");  // exists: true
+    delete("greeting.txt");
+    println("exists after delete: {exists("greeting.txt")}");  // exists after delete: false
+}

@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F22 — GENERATED from loft-lang/features#22 by tools/features/gen.loft — DO NOT EDIT.
+fn make_adder(n: integer) -> fn(integer) -> integer {
+    fn(x: integer) -> integer { n + x }
+}
+fn main() {
+    add5 = make_adder(5);
+    println("add5(10) = {add5(10)}");      // add5(10) = 15
+    greeting = "Hello";
+    greet = fn(name: text) -> text { "{greeting}, {name}" };
+    greeting = "Bye";
+    println(greet("world"));               // Hello, world
+    // The short form `|x| …` takes its parameter types from where it is used.
+    squares = map([1, 2, 3], |x| { x * x });
+    println("{squares}");                  // [1,4,9]
+}

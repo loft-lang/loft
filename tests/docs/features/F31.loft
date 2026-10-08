@@ -1,0 +1,24 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F31 — GENERATED from loft-lang/features#31 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    // continue: skip the value 3, add the rest
+    sum = 0;
+    for n in 1..=5 {
+        if n == 3 { continue; }
+        sum += n;
+    }
+    println("sum without 3: {sum}");                     // sum without 3: 12
+
+    // break out of the OUTER loop from inside the inner one
+    found = "";
+    for i in 1..=3 {
+        for j in 1..=3 {
+            if i * j == 4 {
+                found = "{i} and {j}";
+                i#break;
+            }
+        }
+    }
+    println("first pair whose product is 4: {found}");   // first pair whose product is 4: 2 and 2
+}

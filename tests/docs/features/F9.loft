@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F9 — GENERATED from loft-lang/features#9 by tools/features/gen.loft — DO NOT EDIT.
+struct Row { group: integer, name: text }
+struct Db { rows: index<Row[group, name]> }
+fn main() {
+    db = Db { rows: [
+        Row { group: 2, name: "b" },
+        Row { group: 1, name: "a" },
+        Row { group: 1, name: "c" }
+    ] };
+    for r in db.rows {
+        println("{r.group}-{r.name}");
+    }
+    println("lookup 1,a -> {db.rows[1, "a"].group}");
+    // 1-a
+    // 1-c
+    // 2-b
+    // lookup 1,a -> 1
+}

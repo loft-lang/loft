@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F18 — GENERATED from loft-lang/features#18 by tools/features/gen.loft — DO NOT EDIT.
+struct Account {
+    balance: integer
+}
+fn describe(acct: const Account) -> text {
+    "balance is {acct.balance}"
+}
+fn with_interest(acct: const Account) -> integer {
+    copy = acct;                    // a local copy may be changed
+    copy.balance = copy.balance + 25;
+    copy.balance
+}
+fn main() {
+    a = Account { balance: 500 };
+    println(describe(a));           // balance is 500
+    println("{with_interest(a)}");  // 525
+    println("still {a.balance}");   // still 500
+}

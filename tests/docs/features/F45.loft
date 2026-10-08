@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F45 — GENERATED from loft-lang/features#45 by tools/features/gen.loft — DO NOT EDIT.
+struct Point { x: integer, y: integer }
+
+fn main() {
+    println("integer: {sizeof(integer)}");  // integer: 8
+    println("u8: {sizeof(u8)}");            // u8: 1
+    println("u16: {sizeof(u16)}");          // u16: 2
+    println("Point: {sizeof(Point)}");      // Point: 16
+}

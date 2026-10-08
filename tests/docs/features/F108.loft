@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F108 — GENERATED from loft-lang/features#108 by tools/features/gen.loft — DO NOT EDIT.
+struct Part { const id: integer, name: text }
+
+fn main() {
+    // Stand in for a dataset you shipped earlier: a plain `.store` image.
+    src: hash<Part[id]> = [];
+    store_persist_bind(src, "inventory.store");
+    src += Part { id: 7, name: "bolt" };
+    src += Part { id: 91, name: "washer" };
+
+    // Bind an EMPTY collection to that image. Nothing is loaded yet.
+    parts: hash<Part[id]> = [];
+    store_bind_lazy(parts, "inventory.store");
+    println("resident: {parts.len()}");                 // resident: 0
+
+    p = parts[91];                                      // a miss fetches this one entry
+    println("{p.name}, resident: {parts.len()}");       // washer, resident: 1
+
+    q = parts[91];                                      // a hit never leaves the process
+    println("same: {&p == &q}, resident: {parts.len()}"); // same: true, resident: 1
+
+    // A key the source does not have reads as null — and asking why tells a
+    // genuine absence apart from a source you could not reach. Nothing failed
+    // here, so the channel is clean.
+    missing = parts[404];
+    println("missing: {missing == null}, faults: {store_lazy_faults(parts)}");
+                                                        // missing: true, faults: 0
+
+    delete("inventory.store");
+    delete("inventory.store.dschema");
+}

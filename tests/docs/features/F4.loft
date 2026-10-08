@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F4 — GENERATED from loft-lang/features#4 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    level: u8 = 200;      // fits in a single byte (0..255)
+    year: u16 = 2026;     // fits in two bytes
+    temp: i8 = -40;       // small signed value
+    println("{level} {year} {temp}");   // 200 2026 -40
+}

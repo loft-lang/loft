@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F46 — GENERATED from loft-lang/features#46 by tools/features/gen.loft — DO NOT EDIT.
+type Celsius = float;
+type Pair = (integer, text);
+
+fn describe(temp: Celsius) -> text {
+    "{temp} degrees"
+}
+
+fn main() {
+    here: Celsius = 21.5;
+    println(describe(here));         // 21.5 degrees
+    basket: Pair = (3, "apples");
+    println("{basket.0} {basket.1}");  // 3 apples
+}

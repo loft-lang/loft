@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F104 — GENERATED from loft-lang/features#104 by tools/features/gen.loft — DO NOT EDIT.
+struct Hex { q: integer, r: integer }
+
+fn main() {
+    world: hash<Hex[q, r]> = [];
+    for i in 0..20000 { world += [Hex { q: i, r: i }] }
+
+    // …the far side of the map is unloaded, for good…
+    for i in 10000..20000 { world[i, i] = null }
+
+    freed = store_reclaim(world);
+    println("still held: {world.len()}");     // still held: 10000
+    println("gave back {freed} bytes");       // a six-figure number here
+}

@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F110 — GENERATED from loft-lang/features#110 by tools/features/gen.loft — DO NOT EDIT.
+struct Tile { height: u8 }
+
+fn main() {
+    t = Tile { height: 3 };
+    // `t.height` is a `u8`, which has no null, so this default can never be used —
+    // loft says so, and `--explain` shows the fix: delete it.
+    shown = t.height ?? 0;
+    println("{shown}");
+}

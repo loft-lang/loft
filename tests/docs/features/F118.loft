@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @F118 — GENERATED from loft-lang/features#118 by tools/features/gen.loft — DO NOT EDIT.
+fn main() {
+    started = ticks();                      // microseconds, monotonic
+    total = 0;
+    for i in 0..100000 { total += i; }
+    elapsed = ticks() - started;
+    println("sum: {total}");                          // sum: 4999950000
+    println("measured a duration: {elapsed >= 0}");   // measured a duration: true
+    println("clock is set: {now() > 0}");             // clock is set: true
+}
