@@ -508,3 +508,14 @@ constructors, and hex_form's `plan_new(0, 0, 20, 16, 0, false)` — a library `p
 value-record pass may not reshape, which the native `(R-ValueLocal)` then carried as a register
 tuple — became a store-minted literal (`R-ValueLocal` −1 in six libraries).  The rule now needs
 a vector-literal argument; c12 pins the scalar case on the trace.
+
+Widening the condition to "the record holds a vector" (dryopea's `undo_entry_empty()`, a
+constructor with no arguments) measured the next trap: inside a loop whose local is NOT a loop
+record, the literal mints a store every pass where the call reused a pooled one — +33 % cycles on
+a probe whose local is copied out (`last = ef`), +18 % on `truncate_to` before the refill clause
+admitted `OpNewRecord`/`OpFinishRecord` on the record's own vector fields.  The rule therefore
+reads the loop records of the rewritten body and restores the call where the local is not one
+(c13).  With the gate, `truncate_to` and `reload_and_record` move −0.6 % cycles (neutral: the
+call form already refilled a kept store), `forms_upto` keeps its gain.  `truncate_to`'s cost is
+the copy of each entry into the timeline and the store allocator's per-claim cost (claim 13 %,
+copy walk 13 %, frees 8 %), not the entry's own construction.
