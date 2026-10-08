@@ -6909,6 +6909,7 @@ use a separate collection or add after the loop"
                         let deps = self.vars.tp(*rv).depend();
                         deps.is_empty()
                             || matches!(deps.as_slice(), [w] if self.vars.name(*w).starts_with("__vdb_")
+                                // @FR-O-Proxy asks copy — the witness owns its store
                                 && self.vars.tp(*w).depend().is_empty())
                     }
                 );
