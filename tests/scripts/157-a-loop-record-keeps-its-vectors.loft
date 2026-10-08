@@ -1,0 +1,61 @@
+// `@FR-R-LoopRecord`'s REFILL clause — a record literal bound inside a loop whose type holds
+// vectors of no-heap elements keeps its store AND its vectors across passes: the first pass
+// mints, every later pass writes each scalar field over the kept record and empties each
+// vector field in place for the literal's pushes (`@FR-R-RefillBuffer`'s empty).  Admitted
+// only where every mint heads a literal group that writes every field, and every zero of a
+// vector field is one of those groups'.
+//
+// Kept: r1 (the vectors grow and shrink across passes, with pushes after the literal) and r4
+// (a callee pushes into the record).  Declined: r2 (an omitted field is written by the
+// prefill, not by a zero in the group) and r5 (the record is handed to a native append).
+// `--native` only; the interpreter takes the per-pass store and is the oracle.  Every value is
+// hand-computed.
+struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
+
+fn fm_sum(f: const Fm) -> integer {
+  s = f.h0 * 1000;
+  for x in f.lens { s += x * 10; }
+  for y in f.turns { s += y; }
+  s
+}
+
+fn fm_len(f: const Fm) -> integer { len(f.lens) * 100 + len(f.turns) }
+
+fn fm_push(f: Fm, x: integer) { f.lens += [x]; }
+
+fn main() {
+  // r1 — the kept vectors grow and shrink: pass i pushes (i * 5) % 7 more elements.
+  r1 = 0;
+  for i in 0..12 {
+    ef = Fm { h0: i, lens: [i], turns: [] };
+    for k in 0..(i * 5) % 7 { ef.lens += [k]; }
+    r1 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(r1 == 72090, "r1: {r1}");
+
+  // r2 — an omitted vector field is empty every pass, though odd passes push into it.
+  r2 = 0;
+  for i in 0..9 {
+    ef = Fm { h0: i, lens: [i, i] };
+    if i % 2 == 1 { ef.turns += [i]; }
+    r2 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(r2 == 38540, "r2: {r2}");
+
+  // r4 — a callee pushes into the record's vector on even passes.
+  r4 = 0;
+  for i in 0..8 {
+    ef = Fm { h0: i, lens: [i, 1], turns: [2] };
+    if i % 2 == 0 { fm_push(ef, i * 7); fm_push(ef, i * 7); }
+    r4 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(r4 == 32464, "r4: {r4}");
+
+  // r5 — each pass's record appended to a collection after a push.
+  keep: vector<Fm> = [];
+  for i in 0..6 { ef = Fm { h0: i, lens: [i, i + 1], turns: [] }; ef.lens += [50]; keep += [ef]; }
+  r5 = 0;
+  for k in keep { r5 += fm_sum(k) + fm_len(k); }
+  assert(r5 == 20160, "r5: {r5}");
+  println("refill ok");
+}
