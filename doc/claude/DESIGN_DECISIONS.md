@@ -14,7 +14,9 @@ trade-offs and evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-histor
 added and held by a guard.
 
 Every entry, by the subject it decides.  Ids are one flat sequence across the subject files;
-`./scripts/idx next-decision` names the next free one.
+`./scripts/idx next-decision` names the next free one.  What each entry still owes — an uncited site,
+a guard that does not exercise it — is its line in
+[DESIGN_DECISIONS_WORKLIST.tsv](DESIGN_DECISIONS_WORKLIST.tsv) (`make decisions`).
 
 ## Values, null and arithmetic — [DESIGN_DECISIONS_VALUES.md](DESIGN_DECISIONS_VALUES.md)
 

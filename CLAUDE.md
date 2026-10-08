@@ -241,8 +241,10 @@ up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for q
 **A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): the sites that keep an entry of the register
 (DESIGN_DECISIONS.md indexes its subject files) — code, doc, and at least one guard under `tests/`
 — cite it, and `./scripts/idx decisions` shows which entries nothing verifies; a new entry takes
-the id `./scripts/idx next-decision` names.  A decision no site can keep is
-reopened, not documented.
+the id `./scripts/idx next-decision` names, and a line in the decision worklist
+(`python3 scripts/decisions.py sync`, then classify it).  **`make decisions`** lists what each
+entry still owes (an uncited site, a guard that does not exercise it); `./scripts/idx
+decision:C<n>` shows one.  A decision no site can keep is reopened, not documented.
 
 **A FORMAL RULE is `@FR-`-tagged — `@FR-B-Copy`, `@FR-L-Null`, `@FR-D-bind-11`** — and a code
 site that enforces one CITES it, so *"which sites enforce this rule?"* is a grep and *"is this

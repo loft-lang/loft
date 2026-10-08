@@ -233,6 +233,36 @@ fn check_new_decisions_are_guarded(index: &str) {
     );
 }
 
+/// @PLN175 — the decision worklist (doc/claude/DESIGN_DECISIONS_WORKLIST.tsv) says, per entry,
+/// what keeps it and what it still owes, and `scripts/decisions.py check` holds that to the
+/// tree: every entry has a classified line, every named site still exists and contains its
+/// text, and a site that does not cite `@C<n>` is listed as `cite` work — while a `cite` the
+/// tree has since done is a failure too, so the list cannot rot in either direction.  The
+/// same command a person runs, so the gate and the tool cannot drift; skipped (not failed)
+/// where `python3` is unavailable.
+fn check_decision_worklist() {
+    let out = match loft::platform::process::harness_command("python3")
+        .arg("scripts/decisions.py")
+        .arg("check")
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("SKIP check_decision_worklist: python3 unavailable ({e})");
+            return;
+        }
+    };
+    assert!(
+        out.status.success(),
+        "the decision worklist is out of step with the register or the tree:\n{}{}\n\
+         Run `python3 scripts/decisions.py check` to reproduce; `sync` adds a line for a new \
+         entry, `show C<n>` names its sites and bare mentions — DESIGN_DECISIONS_RULES.md \
+         § Using the register.",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
 #[test]
 fn index_hygiene_clean() {
     // 1. Refresh the index.  `make index` must exit 0.
@@ -317,6 +347,8 @@ fn index_hygiene_clean() {
     //     the register (DESIGN_DECISIONS_*.md) has at least one GUARD, a `tests/` site (here or in a
     //     library) citing `@C<n>`; `./scripts/idx decisions` counts each entry's sites.
     check_new_decisions_are_guarded(&index);
+    // 2c. …and its worklist line says what keeps it and what it owes, true of the tree.
+    check_decision_worklist();
 
     // 2.5 (retired in sub-commit H, 2026-05-18) — `make index`
     // now invokes scan.loft as the canonical source; the prior

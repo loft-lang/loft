@@ -1,0 +1,100 @@
+# The design-decision worklist: one line per entry of the register (DESIGN_DECISIONS_*.md),
+# with the sites that keep it and the work it still owes.  Query and revalidate it with
+# `python3 scripts/decisions.py` (`list`, `show C<n>`, `check`, `sync`); `./scripts/idx decisions`
+# reads the same counts.  DESIGN_DECISIONS_RULES.md § Using the register says what a line means.
+#
+# Columns (tab-separated; ids bare, so this file cites nothing):
+#   kind   code     — code implements or refuses it; `site` names where
+#          decline  — nothing implements it (it is an absence); `note` says what keeps it
+#          library  — it is about a library and is kept there
+#          pending  — decided, not built yet
+#          ?        — not classified yet (`sync` adds a new entry this way)
+#   site   `path` or `path::text` (a literal the file contains), `; `-separated; `?` unknown, `-` none
+#   guard  ok | weak (a guard cites it but does not exercise it; `note` says what is missing)
+#   work   `-` or a comma list of: cite (a site lacks @C<n>), locate (find the site),
+#          guard (write a guard that exercises it), entry (the entry text disagrees with the
+#          code), miscite (a site cites the wrong id), build (pending), classify (new line)
+id	kind	site	guard	work	note
+C3	code	src/main.rs	ok	-	also named as an example in scripts/fetch-library-guards.py
+C38	code	?	ok	locate,cite	its only code citation is the example in scripts/fetch-library-guards.py; the capture copy is not cited
+C54.D	code	src/lexer.rs	ok	-	
+C62	code	src/parser/objects.rs; src/parser/vectors.rs	ok	-	
+C63	code	src/parser/control.rs::must be at file scope	ok	cite	the refusal is shared with nested struct/enum
+C64	code	src/parser/expressions.rs::a COLLECTION member read off an OWNED	ok	cite	one per-member bind serves C64 and C65
+C65	code	src/parser/expressions.rs::a COLLECTION member read off an OWNED	ok	cite	one per-member bind serves C64 and C65
+C66	code	src/runtime_error.rs::fn logged_in_production	ok	cite	bare `C66` in runtime_error.rs and native.rs
+C67	code	src/main.rs; src/parser/control.rs	ok	-	
+C68	code	src/database/search.rs::fn dedup_keyed; src/database/search.rs::fn set_keyed	ok	cite	bare `C68` in database/structures.rs and trie_db.rs
+C69	code	src/parser/vectors.rs::redundant-null-negation	ok	cite	
+C70	code	src/startup_cache.rs::fn save_program; src/cache.rs::fn program_cache_paths	weak	cite,guard,miscite	src/ir_schema.rs cites `§ C69` for this decision; the guard checks a warm hit, never that no per-library image exists
+C71	code	src/native_gate.rs::fn native_compilable; src/cache.rs::fn loft_build_fingerprint	ok	cite	bare `C71` in native_gate.rs, cache.rs, native_lib.rs, compiled_stdlib.rs; tests/native_source_key.rs guards a different path
+C72	code	src/repl.rs	ok	-	
+C73	code	src/parser/vectors.rs::Both operands of `&&`/`||` are TRUTHINESS positions; src/parser/mod.rs::OpConvBoolFromNull	ok	cite	bare `C73` in vectors.rs, state/mod.rs, database/structures.rs, database/format.rs
+C74	code	src/parser/vectors.rs::fn reject_shared_mutable_scalar_captures	ok	cite	tests/comparisons/closures.loft only names it in a comment; tests/issues.rs exercises it
+C75	code	src/parser/definitions.rs::fn cascade_fn_fields	weak	cite,guard	no guard exercises the ownership transfer: closures.loft is comment-only, issues.rs tests an ICE fix and says `frame-bound`
+C76	code	src/parser/mod.rs::import multiple names with parentheses	ok	cite	
+C77	code	src/parser/operators.rs::is a binding marker, NOT a general operator	ok	cite	
+C78	decline	-	ok	-	a boundary kept by the tree scan in tests/extraction_hygiene.rs; nothing in src/ enforces it
+C79	code	src/scopes/reshape_refusals.rs::pub fn reshape_refusals	ok	cite	bare `C79` in parser/mod.rs
+C80	code	src/runtime_error.rs::fn discard_locked_write_in_production; src/ops.rs::macro_rules! checked_long	weak	cite,guard	tests/locked_writes.rs guards the locked-write half; an arithmetic fault turning null has no guard
+C81	code	src/parser/operators.rs::B-Ref-AnnotationOnly — the FIRST primary of a binding RHS	ok	cite	
+C82	decline	-	ok	-	three context-sensitive points spread over the parser, no one chokepoint; the guard exercises all three
+C83	code	src/narrow.rs	ok	cite	a principle; narrow.rs is the one place that implements it
+C84	library	-	ok	-	kept in loft-libs-net (server/tests/c84_surface.loft)
+C85	code	src/parser/operators.rs::non-null integer operands give a non-null result	ok	cite	bare `C85` in operators.rs
+C86	code	src/use_analysis.rs::fn elision_plans; src/scopes/view_walk.rs::fn collect_views_to_materialise; src/parser/expressions.rs::fn classify_vec_bind	ok	cite	about 20 bare `C86` comments
+C87	code	src/parser/definitions.rs	ok	-	
+C88	code	src/scopes/get_free_vars.rs	ok	-	
+C89	code	src/parser/definitions.rs	ok	-	
+C90	code	src/parser/mod.rs::pub fn null(&mut self, tp: &Type)	ok	cite	bare `C90` in data.rs
+C91	code	src/database/equality.rs; src/parser/operators.rs	ok	-	
+C92	code	src/parser/expressions.rs::a compound assign evaluates its place ONCE	ok	cite	bare `C92` here and in parser/collections.rs
+C93	code	src/parser/collections.rs::captured state is READ-ONLY; src/scopes/par_writes.rs	ok	cite	bare `C93` in par_writes.rs and parser/builtins.rs
+C94	code	src/ops.rs::fn op_div_long; src/ops.rs::fn op_rem_long; default/01_code.loft::fn floor_mod	ok	cite	
+C95	code	src/data.rs::let shadowed_method	ok	cite,entry	shares its refusal with C123 (`shadowed_method.or(shadowed_free)`); the entry names `add_fn` as its site
+C96	code	src/main.rs::fn run_ship_command	weak	cite,guard	the guard tests the version-scope check in registry-sign.sh, not the key-present / key-absent routing
+C97	code	src/data.rs::defines its public symbols MODULE-SCOPED	ok	cite	
+C98	code	src/data.rs; src/parser/mod.rs	ok	-	
+C99	code	src/parser/fields.rs::fn parse_key	ok	cite	
+C100	code	default/01_code.loft::pub fn print(v1: text)	ok	cite	the text-only signature is the decision; the refusal is the ordinary call check
+C101	code	src/libscan.rs::RESERVED_PACKAGE_NAMES; src/main.rs::is_reserved_package_name(name)	ok	cite	bare `C101` in libscan.rs and data.rs
+C102	code	src/main.rs	ok	-	
+C103	code	src/data.rs::fn builtin_type_alias	ok	cite	
+C104	code	src/database/lazy.rs::fn lazy_range	ok	cite	
+C105	code	src/hash.rs::SLOT_BYTES	ok	cite	tests/layout_golden.rs placement_contract_is_pinned pins the layout directly and is the better guard to cite
+C106	code	src/use_analysis.rs::c-binding-not-interpretable; src/c_signature.rs::MAX_C_ARITY	ok	cite	bare `C106` in c_call.rs
+C107	code	src/c_signature.rs::fn plan	ok	cite	its guard skips without a C compiler
+C108	code	src/c_signature.rs::fn of_loft; src/c_signature.rs::fn pointee_takes	ok	cite	
+C109	code	src/c_signature.rs::fn boundary_refusals	ok	cite	its guard skips without a C compiler
+C110	code	src/parser/definitions.rs	ok	-	
+C111	code	src/scopes/drops.rs::fn displaced_drop; src/scopes/handoff.rs	ok	cite	guard headers out of step: the 1362 tag line contradicts its body, the copy guard still says the release MOVES (C121)
+C112	code	src/parser/expressions.rs::fn at_binding_name	ok	cite	
+C113	code	src/parser/definitions.rs::fn reject_duplicate_index	ok	cite	bare `C113` in definitions.rs
+C114	code	src/parser/vectors.rs::fn refuse_keyed_vector_element	ok	cite	
+C115	code	src/parser/vectors.rs::Cannot write to the `&` parameter; src/parser/vectors.rs::fn reject_rebound_heap_parameter_captures	ok	cite	bare `C115` in vectors.rs
+C116	code	src/parser/vectors.rs::fn refuse_capturing_closure_in_collection	ok	cite	tests/scripts/fn-ref-field-non-inline-refused.loft is mis-tagged (it tests P215); tests/threading_chars.rs exercises it
+C117	code	src/parser/definitions.rs::fn refuse_mixed_nullability_group	ok	cite	
+C118	code	src/parser/expressions.rs; src/scopes/args.rs	ok	-	
+C119	code	src/parser/definitions.rs::?` is not allowed — a tuple is its members' bytes	ok	cite	
+C120	code	src/generation/non_sentinel.rs::NOT closed, deliberately	ok	cite	tests/release_pass_probe.rs names it only in a doc comment; 1534-by-ref-arg-escapes-the-proof.loft exercises it
+C121	code	src/use_analysis.rs::fn raise_copy_refusals; src/lease.rs::fn written_verdict	ok	cite	
+C122	code	src/generation/hoist.rs::(R-Escape)	ok	cite	bare `(R-Escape)` in hoist.rs and value_record.rs
+C123	code	src/data.rs::let shadowed_free; src/parser/definitions.rs::both-receiver-deprecated	ok	cite	shares its refusal with C95
+C124	code	src/parser/mod.rs	ok	-	
+C125	code	src/data.rs::every heap value is one `DbRef` on the stack; src/generation/mod.rs::every heap value is one `DbRef` in native code	ok	cite	both sites say `(C125)` without the @
+C126	code	src/parser/definitions.rs::appears in no parameter	ok	cite	
+C127	code	src/parser/fit.rs; src/parser/expressions.rs	ok	-	
+C128	code	src/parser/vectors.rs::fn yield_owned_closure	ok	cite	
+C129	code	src/generation/mod.rs::release_pass_probe; src/generation/ops/int_arith.rs::fn probe_form	ok	cite	no refusal site: there is no syntax to opt in
+C130	code	src/parser/store_else.rs	ok	-	
+C131	code	src/parser/objects.rs; src/parser/operators.rs	ok	-	
+C132	code	src/data.rs	ok	-	
+C133	code	src/cache.rs	ok	-	
+C134	code	src/parser/definitions.rs	ok	-	
+C135	code	src/parser/definitions.rs	ok	-	
+C136	code	bench/portal/outliers.py	ok	-	
+C137	code	src/store.rs; src/database/structures.rs	ok	-	
+C138	code	src/store.rs; src/calc.rs	ok	-	
+C139	code	src/tuple_links.rs; src/parser/definitions.rs	ok	-	
+C140	code	src/api_surface.rs; src/parser/definitions.rs	ok	-	
+C141	pending	-	weak	build	(R-DecodeView) is proposed, not built; its guard records no falsification until it is
