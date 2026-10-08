@@ -112,6 +112,95 @@ fn mentions(v: &Value, x: u16) -> bool {
     })
 }
 
+/// The type the constructor's prologue mints its buffer as: `if <present> {} else
+/// OpDatabase(buf, tp)`.
+fn mint_type(data: &Data, prologue: &Value, buf: u16) -> Result<i32, &'static str> {
+    match prologue.unspan() {
+        Value::If(_, _, f) => match f.unspan() {
+            Value::Call(op, a)
+                if name(data, *op) == "OpDatabase" && a.len() == 2 && is_var(&a[0], buf) =>
+            {
+                match a[1].unspan() {
+                    Value::Int(t) => Ok(*t),
+                    _ => Err("a mint of a computed type"),
+                }
+            }
+            _ => Err("a mint other than the buffer's prologue"),
+        },
+        _ => Err("a mint other than the buffer's prologue"),
+    }
+}
+
+/// The literal group's writes: a scalar field from operators over the scalar parameters, a
+/// vector field's zero, a vector parameter appended whole into its field — each vector
+/// parameter exactly once.
+fn check_writes(
+    data: &Data,
+    writes: &[&Value],
+    buf: u16,
+    params: &[u16],
+    fv: &crate::variables::Function,
+) -> Result<(), &'static str> {
+    let scalar_params: Vec<u16> = params
+        .iter()
+        .copied()
+        .filter(|p| !matches!(fv.tp(*p), Type::Vector(_, _)))
+        .collect();
+    let mut vec_uses: HashMap<u16, usize> = HashMap::new();
+    for w in writes {
+        let Value::Call(op, a) = w.unspan() else {
+            return Err("a statement in the literal that is not a write");
+        };
+        let n = name(data, *op);
+        if n == "OpAppendVector" {
+            // `OpAppendVector(OpGetField(buf, off, vtp), p, 0)` — a vector parameter, whole.
+            let field_ok = matches!(a.first().map(Value::unspan), Some(Value::Call(g, ga))
+                if name(data, *g) == "OpGetField" && ga.len() == 3 && is_var(&ga[0], buf)
+                    && matches!(ga[1].unspan(), Value::Int(_)) && matches!(ga[2].unspan(), Value::Int(_)));
+            let Some(Value::Var(p)) = a.get(1).map(Value::unspan) else {
+                return Err("a vector field filled from something other than a parameter");
+            };
+            if !field_ok
+                || !params.contains(p)
+                || !matches!(a.get(2).map(Value::unspan), Some(Value::Int(0)))
+            {
+                return Err("a vector field filled from something other than a parameter");
+            }
+            *vec_uses.entry(*p).or_insert(0) += 1;
+            continue;
+        }
+        if !n.starts_with("OpSet") || n.contains("Text") || a.len() != 3 || !is_var(&a[0], buf) {
+            return Err("a write of a kind the literal does not hold");
+        }
+        if !matches!(a[1].unspan(), Value::Int(_)) {
+            return Err("a write at a computed offset");
+        }
+        let val = &a[2];
+        if !scalar_expr(data, val) {
+            return Err("a field computed by more than operators");
+        }
+        let mut bad = false;
+        val.any_node(&mut |x| {
+            if let Value::Var(v) = x
+                && !scalar_params.contains(v)
+            {
+                bad = true;
+            }
+            false
+        });
+        if bad {
+            return Err("a field that reads something other than a scalar parameter");
+        }
+    }
+    // Every vector parameter is used exactly once, by its fill; the unused locals stay unused.
+    for p in params {
+        if matches!(fv.tp(*p), Type::Vector(_, _)) && vec_uses.get(p).copied() != Some(1) {
+            return Err("a vector parameter read other than once, whole");
+        }
+    }
+    Ok(())
+}
+
 /// The constructor a call of `d` is replaced by, or why not.
 fn admit(data: &Data, d: u32) -> Result<Ctor, &'static str> {
     let def = data.def(d);
@@ -177,77 +266,8 @@ fn admit(data: &Data, d: u32) -> Result<Ctor, &'static str> {
     let Some((prologue, writes)) = init.split_first() else {
         return Err("no mint");
     };
-    let tp = match prologue.unspan() {
-        Value::If(_, _, f) => match f.unspan() {
-            Value::Call(op, a)
-                if name(data, *op) == "OpDatabase" && a.len() == 2 && is_var(&a[0], buf) =>
-            {
-                match a[1].unspan() {
-                    Value::Int(t) => *t,
-                    _ => return Err("a mint of a computed type"),
-                }
-            }
-            _ => return Err("a mint other than the buffer's prologue"),
-        },
-        _ => return Err("a mint other than the buffer's prologue"),
-    };
-    let scalar_params: Vec<u16> = params[..bi]
-        .iter()
-        .copied()
-        .filter(|p| !matches!(fv.tp(*p), Type::Vector(_, _)))
-        .collect();
-    let mut vec_uses: HashMap<u16, usize> = HashMap::new();
-    for w in writes {
-        let Value::Call(op, a) = w.unspan() else {
-            return Err("a statement in the literal that is not a write");
-        };
-        let n = name(data, *op);
-        if n == "OpAppendVector" {
-            // `OpAppendVector(OpGetField(buf, off, vtp), p, 0)` — a vector parameter, whole.
-            let field_ok = matches!(a.first().map(Value::unspan), Some(Value::Call(g, ga))
-                if name(data, *g) == "OpGetField" && ga.len() == 3 && is_var(&ga[0], buf)
-                    && matches!(ga[1].unspan(), Value::Int(_)) && matches!(ga[2].unspan(), Value::Int(_)));
-            let Some(Value::Var(p)) = a.get(1).map(Value::unspan) else {
-                return Err("a vector field filled from something other than a parameter");
-            };
-            if !field_ok
-                || !params[..bi].contains(p)
-                || !matches!(a.get(2).map(Value::unspan), Some(Value::Int(0)))
-            {
-                return Err("a vector field filled from something other than a parameter");
-            }
-            *vec_uses.entry(*p).or_insert(0) += 1;
-            continue;
-        }
-        if !n.starts_with("OpSet") || n.contains("Text") || a.len() != 3 || !is_var(&a[0], buf) {
-            return Err("a write of a kind the literal does not hold");
-        }
-        if !matches!(a[1].unspan(), Value::Int(_)) {
-            return Err("a write at a computed offset");
-        }
-        let val = &a[2];
-        if !scalar_expr(data, val) {
-            return Err("a field computed by more than operators");
-        }
-        let mut bad = false;
-        val.any_node(&mut |x| {
-            if let Value::Var(v) = x
-                && !scalar_params.contains(v)
-            {
-                bad = true;
-            }
-            false
-        });
-        if bad {
-            return Err("a field that reads something other than a scalar parameter");
-        }
-    }
-    // Every vector parameter is used exactly once, by its fill; the unused locals stay unused.
-    for p in &params[..bi] {
-        if matches!(fv.tp(*p), Type::Vector(_, _)) && vec_uses.get(p).copied() != Some(1) {
-            return Err("a vector parameter read other than once, whole");
-        }
-    }
+    let tp = mint_type(data, prologue, buf)?;
+    check_writes(data, writes, buf, &params[..bi], fv)?;
     if unused
         .iter()
         .any(|u| writes.iter().any(|w| mentions(w, *u)))
@@ -390,37 +410,37 @@ fn remap(v: &Value, map: &HashMap<u16, Value>, scope: u16) -> Value {
 /// The mentions of the pooled buffer `buf` in a caller: every one must be its declaration,
 /// its prep (`if null mint else clear`), a free, or the one call being rewritten.
 fn buffer_only_pooled(data: &Data, body: &Value, buf: u16, target: u16) -> bool {
-    fn walk(data: &Data, v: &Value, buf: u16, target: u16, calls: &mut usize, ok: &mut bool) {
+    fn walk(data: &Data, node: &Value, buf: u16, target: u16, calls: &mut usize, ok: &mut bool) {
         if !*ok {
             return;
         }
-        let n = v.unspan();
-        match n {
-            Value::Var(w) if *w == buf => {
+        let here = node.unspan();
+        match here {
+            Value::Var(var) if *var == buf => {
                 *ok = false;
                 return;
             }
-            Value::Set(w, rhs) if *w == buf => {
+            Value::Set(var, rhs) if *var == buf => {
                 if !matches!(rhs.unspan(), Value::Null) {
                     *ok = false;
                 }
                 return;
             }
-            Value::If(c, t, f) if prep_of(data, c, t, f, buf) => return,
-            Value::Call(op, a) => {
+            Value::If(cond, then, other) if prep_of(data, cond, then, other, buf) => return,
+            Value::Call(op, args) => {
                 let nm = name(data, *op);
-                let last_is_buf = a.last().is_some_and(|x| is_var(x, buf));
-                if (nm == "OpFreeRef" && a.len() == 1 && is_var(&a[0], buf))
+                let last_is_buf = args.last().is_some_and(|x| is_var(x, buf));
+                if (nm == "OpFreeRef" && args.len() == 1 && is_var(&args[0], buf))
                     || (nm == "OpFreeRefIfDistinct"
-                        && a.len() == 2
-                        && ((is_var(&a[0], target) && is_var(&a[1], buf))
-                            || (is_var(&a[0], buf) && is_var(&a[1], target))))
+                        && args.len() == 2
+                        && ((is_var(&args[0], target) && is_var(&args[1], buf))
+                            || (is_var(&args[0], buf) && is_var(&args[1], target))))
                 {
                     return;
                 }
                 if last_is_buf && !nm.starts_with("Op") {
                     *calls += 1;
-                    for x in &a[..a.len() - 1] {
+                    for x in &args[..args.len() - 1] {
                         walk(data, x, buf, target, calls, ok);
                     }
                     return;
@@ -428,7 +448,7 @@ fn buffer_only_pooled(data: &Data, body: &Value, buf: u16, target: u16) -> bool 
             }
             _ => {}
         }
-        n.for_each_child(&mut |c| walk(data, c, buf, target, calls, ok));
+        here.for_each_child(&mut |child| walk(data, child, buf, target, calls, ok));
     }
     let mut calls = 0;
     let mut ok = true;
@@ -438,16 +458,16 @@ fn buffer_only_pooled(data: &Data, body: &Value, buf: u16, target: u16) -> bool 
 
 /// `if OpRefIsNull(buf) { OpDatabase(buf, tp) } else OpClear(buf, tp)` — the scope pass's
 /// prep of a pooled call buffer.
-fn prep_of(data: &Data, c: &Value, t: &Value, f: &Value, buf: u16) -> bool {
-    let call_on = |v: &Value, want: &str| {
-        let v = match v.unspan() {
+fn prep_of(data: &Data, cond: &Value, then: &Value, other: &Value, buf: u16) -> bool {
+    let call_on = |arm: &Value, want: &str| {
+        let stmt = match arm.unspan() {
             Value::Insert(items) if items.len() == 1 => items[0].unspan(),
             Value::Block(b) if b.operators.len() == 1 => b.operators[0].unspan(),
-            other => other,
+            plain => plain,
         };
-        matches!(v, Value::Call(op, a) if name(data, *op) == want && a.first().is_some_and(|x| is_var(x, buf)))
+        matches!(stmt, Value::Call(op, args) if name(data, *op) == want && args.first().is_some_and(|x| is_var(x, buf)))
     };
-    call_on(c, "OpRefIsNull") && call_on(t, "OpDatabase") && call_on(f, "OpClear")
+    call_on(cond, "OpRefIsNull") && call_on(then, "OpDatabase") && call_on(other, "OpClear")
 }
 
 /// The vector buffers a rewritten call's literal arguments were built in: each must be used
@@ -501,7 +521,7 @@ fn site_of(stmt: &Value, ctors: &HashMap<u32, Ctor>) -> Option<Site> {
     })
 }
 
-/// The statements that replace `stmt` (a [`Site`]), or `None` when an argument declines.
+/// The statements that replace `stmt` (a [`Site`]), or why the call stays.
 fn expand(
     data: &Data,
     stmt: &Value,
@@ -509,12 +529,12 @@ fn expand(
     site: &Site,
     scope: u16,
     body: &Value,
-) -> Option<Vec<Value>> {
+) -> Result<Vec<Value>, &'static str> {
     let Value::Set(_, rhs) = stmt.unspan() else {
-        return None;
+        return Err("not an assignment");
     };
     let Value::Call(_, args) = rhs.unspan() else {
-        return None;
+        return Err("not a call");
     };
     let x = site.target;
     let target = Value::Var(x);
@@ -523,7 +543,7 @@ fn expand(
     let mut literal_args: HashMap<u16, Value> = HashMap::new();
     for (p, a) in c.params.iter().zip(args.iter()).take(c.params.len() - 1) {
         if mentions(a, x) {
-            return None;
+            return Err("an argument reads the target");
         }
         match a.unspan() {
             Value::Block(b) if b.name == "Vector" => {
@@ -532,8 +552,14 @@ fn expand(
             _ if scalar_expr(data, a) || literal(a) => {
                 map.insert(*p, a.unspan().clone());
             }
-            _ => return None,
+            _ => return Err("an argument other than operators, a vector literal or a variable"),
         }
+    }
+    // Profitable only where a vector literal would otherwise be built in a buffer of its own
+    // and copied: a call of scalars alone already travels as a value record (`R-ValueRecord`),
+    // no store at all, and the literal would mint one.
+    if literal_args.is_empty() {
+        return Err("no vector-literal argument (a call of scalars travels as a value record)");
     }
     let db = data.def_nr("OpDatabase");
     let mut out = vec![
@@ -547,22 +573,23 @@ fn expand(
             && let Some(lit) = literal_args.get(p)
         {
             let field = remap(&a[0], &map, scope);
-            let Some(Value::Call(_, ga)) = Some(field.unspan()) else {
-                return None;
+            let Value::Call(_, ga) = field.unspan() else {
+                return Err("a vector field the literal cannot name");
             };
             let Value::Int(vtp) = ga[2].unspan() else {
-                return None;
+                return Err("a vector field the literal cannot name");
             };
-            let (vdb, pushes) = literal_pushes(data, lit, &field, *vtp, x)?;
+            let (vdb, pushes) = literal_pushes(data, lit, &field, *vtp, x)
+                .ok_or("a vector literal of a shape other than pushes of operator expressions")?;
             if !vdb_only_literal(data, body, vdb) {
-                return None;
+                return Err("a vector literal's buffer is used elsewhere");
             }
             out.extend(pushes);
             continue;
         }
         out.push(remap(w, &map, scope));
     }
-    Some(out)
+    Ok(out)
 }
 
 /// Drop the pooled buffer's prep and turn the target's skip-the-buffer free into its own.
@@ -594,6 +621,56 @@ fn retire_buffer(data: &Data, v: &mut Value, target: u16, buf: u16, free_ref: u3
     {
         *v = Value::Call(free_ref, vec![Value::Var(target)]);
     }
+}
+
+/// The call sites in `caller` whose target and buffer pass the whole-body checks, as
+/// `(target, buffer)` pairs: the target is assigned once, a plain record local and not a
+/// parameter, and the buffer is used by nothing but its pool's prep and frees.
+fn admitted_sites(
+    data: &Data,
+    caller: u32,
+    body: &Value,
+    ctors: &HashMap<u32, Ctor>,
+) -> Vec<(u16, u16)> {
+    let vars = &data.def(caller).variables;
+    let mut sets: HashMap<u16, usize> = HashMap::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, _) = n {
+            *sets.entry(*v).or_insert(0) += 1;
+        }
+        false
+    });
+    let mut ok_sites: Vec<(u16, u16)> = Vec::new();
+    body.any_node(&mut |n| {
+        if let Some(site) = site_of(n, ctors)
+            && site.ctor != caller
+        {
+            let why = if sets.get(&site.target) != Some(&1) {
+                Some("the target is assigned more than once")
+            } else if vars.is_argument(site.target) {
+                Some("the target is a parameter (the function's own return buffer)")
+            } else if vars.is_captured(site.target)
+                || !matches!(vars.tp(site.target), Type::Reference(_, _))
+            {
+                Some("the target is not a plain record local")
+            } else if !buffer_only_pooled(data, body, site.buf, site.target) {
+                Some("the return buffer is used elsewhere")
+            } else {
+                None
+            };
+            match why {
+                None => ok_sites.push((site.target, site.buf)),
+                Some(w) if trace() => eprintln!(
+                    "ctor-literal: {} kept a call in {}: {w}",
+                    ctors[&site.ctor].name,
+                    data.def(caller).name()
+                ),
+                Some(_) => {}
+            }
+        }
+        false
+    });
+    ok_sites
 }
 
 /// `@FR-R-CtorLiteral` over the whole program; answers the number of calls rewritten.
@@ -636,46 +713,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         if blocked || !calls {
             continue;
         }
-        // The sites whose target and buffer pass the whole-body checks.
         let body = def.code().clone();
-        let vars = &def.variables;
-        let mut sets: HashMap<u16, usize> = HashMap::new();
-        body.any_node(&mut |n| {
-            if let Value::Set(v, _) = n {
-                *sets.entry(*v).or_insert(0) += 1;
-            }
-            false
-        });
-        let mut ok_sites: Vec<(u16, u16)> = Vec::new();
-        body.any_node(&mut |n| {
-            if let Some(site) = site_of(n, &ctors)
-                && site.ctor != caller
-            {
-                let why = if sets.get(&site.target) != Some(&1) {
-                    Some("the target is assigned more than once")
-                } else if vars.is_argument(site.target) {
-                    Some("the target is a parameter (the function's own return buffer)")
-                } else if vars.is_captured(site.target)
-                    || !matches!(vars.tp(site.target), Type::Reference(_, _))
-                {
-                    Some("the target is not a plain record local")
-                } else if !buffer_only_pooled(data, &body, site.buf, site.target) {
-                    Some("the return buffer is used elsewhere")
-                } else {
-                    None
-                };
-                match why {
-                    None => ok_sites.push((site.target, site.buf)),
-                    Some(w) if trace() => eprintln!(
-                        "ctor-literal: {} kept a call in {}: {w}",
-                        ctors[&site.ctor].name,
-                        data.def(caller).name()
-                    ),
-                    Some(_) => {}
-                }
-            }
-            false
-        });
+        let ok_sites = admitted_sites(data, caller, &body, &ctors);
         if ok_sites.is_empty() {
             continue;
         }
@@ -733,37 +772,29 @@ fn rewrite_in(
     let scope = b.scope;
     let mut i = 0;
     while i < b.operators.len() {
-        let site = site_of(&b.operators[i], ctors).filter(|s| ok.contains(&(s.target, s.buf)));
-        if let Some(site) = &site
-            && let Some(new) = expand(
-                data,
-                &b.operators[i],
-                &ctors[&site.ctor],
-                site,
-                scope,
-                whole,
-            )
-        {
-            if trace() {
-                eprintln!(
-                    "ctor-literal: {} written in place in {}",
-                    ctors[&site.ctor].name, caller
-                );
-            }
-            let n = new.len();
-            b.operators.splice(i..=i, new);
-            done.push((site.target, site.buf));
-            i += n;
-        } else {
-            if trace()
-                && let Some(site) = &site
-            {
-                eprintln!(
-                    "ctor-literal: {} kept a call in {caller}: an argument other than operators, a vector literal or a variable",
-                    ctors[&site.ctor].name
-                );
-            }
+        let Some(site) =
+            site_of(&b.operators[i], ctors).filter(|s| ok.contains(&(s.target, s.buf)))
+        else {
             i += 1;
+            continue;
+        };
+        let ctor = &ctors[&site.ctor];
+        match expand(data, &b.operators[i], ctor, &site, scope, whole) {
+            Ok(new) => {
+                if trace() {
+                    eprintln!("ctor-literal: {} written in place in {caller}", ctor.name);
+                }
+                let n = new.len();
+                b.operators.splice(i..=i, new);
+                done.push((site.target, site.buf));
+                i += n;
+            }
+            Err(why) => {
+                if trace() {
+                    eprintln!("ctor-literal: {} kept a call in {caller}: {why}", ctor.name);
+                }
+                i += 1;
+            }
         }
     }
 }
