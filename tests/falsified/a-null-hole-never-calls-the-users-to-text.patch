@@ -1,0 +1,74 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 600c8db85..a33ee1a80 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -2747,60 +2747,6 @@ use #count instead"
+         ));
+     }
+ 
+-    /// `@FR-F-FaultSafe` (@C142) — a hole whose value is null renders `null`, and a type's own
+-    /// `operator to_text` is never called with a null `self`: it was, and a body like
+-    /// `"T{self.x}"` printed `Tnull` for an absent `T?` on both backends.  The null test
+-    /// stands BEFORE the call, so the user function does not run at all; the subject is read
+-    /// once — a non-repeatable one (a call result) is bound to a local first.  Null is the
+-    /// handle's store-number sentinel or a `rec` of 0 (`nullref`, `DbRef::or_null`).
+-    fn append_user_text_unless_null(
+-        &mut self,
+-        list: &mut Vec<Value>,
+-        start: &str,
+-        var: Value,
+-        format: &Value,
+-        mut text_call: Value,
+-        state: OutputState,
+-    ) {
+-        let subject = if Self::is_repeatable_place(&self.data, format) {
+-            format.clone()
+-        } else {
+-            let tp = self.data.attr_type(
+-                match text_call.unspan() {
+-                    Value::Call(stub, _) => *stub,
+-                    _ => unreachable!("try_bound_to_text_call answers a call"),
+-                },
+-                0,
+-            );
+-            let holder = self.create_unique("hole_subject", &tp);
+-            self.vars.defined(holder);
+-            list.push(v_set(holder, format.clone()));
+-            if let Value::Call(_, args) = &mut text_call {
+-                args[0] = Value::Var(holder);
+-            }
+-            Value::Var(holder)
+-        };
+-        let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&subject));
+-        let present = self.cl("OpConvBoolFromRef", &[subject]);
+-        let no_record = self.cl("OpNot", &[present]);
+-        let is_null = v_if(null_handle, Value::Boolean(true), no_record);
+-        let null_text = self.cl("OpConvTextFromNull", &[]);
+-        let null_arm = self.cl(
+-            &(start.to_owned() + "Text"),
+-            &[
+-                var.clone(),
+-                null_text,
+-                state.width.clone(),
+-                Value::Int(state.dir),
+-                Value::Int(i32::from(state.token.as_bytes()[0])),
+-            ],
+-        );
+-        let mut value_arm = Vec::new();
+-        self.append_data_text(&mut value_arm, start, var, text_call, state);
+-        let value_arm = value_arm.pop().expect("append_data_text pushes one op");
+-        list.push(v_if(is_null, null_arm, value_arm));
+-    }
+-
+     /// P242: when `d_nr` is the type variable of the current
+     /// generic-function context AND that variable's bound
+     /// supplies a `to_text(self: Self) -> text` method, return a
+@@ -3316,7 +3262,7 @@ use #count instead"
+                 // path; `re_resolve_call` substitutes it with the
+                 // concrete type's impl at instantiation time.
+                 if let Some(text_call) = self.try_bound_to_text_call(d_nr, format, state.spec) {
+-                    self.append_user_text_unless_null(list, start, var, format, text_call, state);
++                    self.append_data_text(list, start, var, text_call, state);
+                 } else if self.data.is_type_var_placeholder(d_nr) {
+                     // loft#845 — the same fault P242 fixed for a BOUND type variable, for
+                     // an unbounded one, where there is no `to_text` to route through.

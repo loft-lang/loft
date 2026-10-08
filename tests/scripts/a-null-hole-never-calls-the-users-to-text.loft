@@ -13,7 +13,13 @@
 // the null as a FIELD of a rendered record (C143: `null`, not the user rendering) and as an
 // ELEMENT of a rendered vector; a null enum beside it; and the present controls.
 //
-// @falsified-at: PENDING
+// @falsified-at: 7c74ab7f2 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-by: tests/falsified/a-null-hole-never-calls-the-users-to-text.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+//   CHANNEL: value — the marker inside `to_text` and the rendered string.
+//   WITNESS: on the control `"[{t}]"` runs the user's `to_text` with a null `self` (its
+//   marker assertion fires) and renders `[Tnull]`.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees; the field,
+//   element and present-value cells pass on both.
 
 struct T { id: integer? }
 operator to_text(self: T) -> text {
