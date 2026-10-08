@@ -9,6 +9,16 @@
 // `make` (the target is the function's own return buffer).  A vector VARIABLE argument is
 // still copied (c2).  Applies in the IR phase, so the interpreter and `--native-release` take
 // it; plain `--native` compiles open-world and keeps the calls.  Every value is hand-computed.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-08) — with the rewrite dropping a literal
+//   argument's first push, c1 fails on --interpret and --native-release; with the refill
+//   clause's vector empties not emitted (the literal's zero strands the kept vector), c9's
+//   live-record count grows on --native-release while every value holds; with
+//   `vector_add`'s fits path writing one element short, c10 fails on --interpret and c2 on
+//   --native-release.  Restored, every cell holds on --interpret, --native and
+//   --native-release, under each switch (`LOFT_NO_CTOR_LITERAL`, `LOFT_NO_LOOP_RECORD_REFILL`,
+//   `LOFT_NO_VADD_FITS`) and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
+//   and LOFT_NATIVE_LEAK_CHECK=1.
 struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
 
 fn hn(h: integer) -> integer { ((h % 12) + 12) % 12 }
@@ -32,6 +42,15 @@ fn three(a: integer) -> integer { a * 3 }
 fn make(k: integer) -> Fm {
   r = fm_new(k, [k, k], [k + 1]);
   r
+}
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
 }
 
 fn main() {
@@ -74,5 +93,32 @@ fn main() {
   c8 = 0;
   for i in 0..8 { ef = fm_new(three(i), [i], [three(i)]); c8 += fm_sum(ef); }
   assert(c8 == 36364, "c8: {c8}");
+  // c9 — the store holds what one pass needs: the live-record count at pass 9 and at pass 39
+  // agree.
+  c9 = 0;
+  rec9 = -1;
+  rec39 = -2;
+  for k in 0..40 {
+    ef = fm_new(k, [k, k + 1], [3]);
+    c9 += fm_sum(ef);
+    if k == 9 { rec9 = live_records(); }
+    if k == 39 { rec39 = live_records(); }
+  }
+  assert(c9 == 220120, "c9: {c9}");
+  assert(rec9 > 0 && rec9 == rec39, "c9 records: {rec9} then {rec39}");
+  // c10 — `Stores::vector_add`'s fits path: a vector with room appended from another store.
+  acc: vector<integer> = [100];
+  src = [1, 2, 3];
+  acc += src;
+  acc += src;
+  c10 = 0;
+  for x in acc { c10 += x; }
+  assert(c10 == 112 && len(acc) == 7, "c10: {c10} over {len(acc)}");
+
+  // c11 — the same path inside one store: a record's vector field appended into its sibling.
+  f11 = fm_new(1, [4, 5], [6]);
+  f11.turns += f11.lens;
+  c11 = fm_sum(f11) + fm_len(f11);
+  assert(c11 == 1308, "c11: {c11}");
   println("ctor ok");
 }
