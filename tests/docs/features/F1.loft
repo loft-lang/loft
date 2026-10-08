@@ -1,9 +1,0 @@
-// Copyright (c) 2026 Jurjen Stellingwerff
-// SPDX-License-Identifier: LGPL-3.0-or-later
-// @F1 — GENERATED from loft-lang/features#1 by tools/features/gen.loft — DO NOT EDIT.
-fn main() {
-    a = null as integer?;  // a holds no value
-    b = a + 10;            // arithmetic on null gives null, no crash
-    println("{a} {b}");    // null null
-    println("still running");
-}

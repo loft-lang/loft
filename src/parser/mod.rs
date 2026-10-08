@@ -14388,15 +14388,17 @@ impl Parser {
     /// `parse()` entry), so without this record the manifest misses
     /// them and an edited library keeps executing from the stale
     /// cached program.
+    #[track_caller]
     fn switch_to_dep(&mut self, f: &str) {
         // A `pub` the use region consumed belongs to the file being left; that file is
         // re-parsed from its start when it resumes.
         self.pub_taken = false;
         if std::env::var("LOFT_LIB_ORDER").is_ok() {
             eprintln!(
-                "[liborder] switch {} -> {}",
+                "[liborder] switch {} -> {} (from {})",
                 self.lexer.pos().file,
-                f.rsplit('/').next().unwrap_or(f)
+                f.rsplit('/').next().unwrap_or(f),
+                std::panic::Location::caller()
             );
         }
         if self.track_sources && !self.parsed_sources.iter().any(|s| s == f) {
@@ -19666,16 +19668,18 @@ impl Parser {
             if crate::file_access::exists(&toml) {
                 Self::add_pkg_triggers(&toml, &d, &mut map, &mut types);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
-                    for (dep, _ver) in &man.dependencies {
-                        // A sibling package first; else the way a `use` line finds it —
-                        // the project's `lib/<dep>`, a `path =` dependency, `--lib` — so a
-                        // dependency's triggers fire however it is declared (@PLN179).
-                        let entry =
-                            self.lib_path_manifest(&d.to_string_lossy(), dep)
-                                .or_else(|| {
-                                    let f = self.lib_path(dep);
-                                    file_exists(&f).then_some(f)
-                                });
+                    for (dep, value) in &man.dependencies {
+                        // PURE lookups only: a sibling package, a `path =` dependency, the
+                        // project's `lib/<dep>` — by path, never through `lib_path`, whose
+                        // side effects queue every dependency of the manifest found above
+                        // the file as a dependency of that file (a root manifest with
+                        // registry packages loaded `graphics` into a one-line script and
+                        // crashed the compiler in `imaging`).  A registry dependency's
+                        // triggers come from the catalogue instead.
+                        let entry = self
+                            .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
+                            .map(|r| r.entry)
+                            .or_else(|| Self::dep_entry_by_path(&d, dep, value));
                         if let Some(entry) = entry
                             && let Some(root) = std::path::Path::new(&entry)
                                 .parent()
@@ -19697,6 +19701,24 @@ impl Parser {
         self.auto_use_trigger_map = Some(map.clone());
         self.auto_use_type_map = types;
         map
+    }
+
+    /// The entry file of a dependency declared by PATH — `dep = { path = "…" }` relative to
+    /// the manifest's directory `d`, or the project's `lib/<dep>` — read from the package's
+    /// own manifest and touching nothing else; `None` for a registry dependency.
+    fn dep_entry_by_path(d: &std::path::Path, dep: &str, value: &str) -> Option<String> {
+        let root = match crate::manifest::extract_path_dep(value) {
+            Some(path) => d.join(path),
+            None => d.join("lib").join(dep),
+        };
+        let toml = root.join("loft.toml");
+        if !crate::file_access::exists(&toml) {
+            return None;
+        }
+        let man = crate::manifest::read_manifest(&toml.to_string_lossy())?;
+        let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
+        let entry = root.join(entry);
+        crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
     }
 
     /// Add a package's derived text-method triggers (`method -> package`) to
