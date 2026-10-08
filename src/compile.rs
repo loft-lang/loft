@@ -57,7 +57,7 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     crate::leaf_inline::rewrite_program(data);
     // `@FR-R-CtorLiteral` — a constructor's call is its literal, after the leaf inlining
     // that leaves a constructor's scalar fields as operator expressions.
-    crate::ctor_literal::rewrite_program(data);
+    crate::ctor_literal::rewrite_program(data, database);
     // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
     crate::forward_walk::rewrite_program(data);
     // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.

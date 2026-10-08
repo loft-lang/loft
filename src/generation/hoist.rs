@@ -12873,6 +12873,26 @@ fn vector_field_offsets(stores: &Stores, tp: u16) -> Vec<i32> {
         .collect()
 }
 
+/// The field NUMBERS of `tp`'s vector fields — what `OpNewRecord` / `OpFinishRecord` name
+/// an append's target field by.
+fn vector_field_numbers(stores: &Stores, tp: u16) -> Vec<i32> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return Vec::new();
+    };
+    (0i32..)
+        .zip(fields.iter())
+        .filter(|(_, f)| {
+            matches!(
+                stores.types.get(f.content as usize).map(|c| &c.parts),
+                Some(crate::database::Parts::Vector(_))
+            )
+        })
+        .map(|(nr, _)| nr)
+        .collect()
+}
+
 /// The REFILL clause's group check: every mint of `v` heads a literal group that writes
 /// every field of `tp` ([`group_covers_type`]), and every zero of a vector field of `v` is
 /// one of those groups' — answered as the set of those zeros, or `None`.  A zero anywhere
@@ -13023,6 +13043,8 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
         // The REFILL clause: the store type the mints name, refillable, every mint heading a
         // complete literal group.  The vector fields' own ops are then part of the init family.
         let mut vec_offs: Vec<i32> = Vec::new();
+        let mut vec_nrs: Vec<i32> = Vec::new();
+        let mut rec_tp: i32 = -1;
         let mut zeros: HashSet<usize> = HashSet::new();
         if rec.refill {
             let tp = mint_type_of(data, def_nr, v);
@@ -13032,6 +13054,8 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                         Some(z) => {
                             zeros = z;
                             vec_offs = vector_field_offsets(stores, tp);
+                            vec_nrs = vector_field_numbers(stores, tp);
+                            rec_tp = i32::from(tp);
                         }
                         None => declined = Some("a mint whose literal group the refill cannot see"),
                     }
@@ -13043,11 +13067,12 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
         fn check(
             n: &Value,
             v: u16,
-            vec_offs: &[i32],
+            vec: (&[i32], &[i32], i32),
             data: &Data,
             minted: &mut bool,
             declined: &mut Option<&'static str>,
         ) {
+            let (vec_offs, vec_nrs, rec_tp) = vec;
             let n = n.unspan();
             match n {
                 Value::Var(w) if *w == v => {
@@ -13087,7 +13112,7 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                                 && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(off)) if vec_offs.contains(off)));
                     if on_vec_field {
                         for a in args.iter().skip(1) {
-                            check(a, v, vec_offs, data, minted, declined);
+                            check(a, v, vec, data, minted, declined);
                         }
                         return;
                     }
@@ -13099,6 +13124,13 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                                 true
                             }
                             "OpFreeRef" | "OpFreeRefIfDistinct" | "OpFreeRefTag" => true,
+                            // The refill clause: an append to one of the record's own vector
+                            // fields, named by field number (`e.v += [R {…}]`).
+                            "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord" => {
+                                let at = if name == "OpFinishRecord" { 2 } else { 1 };
+                                matches!(args.get(at).map(Value::unspan), Some(Value::Int(t)) if *t == rec_tp)
+                                    && matches!(args.get(at + 1).map(Value::unspan), Some(Value::Int(f)) if vec_nrs.contains(f))
+                            }
                             _ => {
                                 fld_lit
                                     && (SCALAR_GETTERS.contains(&name)
@@ -13111,7 +13143,7 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                         }
                         // The other operands still walk (a value may mention `v` again).
                         for a in args.iter().skip(1) {
-                            check(a, v, vec_offs, data, minted, declined);
+                            check(a, v, vec, data, minted, declined);
                         }
                         return;
                     }
@@ -13131,7 +13163,7 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                         }
                         for a in args {
                             if !matches!(a.unspan(), Value::Var(w) if *w == v) {
-                                check(a, v, vec_offs, data, minted, declined);
+                                check(a, v, vec, data, minted, declined);
                             }
                         }
                         return;
@@ -13139,9 +13171,16 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                 }
                 _ => {}
             }
-            n.for_each_child(&mut |c| check(c, v, vec_offs, data, minted, declined));
+            n.for_each_child(&mut |c| check(c, v, vec, data, minted, declined));
         }
-        check(body, v, &vec_offs, data, &mut minted, &mut declined);
+        check(
+            body,
+            v,
+            (&vec_offs, &vec_nrs, rec_tp),
+            data,
+            &mut minted,
+            &mut declined,
+        );
         if !minted {
             declined.get_or_insert("never minted by a literal");
         }
