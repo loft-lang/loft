@@ -107,7 +107,10 @@ fn main() {
 
   // --- fragmented: grown to `grow`, dropped back to `keep`, tail reclaimed.
   frag: hash<Rec[id]> = [];
-  for g in 0..grow { frag += [make(g, reserved, shape)] }
+  // A `while` fill on purpose: a counted fill may reserve the hash up front (@C140), and this
+  // fixture needs the growth an unreserved fill leaves behind.
+  fg = 0;
+  while fg < grow { frag += [make(fg, reserved, shape)]; fg += 1; }
   for d in keep..grow { frag[d] = null }
   store_reclaim(frag);
   if !store_persist_bind(frag, "{prefix}-fragmented.store") { println("FAIL bind-frag"); return }
@@ -154,7 +157,10 @@ fn main() {
   // --- fresh: the same records built once, never grown, never dropped.
   t2 = ticks();
   ceiling: hash<Rec[id]> = [];
-  for c in 0..keep { ceiling += [make(c, reserved, shape)] }
+  // A `while` fill on purpose: a counted fill may reserve the hash up front (@C140), and this
+  // fixture needs the growth an unreserved fill leaves behind.
+  cg = 0;
+  while cg < keep { ceiling += [make(cg, reserved, shape)]; cg += 1; }
   t3 = ticks();
   if !store_persist_bind(ceiling, "{prefix}-fresh.store") { println("FAIL bind-fresh"); return }
   ceiling_bytes = file("{prefix}-fresh.store").size;

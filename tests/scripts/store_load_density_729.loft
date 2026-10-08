@@ -52,7 +52,10 @@ fn main() {
 
   if mode == "write" {
     h: hash<DRec[k]> = [];
-    for i in 0..N { h += [DRec { k: i, data: [] }]; }
+    // A `while` fill on purpose: a counted fill may reserve the hash up front (@C140), and this
+    // fixture needs the growth an unreserved fill leaves behind.
+    hi = 0;
+    while hi < N { h += [DRec { k: hi, data: [] }]; hi += 1; }
     for i in 0..N {
       for j in 0..W { h[i].data += [i * W + j]; }
     }
