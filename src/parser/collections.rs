@@ -6699,10 +6699,11 @@ use #count instead"
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "map: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"
+            self.refuse_function_argument(
+                "map: second argument",
+                list.get(1),
+                true,
+                "map: second argument must be a function — pass its name, or a lambda `|x| { … }`",
             );
             return placeholder;
         };
@@ -6882,10 +6883,11 @@ use #count instead"
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "filter: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"
+            self.refuse_function_argument(
+                "filter: second argument",
+                list.get(1),
+                true,
+                "filter: second argument must be a function — pass its name, or a lambda `|x| { … }`",
             );
             return Err(placeholder);
         };
@@ -7993,10 +7995,11 @@ use #count instead"
                 );
             }
         } else if !self.first_pass {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "{name}: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"
+            self.refuse_function_argument(
+                &format!("{name}: second argument"),
+                list.get(1),
+                true,
+                &format!("{name}: second argument must be a function — pass its name, or a lambda `|x| {{ … }}`"),
             );
             return None;
         }

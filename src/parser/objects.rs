@@ -185,6 +185,71 @@ impl Parser {
         None
     }
 
+    /// @C112 — a local that carries a function's name hides the function from a bare mention.
+    /// That is the rule (a binding position mints a local), but an author who passes the name
+    /// where a function is expected meant the function.  When `arg` is such a local and a
+    /// function of its name exists, the words that say so and name what reaches the function:
+    /// a lambda around it and, for a standard-library function, its `std::` name.  Where the
+    /// position takes no `|x| { … }` lambda (`lambda_ok` false: `par_fold`, `parallel_for`), the
+    /// cure is to rename the local.  `None` for any other argument, so a caller appends this only where it
+    /// explains the refusal.
+    pub(crate) fn shadowed_function_hint(&self, arg: &Value, lambda_ok: bool) -> Option<String> {
+        let Value::Var(v) = arg.unspan() else {
+            return None;
+        };
+        let nm = self.vars.name(*v);
+        let d_nr = self.data.def_nr(&format!("n_{nm}"));
+        if d_nr == u32::MAX || !matches!(self.data.def_type(d_nr), DefType::Function) {
+            return None;
+        }
+        let line = self.vars.var_source(*v).0;
+        if !lambda_ok {
+            return Some(format!(
+                "`{nm}` here is the local bound on line {line}, which hides the function `{nm}` — \
+                 rename the local"
+            ));
+        }
+        let params = (0..self.fn_ref_arg_types(d_nr).len())
+            .map(|i| {
+                ["x", "y", "z", "w"]
+                    .get(i)
+                    .map_or_else(|| format!("a{i}"), |s| (*s).to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let std = if self.data.def(d_nr).is_stdlib() {
+            format!(", or name it `std::{nm}`")
+        } else {
+            String::new()
+        };
+        Some(format!(
+            "`{nm}` here is the local bound on line {line}, which hides the function `{nm}` — \
+             pass the function as `|{params}| {{ {nm}({params}) }}`{std}"
+        ))
+    }
+
+    /// The refusal for a builtin's argument that must be a function: when the author passed a
+    /// local that hides a function of its name (@C112), say so and how to reach the function;
+    /// otherwise `plain`, the builtin's own wording.  `which` names the argument
+    /// (`map: second argument`).
+    pub(crate) fn refuse_function_argument(
+        &mut self,
+        which: &str,
+        arg: Option<&Value>,
+        lambda_ok: bool,
+        plain: &str,
+    ) {
+        if let Some(hint) = arg.and_then(|a| self.shadowed_function_hint(a, lambda_ok)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "{which} is not a function: {hint}"
+            );
+        } else {
+            diagnostic!(self.lexer, Level::Error, "{plain}");
+        }
+    }
+
     fn fn_ref_arg_types(&self, fn_d_nr: u32) -> Vec<Type> {
         self.fn_ref_visible_args(fn_d_nr)
             .into_iter()

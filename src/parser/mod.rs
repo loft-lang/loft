@@ -18272,6 +18272,13 @@ impl Parser {
                              `self`), which makes it a free function and a usable fn-ref"
                         );
                     } else {
+                        // @C112 — a local hiding the function the author named: say so.
+                        let context = match self.shadowed_function_hint(&actual_code, true) {
+                            Some(hint) if matches!(tp, Type::Function(..)) => {
+                                format!("{context}; {hint}")
+                            }
+                            _ => context,
+                        };
                         self.validate_convert(&context, actual_type, &tp, &pos);
                     }
                 } else if !self.can_convert(actual_type, &tp) {

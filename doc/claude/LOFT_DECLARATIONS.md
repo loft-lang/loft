@@ -397,7 +397,8 @@ falls back to the imported-library and standard-library *prelude*:
   `chr(65)` in the same scope still reaches the stdlib function; a bare `chr` reads
   the local once one is bound.  To pass the function itself as a value there, name it
   `std::chr` (a library's as `lib::name`), or wrap one of your own in a lambda:
-  `|x| { chr(x) }`. This holds for every binding form — assignment, the
+  `|x| { chr(x) }`.  Passing the bare name where a function is expected is refused with a
+  message that names the local hiding the function and these cures. This holds for every binding form — assignment, the
   typed local `chr: integer = 65`, a tuple-destructuring element, a parameter, a
   `for` variable, a struct field.
 

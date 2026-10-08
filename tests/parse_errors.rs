@@ -5888,3 +5888,25 @@ fn operator_equals_is_refused() {
     )
     .error("`==` is always structural, for every type: there is no `operator equals` — write a named method (`same_second(self, other)`) and call it at operator_equals_is_refused:2:48");
 }
+
+/// @C112 — a local that carries a function's name hides the function, and an author who passes
+/// that name where a function is expected meant the function: the refusal says which local
+/// hides it and how to reach the function — a lambda around it, `std::` for a standard-library
+/// one, and "rename the local" where the position takes no lambda (`par_fold`).  A local whose
+/// name matches no function keeps the plain message (the last cell).  Every cure named here
+/// compiles and answers the function's value on both backends (checked by hand: 42, `B`).
+#[test]
+fn a_local_hiding_a_function_is_named_where_the_function_was_expected() {
+    code!("fn double(x: integer) -> integer { x * 2 }\nfn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }\nfn test() -> integer { double = 7; apply(double, 21) }")
+        .error("expected fn(integer) -> integer, got integer on argument 1 of call to apply; `double` here is the local bound on line 3, which hides the function `double` — pass the function as `|x| { double(x) }` at a_local_hiding_a_function_is_named_where_the_function_was_expected:3:42");
+    code!("fn show(f: fn(integer) -> text) -> text { f(66) }\nfn test() -> text { chr = 65; show(chr) }")
+        .error("expected fn(integer) -> text, got integer on argument 1 of call to show; `chr` here is the local bound on line 2, which hides the function `chr` — pass the function as `|x| { chr(x) }`, or name it `std::chr` at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:36");
+    code!("fn double(x: integer) -> integer { x * 2 }\nfn test() { double = 7; v = [1, 2]; w = map(v, double); }")
+        .error("map: second argument is not a function: `double` here is the local bound on line 2, which hides the function `double` — pass the function as `|x| { double(x) }` at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:56")
+        .warning("Variable w is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:40");
+    code!("fn add(a: integer, b: integer) -> integer { a + b }\nfn test() { add = 1; v = [1, 2]; t = par_fold(v, 0, add, 2); }")
+        .error("par_fold: third argument is not a function: `add` here is the local bound on line 2, which hides the function `add` — rename the local at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:61")
+        .warning("Variable t is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:37");
+    code!("fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }\nfn test() -> integer { nothing = 7; apply(nothing, 21) }")
+        .error("expected fn(integer) -> integer, got integer on argument 1 of call to apply at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:43");
+}
