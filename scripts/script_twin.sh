@@ -65,7 +65,7 @@ orig="$1"; port="$2"; shift 2
 [ "${1:-}" = "--" ] && shift
 [ -x "$orig" ] || { echo "script_twin: $orig is not executable" >&2; exit 2; }
 [ -x "$port" ] || { echo "script_twin: $port is not executable" >&2; exit 2; }
-if [ -n "$files_dir" ] && [ "$(git ls-files "$files_dir" 2>/dev/null | wc -l)" != 0 ]; then
+if [ -n "$files_dir" ] && [ "$(git ls-files "$files_dir" 2>/dev/null | wc -l | tr -d ' ')" != 0 ]; then
   echo "script_twin: $files_dir holds tracked files; a twin only empties untracked output" >&2; exit 2
 fi
 

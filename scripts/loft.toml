@@ -12,3 +12,6 @@ loft    = ">=0.8"
 
 [dependencies]
 process = { path = "../lib/process" }
+
+# The registry packages the ported scripts use (`wasm_bundle_stamp`).
+crypto = ">=0.3"

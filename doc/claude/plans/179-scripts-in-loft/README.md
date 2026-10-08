@@ -209,7 +209,12 @@ crate builds on first use, and both backends then resolve `use <name>;`.  That i
 
 `scripts/script_twin.sh` (bash, deliberately: it must run while no loft binary exists, and
 it is the last script this plan ports) + `tests/comparisons/scripts/README.md` + the
-divergent self-test.  Gate: the self-test goes red on each channel; the two existing loft
+divergent self-test.  **The cases are declared, not remembered (2026-10-08):** each port's
+`tests/comparisons/scripts/<port>/cases.tsv` lists its twin invocations, `scripts/script_twins.sh`
+(`make script-twins`, `ARGS=--list` to name them) runs every one on both backends, and
+`tests/script_twins.rs` runs them on every PR.  The first run of all twelve found a port that
+had broken silently — `wasm_bundle_stamp`'s bare `use crypto;` stopped importing `sha256`
+under @C98 — which is what a twin that is run only once cannot see.  Gate: the self-test goes red on each channel; the two existing loft
 scripts run under it against the JS files they generate (the committed file is the
 "original" side).  Nothing else depends on this strand, and it can fail alone.
 

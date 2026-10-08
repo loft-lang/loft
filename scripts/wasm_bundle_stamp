@@ -5,7 +5,7 @@
 // bundle from a current one.  The loft twin of scripts/wasm_bundle_stamp.sh (@PLN179
 // strand 3): the same bytes in the same order, the same digest.  Paths are relative to
 // this script's own directory.
-use crypto;
+use crypto::(sha256);
 
 fn main() {
   parts = ["../src/engine_host.rs", "../src/wasm.rs", "../src/native.rs", "../src/compile.rs",

@@ -40,8 +40,9 @@ struct Row {
   tranche: text,
   source: text,
   /// Where the script stands: `—` not ported, `ported` (a loft twin sits beside it under
-  /// the same name, extension dropped), `twinned` (its SCOREBOARD row: green on both
-  /// backends).  Callers move when the plan closes, so no state beyond that is read.
+  /// the same name, extension dropped), `twinned (n)` (n declared twin cases under
+  /// tests/comparisons/scripts/<port>/cases.tsv, which `make script-twins` and the
+  /// script_twins test run on both backends).  Callers move when the plan closes.
   status: text,
 }
 
@@ -319,11 +320,21 @@ fn classify(path: text) -> Row {
   }
 }
 
-// The port's path for an original: the same name with the extension dropped.
+// How many twin cases tests/comparisons/scripts/<port>/cases.tsv declares; 0 without one.
+fn twin_cases(port: text) -> integer {
+  n = 0;
+  for line in (file("tests/comparisons/scripts/{port}/cases.tsv").content() ?? "").split('\n') {
+    if line != "" && !line.starts_with("#") { n += 1; }
+  }
+  n
+}
+
+// The port's path for an original: the same name with the extension dropped; "" for a bare
+// executable (`scripts/idx`, a hook), whose port would be a swap under its own name.
 fn port_path(path: text) -> text {
   if path.ends_with(".py") { return path[0..len(path) - 3]; }
   if path.ends_with(".sh") { return path[0..len(path) - 3]; }
-  path
+  ""
 }
 
 // Every file a caller could name a script from: the Makefile, the workflows, the hooks.
@@ -387,16 +398,22 @@ fn main() {
     }
   }
 
-  // The position: a port beside its original, and the scoreboard's verdict on the pair.
-  scoreboard = file("doc/claude/plans/179-scripts-in-loft/SCOREBOARD.md").content() ?? "";
+  // The position: a port beside its original, and the twin cases declared for the pair.
   ports: vector<text> = [];
   for row in rows { if row.lang == "loft" { ports += [row.path]; } }
   ported = 0;
   twinned = 0;
+  cases = 0;
   for i in 0..len(rows) {
     if rows[i].lang == "loft" { continue; }
-    if scoreboard.contains("`{rows[i].path}` →") { rows[i].status = "twinned"; twinned += 1; ported += 1; }
-    else if has(ports, port_path(rows[i].path)) { rows[i].status = "ported"; ported += 1; }
+    port = port_path(rows[i].path);
+    // The port is a file beside the original, wherever the original lives — not only the
+    // loft rows the walk lists under scripts/.
+    if port == "" || (!has(ports, port) && !is_file(port)) { continue; }
+    ported += 1;
+    rows[i].status = "ported";
+    n = twin_cases(port.basename());
+    if n > 0 { rows[i].status = "twinned ({n})"; twinned += 1; cases += n; }
   }
 
   py = 0; sh = 0; lf = 0; py_lines = 0; sh_lines = 0;
@@ -416,7 +433,7 @@ fn main() {
   println("");
   println("Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **{ratchet}**.");
   println("");
-  println("**Position: {ported} of {py + sh} scripts ported, {twinned} of them twinned** (the `status` column: `ported` = a loft twin beside the original under the same name, `twinned` = its [SCOREBOARD](SCOREBOARD.md) row is green on both backends; callers move when the plan closes).");
+  println("**Position: {ported} of {py + sh} scripts ported, {twinned} of them twinned on {cases} declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `script_twins` test — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).");
   println("");
 
   print_tranche(rows, "T0", "already loft — the twin harness's first subjects");

@@ -2859,6 +2859,11 @@ script-twin:  ## @PLN179 does a port leave the same world as its original?  ORIG
 	@[ -n "$(ORIG)" ] && [ -n "$(PORT)" ] || { echo "usage: make script-twin ORIG=<script> PORT=<script> [ARGS=…] [FILES=<dir>] [BY_CONTENT=1] [REPLAY=<dir>] [RUNS=n]"; exit 2; }
 	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twin.sh $(if $(FILES),--files $(FILES)) $(if $(BY_CONTENT),--by-content) $(if $(REPLAY),--replay $(REPLAY)) --runs $(or $(RUNS),1) $(ORIG) $(PORT) -- $(ARGS)
 
+.PHONY: script-twins
+script-twins:  ## @PLN179 every declared twin case (tests/comparisons/scripts/*/cases.tsv), both backends; ARGS="--list" names them, "--only <port>", "--slow"
+	@cargo build --release --bin loft -q
+	@PATH="$(CURDIR)/target/release:$$PATH" scripts/script_twins.sh $(ARGS)
+
 .PHONY: falsify-review
 falsify-review:  ## Which falsification receipts can still be re-validated, and how quickly
 	@python3 scripts/falsify-review.py $(ARGS)

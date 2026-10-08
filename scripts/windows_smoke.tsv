@@ -61,3 +61,4 @@ scripts/sweep_scratch.sh	--help
 scripts/work-issues.sh	--help
 tools/audience-demo/run-demo.sh	--help
 tests/comparisons/scripts/replay_tool.sh	tests/comparisons/scripts/bin/true
+scripts/script_twins.sh	--list

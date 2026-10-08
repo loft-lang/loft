@@ -32,6 +32,12 @@ through `lib_path` when it is not a sibling package; a fired type is imported by
 file's second visit (as `use pkg::(T);` is); and the `lit` / `hole_*` / `to_text` hooks look a
 type's methods up in the type's own source, where `def_nr`'s current-source scope lost them.
 Local map only — a type name never reaches the registry catalog.
+**Declared twin cases** (`tests/comparisons/scripts/<port>/cases.tsv`, `scripts/script_twins.sh`,
+`make script-twins`, `tests/script_twins.rs`): every port's twin invocations are one file
+beside its fixtures and run on every PR, both backends; the census reads `twinned (n)` from
+them.  The first full run caught `scripts/wasm_bundle_stamp` broken under the bare-`use`
+rule (@C98) and two harness portability slips (macOS `wc` padding, a `read` collapsing an
+empty tab column).  The type-trigger scan skips names the file itself declares.
 **`lines()` / `err_lines()`** (`src/process_run.rs` § cursor): a native-backed cursor over one
 stream of a running program — a reader thread per pipe from the start, a 256-line channel for
 the chosen one, the other collected for `done()`; `stop()` ends the tree.  Its `next` is an

@@ -19199,10 +19199,16 @@ impl Parser {
                             || Self::read_source(auto_use_scan_file.as_str()),
                             str::to_string,
                         );
+                    // A type the file DECLARES is its own, never a trigger: a script with
+                    // its own `struct Path` must not load a package that also has one.
+                    let declared = crate::libscan::scan_type_declarations(&src);
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
                         crate::libscan::scan_method_calls(&src),
-                        crate::libscan::scan_type_refs(&src),
+                        crate::libscan::scan_type_refs(&src)
+                            .into_iter()
+                            .filter(|t| !declared.contains(t))
+                            .collect(),
                     );
                     self.auto_use_scan_cache
                         .insert(auto_use_scan_file.to_string(), pair.clone());
