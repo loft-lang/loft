@@ -39,6 +39,10 @@ for cases in tests/comparisons/scripts/*/cases.tsv; do
   orig=$(sed -n 's/^# orig: *//p' "$cases" | head -1)
   port=$(sed -n 's/^# port: *//p' "$cases" | head -1)
   [ -n "$orig" ] && [ -n "$port" ] || { echo "script_twins: $cases names no orig/port" >&2; exit 2; }
+  # Warm the port once, unmeasured: its first run on a box installs and builds the registry
+  # libraries it names, and that install talks on stderr — the box, not the script.  A
+  # compile check resolves them without running anything, so no case's world is touched.
+  [ "$list" = 1 ] || loft check "$port" > /dev/null 2>&1 || true
   while IFS= read -r line; do
     case "$line" in ''|'#'*) continue ;; esac
     # `cut`, not `read -r a b c`: an empty options column is two tabs in a row, which
