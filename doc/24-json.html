@@ -158,13 +158,13 @@ User.parse(json_parse(text))   -&gt;  Addr.zip: expected JNumber, got JString
   ]);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(reply.<span class="fn-call"><a href="stdlib-json-building-values.html">to_json</a></span>() == `{{<span class="st">"ok"</span>:<span class="kw">true</span>,<span class="st">"n"</span>:<span class="nm">42</span>}}`, <span class="st">"built: {reply.to_json()}"</span>);</code></pre>
 <h2 id="the-shapes-on-the-wire">The shapes on the wire</h2>
-<p>Four encodings a reader interoperating with another system needs, none of which the field declaration makes obvious: * a plain enum variant is an OBJECT keyed by the variant name — <code>Green</code> is <code>{{"Green":{{}}}}</code>, not the string <code>"Green"</code>; * a tuple is an object with <code>_0</code>, <code>_1</code> … keys, not a JSON array; * an absent field is normally LEFT OUT rather than written <code>null</code>, and an absent <code>vector&lt;T&gt;?</code> is left out too — it is not <code>[]</code>, which is the present-but-empty collection and a different value; * a keyed member of a linked collection group is left out as well, because it is an INDEX on the same rows rather than data of its own — and parsing the document back rebuilds it from them.</p>
+<p>Four encodings a reader interoperating with another system needs, none of which the field declaration makes obvious: * a plain enum variant is an OBJECT keyed by the variant name — <code>Green</code> is <code>{{"Green":{{}}}}</code>, not the string <code>"Green"</code>; * a tuple is an object with <code>_0</code>, <code>_1</code> … keys, not a JSON array; * an absent field is written <code>null</code>, an absent <code>vector&lt;T&gt;?</code> too — it is not <code>[]</code>, which is the present-but-empty collection and a different value; * a keyed member of a linked collection group is left out as well, because it is an INDEX on the same rows rather than data of its own — and parsing the document back rebuilds it from them.</p>
 <pre><code>  colour = <span class="en">Flag</span> { on: <span class="en">Shade</span>.<span class="en">Green</span> };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{colour:j}"</span> == `{{<span class="st">"on"</span>:{{<span class="st">"Green"</span>:{{}}}}}}`, <span class="st">"an enum variant: {colour:j}"</span>);
   pair = <span class="en">Pair</span> { p: (<span class="nm">7</span>, <span class="st">"seven"</span>) };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{pair:j}"</span> == `{{<span class="st">"p"</span>:{{<span class="st">"_0"</span>:<span class="nm">7</span>,<span class="st">"_1"</span>:<span class="st">"seven"</span>}}}}`, <span class="st">"a tuple: {pair:j}"</span>);
   nothing = <span class="en">Holder</span> { n: <span class="nm">1</span>, rows: <span class="kw">null</span> };
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{nothing:j}"</span> == `{{<span class="st">"n"</span>:<span class="nm">1</span>}}`, <span class="st">"an absent collection is left out: {nothing:j}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{nothing:j}"</span> == `{{<span class="st">"n"</span>:<span class="nm">1</span>,<span class="st">"rows"</span>:<span class="kw">null</span>}}`, <span class="st">"an absent collection is written null: {nothing:j}"</span>);
   something = <span class="en">Holder</span> { n: <span class="nm">1</span>, rows: [] };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{something:j}"</span> == `{{<span class="st">"n"</span>:<span class="nm">1</span>,<span class="st">"rows"</span>:[]}}`, <span class="st">"an empty one is not: {something:j}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="en">Holder</span>.<span class="fn-call">parse</span>(<span class="st">"{nothing:j}"</span>).rows == <span class="kw">null</span>, <span class="st">"absent comes back absent"</span>);
@@ -396,9 +396,8 @@ fn main() {
   //   * a plain enum variant is an OBJECT keyed by the variant name — `Green`
   //     is `{{"Green":{{}}}}`, not the string `"Green"`;
   //   * a tuple is an object with `_0`, `_1` … keys, not a JSON array;
-  //   * an absent field is normally LEFT OUT rather than written `null`, and an
-  //     absent `vector&lt;T&gt;?` is left out too — it is not `[]`, which is the
-  //     present-but-empty collection and a different value;
+  //   * an absent field is written `null`, an absent `vector&lt;T&gt;?` too — it is
+  //     not `[]`, which is the present-but-empty collection and a different value;
   //   * a keyed member of a linked collection group is left out as well, because
   //     it is an INDEX on the same rows rather than data of its own — and parsing
   //     the document back rebuilds it from them.
@@ -407,7 +406,7 @@ fn main() {
   pair = Pair { p: (7, "seven") };
   assert("{pair:j}" == `{{"p":{{"_0":7,"_1":"seven"}}}}`, "a tuple: {pair:j}");
   nothing = Holder { n: 1, rows: null };
-  assert("{nothing:j}" == `{{"n":1}}`, "an absent collection is left out: {nothing:j}");
+  assert("{nothing:j}" == `{{"n":1,"rows":null}}`, "an absent collection is written null: {nothing:j}");
   something = Holder { n: 1, rows: [] };
   assert("{something:j}" == `{{"n":1,"rows":[]}}`, "an empty one is not: {something:j}");
   assert(Holder.parse("{nothing:j}").rows == null, "absent comes back absent");

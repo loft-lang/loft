@@ -46,7 +46,7 @@
 <p><code>abs()</code> returns the absolute value — the distance from zero, always positive.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="nm">1</span> + <span class="bi"><a href="stdlib-math.html">abs</a></span>(-<span class="nm">2</span>) == <span class="nm">3</span>, <span class="st">"abs(-2) == 2"</span>);</code></pre>
 <h2 id="division-by-zero-produces-null-and-keeps-running">Division by zero — produces null and keeps running</h2>
-<p>Most languages crash on division by zero.  Loft does NOT: a divide (or modulo) by zero is uncomputable, so it produces null and execution CONTINUES — the spreadsheet model, where one bad cell shows an error but the rest still recalculate.  This holds the same everywhere (development, test, and production) — one bad calculation never halts the run. Where the divisor is a literal zero in your source, loft can see it before the program runs and warns (next section). Where it is only zero at RUN time there is no warning — you get null, and when loft knows the reason it prints it, so a bare <code>{12 / a}</code> shows <code>null(/0)</code> rather than a bare <code>null</code>. Recover with <code>??</code>, or test the result for null: nothing else tells you, so a divide whose divisor could be zero is one you handle rather than one you are reminded about.</p>
+<p>Most languages crash on division by zero.  Loft does NOT: a divide (or modulo) by zero is uncomputable, so it produces null and execution CONTINUES — the spreadsheet model, where one bad cell shows an error but the rest still recalculate.  This holds the same everywhere (development, test, and production) — one bad calculation never halts the run. Where the divisor is a literal zero in your source, loft can see it before the program runs and warns (next section). Where it is only zero at RUN time there is no warning — you get null, and <code>{12 / a}</code> prints <code>null</code>. Recover with <code>??</code>, or test the result for null: nothing else tells you, so a divide whose divisor could be zero is one you handle rather than one you are reminded about.</p>
 <pre><code>  a = <span class="nm">2</span> * <span class="nm">2</span>;
   a -= <span class="nm">4</span>;</code></pre>
 <p>a is now 0</p>
@@ -156,8 +156,7 @@ fn main() {
   // test, and production) — one bad calculation never halts the run.
   // Where the divisor is a literal zero in your source, loft can see it before the
   // program runs and warns (next section). Where it is only zero at RUN time there is
-  // no warning — you get null, and when loft knows the reason it prints it, so a bare
-  // '{12 / a}' shows 'null(/0)' rather than a bare 'null'. Recover with '??', or test
+  // no warning — you get null, and '{12 / a}' prints 'null'. Recover with '??', or test
   // the result for null: nothing else tells you, so a divide whose divisor could be
   // zero is one you handle rather than one you are reminded about.
   a = 2 * 2;
