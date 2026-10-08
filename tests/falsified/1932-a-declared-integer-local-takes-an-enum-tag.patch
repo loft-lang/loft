@@ -1,0 +1,27 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 99b00ef69..d27c62bd1 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4319,22 +4319,6 @@ use a separate collection or add after the loop"
+         } else {
+             self.parse_operators(expect, code, &mut parent_tp, 0)
+         };
+-        // `@FR-T-Sub` / `@FR-C-Var` — a plain enum converts to its integer tag at EVERY checking
+-        // position, and a local DECLARED `integer` is one: the argument, return, field and
+-        // element positions took `Colour.Green` as 2 while `y: integer = Colour.Green` (and a
+-        // reassignment of `y`, and an `if` joining into it) was refused as a re-type
+-        // (loft#1932).  The conversion is the one `convert` emits at those positions.
+-        if op == "="
+-            && let Value::Var(v) = to.unspan()
+-            && *v < self.vars.count()
+-            && self.vars.is_annotated(*v)
+-            && matches!(self.vars.tp(*v).base(), Type::Integer(_))
+-            && !matches!(s_type, Type::Optional(_))
+-            && matches!(s_type.base(), Type::Enum(_, false, _))
+-        {
+-            *code = self.cl("OpConvIntFromEnum", &[code.clone()]);
+-            s_type = crate::data::I64.clone();
+-        }
+         // `@FR-Cap-Own` — note whether this assignment to a sandboxed local is a struct literal
+         // built into it (`Parser::sandbox_built`); one other assignment anywhere in the body
+         // makes the local's provenance unknown.

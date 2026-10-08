@@ -12,6 +12,13 @@
 // `a4` / `a8` of the walk's matrix and stay compile errors.  Values hand-computed.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1933-arithmetic-over-bounded-integers-is-typed-by-its-range.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the control refuses the sums at compile time.
+//   WITNESS: `cannot implicitly narrow integer to u16` at `fn sum1933(x: u8, y: u8) -> u16 { x + y }`
+//   and at `a: u16 = x + y`, on the control.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 struct S1933 { z: u16 }
 
