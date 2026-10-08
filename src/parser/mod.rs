@@ -7502,9 +7502,6 @@ impl Parser {
         false
     }
 
-    /// Search for definitions with the given name and call that with the given parameters.
-    #[allow(clippy::too_many_arguments)]
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex` with
     /// the per-record link offset (`database.fields`), a constant only the parser knows once the
     /// type is registered — which is why no stdlib `len(self: index)` can carry it (@FR-Col-Len).
@@ -7533,6 +7530,9 @@ impl Parser {
         Some(crate::data::I64.clone())
     }
 
+    /// Search for definitions with the given name and call that with the given parameters.
+    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn call(
         &mut self,
         code: &mut Value,
