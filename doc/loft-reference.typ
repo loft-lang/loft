@@ -1346,7 +1346,7 @@ Written with the '?' on purpose: it keeps compiling whatever numbers a reader pu
 
 === Division by zero — produces null and keeps running
 
-Most languages crash on division by zero.  Loft does NOT: a divide (or modulo) by zero is uncomputable, so it produces null and execution CONTINUES — the spreadsheet model, where one bad cell shows an error but the rest still recalculate.  This holds the same everywhere (development, test, and production) — one bad calculation never halts the run. Where the divisor is a literal zero in your source, loft can see it before the program runs and warns (next section). Where it is only zero at RUN time there is no warning — you get null, and when loft knows the reason it prints it, so a bare '{12 / a}' shows 'null(/0)' rather than a bare 'null'. Recover with '??', or test the result for null: nothing else tells you, so a divide whose divisor could be zero is one you handle rather than one you are reminded about.
+Most languages crash on division by zero.  Loft does NOT: a divide (or modulo) by zero is uncomputable, so it produces null and execution CONTINUES — the spreadsheet model, where one bad cell shows an error but the rest still recalculate.  This holds the same everywhere (development, test, and production) — one bad calculation never halts the run. Where the divisor is a literal zero in your source, loft can see it before the program runs and warns (next section). Where it is only zero at RUN time there is no warning — you get null, and '{12 / a}' prints 'null'. Recover with '??', or test the result for null: nothing else tells you, so a divide whose divisor could be zero is one you handle rather than one you are reminded about.
 
 ```rust
   a = 2 * 2;
@@ -1477,13 +1477,13 @@ if !result { ... handle missing value ... }
 
 Even without `?? null`, a bare divide never halts: it yields null and execution continues, the same everywhere — development, test, and production.
 
-The `?? null` is not what makes that safe, and it silences nothing. loft warns about a divisor that is a literal 0 in your source, while READING your code, and it warns whether or not you wrote `?? null`; a divisor that is only zero at RUN time is not warned about at all. What `?? null` changes is the VALUE: loft prints the reason it knows, so an undefended result formats as 'null(/0)', and coalescing it to a plain null throws that reason away. Reach for `?? null` when you want the bare null, and for `?? \<value\>` when you want a number — not to quiet a warning.
+The `?? null` is not what makes that safe, and it silences nothing. loft warns about a divisor that is a literal 0 in your source, while READING your code, and it warns whether or not you wrote `?? null`; a divisor that is only zero at RUN time is not warned about at all. Either way the result is null, and a null prints as 'null'. Reach for `?? \<value\>` when you want a number — not to quiet a warning.
 
 ```rust
   zero = 0;
   assert(!(12 / zero ?? null), "null from division-by-zero is false-like when defended");
-  assert("{12 / zero}" == "null(/0)", "an undefended result carries its reason");
-  assert("{12 / zero ?? null}" == "null", "…and `?? null` trades the reason for a plain null");
+  assert("{12 / zero}" == "null", "an undefended result prints as null");
+  assert("{12 / zero ?? null}" == "null", "…and so does a defended one");
   assert(12 > 0, "positive integer is true");
 ```
 
@@ -5190,9 +5190,8 @@ Four encodings a reader interoperating with another system needs, none of which 
 * a plain enum variant is an OBJECT keyed by the variant name — `Green`
   is `{{"Green":{{}}}}`, not the string `"Green"`;
 * a tuple is an object with `_0`, `_1` … keys, not a JSON array;
-* an absent field is normally LEFT OUT rather than written `null`, and an
-  absent `vector<T>?` is left out too — it is not `[]`, which is the
-  present-but-empty collection and a different value;
+* an absent field is written `null`, an absent `vector<T>?` too — it is
+  not `[]`, which is the present-but-empty collection and a different value;
 * a keyed member of a linked collection group is left out as well, because
   it is an INDEX on the same rows rather than data of its own — and parsing
   the document back rebuilds it from them.
@@ -5204,7 +5203,7 @@ Four encodings a reader interoperating with another system needs, none of which 
   pair = Pair { p: (7, "seven") };
   assert("{pair:j}" == `{{"p":{{"_0":7,"_1":"seven"}}}}`, "a tuple: {pair:j}");
   nothing = Holder { n: 1, rows: null };
-  assert("{nothing:j}" == `{{"n":1}}`, "an absent collection is left out: {nothing:j}");
+  assert("{nothing:j}" == `{{"n":1,"rows":null}}`, "an absent collection is written null: {nothing:j}");
   something = Holder { n: 1, rows: [] };
   assert("{something:j}" == `{{"n":1,"rows":[]}}`, "an empty one is not: {something:j}");
   assert(Holder.parse("{nothing:j}").rows == null, "absent comes back absent");
@@ -6762,12 +6761,12 @@ A zero pad is for numbers, and `null` is not one, so it pads with spaces.
   assert("{absent:08}" == "    null", "`null` is never zero-padded");
 ```
 
-An operation inside a hole that cannot produce a value yields null rather than stopping the program, and the text says which fault it was.  Building a message — a log line, an error report — can therefore never itself fail.
+An operation inside a hole that cannot produce a value yields null rather than stopping the program, and the null prints as `null`.  Building a message — a log line, an error report — can therefore never itself fail.
 
 ```rust
   top = 5;
   bottom = 0;
-  assert("{top / bottom}" == "null(/0)", "a division by zero names its cause");
+  assert("{top / bottom}" == "null", "a division by zero prints null");
 ```
 
 === Character format
