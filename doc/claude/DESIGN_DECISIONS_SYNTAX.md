@@ -184,7 +184,10 @@ function stays callable in the same scope (`chr = 65` beside `chr(65)`): parenth
 namespace.  **Why.** Otherwise every short verb a library exports is a word its consumers may not
 use.  This does not reopen @C95 (a local re-points no call site).
 
-**Revisit when.** No trigger recorded.  Decided 2026-08-11 — [record](DESIGN_DECISIONS-history.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call).
+**Revisit when.** A reported defect shows a local silently standing in for a function reference
+the author meant — a bare name read as the local, with no type error, where the function was
+intended.  A bare name of a different type is a compile error, so only a local holding a function
+of the same type could do this.  Decided 2026-08-11 — [record](DESIGN_DECISIONS-history.md#c112--a-binding-position-mints-a-local-whatever-else-carries-that-name-the-function-stays-reachable-as-a-call).
 **Holds at:** `tests/scripts/852-local-shadows-a-function-name.loft`;
 `tests/imports.rs::pln102_c98_a_local_may_shadow_a_library_function`.
 **Catalogue:** @F2 (operators) / modules + naming · [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins)'s consumer-facing half · loft#852, loft#756

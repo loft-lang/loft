@@ -395,7 +395,9 @@ falls back to the imported-library and standard-library *prelude*:
 - **A local may carry a function's name** — values and functions are separate
   namespaces, and the parentheses pick between them. `chr = 65` binds a local while
   `chr(65)` in the same scope still reaches the stdlib function; a bare `chr` reads
-  the local once one is bound. This holds for every binding form — assignment, the
+  the local once one is bound.  To pass the function itself as a value there, name it
+  `std::chr` (a library's as `lib::name`), or wrap one of your own in a lambda:
+  `|x| { chr(x) }`. This holds for every binding form — assignment, the
   typed local `chr: integer = 65`, a tuple-destructuring element, a parameter, a
   `for` variable, a struct field.
 
