@@ -27,7 +27,7 @@ use crate::data::{Data, Value};
 
 fn enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| !std::env::var("LOFT_NO_TAKE_LOCAL").is_ok_and(|v| v != "0"))
+    *F.get_or_init(|| !std::env::var("LOFT_NO_TAKE_LOCAL").is_ok_and(|val| val != "0"))
 }
 
 struct Ops {
@@ -44,9 +44,9 @@ struct Ops {
 
 impl Ops {
     fn lookup(data: &Data) -> Option<Self> {
-        let nr = |n: &str| {
-            let d = data.def_nr(n);
-            (d != u32::MAX).then_some(d)
+        let nr = |count: &str| {
+            let opd = data.def_nr(count);
+            (opd != u32::MAX).then_some(opd)
         };
         Some(Self {
             database: nr("OpDatabase")?,
@@ -63,74 +63,74 @@ impl Ops {
                 "OpFinishRecord",
             ]
             .iter()
-            .filter_map(|n| nr(n))
+            .filter_map(|count| nr(count))
             .collect(),
         })
     }
 }
 
-fn is_var(v: &Value, x: u16) -> bool {
-    matches!(v.unspan(), Value::Var(y) if *y == x)
+fn is_var(val: &Value, dst: u16) -> bool {
+    matches!(val.unspan(), Value::Var(src) if *src == dst)
 }
 
-fn int(v: Option<&Value>) -> Option<i32> {
-    match v.map(Value::unspan) {
-        Some(Value::Int(i)) => Some(*i),
+fn int(val: Option<&Value>) -> Option<i32> {
+    match val.map(Value::unspan) {
+        Some(Value::Int(at)) => Some(*at),
         _ => None,
     }
 }
 
 /// A mint group at `s[at..at + 3]`: `(witness, local, wrapper type, field type)`.
-fn mint_group(s: &[Value], at: usize, ops: &Ops) -> Option<(u16, u16, i32, i32)> {
-    let Value::Call(d, a) = s.get(at)?.unspan() else {
+fn mint_group(stmts: &[Value], at: usize, ops: &Ops) -> Option<(u16, u16, i32, i32)> {
+    let Value::Call(opd, args) = stmts.get(at)?.unspan() else {
         return None;
     };
-    let (true, [Value::Var(w), Value::Int(tp)]) = (*d == ops.database, a.as_slice()) else {
+    let (true, [Value::Var(wit), Value::Int(tp)]) = (*opd == ops.database, args.as_slice()) else {
         return None;
     };
-    let Value::Set(v, init) = s.get(at + 1)?.unspan() else {
+    let Value::Set(val, init) = stmts.get(at + 1)?.unspan() else {
         return None;
     };
-    let Value::Call(g, ga) = init.unspan() else {
+    let Value::Call(getter, ga) = init.unspan() else {
         return None;
     };
-    if *g != ops.get_field
-        || !ga.first().is_some_and(|x| is_var(x, *w))
+    if *getter != ops.get_field
+        || !ga.first().is_some_and(|dst| is_var(dst, *wit))
         || int(ga.get(1)) != Some(0)
     {
         return None;
     }
     let ft = int(ga.get(2))?;
-    let Value::Call(z, za) = s.get(at + 2)?.unspan() else {
+    let Value::Call(arg, za) = stmts.get(at + 2)?.unspan() else {
         return None;
     };
-    if *z != ops.set_int4 || !za.first().is_some_and(|x| is_var(x, *w)) {
+    if *arg != ops.set_int4 || !za.first().is_some_and(|dst| is_var(dst, *wit)) {
         return None;
     }
-    Some((*w, *v, *tp, ft))
+    Some((*wit, *val, *tp, ft))
 }
 
 /// How many nodes name `x`: a `Var`, or a `Set` of it.
-fn names(v: &Value, x: u16) -> usize {
-    let mut n = 0;
-    v.walk(&mut |m| match m {
-        Value::Var(y) | Value::Set(y, _) if *y == x => n += 1,
+fn names(val: &Value, dst: u16) -> usize {
+    let mut count = 0;
+    val.walk(&mut |node| match node {
+        Value::Var(src) | Value::Set(src, _) if *src == dst => count += 1,
         _ => {}
     });
-    n
+    count
 }
 
 /// Is every mention of witness `w` in `code` one of: its mint group's three statements
 /// (counted by the caller), a null init, or the first argument of a free?  Answers the
 /// number of mentions outside those.
-fn foreign_witness_mentions(code: &Value, w: u16, ops: &Ops) -> usize {
-    let total = names(code, w);
+fn foreign_witness_mentions(code: &Value, wit: u16, ops: &Ops) -> usize {
+    let total = names(code, wit);
     let mut allowed = 0usize;
-    code.walk(&mut |m| match m {
-        Value::Set(y, v) if *y == w && matches!(v.unspan(), Value::Null) => allowed += 1,
-        Value::Call(d, a)
-            if (*d == ops.free_ref || *d == ops.free_if_distinct)
-                && a.first().is_some_and(|x| is_var(x, w)) =>
+    code.walk(&mut |node| match node {
+        Value::Set(src, val) if *src == wit && matches!(val.unspan(), Value::Null) => allowed += 1,
+        Value::Call(opd, args)
+            if (*opd == ops.free_ref || *opd == ops.free_if_distinct)
+                && args.first().is_some_and(|dst| is_var(dst, wit)) =>
         {
             allowed += 1;
         }
@@ -141,10 +141,10 @@ fn foreign_witness_mentions(code: &Value, w: u16, ops: &Ops) -> usize {
 
 struct Plan {
     tp: i32,
-    w: u16,
+    wit: u16,
     wy: u16,
-    x: u16,
-    y: u16,
+    dst: u16,
+    src: u16,
     ft: i32,
 }
 
@@ -168,40 +168,40 @@ fn visit(node: &mut Value, whole: &Value, data: &Data, d_nr: u32, ops: &Ops, fir
     match node {
         Value::Block(bl) | Value::Loop(bl) => {
             rewrite_list(&mut bl.operators, whole, data, d_nr, ops, fired);
-            for s in &mut bl.operators {
-                visit(s, whole, data, d_nr, ops, fired);
+            for stmts in &mut bl.operators {
+                visit(stmts, whole, data, d_nr, ops, fired);
             }
         }
         Value::Insert(list) => {
             rewrite_list(list, whole, data, d_nr, ops, fired);
-            for s in list {
-                visit(s, whole, data, d_nr, ops, fired);
+            for stmts in list {
+                visit(stmts, whole, data, d_nr, ops, fired);
             }
         }
         Value::Span(b) => visit(&mut b.1, whole, data, d_nr, ops, fired),
-        Value::If(c, t, e) => {
-            visit(c, whole, data, d_nr, ops, fired);
+        Value::If(callee, t, e) => {
+            visit(callee, whole, data, d_nr, ops, fired);
             visit(t, whole, data, d_nr, ops, fired);
             visit(e, whole, data, d_nr, ops, fired);
         }
-        Value::Set(_, x) | Value::Return(x) | Value::Drop(x) => {
-            visit(x, whole, data, d_nr, ops, fired);
+        Value::Set(_, dst) | Value::Return(dst) | Value::Drop(dst) => {
+            visit(dst, whole, data, d_nr, ops, fired);
         }
         _ => {}
     }
 }
 
 fn rewrite_list(
-    s: &mut Vec<Value>,
+    stmts: &mut Vec<Value>,
     whole: &Value,
     data: &Data,
     d_nr: u32,
     ops: &Ops,
     fired: &mut usize,
 ) {
-    let mut i = 0;
-    while i + 3 < s.len() {
-        if let Some(plan) = admit(s, i, whole, data, d_nr, ops) {
+    let mut at = 0;
+    while at + 3 < stmts.len() {
+        if let Some(plan) = admit(stmts, at, whole, data, d_nr, ops) {
             let tp_int = Value::Int(plan.ft);
             // The source is GIVEN UP into `x`'s freshly reset root: `OpCopyRecord`'s
             // free-source form exchanges the two stores where it can (`@FR-H-SwapIn`, O(1))
@@ -209,108 +209,136 @@ fn rewrite_list(
             // witness and the source itself are null after, and its next mint claims anew.
             let given_up = i32::from(crate::keys::COPY_FREE_SOURCE) | plan.tp;
             let group = vec![
-                Value::Call(ops.database, vec![Value::Var(plan.w), Value::Int(plan.tp)]),
+                Value::Call(
+                    ops.database,
+                    vec![Value::Var(plan.wit), Value::Int(plan.tp)],
+                ),
                 Value::Call(
                     ops.copy,
                     vec![
                         Value::Var(plan.wy),
-                        Value::Var(plan.w),
+                        Value::Var(plan.wit),
                         Value::Int(given_up),
                     ],
                 ),
                 Value::Set(plan.wy, Box::new(Value::Null)),
                 Value::Set(
-                    plan.x,
+                    plan.dst,
                     Box::new(Value::Call(
                         ops.get_field,
-                        vec![Value::Var(plan.w), Value::Int(0), tp_int],
+                        vec![Value::Var(plan.wit), Value::Int(0), tp_int],
                     )),
                 ),
-                Value::Set(plan.y, Box::new(Value::Null)),
+                Value::Set(plan.src, Box::new(Value::Null)),
             ];
-            s.splice(i..i + 4, [Value::Insert(group)]);
+            stmts.splice(at..at + 4, [Value::Insert(group)]);
             *fired += 1;
         }
-        i += 1;
+        at += 1;
     }
 }
 
-fn admit(s: &[Value], i: usize, whole: &Value, data: &Data, d_nr: u32, ops: &Ops) -> Option<Plan> {
-    let (w, x, tp, ft) = mint_group(s, i, ops)?;
-    let Value::Call(d, a) = s.get(i + 3)?.unspan() else {
+fn admit(
+    stmts: &[Value],
+    at: usize,
+    whole: &Value,
+    data: &Data,
+    d_nr: u32,
+    ops: &Ops,
+) -> Option<Plan> {
+    let (wit, dst, tp, ft) = mint_group(stmts, at, ops)?;
+    let Value::Call(opd, args) = stmts.get(at + 3)?.unspan() else {
         return None;
     };
-    if *d != ops.append || a.len() != 3 || !is_var(&a[0], x) {
+    if *opd != ops.append || args.len() != 3 || !is_var(&args[0], dst) {
         return None;
     }
-    let Value::Var(y) = a[1].unspan() else {
+    let Value::Var(src) = args[1].unspan() else {
         return None;
     };
-    let y = *y;
+    let src = *src;
     let vars = data.def(d_nr).variables();
     let trace = |why: &str| {
         if crate::keys::trace_place() {
             eprintln!(
                 "[take-local] fn={} {} = {}: {why}",
                 data.def(d_nr).name(),
-                vars.name(x),
-                vars.name(y)
+                vars.name(dst),
+                vars.name(src)
             );
         }
     };
-    if !vars.name(w).starts_with("__vdb_") || y == x {
+    if !vars.name(wit).starts_with("__vdb_") || src == dst {
         return None;
     }
     // `y` owns its store through its own witness, minted earlier in this list.
-    let [wy] = vars.tp(y).depend()[..] else {
+    let [wy] = vars.tp(src).depend()[..] else {
         trace("declined — the source is no local owning its store");
         return None;
     };
-    if wy == w || !vars.name(wy).starts_with("__vdb_") {
+    if wy == wit || !vars.name(wy).starts_with("__vdb_") {
         trace("declined — the source's witness is not its own");
         return None;
     }
-    let j = (0..i)
-        .rev()
-        .find(|&j| mint_group(s, j, ops).is_some_and(|(mw, my, _, _)| mw == wy && my == y));
-    let Some(j) = j else {
+    let mint_at = (0..at).rev().find(|&mint_at| {
+        mint_group(stmts, mint_at, ops).is_some_and(|(mw, my, _, _)| mw == wy && my == src)
+    });
+    let Some(mint_at) = mint_at else {
         trace("declined — the source is not minted earlier in the same block");
         return None;
     };
-    let (_, _, tp_y, _) = mint_group(s, j, ops)?;
+    let (_, _, tp_y, _) = mint_group(stmts, mint_at, ops)?;
     if tp_y != tp {
         trace("declined — the two wrappers differ");
         return None;
     }
     // Each witness: only its one mint group (3 mentions), null inits and frees.
-    if foreign_witness_mentions(whole, w, ops) != 3 || foreign_witness_mentions(whole, wy, ops) != 3
+    if foreign_witness_mentions(whole, wit, ops) != 3
+        || foreign_witness_mentions(whole, wy, ops) != 3
     {
         trace("declined — a witness is named outside its mint and frees");
         return None;
     }
+    if let Err(why) = source_run(&stmts[mint_at..=at + 3], whole, src, ops) {
+        trace(why);
+        return None;
+    }
+    trace("ADMITTED");
+    Some(Plan {
+        tp,
+        wit,
+        wy,
+        dst,
+        src,
+        ft,
+    })
+}
+
+/// The source's mentions: every one lies in `run` (its mint through the rebind, null inits
+/// aside), as the destination of a write or the rebind's one read.
+fn source_run(run: &[Value], whole: &Value, src: u16, ops: &Ops) -> Result<(), &'static str> {
     // Every mention of `y` lies in s[j ..= i + 3], and there only as an append's
     // destination, the mint's binding, and this rebind's source.
-    let inside: usize = s[j..=i + 3].iter().map(|v| names(v, y)).sum();
+    let inside: usize = run.iter().map(|val| names(val, src)).sum();
     let mut nulls = 0usize;
-    whole.walk(&mut |m| {
-        if matches!(m, Value::Set(v, n) if *v == y && matches!(n.unspan(), Value::Null)) {
+    whole.walk(&mut |node| {
+        if matches!(node, Value::Set(val, count) if *val == src && matches!(count.unspan(), Value::Null)) {
             nulls += 1;
         }
     });
-    if names(whole, y) != inside + nulls {
-        trace("declined — the source is named outside its block run");
-        return None;
+    if names(whole, src) != inside + nulls {
+        return Err("declined — the source is named outside its block run");
     }
     // A write INTO the source names it first: a vector append, or a record push's
     // reservation, mint and finish.  The rebind's append is the one that names it second.
     let mut ok_uses = 0usize;
-    for v in &s[j..=i + 3] {
-        v.walk(&mut |m| {
-            if let Value::Call(c, ca) = m {
-                if ops.writes.contains(c) && ca.first().is_some_and(|z| is_var(z, y)) {
+    for val in run {
+        val.walk(&mut |node| {
+            if let Value::Call(callee, ca) = node {
+                if ops.writes.contains(callee) && ca.first().is_some_and(|arg| is_var(arg, src)) {
                     ok_uses += 1;
                 }
-                if *c == ops.append && ca.get(1).is_some_and(|z| is_var(z, y)) {
+                if *callee == ops.append && ca.get(1).is_some_and(|arg| is_var(arg, src)) {
                     ok_uses += 1;
                 }
             }
@@ -318,32 +346,22 @@ fn admit(s: &[Value], i: usize, whole: &Value, data: &Data, d_nr: u32, ops: &Ops
     }
     // The mint's own `Set(y, …)` is the one more.
     if ok_uses + 1 != inside {
-        trace("declined — the source is read other than by the rebind");
-        return None;
+        return Err("declined — the source is read other than by the rebind");
     }
     // Only the rebind reads `y`: every other append names it as the destination.
     let mut reads = 0usize;
-    for v in &s[j..=i + 3] {
-        v.walk(&mut |m| {
-            if let Value::Call(c, ca) = m
-                && *c == ops.append
-                && ca.get(1).is_some_and(|z| is_var(z, y))
+    for val in run {
+        val.walk(&mut |node| {
+            if let Value::Call(callee, ca) = node
+                && *callee == ops.append
+                && ca.get(1).is_some_and(|arg| is_var(arg, src))
             {
                 reads += 1;
             }
         });
     }
     if reads != 1 {
-        trace("declined — the source is read more than once");
-        return None;
+        return Err("declined — the source is read more than once");
     }
-    trace("ADMITTED");
-    Some(Plan {
-        tp,
-        w,
-        wy,
-        x,
-        y,
-        ft,
-    })
+    Ok(())
 }
