@@ -7094,9 +7094,12 @@ impl Parser {
             }
         }
 
-        // When not a valid enum, just emit Null (errors were already reported).
+        // When not a valid enum, emit nothing (errors were already reported) — as an empty
+        // BLOCK, because a `match` is a brace statement: the statement loop asks the lowered
+        // node whether a `;` is due, and a `Null` there demanded one after the `}` on pass 1
+        // of a valid file whose enum is declared lower down.
         if !valid_enum {
-            *code = Value::Null;
+            *code = v_block(Vec::new(), Type::Void, "unresolved match");
             if subject_unresolved {
                 // ...except on the FIRST pass nothing was reported: the diagnostic above is
                 // `!first_pass`-gated, because the subject may simply be declared lower in the
