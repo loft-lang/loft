@@ -1446,7 +1446,9 @@ Applied by: native generator.  Its clause on the parser's `OpPreAllocVector` is 
                  (OpSetText(e, …) inside the group) is a claim in the store the mint
                  itself claims in, so it moves nothing the admitted mint cannot, and
                  the mint's aliasing decision covers it; a text written into any other
-                 record stays blocking.  The address of a TEXT local (OpCreateStack(t),
+                 record stays blocking, and so does one written into an element
+                 `(R-RefillText)`'s collection clause builds into a KEPT slot (the slot
+                 still owns its previous text, which the write releases).  The address of a TEXT local (OpCreateStack(t),
                  a `&text` hand-off) writes nothing either: on `--native` a text local
                  is a Rust String outside every store.
 ```

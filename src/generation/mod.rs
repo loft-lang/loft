@@ -3036,6 +3036,12 @@ impl Output<'_> {
             value_locals: self.value_record_locals.keys().copied().collect(),
             dead_buffers: self.dead_buffers.clone(),
             dead_by_fn: std::rc::Rc::clone(&self.dead_by_fn),
+            kept_elems: self
+                .refill
+                .keep
+                .as_ref()
+                .map(|k| k.elems.iter().copied().collect())
+                .unwrap_or_default(),
         };
         self.group_ends.clear();
         self.declared.clear();

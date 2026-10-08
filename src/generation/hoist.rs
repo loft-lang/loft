@@ -339,6 +339,10 @@ pub struct HoistOwned {
     /// The same fact for EVERY function of the program, so a CALLEE's body is judged with
     /// its own dead buffers exempt (`call_writes_store`): a program-wide table, shared.
     pub dead_by_fn: Rc<HashMap<u32, HashSet<u16>>>,
+    /// The elements `(R-RefillText)`'s collection clause builds into KEPT slots: a mint there
+    /// reuses a slot that still owns its previous text, so a text written into it releases
+    /// that text — no first write, and `@FR-R-Mint`'s text clause does not take it.
+    pub kept_elems: HashSet<u16>,
 }
 
 impl HoistOwned {
@@ -7049,9 +7053,18 @@ fn fresh_text_set_enabled() -> bool {
 
 /// A write into the fresh element that moves nothing a held header describes: § V-d's delivery
 /// copy (under the in-place tier) or its first text (`@FR-R-Mint`'s text clause, the mint tier).
-fn fresh_write(name: &str, args: &[Value], fresh: &HashSet<u16>, tiers: HoistTiers) -> bool {
+fn fresh_write(
+    name: &str,
+    args: &[Value],
+    fresh: &HashSet<u16>,
+    tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
+) -> bool {
     (tiers.in_place && fresh_copy(name, args, fresh))
-        || (tiers.mint && fresh_text_set(name, args, fresh))
+        || (tiers.mint
+            && fresh_text_set(name, args, fresh)
+            && !matches!(args[0].unspan(), Value::Var(e)
+                if owned.is_some_and(|o| o.kept_elems.contains(e))))
 }
 
 /// The address of a scalar local, or (`@FR-R-Mint`'s text clause) of a text local.
@@ -7184,7 +7197,7 @@ fn blocks_header_hoist(
             let record_copy = known
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
-            let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers);
+            let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers, owned);
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)

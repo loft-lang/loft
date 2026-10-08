@@ -35,8 +35,9 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     //                        buffer, so `@FR-R-Alias`'s versioned clause emits it twice (the
     //                        copy that holds `src`'s header, and the plain one): two of each
     ("n_m6", 1, 0, 2, 0), // c6: boolean, integer, float fields through the slot
-    ("n_m7", 0, 0, 0, 1), // c7: a text field — the formatting write into the element is a
-    //                        store write the admission declines, loop and group alike
+    ("n_m7", 1, 0, 2, 0), // c7: a text field — the formatting write into the fresh element
+    //                        is a claim in the mint's own store (`@FR-R-Mint`'s text
+    //                        clause), so the append fuses like c1
     ("n_m8", 0, 1, 2, 0), // c8: a nested collection field — the element owns heap: the
     //                        GROUP header takes it, its slot zeroed at the mint (the
     //                        literal `xs` mints a store, which declines the LOOP)

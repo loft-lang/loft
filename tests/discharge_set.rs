@@ -20,7 +20,9 @@ const CELLS: &str = "tests/scripts/a-discharge-buffers-text-set-keeps-the-caller
 const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c1", 1, 2), // out's push header; st.nodes and st.seqs read through headers
     ("n_c2", 0, 2), // no push; the two headers, the fallback discharged in the body
-    ("n_c3", 0, 0), // rename grows an element's text: the walk reads through the runtime
+    // rename grows an element's text: the walk reads through the runtime.  The BUILD loop's
+    // two pushes and its text-field mint hold (`@FR-R-Mint`'s text clause).
+    ("n_c3", 3, 0),
     ("n_c4", 0, 1), // the callee misses on every call: the loop keeps its one header
 ];
 

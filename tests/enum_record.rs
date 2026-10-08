@@ -24,7 +24,9 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_e2_fill", 2, 2, 0),
     // The text-carrying arm keeps its template; the arm beside it takes a group header
     // (the loop's index chain runs behind a guard, so it is emitted twice).
-    ("n_e3_fill", 2, 2, 0),
+    // The `Said { who: … }` appends fuse since `@FR-R-Mint`'s text clause: two more slots
+    // zeroed at the mint.
+    ("n_e3_fill", 4, 2, 0),
     ("n_e4", 1, 1, 0),
     // A unit variant's literal writes the tag alone: a zeroed slot, no address.
     ("n_e5", 2, 3, 3),

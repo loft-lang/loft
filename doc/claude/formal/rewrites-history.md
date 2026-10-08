@@ -519,3 +519,18 @@ reads the loop records of the rewritten body and restores the call where the loc
 call form already refilled a kept store), `forms_upto` keeps its gain.  `truncate_to`'s cost is
 the copy of each entry into the timeline and the store allocator's per-claim cost (claim 13 %,
 copy walk 13 %, frees 8 %), not the entry's own construction.
+
+## 2026-10-08 — `(R-Mint)`'s text clause
+
+A loop appending records with text fields while reading another vector declined its holds on
+the element's text write.  Admitted as a claim in the mint's own store: zttext `invert` −13.5 %,
+`materialise` −7.7 %, arguments `parse` −1.7 % cycles.  The first build took an element
+`(R-RefillText)` builds into a KEPT slot as fresh too: every value held and two refill guards'
+live-record counts grew (`a-buffer-of-text-records-is-refilled-where-it-is`,
+`a-kept-buffers-elements-are-refilled-in-their-slots`) — the kept slot's old text was never
+released.  Kept elements are now named to the hoist (`HoistOwned::kept_elems`) and decline.  Five
+emission pins had recorded the old decline as a prediction (`discharge_set` c3, `record_push`
+m7, `complete_write` c4, `copy_in_place` c4, `enum_record` e3); each cell answered the same with
+the clause on and off under `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1` and `LOFT_POISON_CLAIM=1`
+before its prediction moved.
+

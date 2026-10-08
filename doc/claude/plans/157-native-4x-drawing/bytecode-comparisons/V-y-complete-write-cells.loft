@@ -50,8 +50,9 @@ fn c3() {
   match e { A{x} => println("c3 a {x}"), B{y} => println("c3 b {y}") }
 }
 
-// c4 — an UNFUSED mint in an appending loop (S carries text, so § V-t's fused push
-// declines it): the element's OpNewRecord skips the prefill, values exact.
+// c4 — a mint whose element carries text in an appending loop: fused since `@FR-R-Mint`'s
+// text clause (the slot zeroed at the mint), unfused with LOFT_NO_FRESH_TEXT_SET=1 (the
+// element's OpNewRecord then skips the prefill); values exact either way.
 fn c4() {
   out: vector<S> = [];
   for i in 0..3 { out += [S { name: "n{i}", k: i * 10 }]; }

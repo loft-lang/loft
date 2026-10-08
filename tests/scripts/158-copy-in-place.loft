@@ -92,7 +92,8 @@ fn c3b() {
   assert(t == 255 && first.id == 1 && v[0]?.speed == 40, "c3b");
 }
 
-// c4 — a heap-owning record: the copy walks claims, so the loop keeps the general path.
+// c4 — a heap-owning record: the copy walks claims, so the copy loop keeps the general path
+// (its build loop, a text-field mint, holds under `@FR-R-Mint`'s text clause).
 fn c4() {
   v: vector<Named> = [];
   for i in 0..5 { v += [Named { nm: "n{i}", k: i }]; }
