@@ -62,7 +62,7 @@ binary under `bench/.loft/cache/`; LBR call graphs on `cpu_core` (dwarf unwindin
 empty chains on this hybrid CPU, frame pointers break inside the rlib); a logging `rustc`
 first on `PATH` captures loft's exact link line for hand-patch builds; callgrind at n=30
 minus n=10 gives exact per-parse call counts.
-**`R-BoundedNest` SHIPPED 2026-09-17** (`formal/rewrites.md`, the queue's item 2 and C120's
+**`R-BoundedNest` SHIPPED 2026-09-17** (`formal/rewrites.md`, the queue's item 2 and @C120's
 admissible successor): an innermost counted loop that accumulates `?`-discharged element
 products runs with PLAIN operators behind a guard evaluated once at its entry — every range end
 and invariant not the sentinel, every read's element bound known (taken once at the outermost
@@ -84,7 +84,7 @@ step-1 arm, 14/14 hashes): `render_marks` 2.79–2.86× → **1.54–1.74×**, `
 (Perf-Weight) median bar met on this lane, `lock_curved` (3.85×) the one row still over 3×.  Switches `LOFT_NO_BOUNDED_NEST`, `LOFT_NO_NEST_RAW_READS`, `LOFT_NO_SELF_APPEND_BLOCK`;
 falsifier `LOFT_HOIST_VERIFY=1` (`ops::nest_verify`, and the raw read compared with the checked
 one); pins `tests/bounded_nest.rs`; cells `tests/scripts/157-bounded-nest.loft` n1–n23.
-**`R-Range` + `R-GuardedChain` SHIPPED 2026-09-20** (`formal/rewrites.md`; C120's admissible
+**`R-Range` + `R-GuardedChain` SHIPPED 2026-09-20** (`formal/rewrites.md`; @C120's admissible
 successor built twice — the static interval proof and the run-time guard for a counted loop's
 index chains): `composite` 103 → **68 µs** per call (−34 %, the hand ceiling for its six
 record-scalar chains met), hash exact, the guard admitting loops across the graphics library.
@@ -1202,7 +1202,7 @@ NOT a malloc in steady state (the slot table only grows when every slot is live)
 pair is the free/search/init bookkeeping.  So the reset-and-reuse path is ~4× cheaper and is
 taken only by `§ V-al` vector buffers and by return buffers within ONE activation.
 
-*Owner ruling C125 bounds the design:* temporaries are REMOVED, not co-located; one store is
+*Owner ruling @C125 bounds the design:* temporaries are REMOVED, not co-located; one store is
 one object.  So "link them together" means RETAIN and re-use a site's store, never share one.
 
 *Unit A — `R-LoopRecord` (the `§ V-al` shape for a record local):* a plain no-heap record
@@ -1247,7 +1247,7 @@ minting **~11 fresh stores per call** (3 `vector<float>`, 3 `PointList`, 1.5 `Sk
 `fd_sides`, one per activation — 24.5 `FrondSpec`, 1 `vector<Frond>`): the value-record,
 element-first and buffer-adoption rewrites already remove most of what the interpreter
 mints, so the per-site retention below has ~11 × 30 ns ≈ 0.3 µs to win on `parse` (2 %),
-not 25–30 %.  That settles it: unit B is not worth its instrument cost, and C125 already
+not 25–30 %.  That settles it: unit B is not worth its instrument cost, and @C125 already
 said so (the owner ruled against a pooled cheap store per buffer).  What remains on `parse`
 is the scanner; on `fronds` the append machinery, the hash, and `fd_sides` (a per-activation
 two-element literal vector — a candidate for `(R-LiteralHoist)`'s const-param branch).
@@ -1362,7 +1362,7 @@ patches on one emission, hash `2a3aa61` throughout):
   `get_elem_at`/`vec_set_at`; a caller passes its held base, or derives one from the header at
   the call when its loop is not growth-free — sound either way, because a twin is store-free or
   in-place-only, so nothing reallocates for the call's duration.  **Unit (1) BUILT 2026-09-18**
-  (`LOFT_NO_TWIN_BASE`; § Status): `composite` 114.5 → 91.3 µs (−20 %), 2.98× → 2.40×, `lock`/`lock_curved`/`render_lock` −4 % each, 14/14 hashes.  Short of the hand patch's 84–87 because `composite_layer`'s own callers grow a store and so derive the base at the call rather than passing a held one; unit (2) is what remains.  Unit (2) is C120's next range
+  (`LOFT_NO_TWIN_BASE`; § Status): `composite` 114.5 → 91.3 µs (−20 %), 2.98× → 2.40×, `lock`/`lock_curved`/`render_lock` −4 % each, 14/14 hashes.  Short of the hand patch's 84–87 because `composite_layer`'s own callers grow a store and so derive the base at the call rather than passing a held one; unit (2) is what remains.  Unit (2) is @C120's next range
   proof: `x & K` bounds `x` to `[0, K]`, so a chain of `+ - *` over masked leaves and literals
   whose interval fits emits plain — `rgba`, `color_*`, the alpha-over arithmetic and
   `lock_layer`'s `chan()` are all of that shape; it needs a per-function result interval for the
@@ -1537,10 +1537,10 @@ header; what each tap paid was the nullable-aware arithmetic and the per-read st
 resolution.  Shipped: a counted range's counters seeded non-sentinel (`@FR-R-Counter`), a
 division by a literal as one test and a divide (`@FR-R-LitDiv`), and the element BASE
 beside every header of a growth-free loop (`@FR-R-Base`) — the resample probe 139 →
-**111–113 ms/op**, 7.6× → 6.2×.  The C85 line — the integer closure over `+`/`-`/`*`,
+**111–113 ms/op**, 7.6× → 6.2×.  The @C85 line — the integer closure over `+`/`-`/`*`,
 worth a further −17 % as the checked non-null family and −50 % as plain operators on the
 final emission — was put to the owner and **declined on 2026-09-15 (DESIGN_DECISIONS.md
-C120): no random behaviour, only situations we know can be optimised.**  What remains
+@C120): no random behaviour, only situations we know can be optimised.**  What remains
 admissible for the taps is a RANGE proof (bounded operands that cannot overflow emit the
 plain operator), which needs the library to declare its planes' bounds.  The non-tap floor —
 32 ms of premultiply, prefill, growth ladder and two per-pixel vectors, 1.8× the whole
@@ -1600,7 +1600,7 @@ pixel).  The per-pixel vectors were the unit worth building first and are § V-a
 row's remaining floor is the prefill and the reserve (a counted push loop is a reserve by
 its trip count, a constant push loop one fill — the same recogniser, ≈ −3.5 % here and
 `filled`'s whole cost in the render rows), then the premultiply's own arithmetic, which is
-the C85 line again — closed by C120; a range proof over `(c >> 16) & 255` (a masked
+the @C85 line again — closed by @C120; a range proof over `(c >> 16) & 255` (a masked
 value is bounded) is the sound form of that one.
 
 *The queue after the ruling and the machine-code read (2026-09-15; DESIGN.md § V-aj
@@ -1638,7 +1638,7 @@ reference's 17 / 1.7 / 4.4).*  In this order:
 5. The aarch64 re-measure, on its own box.
 
 Not in this plan, recorded so it is not re-proposed as a rewrite: the owner's eventual
-release build pass for games (DESIGN_DECISIONS.md C120, NATIVE.md § Optimisation tiers)
+release build pass for games (DESIGN_DECISIONS.md @C120, NATIVE.md § Optimisation tiers)
 — plain arithmetic for a game that has already run fault-free under the checks, compiled
 from every source it uses after extended in-house testing.  Every unit here stays inside
 the checked semantics.  What IS in scope, and shippable, is the owner's second half:
@@ -2302,7 +2302,7 @@ What remains, ranked by measured value per unit of work:
 |---|---|---|---|---|
 | 1 | **bound-via-header** — the loop bound re-reads the vector length through the runtime on every iteration even where the header was hoisted (`length_vector` beside `get_elem_hoisted` in `n_fnv`) | every `for` over a vector | `hash` and every element loop | S |
 | 2 | **constant shift amounts need no range check** — `x >> 8` emits a `(0..64).contains` test on a literal | `n_fnv` | XS, folds into 1 | XS |
-| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason.  An opt-in to processor semantics (wrapping integers, IEEE floats as values) is DECLINED — machine-dependent behaviour is the opening loft closes (DESIGN_DECISIONS.md C129) | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null — but the third of the row charged to the checks (553–584k → 370–396k ns/op) was the un-inlined fault note BESIDE them: with it inlined the fully checked row sits at its plain-arithmetic floor (219–287k vs 225–272k, DESIGN.md § The out-of-line calls), LLVM compiling each overflow test to `imul` + `jo` and each sentinel test to one `cmp`/`je` | none measured yet — re-rank when a checks-only loop with no helper call beside it shows as hot | M–L |
+| 3 | **range proofs for sentinel elision** — every integer op is sentinel-checked (`op_mul_int`, `op_exclusive_or_int`, `op_logical_and_int` test both operands for `i64::MIN`), and that is the SEMANTICS, not a missing declaration: null is made by ordinary arithmetic — `a/b`, `sqrt(a)`, `a+b` and `a*b` on overflow — so a non-nullable parameter is non-null only at entry and no boundary check can license trusting it inside (owner's ruling, 2026-09-08).  What CAN license eliding a check is a proof about the VALUE: a masked or bounded integer cannot overflow, a product of two bounded ones cannot, a divisor proven finite and non-zero cannot yield NaN — value-range propagation over the P3 non-sentinel facts, which already exclude arithmetic for this reason.  An opt-in to processor semantics (wrapping integers, IEEE floats as values) is DECLINED — machine-dependent behaviour is the opening loft closes (DESIGN_DECISIONS.md @C129) | `n_seed_hash`: `& 0xFFFFFFFF` bounds every operand, so each following op is provably non-null — but the third of the row charged to the checks (553–584k → 370–396k ns/op) was the un-inlined fault note BESIDE them: with it inlined the fully checked row sits at its plain-arithmetic floor (219–287k vs 225–272k, DESIGN.md § The out-of-line calls), LLVM compiling each overflow test to `imul` + `jo` and each sentinel test to one `cmp`/`je` | none measured yet — re-rank when a checks-only loop with no helper call beside it shows as hot | M–L |
 | 4 | **`fronds`' deep-copy class as a MOVE** — SHIPPED 2026-09-11 (the § V-j move row above): ceiling re-measured at −11.3 % on the § V-t runtime and reached exactly | DESIGN.md § V-j (SHIPPED addendum) | `fronds` −11 % (done) | shipped |
 | 4b | **`fronds`' allocation class** — the sides literal, the two builders, the per-sub-array spec; CEILING MEASURED at −9 % by a source-level variant (−64 % stores, hash exact) — small emitter items, not the half the census suggested | DESIGN.md § fronds | `fronds` −9 % | S each |
 | 5 | **frame-local record temporaries** — 12 of `smooth`'s 14 remaining stores are `pt(…)` results bound to locals; the scalar-tangent probe gained 11 % while DOUBLING the helper calls, so a temporary that lives in the frame takes at least that | § V-g's ceiling probe | `smooth` 19× → ~14×; the same class in every routine that names a struct temporary | M–L |

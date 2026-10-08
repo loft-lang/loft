@@ -113,7 +113,7 @@ is the definition of done.
 
 ### ~~T0.1~~ — DONE 2026-07-24
 Silent on the default path at all four fallback sites; `--native` explains. Recorded
-as [DESIGN_DECISIONS.md C102](DESIGN_DECISIONS.md). Verified in a release-shaped
+as [DESIGN_DECISIONS.md @C102](DESIGN_DECISIONS.md). Verified in a release-shaped
 layout (no source tree, `rustc` absent): zero notices on two consecutive runs.
 *The first attempt at verifying this was vacuous* — `rustc` was still on the test
 `PATH`, so native simply succeeded; the calibration check (`which rustc` on the
@@ -146,7 +146,7 @@ never had candidates before. And the hardcoded `'string'` special case, which
 existed in **three** places, folded into the one table.
 
 Suggestion only; declined as a language change with the author's rationale in
-[DESIGN_DECISIONS.md C103](DESIGN_DECISIONS.md). Note `i32`/`u32`/`i8`/`i16`/`u8`/`u16`
+[DESIGN_DECISIONS.md @C103](DESIGN_DECISIONS.md). Note `i32`/`u32`/`i8`/`i16`/`u8`/`u16`
 are **legal** and correctly absent from the table.
 
 ### ~~T1.1~~ — DONE 2026-07-24, **except one claim that needs Jurjen**
@@ -419,7 +419,7 @@ usage header did not mention that **bare `loft` starts the REPL** — that was o
 line 64. Added a *Getting started* block naming the two likely actions (run a
 file, start the REPL) before the option wall, and put the REPL in the usage
 header. It also states plainly that a release interprets by design, which is the
-same message [C102](DESIGN_DECISIONS.md) removed from the runtime path.
+same message [@C102](DESIGN_DECISIONS.md) removed from the runtime path.
 
 ### ~~FU.3~~ — a failed REPL input warned about earlier, correct code. FIXED
 ```

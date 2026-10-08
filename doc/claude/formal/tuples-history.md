@@ -301,7 +301,7 @@ than a third spelling both would have to learn.  Guard:
 >
 > ⚠ **A shipped DIAGNOSTIC already asserted the fixed behaviour**, and that is the strongest
 > argument here — stronger than the aliasing itself. `c = t.0; c[0] = 41` drew
-> `warning[lost-write]: a whole-value bind COPIES the heap value (C86), so the mutation lands in
+> `warning[lost-write]: a whole-value bind COPIES the heap value (@C86), so the mutation lands in
 > the copy`, while the write reached `vl` through two levels of binding. A diagnostic that
 > describes the contract wrongly is worse than a missing one, because it is believed.
 >
@@ -1009,7 +1009,7 @@ work fine as a semantic construction; the internal representation is not that im
 when tuples grow big that will impact speed."*  Until then a scalar-only `&(…)` was STACK-backed
 and `(T-Ref-Src)` refused a vector element or a struct field of tuple type, on the basis that a
 stored tuple is read into a fresh by-value tuple.  Two things had contradicted that basis: the
-loop variable over a `vector<(…)>` already named a stored element in place, and C138 made a
+loop variable over a `vector<(…)>` already named a stored element in place, and @C138 made a
 stored tuple's bytes exactly the record's layout.  Measured on the change: the link to a stored
 tuple costs what the same link to a struct element costs (200 µs and 201 µs for 8,192 updates on
 the release tier); a scalar `&(…)` local takes one claim before its loop and its member accesses

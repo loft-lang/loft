@@ -15,7 +15,7 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 
 **Decision.** A read-only scalar capture is a copy taken at definition; a struct capture references
 the live original.  A scalar the body WRITES becomes a heap cell shared by the outer scope and the
-one mutating closure (several are refused — C74).  **Why.** Reference capture of scalars needs a
+one mutating closure (several are refused — @C74).  **Why.** Reference capture of scalars needs a
 garbage collector or a borrow checker, neither fitting the store heap; a copy surprises least.
 
 **Revisit when.** A critical program cannot be written ergonomically with these captures AND an
@@ -46,12 +46,12 @@ in the struct's own store and adopts its captures there, and the struct's drop c
 record's, so the struct owns that release like any other member's.  A copy of such a struct is
 judged by `(H-Copy-Refuse)` and a move by `(H-Spent)`, as for any type that owns a release.  It
 may be placed into another struct's field, and overwriting that field releases what the
-displaced closures adopted.  A collection of such structs stays refused (C116).  **Why.** `(L-Escape)` makes a closure an ordinary value;
+displaced closures adopted.  A collection of such structs stays refused (@C116).  **Why.** `(L-Escape)` makes a closure an ordinary value;
 building the record where the struct lives makes the transfer the ordinary ownership of a
 member, with every release emitted code (CODEGEN_METHOD.md § Ownership and copy semantics are
 emitted code).
 
-**Revisit when.** C116's collection refusal is reopened.  Decided 2026-06-10, revised
+**Revisit when.** @C116's collection refusal is reopened.  Decided 2026-06-10, revised
 2026-10-05 (loft#1867, loft#1877) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
 **Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
 `capture_adoption::claimed_into_delivered`;
@@ -62,7 +62,7 @@ emitted code).
 
 **Decision.** `&` is a binding marker that binds a live reference — reads and writes go through to
 an addressable source — not a general operator.  A plain binding follows
-[C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule): a
+[@C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule): a
 whole-value heap bind COPIES (aliased only when the source is dead), a projection (`a = vv[0]`, `w =
 o.inner`) is a view, and in-place path mutation writes through.  `&` exists to write through to
 a parameter's content, and a stored `reference<T>` to reach a deep record inside another structure
@@ -73,7 +73,7 @@ instead of a copy-or-view choice made silently by the binding's form; and a refu
 dropped later, where a cost on every program cannot (C79).
 
 **Revisit when.** Views by projection prove a net footgun for a real consumer — writes
-propagating through an alias it did not intend.  Decided 2026-06-22, plain binds superseded by C86, narrowed 2026-10-11 — [record](DESIGN_DECISIONS-history.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference).
+propagating through an alias it did not intend.  Decided 2026-06-22, plain binds superseded by @C86, narrowed 2026-10-11 — [record](DESIGN_DECISIONS-history.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference).
 **Holds at:** [OWNERSHIP_MODEL.md § The law](OWNERSHIP_MODEL.md), @FR-B-Ref-Alias.
 **Catalogue:** @F21 (references `&T`).
 
@@ -134,13 +134,13 @@ free-emission authority is then a fresh plan.  Decided 2026-07-09 — [record](D
 **Decision.** A drop runs when the value's OWNER dies, not when the value is taken out.  Moving a
 droppable into a struct field, enum payload, collection element or another variable transfers the
 release to that container's death (a copy whose source stays in use takes its own lease or is
-refused — C121).  A rebind releases the record it displaces.  Removing or overwriting a collection
+refused — @C121).  A rebind releases the record it displaces.  Removing or overwriting a collection
 element (`v.remove(i)`, `v[i] = x`) does NOT run its drop: close it first.  **Why.** Element removal
 releases through the runtime free cascade; running user code there re-enters the interpreter from
 the path the heap invariant rests on, for a drop that cannot fail or report.
 
 **Revisit when.** A consumer churns a long-lived collection of live resources (a connection pool
-that evicts, a cache of open handles).  Decided 2026-08-11, revised by C121 — [record](DESIGN_DECISIONS-history.md#c111--a-drop-cascade-reaches-a-containers-death-not-an-elements-removal).
+that evicts, a cache of open handles).  Decided 2026-08-11, revised by @C121 — [record](DESIGN_DECISIONS-history.md#c111--a-drop-cascade-reaches-a-containers-death-not-an-elements-removal).
 **Holds at:** `formal/heap.md` (H-Drop), (H-Drop-Not); `scopes::copy_moves_drop_from`;
 `tests/scripts/a-whole-value-copy-of-a-droppable-releases-once.loft`.
 **Catalogue:** @F-drop (`OpDrop`, @PLN125 arc B) · loft#849
@@ -164,7 +164,7 @@ literal and at an element assignment.  Per-element state goes in a struct FIELD,
 one: `Stepper { advance: fn(x: integer) -> integer { x + step } }`.  **Why.** A collection has one
 element layout and a closure's environment differs per lambda; carrying it would widen every
 fn-typed collection and give the collection a second ownership discipline.  A struct field
-co-locates the record (C75).
+co-locates the record (@C75).
 
 **Revisit when.** Not stated.  Decided 2026-09-04 (loft#1358) — [record](DESIGN_DECISIONS-history.md#c116--a-collection-element-holds-a-plain-fn-ref-never-a-capturing-closure).
 Holds at `Parser::refuse_capturing_closure_in_collection`.
@@ -182,7 +182,7 @@ releases twice; inferring moves from later use lets a later line redefine an ear
 **Revisit when.** A consumer needs a droppable OUT of a container it keeps using — that wants a
 named `take`, not an implicit move.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c121--a-copy-of-a-droppable-takes-its-own-lease-or-is-refused-the-release-no-longer-moves-with-a-copy).
 Holds at `(H-Copy-Lease)`, `(H-Copy-Refuse)`, [formal/heap.md](formal/heap.md).
-**Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises C111's whole-value extension
+**Catalogue:** @F-drop (`OpDrop`) · @PLN163 · revises @C111's whole-value extension
 
 ## C124 — a `const` value reaches only a `const` parameter; semantics is judged by the line, optimisation by the proof
 
@@ -191,12 +191,12 @@ Holds at `(H-Copy-Lease)`, `(H-Copy-Refuse)`, [formal/heap.md](formal/heap.md).
 SIGNATURE, never the callee's body.  Both are errors; the plain case, `const-to-plain-parameter`,
 shipped as a warning until every shipped library had declared its read-only parameters `const`.
 **Why.** What a line means is decided by what is written on it and the signatures it
-names (C121); that a body does not write is a proof an optimisation may use, not a license.
+names (@C121); that a body does not write is a proof an optimisation may use, not a license.
 
 **Revisit when.** A read-only helper cannot be declared `const` — a gap in `const`'s syntax to
 close.  Decided 2026-09-15, an error from 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c124--a-const-value-reaches-only-a-const-parameter-semantics-is-judged-by-the-line-optimisation-by-the-proof).
 **Holds at:** `@C124` — `./scripts/idx tag:@C124`.
-**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads C121 and C122
+**Catalogue:** @PLN40 const-model rule 4 · `formal/binding.md` (Const-Value), D-bind-45 (closed) · loft#1540 · reads @C121 and @C122
 
 ## C125 — The store model stays simple: performance work removes objects, it does not add a second kind of object
 
@@ -213,7 +213,7 @@ the programmer, becomes hard to reason about and so impossible to verify.
 measured on the release binary with `perf`.  Decided 2026-09-17 — [record](DESIGN_DECISIONS-history.md#c125--the-store-model-stays-simple-performance-work-removes-objects-it-does-not-add-a-second-kind-of-object).
 **Holds at:** `@C125` — the rule `(O-One-Kind)` in [formal/ownership.md](formal/ownership.md); guard `layout_golden.rs::every_heap_value_is_carried_as_a_dbref`
 (a heap value is one `DbRef` on both backends — a second kind needs a second representation).
-**Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads C122 · `formal/ownership.md` `(O-Buffer)`
+**Catalogue:** @PLN164 (Open design question E1, tier 1 / A1–A2) · reads @C122 · `formal/ownership.md` `(O-Buffer)`
 
 ## C128 — a yielded lambda owns copies of what it captures
 
@@ -241,7 +241,7 @@ read-before-write stayed invisible until a different filler ran.
 **Holds at:** `@C137` — the rule `(H-Claim)` in [formal/heap.md](formal/heap.md); the nightly
 `poison-claim` job (`LOFT_POISON_CLAIM=1` over both backends); guard
 `tests/scripts/a-par-text-result-leaves-its-output-record-intact.loft`.
-**Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads C125
+**Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads @C125
 
 
 ## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
@@ -252,10 +252,10 @@ on such a field (a comparison, a per-character step, a length, a format) may run
 wherever the program's results are the ones the owned form gives.  It is a representation the
 compiler picks under the proof that the buffer outlives every read of the view and is not
 written while the view is read; nothing in the language names it, and where the proof fails
-the field is owned exactly as today.  **Why.** The contract is semantics (C122): a decoder
+the field is owned exactly as today.  **Why.** The contract is semantics (@C122): a decoder
 that copies four texts and two byte strings out of a frame to answer one lookup does work the
 program cannot observe, and the Rust reference never does it (`&str` into the frame).  It
-stays inside C125: no program holds a view by choice, so the programmer still never chooses
+stays inside @C125: no program holds a view by choice, so the programmer still never chooses
 between two kinds of value — the compiler proves where a view is the same value.
 
 **Revisit when.** Not stated.  Decided 2026-10-07 — [record](DESIGN_DECISIONS-history.md#c141--a-decoded-text-or-byte-string-may-be-a-view-into-the-bytes-it-was-decoded-from).
@@ -263,7 +263,7 @@ between two kinds of value — the compiler proves where a view is the same valu
 (proposed); guard `tests/scripts/a-decoded-text-keeps-its-value-when-the-frame-changes.loft`
 (the boundary: a decoded value keeps its bytes when its frame is written, grown, cleared or
 gone).
-**Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)
+**Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads @C122, @C125 · [APART_VALUES.md](APART_VALUES.md)
 
 ## C145 — No back references inside a store: what a reference points at never moves under it
 
@@ -308,4 +308,4 @@ deviation; guards
 `tests/scripts/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft`,
 `tests/scripts/a-stored-reference-its-record-outlives-reads-it.loft` and
 `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
-**Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)
+**Catalogue:** reads @C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

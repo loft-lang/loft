@@ -17,10 +17,10 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 - `pub` prefix makes a definition publicly visible (applies to functions, structs, enums and
   constants).  A library's surface is its `pub` items and nothing else, by either spelling:
   `use lib::*` brings in only those, and a qualified `lib::name` reaches only those — not an
-  item `lib` declares without `pub`, and not a name `lib` only imports for its own use (C98),
+  item `lib` declares without `pub`, and not a name `lib` only imports for its own use (@C98),
   which the error then names with its owner's qualifier
   (`tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`).
-- **Everything a file declares is private to it; `pub` is consent** (C140, `formal/calls.md`
+- **Everything a file declares is private to it; `pub` is consent** (@C140, `formal/calls.md`
   `(F-Visible)`).  Outside its file a type is *invisible* (not `pub`, named by no `pub`
   signature), *name only* (not `pub`, but named by a `pub` fn's signature or a `pub` field's type:
   it can be named, passed and stored, never built) or `pub` (built too — a struct literal when
@@ -70,7 +70,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
     it. Passing it to a `const` parameter is always allowed.
   - Passing it to a plain **record or collection parameter** is reported unless that parameter is
     declared `const` — decided by the signature, not by whether the callee happens to write
-    (DESIGN_DECISIONS.md C124): the error `const-to-plain-parameter`. A read-only helper says so:
+    (DESIGN_DECISIONS.md @C124): the error `const-to-plain-parameter`. A read-only helper says so:
     `fn total(v: const vector<T>)`. The
     standard library's readers (`len`, `sum`, `join`, the `JsonValue` accessors, …) declare their
     parameters `const`; its writers (`clear`, `seek`, the `store_load*` targets) do not. `text`
@@ -105,7 +105,7 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 - A function body ending in an expression (without `;`) returns that value.
 
 A standard-library function implemented in Rust is declared without a body, followed by
-`#rust "..."` — in `default/` only; a library binds Rust with `#native` (C87):
+`#rust "..."` — in `default/` only; a library binds Rust with `#native` (@C87):
 ```
 pub fn starts_with(self: text, value: text) -> boolean;
 #rust "@self.starts_with(@value)"
@@ -234,7 +234,7 @@ Type aliases are compile-time substitutions — `Handler` and
 `fn(Request) -> Response` are the same type.  Outside its file, a non-`pub` alias that a
 `pub` function names is ABSTRACT: a caller holds, passes back, stores, compares (`==`) and
 prints its values, and never reads what is inside (an operator, a member, destructuring).
-`pub type` keeps it transparent everywhere (C140, `formal/calls.md` `(F-Visible)`).  Aliases for `fn(...)` types
+`pub type` keeps it transparent everywhere (@C140, `formal/calls.md` `(F-Visible)`).  Aliases for `fn(...)` types
 and tuple types are supported (C55).
 
 In library/default files, `size(n)` specifies the storage size in bytes:
@@ -306,7 +306,7 @@ declaring one of them yourself is a redefinition and is refused.  A selective
 `use lib::(a, b);` brings in only what it names, and a bare `use lib;` brings in none, so
 every OTHER name in that library stays free for you to declare** — and the two live side
 by side, reached unambiguously in each source that did not import the other (the module
-scoping of @PLN102 C97).
+scoping of @PLN102 @C97).
 
 ```
 use hex_body::*;                     struct Frame { … }   // refused: `Frame` came in bare
@@ -470,7 +470,7 @@ Guard: `tests/scripts/88-imports.loft` (a `use` after a declaration is refused).
 
 Used only in the standard library (`default/`) to bind loft declarations to Rust
 implementations; anywhere else they are refused, and a library binds Rust with `#native` and a
-native crate instead ([PACKAGES.md § Function binding model](PACKAGES.md#function-binding-model), C87):
+native crate instead ([PACKAGES.md § Function binding model](PACKAGES.md#function-binding-model), @C87):
 
 <!-- from default/03_text.loft -->
 ```loft

@@ -7,7 +7,7 @@ ANSWERED, where it differed from what it expected, and the three findings that c
 are at the bottom (§ What the steps answered).
 
 Step 8's implicit half is **declined**, not pending —
-[DESIGN_DECISIONS.md § C104](../../DESIGN_DECISIONS.md). The remaining tails are open work on the
+[DESIGN_DECISIONS.md § @C104](../../DESIGN_DECISIONS.md). The remaining tails are open work on the
 built system and live in [LAZY_STORES.md § Open work](../../LAZY_STORES.md).
 
 How B / B2 / B3 / B4 get built in steps that each land GREEN and each answer one question.
@@ -301,7 +301,7 @@ than finished, because that reasoning is about the sequence:
 
 - **The IMPLICIT range** — step 8 as written wires the range shape "to the slice operation", so
   that `xs[lo..hi]` fetches. It ships as an EXPLICIT call instead, and that is now a **decision**
-  rather than a tail ([C104](../../DESIGN_DECISIONS.md)): failure path 2 settled that a lazily-bound
+  rather than a tail ([@C104](../../DESIGN_DECISIONS.md)): failure path 2 settled that a lazily-bound
   collection answers *"what have I got"*, so a slice that silently consults the source makes `len`
   and iteration mean two different things depending on how the collection was reached. The
   batching claim, which is what step 8 exists for, is fully delivered by the explicit form: one

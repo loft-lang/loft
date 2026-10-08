@@ -1184,7 +1184,7 @@ which:
    terminal calls).
 3. If recoverable: takes the runtime_error, logs the rendered
    diagnostic via `Logger::log_runtime_kind` (production-mode
-   shape per C66), pops the call_stack down to the
+   shape per @C66), pops the call_stack down to the
    handler-coroutine boundary, sets the handler's coroutine to
    `Exhausted`, decrements `had_fatal` if appropriate, returns
    to the EventLoop pump.

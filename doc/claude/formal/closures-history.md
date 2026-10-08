@@ -55,7 +55,7 @@ fixed here, and the guard runs under `LOFT_STRICT_SCHEMA_IDS`.
 **D-clo-18 left the register on 2026-09-03 without being fixed**, which is why the count fell to
 2 with no code change: a `&` scalar parameter written from inside a closure is permanently
 REFUSED, so per [ROADMAP.md](ROADMAP.md) it is a decided edge
-([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)) rather than distance from the spec. Its record,
+([DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)) rather than distance from the spec. Its record,
 and `D-clo-20`'s, are below.
 
 ⚠ **A rebind is not a mutation, and a capture is the one place the code could not tell them
@@ -74,7 +74,7 @@ reads its own slot directly (`t_6vector_len(p(0))`, not a read through the closu
 Two readers, one binding: a repoint moves the wrong answer from the caller to the callee
 rather than removing it. Making it mean what it says needs the binding reachable from inside
 the closure plus a write-back, which is precisely what `D-clo-18` (now a decided edge,
-[DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)) records as unavailable for the `&`-scalar shape — the cell machinery that gives a mutated captured SCALAR that channel
+[DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)) records as unavailable for the `&`-scalar shape — the cell machinery that gives a mutated captured SCALAR that channel
 cannot serve a heap value, because reads in the enclosing body would then see the cell while
 the caller still sees its own slot. Same wall, one rule over, so the same answer.
 
@@ -210,9 +210,9 @@ capturing lambda passed INLINE to `map` and returning text faulted on `--interpr
 > days while the refusal it describes was already permanent, so the count read one higher than
 > the distance actually was. [ROADMAP.md](ROADMAP.md) already says what to do with that: a row
 > that turns out **spec-may-adjust** leaves `formal/` and becomes a decided edge. It is
-> [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md), which carries both halves — this one and
+> [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md), which carries both halves — this one and
 > `D-clo-20`, the heap twin below, whose refusal is the same answer one rule over. The rule keeps
-> the carve-out in its own text: `(L-CapRef)` now states the refusal and cites C115 instead of a
+> the carve-out in its own text: `(L-CapRef)` now states the refusal and cites @C115 instead of a
 > deviation number.
 >
 > Guard `tests/scripts/1276-reject-a-ref-parameter-a-closure-cannot-write.loft`
@@ -255,7 +255,7 @@ capturing lambda passed INLINE to `map` and returning text faulted on `--interpr
 > three right-hand sides × vector, hash, struct); the shapes it must NOT reach are
 > `tests/scripts/1281-a-closure-cannot-replace-a-captured-parameter.loft`, which cannot hold the
 > refused spelling because the fixed compiler will not parse it. Both halves are recorded as one
-> decided edge, [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md).
+> decided edge, [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md).
 
 > **D-clo-19 — OPENED AND CLOSED (2026-09-01, loft#1279): `=` on a captured collection was two
 > other operations, decided by the SOURCE of the right-hand side.**
@@ -1246,13 +1246,13 @@ base — and D-clo-7's remaining half is exactly the case where it does not.
 and refusing is deliberate: `(L-CapScalar)` gives the closure a COPY of the caller's value, so
 there is no shared record for the write to land in and no code change closes it. Per
 [ROADMAP.md](ROADMAP.md), a row that turns out **spec-may-adjust** leaves `formal/` and becomes a
-decided edge — it is [DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md), together with `D-clo-20`,
+decided edge — it is [DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md), together with `D-clo-20`,
 its heap twin, which took the same refusal for the same reason one rule over. Counting a
 permanent refusal as distance from the spec overstates the register by one.
 
 ### the status line formal/README.md's area table carried until 2026-09-04
 
-**2 open** (D-clo-7, D-clo-14 — one `??`-default leak in two positions: the borrow arm's witness cannot be NAMED, so the mint arm's store leaks; they are the SAME missing per-execution ownership witness as ownership.md's D-own-16, and QUALITY.md carries them as one cluster. D-clo-18 and D-clo-20 left as REFUSALS, DESIGN_DECISIONS C115) — the `fn(){}` and `\|…\|` forms capture IDENTICALLY (pure sugar, D-clo-1); first-class (store/pass/return/escape); scalar-by-value / heap-shared capture; a stored un-inferrable short lambda in `map` is now a clean diagnostic, not a crash (D-clo-2). `L-Escape`'s STORAGE half is complete (D-clo-3, opened and closed 2026-08-22 by re-measuring the previous zero): a place that already holds a fn-ref — a local, a tuple member, a struct field, a vector element, a `&`-parameter's field — now takes a new one, releasing the closure record the old one owned, and a source the LITERAL refuses is refused identically
+**2 open** (D-clo-7, D-clo-14 — one `??`-default leak in two positions: the borrow arm's witness cannot be NAMED, so the mint arm's store leaks; they are the SAME missing per-execution ownership witness as ownership.md's D-own-16, and QUALITY.md carries them as one cluster. D-clo-18 and D-clo-20 left as REFUSALS, DESIGN_DECISIONS @C115) — the `fn(){}` and `\|…\|` forms capture IDENTICALLY (pure sugar, D-clo-1); first-class (store/pass/return/escape); scalar-by-value / heap-shared capture; a stored un-inferrable short lambda in `map` is now a clean diagnostic, not a crash (D-clo-2). `L-Escape`'s STORAGE half is complete (D-clo-3, opened and closed 2026-08-22 by re-measuring the previous zero): a place that already holds a fn-ref — a local, a tuple member, a struct field, a vector element, a `&`-parameter's field — now takes a new one, releasing the closure record the old one owned, and a source the LITERAL refuses is refused identically
 
 ## Deviations carried by closures.md until 2026-10-06
 
@@ -1407,7 +1407,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   text and integer arguments and results, 0 mismatches on both backends.  Guard
   `tests/scripts/1658-a-native-called-through-a-function-value-runs.loft`.
 
-- **D-clo-40** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1642)* — `(L-FnAbsent)`, and C66: a
+- **D-clo-40** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1642)* — `(L-FnAbsent)`, and @C66: a
   production program never aborts on a user-attributable edge.  Calling a `vector<fn(…)>`
   element read out of range panicked the interpreter (`fn_call_ref: d_nr=… is negative`) and hit
   `unreachable!` on `--native`, with or without `??`.  And the two ways to ask about the absence

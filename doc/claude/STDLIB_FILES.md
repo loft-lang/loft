@@ -396,7 +396,7 @@ resident count, and what a binding refuses — is [LAZY_STORES.md](LAZY_STORES.m
 | `store_lazy_clear(c: reference) -> boolean` | Acknowledge those faults, answering whether there was anything to acknowledge.  The ONLY thing that clears them. |
 | `store_lazy_fail(c: reference, why: text)` | **The writing end of that channel**, for a lazy driver written in loft (`fn lazy_fetch(…)`, below).  A driver's three answers do not fit its return value: `1` inserted and `0` absent are integers, and "the source is down" carries a REASON — answering `0` for it is the silent wrong answer this channel exists to prevent.  Sticky and counted exactly like a Rust source's failure. |
 
-**Ask after a null, because a null cannot say why.**  C80 means a value read never
+**Ask after a null, because a null cannot say why.**  @C80 means a value read never
 raises, so a miss answers `null` whether the key is genuinely absent or the source
 was unreachable — two different facts, one stable and one not:
 

@@ -8,8 +8,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > **Identity:** the design doc of [`@PLN18`](README.md) (engine host), slug `engine-host`.
 > Grown from the @PLN16 (debugger) exploration and **graduated to this plan**.
 > **Status: recorded evaluations — the build is phased in [README.md](README.md).**
-> This is the C71/N9 execution model made buildable (the per-fn execution model
-> [DESIGN_DECISIONS § C71](../../DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
+> This is the @C71/N9 execution model made buildable (the per-fn execution model
+> [DESIGN_DECISIONS § @C71](../../DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)
 > names as the steady state). It gates [IDE.md](../16-debugger/IDE.md) slices **6b** (hot-swap `reload`)
 > and **6c** (breakpoint-in-game). Canonical context: [LAVITION.md](../../LAVITION.md)
 > (the engine), [GOALS.md](../../GOALS.md) § Purpose (live prototyping, AS/400 reliability).
@@ -62,7 +62,7 @@ kernel reads only the `<msg_id>:` framing — classification, never meaning.
 **The honest residual — what still recompiles, and why that's fine.** Three things
 genuinely need Rust: a new **traffic-class kind** (a fourth drain rule — rare,
 kernel-level), a new **transport** (QUIC/UDP), a new **platform capability** (GL
-feature, audio). Those are exactly C71's *library* tier — they arrive as dlopen'd
+feature, audio). Those are exactly @C71's *library* tier — they arrive as dlopen'd
 native libraries from the registry, not as edits to the host binary. The kernel's
 recompile cadence becomes engine-release cadence, not feature cadence. The discipline
 that keeps it true: when a feature seems to need kernel code, ask *"mechanics or
@@ -83,14 +83,14 @@ native half, inherited by every loft program on top.)
 > convergence signal) — what this note *adds* is the entry-gate probes, the risk
 > register, and the sequencing; LAVITION stays the canonical statement of the model.
 
-C71's model is "interpret the edited fn on a compiled baseline." Its honest weakness:
+@C71's model is "interpret the edited fn on a compiled baseline." Its honest weakness:
 a function in the **frame path** may blow the 16 ms budget under interpretation — and
 frame-path gameplay logic is exactly what live editing is *for*. The evaluation's
 synthesis is a **middle tier**, mirroring how JS engines resolved the same tension:
 
 | Tier | What runs | Latency to take effect | Speed |
 |---|---|---|---|
-| **0 — interpret** | the edited fn, interpreted over the shared store (C71 minimal) | **instant** (the save) | interpreter speed |
+| **0 — interpret** | the edited fn, interpreted over the shared store (@C71 minimal) | **instant** (the save) | interpreter speed |
 | **1 — WASM swap** | the same fn, compiled in the background (loft → Rust → `wasm32` via the existing `--html`/wasip2 pipeline) and swapped in at a frame boundary | seconds (background; tier 0 covers the gap) | ~compiled, minus the bridge tax |
 | **baseline — native** | everything untouched (rlib/cdylib) | — | full native |
 
@@ -122,7 +122,7 @@ else slows down (baseline).**
   meaningfully closer to native.
 - **rustc latency defines tier-1 lag** (seconds → tens of seconds). Acceptable *only
   because tier 0 exists*; wasm-swap **without** the interpret tier is a compile loop —
-  exactly what C71 rejects. The tiers are a package, not options.
+  exactly what @C71 rejects. The tiers are a package, not options.
 - **Bulk-data inner loops stay native.** Call-bridging per element is the wrong shape;
   the tier model applies to logic fns, not to hot loops over large store regions.
 - **The dispatch table is the real build.** Per-fn indirection with three targets
@@ -207,7 +207,7 @@ need sequence numbers.
 1. **The in-process engine host + frame-boundary drain** — restructures `--serve`
    (engine thread + control channel; the request loop becomes one producer). Needed by
    every variant, wasm or not. Replaces the IDE's `gameStatus` polling with the channel.
-2. **The N9 dispatch table with the interpreter as the only alternate target** — C71
+2. **The N9 dispatch table with the interpreter as the only alternate target** — @C71
    minimal: hot-swap-by-interpret + breakpoint-in-game (= IDE slices 6b/6c).
 3. **The WASM promotion tier** on top — background compile + frame-boundary swap,
    gated on the bridge-tax probe.
@@ -439,7 +439,7 @@ identity across states). Four classically-hard features, one primitive — the
 store-centric design is what makes that collapse possible.
 
 **The transport gap:** WebSocket/TCP retransmit stalls hurt twitch play; a
-**UDP/QUIC pump frontend** is C71-library-tier mechanics, and the traffic classes are
+**UDP/QUIC pump frontend** is @C71-library-tier mechanics, and the traffic classes are
 transport-agnostic by construction (conflation maps *more* naturally onto unreliable
 delivery than onto TCP).
 

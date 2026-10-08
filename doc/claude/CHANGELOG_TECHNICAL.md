@@ -917,8 +917,8 @@ to silent.  The formal rules had said otherwise all along — `(N-Reserve)`'s *"
 sit in a non-null narrow slot"* and `(E-Uncomp-NN)`'s *"the next best thing is τ's
 DEFAULT"* — so the encodings were an unrecorded deviation from both.
 
-Scope is the DECLARATION.  The plain `integer` and `i32` templates keep C85's sentinel, and
-that is a PRAGMATIC exemption the owner allowed rather than a line the rule draws: C127
+Scope is the DECLARATION.  The plain `integer` and `i32` templates keep @C85's sentinel, and
+that is a PRAGMATIC exemption the owner allowed rather than a line the rule draws: @C127
 reaches `i32`, and it is exempted because reserving `i32::MIN` costs one value in 2^32 and
 buys the only narrow type whose overflow is detectable.  `u32` reserves a code too and takes
 the default, which is the standing proof that the split is not a principle — so this is the
@@ -947,7 +947,7 @@ DID fuse (`@FR-E-Uncomp-Seen`) is silent.  Census: 16 of 1 653 corpus files, all
 tests about narrow overflow, and no reach into a program from the stdlib.
 
 Guards: `1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value` (renamed,
-with a `templates()` row drawing C127's line and element controls at 33/44 rather than 0, so
+with a `templates()` row drawing @C127's line and element controls at 33/44 rather than 0, so
 a control cannot hold its cell's own value) and
 `1634-a-narrow-types-default-is-the-same-at-every-frame-boundary` (renamed, with a
 `limit(1000, 1100)` row whose default is its minimum, so a cure writing zero fails there
@@ -1143,7 +1143,7 @@ language's own facts (a literal; `a & lit` over a NON-SENTINEL `a`, since `null 
 merge; a counted range's counters from ranged ends; a local whose every assignment is ranged and
 never a self-step; a one-expression callee over its arguments' facts, three deep), per-function
 fixpoint beside the non-sentinel proof, which gains a callee RETURN summary
-(`callee_returns_non_sentinel`).  A parameter or a record/element read is never ranged (C80).
+(`callee_returns_non_sentinel`).  A parameter or a record/element read is never ranged (@C80).
 Measured honestly: `composite` converts 24 of 36 checked operators and does NOT move — the twelve
 left (`j * lw + i`, `x0 + i`, `y0 + j`, the accessors' `by * width + bx`) have record-scalar or
 parameter operands and carry the whole ceiling (class split by hand patch: those six −35 %, the
@@ -1409,7 +1409,7 @@ nest's own prelude (measured: with the header placement instead, the vertical pa
 `rl_mid` 4 096 times per render and the row read 29× SLOWER).  `hoist::bounded_nest` is the
 matcher (`Value::Line` markers are not statements), `int_arith::nest_form` the plain
 operators, `ops::nest_verify` the `LOFT_HOIST_VERIFY=1` form that compares each plain answer
-with the checked template's at the operator.  This is the C120 successor the plan named —
+with the checked template's at the operator.  This is the @C120 successor the plan named —
 the fact is established before the arithmetic runs.
 
 Measured on the drawing lane (arm64, `compare.py`, 14/14 hashes): `render_marks` 6.11× → 2.69×
@@ -1992,7 +1992,7 @@ governing fact was already written in `Type::peel_optional`'s doc block and had 
 citation and no gate, so every batch re-derived it.  It is now `(N-Shape)` in
 [formal/types.md](formal/types.md): a question about a type's SHAPE answers identically for `τ`
 and `τ?`, and only a NULLABILITY question may tell them apart — spelled by READING the marker,
-never by a missing match arm.  It follows from C90, where `Optional(τ)` shares `τ`'s storage.
+never by a missing match arm.  It follows from @C90, where `Optional(τ)` shares `τ`'s storage.
 
 `Optional` is a `Type` VARIANT so that an omission is a compile error, but that fires for an
 EXHAUSTIVE `match Type` and for nothing else.  `scripts/ir_walker_audit.py optional` counts what
@@ -2493,7 +2493,7 @@ the closure is called through another function (`x: integer?` reads 1 where `x: 
 7), an interleaved write answers the closure's private copy (`11 21 100` against the dense
 twin's `11 110 110`), sharing one mutable capture between two closures is refused for a dense
 local and silently wrong for a nullable one, `const` on a nullable parameter is silently not
-enforced, and C115's `&`-from-closure refusal is never asked.  Same for `text?`.
+enforced, and @C115's `&`-from-closure refusal is never asked.  Same for `text?`.
 
 `(L-CapScalar)` is not what was wrong: a capture is by value at creation, so a closure reading
 the creation-time value is correct and both spellings agree on it.  The rules were silent on
@@ -2504,7 +2504,7 @@ its two enforcing sites.
 Cured by the peel at seven sites of one family: the boxable set, the cell name and its `value`
 type (a nullable takes a cell of its OWN, `__cell_opt_<T>`, because the `value` field has to
 declare the nullability or `(N-Store)` is violated at the cell), the read and write ops (chosen
-from `.base()`, since `Optional(τ)` shares `τ`'s storage in-band under C90, while the declared
+from `.base()`, since `Optional(τ)` shares `τ`'s storage in-band under @C90, while the declared
 type keeps its `?` so ordinary discharge still applies), the type-flip preservation guard, and
 the boxed-text LHS test — that last one found by the guard rather than by reading: spelled bare
 it sent a boxed `text?` down the text-special branch and emitted `Set(65535, …)`, loft#1206's
@@ -3203,7 +3203,7 @@ worse than the zero it replaces.  So the declaration is declined where the group
 (`Parser::refuse_mixed_nullability_group`, in the parser before either membership derivation
 runs, leaving the B7x agreement census untouched), with a message naming both cures.
 `(Col-Group)` now states the layout condition, and the declined alternative — the group
-adopting the tagged layout with tag-aware dense reads — is C117 in DESIGN_DECISIONS.md.
+adopting the tagged layout with tag-aware dense reads — is @C117 in DESIGN_DECISIONS.md.
 
 Fires in all four declaration orders.  Guards: the `@EXPECT_ERROR` cell and a controls twin
 whose four shapes each differ from the refused one by exactly one thing — no keyed member (so
@@ -3513,7 +3513,7 @@ where their native twins (`codegen_runtime::OpIterate` / `OpStep`) test the hold
 first; the two had drifted, and a `for` over a collection FIELD of a holder reached through
 `nullref` (`for t in tokens[i].subs` past the end) read the store's header word as the
 collection record before and indexed `allocations[u16::MAX]` after.  Both now test the record
-first and iterate nothing, which is what C80 asks of a read through null; the six iteration
+first and iterate nothing, which is what @C80 asks of a read through null; the six iteration
 scratch builders (`build_hash_sorted_vec` and its unsorted, radix, index, trie-prefix and
 radix-range siblings) answer `nullref` for an absent holder for the same reason, since a
 `for` over a `hash` field collects its records into a scratch before the iterate.  Beside it, both
@@ -4368,7 +4368,7 @@ a projection, and by the literal for a STRUCT member (loft#1361, `tuples.md` D-t
 The struct-enum copy exposed a second family: a whole-value copy of a DROPPABLE released it
 once per record (`h2 = h`, `t = s`, `t: S? = s`, a struct-enum arm now that it copies, and
 `t = s; return t` — three times, two of them before the caller read its copy).
-`scopes::copy_moves_drop_from` is the one home for the move C111 chose for containers,
+`scopes::copy_moves_drop_from` is the one home for the move @C111 chose for containers,
 extended to the plain copy: read by `collect_drop_transferred` (the parser's `Set(v,
 Var(src))` and the `OpCopyRecord` into a `__ref*` buffer — a materialised branch arm or a
 return buffer), by `lift_join_arm_tails` for its `__lift_N = a` (built after the collector
@@ -4397,7 +4397,7 @@ generator's TAIL — it had dropped every statement after the last yield, which 
 persistent heap local of an eager generator and lost a `print` after the loop.  The
 `yield from` desugar binds `__yf_item` as a borrow of `__yf_sub` (the loft#481 dep), so an
 enclosing `if` arm no longer frees the sub-generator's frame through it (BUG #306 on the
-interpreter).  loft#1358: closed as C116 — one refusal home
+interpreter).  loft#1358: closed as @C116 — one refusal home
 (`Parser::refuse_capturing_closure_in_collection`), the canary converted to its guard.
 `tests/ignored_tests.baseline` shrinks to 33 and `doc_hygiene::every_ignore_reason_says_how_it_runs`
 requires each reason to name the run it rides (`--ignored` by hand, a nightly job, a platform);
@@ -5262,7 +5262,7 @@ conversion at all, and `OpNot` inverted the raw handle.
 **And the fallback asked whether the item was FALSY.**  That coincides with "is it null" only
 where the type's null is its only falsy value.  An `integer`'s conversion is `!= i64::MIN` and a
 `text`'s null is out-of-band, so `0` and `""` elements correctly kept iterating; a `boolean`'s
-conversion is the IDENTITY and its null is the three-state `255` (C73), so a `boolean?` iterator
+conversion is the IDENTITY and its null is the three-state `255` (@C73), so a `boolean?` iterator
 ended on its first `false`.  The fallback is now `null_test`'s own documented one — compare
 against the TYPED null — so the loop asks `item == null` and nothing else.
 
@@ -7920,10 +7920,10 @@ a.n            // 7 — that is Anon's `k`, handed back as Named's `n`
 a.label = "x"  // stored in the Anon record, which goes on calling itself an Anon
 ```
 
-Direct payload access STAYS — C89 decided permanently that enum payloads are named fields
+Direct payload access STAYS — @C89 decided permanently that enum payloads are named fields
 you read straight, with matching for DISPATCH and never for extraction, so refusing
 `c.field` (issue option 1) is the outcome that decision exists to prevent, and option 3
-restricts it the same way. C80/C85/C90 then fix what the check must ANSWER: a read that
+restricts it the same way. @C80/@C85/@C90 then fix what the check must ANSWER: a read that
 cannot be computed yields the type's null sentinel and the program keeps running, like a
 hash miss or an out-of-range index. So the access TYPE is unchanged, `a.n` on an `Anon`
 answers null, and a write to a field the value does not have is suppressed.
@@ -8059,7 +8059,7 @@ yields null was chosen, so the idiom every numeric library uses to defend a divi
 nothing (`mesh3d::normalize3` was sound only because a zero-length vector zeroes the
 numerator too, making it a genuine `0.0 / 0.0`).
 
-`OpDiv/RemFloat` + `OpDiv/RemSingle` keep the C80/E-Report Warn on an unguarded zero
+`OpDiv/RemFloat` + `OpDiv/RemSingle` keep the @C80/E-Report Warn on an unguarded zero
 divisor and return the IEEE result. The TYPE is untouched — `/` still types `float?`,
 because `0.0 / 0.0` still yields null — so `(N-Store)` still fires and
 `float_div_var_on_is_nullable` still counts its warning. The `*Nullable` peers are now
@@ -8271,10 +8271,10 @@ layout gives a shared name+type ONE slot — so the read is right for the varian
 declare it and reads another variant's bytes for the rest. `match` afterwards still
 reports the original variant, because nothing changed the tag. Both backends, exit 0.
 
-**Direct payload access stays.** [C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
+**Direct payload access stays.** [@C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced) decided permanently that
 enum payloads are named fields you read straight, with matching for *dispatch* and never
 for *extraction* — refusing a bare `c.field` would force a matcher on every read, which
-is the thing C89 exists to prevent. And the common-prefix case is already correct:
+is the thing @C89 exists to prevent. And the common-prefix case is already correct:
 measured on variants whose preceding fields differ in width, a field every variant
 declares reads right from each of them. The **silence** on the partial case was the
 defect, and `variant-field-unchecked` closes it: `warning` tier by the two-tier rule,
@@ -8291,9 +8291,9 @@ regression test, and every one on a value that IS the declaring variant. Partial
 rare precisely because `match` is the idiom.
 
 **What is still open** is the semantics, and it now has one answer rather than three. The
-issue offered refuse-at-compile-time (contrary to C89), a runtime tag check, or a
-common-prefix-only rule (restricts direct access the same way C89 rejects). The fault
-model picks the middle one's shape: C80/C85/C90 say an uncomputable read answers the
+issue offered refuse-at-compile-time (contrary to @C89), a runtime tag check, or a
+common-prefix-only rule (restricts direct access the same way @C89 rejects). The fault
+model picks the middle one's shape: @C80/@C85/@C90 say an uncomputable read answers the
 type's null SENTINEL and the program keeps running — the same answer a hash miss, an
 out-of-range index and an overflow already give — which leaves the access type unchanged,
 so it breaks nothing. The read lowers with existing IR (`OpGetEnum` → `OpConvIntFromEnum`
@@ -9876,7 +9876,7 @@ nobody's data — the `_`-prefix test tells them apart, the same convention
 Both exclusions were found by sweeping all 2188 `.loft` files with the lint as a probe
 before letting it speak: the first cut had two hits, both the builder idiom, and the final
 one has zero. Runs from `main` beside `warn_dead_stores` / `warn_double_move`, reusing the
-`lost-write` code rather than minting one (same fact about the same C86 copy);
+`lost-write` code rather than minting one (same fact about the same @C86 copy);
 `LOFT_NO_LOST_TEMP_WRITE` opts out.
 
 Deliberately an under-approximation, per the two-tier rule: binding the result to a local
@@ -10921,7 +10921,7 @@ a cursor left pointing at a moved allocation shows up as wrong values rather tha
 
 
 Storing `x / g` back into a non-null `g` is refused correctly — a variable divisor can be
-zero, so the quotient is `τ?` (C80). But the message offered `as` and a new variable name,
+zero, so the quotient is `τ?` (@C80). But the message offered `as` and a new variable name,
 and on this shape **both fail**: the cast checker refuses `as τ` for the very reason the
 store was refused, `as τ?` lands back on this same error — a closed loop between two
 diagnostics — and a fresh name still has to store the value somewhere. The cures that
@@ -11048,7 +11048,7 @@ A library's public function occupied the CONSUMER's variable namespace: with
 `use engine_host;` in scope, `turn = 0` was a compile error anywhere in the consuming
 program. So one public verb added to a library broke every consumer already using that
 word as a local — crawler's gate went red across 109 rows, on a commit crawler did not
-make. [C97](DESIGN_DECISIONS.md)/[C98](DESIGN_DECISIONS.md) make this impossible for
+make. [@C97](DESIGN_DECISIONS.md)/[@C98](DESIGN_DECISIONS.md) make this impossible for
 the *stdlib*; this is the same hazard one level up, where nothing weighs each new name
 and nothing announces which words a release claims.
 
@@ -11078,14 +11078,14 @@ still answers — the mis-parse it exists for fails it either way.
 parameter / loop / field cells as CONTROLS so a change that frees the three refusing
 forms by breaking the three that already worked fails there, and
 `pln102_c98_a_local_may_shadow_a_library_function` (`tests/imports.rs`) for the library
-half on both backends. Register entry: [C112](DESIGN_DECISIONS.md).
+half on both backends. Register entry: [@C112](DESIGN_DECISIONS.md).
 
 **Residual, unchanged by this:** a bare `use lib;` still wildcard-imports every public
 name into the unqualified namespace (`src/parser/mod.rs`,
 `None => Some(ImportSpec::Wildcard)`), so `turn(3)` is callable unqualified after
-`use mylib;`. C98 rules it must bind only the `lib` handle. That is a breaking
+`use mylib;`. @C98 rules it must bind only the `lib` handle. That is a breaking
 resolution change needing a pre-freeze migration (`use lib;` → `use lib::*;`), so it is
-owner-timed rather than folded in here — and C112 is forward-compatible with it.
+owner-timed rather than folded in here — and @C112 is forward-compatible with it.
 
 ### `--html` binds a filesystem, over raw `loft_io` imports (loft#851) (2026-08-11)
 
@@ -12364,7 +12364,7 @@ reference filed it under Environment.
 `text_from_bytes`, not a new `#rust` native: the mechanism is already proven on
 both backends, and loft covering it is exactly when not to add a dependency.
 
-The refusal set is `""`, never a crash (C80): a surrogate, past `U+10FFFF`, a
+The refusal set is `""`, never a crash (@C80): a surrogate, past `U+10FFFF`, a
 negative number — and `0`, which is the one that needed deciding. `character`
 uses 0 as its null, and text ITERATION STOPS at an embedded NUL (measured: a
 3-byte `"A\0B"` reports `len` 3 and slices at 3, and yields ONE character to
@@ -12895,7 +12895,7 @@ five cases produce NO output there (execution falls past the asserts) and pass h
 ### @PLN108 "Share read-only parent stores across par workers" — interpreter core (2026-07-17)
 
 
-- A par worker whose captured parent state is read-only (@PLN102 C93) now **BORROWS** the parent
+- A par worker whose captured parent state is read-only (@PLN102 @C93) now **BORROWS** the parent
   stores read-only instead of `clone_for_worker`'s per-worker byte-copy, for `run_parallel_discard`
   and `run_parallel_queue`. Copy-elision, no semantic change.
 - **Auto-selected by heap size:** the borrow engages only when the copy it would save is ≥ 2 MB
@@ -12904,7 +12904,7 @@ five cases produce NO output there (execution falls past the asserts) and pass h
   heap per worker (measured ~53× on a 122 MB shape). `LOFT_PAR_SHARE=0`/`=1` force off/on.
 - Safety is compiler-carried (the dispatcher's `&Stores` signature proves parent-unwritten) +
   the `read_only` write-panic; **ASan + TSan clean** on the flag-ON path (positive control fires).
-  `--native` par still copies (a native analogue is deferred). Decision recorded as C99.
+  `--native` par still copies (a native analogue is deferred). Decision recorded as @C99.
 
 ### `loft fmt` — parser-driven formatter, written in loft
 
@@ -12945,7 +12945,7 @@ Commits `a77afaec` (P5+P6), `6e9b6c5f` (P1 resolution), `<this>` (P7).
   lit / narrow-cast) unnecessary — their diagnostics already capture positions
   via `diagnostic_at!` and none faults at runtime, so wrapping would attach a
   position no consumer reads while risking `unspan()` churn. Status → done.
-- **P7 closeout**: COMPILER.md § Diagnostics rewritten (spans → runtime C66 →
+- **P7 closeout**: COMPILER.md § Diagnostics rewritten (spans → runtime @C66 →
   renderers); user-facing CHANGELOG entry; CLAUDE.md `LOFT_ERRORS` + diagnostic
   toggles; CAVEATS native-no-source-map entry. No opcode changes; no runtime
   path touched (bench flat).
@@ -13054,7 +13054,7 @@ chokepoint-first and verified on both backends.
 - **P3 — `use … as …` aliasing** for libraries (`use lib as m`), types
   (`use lib::Type as T`), and functions (`use lib::fn as f`).
 - **P4 — grouped selective imports** `use lib::(a as x, b, c)`; the flat comma
-  list `use lib::a, b` is dropped (hard error). Design decision C76.
+  list `use lib::a, b` is dropped (hard error). Design decision @C76.
 - **Reserved-keyword hardening (commit `c383a25c`).** `struct iterator` was
   silently adopted (the struct adopt-branch swallowed the `type iterator;`
   forward-decl); `enum hash` / `type sorted` panicked in `complete_definition`.
@@ -13795,7 +13795,7 @@ loft-script binary against the host loft binary as a frozen pair.
   consumer walked the path — `lib/web` + `lib/server` integration,
   text-returning fn inline calls, fn-ref dispatcher work-buffers,
   cross-crate native fn routing, JSON parser UTF-8, JSON natives
-  todo-stubs.  Closed via DESIGN_DECISIONS.md § C67 ("fail at startup,
+  todo-stubs.  Closed via DESIGN_DECISIONS.md § @C67 ("fail at startup,
   not at runtime — internal-bug runtime panics caught at compile time").
 - P54 (JsonValue ecosystem) native side completed via @P268 + the
   16-fn follow-up wiring all 23 JSON natives in
@@ -14130,7 +14130,7 @@ text, E3 nested, E4 closure, E5 struct reference) and 3
 destinations (D1 local, D2 direct stack, D3 struct field), all
 cross-mode-validated under `tests/tuple_matrix.rs`'s
 interp/native byte-identical assertion.  Plus E6 (struct value)
-folded into E5 by C65 design decision and E7 (collections in
+folded into E5 by @C65 design decision and E7 (collections in
 tuples) closed-by-non-goal.
 
 **Phases shipped (00, 01, 02, 03, 04, 05, 07):**
@@ -14147,7 +14147,7 @@ tuples) closed-by-non-goal.
   (20-byte fn-ref layout extended into 6 tuple codegen sites +
   `__fn_ref_tmp` postfix-call temp marked skip_free).
 - 04: 6 E5 cells (struct references).  Decision: MOVE
-  semantics (recorded as C64).  Loop-iteration aliasing bug
+  semantics (recorded as @C64).  Loop-iteration aliasing bug
   parked as @P250.
 - 05: 6 D3 cells (tuples in struct fields).  Decision: LIFT
   was already shipped by Plan-06 phase 4d; phase 05 was a
@@ -14170,8 +14170,8 @@ tuples) closed-by-non-goal.
 - @P251 — open: native projection for fn-ref-tuple-in-struct-field.
 
 **Design decisions recorded in DESIGN_DECISIONS.md:**
-- C64: Tuple struct-ref elements use MOVE semantics.
-- C65: E6 (struct value) folded into E5 — no inline value-struct
+- @C64: Tuple struct-ref elements use MOVE semantics.
+- @C65: E6 (struct value) folded into E5 — no inline value-struct
   type in current loft.
 
 Reference content moved to TUPLES.md (Known limitations + Non-

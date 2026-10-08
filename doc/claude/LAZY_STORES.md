@@ -181,7 +181,7 @@ naming what was wrong.
 
 ## A failed fetch cannot raise, and a later success must not erase it
 
-loft has no runtime errors (C80). If an unreachable database answered `null`, then
+loft has no runtime errors (@C80). If an unreachable database answered `null`, then
 "no such person" and "the network is down" would be indistinguishable **and
 unstable across runs** — the worst class, because it looks like data. So the
 failure lives on a store-level channel a program can ask:
@@ -281,7 +281,7 @@ connect and an auth per row, which is a different order of problem, and those ar
 exactly the backends core has no Rust driver for.
 
 **A fault inside the driver is CONTAINED.** For an ordinary call, propagating a
-fault is right; for a fetch it is not, because C80 says a failed fetch reports
+fault is right; for a fetch it is not, because @C80 says a failed fetch reports
 through `store_lazy_error` and the lookup answers null. So a buggy driver leaves
 the lookup answering null with a reason, the outer frame intact, and the program
 running.
@@ -322,7 +322,7 @@ count is asking the wrong object.
 This is why a range is an explicit call rather than a slice that fetches: a slice
 that silently consulted the source would make `len` and iteration mean two
 different things depending on how the collection was reached. See
-[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) § C104.
+[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) § @C104.
 
 ## A traversal sees one world
 

@@ -238,7 +238,7 @@ arm names it — a guard does not), or a final `_`; otherwise the program does n
 > renamed variant would otherwise fall to `_` and answer the wildcard's value
 > (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
-no total final arm may select nothing at runtime and then yields **null** (the C80 model), which makes
+no total final arm may select nothing at runtime and then yields **null** (the @C80 model), which makes
 its result type nullable. So a `match` still never faults on a fall-through: on an enum it cannot fall
 through at all, and on a scalar it falls through to null. For a pure-enum match, nothing changes from
 `M-Exhaust`.

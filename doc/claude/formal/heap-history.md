@@ -2249,7 +2249,7 @@ leaving as loft#1506's prose.
 
 `(B-View)` makes `mk_dense().h` a VIEW: a projection whose type is a STRUCT is a view, and a
 view whose base is disturbed materialises into a copy ("a plain view gets a **copy** and is told
-so"; the C86 escape rule the implementation cites at `parser/operators.rs`). The base here is a
+so"; the @C86 escape rule the implementation cites at `parser/operators.rs`). The base here is a
 call TEMP whose store dies inside the statement, so **the copy is required by rule** — a cure
 that aliased into the temp and deferred its death instead would contradict `(B-View)`.
 

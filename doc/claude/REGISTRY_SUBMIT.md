@@ -243,7 +243,7 @@ subsequent versions, `add my-lib 0.2.0`).
 Editing `index.json` directly (above) has two drawbacks: your PR can **race** the
 signed index (two PRs touching the same file, or a maintainer publish landing
 between your CI run and the merge), and nothing **validates** your library before it
-is trusted.  The **`submissions/` path** fixes both (@PLN102 C96): you add a small
+is trusted.  The **`submissions/` path** fixes both (@PLN102 @C96): you add a small
 staging file that *never touches `index.json`*, and the maintainer's `loft ship` run
 puts it through the full validation gate before folding it in.
 

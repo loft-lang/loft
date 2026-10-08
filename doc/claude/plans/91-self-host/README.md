@@ -146,7 +146,7 @@ host with a C compiler.** The Rust implementation degrades to the bootstrap comp
 - **Special types keep a kernel impl** — `text`/`vector`/`integer` move their *declaration* to bundles; impls touch opcodes/IR until self-host pulls them up.
 - **4th-backend parity is ongoing cost** — interp / rustc-native / wasm / ANSI-C must match (Goal D; @PLN89 polices it).
 - **Without self-host, strand 5 is a slog** — hand-port `loft-ffi` to C *and* author parallel `#c` stdlib bodies. Self-host removes both.
-- **C89 vs C99 is a real fork** — C99 (`stdint.h`, `long long`) maps i64/UTF-8 cleanly; true C89 forces width typedefs + config. Decide before strand 5.
+- **@C89 vs @C99 is a real fork** — @C99 (`stdint.h`, `long long`) maps i64/UTF-8 cleanly; true @C89 forces width typedefs + config. Decide before strand 5.
 - **ANSI-C is not a perf play** — the case is reach + trust + bootstrap.
 - **`DbRef` is used everywhere** (keys, store, `deps`/lifetime, fn-ref slots, vector/text addressing) — the narrowed profile must keep the `deps` system working at 8 bytes; it is a parameterization of an existing abstraction, but a broad one.
 

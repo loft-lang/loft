@@ -52,7 +52,7 @@ called as `w(v[2])` writes 99 into the caller's `v`; loft's own `warn_redundant_
 so in as many words. So X4 is X1's lost write without the `&` spelling, and refusing only the
 `&` form would mean an author who takes loft's advice and drops the `&` trades a compile error
 for a silent lost write. The cross-frame refusal therefore keys on the ALIASING relation, not on
-the token. loft#779's own table said the opposite (*"A2 … plain param copies (C86), so nothing
+the token. loft#779's own table said the opposite (*"A2 … plain param copies (@C86), so nothing
 to lose"*) — that row is measurement-contradicted, and X9 is the measurement.
 
 **S4 — a plain LOCAL bind is the other way round.** It does not alias across a reshape, because

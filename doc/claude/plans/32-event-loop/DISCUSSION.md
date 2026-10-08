@@ -77,7 +77,7 @@ el::on(loop, fn(e: ClickEvent) { state.score += 1 });   // doesn't work
 In every language the novice has used (JS, Python, Lua, C#
 closures), this Just Works.  The error message will be Greek.
 This is **not** something the EventLoop spec can fix — it's
-loft's [C38](../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition)
+loft's [@C38](../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition)
 design choice — but it dominates the novice's first-day
 experience.
 

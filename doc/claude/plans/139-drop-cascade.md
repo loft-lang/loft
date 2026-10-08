@@ -13,7 +13,7 @@ for what a drop does. Guards: `tests/owns_droppable.rs`, `tests/scripts/139-drop
 
 **Canonical:** [loft-lang/plans#139](https://github.com/loft-lang/plans/issues/139) ·
 **Bug:** [loft#849](https://github.com/loft-lang/loft/issues/849) ·
-**Scope decision:** [DESIGN_DECISIONS.md § C111](../DESIGN_DECISIONS.md)
+**Scope decision:** [DESIGN_DECISIONS.md § @C111](../DESIGN_DECISIONS.md)
 
 ## The rule
 
@@ -23,7 +23,7 @@ alternative because the sanctioned workaround (`disown` after constructing the c
 requires the droppable to BE a field — a declaration-site refusal rejects its own cure, and with
 collections in scope it would have to cover `vector<T>` too.
 
-Scope boundary decided with it and recorded as **C111**: the cascade reaches a container's
+Scope boundary decided with it and recorded as **@C111**: the cascade reaches a container's
 DEATH, not an element's REMOVAL. `v.remove(i)` / `v[i] = x` do not drop the displaced element.
 
 > A drop runs when the value's OWNER dies. Taking a value out of its owner does not.

@@ -51,14 +51,14 @@ it.
 | C6 exhaustiveness through nesting | PARTIAL | the hole is refused, named by its outer variant (*"missing: X"*), not as `X { i: B }` |
 | C7 scalar-match hole diagnosed | PARTIAL | a warning, phrased as the null the hole produces (*"a nullable `text?` is stored into the return value"*), not naming the uncovered value |
 | C8 head/tail pattern | PASS with `_` | `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail …"*); the probe's `fn sum` collides with the reserved stdlib name |
-| D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index by contract (C80) |
+| D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index by contract (@C80) |
 | D2 empty-stub default | FAIL | silent `0.0`, both backends |
 | E1, E2 structural sharing | not measured | `memory_used()` does not exist; a recursive enum links nodes bound to locals (A5b), so the probes need a new design before they measure sharing |
 | F1 missing combination named | changed | a definition over a plain-enum VALUE is refused at the declaration (*"'Rock' is a value of the plain enum 'Hand', not a type … take a 'Hand' and 'match' on its value"*) |
 | F2 enum-level fallback | **PASS** | `match (a, b) { (Rock, Scissors) => true, …, _ => false }` over the plain enum |
 | H1 functional record update | PARTIAL | `Unit { hp: 0, ..u }` is refused (*"Expect token ;"*); the capability is two statements — `d = u; d.hp = 0;` copies the record, `u` keeps its value |
 | H2 immutable binding | **PASS** | `total: const integer = 5; total = 6;` → *"Cannot modify const variable 'total'"*.  The default is the opposite of OCaml's: a binding is mutable unless declared `const` |
-| H3 abstract type | **PASS** | `p.x` on a `geo::Pt` from outside `geo` → *"field `x` of `Pt` is not `pub` in `geo`"*, naming the cure (`pub x`); a field is private to its file (C140).  A non-`pub` `type` alias named by a `pub` fn is OCaml's `type t` (`tests/pub_visibility.rs`). |
+| H3 abstract type | **PASS** | `p.x` on a `geo::Pt` from outside `geo` → *"field `x` of `Pt` is not `pub` in `geo`"*, naming the cure (`pub x`); a field is private to its file (@C140).  A non-`pub` `type` alias named by a `pub` fn is OCaml's `type t` (`tests/pub_visibility.rs`). |
 | H4 phantom type parameter | **PASS** | `Door<Closed>` into a `Door<Open>` parameter → *"expected Door<Open>, got Door<Closed>"* |
 | H5 structural equality | **PASS** | `==` on structs and on enum variants with fields compares by value |
 | H6 recursion as the loop | FAIL | a self-call in tail position still takes a frame: `count(100000, 0)` stops with *"call stack overflow — exceeded 10000 stack frames"* |

@@ -7,8 +7,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 > **Status: IMPLEMENTED for `par(worker, n)` writes (2026-07-14).** Owner ruling: the parent
 > state a `par` worker captures is read-only; a write to it is a compile error — *no runtime
-> error, ever* (C80): a data race can't be resolved to a null, so it is DISALLOWED, not defined.
-> Decision record: [DESIGN_DECISIONS.md C93](../../DESIGN_DECISIONS.md).
+> error, ever* (@C80): a data race can't be resolved to a null, so it is DISALLOWED, not defined.
+> Decision record: [DESIGN_DECISIONS.md @C93](../../DESIGN_DECISIONS.md).
 >
 > **Done:** a raw `OpSet*` write to a captured (non-local param) reference/struct/vector inside a
 > `par(worker, n)` worker (direct or transitive) is now a **clean compile error** at the
@@ -134,7 +134,7 @@ instrument settles before any fix.
 
 ## See also
 
-- [DESIGN_DECISIONS.md C93](../../DESIGN_DECISIONS.md) — the decision.
+- [DESIGN_DECISIONS.md @C93](../../DESIGN_DECISIONS.md) — the decision.
 - [THREADING.md](../../THREADING.md) — `par` semantics.
 - [COMPATIBILITY.md](../../COMPATIBILITY.md) § the error surface — an error-ADD only lands pre-freeze.
 - The platform rule: *no runtime errors, ever* — disallow, or degrade to null; a race can only be

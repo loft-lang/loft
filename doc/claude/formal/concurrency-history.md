@@ -10,11 +10,11 @@ doc — adds no code deviation"* until the formal-rule walk of 2026-10-07 measur
 
 ### D-conc-2 — OPENED AND CLOSED (2026-10-07, loft#1918): a worker writing its input through a view compiled and halted at run time
 
-C93 makes a write to a `par` worker's captured state a compile error at the write.  The check
+@C93 makes a write to a `par` worker's captured state a compile error at the write.  The check
 followed a write rooted at the parameter itself and at a callee's parameter, but not one rooted
 at a local VIEWING it — `x = e.inner; x.k = …`, `x = &e.inner`, `x = e.list[0]`, `for l in
 e.list { l.k = … }` — so these compiled and stopped at run time on the read-only store, on both
-backends, against C80 as well.  The check follows the local's dep chain to the parameter; a
+backends, against @C80 as well.  The check follows the local's dep chain to the parameter; a
 whole-value copy has no dep and stays legal.  Guards
 `1918-a-par-worker-writing-through-a-view-is-refused.loft` and its control
 `1918b-a-par-worker-may-write-a-copy-of-its-input.loft`.

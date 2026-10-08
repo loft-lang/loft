@@ -17,7 +17,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 >
 > Rough spot #3 from [FORMALIZATION.md](../FORMALIZATION.md). Pinned-behaviour sources:
 > [LOFT.md § null](../LOFT.md) (in-band sentinels) and [LOFT.md § Arithmetic safety](../LOFT.md)
-> (overflow / divide-by-zero — under C80, these yield **null and continue**; `??` is the
+> (overflow / divide-by-zero — under @C80, these yield **null and continue**; `??` is the
 > null-fallback). Scope note: this file covers the scalar core (values, arithmetic, the
 > uncomputable→null discipline, evaluation order, assignment, `if`, sequencing). The rest of
 > the operational semantics is split into sibling files (all 2026-07-04): [heap.md](heap.md)
@@ -192,7 +192,7 @@ scalar types** — `null == null` is always true, never type-dependent. (`float`
 a NaN, so `null == null` used to be false and ordering unordered — deviation D-op-null-1, CLOSED
 by keystone step 2 (2026-07-10); both are now uniform with the integer/char behavior.)
 
-**Equality is what the value holds (E-Eq).**  Every variable is its own value (C86), so `b = a`
+**Equality is what the value holds (E-Eq).**  Every variable is its own value (@C86), so `b = a`
 makes a `b` equal to `a` whatever the type, and a `value struct` versus a `struct` — a layout
 choice — cannot change an answer.  What `==` means is decided by what is written; how fast it is,
 by the compiler: that two operands are one record answers `true` at once, and a cycle ends
@@ -214,7 +214,7 @@ the ordering clause for its whole life regardless — an over-claim measured and
 
 **The second exception is truthiness (E-Truthy).** `&&`, `||`, `!` and the `if`/`while`/`assert`
 condition are not contagious — they read a null operand as `false` — which is
-[DESIGN_DECISIONS.md C73](../DESIGN_DECISIONS.md)'s three-state boolean, and is why `&&`/`||`
+[DESIGN_DECISIONS.md @C73](../DESIGN_DECISIONS.md)'s three-state boolean, and is why `&&`/`||`
 type as the non-null `boolean`. It is a genuinely separate exception from comparisons and was
 simply missing here, so E-NullArg read as forbidding behaviour the language ships and documents.
 See D-op-6 for what that cost.
@@ -238,7 +238,7 @@ made `a / b ?? 0.0` select the peer that never yields null, so the idiom every n
 uses to defend a divide guarded nothing. Integer `/0` stays null: an integer has no `inf` to
 answer with.
 
-**Under all of it is the spreadsheet model** ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md)):
+**Under all of it is the spreadsheet model** ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md)):
 a cell that can't compute shows null and never stops the other cells. A fault is *local* — it
 degrades one value, never the whole run. The same holds for every uncomputable step (an
 out-of-bounds index, a deref of an absent value): null, continue.
@@ -275,7 +275,7 @@ which is exactly why it belongs in the shared contract rather than being left "t
 result when it fits." The stdlib `floor_mod(a, b)` is the companion for the cyclic case that
 genuinely wants the divisor's sign and a `[0, b)` result — `floor_mod(-7, 2) == 1` — so
 circular indexing (`grid[(i - 1).floor_mod(w)]`) never silently reads a negative index the
-way a bare `%` would. [DESIGN_DECISIONS.md C94](../DESIGN_DECISIONS.md) (commit `a2eaba66`);
+way a bare `%` would. [DESIGN_DECISIONS.md @C94](../DESIGN_DECISIONS.md) (commit `a2eaba66`);
 verified both backends.
 
 ### `??` — a non-null fallback (no trap mode)
@@ -287,7 +287,7 @@ verified both backends.
 
 **In words.** `??` supplies a fallback for a null: `(a * b) ?? 0` is "a*b, or 0 if it couldn't
 compute." There is **no** context-dependent "trap-suppression mode" any more — an op yields
-null whether or not it sits under `??` (C80); `??` just decides what to do with that null.
+null whether or not it sits under `??` (@C80); `??` just decides what to do with that null.
 (This is what closes the old D-op-3.)
 
 ### `x?` — a fallback to the TYPE's default (@PLN116)
@@ -414,7 +414,7 @@ compound assignment can target, including a struct field at a nonzero offset rea
 a call-index (`w[idx()].y += 5` calls `idx()` once, and reads/writes the same element's `y`)
 and nested indices (`m[i()][j()] += n` evaluates `i()` once and `j()` once, not per read/write
 or per nesting level). Contrast `E-Asgn`: a plain `x = v` already writes its place once, so
-there is no double-eval to close. [DESIGN_DECISIONS.md C92](../DESIGN_DECISIONS.md); verified
+there is no double-eval to close. [DESIGN_DECISIONS.md @C92](../DESIGN_DECISIONS.md); verified
 both backends — `tests/scripts/pln102-f2-place-once.loft`.
 
 **Step 4 is `(E-Op)` on BOTH operand types, and step 5 writes the result.** The operator is
@@ -459,7 +459,7 @@ binds, never off the spelling the author wrote. `w[idx()]? += 1` therefore calls
 **once**, and the discharge and the operation land on the element that one call named; read
 off the original spelling instead it calls twice and reads one element while writing the
 next, which is the corruption the once-only rule exists to prevent.
-[DESIGN_DECISIONS.md C92](../DESIGN_DECISIONS.md), [types.md (N-Default)](types.md);
+[DESIGN_DECISIONS.md @C92](../DESIGN_DECISIONS.md), [types.md (N-Default)](types.md);
 verified both backends — `tests/scripts/1205-a-discharged-place-writes-through-to-its-place.loft`.
 
 **A discharge INTERIOR to the place is a different question, and this rule does not reach it.**

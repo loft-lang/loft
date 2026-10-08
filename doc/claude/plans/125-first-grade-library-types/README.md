@@ -23,7 +23,7 @@ Behaviour matrices: `tests/scripts/pln125-{a2c-companion,b-drop,c-index}.loft`.
 **Two pieces left, and neither is this plan's:**
 
 - **A4** — collapsing @PLN124's `hole_*` family needs a GENERIC METHOD, not
-  associated types. Filed as @PLN137 and then **DECLINED** (C110): the collapse
+  associated types. Filed as @PLN137 and then **DECLINED** (@C110): the collapse
   would delete a deliberate safety refusal, and the first-parameter rule it needed
   lifted is the monomorph's identity. The reasoning for the premise being wrong is
   below, because the plan's own claim was that these were one feature.

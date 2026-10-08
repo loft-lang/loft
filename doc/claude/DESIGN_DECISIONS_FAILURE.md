@@ -15,12 +15,12 @@ trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-hi
 
 **Decision.** A production run (`--production`, the logger's `production` flag) never aborts:
 `panic` and a failed `assert` log, set `had_fatal` and continue; in development they halt with a
-typed error.  Calculation faults yield null in EVERY mode (C80); a `{…}` interpolation never raises.
+typed error.  Calculation faults yield null in EVERY mode (@C80); a `{…}` interpolation never raises.
 **Why.** loft's targets — games, scenes, servers — must not stop; a frozen program is worse than a
 wrong value, while a developer wants the loud stop.
 
 **Revisit when.** A deployment shape surfaces where log-and-continue is wrong.  Decided
-2026-05-11, calculation faults revised by C80 on 2026-06-24 — [record](DESIGN_DECISIONS-history.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).
+2026-05-11, calculation faults revised by @C80 on 2026-06-24 — [record](DESIGN_DECISIONS-history.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).
 **Holds at:** `@C66` — `./scripts/idx tag:@C66`: production continues on both backends
 (`tests/panic_halts_both_backends.rs`), the locked-store write too (`tests/locked_writes.rs`).
 **Catalogue:** @F38 (arithmetic safety), @F44 (logging — panic/assert).
@@ -46,8 +46,8 @@ unimplemented native refused at compile time and at startup (`tests/exit_codes.r
 out-of-bounds index, a deref of an absent value — yields null and execution continues, identically
 in development, test and production.  It is silent except for one warning on an unguarded division
 by zero; tests observe faults through the debug log.  `panic` and `assert` are not calculations:
-they halt in development and tests and log-and-continue in production (C66).  Startup failures still
-stop (C67).  **Why.** As in a spreadsheet, one bad cell never stops the others: degradation stays
+they halt in development and tests and log-and-continue in production (@C66).  Startup failures still
+stop (@C67).  **Why.** As in a spreadsheet, one bad cell never stops the others: degradation stays
 local, with no unwinding or cleanup blocks to get wrong.
 
 **No runtime exceptions — ever.**  Nothing a running program does stops it: no new runtime error
@@ -75,9 +75,9 @@ write logs one Warn line in every build kind — that log is the default resolut
 `else` is never diagnosed.  `else` supersedes `if !place`, which stays accepted.  **A lock fault is
 not a dropped write:** writing a locked store is a program error, not a missing element, so
 unguarded it halts a DEVELOPMENT run with the lock report, and a production run logs and discards it
-(`@FR-H-WriteLocked`, C80).  **Why.** Re-spelling the place copies a chain exactly where the copy
+(`@FR-H-WriteLocked`, @C80).  **Why.** Re-spelling the place copies a chain exactly where the copy
 goes wrong, and re-reads instead of reporting; a store as a condition is the `=`-for-`==` typo; `||`
-or `??` would give "or" a third meaning; a result wrapper is declined by C89.
+or `??` would give "or" a third meaning; a result wrapper is declined by @C89.
 
 **Revisit when.** A consumer shows the Warn line is noise in a real program — and even then the
 answer is a cheaper guard (`else {}`), never a mode split or a compile-time nag.  Decided
@@ -110,7 +110,7 @@ or `is`, not a wider cast.  Decided 2026-09-29 (owner) — [record](DESIGN_DECIS
 of its type — whether the null was stored, inherited or produced by a fault inside the hole
 (`{a / b}` with `b = 0`, `{v[9]}`, `{5.0 % 0.0}`).  No hole kind annotates it with a cause, on
 either backend, and nothing switches one on.  The fault itself is unchanged: it yields the null
-value and the program continues (C80, `(E-Uncomp)`), and formatting never traps (C66).
+value and the program continues (@C80, `(E-Uncomp)`), and formatting never traps (@C66).
 **Why.** The same null rendered differently by where the fault sat — `"{a/b}"` against
 `c = a / b; "{c}"` — and keeping a cause attached to a hole's null cost four defects in a row,
 each a cause shown, lost or worn by the wrong hole.  The value is what a hole shows; *why* a
@@ -122,4 +122,4 @@ value is null belongs to the program's own inspection (`??`, a test) or the log.
 (`src/parser/collections.rs`), `formal/formatting.md` `(F-FaultSafe)`, guards
 `tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` and
 `tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`.
-**Catalogue:** @F38 (arithmetic safety) · `formal/formatting.md` `(F-FaultSafe)`, `formal/operational.md` `(E-Uncomp)` · reads C66, C80.
+**Catalogue:** @F38 (arithmetic safety) · `formal/formatting.md` `(F-FaultSafe)`, `formal/operational.md` `(E-Uncomp)` · reads @C66, @C80.

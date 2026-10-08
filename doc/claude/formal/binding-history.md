@@ -967,7 +967,7 @@ gap, D-const-1, now closed).
 > ```
 >
 > Closing D-bind-8 while these held was an accounting error: the deviation named all three
-> mechanisms of one rule and the sign-off covered one. Both now refuse, under the C79 principle
+> mechanisms of one rule and the sign-off covered one. Both now refuse, under the @C79 principle
 > (*decline what we cannot implement safely*) rather than as a second special case. The
 > reassignment arm is the same liveness walk with the cause filter dropped; the re-key arm
 > refuses at `note_key_field_write` where the base `is_amp_link`, and needs no liveness question
@@ -1022,7 +1022,7 @@ gap, D-const-1, now closed).
 >   as `w(v[2])` writes 99 into the caller's `v`), and loft's own `warn_redundant_amp` advice
 >   tells authors so — refusing only the `&` spelling would mean taking that advice trades a
 >   compile error for a silent lost write. loft#779's own table asserted the opposite (*"plain
->   param copies (C86), so nothing to lose"*); that row is measurement-contradicted;
+>   param copies (@C86), so nothing to lose"*); that row is measurement-contradicted;
 > - a plain LOCAL bind stays exempt for the opposite and equally measured reason: it does not
 >   alias across a reshape, because @PLN130 F2 materialises it and says so.
 >
@@ -1035,7 +1035,7 @@ gap, D-const-1, now closed).
 >
 > **What it did NOT close:** the other two disturbances. The maker's sentence named removal, so
 > the RE-KEY and REASSIGNMENT causes were scoped out and still downgrade a `&` to a copy — now
-> tracked as **D-bind-9** above, under the widened C79 principle rather than as an open question.
+> tracked as **D-bind-9** above, under the widened @C79 principle rather than as an open question.
 
 > **Landed via @PLN102 K1 (verified, closed):**
 > - **D-const-1 — enum-variant `const` / value-const fields are now enforced identically
@@ -1267,7 +1267,7 @@ refusal names it.
 
 ### the status line formal/README.md's area table carried until 2026-09-04
 
-**0 open** — D-bind-11 CLOSED 2026-09-03 (a `&(τ, …)` with a heap element is a reference to the `__tuple<…>` record; it had read: `&(τ, …)` admits only SCALAR elements, against B-Ref-Alias/B-Ref-Uniform) and D-bind-16 CLOSED the same day (a join binds every arm a plain bind would copy through its own temp, loft#1321); (the D-bind-11 entry read: — the two backends represent a reference tuple differently and `text` is the first element where that shows; loft#1006) — **B-Ref-AnnotationOnly is now total** (D-bind-10, 2026-08-09): a `&` that was the LAST operand of an expression (`b = 1 + &a`, `b += &a`, a block-final `1 + &a`, `S { x: &a }`) used to compile, because the guard peeked only the token AFTER the operand; `B-Ref-StoredRef` records the one legal non-binding position, a `reference<τ>` field. **B-Ref-Reshape** landed (@PLN130 F9, loft#779): disturbing a container while a `&` reference into it is LIVE is a compile error, for all three of `B-Disturb`'s events (removal, re-key, container reassignment). It is the first application of C79's 2026-08-05 *decline-what-we-cannot-implement-safely* revisit, whose reason is forward compatibility: an error can be dropped later, a silently different semantics cannot. Also closed: `&` is a TYPE ANNOTATION (`&τ` = `Type::RefVar`), @PLN87 ladder L1–L6 + D-bind-7 closed; the @PLN40 two-level `const` model (Const-Bind/Value/…) shipped, and D-const-1 (enum-variant const) closed via @PLN102 K1 — enforced identically to struct fields, both backends
+**0 open** — D-bind-11 CLOSED 2026-09-03 (a `&(τ, …)` with a heap element is a reference to the `__tuple<…>` record; it had read: `&(τ, …)` admits only SCALAR elements, against B-Ref-Alias/B-Ref-Uniform) and D-bind-16 CLOSED the same day (a join binds every arm a plain bind would copy through its own temp, loft#1321); (the D-bind-11 entry read: — the two backends represent a reference tuple differently and `text` is the first element where that shows; loft#1006) — **B-Ref-AnnotationOnly is now total** (D-bind-10, 2026-08-09): a `&` that was the LAST operand of an expression (`b = 1 + &a`, `b += &a`, a block-final `1 + &a`, `S { x: &a }`) used to compile, because the guard peeked only the token AFTER the operand; `B-Ref-StoredRef` records the one legal non-binding position, a `reference<τ>` field. **B-Ref-Reshape** landed (@PLN130 F9, loft#779): disturbing a container while a `&` reference into it is LIVE is a compile error, for all three of `B-Disturb`'s events (removal, re-key, container reassignment). It is the first application of @C79's 2026-08-05 *decline-what-we-cannot-implement-safely* revisit, whose reason is forward compatibility: an error can be dropped later, a silently different semantics cannot. Also closed: `&` is a TYPE ANNOTATION (`&τ` = `Type::RefVar`), @PLN87 ladder L1–L6 + D-bind-7 closed; the @PLN40 two-level `const` model (Const-Bind/Value/…) shipped, and D-const-1 (enum-variant const) closed via @PLN102 K1 — enforced identically to struct fields, both backends
 
 ## Deviations carried by binding.md until 2026-09-29
 
@@ -1392,7 +1392,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   reaches the same classifier); read positions — the index, the length, the iteration —
   keep the view.  The one route that is not a bind, a callee writing through a PARAMETER
   handed the constant, was left a runtime fault here; `(R-Const)` makes it `(B-Copy)`'s copy
-  too, and C80 rules the halt out — rewrites.md `D-rw-6` (loft#1729).  The constant store
+  too, and @C80 rules the halt out — rewrites.md `D-rw-6` (loft#1729).  The constant store
   stays locked as a user lock (`Store::lock_constant`, both backends), `(H-WriteLocked)`'s
   backstop for a route no rule copies.  Guard
   `tests/scripts/1686-a-local-bound-from-a-vector-constant-copies-it.loft`; the parameter
@@ -1766,12 +1766,12 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   value-const value handed to a PLAIN heap parameter.  A plain struct or vector parameter names the
   caller's record (`calls.md` F-ParamHeap), so `fn bump(a: Account) { a.balance = 999 }` called as
   `bump(acct)` with `acct: const Account` wrote the caller's balance on both backends with no
-  diagnostic.  **Decided (owner, C124): by SIGNATURE.**  A value-const value reaches only a parameter
+  diagnostic.  **Decided (owner, @C124): by SIGNATURE.**  A value-const value reaches only a parameter
   declared `const`; whether the callee's body writes it is not asked — a line's meaning is judged by
-  the line and the signatures it names (C121), and a proof about a body stays an optimisation's
-  (C122).  **Built, as a WARNING first — an error since 2026-09-28, when every shipped library had declared its read-only parameters** (`const-to-plain-parameter`, the owner's rollout: 102 call
+  the line and the signatures it names (@C121), and a proof about a body stays an optimisation's
+  (@C122).  **Built, as a WARNING first — an error since 2026-09-28, when every shipped library had declared its read-only parameters** (`const-to-plain-parameter`, the owner's rollout: 102 call
   sites in consumer libraries reach 17 read-only helpers not yet declared `const` — DESIGN_DECISIONS.md
-  C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
+  @C124 § Rollout lists them; it becomes an error once they are): the call gate beside D-bind-44's `&`
   gate, reading the parameter's `const` from
   the definition's attribute (`Attribute.value_const`, now serialised in the IR store so a cached
   stdlib or library keeps it); the standard library declares its read-only heap parameters `const`;
@@ -1929,7 +1929,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   headline behaviour — the second gate was reachable only through the first, so fixing the
   first is what made the interpreter crash where it had merely refused.
   **Uniformity is what the guard scores**, not just success: an unfitting compound step answers the
-  type's default through the link exactly as it does at the place (C127), drawing the same
+  type's default through the link exactly as it does at the place (@C127), drawing the same
   `narrow-fallback` advice, and a direct write beside two links reaches both.  Guard
   `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, which
   replaces `a-link-to-a-narrow-integer-store-place-is-refused.loft` and keeps its seven shapes,

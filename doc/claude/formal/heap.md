@@ -51,7 +51,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   is `H` updated at `r`.
 - `store(r)` is `r.store_nr`; `H ⊢ r live` means `store(r) ∈ dom(H)` and that store is not
   freed. `fresh(H)` is a `store_nr` not in `dom(H)`.
-- `⊥` is the faulting configuration **only** where noted; per operational.md's C80, most
+- `⊥` is the faulting configuration **only** where noted; per operational.md's @C80, most
   "can't" cases are the value `null` + continue, **not** a halt (see `H-ReadNull`).
 
 ---
@@ -281,7 +281,7 @@ agree exactly (verified):
   **vector-typed** projection (`fv = e.items`). A fresh store is allocated and the graph
   duplicated, so the two are independent: `fv = e.items; fv[0] = 99` leaves `e.items[0] == 1`;
   `c = o; c.v = 9` leaves `o.v == 1`.
-- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
+- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([@C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
   NOT a copy: `r = &v; r[0] = 99` makes `v[0] == 99` (verified both backends). This is why a `&`
   is written — to share the backing, not duplicate it. (A vector **parameter** likewise aliases
   the caller — see the invariant below.)
@@ -296,7 +296,7 @@ agree exactly (verified):
   `v[0].n == 11`. Order matters: `c = v[0]; c.n = 99; v.remove(2)` keeps the alias and lands the
   99, because the view is dead before the container changes.
 
-This is the [DESIGN_DECISIONS.md C86](../DESIGN_DECISIONS.md) (`#415`) copy vs [ownership.md](ownership.md)
+This is the [DESIGN_DECISIONS.md @C86](../DESIGN_DECISIONS.md) (`#415`) copy vs [ownership.md](ownership.md)
 `#426` view boundary, and it is **exactly** the struct-vs-vector split
 [capabilities.md](capabilities.md)'s raw-write rule (D-cap-3) already encodes: a **vector** local is
 owned (copies, so writing it is `Cap-Own`), a **struct-typed** local may be a view of host data (so
@@ -857,7 +857,7 @@ the one line that would duplicate it is the line the error names.
 goes with one structure while the other still uses the handle; a mark recording which member
 moved out, or a static fact deciding which copy owns, leaves the programmer guessing which
 structure still works.  Refusing the copy leaves no guess: a program that compiles has one
-structure per lease (DESIGN_DECISIONS.md C121; the earlier rule is in heap-history.md).
+structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-history.md).
 
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
@@ -942,7 +942,7 @@ The rules are checkable directly, and every check is a program both backends mus
 - **Copy vs alias vs view (`H-Copy` / `H-Ref` / `H-View`)** — proven both backends: a PLAIN
   whole-value / vector bind COPIES — `c = o; c.v = 9` ⇒ `o.v == 1`; `fv = e.items; fv[0] = 99` ⇒
   `e.items[0] == 1`. An EXPLICIT `&`-bind ALIASES — `r = &v; r[0] = 99` ⇒ `v[0] == 99` (a live
-  reference, C77; the vector twin of a parameter). A STRUCT-typed projection is a VIEW —
+  reference, @C77; the vector twin of a parameter). A STRUCT-typed projection is a VIEW —
   `c = o.i; c.v = 9` ⇒ `o.i.v == 9`; `s = v[0]; s.v = 9` ⇒ `v[0].v == 9` (a struct element of a
   vector). capabilities.md's raw-write rule encodes this: a plain-copied vector is owned, a
   `&`-aliased or parameter-rooted vector is host (D-cap-3 follows the dep chain), a struct is a
@@ -972,7 +972,7 @@ The rules are checkable directly, and every check is a program both backends mus
   down (`tests/scripts/164-callee-disturb.loft`, every cell paired with its inline twin).
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md
-  C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
+  @C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
   at EITHER layout — is `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout.loft`;
   no guard is dedicated to the read's null answer itself, which every `??` cell in the corpus
   exercises without naming it.

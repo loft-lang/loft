@@ -11,26 +11,26 @@ a finding that **re-frames what phase B is**.
 
 ## The finding that reframes phase B (read first)
 
-The plan said phase B = "drain the **Avoidable** worklist." Grounding that against C86 changes it.
+The plan said phase B = "drain the **Avoidable** worklist." Grounding that against @C86 changes it.
 
-- **C86 (the law, [OWNERSHIP_MODEL.md § The law](../../OWNERSHIP_MODEL.md)):** a whole-value heap
+- **@C86 (the law, [OWNERSHIP_MODEL.md § The law](../../OWNERSHIP_MODEL.md)):** a whole-value heap
   bind COPIES (own store, value semantics). The compiler may **elide the copy to an alias/move
   ONLY when the source is provably DEAD afterwards** — the rustc last-use rule; `ElidePlan` *is*
   this analysis. A live source is copied; a borrow of a live source needs the user's explicit `&`.
 - **The survival split's `Avoidable` bucket is SURVIVING sources** (16/17 are `S { f: src }` where
-  `src` is read after the copy). Under C86 those are **not compiler-elidable** — the source is
+  `src` is read after the copy). Under @C86 those are **not compiler-elidable** — the source is
   alive, so the copy is the value-semantics contract; only `&` removes it, and that is the
   **user's** call (which the report already hints: "a `&` borrow … would remove these").
 - **The copies the compiler CAN eliminate are the LAST-USE ones** — the survival split labels them
   `Implicit` ("move: source consumed"), but **they still physically copy at runtime.** Probe:
   `a = Item { tags: base }` with `base` dead afterwards →
   `LOFT_COPY_DUMP=1` shows `[copy] vector-append elements=3` + a free of `base`. The last-use
-  elision that C86 sanctions is **implemented only for the var-buffer idiom** (`v = buf; v += src`,
+  elision that @C86 sanctions is **implemented only for the var-buffer idiom** (`v = buf; v += src`,
   `use_analysis::ElidePlan` + `scopes::elide_borrows`), **not for construction / record copies.**
 
-> **So phase B is: implement the C86 last-use MOVE-elision for construction (`S { f: src }`) and
+> **So phase B is: implement the @C86 last-use MOVE-elision for construction (`S { f: src }`) and
 > record (`v[i] = e`) copies** — transfer a dead source's store into the field/element instead of
-> copy-then-free. It is C86's own rule, already the *semantic* (the split calls it a move), only
+> copy-then-free. It is @C86's own rule, already the *semantic* (the split calls it a move), only
 > the *lowering* lags. The `Avoidable` worklist is a **user `&`-hint**, not a compiler-drain set.
 
 ## The two workstreams
@@ -59,7 +59,7 @@ applied to two new shapes.
 ### B2 — the Avoidable `&`-hints (the user's job, already served) — NOT a compiler drain
 
 The report's `Avoidable` rows are correct **as a hint**: "a live source is copied here; add `&` to
-borrow instead." That is C86-compatible and needs no codegen. The only change worth considering:
+borrow instead." That is @C86-compatible and needs no codegen. The only change worth considering:
 the survival reason says "a borrow/**move** would avoid this copy" — for a *survivor* a move is
 unsound (the source is alive), only `&` applies. Tighten the reason to "add `&` to borrow" so the
 report does not imply an auto-elision the model will not do. **XS, optional.**
@@ -68,9 +68,9 @@ report does not imply an auto-elision the model will not do. **XS, optional.**
 
 **Recommended framing:** phase B = **B1** (last-use move-elision), with the Avoidable worklist
 staying a **user `&`-hint** (B2). Do **not** have the compiler auto-elide *surviving*-source copies
-into field-borrows — that would extend C86 to let a struct field / vector element hold a live
+into field-borrows — that would extend @C86 to let a struct field / vector element hold a live
 borrow of a source, coupling the struct's lifetime to the source and re-introducing the
-alias-surprise C86's value-semantics copy exists to prevent. Field-borrow-of-a-live-source is
+alias-surprise @C86's value-semantics copy exists to prevent. Field-borrow-of-a-live-source is
 exactly what the explicit `&` is *for* (the user's decision), not an implicit optimization.
 
 If the maker instead wants implicit field-borrows-of-survivors, that is a **separate, larger
@@ -91,7 +91,7 @@ is mutated independently) — flag it as its own plan, gated on that design, not
    alloc/copy/free. `v[i] = e` (record, the 1 Avoidable + the moves) after `S { f: src }`.
 4. **Boundary matrix.** `{construction, record} × {dead source, surviving source (must NOT elide),
    source mutated, nested field} × {interp, native}` — assert value + length + **leak + poison**
-   per cell. The surviving-source cells prove B1 does NOT touch what C86 keeps.
+   per cell. The surviving-source cells prove B1 does NOT touch what @C86 keeps.
 5. **Graduate + flip.** Guards to `tests/scripts/` + `tests/leak_cases/`; flip the gate default-on
    once every cell is green both backends; keep an opt-out. Re-measure the survey (the move rows
    should now show 0 runtime copies via `LOFT_COPY_DUMP`).
@@ -100,12 +100,12 @@ is mutated independently) — flag it as its own plan, gated on that design, not
 
 - Any cell double-frees or leaks on either backend → the transfer is wrong; revert (heap invariant).
 - A **surviving-source** cell elides (a field borrows a live source) → B1 overreached into B2's
-  territory / broke C86 value semantics; revert.
+  territory / broke @C86 value semantics; revert.
 - One backend moves, the other still copies → not landable (both-backends rule).
 
 ## Relationship to sibling work
 
-- Reuses the **C86 last-use elision** philosophy (`ElidePlan` / `elide_borrows`) — B1 is that
+- Reuses the **@C86 last-use elision** philosophy (`ElidePlan` / `elide_borrows`) — B1 is that
   analysis applied to two shapes it doesn't yet cover.
 - Adjacent to the **@PLN85 P4 borrow-return** ([borrow-return/DESIGN.md](borrow-return/DESIGN.md)):
   that eliminates the *return*-buffer copy by borrowing a field on the way OUT; B1 eliminates the

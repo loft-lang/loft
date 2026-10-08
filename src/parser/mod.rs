@@ -15155,7 +15155,7 @@ impl Parser {
             let cname = self.vars.name(dep).to_string();
             // @PLN130 F9 — an explicit `&` is an ownership decision, so it may not be quietly
             // downgraded to a copy: where the write cannot reach the source, REFUSE it
-            // (formal/binding.md B-Ref-Reshape, @C79 revisited 2026-08-05).  Unlike the removal
+            // (`@FR-B-Ref-Reshape`, @C79).  Unlike the removal
             // and reassignment causes there is no liveness question here — the key write IS the
             // use — and no "move it later" remedy either, so the message points at re-inserting.
             if self.vars.is_amp_link(base) {

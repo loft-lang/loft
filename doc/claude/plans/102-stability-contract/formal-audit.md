@@ -39,7 +39,7 @@ formal spec currently *denies* they exist**, which is itself a must-fix:
 | `null == null` is **true for integer/char, false for float** (NaN) | `x == null` silently means different things by type; even `x == x` differs | verified both backends; `fill.rs:636,1018` |
 | `null` orders as **−∞ for integer** (`null < 5` → true) but **incomparable for float** | a nullable `sorted`/`index` key or a hand `if x < limit` treats missing as smallest, no signal | verified; `fill.rs:650` |
 | the declared `integer` range **includes its own `i64::MIN` sentinel** (off-by-one) | `1<<63`, `abs(i64::MIN)`, `"-9223372036854775808" as integer` all collide → null | `data.rs:96` reserves `MIN+1`; verified |
-| overflow (**C85**) writes the sentinel into a **non-null** `integer` slot | the non-null guarantee is advisory for arithmetic — a frozen soundness hole | `types.md` N-Arith vs C85 |
+| overflow (**@C85**) writes the sentinel into a **non-null** `integer` slot | the non-null guarantee is advisory for arithmetic — a frozen soundness hole | `types.md` N-Arith vs @C85 |
 | the two formal docs cite **different** sentinel constants (`i32::MIN` vs `i64::MIN`) | the frozen constant is ambiguous; per-width sentinel steals a real value (`u8` null=255) | `types.md` table vs `operational.md` |
 
 **Decide this first.** It is the @PLN102/@PLN25 boundary and it changes signatures
@@ -60,9 +60,9 @@ concentrated in the newly-added faults (near-zero, per the error audit). Either 
 > | Item | Status now | Evidence |
 > |---|---|---|
 > | F1 float `==` | ✅ **exact** | `1.0 == 1.0000000001` → false; `!=` exact complement |
-> | F2 compound-assign | ✅ **single-eval (C92) — IMPLEMENTED + VALIDATED + LANDED (2026-07-16)** | `v[idx()] += 5` now calls `idx()` **once**; a divergent index reads + writes the SAME slot. Validated both backends (boundary matrix + byte-identical corpus + no leak; suite green modulo known flakes). On `tuxedo-f2-impl-steps`. Scope + method: [compound-assign-place-once.md](compound-assign-place-once.md) |
+> | F2 compound-assign | ✅ **single-eval (@C92) — IMPLEMENTED + VALIDATED + LANDED (2026-07-16)** | `v[idx()] += 5` now calls `idx()` **once**; a divergent index reads + writes the SAME slot. Validated both backends (boundary matrix + byte-identical corpus + no leak; suite green modulo known flakes). On `tuxedo-f2-impl-steps`. Scope + method: [compound-assign-place-once.md](compound-assign-place-once.md) |
 > | F3 `&&`/`\|\|` short-circuit | ✅ **specified** | `operational.md` E-And/E-Or; E-Left scoped to non-short-circuit |
-> | F5 match non-enum + guards | ✅ **works** + **spec'd (2026-07-16)** | `matching.md` now has P-Range (`a..=b` incl / `a..b` half-open), P-Guard (fail→next arm), and a two-regime M-Total: ENUM = static exhaustiveness (a guard never covers a variant), SCALAR = nullable fall-through (C80). Verified both backends |
+> | F5 match non-enum + guards | ✅ **works** + **spec'd (2026-07-16)** | `matching.md` now has P-Range (`a..=b` incl / `a..b` half-open), P-Guard (fail→next arm), and a two-regime M-Total: ENUM = static exhaustiveness (a guard never covers a variant), SCALAR = nullable fall-through (@C80). Verified both backends |
 > | F6 `&v` alias | ✅ **aliases** + sandbox hole closed + **docs reconciled** | `w=&v; w[0]=99` → `v[0]==99`; `heap.md` (H-Ref/H-Copy), `binding.md` (B-Ref/B-Copy), `capabilities.md` (D-cap-3) all state `&`-bind ALIASES / plain bind COPIES — no doc still says `&v` copies |
 > | F8 comparison chaining | ✅ **rejected** (non-assoc) | `1 == 2 == 3` → "comparison operators do not chain" |
 > | runtime errors | ✅ **stable kinds** | `RuntimeErrorKind::{CastOutOfRange,DivideByZero,ShiftOutOfRange}` |
@@ -103,13 +103,13 @@ concentrated in the newly-added faults (near-zero, per the error audit). Either 
 > **Spec-honesty for the ✅-behavior rows — DONE (2026-07-16):** F1 (float `==` exact, pinned in
 > `operational.md`), F3 (short-circuit E-And/E-Or), F4 (assign eval order), F5 (P-Range/P-Guard +
 > two-regime M-Total in `matching.md`), F6 (`&v` aliases), F8 (chaining rejected) all reconciled +
-> re-verified both backends; F7 decided (C91). The ✅ rows now match reality.
+> re-verified both backends; F7 decided (@C91). The ✅ rows now match reality.
 > **F4 — DONE (re-verified 2026-07-16):** `operational.md` E-Asgn already specifies the place
 > reduces **first** (left-to-right), **then** the RHS, then the store update (by E-Left) — no
 > "RHS first" contradiction remains. Re-verified both backends: `a[idx()]=rhs()` prints the
 > place index before the RHS; nested `m[outer()][inner()]=rhs()` is strictly left-to-right
 > (outer, inner, rhs). Off the open list.
-> **F7 — DECIDED (C91, 2026-07-13):** `==` = value-by-value / reference-by-identity (one uniform rule,
+> **F7 — DECIDED (@C91, 2026-07-13):** `==` = value-by-value / reference-by-identity (one uniform rule,
 > bounded by the value's own storage, NEVER chasing a reference — so `==` is never a deep crawl);
 > `===` reserved for opt-in deep structural equality. A shallow/hybrid `==` was rejected as internally
 > inconsistent. Off the open list.
@@ -121,12 +121,12 @@ contract 0 allows, because after the freeze changing an observed value is a regr
 |---|---|---|---|
 | K | the null-sentinel model (above) | changes signatures + values | — |
 | F1 | ~~**float `==`/`!=` are epsilon-approximate but `<`/`<=` exact**~~ — **RECONCILED (re-verified 2026-07-16)**: float `==` is **exact IEEE**, no epsilon (`fill.rs` has no tolerance logic). `1.0 == 1.0000000001` → **false**; `0.1 + 0.2 == 0.3` → **false**; `!=` the exact complement; `<`/`<=` consistent (no trichotomy violation — NaN is null, so non-null floats are a total order). Now **pinned in the formal spec** (`operational.md` § comparison, "Float `==` is exact, never epsilon") | ~~a trichotomy violation frozen forever; no formal rule pins it~~ — spec added, both backends agree | verified both backends |
-| F2 | ~~compound assignment double-evaluates its place~~ — **FIXED (C92, 2026-07-16)**: `w[f()] += g()` now calls `f()` once (nested `m[i()][j()]` → 2×), and a divergent index reads + writes the SAME slot. `ir_has_user_call` + a `_place` RefVar hoist in `parse_assign` → [scope + validation](compound-assign-place-once.md) | the duplicate side-effect + divergent-index corruption are gone; byte-identical for no-user-call places | LANDED, validated both backends |
+| F2 | ~~compound assignment double-evaluates its place~~ — **FIXED (@C92, 2026-07-16)**: `w[f()] += g()` now calls `f()` once (nested `m[i()][j()]` → 2×), and a divergent index reads + writes the SAME slot. `ir_has_user_call` + a `_place` RefVar hoist in `parse_assign` → [scope + validation](compound-assign-place-once.md) | the duplicate side-effect + divergent-index corruption are gone; byte-identical for no-user-call places | LANDED, validated both backends |
 | F3 | ~~**`&&` / `||` short-circuit is unspecified**~~ — **SPEC'D + verified (2026-07-16)**: `operational.md` has E-And/E-Or (reduce left; skip right when the left decides the result), and the E-Left "in words" scopes the general both-evaluate rule to explicitly EXCLUDE `&&`/`||`. Verified both backends: `false && boom()` / `true \|\| boom()` never call `boom()` | short-circuit is now written down, not impl-defined | verified; `operational.md` E-And/E-Or |
 | F4 | ~~**assignment place-vs-RHS eval order unspecified** (`a[f()] = g()`); E-Asgn prose "RHS first" contradicts observed LHS-first~~ — **RECONCILED (re-verified 2026-07-16)**: `operational.md` E-Asgn specifies the place reduces first (left-to-right), then the RHS, then the store (by E-Left); no contradiction remains | evaluation-order gap — CLOSED (spec matches both backends) | verified `[L][R]` both backends: `a[idx()]=rhs()` prints place before RHS; nested `m[o()][i()]=rhs()` strictly left-to-right |
-| F5 | ~~**`match` guards have no formal semantics**; **`match` on non-enum** (int/range/literal) unspecified~~ — **SPEC'D (2026-07-16)**: `matching.md` P-Range (`a..=b` inclusive / `a..b` half-open, upper exclusive), P-Guard (guard false ⟹ arm Fail, next arm; provisional binds invisible), and a corrected two-regime M-Total — ENUM subject = static exhaustiveness error (a variant is covered only by a TOTAL arm, never a guard), SCALAR subject = the match may select nothing and yields null (C80), result type nullable. The old blanket "non-exhaustive = static error" was itself stale post-null-model | shipped feature now formally pinned | verified both backends (range boundaries, guard fallthrough, enum-missing error, scalar-nullable) |
+| F5 | ~~**`match` guards have no formal semantics**; **`match` on non-enum** (int/range/literal) unspecified~~ — **SPEC'D (2026-07-16)**: `matching.md` P-Range (`a..=b` inclusive / `a..b` half-open, upper exclusive), P-Guard (guard false ⟹ arm Fail, next arm; provisional binds invisible), and a corrected two-regime M-Total — ENUM subject = static exhaustiveness error (a variant is covered only by a TOTAL arm, never a guard), SCALAR subject = the match may select nothing and yields null (@C80), result type nullable. The old blanket "non-exhaustive = static error" was itself stale post-null-model | shipped feature now formally pinned | verified both backends (range boundaries, guard fallthrough, enum-missing error, scalar-nullable) |
 | F6 | ~~**`&v` on a vector: `heap.md`+`capabilities.md` say COPIES; `binding.md`+reality say ALIASES**~~ — **RECONCILED** (2026-07-11 fix + docs, re-verified 2026-07-16): all three specs now state `&`-bind ALIASES / plain bind COPIES (`heap.md` H-Ref/H-Copy, `binding.md` B-Ref/B-Copy, `capabilities.md` D-cap-3); the sandbox gate `raw_write_is_host_owned` follows the dep chain (`root_aliases_argument`), so an `&`-alias-into-host write is host-gated, not laundered | memory-model spec contradiction + sandbox-admission hole — both CLOSED | verified both backends: `w=&v; w[0]=99`→`v[0]==99`; plain bind independent (`c=v; c[1]=77` leaves `v[1]==2`) |
-| F7 | **reference `==` defaults to identity, not structural** — ~~unspecified~~ **DECIDED (C91)**: `==` = value-by-value / reference-by-identity (uniform, bounded, no reference-chase); `===` reserved for opt-in deep equality; shallow hybrid rejected as inconsistent | ~~a decision~~ | `DESIGN_DECISIONS.md` C91 |
+| F7 | **reference `==` defaults to identity, not structural** — ~~unspecified~~ **DECIDED (@C91)**: `==` = value-by-value / reference-by-identity (uniform, bounded, no reference-chase); `===` reserved for opt-in deep equality; shallow hybrid rejected as inconsistent | ~~a decision~~ | `DESIGN_DECISIONS.md` @C91 |
 | F8 | ~~**comparison operators are one left-assoc level** — `a == b == c` type-checks and misbehaves~~ — **RECONCILED + verified (2026-07-16)**: comparison is NON-associative (`grammar.md` level 3); `1 == 2 == 3` is a STATIC ERROR ("comparison operators do not chain — parenthesise or combine with `&&`") on both backends, not a silent misbehave | grouping change landed (chaining rejected pre-freeze) | verified both backends; `grammar.md` level 3 |
 | F9 | **layout persistence guard not wired into the load path** (D-layout-1); ~~layout hash ignores **endianness**~~ **FIXED 2026-07-17** (`@endian` line in `layout_dump` + descriptor twin) — and still can't see a **not-null↔nullable** schema flip on a FULL-WIDTH field (`layout_dump` renders `i@0:integer` for both `integer` and `integer not null`; narrow ints already differ via `null=<sentinel>`) | the frozen persistence promise's own detector: endianness now caught; a full-width nullability flip still reads raw | `@PLN97`; `types.rs` `layout_dump`; positive control `endian_flip_is_never_a_raw_handoff` |
 | E1 | **diagnostics have no stable identity code** (`DiagEntry` = level+message) + 41 golden baselines → loft freezes **error prose as identity** | add a stable code/kind now → prose stays improvable forever behind a frozen code | `diagnostics.rs:16` |
@@ -140,7 +140,7 @@ Post-freeze loft can only DROP errors, so **add every error we might want now.**
 findings, with conversion cost (the trade-off you weigh):
 
 ### Tier 0 — soundness CRASHES (both FIXED 2026-07-13, `tuxedo-compat-gate-design`)
-The E2 sweep found two SIGSEGVs (both backends) where C80 requires null/drop, not a crash. Neither
+The E2 sweep found two SIGSEGVs (both backends) where @C80 requires null/drop, not a crash. Neither
 is a "missing error" — they are the interpreter using a bad value as a pointer. Both fixed:
 - **default-arg type mismatch** (`fn f(x: text = 42)`) — an unchecked wrong-typed default reached
   runtime as a pointer. Fix (72bc5302): type-check + coerce the default against the param type at
@@ -150,7 +150,7 @@ is a "missing error" — they are the interpreter using a bad value as a pointer
 - **null-struct field access** (`o: T? = null; o.field`) — read/write of a field of a null struct hit
   `store()`/`store_mut()` with the null `store_nr` (65535) → OOB `allocations` panic. Fix (91246f2d):
   every scalar field op guards `rec == 0` at the `#rust`-template chokepoint (feeds both backends) —
-  read → the field type's null, write → drop (C80). Regression: `tests/scripts/558-*`.
+  read → the field type's null, write → drop (@C80). Regression: `tests/scripts/558-*`.
 
 **`field == null` on a non-nullable field — codegen FIXED (7bc01e1e).** The MIS-CODEGEN was
 enum-specific: `s.c == null` for a value-enum field lowered to `OpRefIsNull(OpGetEnum(s,off))` — a
@@ -159,12 +159,12 @@ the interpreter returned the wrong value.  Root: the enum_null branch used OpRef
 non-`__nullable` enum, and a value-enum field access is typed `Enum(_, true, _)` (the access-context
 is-reference flag is polluted).  Now decides value-vs-reference from the enum DEFINITION's `returned`
 type: a value enum tests the disc (`OpConvIntFromEnum == 0`), only a struct-enum keeps OpRefIsNull.
-Correct on both backends (present → false, read through a null receiver → true, C80).  Text fields
+Correct on both backends (present → false, read through a null receiver → true, @C80).  Text fields
 were never mis-codegened (they use `OpEqText` + the text null) — the E0308 note conflated them.
 **RESIDUAL — FIXED (c9fc8153).** The spurious "Redundant null check" / "Redundant null coalescing"
 warning on `field == null` / `field ?? d` for a NULLABLE receiver: `field()` now clears
 `expr_not_null` when the receiver's TYPE is `Optional` (a field of a nullable receiver reads null when
-the receiver is absent, C80).  The signal is the receiver TYPE, not `expr_not_null` — a non-null
+the receiver is absent, @C80).  The signal is the receiver TYPE, not `expr_not_null` — a non-null
 CONSTRUCTED struct (`g = P285G{…}`) leaves `expr_not_null` false too, so the earlier type-agnostic
 attempt wrongly killed the genuine p285 warning.  Only the lint is cleared (the type is unchanged;
 widening to `Optional` would force `?? d` on every nullable-receiver field read).  Nested
@@ -172,22 +172,22 @@ widening to `Optional` would force `?? d` on every nullable-receiver field read)
 
 ### Tier 1 — RE-MEASURED 2026-07-13 (`tuxedo-compat-gate-design`)
 Running the current tree flipped most of the table below: the runtime already reads NULL for
-out-of-range operations (C80), so the "silently MASKED to a wrong value" concern is largely gone.
+out-of-range operations (@C80), so the "silently MASKED to a wrong value" concern is largely gone.
 The only genuine silent-*wrong values* were two, both FIXED; the rest are already-resolved or
-sentinel-collision edges the owner's C80 rule says accept.
+sentinel-collision edges the owner's @C80 rule says accept.
 
 | Item (re-measured) | Status |
 |---|---|
 | **cross-type `==`/`!=` → truthiness** (`5 == "banana"` → **true**) | **FIXED** (449c4f64) — reject at compile, like the ordering ops. See § below the K-table note. |
-| **`single as integer` overflow → i64::MAX** (saturates; `float as integer` already nulled) | **FIXED** (b230b957) — mirrors float→int: overflow reads null (C80). |
+| **`single as integer` overflow → i64::MAX** (saturates; `float as integer` already nulled) | **FIXED** (b230b957) — mirrors float→int: overflow reads null (@C80). |
 | **`enum == int` → discriminant leak** (`Color.Green == 1` → **false**, comparing the +1-biased internal disc) | **FIXED** (b5d33b5d) — reject at compile, "No matching operator"; enum==enum / enum==null untouched. |
-| `1e30 as integer` (float) → **null** | **COMPILE ERROR (E2-B, 2026-07-19)** `[cast-constant-out-of-range]` when the operand is a LITERAL/const-expr; a variable-held value (`fb: float = 1e30; fb as integer`) still nulls (C80), and the checked `as integer?` / `?? d` forms stay the escape. |
+| `1e30 as integer` (float) → **null** | **COMPILE ERROR (E2-B, 2026-07-19)** `[cast-constant-out-of-range]` when the operand is a LITERAL/const-expr; a variable-held value (`fb: float = 1e30; fb as integer`) still nulls (@C80), and the checked `as integer?` / `?? d` forms stay the escape. |
 | `"…" as integer` (text parse) → **null** | already a COMPILE ERROR (`as integer` "may fail — use `integer?`"). No add. |
-| `1 << 100` / `1 << -1` (out-of-range shift) → **null** | **COMPILE ERROR (E2-B, 2026-07-19)** `[shift-amount-out-of-range]` when the amount is a const-expr outside `0..=63`; `?? d` fallback + a *dynamic* amount still null (C80/C85). |
-| `999999999 as character` → NUL | renders null; C80-adjacent. No genuine wrong value. |
-| `sqrt(-1)` / `log(-1)` / `asin(2)` → **null** | **ACCEPT** ([C80](../../DESIGN_DECISIONS.md): undefined → null, never a fault). No decision needed. |
+| `1 << 100` / `1 << -1` (out-of-range shift) → **null** | **COMPILE ERROR (E2-B, 2026-07-19)** `[shift-amount-out-of-range]` when the amount is a const-expr outside `0..=63`; `?? d` fallback + a *dynamic* amount still null (@C80/@C85). |
+| `999999999 as character` → NUL | renders null; @C80-adjacent. No genuine wrong value. |
+| `sqrt(-1)` / `log(-1)` / `asin(2)` → **null** | **ACCEPT** ([@C80](../../DESIGN_DECISIONS.md): undefined → null, never a fault). No decision needed. |
 
-**Sentinel collisions — DECIDED: ACCEPTED (owner ruling 2026-07-13, [C85](../../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
+**Sentinel collisions — DECIDED: ACCEPTED (owner ruling 2026-07-13, [@C85](../../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
 A value equal to the null sentinel (`i64::MAX+1`, `abs(i64::MIN)`, `1<<63`, a literal
 `-9223372036854775808`) reads as null. This is semantically **just an overflow** ("don't rely on it;
 the program may malfunction") and strictly BETTER than a two's-complement wrap because null is
@@ -201,7 +201,7 @@ compile error. Owner's rationale: *"error too, because `x = null` is a fallback"
 is a fallback the developer can still opt into explicitly, so erroring the BARE constant (which the
 developer can SEE is wrong) removes no capability. The escape hatches are preserved and uniform
 across both ops: the `?? d` fallback (shift + cast) and the checked `as τ?` (cast) skip the check;
-a *dynamic* operand (a variable, even one holding a constant) stays C80-null. Codes:
+a *dynamic* operand (a variable, even one holding a constant) stays @C80-null. Codes:
 `shift-amount-out-of-range`, `cast-constant-out-of-range`. Both backends agree (the diagnostic
 fires in the parser, pre-codegen). Regression: `tests/scripts/pln102-const-out-of-range.loft`
 (+ existing `pln102-shift-collision-guard.loft` / `559-narrowing-cast-overflow-null.loft` unchanged
@@ -231,10 +231,10 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
 | High | `content()`/`read_bytes()`/`list_dir()` → `""`/`[]` on missing file | additive checked/nullable variant | low-medium |
 
 ### Reconsider the spreadsheet model's quietness (C80/C85 — decided, but frozen)
-- **integer overflow → null but the type stays non-null `integer`** (C85) — invisible at compile
+- **integer overflow → null but the type stays non-null `integer`** (@C85) — invisible at compile
   *and* silent at runtime, while div/parse are typed `integer?` (DN3). At minimum an opt-in
-  overflow-site warning (costs nothing); forcing `integer?` is what C85 declined (very high cost).
-- **div0/mod0/OOB/null-deref → null+continue, silent by default** (C80) — a bare `loft prog.loft`
+  overflow-site warning (costs nothing); forcing `integer?` is what @C85 declined (very high cost).
+- **div0/mod0/OOB/null-deref → null+continue, silent by default** (@C80) — a bare `loft prog.loft`
   emits nothing (only div0 warns, and only for a *constant* divisor). Decide the runtime loudness.
 - Each of these already has a DESIGN_DECISIONS home; the freeze just needs them stated *as* the
   frozen contract, not left implicit.
@@ -251,7 +251,7 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
   COMPATIBILITY.md.
 - ~~The **`null(/0)` format-suffix** leaks fault identity into observable output — but for only 4
   fault kinds (inconsistent). Decide if it's frozen; if kept, cover all faults; else flip
-  `LOFT_FORMAT_BARE_NULL` to default.~~ Decided by [C142](../../DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null):
+  `LOFT_FORMAT_BARE_NULL` to default.~~ Decided by [@C142](../../DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null):
   a hole renders plain `null`, and the suffix and its switch are gone.
 - **Recoverable-vs-halting fault boundary undocumented**; **halting faults mode-dependent** (halt
   in dev, continue in prod) — pin both as the contract.
@@ -270,7 +270,7 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
 ## Per-area formal findings
 
 ### Types / null / binding / tuples
-- The null-sentinel cluster (keystone). Plus **decided edges to state honestly**: C85 overflow-non-null
+- The null-sentinel cluster (keystone). Plus **decided edges to state honestly**: @C85 overflow-non-null
   (fix the `types.md` prose that denies it), DN3-vs-C85 asymmetry (`/` nullable, `*` not), B-View
   struct-projection-aliases, DN6 null-join excludes `text` (impl leak → make uniform or accept).
 - **Gaps (freeze impl-defined):** **tuple/struct equality entirely unspecified** (structural? does it
@@ -280,7 +280,7 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
 
 ### Ownership / heap / layout (the memory model — highest stakes)
 - ~~**F6 (`&v` copies-vs-aliases contradiction)**~~ **RECONCILED** (see the must-fix table above) and **F7 (reference `==` identity)** above.
-- **C80 write-side drop:** `obj.field = x` when `obj` is null **silently discards the write** and
+- **@C80 write-side drop:** `obj.field = x` when `obj` is null **silently discards the write** and
   continues (`H-WriteNull`/`H-WriteOOB`) — the write side is more dangerous than the read side and
   isn't separately justified. State it deliberately.
 - **F9 persistence** + **gaps to pin:** the on-disk `text`/string record format is unspecified; the
@@ -346,7 +346,7 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
   warn like div0; the reachability argument is weaker for OOB than overflow).
 - ~~**Format-null render is syntactic:** `c=a/b; "{c}"` → `null` but `"{a/b}"` → `null(/0)` — the same
   null renders differently by where the fault sat; hoisting drops the tag. Carry the tag on the value
-  or drop it — don't freeze the syntactic split.~~ Dropped by C142: both render `null`.
+  or drop it — don't freeze the syntactic split.~~ Dropped by @C142: both render `null`.
 
 ### Grammar / format sub-language / precedence
 - **The format sub-language is the least-specified frozen sub-syntax** (highest-value): `F-Render`
@@ -358,7 +358,7 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
   non-associative); `-2 ** 2 == 4` (unary-minus tighter than power, against math/Python); `??` is
   loosest so `x ?? d == y` parses `x ?? (d == y)` (footgun on the headline null op).
 - `grammar.md` omits unary/postfix precedence (`-a.b` mis-groups in the informal grammar; `~` missing);
-  the "parser IS the grammar" (C82) means a parse quirk is canonical — pair the freeze with a
+  the "parser IS the grammar" (@C82) means a parse quirk is canonical — pair the freeze with a
   **golden parse-shape corpus**, not only output/diagnostics.
 - Every string literal is a format string (no raw-string form) — a raw form is additive later, lower
   urgency.
@@ -384,7 +384,7 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
 ## Spec hygiene (prose-vs-rule / calibration — fix as you go)
 - E-Left prose ("both operands evaluate") false for short-circuit ops; E-Asgn prose ("RHS first")
   contradicts LHS-first; E-NullArg ("compare against the sentinel") hides the type-split equality;
-  `types.md` "a slot of τ never holds a non-τ" contradicted by C85; C86 "provenance-independent" vs
+  `types.md` "a slot of τ never holds a non-τ" contradicted by @C85; @C86 "provenance-independent" vs
   H-View; layout.md "portable" over-claims vs native-endian; O-Deps "closed/formal" vs honest-floor.
   Per the README's own rule (prose is the mistake when it disagrees), fix each so the freeze records
   the true contract.

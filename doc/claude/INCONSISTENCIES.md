@@ -98,7 +98,7 @@ naming choice, not a language bug.
 
 **2026-09-15:** a method and a free function of one name whose first parameter
 has one type are refused in either order (`formal/calls.md (F-OneBody)`,
-DESIGN_DECISIONS.md C123), so the two call spellings can no longer reach two
+DESIGN_DECISIONS.md @C123), so the two call spellings can no longer reach two
 bodies.  The same day `both` was deprecated: a `self` function takes both spellings and is
 imported by name, so there are now two call-form classes, `self` (both spellings) and a plain
 first parameter (free only), and `both` warns `both-receiver-deprecated`.

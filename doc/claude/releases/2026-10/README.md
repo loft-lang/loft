@@ -35,7 +35,7 @@ a feature set.
 
 | row | state | what it needs |
 |---|---|---|
-| `A-ci` | ❌ | the GitHub gate on `b4eddae08`: P310 and the browser pack fail on `mesh3d` under C98 (the library republish), the feature catalogue (fixed, `4f6270f70`), the optional ratchet (re-pinned), fixture drift for gridmesh/time/assets (advisory, the same republish) |
+| `A-ci` | ❌ | the GitHub gate on `b4eddae08`: P310 and the browser pack fail on `mesh3d` under @C98 (the library republish), the feature catalogue (fixed, `4f6270f70`), the optional ratchet (re-pinned), fixture drift for gridmesh/time/assets (advisory, the same republish) |
 | `A-deviations` | ❌ | D-types-17 (loft#1742).  D-perf-1 closed with loft#1570; its successor D-perf-2 (loft#1743, the Perf-Weight bars over all 205 routines: median 2.79×, 140 over 3×) is marked **not resolvable in a release** — owner, 2026-09-29 — and read per release through `M-perf-pass` |
 | `A-pdf-version` | ❌ | needs the version bump (release window) |
 | `A-release-gate` | ❓ | after the tree settles — every commit resets it |
@@ -72,7 +72,7 @@ fns named), `A-ignores` (35, each with a rationale); ticked 09-16 and still stan
 | `A-release-gate` | ❓ | `make release-gate` on the pushed branch — every nightly, one run, one verdict |
 | `A-validator-dryrun` | ❓ | structural gates pass at exit 3, not the full verdict |
 
-**Owner calls:** `M-ignores` (sign-off on every ignore and skip entry); the C98 library conversion
+**Owner calls:** `M-ignores` (sign-off on every ignore and skip entry); the @C98 library conversion
 and its republish order — it gates `M-libs`'s remainder (graphics / regex warning-clean), the
 consumer census re-run (`scripts/eq_census.sh`: 1280 consumer files did not compile on 09-29)
 and `A-consumers` at the tag; `M-ndb` (the native-debug paths changed since the last tag); when
@@ -119,9 +119,9 @@ proper, and these three are the first things this cycle owes:
 ## What the cycle carries so far
 
 - `2026.9.0` shipped 2026-09-05 (the `2026-09` record).
-- **Merged since** (PR #1542, squashed as `e5dcf2deb`): C124 — a `const` value reaches only a
+- **Merged since** (PR #1542, squashed as `e5dcf2deb`): @C124 — a `const` value reaches only a
   `const` parameter, decided by the signature — with loft#1540's view half and its
-  function-reference half (`fn(const T)`); C121–C123; @PLN162's close; @PLN163's copy leases;
+  function-reference half (`fn(const T)`); @C121–@C123; @PLN162's close; @PLN163's copy leases;
   @PLN164 through B1 and C4; @PLN165 phase 0; loft#1535.  Issues #1535–#1540 closed on that merge.
 - **On `tuxedo-advisory-2026-09-16`, not yet merged**: the catalogue tag for `src/lease.rs`; a
   nullable iterator's `null` init writing its slot (the Debug-assertions and `LOFT_VERIFY_STACK`
@@ -129,7 +129,7 @@ proper, and these three are the first things this cycle owes:
   re-measurements with @PLN164's B2 units 2–3 and loft#1541's browser-kernel fix; @PLN164 B2's
   placement candidate asking its return shape before the ownership question (which closed the
   Debug-assertions gate for a SECOND reason); the stdlib reference dropping the `both` receiver
-  C123 retired; @PLN162 citing `@I78` by its real prefix; and SLOTS.md naming the allocator that
+  @C123 retired; @PLN162 citing `@I78` by its real prefix; and SLOTS.md naming the allocator that
   runs.
 - **Open and labelled `fixed-pending-merge`**: #1541, whose fix rides the branch above.
 - **Filed this cycle**: loft#1544 — `./scripts/idx tag:@PLN<n>` answers an empty list at exit 0 for

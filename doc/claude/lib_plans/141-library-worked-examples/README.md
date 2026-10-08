@@ -1309,7 +1309,7 @@ declaration order moved for the WORKER and for the ELEMENT TYPE, not just one of
 `36_par_worker_writes_parent` locked the spurious `Expect token ;` cascade — and its name
 was a lie: the source has no worker CALL, so it died on the parse long before any parent
 write. Split into `36_par_worker_is_not_a_call` (which now locks the real message) and a
-new `53_par_worker_writes_parent` that reaches the C93 data-race error the name promised.
+new `53_par_worker_writes_parent` that reaches the @C93 data-race error the name promised.
 
 **Filed, not fixed:** loft#987 (`par` with an EMPTY body fails to compile on `--native`;
 `n_parallel_discard` is declared one parameter short AND its generated body is empty, so

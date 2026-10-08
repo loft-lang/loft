@@ -38,7 +38,7 @@ friction against a pointless annotation.
 That is also why `int` and `str` are **suggested but not legal** — the compiler
 tells a newcomer the loft name, and the newcomer learns the vocabulary once
 rather than writing a foreign dialect forever
-([DESIGN_DECISIONS.md C103](../DESIGN_DECISIONS.md)).
+([DESIGN_DECISIONS.md @C103](../DESIGN_DECISIONS.md)).
 
 ## Why there is one integer type, and no separate index type
 
@@ -76,7 +76,7 @@ the sheet still opens. The whole fallible-value story is then two operators — 
 supplies the default *you* give, `?` supplies the default the *type* gives — and
 the type system forces you to discharge a `τ?` before storing it somewhere
 non-null. So "no runtime errors" is not permissiveness; the checking moved to
-compile time. ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md))
+compile time. ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md))
 
 ## Why loft compiles through rustc instead of its own backend
 

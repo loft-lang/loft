@@ -173,7 +173,7 @@ where the field is NULLABLE, and reading it as null regardless reported a not-nu
 Three more readers joined the count, all of them the same sentence again and all
 found by ONE probe of an `i8` holding `-1`.  `Parser::get_val` and `Parser::set_field_check` are
 the field's read and write: a non-null type that kept a spare top code decoded every code as a
-value, so C85's overflow read back as `64535` at two bytes, and at ONE byte the write lost the
+value, so @C85's overflow read back as `64535` at two bytes, and at ONE byte the write lost the
 code entirely (`i64::MIN as i32` is `0`, a value inside the declared range) — loft#1615.  The
 `min` operand of all twelve narrow ops was `const i16` while a minimum is an `i32`, so a bias
 outside i16 was truncated at EMISSION and `limit(40000, 40100) size(1)` read one wrong number for

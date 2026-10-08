@@ -103,7 +103,7 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
 **`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
 the conditions under which a program cannot tell the rewritten form from the written one,
 and the compiler validates those conditions or declines.  What it may never do is change
-a value, a fault or an effect (C120 is the same principle from the other side), or hand a
+a value, a fault or an effect (@C120 is the same principle from the other side), or hand a
 representation of its own choosing across a library's API, where the callers that would
 have to validate the conditions are not in the compilation.  The freedom rests on loft having
 no construct that observes representation — no address, no raw buffer, no `unsafe` (@C135);
@@ -114,7 +114,7 @@ at the boundary — and `(O-ViewField)` takes its scope from here.  A user PROGR
 closed unit (every use is in the compilation; a fn-ref call is a match over known
 definitions), so every condition is decidable in it and the only boundaries left are
 where a representation is turned back into the promised one: a call into a `use`d
-library, the live-reload arm, and a record's layout in a store (C122's corollary).
+library, the live-reload arm, and a record's layout in a store (@C122's corollary).
 And the UNIT is a build decision: a release copy of a program (`--native-release`)
 emits its `use`d loft libraries' reachable functions into the one program it compiles,
 so there a loft-to-loft library API is no boundary at all — a library is recompiled
@@ -985,7 +985,7 @@ remainder may grow a store"*), and each of the ~20 field accesses per pass resol
 store.  The copy itself STAYS.  Eliding it
 statically would need more than the alias proof: on the path where `ents[i]?` discharged an
 absent element, `ents[i] = e` is an out-of-range store with a fault note of its own, and a
-rewrite does not decide what is reported after a fault (C120).  Two cells could not fail
+rewrite does not decide what is reported after a fault (@C120).  Two cells could not fail
 when first sabotaged and were replaced by ones that can: with the copy contributing nothing
 to the write set, a loop that also discharges with `?` stayed green — the discharge buffer
 is itself a whole-type write of the same type and evicted the scalars on the copy's behalf —
@@ -1642,11 +1642,11 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  always right.
 ```
 
-**The type clause, in words.** The C129/C120 discussion with the `cbor` library as
+**The type clause, in words.** The @C129/@C120 discussion with the `cbor` library as
 the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
 SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
 was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a
-library that declared `major: integer limit(0, 7)` — C120's own stated route, *"a library opts
+library that declared `major: integer limit(0, 7)` — @C120's own stated route, *"a library opts
 in by declaring the bounded element types it already knows"* — got nothing for it.  Probed on
 four shapes: every op checked.  The clause could not be built until the declaration WAS a fact
 (loft#1593: a user `limit` accepted an out-of-range store and read a wrong in-range number —
@@ -1659,7 +1659,7 @@ checked (c7, measured, a refinement not a defect); a bare-variable `??` over a n
 parameter lowers to an `if` whose then arm is the parameter and stays checked (c5).  Cells
 `tests/scripts/157-range-arith.loft` c1–c8, pins `tests/range_arith.rs`.
 
-**In words.**  C120 declined the CLOSURE of the non-sentinel proof over
+**In words.**  @C120 declined the CLOSURE of the non-sentinel proof over
 arithmetic — an overflow's null must propagate on both backends — and named the admissible
 successor: *"a PROOF, not a policy: arithmetic whose operands carry ranges such that the
 result CANNOT overflow may emit the plain operator, because no fault can occur and no value
@@ -2470,7 +2470,7 @@ read it.  Guard
 **In words.** The checked operators' null and overflow branches are what keep a chain of
 small grid helpers (`nb_q`, `eg_index`, `eg_dir_from`) from folding: hex_field's
 `edgeset_count` was 18× its Rust twin.  `(R-Range)` cannot range a parameter or a field by
-shape (C80), so the bound comes from the caller, tested once per loop entry, and flows
+shape (@C80), so the bound comes from the caller, tested once per loop entry, and flows
 into the helpers through variants.  With the byte read of `(R-Base)` the chain is free of
 store calls and LLVM folds it: `edgeset_count` 18.2× → 1.9×.  Switch
 `LOFT_NO_RANGED_CALLS`; `LOFT_TRACE_RANGED_CALL=1` names each copy, variant and decline;
@@ -2559,7 +2559,7 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  index or a computed start keeps the checked loop.
 ```
 
-**In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
+**In words.**  @PLN157's guarded plain nest, the admissible successor @C120 names: the
 integer closure is not taken (R-Counter) because an overflow's null must propagate on both
 backends, so the plain form is admitted only where a fact ESTABLISHED before the arithmetic
 runs says no overflow can occur — which is exactly what the guard checks, in the same
@@ -2596,7 +2596,7 @@ the result of.  Switch `LOFT_NO_BOUNDED_SUM` (and `LOFT_NO_VECTOR_BASE` /
 and each counted loop declined with why; falsifier `LOFT_HOIST_VERIFY=1` re-runs every
 admitted block through the checked add and panics on a disagreement — the proof itself,
 re-run, so unlike the join clause's verifier it has no blind spot here: sabotaged on the ROOM
-test, s5 answers `−9223372036854773861` for null (wrapped garbage, exactly what C85 forbids)
+test, s5 answers `−9223372036854773861` for null (wrapped garbage, exactly what @C85 forbids)
 and the verifier panics; sabotaged on the element BOUND, s2 answers `MAX` for null (the
 `MAX + 1` prefix overflow summed plain and cancelled) and the verifier panics.  Three of the
 cells' expectations were first written by hand and were wrong; every number stands as
@@ -3548,7 +3548,7 @@ libraries-wide.md`) measured a second class those cannot reach, and it holds the
 furthest from Rust: bytes that ALREADY EXIST in a store the program still owns, copied
 whole into a second store because the language's plain bind copies (`(B-Copy)`).  The
 four rules here each name one shape in which the value's home is already there, so the
-copy has no work to do — C125's direction, *remove the temporary*, applied to a temporary
+copy has no work to do — @C125's direction, *remove the temporary*, applied to a temporary
 that is a copy rather than a mint.  Their common floor is `(H-CopySelf)`: a whole value
 delivered onto the place that holds it is a no-op the runtime decides by identity, which
 is what lets a rule hand a value's own home as its destination without a second answer
@@ -4235,7 +4235,7 @@ each inlined call, each decline and each reduction below.
 **In words.** Applies in: the IR phase; the xor clause also widens native's plain operators.
 **A range inside `0 ..= m` is not enough for any `m`**: `5 & 6` is `4`, so only an all-ones
 mask is the identity on its range.  The fallback needs the NON-NULL proof, which a value built
-from a parameter never has (C80) — inside `seed_hash` alone it stays; after the inline, with
+from a parameter never has (@C80) — inside `seed_hash` alone it stays; after the inline, with
 literal or ranged arguments, it goes.  `LOFT_NO_MASK_RANGE=1`.
 
 ### A value read once, right after it is written, is not stored
@@ -4804,7 +4804,7 @@ will live.  The ok-false path is the ownership question, and the answer is the o
 member of the container (`vector_finish` is the one visibility step), and whatever heap the
 failed child placed is released by the CALLER, the release walk freeing the discarded result
 runs; a failure is then identical to the plain form's in every value, member and live record,
-and only spare capacity differs, which is representation (C122).  The offset-0 condition is
+and only spare capacity differs, which is representation (@C122).  The offset-0 condition is
 what binding the buffer to the element costs: a moved field anywhere else would be written
 that far past the element.  The chain clause's release is visible only in LIVE RECORDS — a
 key built into an element whose value then failed stays in the store the kept results live in,
@@ -4891,7 +4891,7 @@ dangling window is empty by construction.  The twin decides per call site, so a 
 holds the result longer, or writes in between (the guard's `text_then_clear`), keeps the
 copy.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy and
 its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
-ownership question it raised is settled by C122 and @C139: a representation is the
+ownership question it raised is settled by @C122 and @C139: a representation is the
 compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
 `LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
 `src/generation/view_return.rs`; guard `tests/scripts/a-found-entry-is-read-where-it-lies.loft`.
@@ -4941,13 +4941,13 @@ compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN
 ```
 
 **In words.**  The Rust reference decodes into `&str` and `&[u8]` slices of the frame; loft
-copies four texts and two byte strings out of it per request to read one key.  C139 permits
+copies four texts and two byte strings out of it per request to read one key.  @C139 permits
 the slice form wherever the results are kept.  Its one invariant is that a span answers what
 the owned copy would, which holds exactly when B outlives the span and does not change under
 it: (1) and (2) are those two facts, (3) lists the places the compiler cannot follow, and (4)
 keeps every use one that reads.  (5) is the one way a span and a copy can differ in content.
 A run-time tag in the field ("owned or span?") was the other representation.  It is
-declined here because every `text` field read in every program would test it (C125).
+declined here because every `text` field read in every program would test it (@C125).
 
 The ceiling, measured on pluginabi `check_request` (over-9x.md): building no text or byte
 string at all takes the row from 3.95 to 2.54 ms (−36 %); the spans' own bookkeeping comes

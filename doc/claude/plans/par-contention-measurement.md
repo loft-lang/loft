@@ -39,7 +39,7 @@ Run them on a quiet box — `perf c2c` and 8-thread probes are exactly the load 
 - **Syntax:** `for a in src par(b = worker(a), N) { body }`.  The first worker
   argument is the loop element (loft#1060).  Extra arguments are scalars only.
   Captured parent state is read-only; a `ParentWrite` from a worker is a compile
-  error (@PLN102 C93).
+  error (@PLN102 @C93).
 - **Parent stores:** workers borrow them read-only through
   `Stores::clone_for_light_worker`, which is the only clone path (@PLN108).
 - **Worker allocations:** each worker gets 4 × 1024-word scratch stores,

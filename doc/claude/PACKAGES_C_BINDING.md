@@ -381,7 +381,7 @@ if c_library_available("libduckdb.so") { … } else { /* fall back */ }
 Ask it *before* the first call.  A `#c` symbol that cannot be resolved **faults**
 — `#c` is the declared edge of loft's totality, not a null-returning
 computation — so this query is what keeps an optional backend inside the
-no-runtime-errors rule (C80).
+no-runtime-errors rule (@C80).
 
 `c_library_available` answers true when the library loads **and** every `#c`
 symbol attributable to it resolves.  Both halves matter: a library of the wrong

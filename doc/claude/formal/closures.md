@@ -243,7 +243,7 @@ with the closure's environment in scope.
 > identity, every kind and spelling) and `1320-…` (a branch-joined binding).  What they hold
 > FIXED: **every closure is built in the frame that calls it**, every witness variable is assigned
 > once, and no closure is stored in a container or in a struct a container holds (a decided
-> refusal, C115/#247).  ONE shape is still DECLINED and asserted by value only — `c ?? d`, where
+> refusal, @C115/#247).  ONE shape is still DECLINED and asserted by value only — `c ?? d`, where
 > either capture may come back — and it keeps the leak it had.  The second, **a capture variable
 > reassigned after the build, is no longer declined**: loft#1446 put it on store identity and
 > `1446-…` asserts it, across one and two closures, one and two reassignments, a reassignment
@@ -267,7 +267,7 @@ with the closure's environment in scope.
 > local and a literal): each arm builds into a store of its own, and every one of them is the
 > local's join owner (loft#1726).
 
-`D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS C115](../DESIGN_DECISIONS.md)),
+`D-clo-18` and `D-clo-20` are decided refusals ([DESIGN_DECISIONS @C115](../DESIGN_DECISIONS.md)),
 not deviations: `(L-CapScalar)` gives a closure a COPY of a `&` scalar parameter, so a write to
 it from inside the closure has no shared record to land in, and the heap twin takes the same
 refusal one rule over.
@@ -305,5 +305,5 @@ the companion [closures-history.md](closures-history.md).
 Closures are a full first-class contract: construction, every container measured above, and
 re-assignment into a place that already holds one. What a closure may not do is bounded by
 two decisions rather than by gaps — one capture shape per fn-ref attribute, and no capturing
-closure inside a collection (DESIGN_DECISIONS.md C116, loft#247) or inside a struct that a
+closure inside a collection (DESIGN_DECISIONS.md @C116, loft#247) or inside a struct that a
 collection holds (#318).

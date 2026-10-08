@@ -56,7 +56,7 @@ predicate, so lint and refusal cannot disagree about which stores are narrowings
 
 **What loft#984 keeps.**  Its three regressions — an aliased, a dropped and a wrapped store
 in the store layer — are still guarded, on the one seam the alias also leaves open: a slot
-stepped past its range by its OWN arithmetic (`+=`, C85's overflow edge, `(E-Uncomp-NN)`).
+stepped past its range by its OWN arithmetic (`+=`, @C85's overflow edge, `(E-Uncomp-NN)`).
 Cells 984, 1009, 1379 and the boxed-capture cell re-spell every out-of-range arrival as `+=`
 from a known value, so the same value reaches the same setter; the plain-store forms are
 pinned as refusals in `tests/scripts/1593-a-limit-slot-refuses-the-narrowing-the-alias-refuses.loft`,
@@ -203,7 +203,7 @@ The last of loft#1450's three legs, and the one the register could not see: `D-N
 the ABSENT-collection read and `D-col-lookup` the keyed MISS, but a plain `s.f` on an `s: S?`
 still typed `f`'s declared type.  `get_field` reads the FIELD's own nullness, which is the field's
 promise about itself and says nothing about whether the receiver is there to hold it — reading
-`s.f` on an absent `s` yields the C80 null whatever `f` declares.
+`s.f` on an absent `s` yields the @C80 null whatever `f` declares.
 
 **The site already knew and could not say it.**  `fields.rs`'s own header has said since @PLN102
 that *"a field access can't be MORE non-null than its receiver"*, and it acted on that by clearing
@@ -293,7 +293,7 @@ and elides that only where the input is *"PROVABLY in-domain (constant / range /
 elision is `index_provably_fit`, and what it proves is about the INDEX — a literal the developer
 typed, a loop variable, a bounded computation (the loft#1436 trust).  It says nothing about
 whether the COLLECTION exists.  Reading an element of an absent collection answers the element
-type's null (C80) whatever the index names, so the elision was being asked a question it does
+type's null (@C80) whatever the index names, so the elision was being asked a question it does
 not answer:
 
 ```loft
@@ -312,7 +312,7 @@ the fix reads the receiver's nullability BEFORE that peel and carries it to the 
 Closed at `parse_index`; the dense-receiver trust is untouched, which is the control.
 
 This also closes the *"nullable-receiver index typing"* half that loft#1434's ruling
-(`(Col-Insert-Absent)`, C118) left open for whoever took the fix.
+(`(Col-Insert-Absent)`, @C118) left open for whoever took the fix.
 
 ⚠ **Two legs of loft#1450 stay open and are deliberately NOT closed here**, because they are
 migrations rather than one-site fixes and were measured before the split was chosen: a FIELD
@@ -382,7 +382,7 @@ null"* — a tuple has no faithful document form anyway.  `(N-Opt)` now reads `�
 ⟹ τ? wf`, which is what it always meant (two formers were refused by name under it), and the
 representation of a tuple's absence is `tuples.md (T-Absent)`: `optional((τ₁, …, τₙ)) ≡
 (τ₁?, …, τₙ?)`, no `Optional(Tuple)` even in flight.  The stack-tag layout that would have
-made `(τ, τ)?` a type is declined in DESIGN_DECISIONS C119 on brittleness (ten-plus silent
+made `(τ, τ)?` a type is declined in DESIGN_DECISIONS @C119 on brittleness (ten-plus silent
 re-assertion sites for a one-clause rule).  The CODE half — `Type::optional` still wraps a
 tuple, so a generic `T?` at a tuple answers garbage / E0308 (loft#1451), `v[i].0` is refused
 where the rule types it `τ?`, and `t == null` has no tuple home — is `D-tup-10` in tuples.md.
@@ -392,7 +392,7 @@ The entry as opened follows.
 
 `(N-Opt)` is `τ wf ⟹ τ? wf` — *"`τ?` is a type for any τ"*.  Two types are refused at the
 declaration instead, and for the same reason: the null MODEL (the @PLN102 keystone, option B,
-frozen as C90) gives absence either `(L-Null)`'s in-band sentinel — a value the type RESERVES —
+frozen as @C90) gives absence either `(L-Null)`'s in-band sentinel — a value the type RESERVES —
 or `(L-Null-Tag)`'s discriminant, which is for a STRUCT stored inline.  A `value struct` has
 neither (@PLN101, refused by name since then), and neither does a TUPLE: it is its members'
 bytes, and the synthetic `__tuple<…>` is a struct only where the tuple is STORED — a stack-backed

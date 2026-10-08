@@ -65,7 +65,7 @@ is not.)
 ### graphics — ☐ (the messiest — 6 PRs)
 - [ ] **DELETE** `fix-c95-stdlib-clamp-collision` — merged.
 - [ ] **#13 reconcile-graphics-0.3.0** — main is behind the released 0.3.0/imaging-0.2.0; merge to reconcile.
-- [ ] **#10 canvas `&self.data`** (C86) — review + merge.
+- [ ] **#10 canvas `&self.data`** (@C86) — review + merge.
 - [ ] **#12 graphics 0.4.0** input-event queue (also drops unnecessary `&`, C3) — review + merge.
 - [ ] **#7 CI native packages**, **#2 gl_load_font path (#255)** — review + merge.
 - [ ] **glb flip #14** — un-hold + merge.
@@ -78,7 +78,7 @@ is not.)
 
 ### world — ☐
 - [ ] **DELETE** `tuxedo-nullflow-compat` — superseded (main already discharges the sqrt; PR #9 closed).
-- [ ] **hex_terrain #7** — likely stale (main already carries the `&self` C86 fix); confirm + close-or-merge.
+- [ ] **hex_terrain #7** — likely stale (main already carries the `&self` @C86 fix); confirm + close-or-merge.
 - [ ] **hex_world #8** (`not null` retirement C2a + `&` alias) — review + merge.
 - [ ] Re-run main CI → green; verify warning-free (`not null` on hex_terrain).
 

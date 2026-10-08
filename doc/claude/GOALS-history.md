@@ -49,7 +49,7 @@ The timeline behind [GOALS.md](GOALS.md): dated readings of the two floors and p
   `main` on most nights since 2026-07-31 (08-07, 08-08 and 08-09 consecutively). Both faults
   that used to hold it red are fixed: the workflow installs `libasound2-dev`, so `graphics`
   builds `--native` on a clean runner, and `hex_terrain` validates green against current
-  loft. That closes the ecosystem rot this caveat recorded — including the C86 H-Copy
+  loft. That closes the ecosystem rot this caveat recorded — including the @C86 H-Copy
   compatibility break, which is the exact failure the wide-release bar's **gate 5** exists
   to prevent.
 

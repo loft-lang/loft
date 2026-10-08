@@ -6,7 +6,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # formal/operators.md — operator syntax on a user type (strict)
 
 **Catalogue:** @PLN182 (the plan that builds it; its draft rules for the forms not built yet are
-[plans/182-user-operator-methods/RULES.md](../plans/182-user-operator-methods/RULES.md)), C132.
+[plans/182-user-operator-methods/RULES.md](../plans/182-user-operator-methods/RULES.md)), @C132.
 
 > **Rules then deviations** (see [README](README.md)).  A user type — a `struct`, `value
 > struct` or `enum` declared outside `default/` — reaches an operator form through ONE method

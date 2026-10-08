@@ -157,7 +157,7 @@ assert(add5(10) == 15, "the captured `n` survives the return");
   unless the closure MUTATES the capture, in which case the scalar is promoted to a
   shared heap cell and writes propagate both ways (plan-22; the
   single-closure accumulator pattern).  A mutated scalar may be captured by
-  only ONE closure (C74, #314).  The captured binding may be a local **or a
+  only ONE closure (@C74, #314).  The captured binding may be a local **or a
   parameter**: a mutated parameter is copied into a hidden local first, so the
   closure's writes are visible for the rest of the function and the CALLER's value
   is untouched — a scalar parameter stays by-value (#685).  Mutating a `const`

@@ -72,7 +72,7 @@ game developer ever need to open this?" — no (codegen, type checker, allocator
 (world model, gameplay primitives, rendering composition) stays loft, even when hard.  Libraries are
 kits of primitives lifted one at a time; needing to move game-facing code into Rust is a language
 bug to fix in loft.  **Why.** A genre in the compiler taxes every other author, and Rust code is a
-black box the developer cannot read or fork.  Orthogonal to C71 (how a library runs).
+black box the developer cannot read or fork.  Orthogonal to @C71 (how a library runs).
 
 **Revisit when.** A genre-neutral mechanism in a library (likely the streaming substrate) is a
 measured bottleneck only the engine can fix, and moving it buries neither a worldview nor a
@@ -123,7 +123,7 @@ the only faithful answer is to make it unexpressible.
 
 **Revisit when.** Never by loosening `par`; broader shared-mutation parallelism would be a new,
 inherently safe construct, and none is envisioned.  Decided 2026-07-14 — [record](DESIGN_DECISIONS-history.md#c93--a-par-workers-captured-parent-state-is-read-only-a-write-to-it-is-a-compile-error).
-**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
+**Catalogue:** @F2 (operators) / threading. Instances the platform rule *no runtime errors, ever* (DESIGN_DECISIONS [@C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation)): we do not fault at runtime — we either DISALLOW what cannot work (a compile error) or make it work in a lesser state (null). A `par` data race cannot be made to "work" as null, so it is DISALLOWED. Sibling of the sandbox host-data read-only model.
 
 ## C96 — Library shipping is keyed on trust-root presence: a key-present machine ships autonomously, a key-absent one defers
 
@@ -202,7 +202,7 @@ trampoline arity list; an argument would need a rung per subset of positions.  W
 level-1 BLAS function and every LAPACK routine that answers a number needed a C shim.
 
 **Revisit when.** Someone needs a float argument badly enough to pay for an SSE-aware ladder; it
-moves for both backends at once, as C106 requires.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not).
+moves for both backends at once, as @C106 requires.  Decided 2026-08-10 — [record](DESIGN_DECISIONS-history.md#c109--a-float-return-crosses-c-a-float-argument-still-does-not).
 **Catalogue:** @F92 (direct C binding)
 
 ## C122 — The contract is semantics; a rewrite is free wherever its conditions are validated, and a library API is the one boundary
@@ -212,7 +212,7 @@ moves for both backends at once, as C106 requires.  Decided 2026-08-10 — [reco
 declines otherwise.  A construction escaping the unit keeps the promised representation; which API
 is a boundary is a BUILD fact (`--native-release` compiles its loft libraries into the unit; a
 `#rust` native, live reload, a stored layout and a placed library stay boundaries).  **Why.** What a
-program cannot observe is the compiler's; what it can is the language's (C120, other side).
+program cannot observe is the compiler's; what it can is the language's (@C120, other side).
 
 **Revisit when.** Not stated.  Decided 2026-09-15 — [record](DESIGN_DECISIONS-history.md#c122--the-contract-is-semantics-a-rewrite-is-free-wherever-its-conditions-are-validated-and-a-library-api-is-the-one-boundary).
 Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
@@ -221,11 +221,11 @@ Holds at `(R-Escape)`, [formal/rewrites.md](formal/rewrites.md).
 
 **Decision.** No loft construct lets a program observe how a value is represented: no address,
 no raw buffer, no layout, no `unsafe` block.  A Rust body belongs to the standard library
-(`#rust`, C87); a package binds Rust only through `#native` and its own native crate.
+(`#rust`, @C87); a package binds Rust only through `#native` and its own native crate.
 Representation is observable at exactly two boundaries: a package's native code, and a store
 whose bytes persist or are mapped from a file — there the store layout IS the contract, read
 back by another run, process or tool.  Everywhere else a value's representation is the
-compiler's (C122).  Reports of representation — `store_memory()`, the `LOFT_TRACE_*` switches —
+compiler's (@C122).  Reports of representation — `store_memory()`, the `LOFT_TRACE_*` switches —
 describe the build, not the program; their output is not part of the contract.  **Why.** Every
 representation rewrite (`(R-Escape)`, `(R-ValueRecord)`, the store rewrites, the proposed
 `(R-Apart)` in [APART_VALUES.md](APART_VALUES.md)) is sound only because a program cannot tell
@@ -236,7 +236,7 @@ the forms apart.  Rust's optimiser stays conservative because `unsafe` code may 
 package nor a file-backed store serves.  Opening that door makes every representation rewrite a
 soundness question at once, so the proposal must name each rewrite it invalidates.  Decided
 2026-10-04 — [record](DESIGN_DECISIONS-history.md#c135--loft-has-no-unsafe-construct-representation-is-observable-only-at-a-native-boundary-or-a-file-backed-store).
-**Holds at:** `@C135` — the `#rust` refusal in `src/parser/definitions.rs` (with C87),
+**Holds at:** `@C135` — the `#rust` refusal in `src/parser/definitions.rs` (with @C87),
 `(R-Escape)` in [formal/rewrites.md](formal/rewrites.md); guard
 `tests/scripts/c135-representation-is-observable-only-at-a-boundary.loft`; the file-backed
 boundary by the store format's guards (`tests/store_durable_format.rs`).
@@ -301,7 +301,7 @@ so do its stack frames, which the frame allocator lays out.
 **Why.** A packed record left every field aligned only by accident (an `i64` field at all seven
 non-zero remainders), so the store could not hand Rust a reference into itself: a native `&`
 link panicked or was undefined behaviour (loft#1481).  Aligned data is what Rust's pointer rules,
-C structs and the C boundary (C108) assume.  The check belongs where the offsets are made, not
+C structs and the C boundary (@C108) assume.  The check belongs where the offsets are made, not
 on the access: a per-access test re-asks a fact the layout settled, and on the store's hottest
 path it cost 11–13 % on native keyed and vector-build routines.  The cost falls only on collections of small records
 and on inlined records: a standalone record is claimed in whole 8-byte words anyway.  The

@@ -4,7 +4,7 @@
 ## Status
 
 **CLOSED 2026-08-10 — delivered.**  Arcs A–E and the design questions that were load-bearing
-(Q2, Q3→C109, Q4, Q5).  Two remain open by choice and are described where they sit: **Q1**
+(Q2, Q3→@C109, Q4, Q5).  Two remain open by choice and are described where they sit: **Q1**
 (scalar-by-1-element-vector ergonomics) and **E6b** (handing a retaining API a *loft* vector is
 still a silent use-after-free — undetectable at the declaration, and cured by the C-owned
 buffer idiom rather than by a language feature).  Anything further belongs in a new plan.
@@ -24,9 +24,9 @@ classes and one capability the plan had refused by mistake.**
    C write **24 bytes into a 12-byte loft vector** — a write past the end of a store
    allocation, from a declaration loft accepted.  Both on both backends, exit 0, no
    diagnostic.  `vector<i8>`/`vector<i16>` shifted every value by the storage bias, and
-   `vector<text>` SIGSEGV'd on a row the fixture README claimed worked.  **Fixed (C108):** the
+   `vector<text>` SIGSEGV'd on a row the fixture README claimed worked.  **Fixed (@C108):** the
    element layout is now part of the declaration check.
-2. **A `double` RETURN was refused, and it did not need to be (C109).**  Q3 settled "float by
+2. **A `double` RETURN was refused, and it did not need to be (@C109).**  Q3 settled "float by
    value" once, for both directions.  That is right for an argument — the register file is
    chosen per position, so a float anywhere would need a rung per `2^arity` subset — and wrong
    for a return, which is one axis and costs one more expansion of the same arity list.  The
@@ -45,7 +45,7 @@ signature (thirteen bare pointers, no counts), **no Fortran routine was bindable
 ceiling**: the honest declaration was refused for arity, and the shape loft accepted delivered
 each count where the callee expected the next pointer — SIGSEGV on the interpreter, nothing
 under `--native`.  The fix is that **the C signature decides whether a `vector` carries a
-count** (C107).  `dgemm_` now costs 13 slots rather than the 26 this plan asserted, binds
+count** (@C107).  `dgemm_` now costs 13 slots rather than the 26 this plan asserted, binds
 directly, and copies nothing.
 
 **Two earlier claims were wrong and are corrected below**: "`dgemm_` binds without an
@@ -55,7 +55,7 @@ shape — the benchmark held the axis fixed for free.
 
 **E6b is the one finding the plan closes without a LANGUAGE fix — but it is not a gap.**
 Handing a **loft** vector to an API that retains it is a silent use-after-free on both
-backends, and unlike C108's overrun it cannot be caught at the declaration: the detectable
+backends, and unlike @C108's overrun it cannot be caught at the declaration: the detectable
 condition ("a vector's last use is a `#c` call") is the *common correct* case.  The cure is
 that C owns the buffer — allocate on the C side, hold it as an opaque handle, `memcpy` in and
 out.  FFTW, zlib's `z_stream` and `sqlite3_bind_text(SQLITE_STATIC)` are all bindable that
@@ -73,7 +73,7 @@ idiom a numeric author would accept.
 
 - **Effort:** M (arc A is XS; arc D was the M, and turned out to be S once measured — a
   boundary correction rather than the generator it was scoped as)
-- **Design:** ✓ (C106 fixes the arity contract, C107 the count contract)
+- **Design:** ✓ (@C106 fixes the arity contract, @C107 the count contract)
 - **Last touched:** 2026-08-10
 
 ## Composition matrix — Stage A (measured)
@@ -95,7 +95,7 @@ matters is that each is an oracle, not a recording.)
 | E7 | **14 C argument slots** | ✅ 1015 | ✅ 1015 |
 | E7b | **33 C argument slots** (past the new ceiling) | ❌ refused | ❌ refused |
 | E3 | a `double` **argument** by value | ❌ refused | ❌ refused |
-| **E3b** | a `double` **RETURNED** by value (arc E, C109) | ✅ 90 | ✅ 90 |
+| **E3b** | a `double` **RETURNED** by value (arc E, @C109) | ✅ 90 | ✅ 90 |
 | **E3c** | a `float` returned by value — `single`, not a narrowed double | ✅ 90 | ✅ 90 |
 | **F1** | a **genuine Fortran routine** — 5 bare pointers, no counts (`daxpby_`) | ✅ 1003 2004.5 4008 | ✅ same |
 | **F2** | **`dgemm_` at full width** — 13 by-reference arguments, 13 slots | ✅ 1046 2068 3062 4092 | ✅ same |
@@ -138,7 +138,7 @@ both backends — which is what makes binding the numeric stack worth doing at a
    something loft adds to a Fortran call — it is something the Fortran routine does not
    *take*.  Declared honestly, `dgemm_` was refused ("takes 13 parameter(s), the loft
    declaration needs 26"); declared with counts, the counts landed where the callee expected
-   pointers and it crashed.  The ceiling was never the binding constraint.  Since C107 a
+   pointers and it crashed.  The ceiling was never the binding constraint.  Since @C107 a
    `vector` carries a count only where the C signature has one, so `dgemm_` costs **13**
    slots, binds directly, and LAPACK's 20+-argument drivers fit under 32 as well.
 
@@ -161,7 +161,7 @@ both backends — which is what makes binding the numeric stack worth doing at a
   oracle-matched, no shim and no C toolchain.
 - **GSL — bound.**  `gsl_fft_complex_radix2_forward` and the mixed-radix wavetable/workspace
   path both answer a C oracle on both backends.  Its retained state is a C-owned wavetable and
-  workspace held as handles, so E6b never arises; and C109 is what makes the rest of the
+  workspace held as handles, so E6b never arises; and @C109 is what makes the rest of the
   library reachable, since `gsl_*` functions overwhelmingly return a `double`.
 - **HDF5** — pointer+integer APIs throughout; nothing in the matrix blocks it.
 - **FFTW — yes, over C-owned buffers.**  `fftw_malloc` the buffers, hold them as opaque
@@ -342,7 +342,7 @@ function's, not the author's.
    — a consumer cannot edit someone else's declaration.  Call sites are checked everywhere,
    because a call that cannot work must be refused wherever it is written.
 
-3. **Float by value — REOPENED and split by arc E.  The RETURN crosses (C109); the ARGUMENT
+3. **Float by value — REOPENED and split by arc E.  The RETURN crosses (@C109); the ARGUMENT
    stays refused.**
 
    The answer above was one decision too few, and the sentence that gave it away is *"a uniform
@@ -485,6 +485,6 @@ several sessions on the strength of two facts (nothing numeric installed, no pas
   `--native` half of the same mapping.
 - [`tests/fixtures/c_abi/`](../../../tests/fixtures/c_abi/) — the `#c` fixture and its
   `cc`-only build.  Its README § *The FOREIGN half* is where arc D's lesson lives.
-- [DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md) § C106 (one arity ceiling), § C107 (the
-  signature decides the count), § C108 (the element layout is part of the declaration),
-  § C109 (a float return crosses; a float argument does not).
+- [DESIGN_DECISIONS.md](../DESIGN_DECISIONS.md) § @C106 (one arity ceiling), § @C107 (the
+  signature decides the count), § @C108 (the element layout is part of the declaration),
+  § @C109 (a float return crosses; a float argument does not).

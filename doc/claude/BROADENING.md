@@ -257,7 +257,7 @@ draining library code out of the compiler crate (@PLN3).
 
 ## Native-library execution model — the steady-state design
 
-_Decided 2026-06-04. Canonical decision record: [DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)._
+_Decided 2026-06-04. Canonical decision record: [DESIGN_DECISIONS.md § @C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model)._
 
 ### The model
 
@@ -381,7 +381,7 @@ executable).
   WASM concerns.  First-use compile latency is accepted.
 - Cache native artifacts **per library** (max reuse; native `init()`-sequencing
   composes independently-compiled libs at load — this is why per-library native
-  artifacts work where per-library IR snapshots did not; see C70 in
+  artifacts work where per-library IR snapshots did not; see @C70 in
   DESIGN_DECISIONS.md).
 
 ### Remaining risks and open points

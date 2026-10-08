@@ -139,7 +139,7 @@ otherwise first.
 
 ## Decisions taken, and what they cost
 
-**`#c` is the declared edge of loft's totality (C80).** C traps or corrupts; loft
+**`#c` is the declared edge of loft's totality (@C80).** C traps or corrupts; loft
 does not model that. The concession is smaller than it sounds: arguments cost
 nothing (non-null is already the default and null-flow refuses a `τ?` without a
 discharge, so the illegal call does not compile), a NULL pointer return maps to

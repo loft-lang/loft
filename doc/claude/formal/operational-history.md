@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **2** (D-op-14…22 — C91's content `==`, opened AND closed 2026-09-29 by @PLN175 steps 2–7; D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
+OPEN: **2** (D-op-14…22 — @C91's content `==`, opened AND closed 2026-09-29 by @PLN175 steps 2–7; D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
 spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
 same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
@@ -18,7 +18,7 @@ Opened 2026-07-10 by the @PLN102 pre-freeze audit —
 ⚠ **This register read `OPEN: 2` while D-op-6 was live, and no measurement could have moved
 it** — the rule it violates was itself incomplete. `(E-NullArg)` named comparisons as the only
 exception to contagion and never mentioned truthiness, so a `&&` that answered `null` looked
-like the rule being OBEYED rather than a shipped decision (C73) being broken. An `OPEN: n` is
+like the rule being OBEYED rather than a shipped decision (@C73) being broken. An `OPEN: n` is
 only as strong as the rules above it, not only as strong as its oracle.
 
 ### D-op-7 — CLOSED (2026-08-31, loft#1246): (E-Uncomp-NN)'s default was the range's FLOOR
@@ -74,7 +74,7 @@ only as strong as the rules above it, not only as strong as its oracle.
 
 ### D-op-6 — CLOSED (2026-08-29, the `@FR-E-NullArg` walk): `&&`/`||` kept a null right operand
 - Was: `&&` and `||` coerced a null LEFT operand to `false` and let a null RIGHT operand through
-  unchanged — `true && null` answered `null` where C73 says `false`. The parser types the whole
+  unchanged — `true && null` answered `null` where @C73 says `false`. The parser types the whole
   expression the non-null `Type::Boolean`, so the null flowed out of a position the type system
   had already promised could not hold one: `r: boolean = t && maybe()` compiled clean and
   `r == null` was `true`; the same value reached a `boolean` STRUCT FIELD and a
@@ -90,7 +90,7 @@ only as strong as the rules above it, not only as strong as its oracle.
   So the coercion had one home, the jump, and the right operand never reached it.
 - Fixed in `Parser::boolean_operator` (`src/parser/vectors.rs`), the one site that knows both
   operands are truthiness positions: a nullable-boolean right operand is wrapped in
-  `b == true`, C73's raw compare, which answers `false` for the 255 sentinel. Parser-side, so
+  `b == true`, @C73's raw compare, which answers `false` for the 255 sentinel. Parser-side, so
   both backends inherit it from one IR change; short-circuit is unaffected (the wrap stays
   inside the branch, measured by a counting right operand). Guard
   `tests/scripts/a-boolean-operator-answers-a-definite-boolean.loft`, falsified at `48544f1e`
@@ -122,7 +122,7 @@ only as strong as the rules above it, not only as strong as its oracle.
     an invalid code point (was: silent NUL); `OpCastIntFromText` reports when a *valid* number parses
     to exactly `i64::MIN` (an unparseable text stays DN3-nullable → null, silently, unchanged). NaN
     floats and null integers stay contagious.
-- Distinct from **C85** overflow of ordinary arithmetic, which is a decided edge and stays silent.
+- Distinct from **@C85** overflow of ordinary arithmetic, which is a decided edge and stays silent.
 - Both backends; guards `tests/scripts/pln102-shift-collision-guard.loft` +
   `tests/scripts/pln102-cast-collision-guard.loft`; the conversion set was one assertion
   (`inf as integer` saturate → null in `02-floats.loft`).
@@ -237,7 +237,7 @@ only as strong as the rules above it, not only as strong as its oracle.
 
 ### D-op-14 … D-op-22 — OPENED AND CLOSED (2026-09-29, @PLN175): `==` was not content for every type
 
-- **Violates:** `(E-Eq)` / `(E-Eq-Key)` as amended by C91 (owner, 2026-09-28): content for every
+- **Violates:** `(E-Eq)` / `(E-Eq-Key)` as amended by @C91 (owner, 2026-09-28): content for every
   type, `&a == &b` for identity, keys agreeing with `==`.
 - **Measured** (2026-09-29, the same on both backends): `struct` and `c = a` → `false`; a struct
   holding a struct → `false`; `vector == vector` refused; a tuple of structs → `false`; `hash` /
@@ -274,7 +274,7 @@ only as strong as the rules above it, not only as strong as its oracle.
   now say `&a == &b`; the 1580 / 1581 controls asserted the old identity and now assert
   content beside an `&` cell; the rest already meant content.  Guard
   `tests/scripts/c91-a-struct-compares-by-content-through-its-references.loft`, both backends.
-- **Closed by** the ten steps of [@PLN175 § C91 — the build](https://github.com/loft-lang/plans/issues/175),
+- **Closed by** the ten steps of [@PLN175 § @C91 — the build](https://github.com/loft-lang/plans/issues/175),
   each entry naming its step in [operational.md](operational.md) § Deviations.
 
 ### D-op-13 — OPENED AND CLOSED (2026-09-24, loft#1657): a literal part that wrote its own destination was handed the read snapshot
@@ -440,12 +440,12 @@ only as strong as the rules above it, not only as strong as its oracle.
 > dead code** — an earlier version of this line called it "a separable cleanup", and measuring
 > it (2026-08-25) says otherwise. The peers no longer differ in VALUE (both answer the null
 > sentinel and continue), which is what that reading saw; they differ on the REPORT channel,
-> which is E-Report's half of C80. The peers never call `s.raise`, so a swapped site is silent
+> which is E-Report's half of @C80. The peers never call `s.raise`, so a swapped site is silent
 > while an unswapped one logs — that is exactly what distinguishes a fault the program
 > DEFENDED (`v[i] ?? fb`, or `x = v[i]; if x == null {…}`) from one it did not. Deleting the
 > split would make every defended site report. Measured: of three sites in one program, only
 > the undefended one logs, on both backends. Kept as a one-line tombstone because it reshaped two rules
-> (E-Report's logging policy + the C80 refinement); see `git log` for the full entry.
+> (E-Report's logging policy + the @C80 refinement); see `git log` for the full entry.
 
 ## Carried by operational.md until 2026-09-04
 
@@ -484,5 +484,5 @@ Guard `tests/dev_soft_halt_surfaces_overflow.rs`.
 
 ### the status line formal/README.md's area table carried until 2026-09-04
 
-**rules complete for the core, 2 open** — values/null sentinels, left-to-right order, uncomputable→null (C80) + `??`, state steps; the 2 open are the META deviation D-op-1/2 (differential-not-definitional conformance), inherited by every operational file below
+**rules complete for the core, 2 open** — values/null sentinels, left-to-right order, uncomputable→null (@C80) + `??`, state steps; the 2 open are the META deviation D-op-1/2 (differential-not-definitional conformance), inherited by every operational file below
 

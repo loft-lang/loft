@@ -325,22 +325,22 @@ cannot see.
 from muscle memory built in Rust, where the receiver's float width decides, and `sin(v)` for
 one who never learned that convention and should not be forced into it.  A `self` method answers
 both ((F-Recv)), and an import list reaches it by name; `both`, which once was the only spelling
-an import list could find, therefore names nothing more and is deprecated (C123).
+an import list could find, therefore names nothing more and is deprecated (@C123).
 
 Before this was refused in both orders the free function simply went dead: `doit(p)` resolves
 the method key first, so `fn doit(self: Pt)` followed by `fn doit(p: Pt)` answered the method's
 value from both spellings with no diagnostic, and so did the opposite order.  Only a `both` method
 followed by the function was caught, because only `both` registers a bare-name dispatcher.
 
-Across SOURCES the rule is C97's: a library's plain function beside a STDLIB method of its name
+Across SOURCES the rule is @C97's: a library's plain function beside a STDLIB method of its name
 stays legal (the library is module-scoped, so the stdlib can grow) and is warned
 `shadowed-by-method`, because its bare name belongs to the stdlib; a program's function beside a
-stdlib method is this refusal (C95).  A generic template is keyed the same way, so
+stdlib method is this refusal (@C95).  A generic template is keyed the same way, so
 `fn pick<T>(self: vector<T>)` beside `fn pick<T>(v: vector<T>)` is refused too.
 
 *Anchors:* `Data::add_fn` (`src/data.rs`, `shadowed_method` / `shadowed_free`);
 `tests/scripts/a-method-and-a-function-of-one-name-on-one-type-are-refused.loft`;
-DESIGN_DECISIONS.md C123.
+DESIGN_DECISIONS.md @C123.
 
 ### A library's surface is its `pub` items, by either spelling
 
@@ -403,7 +403,7 @@ for its own item.
 parsed — `parse_var` (`src/parser/objects.rs`) for values, calls, literals and variants, and
 the type parser (`src/parser/definitions.rs`) for `L::Type` — beside `Data::exported`, which
 the glob import reads; `tests/scripts/a-qualified-name-reaches-only-what-a-library-publishes.loft`
-and `…-reaches-what-a-library-publishes.loft`; DESIGN_DECISIONS C97, C98.  A type named above
+and `…-reaches-what-a-library-publishes.loft`; DESIGN_DECISIONS @C97, @C98.  A type named above
 its declaration is a forward-reference stub, not an item: it travels with any import
 (`Data::passes_on`) and the declaration that adopts it decides its `pub` (the definition loop
 in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one file,

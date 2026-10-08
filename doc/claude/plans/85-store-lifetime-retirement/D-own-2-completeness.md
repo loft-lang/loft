@@ -55,9 +55,9 @@ fn choose(cond, x: Box) -> Box { r = x; if cond { r = Box{..}; } r }  // the JOI
   the caller's `returns_borrowed_view()` reads *true* → it treats the result as a
   borrow of `x` → never frees the owned copy.
 - **Root (exhaustively traced with `LOFT_TRACE_RR`):** a CROSS-PASS staleness.
-  Per C86, `r = x` COPIES (confirmed: mutating `r` doesn't touch `x`; native emits
+  Per @C86, `r = x` COPIES (confirmed: mutating `r` doesn't touch `x`; native emits
   `OpDatabase`+`OpCopyRecord`), so `r` OWNS its store and must not carry `x`.  The
-  C86 whole-value copy dep-strip is implemented for VECTORS (`classify_vec_bind` →
+  @C86 whole-value copy dep-strip is implemented for VECTORS (`classify_vec_bind` →
   `make_independent`, `parser/expressions.rs`) but there is NO struct equivalent —
   AND the var-copy strip is deliberately pass-2-only (to avoid the vector elm-var
   counter drift).  So in **pass 1** `r`'s dep is still `[x]`; `ref_return` pulls `x`
@@ -143,7 +143,7 @@ never freed on the loop-ran path. `collect_witness_vars` (generation/mod.rs)
 scopes it to `owned >= 1 && borrow >= 1` — 4 scripts trigger it, all genuine
 ownership-transition cases; interp is untouched (was already correct). Validated:
 dn2batch 6/6, guard `tests/scripts/85-runtime-join-loop-copy-view.loft`, full
-suite 2600/2600 + native_scripts + poison + native leak-check + C86 mutation.
+suite 2600/2600 + native_scripts + poison + native leak-check + @C86 mutation.
 
 ### Sweep of the transition class (commit a4bcad5b + probes)
 
@@ -174,7 +174,7 @@ the return-buffer machinery) — the deps-carried-join, unfuzzed axis, still ope
 
 Original root-cause below.
 
-Shape: `r = x (C86 copy);  for i { r = v[i] ?? x }` — a Reference local that starts
+Shape: `r = x (@C86 copy);  for i { r = v[i] ?? x }` — a Reference local that starts
 OWNED then is reassigned to a **view** each iteration. `ownership_of(v[i] ?? x)` =
 `Join{base=v}` (owned on neither arm). Native over-frees the borrowed views at BOTH
 free-sites: (1) the in-loop `owned_ref_reassign` displaced-free (`dispatch.rs`)

@@ -376,7 +376,7 @@ spelling; the code failed to convert at the boundary.
   test the record first, and the iteration scratch builders (a `hash`, `radix`, `index` or
   `trie` walk collects its records into a scratch before the iterate) answer `nullref` for
   an absent holder, so a `for` over a collection field reached through `nullref` iterates
-  nothing on every kind, as C80 asks.  Guard:
+  nothing on every kind, as @C80 asks.  Guard:
   `tests/scripts/1374-an-absent-pointer-leaves-its-slot-as-nullref.loft`.
   `Contract: settled` — the rule named the value's spelling; the reads did not mint it.
 

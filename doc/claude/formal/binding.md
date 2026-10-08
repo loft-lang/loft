@@ -22,7 +22,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > The model here is now also the one in [OWNERSHIP_MODEL.md § The law](../OWNERSHIP_MODEL.md) —
 > @PLN87 rewrote it to the bind-site-link framing (the old "`&` = reassignment write-back"
 > framing is gone). Design home: [OWNERSHIP_MODEL.md](../OWNERSHIP_MODEL.md),
-> [DESIGN_DECISIONS.md C77](../DESIGN_DECISIONS.md).
+> [DESIGN_DECISIONS.md @C77](../DESIGN_DECISIONS.md).
 > This doc is the **binding surface**; the `deps`/borrow *checker* (lifetimes) stays in
 > the deferred `ownership.md`.
 

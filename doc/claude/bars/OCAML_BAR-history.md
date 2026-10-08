@@ -43,7 +43,7 @@ false FAILs (A7, B5, C8, F2).
 | C6 exhaustiveness through nesting | PARTIAL | over a non-recursive nesting the hole IS refused, but named by its outer variant (*"not exhaustive — missing: W"*), not as `W { i: B }` |
 | C7 scalar-match hole diagnosed | FAIL | silent, both backends |
 | C8 head/tail pattern | PASS with `_` | slice patterns exist (`[]`, `[x, ..rest]`); `[]` + `[x, ..rest]` is not seen as total (*"a slice pattern can fail … add a '_ =>'"*). The probe's own `fn sum` collides with the reserved stdlib name |
-| D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index *by contract* (C80, @PLN102 D1): `v[0]` reads `T` non-null and faults to null at run time. Moving this bar reopens that decision; it is not an unregistered hole |
+| D1 generic return smuggles null | FAIL — a DECIDED edge | `formal/types.md` (N-Index) trusts a constant index *by contract* (@C80, @PLN102 D1): `v[0]` reads `T` non-null and faults to null at run time. Moving this bar reopens that decision; it is not an unregistered hole |
 | D2 empty-stub default | FAIL | silent `0.0`, both backends |
 | E1, E2 structural sharing | BLOCKED | on A5b (no recursive enum can be built); `memory_used()` does not exist — `store_memory()`'s record count is the instrument the corpus uses |
 | F1 missing combination named | PARTIAL | refused at compile time: *"no definition of `beats` takes (Hand, Hand) — declared: beats(Rock, Scissors), …"* — names the declared set, not the missing pair |
@@ -60,7 +60,7 @@ E blocked · F 0/2 + 1 partial.
 3. **loft#1579 — the cycle refusal's own cure does not work.** The real boundary is wider than recursion: ANY struct or variant field typed `reference<E>` over an ENUM refuses `&x` (*"Cannot assign ref(Shape)["c"] to field SH.s of type ref(Shape)["??"]"*), while a reference to a struct works everywhere and a LOCAL `reference<E>` works. So no recursive struct-enum is buildable the way the compiler suggests, which blocks A5, the recursive forms of C1 and C6, and tier E; the struct-wrapper above is the workaround.
 
 Two more surfaced while correcting the reference pages against these results: **loft#1580** —
-`==` on a `value struct` compares identity, not content (DESIGN_DECISIONS C91); **loft#1581** — a
+`==` on a `value struct` compares identity, not content (DESIGN_DECISIONS @C91); **loft#1581** — a
 concrete `!=` ignores a user-defined `OpEq`, so `a == b` and `a != b` are both true. Both
 `silent-wrong`.
 
@@ -71,7 +71,7 @@ concrete `!=` ignores a user-defined `OpEq`, so `a == b` and `a != b` are both t
 - **The expectation line cannot be `# bar: …`.** `#` opens a loft annotation (`#rust`, `#cwd`), not a comment. Use `// @BAR: pass` / `// @BAR: refuse "…"` / `// @BAR: measure …`, or reuse the corpus's `@EXPECT_ERROR:` and `@EXPECT_WARNING:` (C7's "a warning counts" is exactly `@EXPECT_WARNING`).
 - **A parse failure is a FAIL only when no current spelling expresses the capability.** Rewrite a probe into the existing spelling first (A7, B5, C8, F2 above) — the "syntax is a placeholder" rule cuts both ways.
 - **WONTFIX belongs in DESIGN_DECISIONS.md**, the declined-features register. COMPATIBILITY.md is the breaking-change policy; it is the right home only for the separate decision to make a tier a promise.
-- **Tier A's order is @PLN165's.** Arc C (several variables, a variable in any parameter — A1–A3, B6), arc D (generic structs and enums — A4–A6), arc E (`map`/`reduce` as library generics). Its STEPS.md already sequences them after the C110 → C126 revision; this file should track that plan, not set a second order.
+- **Tier A's order is @PLN165's.** Arc C (several variables, a variable in any parameter — A1–A3, B6), arc D (generic structs and enums — A4–A6), arc E (`map`/`reduce` as library generics). Its STEPS.md already sequences them after the @C110 → @C126 revision; this file should track that plan, not set a second order.
 - **Tier G needs no lifted copies.** Point each row at its `tests/docs/*.loft` file; a copy would be a second home for the same example.
 
 ## Per-entry statuses carried by OCAML_BAR.md until 2026-10-05
@@ -239,7 +239,7 @@ probe in it if it differs.
 
 ### D1_generic_return_cannot_smuggle_null
 
-Measured 2026-09-21: FAIL — a decided edge: (N-Index) trusts a constant index by contract (C80, @PLN102 D1).
+Measured 2026-09-21: FAIL — a decided edge: (N-Index) trusts a constant index by contract (@C80, @PLN102 D1).
 
 Documented 2026-09-21 (before measuring): **FAIL**. Acceptable fixes: (a) constant-index reads are
 typed `T?` like computed ones; (b) a returned expression whose static type is

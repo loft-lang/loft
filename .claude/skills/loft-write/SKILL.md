@@ -33,7 +33,7 @@ for the code as written, and a rewrite only as an API an `advice` names to users
 The parser **rejects** code that violates these rules.
 
 `OpXxx` definitions are the stdlib's operator table.  A user `fn Op…` still binds its
-operator today, but C132 retires that (loft#1833, DESIGN_DECISIONS_SYNTAX.md): give a user
+operator today, but @C132 retires that (loft#1833, DESIGN_DECISIONS_SYNTAX.md): give a user
 type named methods (`a.before(b)`, `v.plus(w)`) rather than new `fn Op…` definitions.
 
 ---
@@ -60,7 +60,7 @@ full-range `integer`.  Writing `long` or `10l` is a parse error
 `x as i32` etc.  Use plain `integer` for ordinary arithmetic — it has
 the full 64-bit range.
 
-**Uncomputable arithmetic → null, and the program KEEPS RUNNING** (C80, the
+**Uncomputable arithmetic → null, and the program KEEPS RUNNING** (@C80, the
 spreadsheet model): divide / modulo by zero, and integer overflow
 (`i64::MAX + 1`), are uncomputable, so they yield `null` and execution CONTINUES
 — no trap, no halt, identically in dev / test / production.  Any arithmetic
@@ -130,7 +130,7 @@ This is the same reachable-fault rule as `÷0` / out-of-bounds indexing (@PLN25
 `(N-Parse)`).  A *numeric* `as` (`3.14 as integer`, `x as u8`) is not a parse and does
 not add `?` on its own (a narrowing numeric cast that can miss uses `as u8?`).
 
-**A cast to a variant is non-null** (C131): `s as Circle` answers a `Circle`; on a miss its fields
+**A cast to a variant is non-null** (@C131): `s as Circle` answers a `Circle`; on a miss its fields
 are defaulted and it WARNS (`variant-cast-default`) unless checked first (`if s is Circle { … }`)
 or spelled `as Circle?` (null on a miss).  A miss the compiler can prove is an error.  Likewise
 `t as Color` (text → plain enum) answers the FIRST variant on a miss and warns
@@ -301,7 +301,7 @@ use arguments as args;               // library alias → `args::parse_args` (qu
 
 - **Multiple names MUST be parenthesised** — `use lib::a, b;` (flat comma list) is a
   hard error; write `use lib::(a, b);`.  (@PLN22 Phase 4.)
-- `use lib;` gives the `lib::` qualifier only (C98); `use lib::*;` brings every `pub` name in
+- `use lib;` gives the `lib::` qualifier only (@C98); `use lib::*;` brings every `pub` name in
   bare.  An import serves this file only; `pub use lib::*;` / `pub use lib::(a);` also passes
   the names on to whoever imports this file (a package entry offering its modules).
 - `use lib as m;` gives a qualifier alias only (`m::fn`); it does not wildcard-import.
@@ -517,7 +517,7 @@ fn find_min<T: Comparable>(v: vector<T>) -> T { ... }
 Structural satisfaction: if the methods exist, the type satisfies the interface.
 No `impl` block needed. Built-in types satisfy `Ordered`, `Equatable`, `Addable`,
 `Numeric`, `Scalable`, `Printable` automatically, and EVERY type — a struct, vector,
-tuple, enum — is `Equatable` (C91).
+tuple, enum — is `Equatable` (@C91).
 
 ---
 
@@ -545,7 +545,7 @@ b = exists(f);       // free function syntax
 **`both` is the retired spelling for this — do not write it.** It still resolves, and
 still gives both spellings, but it emits `both-receiver-deprecated`, which is a
 `warning`; a library's CI runs with `LOFT_DENY_WARNINGS=1`, so writing `both` turns a
-package's own gate red (C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILITY.md)).
+package's own gate red (@C123, [COMPATIBILITY.md](../../../doc/claude/COMPATIBILITY.md)).
 
 ---
 
@@ -582,7 +582,7 @@ flags & ~32                        // bitwise NOT — clears bit 5
 
 **`==` / `!=` compare CONTENT for every type** — structs, vectors, tuples, struct-enum
 values, keyed collections, recursively through fields and `reference<T>`, cycles
-included (DESIGN_DECISIONS_VALUES.md § C91).  Two separately built records with equal
+included (DESIGN_DECISIONS_VALUES.md § @C91).  Two separately built records with equal
 fields are `==`; `[P{x:1}] == [P{x:1}]` is `true`.  To ask whether two names are ONE
 record, write `&a == &b` — `&` on both sides; on one side only it is a compile error.
 There is no `===`.  Keyed collections hash and compare keys the way `==` does (`0.0`
@@ -788,7 +788,7 @@ emit = fn(x: integer, y: integer) { total += x + y; };
 emit(1, 2);
 ```
 
-**Type annotations on `|x|` shorthand are rejected by design** (C62,
+**Type annotations on `|x|` shorthand are rejected by design** (@C62,
 DESIGN_DECISIONS_SYNTAX.md) — when you need types, write `fn(name: <type>) { ... }`.
 
 ---
@@ -902,7 +902,7 @@ width (`f += (n as i32)`).
 it plainly; write `vector<T>?` only when null must be distinct from empty.
 
 **Never capture a vector into a local in order to write through it.**  A
-whole-value bind COPIES the heap value (C86), so every write lands in the
+whole-value bind COPIES the heap value (@C86), so every write lands in the
 copy and is silently lost — indexed writes, whole-element assigns and
 appends alike:
 

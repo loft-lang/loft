@@ -28,7 +28,7 @@ that) — so it closes.**
 - **⏸ S8 (MSan) — deferred** (needs a fully-instrumented dep closure; low marginal
   value over Miri + the debug-asserts gate).  Meets the exit criterion (deferred
   with a one-line reason).
-- **⏭ S9 (mixed-boundary C71 cdylib ASan) — SPUN OUT (toolchain-blocked).**  The
+- **⏭ S9 (mixed-boundary @C71 cdylib ASan) — SPUN OUT (toolchain-blocked).**  The
   ASan-injection mechanism landed (`build_shared_cdylib` + the `LOFT_NATIVE_ASAN`
   gate); end-to-end is blocked on the **curve25519-proc-macro `E0463`** in the
   cross-target ASan cdylib build (the host proc-macro is not on the target `-L`) —
@@ -36,7 +36,7 @@ that) — so it closes.**
   in [NATIVE_ASAN_DESIGN.md](NATIVE_ASAN_DESIGN.md) § S9) is unvalidated.  It was
   routed in from [@PLN11](../11-data-as-store/README.md) N5 (the mixed-boundary
   soundness A-leg); re-open it there or as its own focused plan when the `E0463`
-  block is cleared.  The C71 cross-boundary surface stays sanitizer-uncovered until
+  block is cleared.  The @C71 cross-boundary surface stays sanitizer-uncovered until
   then (documented gap, not silent).
 
 The finishing PR closes the tracker issue (`Closes @PLN54`).
@@ -74,7 +74,7 @@ The finishing PR closes the tracker issue (`Closes @PLN54`).
   ASan tolerates the uninstrumented libloft (no `-Zbuild-std`). See
   [NATIVE_ASAN_DESIGN.md](NATIVE_ASAN_DESIGN.md).
 - **S9 (cdylib mixed-boundary ASan) — mechanism landed; NO validated design yet.** The
-  C71 path (an interpreted script sharing its `*mut Stores` with a compiled cdylib
+  @C71 path (an interpreted script sharing its `*mut Stores` with a compiled cdylib
   by raw pointer) is the one cross-boundary surface no in-process sanitizer sees.
   Cdylib injection shares S6's `LOFT_NATIVE_ASAN` gate; blocked on the
   curve25519-proc-macro `E0463` in the cross-target ASan cdylib build. The obvious
@@ -164,7 +164,7 @@ S9's deep analysis is in [NATIVE_ASAN_DESIGN.md](NATIVE_ASAN_DESIGN.md).
 | **S6** | **Native-backend ASan** — instrument the `--native` codegen runtime under ASan (currently ASan instruments only the in-process interpreter; the `--native` path is uninstrumented).  **✅ DONE 2026-07-09: `LOFT_NATIVE_ASAN=1` → `-Zsanitizer=address` on the generated binary; nightly `native-asan` job; 14/14 curated corpus clean + positive control fires; ASan tolerates the uninstrumented libloft (no -Zbuild-std). See NATIVE_ASAN_DESIGN.md.** | At least one native-mode test corpus passes under ASan; any findings catalogued or fixed. | ✅ Done |
 | **S7** | **Failure→issue notifier for the nightly** — a CI job that opens/updates a deduped GitHub issue when the nightly fails, reading per-*job* conclusions (not the overall run status, which `continue-on-error` holds green even when matrix legs are red). | Nightly failure automatically surfaces as a tracked GitHub issue within 24 h of the failing run.  **✅ DONE 2026-07-09: `notify` job — per-JOB conclusions, deduped open/update/close; jq logic validated locally.** | ✅ Done |
 | **S8** | **MSan (MemorySanitizer) corpus-wide** — uninitialised-read detection beyond what Miri covers.  Painful setup (needs a fully instrumented std); lower priority. | MSan job passes the interpreter subset or deferred with a one-line setup-cost note. | Low |
-| **S9** | **Mixed-boundary (C71) cdylib ASan** — instrument the auto-built native-library cdylib *and* the interpreter host under ASan together, covering the [@PLN11](../11-data-as-store/README.md) C71 mixed path: an interpreted script shares its `*mut Stores` with a compiled library cdylib by **raw pointer** (zero-marshalling) — the one cross-boundary surface no current sanitizer sees (ASan = interpreter targets only; the `stack_align_guard` sweep can't see spawned binaries; Miri can't `dlopen` a cdylib).  Propagate `-Zsanitizer=address` into `build_shared_cdylib` when the host is ASan-instrumented, + a nightly job.  **Routed in from @PLN11 N5** (mixed-boundary soundness — the D + E legs landed there, this A leg was tooling-blocked).  Shares the ASan-on-a-generated-build mechanism with **S6**.  **Mechanism landed (build_shared_cdylib ASan injection, LOFT_NATIVE_ASAN gate); end-to-end BLOCKED on the curve25519-proc-macro E0463 in the cross-target ASan cdylib build (host proc-macro not on the target -L); fix + CI-job design in NATIVE_ASAN_DESIGN.md.** | the interp-script + native-lib mixed corpus (the `tests/n3_parity.rs` shapes) passes under ASan; a cross-boundary UAF/OOB on the shared store is caught, not silent. | Mechanism✅ blocked |
+| **S9** | **Mixed-boundary (@C71) cdylib ASan** — instrument the auto-built native-library cdylib *and* the interpreter host under ASan together, covering the [@PLN11](../11-data-as-store/README.md) @C71 mixed path: an interpreted script shares its `*mut Stores` with a compiled library cdylib by **raw pointer** (zero-marshalling) — the one cross-boundary surface no current sanitizer sees (ASan = interpreter targets only; the `stack_align_guard` sweep can't see spawned binaries; Miri can't `dlopen` a cdylib).  Propagate `-Zsanitizer=address` into `build_shared_cdylib` when the host is ASan-instrumented, + a nightly job.  **Routed in from @PLN11 N5** (mixed-boundary soundness — the D + E legs landed there, this A leg was tooling-blocked).  Shares the ASan-on-a-generated-build mechanism with **S6**.  **Mechanism landed (build_shared_cdylib ASan injection, LOFT_NATIVE_ASAN gate); end-to-end BLOCKED on the curve25519-proc-macro E0463 in the cross-target ASan cdylib build (host proc-macro not on the target -L); fix + CI-job design in NATIVE_ASAN_DESIGN.md.** | the interp-script + native-lib mixed corpus (the `tests/n3_parity.rs` shapes) passes under ASan; a cross-boundary UAF/OOB on the shared store is caught, not silent. | Mechanism✅ blocked |
 
 ## Concrete steps to finish
 
@@ -271,7 +271,7 @@ Opt-in, off by default.
   (verbosity banner); **green-drive 14/14 curated store-heavy scripts** (incl. the
   `131`/`132` UAF regression scripts) ASan-clean; positive control (raw-pointer
   OOB) fires. CI: the nightly `native-asan` job in `miri.yml`.
-- **S9 (C71 cdylib mixed-boundary) — mechanism landed; end-to-end BLOCKED.**
+- **S9 (@C71 cdylib mixed-boundary) — mechanism landed; end-to-end BLOCKED.**
   Injection into `native_lib::build_shared_cdylib` (same `LOFT_NATIVE_ASAN` gate).
   Architecture validated (an ASan loft binary — 870 `__asan` symbols — drives the
   `datalib` mixed path up to the cdylib build), but the ASan cdylib build fails

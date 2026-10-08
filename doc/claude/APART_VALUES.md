@@ -51,14 +51,14 @@ step is carried out; the specification is the program read through the formal ru
 compiler may realise it any way that answers the same.  An optimising C or Rust compiler works
 under the same "as if" freedom, but it has to reconstruct facts loft states outright: the type
 of every value and its layout, which stores can never alias (`(R-Alias)`), every owner and every
-lifetime (the scope pass), and — in a release build — the whole program as one unit (C122).
+lifetime (the scope pass), and — in a release build — the whole program as one unit (@C122).
 What LLVM must prove by escape analysis, loft already knows, so it can choose representations
 LLVM never dares to.  That freedom depends on loft having no construct that observes
-representation (C135): the two places it is observable, a package's native code and a store
+representation (@C135): the two places it is observable, a package's native code and a store
 bound to a file, are exactly where an apart value must already be a store value.
 
-**Where it sits.**  It is an instance of `(R-Escape)` (C122): the contract is what a program
-computes and observes, never where a value lives.  It does not revisit C125: `(O-One-Kind)`
+**Where it sits.**  It is an instance of `(R-Escape)` (@C122): the contract is what a program
+computes and observes, never where a value lives.  It does not revisit @C125: `(O-One-Kind)`
 governs every value that reaches loft's heap as a `DbRef` naming a store, and an apart value
 never gets one.  `(R-ValueRecord)`'s tuple in registers is the existing instance; this note
 extends the same idea to values that own a collection.
@@ -176,7 +176,7 @@ The list below is only the ORDER, set by measured payoff — the classes over th
 ## Which representations are allowed
 
 Any representation loft itself cannot express — on the stack, on Rust's heap, in registers — as
-long as the boundaries above hold: it is never observable by a program (C135), it meets the
+long as the boundaries above hold: it is never observable by a program (@C135), it meets the
 store only through the ordinary constructors at a boundary, and every allowed use answers what
 the store path answers.  A stack array is one instance, not the rule; a Rust `Vec` or `String`
 allocated outside the stores is equally admissible (owner).  The choice per value is the

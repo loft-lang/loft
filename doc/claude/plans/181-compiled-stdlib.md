@@ -19,7 +19,7 @@ follows is the record.
 ## Goal
 
 An interpreted program calls the standard library's COMPILED loft bodies, exactly as it
-already calls a `use`d library's (C71, "libraries compile, scripts interpret"), without
+already calls a `use`d library's (@C71, "libraries compile, scripts interpret"), without
 rustc on the user's machine.  Then the hand-written Rust kernels
 ([KERNELS.md](../KERNELS.md)) are replaced by their loft bodies, as the owner directed: every
 kernel is a stop-gap, and a Rust routine is replaced by loft as soon as that is viable.
@@ -27,7 +27,7 @@ kernel is a stop-gap, and a Rust routine is replaced by loft as soon as that is 
 ## Why
 
 A kernel fixes one name with hand-written Rust.  Loft compiles through rustc, so its own code
-can be as fast; the only gap is the interpreter, and C71 already closes that gap for every
+can be as fast; the only gap is the interpreter, and @C71 already closes that gap for every
 library except the standard library.  Measured in P0: `split`'s own loft body, compiled and
 called from the interpreter, runs within 1.4× of the `split` kernel (the retirement bar is 2×);
 interpreted, it is 21× slower.

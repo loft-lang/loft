@@ -141,7 +141,7 @@ null, and the first thing the program then does with it is add to it.  Requiring
 distinction the insert cannot even observe.  The type of `c` is unchanged
 by the append (still `<kind><…>?`); what changes is the value it holds.  Measured on both
 backends before it was ruled (`n: vector<It>? = null; n += [It{…}]; len(n) == 1`), and the
-refusal alternative is declined in [DESIGN_DECISIONS.md C118](../DESIGN_DECISIONS.md).
+refusal alternative is declined in [DESIGN_DECISIONS.md @C118](../DESIGN_DECISIONS.md).
 
 **What `Col-Insert`'s source may BE, and what it may not.** The rule is written over one
 spelling, `c += [ rec, … ]`, and three source shapes satisfy it: the collection ITSELF (for a
@@ -201,7 +201,7 @@ under 9, left `c[5]` untouched, and the move spelling above DELETED the record �
 landing at a place other than the one it names, which no rule admits.  `(Col-Lookup)` makes
 `c[k]` the record whose key is `k`, and an assignment to a place must leave that place reading
 the value written, as `v[i] = x` does.  A refusal was not available: a mismatch depends on
-values, so it cannot be judged from the line, and C80 rules out a runtime error.  Re-keying
+values, so it cannot be judged from the line, and @C80 rules out a runtime error.  Re-keying
 the COPY re-keys nothing that exists, so this does not collide with `(B-Ref-Reshape)`, which
 refuses re-keying a LIVE element (`e = &c[30]; e.key = 5`).  A value that lives inside the
 collection (`c[5] = c[30]`, `c[30] = c[30]`) is read before the collection moves under it.

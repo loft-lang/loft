@@ -186,7 +186,7 @@ last read.  The three parts are the three ways it could be wrong: the source dyi
 the frame (a dangling view), a site that writes or keeps the field (a lost write, a copy
 the caller expected), and a disturbance between the call and the read (a stale view).
 Every part declines to the copy the code emits today, which is the direction
-`(O-Move)` already points.  Admitted under C122: the contract is
+`(O-Move)` already points.  Admitted under @C122: the contract is
 semantics, not representation, so a returned view needs only its conditions; the library
 API is the boundary, and a construction that does not escape it may be rewritten freely.
 
@@ -255,7 +255,7 @@ error the user fixes — it is a miscompile or a leak. So the failure mode to fe
 
 The single carve-out is not in this doc's rules at all, and stays that way: where NO correct
 lowering exists — an explicit `&` reference whose place the program then destroys — the
-*binding surface* declines the program ([binding.md](binding.md) B-Ref-Reshape, C79 revisited). That is a decision about what `&` MEANS, not a lifetime the checker failed to
+*binding surface* declines the program ([binding.md](binding.md) B-Ref-Reshape, @C79 revisited). That is a decision about what `&` MEANS, not a lifetime the checker failed to
 prove, so it changes nothing here: these rules still never reject, and the deps fact is still
 computed for every binding on every path. A program this doc's rules would have handled fine is
 never refused.
@@ -573,7 +573,7 @@ shape that `f=Owned ⇒ owns'(var)=var`, and that a non-`Owned` `f` authorizes n
   owns a fresh store — `owns'(var)=var`. NARROW by construction: it fires ONLY for a bare `Var` RHS,
   never a projection (a `OpGet*` view stays `Borrowed(root)` per (b)), so no borrowing view is
   manufactured `Owned` — the property that keeps the A1b returned-view catch intact. ∎ *(independent —
-  rests on O-Owner + the C86 copy-materialisation, like (c)'s `Owned` sub-case)*
+  rests on O-Owner + the @C86 copy-materialisation, like (c)'s `Owned` sub-case)*
 - **(d) non-native call `var = f(args)` → `call_own`.** `f=Owned` only when the callee
   `return_ownership` is `Owned` = *returns a fresh store* (**O-Move**), so `owns'(var)=var`; a
   `Borrowed(argᵢ)` return authorizes no free. Sound by induction over the call graph — the callee

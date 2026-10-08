@@ -78,7 +78,7 @@ error: Unknown field text.method_from_the_future               (rc=1)
 ```
 
 The class this whole plan exists to kill is the **silent** one — old code that still
-compiles and runs but now does the *wrong* thing (C86 plain-bind copy → `hex_terrain`'s
+compiles and runs but now does the *wrong* thing (@C86 plain-bind copy → `hex_terrain`'s
 `0 land cells`). That is precisely the *breaking-change* class, and a monotone
 breaking-change integer is exactly the axis that captures it. The loud class is already
 safe without any version bound. So minor/patch buys nothing here: **collapse semver to
@@ -95,7 +95,7 @@ A library declares `contract = K` (or a range). Let `E` be loft's current contra
 | `E > K` | loft made ≥1 silent break since K; the library may misbehave | **warn** via the deprecation channel (arc C) — "tested against contract K; loft is at E; republish" |
 
 A bare `contract = K` means **"tested at epoch K"** and warns on a newer loft — the
-*honest* default, because forward-compatibility is exactly the thing C86 silently
+*honest* default, because forward-compatibility is exactly the thing @C86 silently
 assumed and broke. An author who has re-tested widens to a range (`">=K"`, or
 `">=K, <=E"`) to assert forward-coverage and clear the warning. This puts the cost of
 change on the maker (republish/re-test), never silently on the consumer — the GOALS.md
@@ -109,7 +109,7 @@ B split: the mechanism already shipped; B-semantic only points it at the right a
 
 1. **Maintainer forgets to bump `contract` on a silent break.** THE real brittleness:
    the integer is only as honest as the discipline that increments it, and a semantic
-   break (C86-shaped) changes no hash and throws no error, so nothing *automatically*
+   break (@C86-shaped) changes no hash and throws no error, so nothing *automatically*
    catches the omission. Mitigation, and the tie to the other arcs:
    - The @PLN97 **layout-identity hash** already detects store/heap-layout breaks
      mechanically → a CI gate "layout hash changed ⇒ contract must bump" makes omission
@@ -206,7 +206,7 @@ Both ratified by the owner:
   pivot) and open question 2.
 - [../97-layout-contract/](../97-layout-contract/) — the layout-identity hash; the
   automatic detector for the store surface (failure path 1) and the answer to open Q1.
-- [../../DESIGN_DECISIONS.md § C86](../../DESIGN_DECISIONS.md) — the plain-bind copy: the
+- [../../DESIGN_DECISIONS.md § @C86](../../DESIGN_DECISIONS.md) — the plain-bind copy: the
   archetypal *silent* break this axis exists to make declarable.
 - [../../GOALS.md](../../GOALS.md) — Goal F (warnings are the only channel that may bill
   the programmer) governs the `E > K` warn; the AS/400 standard (cost of change paid by

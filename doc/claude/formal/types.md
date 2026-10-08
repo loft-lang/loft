@@ -225,7 +225,7 @@ the UB class**: a slot of type `τ` never holds a non-`τ` value — it either f
 op is non-null) or it's `null` (and `(N-Store)` forces you to discharge it). We do **not**
 fake non-null on an op that can miss.
 
-> **The one decided exception — overflow arithmetic ([C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
+> **The one decided exception — overflow arithmetic ([@C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).**
 > `a+b` / `a*b` / `a-b` stay typed **non-null `integer`** (forcing `integer?` on every
 > arithmetic op would poison the common path to guard a fault that essentially never fires),
 > yet on overflow they write the reserved `i64::MIN` sentinel into that non-null slot — which
@@ -357,7 +357,7 @@ empty, a record to itself with every field defaulted. Two things genuinely have 
 for those `x?` does not compile — you must say what you mean with `??` or `match`.
 
 **The partiality is a TYPE rule, not a runtime one.** This is what keeps `x?` consistent with
-"no *runtime* errors, ever" ([C80](../DESIGN_DECISIONS.md)): `x?` never fails at run time
+"no *runtime* errors, ever" ([@C80](../DESIGN_DECISIONS.md)): `x?` never fails at run time
 because the cases where no default exists are rejected at *compile* time. `has_default` is a
 static well-definedness condition on the operator, in the same family as `(N-Cast)`'s
 provable-fit requirement — not a check that can fire on a value.
@@ -413,7 +413,7 @@ q?                        // P{x:0, y:0}
 ### Null-flow — the general laws, across EVERY type (@PLN102, 2026-07-11)
 
 The `(N-*)` rules are stated on `τ` and hold for **every** type, not just `integer`. The null
-model is ONE model: each type reserves exactly one null ([C90](../DESIGN_DECISIONS.md); table
+model is ONE model: each type reserves exactly one null ([@C90](../DESIGN_DECISIONS.md); table
 below), and four general laws govern how a null is *produced*, *propagated*, *asserted away*,
 and *stored*. They are checked **throughout the stack** by a cross-type conformance matrix
 (each type × each law, both backends), so a gap in any one type is a caught deviation, not a
@@ -560,25 +560,25 @@ old auto-`τ?` reading. Design record:
 ```
 
 **Per-type null + store verdict** — the verdict follows the *representability* test, not
-per-type taste ([C90](../DESIGN_DECISIONS.md) fixes the reserved value):
+per-type taste ([@C90](../DESIGN_DECISIONS.md) fixes the reserved value):
 
 | τ | reserved null | distinct in the NON-null form? | `τ?` → `τ` store |
 |---|---|---|---|
 | `integer` (i64) | `i64::MIN` — reserved even non-null (`[MIN+1, MAX]`) | yes | **warn** |
 | `float` / `single` | `NaN` | yes (`NaN` ≠ any real) | **warn** |
-| `boolean` | `255` (three-state, C73) | yes (non-null = 0 / 1) | **warn** |
+| `boolean` | `255` (three-state, @C73) | yes (non-null = 0 / 1) | **warn** |
 | `character` | codepoint `0` / NUL — reserved even non-null (`0 as character` reads null) | yes | **warn** |
 | `text` | out-of-band (heap) | yes | **warn** |
 | reference | out-of-band `nullref` | yes | **warn** |
 | struct in `vector` | tagged `__nullable<S>` | yes | **warn** |
 | narrow `u8`/`i8`/`u16`/`i16`/`i32`/`u32` | top width value — reserved ONLY in the `τ?` form | **no** — non-null uses the full width (`255` is a real `u8`) | **error** |
-| narrow `limit(lo, hi) size(n)` — a range with codes to spare | top width value — reserved ONLY in the `τ?` form, exactly as above | **no** — a spare code is not a reserved one (C127) | **error** |
+| narrow `limit(lo, hi) size(n)` — a range with codes to spare | top width value — reserved ONLY in the `τ?` form, exactly as above | **no** — a spare code is not a reserved one (@C127) | **error** |
 | `u32` — `limit(0, 4294967294) size(4)`, a reserved TOP code | top width value, in the `τ?` form | **no** — the reserved code buys the refusal of `4294967295`, not a null: an overflow reads `0` | **error** |
 
 The narrow widths are the **sole error case**: they are the only types whose non-null form
-spends the whole width on real values (C90 gives them a sentinel only in `τ?`, to keep the
+spends the whole width on real values (@C90 gives them a sentinel only in `τ?`, to keep the
 range full), so a null cannot sit in a non-null narrow slot. Every other type reserves its
-null distinctly even non-null — the C85 in-band-sentinel property — so a stored null is
+null distinctly even non-null — the @C85 in-band-sentinel property — so a stored null is
 observable and a warning suffices. (Composite `τ?` — tuples, multi-field aggregates — inherits
 its elements' out-of-band tags and warns; per-element vs whole-tuple nullability is an open
 gap, see [../plans/102-stability-contract/formal-audit.md](../plans/102-stability-contract/formal-audit.md).)
@@ -650,9 +650,9 @@ library used as intended) needs **none**, the bar Rust's `usize`-index `as`-tax 
 construction and loft holds by having **one integer type, no special index type**. It is the
 *right* moment to ask intent (you are in the editor, choosing to drop bits), not the wrong one
 (runtime, or the common path). And it coexists with the spreadsheet model: a narrowing that
-overflows *at runtime* yields **null and keeps running** (operational.md `E-Uncomp`, C80) —
+overflows *at runtime* yields **null and keeps running** (operational.md `E-Uncomp`, @C80) —
 `as` is compile-time intent, null is runtime keep-going. See
-[GOALS.md § the wrong moment](../GOALS.md) and [DESIGN_DECISIONS.md C79/C80](../DESIGN_DECISIONS.md).
+[GOALS.md § the wrong moment](../GOALS.md) and [DESIGN_DECISIONS.md @C79/@C80](../DESIGN_DECISIONS.md).
 
 ### Coercion closure
 

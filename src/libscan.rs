@@ -30,7 +30,7 @@
 ///
 ///   * `std` — the standard library. `std::name` is the stdlib's qualified form
 ///     and the escape hatch when a bare name is shadowed (by a user definition
-///     or a `use lib::*` import — see @C97/C98). It is already bound in `data.rs`
+///     or a `use lib::*` import — see @C97/@C98). It is already bound in `data.rs`
 ///     (`use_names["std"] = STD_SOURCE`), so a `std` library could never override
 ///     it — reserving the *name* keeps it from being claimed or confused.
 ///   * `core` — held for a possible future stdlib-core split (cf. Rust). Free to

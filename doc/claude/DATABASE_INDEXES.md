@@ -216,7 +216,7 @@ apart, say so in the TYPES, where the reader can see it.
 Every combination of kinds is a valid group
 except **two `index` members with the same key**, which is refused where it is declared: an index keeps its tree links in a
 field of the element record, so a second one has nowhere to put them (loft#902, and
-[DESIGN_DECISIONS.md § C113](DESIGN_DECISIONS.md) for why it is refused rather than
+[DESIGN_DECISIONS.md § @C113](DESIGN_DECISIONS.md) for why it is refused rather than
 given its own storage). **The records belong to exactly one member.** `types.rs` decides which when it
 builds the group: the first-declared member is the PRIMARY, and every later one gets a
 leading `u16::MAX` on its `other_indexes` marking it a VIEW. That marker is the only place

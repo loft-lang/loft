@@ -451,7 +451,7 @@ Lua: `actions[name](e)`, `_G["on_" .. event]`, `obj[method]()`.
 Documented state: fn-refs are first-class (@F23); a keyed collection may hold non-capturing
 lambdas only (`26-closures.html`); `type_named("Row")` looks a type up by runtime name (@F107);
 no function-by-name lookup is documented; variadic functions are a recorded non-goal
-(DESIGN_DECISIONS C100, TUPLES.md).
+(DESIGN_DECISIONS @C100, TUPLES.md).
 
 ### LC1_action_table_of_fn_refs (regression floor)
 
@@ -536,7 +536,7 @@ Documented 2026-09-21 (before measuring): UNKNOWN (no such lookup documented).
 
 ### LC4_no_variadics_is_recorded (WONTFIX, pinned)
 
-DESIGN_DECISIONS C100: loft has no variadic functions; the format string is the single
+DESIGN_DECISIONS @C100: loft has no variadic functions; the format string is the single
 string-building tool. This probe pins that the refusal is a diagnostic, not a parse crash, and
 that it names the alternative.
 

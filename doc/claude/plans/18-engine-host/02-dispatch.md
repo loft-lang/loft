@@ -48,7 +48,7 @@
 > - The native-baseline build itself (entry checks + the interp bootstrap
 >   sharing the program's Stores + result retrieval for value-returning
 >   fns) is **08 scenario S2's build** — one home, gated there; 02's own
->   scope (the interpreter-target dispatch, C71 minimal, on the running
+>   scope (the interpreter-target dispatch, @C71 minimal, on the running
 >   demo) is fully shipped: live reload + reenter + the frame contract.
 > - The 6b wire-up shipped: `launch_game` sets `LOFT_LIVE_RELOAD=1` (opt
 >   out with `=0`) — every IDE-launched game is live-editable; the child's

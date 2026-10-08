@@ -524,7 +524,7 @@ do not reach for one as the way in.
 
 - [GOALS.md](GOALS.md) Goal E — the destination this method walks toward;
   § "Stability trumps features" governs what to do when a sweep finding is
-  better closed by rejection than by consolidation (→ C74/C75 precedents).
+  better closed by rejection than by consolidation (→ @C74/@C75 precedents).
 - The **engineering-rigor skill** — supplies the per-finding instruments
   (boundary matrix, usage sentinel, falsification probes).
 - [DESIGN_PROTOCOL.md](DESIGN_PROTOCOL.md) — pass 2's moves are designs;
