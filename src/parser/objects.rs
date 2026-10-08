@@ -3157,34 +3157,6 @@ impl Parser {
         vec_type
     }
 
-    /// `@FR-F-FaultSafe` — does an interpolation hole of this type render through a renderer
-    /// that takes its fault's cause back and annotates its null with it?  The integer, float,
-    /// single, text and boolean renderers and the record walker (a record, a collection, an
-    /// enum) do, on both backends (loft#1939).  A CHARACTER renders a null as nothing
-    /// (`@FR-F-Render`), so it is never armed, and neither is a record whose own `to_text`
-    /// renders it: user code runs there, and its own holes would take the cause.
-    fn hole_takes_fault_cause(&self, tp: &Type) -> bool {
-        match tp.peel_link() {
-            Type::Integer(_)
-            | Type::Float
-            | Type::Single
-            | Type::Text(_)
-            | Type::Boolean
-            | Type::Vector(_, _)
-            | Type::Enum(_, _, _) => true,
-            Type::Reference(d, _) => {
-                let def = self.data.def(*d);
-                !def.name().starts_with("__tuple<")
-                    && !self.data.is_type_var_placeholder(*d)
-                    && self
-                        .data
-                        .def_nr(&crate::data::Data::mangle_method(def.name(), "to_text"))
-                        == u32::MAX
-            }
-            _ => false,
-        }
-    }
-
     // @F35 — string literals ({expr} interpolation + backtick multiline)
     //
     // @PLN124 — `target` is the struct this string BUILDS (from
@@ -3228,42 +3200,12 @@ impl Parser {
                 self.expression(&mut format)
             };
             self.in_format_expr = saved_in_fmt;
-            // Plan-07 phase 4e.1 — format strings are the user's
-            // observability surface and must NEVER halt, log, or warn
-            // (per C66 + DESIGN_DECISIONS 2026-05-11).  Walk the
-            // interpolated expression tree and swap every fault-prone
-            // op to its Nullable peer so `println("{a / b}")` /
-            // `println("{user.name}")` / `println("{v[i]}")` always
-            // render the silent sentinel ("null") instead of taking
-            // out the print statement that the developer is using to
-            // diagnose the problem in the first place.
-            //
-            // Phase 4e.3 — when the OUTERMOST swapped op is
-            // fault-prone (div / mod / vector-index / text-index),
-            // append an `OpTagFault(kind)` SIBLING statement to the
-            // statement list BEFORE the format-conversion op so the
-            // conversion op sees the tag and renders `null(<reason>)`
-            // instead of bare `null` on the null sentinel.  Inner
-            // faults (`"{a + v[i] / b}"`) get their Nullable peer
-            // swap from the recursion but do NOT tag — there's no
-            // renderer to consume their tag in mid-expression.
-            let outer_fault_kind = if self.first_pass {
-                None
-            } else {
-                Self::rewrite_subtree_to_nullable_kind(&mut format, &self.data)
-            };
-            // `@FR-F-FaultSafe` — a hole renders ITS OWN cause, so a hole is armed only when its
-            // renderer TAKES the cause back (`ops::take_format_fault`) — `hole_takes_fault_cause`.
-            // Arming one whose renderer never takes it left the cause recorded and ARMED until
-            // the next renderer that does took it: `{z / z}` followed by `{ni()}` printed `null`
-            // then `null(/0)` (loft#1920).
-            if let Some(kind) = outer_fault_kind
-                && target == u32::MAX
-                && self.hole_takes_fault_cause(&tp)
-                && self.data.def_nr("OpTagFault") != u32::MAX
-            {
-                let tag_call = self.cl("OpTagFault", &[Value::Int(i32::from(kind))]);
-                list.push(tag_call);
+            // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
+            // hole is swapped to its silent nullable peer (C66), so `"{a / b}"`, `"{v[i]}"`
+            // and `"{user.name}"` yield the null VALUE and the hole renders it as a plain
+            // `null`, never the fault's cause.
+            if !self.first_pass {
+                Self::rewrite_subtree_to_nullable(&mut format, &self.data);
             }
             self.un_ref(&mut tp, &mut format);
             // @P376 — the format expression resolved to `Unknown`: a directly

@@ -4740,3 +4740,19 @@ three options: views where the compiler proves confinement, a view as a run-time
 field copied on escape, or no views and the levers that need no decision (≈ 5.5×).  The owner:
 *"In the optimizations everything is possible as long as the semantics of the original program
 is kept.  So giving a view with operations per character is fine."*
+
+## C142 — A null inside a `{…}` hole renders plain `null`, never the reason it is null
+
+Decided 2026-10-08 by the owner: *"I do not want to see the reason of null in {} expressions"*.
+Since plan-07 phase 4e.3 (2026-05-11) a hole whose own fault-prone operation faulted rendered
+`null(/0)`, `null(%0)` or `null(oob)`, and `(F-FaultSafe)` stated it as a rule.  Keeping that
+true took a parse-time arm (`OpTagFault`), a per-thread cause every fault-prone nullable peer
+wrote, and a renderer per type that took it back — and four fixes in five months, each where
+the cause was shown, lost or worn by the wrong hole: loft#1169 (a null that only passed through
+an op wore its cause), loft#1478 (a cause only under a dividing operator), loft#1920 (a cause
+left armed for the next hole) and loft#1939 (only integer holes showed one; the day before this
+decision).  The @PLN102 formal audit had already listed the suffix as an open question —
+*"Format-null render is syntactic: `c=a/b; "{c}"` → `null` but `"{a/b}"` → `null(/0)` … Carry
+the tag on the value or drop it — don't freeze the syntactic split"* — and the owner dropped it.
+The fault-to-null semantics were not in question and did not change; neither did the silent
+nullable rewrite of a hole (C66).

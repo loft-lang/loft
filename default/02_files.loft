@@ -1251,7 +1251,7 @@ fn OpTextEndJump(src: const u16, arg: const u8, idx: const u16, step: const i32)
 fn OpVecGetInt(vec: const u16, size: const u16, idx: const u16, fld: const u16) -> integer;
 #rust"{{ let r = s.get_var::<DbRef>(@vec); let i = s.get_var::<i64>(@idx); let db = s.vec_get_or_raise(&r, u32::from(@size), i); if db.rec == 0 {{ i64::MIN }} else {{ s.database.store(&db).get_int(db.rec, db.pos + u32::from(@fld)) }} }}"
 fn OpVecGetIntNullable(vec: const u16, size: const u16, idx: const u16, fld: const u16) -> integer;
-#rust"{{ let r = s.get_var::<DbRef>(@vec); let i = s.get_var::<i64>(@idx); let db = vector::get_vector(&r, u32::from(@size), i, &s.database.allocations); ops::note_format_fault(3, db.rec == 0 && i != i64::MIN && !r.is_null()); if db.rec == 0 {{ i64::MIN }} else {{ s.database.store(&db).get_int(db.rec, db.pos + u32::from(@fld)) }} }}"
+#rust"{{ let r = s.get_var::<DbRef>(@vec); let i = s.get_var::<i64>(@idx); let db = vector::get_vector(&r, u32::from(@size), i, &s.database.allocations); if db.rec == 0 {{ i64::MIN }} else {{ s.database.store(&db).get_int(db.rec, db.pos + u32::from(@fld)) }} }}"
 fn OpVecSetInt(vec: const u16, size: const u16, idx: const u16, fld: const u16, val: integer);
 #rust"{{ let v = @val; let r = s.get_var::<DbRef>(@vec); let i = s.get_var::<i64>(@idx); let db = s.vec_get_or_raise(&r, u32::from(@size), i); if db.rec != 0 {{ s.database.store_mut(&db).set_int(db.rec, db.pos + u32::from(@fld), v); }} }}"
 // The end test of `for x in v`: jump unless `len(v) <= index`, as the unfused test plus

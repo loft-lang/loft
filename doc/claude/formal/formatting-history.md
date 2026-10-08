@@ -192,3 +192,29 @@ both padded, which is what a deviation says they do not.
 
 **rules written (2026-07-05), 0 own** — arbitrary-expression interpolation, `{{`/`}}` escape, per-type render (null → `"null"`, char-0 → nothing), the width/align/pad/precision/radix specs, and fault-safe interpolation (`{a/b}` → `null(/0)`, never a halt); one rendering sink → backend parity; plus `F-Target` (@PLN124, 2026-08-09) — the same template builds a VALUE when checked against a type defining `lit`/`hole_*`; conformance via the oracle
 
+
+## (F-FaultSafe) lost its cause annotation (2026-10-08, @C142)
+
+Until 2026-10-08 the rule read:
+
+```
+  (F-FaultSafe)  a fault-prone operation inside an interpolation (÷0, index OOB, a field of null)
+                 follows operational.md E-Uncomp: it yields the null VALUE, and the interpolation
+                 renders it as "null" annotated with the fault cause, e.g. "null(/0)".  Formatting
+                 a value NEVER traps or halts — the template always produces text.
+```
+
+and its "In words" paragraph said the tag names *why* the value is null, "which is exactly what a
+`"{x}"` in a log line wants".  The owner ruled it out — *"I do not want to see the reason of null
+in {} expressions"* — and the rule now renders a plain `null`.  The annotation had been the
+source of a run of defects in its own right: loft#1169 (a null that merely passed through an op
+wore that op's cause), loft#1478 (a cause shown only when the arithmetic around the fault was a
+division), loft#1920 (a cause left armed by one hole and worn by the next) and loft#1939 (only an
+integer hole showed one), and the stability audit had already flagged it as syntactic — `"{a/b}"`
+answered `null(/0)` while `c = a / b; "{c}"` answered `null`.  The machinery that carried a cause
+into a hole (`OpTagFault`, the per-thread cause, the `*_with_tag` renderers and
+`LOFT_FORMAT_BARE_NULL`) went with it; the fault-to-null semantics (`E-Uncomp`) did not change.
+The guards that pinned a cause (`a-fault-tag-names-the-fault-that-happened.loft`,
+`1478-a-fault-cause-survives-the-arithmetic-around-it.loft`,
+`1920-a-fault-cause-stays-in-its-own-hole.loft`, `1939-a-fault-inside-any-hole-names-its-cause.loft`)
+were retired into `tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`.

@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C142 / `@FR-F-FaultSafe` — a fault inside an interpolation hole yields the null VALUE, and
+// the hole renders it as plain `null`: never annotated with the fault's cause, in every hole
+// kind, on both backends.  The program continues and formatting never traps.
+//
+// Cells: an out-of-range element of every element kind (integer, float, single, text,
+// boolean, record, vector, enum); an integer `/` and `%` by zero and a float and single
+// `0.0 / 0.0` (`inf` stays a value); a fault under `+`, `-`, `*`, `/`, on the right operand and
+// two in one hole; a null that only passed through an op; a character overrun (renders
+// nothing, `@FR-F-Render`); a width, an alignment and a zero pad on the null (which takes no
+// zero pad); a target string's hole; and the controls — present values render unchanged, the
+// hole after a fault renders its own value, and a `??` discharge of a fault still works.
+//
+// @falsified-at: PENDING
+
+struct P { x: integer }
+enum E { A, B }
+
+struct Q { const parts: vector<text> }
+fn lit(self: Q, s: text) { self.parts += [s]; }
+// Records the hole WITHOUT rendering it, so the cell sees the value the hole received.
+fn hole_int(self: Q, v: integer?) { self.parts += [if v == null { "null" } else { "value" }]; }
+
+fn ni() -> integer? { null }
+fn id(x: integer) -> integer { x }
+
+fn test_every_element_kind_renders_its_overrun_as_null() {
+  vi = [1, 2];
+  vf = [1.5, 2.5];
+  vs = [1.5f, 2.5f];
+  vt = ["a"];
+  assert("[{vi[id(9)]}] [{vf[id(9)]}] [{vs[id(9)]}] [{vt[id(9)]}]" == "[null] [null] [null] [null]",
+    "scalars: got [{vi[id(9)]}] [{vf[id(9)]}] [{vs[id(9)]}] [{vt[id(9)]}]");
+  vb = [true];
+  vp = [P { x: 1 }];
+  vv = [[1], [2]];
+  ve = [E.A];
+  assert("[{vb[id(9)]}] [{vp[id(9)]}] [{vv[id(9)]}] [{ve[id(9)]}]" == "[null] [null] [null] [null]",
+    "boolean, record, vector, enum: got [{vb[id(9)]}] [{vp[id(9)]}] [{vv[id(9)]}] [{ve[id(9)]}]");
+}
+
+fn test_a_division_by_zero_renders_null() {
+  a = id(5);
+  z = id(0);
+  assert("[{a / z}] [{a % z}]" == "[null] [null]", "integer: got [{a / z}] [{a % z}]");
+  zf = 0.0;
+  zs = 0.0f;
+  assert("[{zf / zf}] [{zs / zs}] [{5.0 % zf}] [{1.0 / zf}]" == "[null] [null] [null] [inf]",
+    "float, single: got [{zf / zf}] [{zs / zs}] [{5.0 % zf}] [{1.0 / zf}]");
+}
+
+fn test_a_fault_under_other_arithmetic_renders_null() {
+  v = [1, 2, 3];
+  i = id(9);
+  j = id(8);
+  a = id(5);
+  z = id(0);
+  assert("[{v[i] + 1}] [{v[i] - 1}] [{v[i] * 2}] [{v[i] / 2}]" == "[null] [null] [null] [null]",
+    "around an overrun: got [{v[i] + 1}] [{v[i] - 1}] [{v[i] * 2}] [{v[i] / 2}]");
+  assert("[{(a / z) + 1}] [{2 + (a / z)}] [{v[i] + v[j]}] [{v[i] / z}]" == "[null] [null] [null] [null]",
+    "around a division: got [{(a / z) + 1}] [{2 + (a / z)}] [{v[i] + v[j]}] [{v[i] / z}]");
+}
+
+fn test_an_inherited_null_renders_null() {
+  v: vector<integer?> = [1, null, 3];
+  n: integer? = null;
+  a = id(5);
+  assert("[{v[1]}] [{n / a}] [{a / n}] [{n % a}]" == "[null] [null] [null] [null]",
+    "got [{v[1]}] [{n / a}] [{a / n}] [{n % a}]");
+}
+
+fn test_a_character_overrun_renders_nothing() {
+  s = "abc";
+  assert("[{s[id(9)]}] [{ni()}]" == "[] [null]", "got [{s[id(9)]}] [{ni()}]");
+}
+
+fn test_the_field_shapes_the_null() {
+  vf = [1.5, 2.5];
+  vt = ["a"];
+  a = id(5);
+  z = id(0);
+  assert("[{vf[id(9)]:>10}] [{vt[id(9)]:<10}] [{vf[id(9)]:010}] [{a / z:<6}] [{a / z:06}]" == "[      null] [null      ] [      null] [null  ] [  null]",
+    "got [{vf[id(9)]:>10}] [{vt[id(9)]:<10}] [{vf[id(9)]:010}] [{a / z:<6}] [{a / z:06}]");
+}
+
+fn test_a_target_hole_receives_the_null() {
+  a = id(5);
+  z = id(0);
+  q: Q = "n={a / z}";
+  assert(q.parts == ["n=", "null"], "got {q.parts}");
+}
+
+fn test_control_present_values_the_next_hole_and_a_discharge() {
+  vf = [1.5, 2.5];
+  vt = ["a"];
+  vb = [true];
+  vp = [P { x: 1 }];
+  ve = [E.A, E.B];
+  assert("[{vf[1]:.2}] [{vt[0]}] [{vb[0]}] [{vp[0]}] [{ve[1]}]" == "[2.50] [a] [true] [{{x:1}}] [B]",
+    "got [{vf[1]:.2}] [{vt[0]}] [{vb[0]}] [{vp[0]}] [{ve[1]}]");
+  a = id(5);
+  z = id(0);
+  assert("[{a / z}] [{a / id(1)}] [{ni()}]" == "[null] [5] [null]", "got [{a / z}] [{a / id(1)}] [{ni()}]");
+  discharged: integer = a / z ?? 7;
+  assert(discharged == 7, "a discharged fault still answers its fallback: got {discharged}");
+}

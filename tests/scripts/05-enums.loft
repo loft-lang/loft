@@ -99,7 +99,7 @@ fn main() {
   dirs: vector<Direction> = [North, East, South, West];
   assert(dirs[0] == North, "enum vector [0]");
   assert(dirs[3] == West, "enum vector [3]");
-  assert("{dirs[10]}" == "null(oob)", "enum vector out-of-bounds formats as null, with its cause (F-FaultSafe)");
+  assert("{dirs[10]}" == "null", "enum vector out-of-bounds formats as plain null (F-FaultSafe, @C142)");
   assert(len(dirs) == 4, "enum vector has 4 elements");
   // --- Iterating a vector<PlainEnum> must terminate (was: infinite loop) ---
   // get_enum returned 0 (not 255) for an out-of-bounds DbRef, so conv_bool_from_enum

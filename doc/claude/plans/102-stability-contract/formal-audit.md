@@ -249,9 +249,10 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
   `cast-constant-out-of-range`); back-filling the ~470 legacy sites is an additive follow-up (a
   code can be added post-freeze — only the BOUNDARY is frozen, not the code set). Contract line in
   COMPATIBILITY.md.
-- The **`null(/0)` format-suffix** leaks fault identity into observable output — but for only 4
+- ~~The **`null(/0)` format-suffix** leaks fault identity into observable output — but for only 4
   fault kinds (inconsistent). Decide if it's frozen; if kept, cover all faults; else flip
-  `LOFT_FORMAT_BARE_NULL` to default.
+  `LOFT_FORMAT_BARE_NULL` to default.~~ Decided by [C142](../../DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null):
+  a hole renders plain `null`, and the suffix and its switch are gone.
 - **Recoverable-vs-halting fault boundary undocumented**; **halting faults mode-dependent** (halt
   in dev, continue in prod) — pin both as the contract.
 - **Drop before freeze** (dropping stays available, but cleaner deliberate): dead
@@ -343,9 +344,9 @@ their behaviour.  Lesson: a `touch src/*.rs` / clean rebuild before trusting a g
 - **Spreadsheet-model observability asymmetry:** value is uniform (null+continue) but div0 *warns*
   while overflow/OOB are silent — state the asymmetry as frozen (and reconsider whether OOB should
   warn like div0; the reachability argument is weaker for OOB than overflow).
-- **Format-null render is syntactic:** `c=a/b; "{c}"` → `null` but `"{a/b}"` → `null(/0)` — the same
+- ~~**Format-null render is syntactic:** `c=a/b; "{c}"` → `null` but `"{a/b}"` → `null(/0)` — the same
   null renders differently by where the fault sat; hoisting drops the tag. Carry the tag on the value
-  or drop it — don't freeze the syntactic split.
+  or drop it — don't freeze the syntactic split.~~ Dropped by C142: both render `null`.
 
 ### Grammar / format sub-language / precedence
 - **The format sub-language is the least-specified frozen sub-syntax** (highest-value): `F-Render`

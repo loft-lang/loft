@@ -196,19 +196,21 @@ That composition decides the one edge worth stating: a **null character renders 
 (`F-Render`), so `{nc:>3}` is three pad characters — a full field of them, not an empty string.
 Nothing is still a rendering, and a width pads whatever the rendering is.
 
-### Fault-safety — an uncomputable inside `{…}` renders a tagged null, never halts
+### Fault-safety — an uncomputable inside `{…}` renders `null`, never halts
 
 ```
   (F-FaultSafe)  a fault-prone operation inside an interpolation (÷0, index OOB, a field of null)
                  follows operational.md E-Uncomp: it yields the null VALUE, and the interpolation
-                 renders it as "null" annotated with the fault cause, e.g. "null(/0)".  Formatting
+                 renders it as `null` — the same rendering any null of its type gets (F-Render),
+                 never annotated with the fault's cause (@C142).  The program continues: formatting
                  a value NEVER traps or halts — the template always produces text.
 ```
 
-**In words.** `"{a / b}"` with `b = 0` renders `null(/0)` rather than crashing the program — the
+**In words.** `"{a / b}"` with `b = 0` renders `null` rather than crashing the program — the
 formatter rewrites fault-prone operations in interpolation position to their nullable peers (C66 /
-@P376), so building a diagnostic string can never itself fault. The tag (`/0`, an out-of-range
-index, …) names *why* the value is null, which is exactly what a `"{x}"` in a log line wants.
+@P376), so building a diagnostic string can never itself fault.  The null a fault yields is the
+null any other null is: `"{a / b}"`, `"{v[9]}"` and `"{c}"` after `c = a / b` all render `null`,
+whatever type the hole has, so a rendering never depends on where in the expression the fault sat.
 
 ---
 
@@ -233,8 +235,9 @@ the companion [formatting-history.md](formatting-history.md).
   agreed throughout (loft#1087).  The `+`-on-a-float cells are in
   `tests/scripts/14-formatting.loft` for that reason: what pins a rule is a cell that
   spells out the expected string, not the agreement of two implementations.
-- **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null(/0)` on both backends, and
-  the program continues.
+- **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null` on both backends, and
+  the program continues; so are `"{v[9]}"` on `v = [1, 2]` and `"{5.0 % 0.0}"` — no hole kind
+  shows a fault's cause (`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`).
 - **Target (`F-Target`)** — with `lit` + `hole_text` + `hole_int` on `Query`,
   `q: Query = "SELECT * FROM t WHERE name = {name} AND id = {n}"` leaves `len(q.parts) == 2` and
   `q.values == ["ada", "7"]` — identical on both backends; the same template assigned to `text`

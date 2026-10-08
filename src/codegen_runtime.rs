@@ -682,8 +682,6 @@ pub fn OpFormatDatabase(
         max_elements: u16::MAX,
     }
     .write(&mut s, 0);
-    // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
-    crate::ops::tag_rendered_null(&mut s, crate::ops::take_format_fault());
     output.push_str(&s);
 }
 
@@ -1116,8 +1114,7 @@ pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
 /// `parts = text.split(c)` collected as slices — answering what the NULLABLE element read
 /// of the `vector<text>` it replaces answers (`OpGetVectorNullable` then `OpGetText`): a
 /// negative index counts from the end; the null index is the null text; an index outside
-/// the table is the null text too, and notes the out-of-bounds fault a formatted hole
-/// renders, exactly as the op's template does.
+/// the table is the null text too, exactly as the op's template answers.
 #[inline]
 #[must_use]
 pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
@@ -1127,7 +1124,6 @@ pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
     let len = table.len() as i64;
     let at = if from < 0 { from + len } else { from };
     if at < 0 || at >= len {
-        crate::ops::note_format_fault(3, true);
         crate::state::STRING_NULL
     } else {
         table[at as usize]

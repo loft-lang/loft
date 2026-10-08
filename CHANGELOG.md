@@ -86,6 +86,11 @@ with a null `flag` used to read `"ready: null"`; it is now `null`, as `"a" + t` 
 already was, and `t += x` with a null `x` makes `t` null.  Interpolation still prints the word:
 write `"ready: {flag}"` when you want the text either way.
 
+**A null inside `{…}` prints `null`, never why it is null.**  `"{a / b}"` with `b = 0`,
+`"{v[9]}"` past the end and `"{5.0 % 0.0}"` now all print `null` where they printed `null(/0)`,
+`null(oob)` and `null(%0)`; the program still continues.  A test or a parser that matched the
+old suffix matches `null` now.  `LOFT_FORMAT_BARE_NULL` is gone: plain `null` is the only form.
+
 ### New
 
 **A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2

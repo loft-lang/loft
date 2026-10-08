@@ -54,7 +54,7 @@ fn main() {
   assert(ok == 42 && n == 42, "identity a == (a / b) * b + a % b: {ok} of {n}");
   // the null edges
   z = 0;
-  assert(!(7 / 0) && !(7 % 0) && !(-7 / z) && !(-7 % z) && "{dm(7, 0)}" == "null(/0) null(%0)",
+  assert(!(7 / 0) && !(7 % 0) && !(-7 / z) && !(-7 % z) && "{dm(7, 0)}" == "null null",
     "by zero: {7 / 0} {7 % 0} {-7 / z} {-7 % z} {dm(7, 0)}");
   mn = -9223372036854775807 - 1;
   m1 = -1;
