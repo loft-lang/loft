@@ -3528,6 +3528,35 @@ use #count instead"
     /// program wrote.  They differ only from the second loop over a name onward, and the
     /// two are read for different questions: companions and the binding itself are keyed
     /// off `id`, while the shadow guards ask what `src_id` denotes right now.
+    /// The loop variable of a `for` over a struct VALUE that has no visible `operator next`.
+    /// `for_type` answers the iterable's own type there, which is right for an iterator
+    /// expression (a keyed slice `s[lo..hi]` is already typed by its element) and wrong for a
+    /// struct value: on the first pass its `operator next` may be declared further down, and
+    /// otherwise the iteration refuses the loop naming the cause (`@FR-Op-Mark`).  Typed as
+    /// the struct, the body reported a type error against it first — refusing a valid program
+    /// and hiding the real diagnostic (loft#1950).  A plain `fn next`'s item is what the author
+    /// meant the loop to bind, so it types the body and the refusal stays the one diagnostic;
+    /// with no `next` at all the variable has no type yet.
+    fn struct_value_loop_type(&self, in_type: &Type, expr: &Value, var_tp: Type) -> Type {
+        if matches!(expr, Value::Iter(..)) || var_tp != *in_type {
+            return var_tp;
+        }
+        let Type::Reference(..) = in_type.base() else {
+            return var_tp;
+        };
+        let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
+        if next_d_nr == u32::MAX {
+            return Type::Unknown(0);
+        }
+        if self.data.def(next_d_nr).operator_form() {
+            return var_tp;
+        }
+        match self.data.def(next_d_nr).returned().clone() {
+            Type::Optional(inner) => *inner,
+            other => other,
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     pub(crate) fn parse_for_iter_setup(
         &mut self,
@@ -3538,6 +3567,7 @@ use #count instead"
         destructure_names: Option<&[String]>,
     ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
         let var_tp = self.for_type(in_type);
+        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
         let (iter_var, pre_var) = if walks_text(in_type) {
             let pos_var = self.create_var(&format!("{id}#next"), &I32);

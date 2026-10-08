@@ -13495,24 +13495,6 @@ impl Parser {
                     other => other,
                 };
             }
-            // A struct with no visible `operator next` gives its loop variable no type yet: on
-            // the first pass the `operator` may be declared further down, and otherwise the
-            // iteration refuses the loop naming the cause (`@FR-Op-Mark`, "cannot iterate").
-            // Typing the variable as the struct itself made the body report a type error
-            // against it first — refusing a valid program whose `operator next` comes after
-            // its use, and hiding the real diagnostic (loft#1950).
-            if matches!(in_type.base(), Type::Reference(_, _)) {
-                // A plain `fn next` is refused by the iteration, but its item is still what
-                // the author meant the loop to bind: typing the body with it leaves that
-                // refusal as the one diagnostic.
-                if next_d_nr != u32::MAX {
-                    return match self.data.def(next_d_nr).returned().clone() {
-                        Type::Optional(inner) => *inner,
-                        other => other,
-                    };
-                }
-                return Type::Unknown(0);
-            }
             in_type.clone()
         } else if !self.first_pass {
             diagnostic!(
