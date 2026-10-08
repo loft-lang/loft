@@ -76,9 +76,7 @@ fn main() {
   manifest = "src/manifest.rs";
   goldens = ["tests/golden/layout/corpus.txt", "tests/golden/behavior/corpus.out"];
 
-  // `?? exit(1)` is refused (finding 019: a call that never returns is not a `??` default).
-  contract = contract_version(file(manifest).content() ?? "") ?? -1;
-  if contract < 0 { exit(1); }
+  contract = contract_version(file(manifest).content() ?? "") ?? exit(1);
   golden_changed = 0;
   moved: vector<text> = [];
   for g in goldens {

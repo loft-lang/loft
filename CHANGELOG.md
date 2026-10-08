@@ -76,6 +76,10 @@ result: `fn view(…) -> const vector<u8>`.
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
 1 and a message.  Under `loft test` it fails the test that called it, naming the code.
 
+**`?? exit(2)` and `?? panic("…")`.**  A call that never returns may be a `??` default, the
+way `?? return` already was: `n = version(text) ?? exit(1)` reads the value or stops the
+program with that status, with no sentinel and no `if` for the absent case.
+
 **Naming a library's type loads the library.**  `c: Command = "git log -n {n}"` brings in
 `process` the way `line.matches(p)` brings in `regex`: a package that opts into triggers now
 fires on its `pub struct` and `pub enum` names too, wherever the package is declared — a

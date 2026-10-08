@@ -19863,10 +19863,9 @@ impl Parser {
             } else {
                 list[0].clone()
             };
-            if self.first_pass {
-                *val = Value::Null;
-                return Type::Void;
-            }
+            // Emitted on the first pass too: a `?? panic("…")` default is recognised by the
+            // call it is, and a pass that left `Null` there typed the coalesce from a void
+            // default instead (@PLN179 finding 019).
             let d_nr = self.data.def_nr("n_panic");
             *val = Value::Call(
                 d_nr,

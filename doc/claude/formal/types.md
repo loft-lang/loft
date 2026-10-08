@@ -78,7 +78,9 @@ eliminate it; indexing (`(N-Index)`) is one of the fallible operations that synt
 
 **In words.** `τ ⤳ σ` is loft's *only* automatic conversion — "a `τ` value is fine where a
 `σ` is wanted, no cast needed." The rules list the safe cases: the same type; a `Never`
-(a `return`/`break`, which fits anywhere); tuples element-by-element; a struct used as one
+(a `return`/`break`, or a call of `exit`/`panic` where a `??` fallback is wanted — a call
+that never returns is a jump there, by name until a never-returning type is spellable; it
+fits anywhere); tuples element-by-element; a struct used as one
 of an enum's variants (and the nullable/tag duals); and an integer into a *wider* integer.
 `(C-Num)` is the numeric table in [LOFT.md § Type-conversion rules](../LOFT.md) — it was
 promised there and implemented at four of the five store sites before it was written here.

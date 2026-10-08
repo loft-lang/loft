@@ -218,7 +218,16 @@ row = next_row(src) ?? break; // stop at the first absent row
 A labelled jump (`i#break`, `i#continue`) is allowed there too.  Outside a loop each is
 refused as the bare word is.
 
-Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return`, `?? break` and `?? continue` are `(E-Coalesce)` with a jump in the fallback, which `(C-Never)` in [formal/types.md](formal/types.md) admits at any type.
+`?? exit(code)` and `?? panic("…")` do the same for the program: on a null it stops with that
+status, or with the panic's report, and otherwise the value is bound — the shape a script
+writes where a shell writes `|| exit 1`:
+```
+contract = version(manifest) ?? exit(1);     // no manifest version: status 1, nothing printed
+```
+A call that never returns is the only kind admitted there; `assert` returns, so it is a
+default like any value and is refused by type.
+
+Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return`, `?? break`, `?? continue`, `?? exit(…)` and `?? panic(…)` are `(E-Coalesce)` with a jump in the fallback, which `(C-Never)` in [formal/types.md](formal/types.md) admits at any type — a call that never returns is such a jump.
 
 ### Custom iterators (I13)
 
