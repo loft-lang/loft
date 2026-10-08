@@ -711,6 +711,12 @@ lands on a live block or a store that grows where the walk would have reused a f
 seeded test `store::tests::the_indexed_scan_takes_the_block_the_walk_takes` compares the two
 answers at every claim.
 
+**`LOFT_NO_HEAP_FREE_VECTOR_COPY=1`** (runtime, BOTH backends) makes the deep copy of a vector
+whose elements own no heap list and visit every element after its one block copy again — with
+it off, that walk is skipped, as the record arm already skips a record that owns no heap.
+First bisect step for a copied record whose vector reads the source's data; guard
+`tests/scripts/157-a-heap-free-vector-copies-in-one-block.loft`.
+
 **A removed record a stored reference named leaves a tombstone (default-ON, both backends,
 `@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
 keeps such a record's header word as a one-word block that no claim reuses and frees the rest,
