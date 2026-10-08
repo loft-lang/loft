@@ -5,6 +5,11 @@
 // collection is a reference to a record of its own database type, delivered on the reference
 // lane as a record result is (loft#1951: `--native` cast it as an integer, E0605).  Every
 // value by hand.
+// @falsified-at: 7a4970dd7 — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1951-a-par-worker-may-return-a-keyed-collection.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   ARMED: none — the control fails at rustc, no switch is involved.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees;
+//   only the native exit moved.
 
 struct E { k: integer, name: text }
 struct P { px: integer, py: integer, pv: integer }
