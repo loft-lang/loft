@@ -5685,7 +5685,7 @@ impl Parser {
                 let chain_expected = if matches!(true_type, Type::Void) {
                     Type::Unknown(0)
                 } else {
-                    true_type.clone()
+                    Self::arm_expectation(&true_type)
                 };
                 let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
                 false_fact = std::mem::take(&mut self.operand_fact);
@@ -5729,7 +5729,8 @@ impl Parser {
                 // type that serves both: it is what the arms actually join to, and it still
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
-                false_type = self.parse_block("else", &mut false_code, &true_type);
+                false_type =
+                    self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
@@ -5854,6 +5855,13 @@ impl Parser {
         // the caller to declare `τ?` or discharge. Only fires when exactly one branch yields null
         // and the other is a non-null scalar (heap types stay nullable; both-null stays as-is).
         let mut result_tp = merge_dependencies(&true_type, &false_type);
+        // `@FR-I-Join` — the two arms' integer ranges join to their union.
+        if let Some(union) = Self::integer_arm_union(
+            &self.arm_contribution(&true_code, &true_type),
+            &self.arm_contribution(&false_code, &false_type),
+        ) {
+            result_tp = union;
+        }
         if let Some(chain) = &chain_borrow {
             result_tp = result_tp.joined_deps(chain);
         }
@@ -7154,7 +7162,7 @@ impl Parser {
         {
             Type::Unknown(0)
         } else {
-            result_type.clone()
+            Self::arm_expectation(result_type)
         }
     }
 
@@ -15463,6 +15471,78 @@ impl Parser {
         )
     }
 
+    /// `@FR-I-Join` — the type an arm is parsed EXPECTING, given the type its siblings answered
+    /// in.  An integer sibling's RANGE is that sibling's, not the construct's: an arithmetic
+    /// arm (`@FR-N-Arith`) answers a range narrower than its siblings, and expecting it of the
+    /// next arm refused `-1` beside `a * 100 + z`.  The arms join ([`Self::integer_arm_union`])
+    /// and the destination checks the joined range, so an integer expectation is the full
+    /// `integer`; every other type is expected as it is.
+    ///
+    /// A NAMED width (`u8`, `i16` — a `forced_size`) is a declaration, typically the
+    /// destination's own, and keeps holding its siblings: `c: u8 = if … { a } else { a + b }`
+    /// refuses the arm that does not fit, as it always has.
+    pub(super) fn arm_expectation(sibling: &Type) -> Type {
+        match sibling.base() {
+            Type::Integer(sp) if sp.forced_size.is_some() => sibling.clone(),
+            Type::Integer(_) if matches!(sibling, Type::Optional(_)) => {
+                Type::optional(crate::data::I64.clone())
+            }
+            Type::Integer(_) => crate::data::I64.clone(),
+            _ => sibling.clone(),
+        }
+    }
+
+    /// The range an integer arm CONTRIBUTES to a join: a constant tail is the one value it is
+    /// (`else { 7 }` is `[7, 7]`, not the full `integer` a literal is typed), any other arm its
+    /// own type.
+    pub(super) fn arm_contribution(&self, arm: &Value, tp: &Type) -> Type {
+        // Only a literal's own, unbounded `integer`: an arm already held to a declared width
+        // (`u8`) contributes that width, and was refused there if it did not fit.
+        // An optional arm keeps its type: the `?` it carries is what the join must keep.
+        if matches!(tp, Type::Optional(_)) {
+            return tp.clone();
+        }
+        match tp.base() {
+            Type::Integer(sp) if sp.min <= i32::MIN + 1 && sp.max >= i64::from(i32::MAX) => {}
+            _ => return tp.clone(),
+        }
+        let tail = match arm.unspan() {
+            Value::Block(bl) => bl.operators.last(),
+            other => Some(other),
+        };
+        match tail.and_then(|t| self.const_int(t)).and_then(|k| i32::try_from(k).ok()) {
+            Some(k) if k > i32::MIN + 1 => Type::Integer(crate::data::IntegerSpec {
+                min: k,
+                max: i64::from(k),
+                forced_size: None,
+                ..crate::data::IntegerSpec::wide()
+            }),
+            _ => tp.clone(),
+        }
+    }
+
+    /// `@FR-I-Join` — two integer arms join to the UNION of their ranges, optional when either
+    /// is (`@FR-N-Join`); `None` when either arm is not an integer, or the ranges are one.
+    pub(super) fn integer_arm_union(a: &Type, b: &Type) -> Option<Type> {
+        let (Type::Integer(x), Type::Integer(y)) = (a.base(), b.base()) else {
+            return None;
+        };
+        if x == y {
+            return None;
+        }
+        let base = Type::Integer(crate::data::IntegerSpec {
+            min: x.min.min(y.min),
+            max: x.max.max(y.max),
+            forced_size: None,
+            ..*x
+        });
+        Some(if matches!(a, Type::Optional(_)) || matches!(b, Type::Optional(_)) {
+            Type::optional(base)
+        } else {
+            base
+        })
+    }
+
     /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
     /// variant?
     ///
@@ -15765,6 +15845,10 @@ impl Parser {
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
+        // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`
+        // keeps the first arm's, which an arithmetic arm (`@FR-N-Arith`) makes narrower.
+        let joined =
+            Self::integer_arm_union(&joined, &self.arm_contribution(arm, tp)).unwrap_or(joined);
         // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
         let joined = match (joined.function_consts(), tp.function_consts()) {
             (Some(jc), Some(ac)) if jc.common(ac) != jc => {

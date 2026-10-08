@@ -6067,6 +6067,30 @@ impl Parser {
             // call_op consumes them, so the result range of `&`/`%` can be narrowed
             // (a masked/modded value becomes provably-fit for a later narrowing
             // cast, removing DN4's `(x & 255) as u8` friction).
+            // `@FR-N-Arith` for `+ - *` — the operands' RANGES, read before `call_op` consumes
+            // them: a constant operand is the one value it is, a declared or inferred range is
+            // its bounds, and a plain `integer` is unbounded (no range is derived from it).
+            let arith_ranges = if matches!(operator, "+" | "-" | "*") {
+                let range = |p: &Self, tp: &Type, c: &Value| -> Option<(i64, i64)> {
+                    if let Some(k) = p.const_int(c) {
+                        return Some((i64::from(k), i64::from(k)));
+                    }
+                    // A plain `integer` is unbounded whichever template spells it — the
+                    // 32-bit one (`i32::MIN + 1 ..= i32::MAX`) or the wide one — so only a
+                    // range strictly inside that window is a range to compute with.
+                    match tp.base() {
+                        Type::Integer(sp)
+                            if sp.min > i32::MIN + 1 || sp.max < i64::from(i32::MAX) =>
+                        {
+                            Some((i64::from(sp.min), sp.max))
+                        }
+                        _ => None,
+                    }
+                };
+                range(self, ctp, code).zip(range(self, &second_type, &second_code))
+            } else {
+                None
+            };
             let (and_bound, mod_const, lhs_nonneg) = if matches!(operator, "&" | "%") {
                 let and_bound = [
                     self.nonneg_bound(ctp, code),
@@ -6127,7 +6151,42 @@ impl Parser {
             // the operation guarantees), and only ever a tightening of call_op's
             // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or
             // [0, |c|-1] when `a` is non-negative.
-            if let Type::Integer(s) = &*ctp {
+            if let Type::Integer(s) = ctp.clone() {
+                let s = &s;
+                // `@FR-N-Arith` — `a op b` over bounded integers is typed `Integer[r]`, r the
+                // interval arithmetic of the operand ranges (loft#1933: `u8 + u8` typed the full
+                // `integer`, so it could not be stored into a `u16`).  A range the spec cannot
+                // name stays the full `integer`.
+                if let Some(((al, ah), (bl, bh))) = arith_ranges {
+                    let (lo, hi) = match operator {
+                        "+" => (al.saturating_add(bl), ah.saturating_add(bh)),
+                        "-" => (al.saturating_sub(bh), ah.saturating_sub(bl)),
+                        _ => {
+                            let p = [
+                                al.saturating_mul(bl),
+                                al.saturating_mul(bh),
+                                ah.saturating_mul(bl),
+                                ah.saturating_mul(bh),
+                            ];
+                            (*p.iter().min().unwrap_or(&0), *p.iter().max().unwrap_or(&0))
+                        }
+                    };
+                    let both_constant = al == ah && bl == bh;
+                    if !both_constant
+                        && lo >= i64::from(i32::MIN) + 1
+                        // `u32::MAX` is the wide template's marker for "wider than 32 bits"
+                        // (`IntegerSpec::wide`), so a range must stay strictly below it.
+                        && hi < i64::from(u32::MAX)
+                        && (lo > i64::from(s.min) || hi < s.max)
+                    {
+                        *ctp = Type::Integer(IntegerSpec {
+                            min: i32::try_from(lo).unwrap_or(s.min),
+                            max: hi,
+                            forced_size: None,
+                            ..*s
+                        });
+                    }
+                }
                 let narrowed = match operator {
                     "&" => and_bound.map(|m| (0i32, m)),
                     "%" => mod_const.filter(|c| *c != 0).map(|c| {
