@@ -6,7 +6,8 @@
 //
 // Rewritten here: c1, c2, c3, c5, c8 (an argument the leaf inliner turned into an operator
 // expression), c9 and c11 (outside a loop).  Kept a call: c12 (scalars alone: a value
-// record already carries it without a store), c4 (`(R-Place)` builds the record into `keep` already) and
+// record already carries it without a store), c13 (inside a loop, a local copied out cannot be
+// a loop record, and the literal would mint a store a pass), c4 (`(R-Place)` builds the record into `keep` already) and
 // `make` (the target is the function's own return buffer).  A vector VARIABLE argument is
 // still copied (c2).  Applies in the IR phase, so the interpreter and `--native-release` take
 // it; plain `--native` compiles open-world and keeps the calls.  Every value is hand-computed.
@@ -46,6 +47,20 @@ struct Pt { px: integer, py: integer }
 pub fn pt_new(a: integer, b: integer) -> Pt { Pt { px: a * 2, py: b } }
 
 fn pt_sum(p: const Pt) -> integer { p.px + p.py }
+
+/// Inside a loop whose local is copied out (`last = ef`): not a loop record, so the call
+/// stays — the literal would mint a store every pass where the call reuses a pooled one.
+/// `fm_sum` per pass is `1021a + 12`: 15387 over 0..6, plus the last pass's 5117.
+fn c13_loop() -> integer {
+  total = 0;
+  last = fm_new(0, [0], [0, 0]);
+  for a in 0..6 {
+    ef = fm_new(a, [a, a + 1], [a, 2]);
+    total += fm_sum(ef);
+    if a == 5 { last = ef; }
+  }
+  total + fm_sum(last)
+}
 
 /// `sum (2 * 4 + 9 + k)` over 0..3 = 3 * 17 + 3 = 54.
 fn pt_loop() -> integer {
@@ -140,5 +155,8 @@ fn main() {
   // store at all, which the literal would mint.
   c12 = pt_loop();
   assert(c12 == 54, "c12: {c12}");
+  // c13 — a constructor in a loop whose local cannot be a loop record keeps its call.
+  c13 = c13_loop();
+  assert(c13 == 20504, "c13: {c13}");
   println("ctor ok");
 }
