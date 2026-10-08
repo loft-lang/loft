@@ -24,7 +24,10 @@ B1936 = ["aa"];
 PTS1936 = [P1936 { x: 7, name: "p" }, P1936 { x: 9, name: "qq" }];
 NUMS1936 = [3, 4, 5];
 
+struct T1936 { t: vector<integer> }
+
 fn first1936() -> P1936 { PTS1936[0] }
+fn pick1936(k: integer) -> vector<integer> { o: vector<integer> = [9]; if k == 1 { NUMS1936 } else { o } }
 fn whole1936() -> vector<integer> { NUMS1936 }
 
 fn elem1936(i: integer) -> integer {
@@ -63,6 +66,11 @@ fn test_a_returned_constant_is_a_copy() {
   w += [6];
   assert(a.x == 100 && PTS1936[0].x == 7, "element: {a.x} {PTS1936[0].x}");
   assert("{w}" == "[3,4,5,6]" && "{NUMS1936}" == "[3,4,5]", "whole: {w} {NUMS1936}");
+  // One arm of a join answering the constant, delivered into a FIELD the caller fills
+  // through the return buffer: `--native` read the field empty.
+  f1 = T1936 { t: pick1936(1) };
+  f0 = T1936 { t: pick1936(0) };
+  assert("{f1.t} {f0.t}" == "[3,4,5] [9]", "a joined arm into a field: {f1.t} {f0.t}");
 }
 
 fn main() {
