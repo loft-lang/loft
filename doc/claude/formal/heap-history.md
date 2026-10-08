@@ -2749,3 +2749,16 @@ condition was dropped, and an enclosing call's argument now counts as an in-flig
 only when it can answer a text.  Guards:
 `tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft` and
 `tests/scripts/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.loft`.
+
+## 2026-10-08 — `(H-ScanIndex)`: the claim scan reads its indexes
+
+Found profiling dryopea's `truncate_to` (the timeline rebuilt per push): `Store::claim`'s self
+time was 13 % of the row, and the hot loop was the inlined block-chain walk.  A temporary trace
+counted ~250 walks per op, each stopping about half way through a 1267-word store, every one
+with an empty tree and no wilderness and the store in its lazy phase — the freed blocks were
+untracked, so the walk was the only way to find them.  Read off the lazy record's bitset and
+the tail's confirmed footer instead: `truncate_to` −7 % instructions, −12 % cycles (hash
+unchanged); `panel_build` −0.4 % / −0.8 % (its claims never reached the walk).  The seeded
+equivalence test found on its first run that a freshly claimed record's last payload word
+still spells the free block's old footer (a claim does not zero it) — the case the tail
+confirmation exists for; it is pinned there.

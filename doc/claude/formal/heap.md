@@ -469,6 +469,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  within its first rungs, so the working set never doubles.  Below the
                  bound a claim the wilderness cannot hold grows the store, or takes an
                  untracked block the chain walk meets on its way to growing.
+  (H-ScanIndex)  a claim the tree and the wilderness cannot serve takes the FIRST free
+                 block in address order that holds it, or grows the store from its tail
+                 block — and that answer is read off the store's own indexes, not its
+                 block chain.  Every free block of two words or more is in the tree, the
+                 wilderness or the lazy record (`H-LazyFree`), and neither of the first two
+                 holds a fit, so the first fit is the lowest lazily freed block that holds
+                 the claim; a one-word claim, the one size a one-word free block could
+                 hold, walks the chain.  The tail block is free exactly when its footer is
+                 negative, and is trusted only when an index confirms it, since a claimed
+                 block's last word is payload and can spell any footer; unconfirmed, the
+                 chain walk answers.  The same block either way, so the layout is
+                 unchanged; what goes is a header read per block from the store's start
+                 on every such claim, the lazy phase's common case.
   (H-ReadSurface) a store opened from a file only to be READ — a cached stdlib or program
                  image — writes nothing into the file: its free-block tree and footers
                  (`H-FreeFooter`, `H-Wilderness`) are left unbuilt, since a read surface

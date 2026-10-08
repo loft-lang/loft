@@ -682,3 +682,10 @@ construction) and is the first bisect step for a store-layout fault, a claim tha
 live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
 own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
 pin the untracked delete, the growth below the floor and the one sweep at the bound.
+**`LOFT_NO_SCAN_INDEX=1`** (runtime, BOTH backends, `@FR-H-ScanIndex`) makes a claim the free
+tree and the wilderness cannot serve walk the block chain from the store's start again — with
+it off, the first fit is read off the lazily freed blocks' bitset and the tail block off its
+confirmed footer, which is the same block the walk takes.  First bisect step for a claim that
+lands on a live block or a store that grows where the walk would have reused a free block; the
+seeded test `store::tests::the_indexed_scan_takes_the_block_the_walk_takes` compares the two
+answers at every claim.
