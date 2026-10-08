@@ -4,6 +4,11 @@
 // deep-copying it.  The double-buffer prepend is the shape (zttext's `invert`).  A source
 // read, or appended to, after the rebind keeps the copy.  Both backends; every value is
 // hand-computed.
+//
+// @falsified-at: none — the clause and this guard land together; the planted defect is recorded
+//   with `@falsified-by:` below (the source's mentions after the rebind not checked: c2 reads
+//   the store it gave up).
+// @falsified-by: tests/falsified/a-rebound-vector-takes-the-dead-locals-store.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 
 struct Op { at: integer, s: text }
 
@@ -28,30 +33,31 @@ fn prepend_all(n: integer) -> vector<Op> {
   result
 }
 
-/// The source is read after the rebind: declined, the copy kept.
+/// The source is read after the rebind: declined, the copy kept.  Record pushes, as in
+/// `prepend_all`, so the read after the rebind is the only thing that declines it.
 fn read_after(n: integer) -> integer {
-  result: vector<integer> = [];
+  result: vector<Op> = [];
   t = 0;
   for i in 0..n {
-    tmp: vector<integer> = [];
-    tmp += [i];
+    tmp: vector<Op> = [];
+    tmp += [Op { at: i, s: "r" }];
     tmp += result;
     result = tmp;
-    t += len(tmp) * 100 + tmp[0];
+    t += len(tmp) * 100 + tmp[0].at;
   }
   t + len(result)
 }
 
 /// The source grows after the rebind: declined, `result` must not see the growth.
 fn grow_after(n: integer) -> integer {
-  result: vector<integer> = [];
+  result: vector<Op> = [];
   for i in 0..n {
-    tmp: vector<integer> = [];
-    tmp += [i];
+    tmp: vector<Op> = [];
+    tmp += [Op { at: i, s: "g" }];
     result = tmp;
-    tmp += [99];
+    tmp += [Op { at: 99, s: "x" }];
   }
-  len(result) * 10 + result[0]
+  len(result) * 10 + result[0].at
 }
 
 fn main() {
