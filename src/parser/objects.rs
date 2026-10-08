@@ -2706,7 +2706,8 @@ impl Parser {
                     // depends on a skip-free anchor of this function's own, never assigned,
                     // so every reader of the dep finds a real variable and no free follows.
                     let anchor =
-                        self.vars.unique("const_view", &const_tp.without_deps(), &mut self.lexer);
+                        self.vars
+                            .unique("const_view", &const_tp.without_deps(), &mut self.lexer);
                     self.vars.set_skip_free(anchor);
                     return const_tp.without_deps().depending(anchor);
                 }

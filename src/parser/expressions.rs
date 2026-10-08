@@ -6729,7 +6729,8 @@ use a separate collection or add after the loop"
                     // the clear below before the append reads it (loft#1916).  A projection
                     // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
                     // the temp then owns its copy and frees it.
-                    let projection = !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+                    let projection =
+                        !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
                     let fill_tmp = if projection {
                         vec![
                             v_set(tmp, Value::Null),
