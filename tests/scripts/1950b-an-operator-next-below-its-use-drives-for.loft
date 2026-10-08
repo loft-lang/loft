@@ -5,6 +5,10 @@
 // visible; the loop variable then has no type yet rather than the iterable's own, which made
 // the body's assignment report a type change and refused this valid program (loft#1950).
 // Every value by hand.
+// @falsified-at: 60133ddef — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1950b-an-operator-next-below-its-use-drives-for.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   ARMED: none — no switch is needed for either channel.
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees; only the exit moved.
 
 struct L { n: integer }
 

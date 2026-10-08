@@ -1906,6 +1906,7 @@ impl Stores {
     #[must_use]
     pub fn keyed_type(&self, data: &crate::data::Data, tp: &crate::data::Type) -> u16 {
         use crate::data::Type;
+        let tp = tp.base();
         match tp {
             Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
                 let kind = if matches!(tp, Type::Hash(..)) {

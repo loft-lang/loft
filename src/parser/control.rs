@@ -13501,7 +13501,7 @@ impl Parser {
             // Typing the variable as the struct itself made the body report a type error
             // against it first — refusing a valid program whose `operator next` comes after
             // its use, and hiding the real diagnostic (loft#1950).
-            if matches!(in_type, Type::Reference(_, _)) {
+            if matches!(in_type.base(), Type::Reference(_, _)) {
                 // A plain `fn next` is refused by the iteration, but its item is still what
                 // the author meant the loop to bind: typing the body with it leaves that
                 // refusal as the one diagnostic.
