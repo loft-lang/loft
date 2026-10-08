@@ -195,16 +195,10 @@ both padded, which is what a deviation says they do not.
 
 ## (F-FaultSafe) lost its cause annotation (2026-10-08, @C142)
 
-Until 2026-10-08 the rule read:
-
-```
-  (F-FaultSafe)  a fault-prone operation inside an interpolation (÷0, index OOB, a field of null)
-                 follows operational.md E-Uncomp: it yields the null VALUE, and the interpolation
-                 renders it as "null" annotated with the fault cause, e.g. "null(/0)".  Formatting
-                 a value NEVER traps or halts — the template always produces text.
-```
-
-and its "In words" paragraph said the tag names *why* the value is null, "which is exactly what a
+Until 2026-10-08 the rule's body read: *a fault-prone operation inside an interpolation (÷0,
+index OOB, a field of null) follows operational.md E-Uncomp: it yields the null VALUE, and the
+interpolation renders it as "null" annotated with the fault cause, e.g. "null(/0)".  Formatting
+a value NEVER traps or halts — the template always produces text.*  Its "In words" paragraph said the tag names *why* the value is null, "which is exactly what a
 `"{x}"` in a log line wants".  The owner ruled it out — *"I do not want to see the reason of null
 in {} expressions"* — and the rule now renders a plain `null`.  The annotation had been the
 source of a run of defects in its own right: loft#1169 (a null that merely passed through an op
