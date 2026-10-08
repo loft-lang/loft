@@ -1,0 +1,58 @@
+diff --git b/src/generation/ops/parallel.rs a/src/generation/ops/parallel.rs
+index 28281c61c..f5b2c508c 100644
+--- b/src/generation/ops/parallel.rs
++++ a/src/generation/ops/parallel.rs
+@@ -98,7 +98,7 @@ fn closure_shape(ret: &Type) -> ClosureShape {
+ /// — a worker returning one still fails to compile loudly rather than copying at
+ /// the wrong stride.  Extending `heap_ref_kt` to them is the follow-up.
+ fn is_ref_return(ret: &Type) -> bool {
+-    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _) | Type::Hash(..))
++    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _))
+ }
+ 
+ /// The `(struct_size, known_type)` a `HeapRef` worker return is copied as by
+@@ -125,15 +125,6 @@ fn heap_ref_kt(ctx: &EmitCtx<'_, '_>, ret: &Type) -> (i32, i32) {
+             return (0, 0);
+         }
+         data.def(wrapper).known_type()
+-    } else if let Type::Hash(tp, key, _) = ret {
+-        // EXPERIMENT loft#1951
+-        let mut name = "hash<".to_string() + data.def(*tp).name() + "[";
+-        ctx.output.stores.field_name(data.def(*tp).known_type(), key, &mut name);
+-        let k = ctx.output.stores.name(&name);
+-        if k == u16::MAX {
+-            return (0, 0);
+-        }
+-        k
+     } else {
+         return (0, 0);
+     };
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index acb2ee0df..b4fc4d225 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -13495,24 +13495,6 @@ impl Parser {
+                     other => other,
+                 };
+             }
+-            // A struct with no visible `operator next` gives its loop variable no type yet: on
+-            // the first pass the `operator` may be declared further down, and otherwise the
+-            // iteration refuses the loop naming the cause (`@FR-Op-Mark`, "cannot iterate").
+-            // Typing the variable as the struct itself made the body report a type error
+-            // against it first — refusing a valid program whose `operator next` comes after
+-            // its use, and hiding the real diagnostic (loft#1950).
+-            if matches!(in_type, Type::Reference(_, _)) {
+-                // A plain `fn next` is refused by the iteration, but its item is still what
+-                // the author meant the loop to bind: typing the body with it leaves that
+-                // refusal as the one diagnostic.
+-                if next_d_nr != u32::MAX {
+-                    return match self.data.def(next_d_nr).returned().clone() {
+-                        Type::Optional(inner) => *inner,
+-                        other => other,
+-                    };
+-                }
+-                return Type::Unknown(0);
+-            }
+             in_type.clone()
+         } else if !self.first_pass {
+             diagnostic!(

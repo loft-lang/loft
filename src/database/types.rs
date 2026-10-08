@@ -1896,6 +1896,40 @@ impl Stores {
     /// `__nullable<S>` element keeps S's keys inside the `Some` variant's inline payload, so
     /// indexing the enum's own field list finds none of them.  Same rule as [`Self::hash`] and
     /// [`Self::create_key`] — one question, one answer, whichever kind asks it.
+    /// The registered database type of a keyed collection, or `u16::MAX` when this program
+    /// never registered it.  ONE home for the names [`Parser::get_type`] registers under
+    /// (`hash<T[k]>`, `spatial<T[k]>`, `trie<T[k]>`, `sorted<…>` or its `ordered<…>` spelling,
+    /// `index<…>`), so the parser's lookup and the native `par` emitter, which sizes a
+    /// worker's keyed result by it, cannot disagree.
+    ///
+    /// [`Parser::get_type`]: crate::parser::Parser
+    #[must_use]
+    pub fn keyed_type(&self, data: &crate::data::Data, tp: &crate::data::Type) -> u16 {
+        use crate::data::Type;
+        match tp {
+            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
+                let kind = if matches!(tp, Type::Hash(..)) {
+                    "hash"
+                } else {
+                    "spatial"
+                };
+                let mut name = format!("{kind}<{}[", data.def(*d).name());
+                self.field_name(data.def(*d).known_type(), key, &mut name);
+                self.name(&name)
+            }
+            Type::Trie(d, key, _) => self.name(&format!("trie<{}[{key}]>", data.def(*d).name())),
+            Type::Sorted(d, key, _) => {
+                let r = self.name(&keyed_name("sorted", data.def(*d).name(), key));
+                if r != u16::MAX {
+                    return r;
+                }
+                self.name(&keyed_name("ordered", data.def(*d).name(), key))
+            }
+            Type::Index(d, key, _) => self.name(&keyed_name("index", data.def(*d).name(), key)),
+            _ => u16::MAX,
+        }
+    }
+
     pub fn field_name(&self, content: u16, key: &[String], name: &mut String) -> Vec<u16> {
         let owner = self.key_owner(content);
         let mut key_nrs = Vec::new();
@@ -3766,6 +3800,23 @@ impl Type {
             .iter()
             .filter(|g| matches!(g.kind, crate::data::LinkedFieldKind::Index))
     }
+}
+
+/// `<kind><T[k1,-k2]>` — the spelling an ordered keyed collection is registered under: each
+/// key field by name, a descending one prefixed `-`.
+pub(crate) fn keyed_name(kind: &str, content: &str, key: &[(String, bool)]) -> String {
+    let mut name = format!("{kind}<{content}[");
+    for (k_nr, (k, asc)) in key.iter().enumerate() {
+        if k_nr > 0 {
+            name += ",";
+        }
+        if !asc {
+            name += "-";
+        }
+        name += k;
+    }
+    name += "]>";
+    name
 }
 
 #[cfg(test)]

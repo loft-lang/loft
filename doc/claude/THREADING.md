@@ -325,8 +325,9 @@ for b#index in 0..par_len {
 
 ### Supported return types
 
-`integer`, `float`, `single`, `boolean`, inline `enum`, `text`, and `struct`/reference types,
-and the nullable form `τ?` of each: a `τ?` worker rides τ's result lane, a `null` it answers
+`integer`, `float`, `single`, `boolean`, inline `enum`, `text`, `struct`/reference types,
+`vector<T>`, the keyed collections (`hash`, `sorted`, `index`, `spatial`, `trie`), and the
+nullable form `τ?` of each: a `τ?` worker rides τ's result lane, a `null` it answers
 reaches the body as `null`, and the loop variable keeps the declared `?` (`@FR-N-Shape`; one
 exception to "τ's lane" — a nullable NARROW integer such as `i32?` rides the wide lane, whose
 row carries the stack value's `null`, loft#1948).  Extra context arguments are forwarded to workers: `par(b = scale(a, mult), N)` — here `mult`
