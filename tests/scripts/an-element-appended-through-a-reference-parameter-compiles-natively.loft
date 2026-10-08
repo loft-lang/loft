@@ -6,6 +6,10 @@
 // `&` struct.  A local vector, a plain vector parameter and a push inside a loop (the held
 // header) take other paths and are the controls.  `add_field`'s `&` is the axis under test, so
 // the `slow-reference-parameter` advice it draws is expected.
+// @falsified-at: f188f58be — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/an-element-appended-through-a-reference-parameter-compiles-natively.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
 struct Th { tx: integer, ty: integer, hs: vector<float> }
 struct Bag { items: vector<Th>, n: integer }
 
