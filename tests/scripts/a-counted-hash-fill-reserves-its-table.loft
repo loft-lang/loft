@@ -4,6 +4,13 @@
 // the program answers without it (hand-computed), and LOFT_NO_HASH_RESERVE=1 must agree.
 // The linked cell is loft#843's territory: a hash sharing its element type with another
 // keyed collection borrows its entries, and a reservation must not give it an arena.
+//
+// @falsified-at: none — the clause and this guard land together.  A reservation is capacity
+//   only, so the clause has no wrong VALUE to plant; the hazard it newly reaches is
+//   loft#843's (a reservation that gives a record-backed hash an arena).  Planting that
+//   (`reserve_hash` without its `linked` stride rule) was INERT here, measured, with the
+//   linked local of c5b reserved — the cells pin every value against
+//   LOFT_NO_HASH_RESERVE=1 and LOFT_KEYED_VERIFY=1 on both backends instead.
 
 struct C { ck: integer, ix: integer }
 struct W { a: hash<C[ck]> }
@@ -60,6 +67,15 @@ fn main() {
   e5 = 0;
   for k in 0..300 { e5 = e5 * 3 % 100003 + (299 - k); }
   assert(len(g.h) == 300 && len(g.s) == 300 && g.h[0]?.v == 299 && t5 == e5, "c5 {t5} {e5}");
+
+  // c5b — a LOCAL hash of the same element type: `L` is linked program-wide (G holds it in
+  // two keyed collections), so this hash borrows its entries too, and the clause reserves it.
+  hl: hash<L[k]> = [];
+  for i in 0..300 { hl += [L { k: i * 3, v: i }]; }
+  s5 = 0;
+  for i in 0..300 { s5 += hl[i * 3]?.v ?? -1000; }
+  // every key present: sum of 0..299
+  assert(len(hl) == 300 && s5 == 44850 && hl[897]?.v == 299, "c5b {s5}");
 
   // c6 — refilled 40 times: the live record count holds once warm.
   r1 = 0;

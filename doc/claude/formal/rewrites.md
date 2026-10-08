@@ -518,6 +518,11 @@ versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` deci
                  beside the reads keeps them; only a BASE would need the store's
                  memory still, and the clause binds none — a loop inside that is
                  growth-free derives its base off the held header.
+                 THE HASH CLAUSE: a counted loop inserting records into one hash
+                 LOCAL reserves its table for len(h) + inserts × trip count before
+                 it runs (the most inserts a pass can run: an `if` takes its larger
+                 arm).  A reservation is capacity only, so no value changes; a pass
+                 whose key is present leaves room unused, bounded by the trip count.
 ```
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto

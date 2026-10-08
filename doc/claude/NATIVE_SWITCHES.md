@@ -662,6 +662,9 @@ delivery copies — with it on, a shape-A result local ADOPTS the hidden return 
 (built where it must end up; the exits deliver nothing; the buffer's backing reused across
 calls) — and is the bisect step for a wrong vector return, a leak at a vector-returning
 call, or values accumulating across calls.  `LOFT_TRACE_ADOPT=1` names the declining gate.
+**`LOFT_NO_HASH_RESERVE=1`** (`@FR-R-PushFill`'s hash clause) makes a counted loop that inserts
+into a hash grow the table as it fills again, instead of reserving it for the loop's inserts
+up front — the A/B for a keyed fill's time or memory; a reservation changes no value.
 **`LOFT_NO_KEYED_IN_PLACE=1`** (`@FR-R-InPlaceLiteral`'s keyed clause) makes `h[k] = R { … }`
 build its literal in a store of its own and copy it in again — with it on, the values are
 staged, the record under the key is removed, a fresh one is claimed in the collection's store
