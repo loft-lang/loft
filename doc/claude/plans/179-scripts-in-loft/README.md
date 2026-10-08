@@ -82,7 +82,9 @@ and `status: fixed`; an issue is filed only when a finding turns into work someo
 up, never per finding.  [`REASONS.md`](REASONS.md) is rendered from those files by
 `make script-reasons` (a loft script), grouped by state, with the open count as the
 headline — nothing else is maintained by hand.  **The register's open count is the plan's headline
-number and it must reach zero**; `WORKLIST.md` is what is left to port, `REASONS.md` is what
+number and it must reach zero**; `WORKLIST.md` is what is left to port — its `status`
+column and **Position** line say per script whether a port sits beside it and whether the
+pair is twinned, the way `make rule-coverage` reads the rule register — `REASONS.md` is what
 is left to fix, and the second is the one the goal is stated in.  Two readings keep it
 honest: a reason is recorded when a port MEETS it, never guessed in advance, and it is
 struck only when the port that met it re-measures green on that axis.

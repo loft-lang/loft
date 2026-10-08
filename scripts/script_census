@@ -39,6 +39,10 @@ struct Row {
   contract: text,
   tranche: text,
   source: text,
+  /// Where the script stands: `—` not ported, `ported` (a loft twin sits beside it under
+  /// the same name, extension dropped), `twinned` (its SCOREBOARD row: green on both
+  /// backends).  Callers move when the plan closes, so no state beyond that is read.
+  status: text,
 }
 
 // The identifier-shaped tokens of one line — brackets and operators split, so
@@ -311,8 +315,15 @@ fn classify(path: text) -> Row {
   tranche = tranche_of(lang, name, t, m);
   Row {
     path: path, lang: lang, lines: len(src), tools: t, mods: m, callers: [],
-    contract: contract, tranche: tranche, source: src.join("\n"),
+    contract: contract, tranche: tranche, source: src.join("\n"), status: "—",
   }
+}
+
+// The port's path for an original: the same name with the extension dropped.
+fn port_path(path: text) -> text {
+  if path.ends_with(".py") { return path[0..len(path) - 3]; }
+  if path.ends_with(".sh") { return path[0..len(path) - 3]; }
+  path
 }
 
 // Every file a caller could name a script from: the Makefile, the workflows, the hooks.
@@ -332,14 +343,14 @@ fn print_tranche(rows: vector<Row>, label: text, title: text) {
   for r in rows { if r.tranche == label { cnt += 1; total += r.lines; } }
   println("## {label} — {title} ({cnt} files, {total} lines)");
   println("");
-  println("| script | lang | lines | tools | py modules | callers | contract |");
-  println("|---|---|---|---|---|---|---|");
+  println("| script | lang | lines | tools | py modules | callers | contract | status |");
+  println("|---|---|---|---|---|---|---|---|");
   for r in rows {
     if r.tranche != label { continue; }
     tl = r.tools.join(" ");
     md = r.mods.join(" ");
     cl = r.callers.join(",");
-    println("| `{r.path}` | {r.lang} | {r.lines} | {tl} | {md} | {cl} | {r.contract} |");
+    println("| `{r.path}` | {r.lang} | {r.lines} | {tl} | {md} | {cl} | {r.contract} | {r.status} |");
   }
   println("");
 }
@@ -376,6 +387,18 @@ fn main() {
     }
   }
 
+  // The position: a port beside its original, and the scoreboard's verdict on the pair.
+  scoreboard = file("doc/claude/plans/179-scripts-in-loft/SCOREBOARD.md").content() ?? "";
+  ports: vector<text> = [];
+  for row in rows { if row.lang == "loft" { ports += [row.path]; } }
+  ported = 0;
+  twinned = 0;
+  for i in 0..len(rows) {
+    if rows[i].lang == "loft" { continue; }
+    if scoreboard.contains("`{rows[i].path}` →") { rows[i].status = "twinned"; twinned += 1; ported += 1; }
+    else if has(ports, port_path(rows[i].path)) { rows[i].status = "ported"; ported += 1; }
+  }
+
   py = 0; sh = 0; lf = 0; py_lines = 0; sh_lines = 0;
   for row in rows {
     if row.lang == "py" { py += 1; py_lines += row.lines; }
@@ -392,6 +415,8 @@ fn main() {
   println("| loft (under scripts/) | {lf} | — |");
   println("");
   println("Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **{ratchet}**.");
+  println("");
+  println("**Position: {ported} of {py + sh} scripts ported, {twinned} of them twinned** (the `status` column: `ported` = a loft twin beside the original under the same name, `twinned` = its [SCOREBOARD](SCOREBOARD.md) row is green on both backends; callers move when the plan closes).");
   println("");
 
   print_tranche(rows, "T0", "already loft — the twin harness's first subjects");
