@@ -71,9 +71,7 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(
-        trace(&out, "ctor-literal:"),
-        vec![
+    let mut want = vec![
             // c4: `(R-Place)` builds the record into `keep` through the buffer.
             (
                 "ctor-literal: n_fm_new kept a call in n_main: the return buffer is used elsewhere"
@@ -105,8 +103,9 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
                     .to_string(),
                 1
             ),
-        ]
-    );
+    ];
+    want.sort();
+    assert_eq!(trace(&out, "ctor-literal:"), want);
     let off = loft(
         &["--interpret"],
         CTOR,
@@ -136,8 +135,8 @@ fn the_refill_clause_keeps_the_designed_loop_records() {
         .iter()
         .filter(|l| l.contains("keeps its store and its vectors"))
         .count();
-    // r1, r4, r6 (r1's inner loop holds no record).
-    assert_eq!(kept, 3, "{lines:#?}");
+    // r1, r4, r6, r7 (r1's inner loop holds no record).
+    assert_eq!(kept, 4, "{lines:#?}");
     // r2: the omitted field is written by the prefill; r5: a native append takes the record.
     assert!(
         lines

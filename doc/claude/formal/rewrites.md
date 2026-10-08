@@ -656,8 +656,10 @@ now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
                  zero of a vector field is one of those groups': each such zero empties the
                  kept vector in place (`(R-RefillBuffer)`'s empty), and a vector field read
                  in place as the operated-on vector of a native op (a push, a length, an
-                 element read) is part of the init family.  A partial literal keeps the
-                 plain mint — its prefill would zero a kept vector's slot.
+                 element read) is part of the init family, as is an append to one of
+                 those fields named by field number (`OpNewRecord` / `OpFinishRecord`,
+                 `e.v += [R {…}]`).  A partial literal keeps the plain mint — its prefill
+                 would zero a kept vector's slot.
 ```
 
 **In words.** The `(R-LoopBuffer)` shape for a record.  A record literal
@@ -4211,9 +4213,13 @@ sentinel; the scale fold's conditions).
                  arguments.  A vector-literal argument is built IN ITS FIELD — the
                  literal's pushes retargeted at the field, its own buffer left unminted —
                  and a vector-variable argument is appended whole, as the callee did.
-                 Admitted where at least one argument is a vector literal (a call of
-                 scalars alone already travels as a value record, `(R-ValueRecord)`, with
-                 no store to remove); where every argument is an operator expression over
+                 Admitted where the record holds a vector field (a record of scalars
+                 travels as a value record, `(R-ValueRecord)`, with no store to remove);
+                 where, inside a loop, `x` is a loop record of the REWRITTEN body
+                 (`(R-LoopRecord)`'s refill clause — otherwise the literal mints a store
+                 every pass where the call reused a pooled one), decided by rewriting the
+                 body, reading its loop records and restoring the call at each site whose
+                 local is not one; where every argument is an operator expression over
                  variables and literals (no store read, no call), a vector literal of such
                  elements, or a vector variable, none reading `x`; where `x` is a plain record local,
                  not a parameter; and where the call's pooled return buffer is mentioned by
@@ -4230,7 +4236,10 @@ does not make; the literal builds it where it lives, and in a loop the literal f
 condition is what makes the interleaving exact: the callee's writes now run between the
 argument evaluations, so an argument may read nothing a write can change and do nothing a
 reordering could expose.  A literal of at most eleven elements drops its reservation — the
-first push claims as much, and a kept vector already has its record.
+first push claims as much, and a kept vector already has its record.  The loop-record
+condition is what makes the rule profitable rather than only sound: a constructor called in a
+loop whose result is copied out stays a call.  `LOFT_NO_LOOP_RECORD` or
+`LOFT_NO_LOOP_RECORD_REFILL` therefore keeps every call inside a loop as well.
 `LOFT_NO_CTOR_LITERAL=1` keeps every call; `LOFT_TRACE_CTOR_LITERAL=1` names each rewritten
 call, each declined call site and each declined `*_new` constructor.  Site:
 `ctor_literal::rewrite_program`.

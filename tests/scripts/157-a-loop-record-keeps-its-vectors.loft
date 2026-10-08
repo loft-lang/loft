@@ -5,8 +5,8 @@
 // only where every mint heads a literal group that writes every field, and every zero of a
 // vector field is one of those groups'.
 //
-// Kept: r1 (the vectors grow and shrink across passes, with pushes after the literal) and r4
-// (a callee pushes into the record).  Declined: r2 (an omitted field is written by the
+// Kept: r1 (the vectors grow and shrink across passes, with pushes after the literal), r4
+// (a callee pushes into the record), r6 and r7 (records appended into the kept vector).  Declined: r2 (an omitted field is written by the
 // prefill, not by a zero in the group) and r5 (the record is handed to a native append).
 // `--native` only; the interpreter takes the per-pass store and is the oracle.  Every value is
 // hand-computed.
@@ -29,6 +29,15 @@ fn fm_sum(f: const Fm) -> integer {
 fn fm_len(f: const Fm) -> integer { len(f.lens) * 100 + len(f.turns) }
 
 fn fm_push(f: Fm, x: integer) { f.lens += [x]; }
+
+struct Pd { a: integer, b: integer }
+struct St { ps: vector<Pd>, n: integer }
+
+fn st_sum(t: const St) -> integer {
+  s = t.n * 100;
+  for p in t.ps { s += p.a * 10 + p.b; }
+  s
+}
 
 fn live_records() -> integer {
   t = store_memory();
@@ -86,5 +95,20 @@ fn main() {
   }
   assert(r6 == 796120, "r6: {r6}");
   assert(rec9 > 0 && rec9 == rec39, "r6 records: {rec9} then {rec39}");
+  // r7 — a vector of RECORDS appended after the literal (`OpNewRecord` / `OpFinishRecord` on the
+  // kept record's own field); pass i appends i % 4 elements: sum 100i + 10i(i % 4) + (i % 4)(i % 4 - 1) / 2.
+  // Passes 3 and 7 hold the same three elements, so their live-record counts agree.
+  r7 = 0;
+  rec3 = -1;
+  rec7 = -2;
+  for i in 0..12 {
+    st = St { ps: [], n: i };
+    for j in 0..i % 4 { st.ps += [Pd { a: i, b: j }]; }
+    r7 += st_sum(st);
+    if i == 3 { rec3 = live_records(); }
+    if i == 7 { rec7 = live_records(); }
+  }
+  assert(r7 == 7752, "r7: {r7}");
+  assert(rec3 > 0 && rec3 == rec7, "r7 records: {rec3} then {rec7}");
   println("refill ok");
 }
