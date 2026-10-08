@@ -289,7 +289,7 @@ pub fn append_bytes(db: &DbRef, bytes: &[u8], stores: &mut [Store]) {
 /// path [`append_slot_in_capacity`], so each refusal has one home.
 #[allow(clippy::inline_always)]
 #[inline(always)]
-fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
+pub(crate) fn append_capacity(store: &Store, db: &DbRef, vec_rec: u32, size: u32) -> u32 {
     let owner_words = store.read::<i32>(db.rec, 0);
     if !(owner_words >= 1 && u64::from(db.pos) + 4 <= owner_words as u64 * 8) {
         append_field_outside_record(db, owner_words);

@@ -68,8 +68,12 @@ impl OpEmitter for OpDatabaseEmitter {
             // statements that follow) needs nothing, and a partial literal (`OpDatabase`) needs
             // only the prefill that re-establishes the omitted fields' defaults — never the
             // clear, claim, zero and tag the mint would repeat on the same record.
+            // The refill clause (a record with vector fields) is kept only under a complete
+            // literal: the prefill would zero a kept vector's slot and strand its record, so a
+            // partial one takes the plain mint, whose clear arm reclaims the store.
             if let Value::Var(w) = var_val.unspan()
-                && ctx.output.loop_records.contains_key(w)
+                && let Some(lr) = ctx.output.loop_records.get(w)
+                && (!lr.refill || ctx.output.complete_writes.db_vars.contains(w))
             {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*w),
