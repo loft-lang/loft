@@ -92,13 +92,22 @@ fn closure_shape(ret: &Type) -> ClosureShape {
 /// can size.  A vector-returning worker was previously mis-routed to the scalar
 /// path, which cast `DbRef as i64` (E0605, the native-refreturn bug).
 ///
-/// Keyed collections (`Sorted`/`Hash`/`Index`/`Radix`) are also DbRef returns
-/// (the parser groups them with `return_size = -1`) but have no `main_<kind><T>`
-/// storage wrapper for `heap_ref_kt` to size, so they stay off this path for now
-/// — a worker returning one still fails to compile loudly rather than copying at
-/// the wrong stride.  Extending `heap_ref_kt` to them is the follow-up.
+/// Keyed collections (`Sorted`/`Hash`/`Index`/`Radix`/`Trie`) are DbRef returns too
+/// (the parser groups them with `return_size = -1`): each is a record of its own
+/// database type, which `heap_ref_kt` sizes through [`Stores::keyed_type`].
+///
+/// [`Stores::keyed_type`]: crate::database::Stores::keyed_type
 fn is_ref_return(ret: &Type) -> bool {
-    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _))
+    ret.heap_def_nr().is_some()
+        || matches!(
+            ret,
+            Type::Vector(_, _)
+                | Type::Hash(..)
+                | Type::Sorted(..)
+                | Type::Index(..)
+                | Type::Radix(..)
+                | Type::Trie(..)
+        )
 }
 
 /// The `(struct_size, known_type)` a `HeapRef` worker return is copied as by
@@ -126,7 +135,13 @@ fn heap_ref_kt(ctx: &EmitCtx<'_, '_>, ret: &Type) -> (i32, i32) {
         }
         data.def(wrapper).known_type()
     } else {
-        return (0, 0);
+        // A keyed collection is a reference to a record of its own database type — the one
+        // `OpDatabase` allocates for it — which the copy walks whole, its index included.
+        let k = ctx.output.stores.keyed_type(data, ret);
+        if k == u16::MAX {
+            return (0, 0);
+        }
+        k
     };
     (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
 }

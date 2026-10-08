@@ -23802,19 +23802,6 @@ fn merge_dependencies(a: &Type, b: &Type) -> Type {
     a.joined_deps(b)
 }
 
-fn field_id(key: &[(String, bool)], name: &mut String) {
-    for (k_nr, (k, asc)) in key.iter().enumerate() {
-        if k_nr > 0 {
-            *name += ",";
-        }
-        if !asc {
-            *name += "-";
-        }
-        *name += k;
-    }
-    *name += "]>";
-}
-
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
 fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {

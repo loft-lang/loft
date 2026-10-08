@@ -3,7 +3,7 @@
 
 use super::{
     Argument, DefType, Function, I32, Level, Parser, ToString, Type, Value, diagnostic_format,
-    field_id, v_block, v_if, v_loop, v_set,
+    v_block, v_if, v_loop, v_set,
 };
 use crate::data::Deps;
 
@@ -8082,10 +8082,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Type::Function(..) => self.database.int(0, false),
             Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
             Type::Hash(tp, key, _) => {
-                let mut name = "hash<".to_string() + self.data.def(*tp).name() + "[";
-                self.database
-                    .field_name(self.data.def(*tp).known_type(), key, &mut name);
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -8100,10 +8097,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // @PLN48 — mirror Hash: resolve the spatial<T[…]> db type id, and
                 // register it on demand for a local-only var (whose type would else
                 // be absent from the schema, so iteration/`get_type` sees u16::MAX).
-                let mut name = "spatial<".to_string() + self.data.def(*tp).name() + "[";
-                self.database
-                    .field_name(self.data.def(*tp).known_type(), key, &mut name);
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -8117,8 +8111,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // The Radix shape, for a trie: resolve the registered id, and register
                 // on demand for a local-only var whose type is otherwise absent from
                 // the schema.  Same spelling `Stores::trie` uses.
-                let name = format!("trie<{}[{key}]>", self.data.def(*tp).name());
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -8129,15 +8122,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.database.trie(c_tp, key)
             }
             Type::Sorted(tp, key, _) => {
-                let mut name = "sorted<".to_string() + self.data.def(*tp).name() + "[";
-                field_id(key, &mut name);
-                let r = self.database.name(&name);
-                if r != u16::MAX {
-                    return r;
-                }
-                let mut ordered = "ordered<".to_string() + self.data.def(*tp).name() + "[";
-                field_id(key, &mut ordered);
-                let r = self.database.name(&ordered);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -8153,9 +8138,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.database.sorted(c_tp, key)
             }
             Type::Index(tp, key, _) => {
-                let mut name = "index<".to_string() + self.data.def(*tp).name() + "[";
-                field_id(key, &mut name);
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
