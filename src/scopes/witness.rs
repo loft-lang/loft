@@ -245,6 +245,9 @@ pub(super) fn nullable_locals_that_displace(
     // bind takes the dense arm (`use_analysis::first_bind_shape`), which answers this question
     // by store identity.  A flag beside it is a second release mechanism whose writes that arm
     // never emits: two `y: S?` loops shared one stale flag and freed a buffer still in use.
+    // The mechanism stays for `LOFT_NO_NULLABLE_RETBUF=1`, the buffer-less road that switch
+    // restores as cure 1's falsifier (`tests/nullable_ret_buffer.rs`): there it is still what
+    // releases loft#1200's displaced store.
     if crate::keys::nullable_ret_buffer() {
         return Vec::new();
     }
