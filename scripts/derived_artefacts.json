@@ -120,6 +120,27 @@
       "note": "rebuilt only when its source stamp moved (scripts/wasm_bundle_stamp.sh): its bytes depend on the toolchain, so an unconditional rebuild re-commits ~9 MB of wasm on every runner pass with no source change"
     },
     {
+      "name": "sprite-pack",
+      "paths": [
+        "doc/assets/bb.meta.store",
+        "doc/assets/bb.blobs.store",
+        "doc/assets/bb.meta.store.dschema",
+        "doc/assets/bb.blobs.store.dschema"
+      ],
+      "inputs": [
+        "src/",
+        "default/",
+        "tools/brick-buster/pack_atlas.loft",
+        "tests/fixtures/libs/assets/"
+      ],
+      "check": "cd tools/brick-buster && ../../target/release/loft --interpret check_pack.loft",
+      "regen": [
+        "cd tools/brick-buster && ../../target/release/loft --interpret check_pack.loft >/dev/null 2>&1 || { ../../target/release/loft --interpret pack_atlas.loft >/dev/null && cp assets/bb.meta.store assets/bb.blobs.store assets/bb.meta.store.dschema assets/bb.blobs.store.dschema ../../doc/assets/; }"
+      ],
+      "ci": true,
+      "note": "the gallery's Brick Buster sprite pack: stored records, so a layout rule that moves a field leaves it unreadable and the page draws nothing (loft#1956). Rebuilt only when check_pack.loft refuses it: the packer does not write byte-identical output twice"
+    },
+    {
       "name": "features-shadow",
       "paths": [
         "doc/features/",
