@@ -70,10 +70,10 @@ pub fn record() {
     // tolerates extra keys.  The defaults are visible (loft#870), and `name` joined
     // them with loft#875: a plain `text` the document omits is the EMPTY string, which
     // is a value `show` prints, not the null it used to hold and skip.  `category` is
-    // an enum, whose absent value genuinely is nothing, so it stays unprinted.
+    // an enum, whose absent value is null, and a null field is shown as `null` (@C143).
     assert_eq!(
         stores.parse_message("{blame:\"nothing\"}", s),
-        "{name:\"\",size:0,amount:0,percentage:0,calc:0}"
+        "{name:\"\",category:null,size:0,amount:0,percentage:0,calc:0}"
     );
     assert_eq!("/", stores.path(&result, s));
     assert_eq!(
