@@ -2735,6 +2735,16 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-46 — OPENED AND CLOSED (2026-10-07, loft#1916): a collection place assigned from a projection of itself was emptied
+
+`(H-CopySelf)` makes a self-delivery a no-op.  A collection field two or more steps deep
+assigned onto itself (`o.inner.sub = o.inner.sub`, `v[0].sub = v[0].sub`) came back empty on
+both backends with no diagnostic: the right-hand side was bound to a temporary that VIEWED the
+destination, the destination was cleared, and the empty view appended.  `n.kids =
+n.kids[0].kids` read from inside elements the clear frees.  Depth one was an elided no-op and
+never reached the path.  A projection is copied into a fresh temporary before the clear.
+Guard `1916-a-nested-collection-assigned-onto-itself-keeps-its-elements.loft`.
+
 ### D-heap-45 — OPENED AND CLOSED (2026-10-06, loft#1873 → loft#1876 → loft#1879): an assigned text field kept the text it replaced
 
 `(H-TextReplace)` was written with #1873's fix, which released only where the record's owner
