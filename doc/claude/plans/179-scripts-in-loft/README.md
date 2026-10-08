@@ -31,7 +31,9 @@ library spells today that the design says it will not: `use process::*;` (the tr
 surface fires from the registry index, and `process` is not published), and a path
 dependency in `scripts/loft.toml`, the manifest that makes `scripts/` one package so a bare
 script finds the repo-local library from any working directory.  Both leave when the
-library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day.
+library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day, and
+016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
+`lib/process/tests/command.loft`).
 Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,
 `build-playground-examples.loft`); nothing in the Makefile, CI or the hooks runs either, so
 they are subjects for the twin harness rather than a head start.

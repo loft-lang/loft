@@ -76,7 +76,6 @@
 1 scripts/revalidate_matrix.py
 3 scripts/rewrite_census.py
 2 scripts/rule_tags.py
-3 scripts/script_recheck.sh
 2 scripts/skills-review.py
 1 scripts/steering_rate.py
 1 scripts/test_duration_gate.py

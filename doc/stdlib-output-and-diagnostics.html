@@ -32,6 +32,10 @@
 <p>Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry and execution continues. The file and line are injected by the compiler; do not pass them manually.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">exit</a></span>(code: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Ends the program at once with exit status <code>code</code>, as a shell's <code>exit</code> does: what was printed is flushed, nothing more is printed, and no diagnostic names the line — a script's verdict is its own, where <code>assert</code> and <code>panic</code> answer loft's (status 1 and a message).  Under <code>loft test</code> it ends the test instead, as a failure that names the code.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_info</a></span>(message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
 <p>Write a structured log record at the chosen severity. The file and line are injected by the compiler; do not pass them manually. Safe to call from <code>par</code> workers: the host serialises log writes across threads.</p>
 </div>

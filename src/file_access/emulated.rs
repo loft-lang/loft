@@ -276,7 +276,16 @@ mod tests {
         for n in ["q?.txt", "trail.", "aux.txt", "a:b.txt", "b.txt", "B.txt"] {
             write(d.join(n), n).unwrap();
         }
-        assert_eq!(names(&d).len(), 6);
+        // The default macOS file system folds case: `B.txt` is `b.txt` there, and that is
+        // the host's own rule too — five names, not six.  Measured, not assumed by platform.
+        let folds_case = read_to_string(d.join("B.txt")).unwrap()
+            == read_to_string(d.join("b.txt")).unwrap()
+            && names(&d)
+                .iter()
+                .filter(|n| n.eq_ignore_ascii_case("b.txt"))
+                .count()
+                == 1;
+        assert_eq!(names(&d).len(), if folds_case { 5 } else { 6 });
         remove_dir_all(&d).unwrap();
     }
 }

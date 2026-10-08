@@ -8534,6 +8534,12 @@ pub fn panic(message: text, file: text, line: integer)
 Immediately terminates execution with message. Use for unrecoverable error states. In production mode (--production), logs a fatal entry and execution continues. The file and line are injected by the compiler; do not pass them manually.
 
 ```rust
+pub fn exit(code: integer)
+```
+
+Ends the program at once with exit status `code`, as a shell's `exit` does: what was printed is flushed, nothing more is printed, and no diagnostic names the line — a script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a message).  Under `loft test` it ends the test instead, as a failure that names the code.
+
+```rust
 pub fn log_info(message: text, file: text, line: integer)
 ```
 
