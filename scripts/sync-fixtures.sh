@@ -236,6 +236,10 @@ graphics/src/math.loft
 graphics/src/mesh.loft
 graphics/src/scene.loft
 shapes/src/shapes.loft
+# The two the browser bundle compiles Brick Buster against and the census missed: the fields
+# their libraries' own @PLN187 republish (assets 0.4.2, graphics 0.9.10) made `pub`.  The
+# gallery's page read "field `pages` of `Pack` is not `pub`" once C140 held on every build.
+assets/src/assets.loft
 EOF
 )
 
