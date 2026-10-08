@@ -72,7 +72,7 @@ C112	code	src/parser/expressions.rs::fn at_binding_name	ok	-
 C113	code	src/parser/definitions.rs::fn reject_duplicate_index	ok	-	
 C114	code	src/parser/vectors.rs::fn refuse_keyed_vector_element	ok	-	
 C115	code	src/parser/vectors.rs::Cannot write to the `&` parameter; src/parser/vectors.rs::fn reject_rebound_heap_parameter_captures	ok	-	
-C116	code	src/parser/vectors.rs::fn refuse_capturing_closure_in_collection	ok	-	tests/threading_chars.rs exercises it
+C116	code	src/parser/vectors.rs::fn refuse_capturing_closure_in_collection	ok	-	tests/threading_chars.rs and the last two cells of fn-ref-field-non-inline-refused.loft
 C117	code	src/parser/definitions.rs::fn refuse_mixed_nullability_group	ok	-	
 C118	code	src/parser/expressions.rs; src/scopes/args.rs	ok	-	
 C119	code	src/parser/definitions.rs::?` is not allowed — a tuple is its members' bytes	ok	-	
