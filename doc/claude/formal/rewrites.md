@@ -4211,9 +4211,11 @@ sentinel; the scale fold's conditions).
                  arguments.  A vector-literal argument is built IN ITS FIELD — the
                  literal's pushes retargeted at the field, its own buffer left unminted —
                  and a vector-variable argument is appended whole, as the callee did.
-                 Admitted where every argument is an operator expression over variables
-                 and literals (no store read, no call), a vector literal of such elements,
-                 or a vector variable, none reading `x`; where `x` is a plain record local,
+                 Admitted where at least one argument is a vector literal (a call of
+                 scalars alone already travels as a value record, `(R-ValueRecord)`, with
+                 no store to remove); where every argument is an operator expression over
+                 variables and literals (no store read, no call), a vector literal of such
+                 elements, or a vector variable, none reading `x`; where `x` is a plain record local,
                  not a parameter; and where the call's pooled return buffer is mentioned by
                  nothing but its declaration, its prep and its frees — the prep goes, the
                  target's free that skipped the buffer frees the target, and the buffer's
