@@ -1,0 +1,78 @@
+// `@FR-R-CtorLiteral` — a call of a CONSTRUCTOR (a function whose body is one record literal
+// over its parameters) that declares a local is that literal, written into the local: a
+// vector-literal argument is built in its field where the call built it in a buffer of its own
+// and the callee copied it whole.  In a loop the literal form is then a `@FR-R-LoopRecord`
+// whose vectors are kept across passes (the refill clause).
+//
+// Rewritten here: c1, c2, c3, c5, c8 (an argument the leaf inliner turned into an operator
+// expression).  Kept a call: c4 (`(R-Place)` builds the record into `keep` already) and
+// `make` (the target is the function's own return buffer).  A vector VARIABLE argument is
+// still copied (c2).  Applies in the IR phase, so the interpreter and `--native-release` take
+// it; plain `--native` compiles open-world and keeps the calls.  Every value is hand-computed.
+struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
+
+fn hn(h: integer) -> integer { ((h % 12) + 12) % 12 }
+
+/// A constructor: its body is one record literal over its parameters.
+fn fm_new(h0: integer, lens: vector<integer>, turns: vector<integer>) -> Fm {
+  Fm { h0: hn(h0), lens: lens, turns: turns }
+}
+
+fn fm_sum(f: const Fm) -> integer {
+  s = f.h0 * 1000;
+  for x in f.lens { s += x * 10; }
+  for y in f.turns { s += y; }
+  s
+}
+
+fn fm_len(f: const Fm) -> integer { len(f.lens) * 100 + len(f.turns) }
+
+fn three(a: integer) -> integer { a * 3 }
+
+fn make(k: integer) -> Fm {
+  r = fm_new(k, [k, k], [k + 1]);
+  r
+}
+
+fn main() {
+  // c1 — two vector literals built in their fields, every pass; a negative heading.
+  c1 = 0;
+  for i in 0..20 { ef = fm_new(i - 7, [i, i + 1, i + 2], [i * 2, 5]); c1 += fm_sum(ef) + fm_len(ef); }
+  assert(c1 == 134820, "c1: {c1}");
+
+  // c2 — a vector VARIABLE argument is copied: growing it after the call leaves the field as it was.
+  c2 = 0;
+  v = [1, 2];
+  for i in 0..6 { ef = fm_new(i, v, [i]); v += [i * 100]; c2 += fm_sum(ef) + fm_len(ef); }
+  assert(c2 == 37901, "c2: {c2}");
+
+  // c3 — a literal longer than the first append's eleven elements.
+  c3 = 0;
+  for i in 0..4 {
+    ef = fm_new(i, [i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6, i + 7, i + 8, i + 9, i + 10, i + 11, i + 12], [i]);
+    c3 += fm_sum(ef) + fm_len(ef);
+  }
+  assert(c3 == 15110, "c3: {c3}");
+
+  // c4 — each pass's record appended to a collection: the stored copies stay distinct.
+  keep: vector<Fm> = [];
+  for i in 0..5 { ef = fm_new(i, [i, i * i], [7]); keep += [ef]; }
+  c4 = 0;
+  for k in keep { c4 += fm_sum(k) + fm_len(k); }
+  assert(c4 == 11440, "c4: {c4}");
+
+  // c5 — a `continue` after the construction.
+  c5 = 0;
+  for i in 0..10 { ef = fm_new(i, [i], [1, 2]); if i % 3 == 0 { continue } c5 += fm_sum(ef); }
+  assert(c5 == 27288, "c5: {c5}");
+
+  // c6 — outside a loop, the record returned.
+  c6 = fm_sum(make(3)) + fm_sum(make(-5)) + fm_sum(make(40));
+  assert(c6 == 14801, "c6: {c6}");
+
+  // c8 — an argument that is a call: the constructor stays a call.
+  c8 = 0;
+  for i in 0..8 { ef = fm_new(three(i), [i], [three(i)]); c8 += fm_sum(ef); }
+  assert(c8 == 36364, "c8: {c8}");
+  println("ctor ok");
+}

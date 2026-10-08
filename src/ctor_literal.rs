@@ -639,12 +639,29 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         body.any_node(&mut |n| {
             if let Some(site) = site_of(n, &ctors)
                 && site.ctor != caller
-                && sets.get(&site.target) == Some(&1)
-                && !vars.is_captured(site.target)
-                && matches!(vars.tp(site.target), Type::Reference(_, _))
-                && buffer_only_pooled(data, &body, site.buf, site.target)
             {
-                ok_sites.push((site.target, site.buf));
+                let why = if sets.get(&site.target) != Some(&1) {
+                    Some("the target is assigned more than once")
+                } else if vars.is_argument(site.target) {
+                    Some("the target is a parameter (the function's own return buffer)")
+                } else if vars.is_captured(site.target)
+                    || !matches!(vars.tp(site.target), Type::Reference(_, _))
+                {
+                    Some("the target is not a plain record local")
+                } else if !buffer_only_pooled(data, &body, site.buf, site.target) {
+                    Some("the return buffer is used elsewhere")
+                } else {
+                    None
+                };
+                match why {
+                    None => ok_sites.push((site.target, site.buf)),
+                    Some(w) if trace() => eprintln!(
+                        "ctor-literal: {} kept a call in {}: {w}",
+                        ctors[&site.ctor].name,
+                        data.def(caller).name()
+                    ),
+                    Some(_) => {}
+                }
             }
             false
         });
@@ -656,7 +673,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         let mut done = Vec::new();
         // Only the sites the whole-body checks admitted: a site whose target or buffer did
         // not pass is filtered by its pair.
-        rewrite_in(data, &mut code, &ctors, &body, &ok_sites, &mut done);
+        let caller_name = data.def(caller).name().to_string();
+        rewrite_in(data, &caller_name, &mut code, &ctors, &body, &ok_sites, &mut done);
         for (target, buf) in &done {
             retire_buffer(data, &mut code, *target, *buf, free_ref);
         }
@@ -682,38 +700,51 @@ pub fn rewrite_program(data: &mut Data) -> usize {
 /// recording each rewritten site's target and buffer.
 fn rewrite_in(
     data: &Data,
+    caller: &str,
     v: &mut Value,
     ctors: &HashMap<u32, Ctor>,
     whole: &Value,
     ok: &[(u16, u16)],
     done: &mut Vec<(u16, u16)>,
 ) {
-    v.for_each_child_mut(&mut |c| rewrite_in(data, c, ctors, whole, ok, done));
+    v.for_each_child_mut(&mut |c| rewrite_in(data, caller, c, ctors, whole, ok, done));
     let Value::Block(b) = v else {
         return;
     };
     let scope = b.scope;
     let mut i = 0;
     while i < b.operators.len() {
-        if let Some(site) = site_of(&b.operators[i], ctors)
-            && ok.contains(&(site.target, site.buf))
+        let site = site_of(&b.operators[i], ctors).filter(|s| ok.contains(&(s.target, s.buf)));
+        if let Some(site) = &site
             && let Some(new) = expand(
                 data,
                 &b.operators[i],
                 &ctors[&site.ctor],
-                &site,
+                site,
                 scope,
                 whole,
             )
         {
             if trace() {
-                eprintln!("ctor-literal: {} written in place", ctors[&site.ctor].name);
+                eprintln!(
+                    "ctor-literal: {} written in place in {}",
+                    ctors[&site.ctor].name,
+                    caller
+                );
             }
             let n = new.len();
             b.operators.splice(i..=i, new);
             done.push((site.target, site.buf));
             i += n;
         } else {
+            if trace()
+                && let Some(site) = &site
+            {
+                eprintln!(
+                    "ctor-literal: {} kept a call in {caller}: an argument other than operators, a vector literal or a variable",
+                    ctors[&site.ctor].name
+                );
+            }
             i += 1;
         }
     }
