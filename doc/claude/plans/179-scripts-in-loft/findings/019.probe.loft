@@ -1,0 +1,2 @@
+// finding 019 — still holds while a never-returning call is refused as a `??` default.
+fn main() { x: integer? = null; y = x ?? exit(1); println(y); }

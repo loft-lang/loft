@@ -6,7 +6,7 @@ fix: `dir.walk(suffix) -> vector<text>` in the on-demand `script` library (READM
 ref: 
 probe: 005.probe.loft
 expect: refused
-checked: 231a813a9
+checked: 8c8a7ed43
 holds: yes
 
 no recursive listing: `files()` answers one level, so `find … -name '*.loft'` is a hand-written walk — the tree already carries one in `tools/indexer/src/scan.loft` (`walk_plan_dirs`), one in each of the two gallery scripts, one in the census and one in this port, none symlink-aware before `is_symlink` existed

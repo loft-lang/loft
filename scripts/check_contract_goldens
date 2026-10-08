@@ -1,0 +1,113 @@
+#!/usr/bin/env -S loft --interpret
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN102 arc-E flip-gate — the CI drift gates: a frozen-golden change ⇒ CONTRACT_VERSION
+// must bump.  Two frozen surfaces make up the persistence/behaviour contract: the LAYOUT
+// golden (tests/golden/layout/corpus.txt, the byte layout of stored data — a change misreads
+// a store persisted under the old layout) and the BEHAVIOUR golden
+// (tests/golden/behavior/corpus.out, the observable output of valid programs — a changed
+// value is a silent semantics break).  Post-freeze a change to either may land only
+// alongside a CONTRACT_VERSION bump; inert while CONTRACT_VERSION == 0.  Non-blocking by
+// design: it informs, the doctrine is a conscious decision.
+//
+// Usage:  scripts/check_contract_goldens [BASE_REF]   (default BASE_REF = origin/main)
+//         scripts/check_contract_goldens --self-test  (prove the decision table)
+//
+// The port of scripts/check_contract_goldens.sh (@PLN179 strand 4d); its twin cases are
+// tests/comparisons/scripts/check_contract_goldens/.  A repo-root tool: paths resolve against
+// the working directory.
+#cwd
+
+struct Verdict {
+  word: text,
+  rc: integer
+}
+
+// Pure decision function — the whole policy, so --self-test can exercise it without git.
+fn decide(contract: integer, golden_changed: integer, contract_bumped: integer) -> Verdict {
+  if contract == 0 { return Verdict { word: "inert", rc: 0 }; }       // pre-freeze: free
+  if golden_changed == 0 { return Verdict { word: "ok", rc: 0 }; }    // nothing moved
+  if contract_bumped == 1 { return Verdict { word: "ok", rc: 0 }; }   // declared break
+  Verdict { word: "break", rc: 1 }                                    // silent break
+}
+
+fn check(want: text, rc: integer, contract: integer, changed: integer, bump: integer) -> boolean {
+  got = decide(contract, changed, bump);
+  if got.word != want || got.rc != rc {
+    println("SELF-TEST FAIL: decide({contract},{changed},{bump}) = ({got.word},{got.rc}), expected ({want},{rc})");
+    return true;
+  }
+  false
+}
+
+fn self_test() {
+  fail = false;
+  fail = check("inert", 0, 0, 1, 0) || fail;   // contract 0 → always inert, even a golden change
+  fail = check("inert", 0, 0, 0, 0) || fail;
+  fail = check("ok", 0, 1, 0, 0) || fail;      // post-flip, golden unchanged → ok
+  fail = check("ok", 0, 1, 1, 1) || fail;      // post-flip, golden changed WITH a bump → ok
+  fail = check("break", 1, 1, 1, 0) || fail;   // post-flip, golden changed, NO bump → break
+  fail = check("break", 1, 2, 1, 0) || fail;   // any contract >= 1 behaves the same
+  if !fail { println("check_contract_goldens self-test: PASS"); exit(0); }
+  println("check_contract_goldens self-test: FAIL");
+  exit(1);
+}
+
+// The CONTRACT_VERSION the manifest declares, or null when it declares none.
+fn contract_version(manifest: text) -> integer? {
+  for line in manifest.split('\n') {
+    if line.starts_with("pub const CONTRACT_VERSION: u32 = ") {
+      digits = "";
+      for c in line["pub const CONTRACT_VERSION: u32 = ".len()..] {
+        if c >= '0' && c <= '9' { digits += "{c}"; } else { break; }
+      }
+      return digits as integer?;
+    }
+  }
+  null
+}
+
+fn main() {
+  args = arguments();
+  if len(args) > 0 && args[0] == "--self-test" { self_test(); }
+  base = "origin/main";
+  if len(args) > 0 && args[0] != "" { base = args[0]; }
+  manifest = "src/manifest.rs";
+  goldens = ["tests/golden/layout/corpus.txt", "tests/golden/behavior/corpus.out"];
+
+  // `?? exit(1)` is refused (finding 019: a call that never returns is not a `??` default).
+  contract = contract_version(file(manifest).content() ?? "") ?? -1;
+  if contract < 0 { exit(1); }
+  golden_changed = 0;
+  moved: vector<text> = [];
+  for g in goldens {
+    quiet: Command = "git diff --quiet {base} -- {g}";
+    r = quiet.run();
+    eprint(r.stderr);
+    if !r.ok { golden_changed = 1; moved += [g]; }
+  }
+  diff: Command = "git diff {base} -- {manifest}";
+  r = diff.run();
+  eprint(r.stderr);
+  contract_bumped = 0;
+  for line in r.stdout.split('\n') {
+    if line.starts_with("+") && !line.starts_with("++") && line.contains("CONTRACT_VERSION: u32 =") { contract_bumped = 1; }
+  }
+  verdict = decide(contract, golden_changed, contract_bumped);
+  if verdict.word == "inert" {
+    println("contract-goldens gate: INERT (CONTRACT_VERSION={contract}, pre-freeze)");
+  } else if verdict.word == "ok" {
+    println("contract-goldens gate: ok (contract={contract}, golden_changed={golden_changed}, bumped={contract_bumped})");
+  } else {
+    eprintln("contract-goldens gate: FAIL — a frozen contract golden changed but CONTRACT_VERSION did not bump.");
+    eprintln("Changed: {moved.join(" ")}");
+    eprintln("A change to the layout golden is a silent PERSISTENCE break; a change to the behaviour");
+    eprintln("golden is a silent SEMANTICS break. Post-freeze (CONTRACT_VERSION={contract}) that may land");
+    eprintln("only as a DECLARED break. Either:");
+    eprintln("  - bump CONTRACT_VERSION in {manifest} (and, for a layout change, set LAYOUT_CONTRACT to");
+    eprintln("    the new value in tests/layout_golden.rs), or");
+    eprintln("  - if the change is contract-neutral, revert the golden re-bless.");
+  }
+  exit(verdict.rc);
+}

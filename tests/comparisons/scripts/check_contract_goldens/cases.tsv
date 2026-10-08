@@ -1,0 +1,6 @@
+# orig: scripts/check_contract_goldens.sh
+# port: scripts/check_contract_goldens
+# case	twin options	arguments
+self-test		--self-test
+default	--replay tests/comparisons/scripts/check_contract_goldens/replay/default	origin/main
+no-base	--replay tests/comparisons/scripts/check_contract_goldens/replay/no-base	nope

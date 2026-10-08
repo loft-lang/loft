@@ -19,15 +19,16 @@ honest.  A workaround inside a port would teach every reader the wrong shape.
 ## Status (REQUIRED)
 
 Open — strand 1's census ships with the plan (`scripts/script_census`, the plan's first
-loft script, and `WORKLIST.md` it generates); seven ports are twinned green on both backends
+loft script, and `WORKLIST.md` it generates); eight ports are twinned green on both backends
 ([SCOREBOARD.md](SCOREBOARD.md)), each beside its original, which every caller still calls.
 **Strand 4 is built through 4c and has its first port (2026-10-08):** `lib/process` carries
 `Command` (4a), `run` / `start` / `wait` / `stop` and the `lines()` / `err_lines()` cursor with its
 probes answered (4b, PROCESS.md § Built), and recording + replay inside `run` (4c,
 `LOFT_RUN_RECORD` / `LOFT_RUN_REPLAY`, with `tests/comparisons/scripts/replay_tool.sh` as
 the original's half and `script_twin.sh --replay`).  `scripts/check_bundle_fresh` is the
-first T3 port, twinned offline on four recorded `git` answers, and nothing in it names the
-library: the TYPE trigger the design rests on fires now (finding 018 — derived from the
+first T3 port, twinned offline on four recorded `git` answers, `scripts/check_contract_goldens`
+the second (finding 019: a never-returning call is not a `??` default), and nothing in
+either names the library: the TYPE trigger the design rests on fires now (finding 018 — derived from the
 start, never read).  What a port still carries is the path dependency in `scripts/loft.toml`,
 the manifest that makes `scripts/` one package so a bare script finds the repo-local
 library from any working directory; it leaves when the library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day, and

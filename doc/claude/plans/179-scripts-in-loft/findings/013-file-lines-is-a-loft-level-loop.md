@@ -6,7 +6,7 @@ fix: `lines()` as a runtime primitive (a `#rust` body over `content()`, the CR/L
 ref: @PLN181
 probe: 013.probe.loft
 expect: over:150
-checked: 231a813a9
+checked: 8c8a7ed43
 holds: no
 
 `LOFT_PROFILE=1` on the port: 90.9 % of 10.7 s in `t_4File_lines`, three lines of `02_files.loft` (the `for ch in c` walk, the slice into `result`, the `\n` test); the regex matching the port exists for is 2 %. The original, Python's `f.read().splitlines()` plus its regexes, runs the whole job in 298 ms; the interpreted port takes 5.9 s and the native one about 0.75 s. Python's split is C; loft's is a loft loop the interpreter executes per character, so the port loses by 20× on the one stdlib call every text-processing script makes first.

@@ -1,0 +1,5 @@
+git
+diff
+origin/main
+--
+src/manifest.rs

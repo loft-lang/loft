@@ -4,20 +4,21 @@
 | language | files | lines |
 |---|---|---|
 | Python | 124 | 30864 |
-| bash | 155 | 19302 |
-| loft (under scripts/) | 9 | — |
+| bash | 155 | 19306 |
+| loft (under scripts/) | 10 | — |
 
-Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **38673**.
+Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **38677**.
 
-**Position: 7 of 279 scripts ported, 7 of them twinned on 12 declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `lib_process` suite — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).
+**Position: 8 of 279 scripts ported, 8 of them twinned on 15 declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `lib_process` suite — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).
 
-## T0 — already loft — the twin harness's first subjects (9 files, 1318 lines)
+## T0 — already loft — the twin harness's first subjects (10 files, 1431 lines)
 
 | script | lang | lines | tools | py modules | callers | contract | status |
 |---|---|---|---|---|---|---|---|
 | `scripts/build-gallery-examples.loft` | loft | 113 |  |  |  | report | — |
 | `scripts/build-playground-examples.loft` | loft | 176 |  |  |  | report | — |
 | `scripts/check_bundle_fresh` | loft | 78 |  |  | ci,script | gate | — |
+| `scripts/check_contract_goldens` | loft | 113 |  |  | make,script | gate | — |
 | `scripts/kernel_ratio` | loft | 44 |  |  | make | report | — |
 | `scripts/opl_points` | loft | 97 |  |  | script | report | — |
 | `scripts/rule_predicate_audit` | loft | 227 |  |  | script | report | — |
@@ -149,7 +150,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `tools/indexer/migrate.py` | py | 312 |  | argparse re | script | gate+writes | — |
 | `tools/ir_schema/extract.py` | py | 215 |  | re | script | gate | — |
 
-## T3 — needs git / gh / curl — strand 4, typed git + github (56 files, 12090 lines)
+## T3 — needs git / gh / curl — strand 4, typed git + github (56 files, 12092 lines)
 
 | script | lang | lines | tools | py modules | callers | contract | status |
 |---|---|---|---|---|---|---|---|
@@ -167,7 +168,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/bug-review.py` | py | 438 | gh | re json argparse subprocess | make,script | gate | — |
 | `scripts/check-release-published.py` | py | 163 | gh | argparse json re subprocess | ci,script | gate | — |
 | `scripts/check_bundle_fresh.sh` | sh | 67 | git grep |  | ci,script | gate | twinned (4) |
-| `scripts/check_contract_goldens.sh` | sh | 91 | grep git |  | make | gate | — |
+| `scripts/check_contract_goldens.sh` | sh | 93 | sed git grep |  | make,script | gate | twinned (3) |
 | `scripts/check_registry_coverage.sh` | sh | 128 | curl python3 git sed |  | ci,script | writes | — |
 | `scripts/ci_failure_digest.py` | py | 624 | gh git | json re subprocess | make,ci | gate | — |
 | `scripts/ci_timing.py` | py | 292 | gh | json subprocess | make,ci | gate | — |
@@ -244,7 +245,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/test_speed_gate.py` | py | 210 | gh cargo | json re subprocess | make,ci,script | gate+writes | — |
 | `scripts/tmp_headroom.sh` | sh | 54 | awk cargo rustc |  |  | writes | — |
 
-## T5 — runs a program of its own choosing — strand 4's `run` first (64 files, 9759 lines)
+## T5 — runs a program of its own choosing — strand 4's `run` first (64 files, 9761 lines)
 
 | script | lang | lines | tools | py modules | callers | contract | status |
 |---|---|---|---|---|---|---|---|
@@ -297,7 +298,7 @@ Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **
 | `scripts/release-gate.sh` | sh | 88 | run sed git gh |  | make | gate | — |
 | `scripts/revalidate_libs_local.sh` | sh | 296 | run sed git python3 grep awk |  | ci,script | gate+writes | — |
 | `scripts/script_recheck.sh` | sh | 76 | git sed grep run |  | script | writes | — |
-| `scripts/script_twin.sh` | sh | 128 | run sed git grep |  | make,script | gate+writes | — |
+| `scripts/script_twin.sh` | sh | 130 | run sed git grep |  | make,script | gate+writes | — |
 | `scripts/script_twins.sh` | sh | 74 | sed run |  | make | writes | — |
 | `scripts/sweep_scratch.sh` | sh | 127 | sed git run |  | make,script | report | — |
 | `scripts/test-timing-runner.sh` | sh | 47 | run awk |  |  | gate+writes | — |
