@@ -122,7 +122,8 @@ def default_sources(days, head):
         ref, date = line.split(" ", 1)
         if ref in ("origin/HEAD", "origin/main", "origin/gh-pages", own) or ref == "origin":
             continue
-        if datetime.datetime.fromisoformat(date) < cutoff:
+        # `fromisoformat` takes the `Z` suffix only from Python 3.11; macOS ships 3.9.
+        if datetime.datetime.fromisoformat(date.replace("Z", "+00:00")) < cutoff:
             continue
         if git("rev-list", "--count", f"{head}..{ref}").strip() != "0":
             out.append(ref)
