@@ -413,8 +413,8 @@ fn buffer_only_pooled(data: &Data, body: &Value, buf: u16, target: u16) -> bool 
                 if (nm == "OpFreeRef" && a.len() == 1 && is_var(&a[0], buf))
                     || (nm == "OpFreeRefIfDistinct"
                         && a.len() == 2
-                        && is_var(&a[0], target)
-                        && is_var(&a[1], buf))
+                        && ((is_var(&a[0], target) && is_var(&a[1], buf))
+                            || (is_var(&a[0], buf) && is_var(&a[1], target))))
                 {
                     return;
                 }
@@ -568,12 +568,23 @@ fn expand(
 /// Drop the pooled buffer's prep and turn the target's skip-the-buffer free into its own.
 fn retire_buffer(data: &Data, v: &mut Value, target: u16, buf: u16, free_ref: u32) {
     v.for_each_child_mut(&mut |c| retire_buffer(data, c, target, buf, free_ref));
+    // The buffer's free that skips the target (`OpFreeRefIfDistinct(buf, target)`, where the
+    // target was the buffer) frees a store nothing mints any more.
+    let dead = |o: &Value| match o.unspan() {
+        Value::If(c, t, f) => prep_of(data, c, t, f, buf),
+        Value::Call(op, a) => {
+            name(data, *op) == "OpFreeRefIfDistinct"
+                && a.len() == 2
+                && is_var(&a[0], buf)
+                && is_var(&a[1], target)
+        }
+        _ => false,
+    };
     if let Value::Block(b) = v {
-        b.operators
-            .retain(|o| !matches!(o.unspan(), Value::If(c, t, f) if prep_of(data, c, t, f, buf)));
+        b.operators.retain(|o| !dead(o));
     }
     if let Value::Insert(items) = v {
-        items.retain(|o| !matches!(o.unspan(), Value::If(c, t, f) if prep_of(data, c, t, f, buf)));
+        items.retain(|o| !dead(o));
     }
     if let Value::Call(op, a) = v
         && name(data, *op) == "OpFreeRefIfDistinct"
@@ -674,7 +685,15 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         // Only the sites the whole-body checks admitted: a site whose target or buffer did
         // not pass is filtered by its pair.
         let caller_name = data.def(caller).name().to_string();
-        rewrite_in(data, &caller_name, &mut code, &ctors, &body, &ok_sites, &mut done);
+        rewrite_in(
+            data,
+            &caller_name,
+            &mut code,
+            &ctors,
+            &body,
+            &ok_sites,
+            &mut done,
+        );
         for (target, buf) in &done {
             retire_buffer(data, &mut code, *target, *buf, free_ref);
         }
@@ -728,8 +747,7 @@ fn rewrite_in(
             if trace() {
                 eprintln!(
                     "ctor-literal: {} written in place in {}",
-                    ctors[&site.ctor].name,
-                    caller
+                    ctors[&site.ctor].name, caller
                 );
             }
             let n = new.len();
