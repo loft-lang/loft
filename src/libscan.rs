@@ -259,8 +259,9 @@ pub fn scan_type_refs(content: &str) -> Vec<String> {
     let len = bytes.len();
     let mut types: Vec<String> = Vec::new();
     let mut i = 0usize;
-    // The last non-blank bytes before the identifier, as a short text: `:`, `->`, `as`, `<`.
-    let mut prev = String::new();
+    // The last token before the identifier, as a slice of `content` — the scan runs on
+    // every file of every compile, so it allocates only for a hit.
+    let mut prev: &str = "";
     while i < len {
         let ch = bytes[i];
         if ch == b'/' && i + 1 < len && bytes[i + 1] == b'/' {
@@ -285,7 +286,7 @@ pub fn scan_type_refs(content: &str) -> Vec<String> {
                 i += 1;
             }
             i += 1;
-            prev.clear();
+            prev = "";
             continue;
         }
         if is_ident_start(ch) {
@@ -294,12 +295,12 @@ pub fn scan_type_refs(content: &str) -> Vec<String> {
                 i += 1;
             }
             let word = &content[start..i];
-            if word.as_bytes()[0].is_ascii_uppercase() {
+            if ch.is_ascii_uppercase() {
                 let mut after = i;
                 while after < len && (bytes[after] == b' ' || bytes[after] == b'\t') {
                     after += 1;
                 }
-                let before = matches!(prev.as_str(), ":" | "->" | "as" | "<");
+                let before = matches!(prev, ":" | "->" | "as" | "<");
                 let literal = after < len && bytes[after] == b'{';
                 let variant = after + 1 < len
                     && bytes[after] == b'.'
@@ -308,7 +309,7 @@ pub fn scan_type_refs(content: &str) -> Vec<String> {
                     types.push(word.to_string());
                 }
             }
-            prev = word.to_string();
+            prev = word;
             continue;
         }
         if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
@@ -316,11 +317,11 @@ pub fn scan_type_refs(content: &str) -> Vec<String> {
             continue;
         }
         if ch == b'-' && i + 1 < len && bytes[i + 1] == b'>' {
-            prev = "->".to_string();
+            prev = "->";
             i += 2;
             continue;
         }
-        prev = (ch as char).to_string();
+        prev = &content[i..=i];
         i += 1;
     }
     types
