@@ -89,7 +89,9 @@ run_side() {
     [ -n "$files_dir" ] && rm -rf "$files_dir"
     local s e ms
     s=$(date +%s%N)
-    "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
+    # The CI ledgers are the gate's instrumentation, not the script's stderr: unset for both
+    # sides, or a `[loft-timing]` line is a red err channel on every port.
+    env -u LOFT_TIMING_LEDGER -u LOFT_SKIP_LEDGER "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
     echo $? > "$work/$side.exit"
     e=$(date +%s%N)
     ms=$(( (e - s) / 1000000 ))
