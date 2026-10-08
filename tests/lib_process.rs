@@ -65,6 +65,21 @@ mod spawns_sh {
         run("--native", "run.loft");
     }
 
+    // `lines.loft` — the streaming view (@PLN179 strand 4b): the design's gate probes, each
+    // a cell that can fail on its own — the first line of a slow producer arrives before it
+    // ends, 50 MB streams through a loop that counts it, a loop left early then `stop()`
+    // leaves no program behind (its pid asked), and the contract of the finished run.  The
+    // producers are `sh`, under the same exemption as the drain gate.
+    #[test]
+    fn lines_stream_as_they_arrive_interpreted() {
+        run("--interpret", "lines.loft");
+    }
+
+    #[test]
+    fn lines_stream_as_they_arrive_compiled() {
+        run("--native", "lines.loft");
+    }
+
     #[test]
     fn a_started_program_and_its_tree_interpreted() {
         run("--interpret", "start.loft");
@@ -90,25 +105,5 @@ mod spawns_sh {
         run_on("--interpret", "start.loft", "windows");
         run_on("--native", "start.loft", "windows");
         run_on("--interpret", "../tests-unix/tree.loft", "windows");
-    }
-}
-
-// `lines.loft` — the streaming view (@PLN179 strand 4b): the design's gate probes, each a
-// cell that can fail on its own — the first line of a slow producer arrives before it ends,
-// 50 MB streams through a loop that counts it, a loop left early then `stop()` leaves no
-// program behind (its pid asked), and the contract of the finished run.  The producers are
-// `sh`, so unix only, like the drain gate above.
-#[cfg(unix)]
-mod streams_sh {
-    use super::run;
-
-    #[test]
-    fn lines_stream_as_they_arrive_interpreted() {
-        run("--interpret", "lines.loft");
-    }
-
-    #[test]
-    fn lines_stream_as_they_arrive_compiled() {
-        run("--native", "lines.loft");
     }
 }
