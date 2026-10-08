@@ -94,8 +94,8 @@ The twelve rows reduce to a handful of mechanisms.  Ordered by how many rows eac
 * **A copy where Rust moves — the constructor case.**  `(R-CtorLiteral)` (a call of a
   function whose body is one record literal is that literal, a vector-literal argument built
   in its field) and `(R-LoopRecord)`'s refill clause (a record literal in a loop keeps its
-  vectors across passes).  `forms_upto` −24.5 % cycles native (priced −31 %; the rest is the
-  inlined call's own prologue the hand form also dropped), −54 % interpreted; hash unchanged.
+  vectors across passes).  `forms_upto` −24.5 % cycles native (priced −31 %; the gap to the
+  price is not yet attributed), −54 % interpreted; hash unchanged.
   Receipt: `formal/rewrites-history.md` § 2026-10-08.  A runtime fast path in
   `Stores::vector_add` was priced first and bought −4 % here: the copy routine was not the
   cost, the temporary was.
