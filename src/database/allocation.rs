@@ -191,6 +191,13 @@ struct FieldAt {
     content: u16,
 }
 
+/// `LOFT_NO_HEAP_FREE_VECTOR_COPY=1` — a deep copy of a vector whose elements own no heap
+/// walks its elements again after the bulk copy (`copy_claims_seq_vector`).
+fn heap_free_vector_copy_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_HEAP_FREE_VECTOR_COPY").is_ok_and(|v| v != "0"))
+}
+
 impl Stores {
     /// Is `cur` a record this store could actually contain?
     ///
@@ -3248,6 +3255,15 @@ impl Stores {
         // pass deep-copies the nested claims).  The bulk copy laid the destination out
         // byte-identically, so each element sits at the SAME offset in `into`; reuse
         // `child.pos` for the destination instead of recomputing `8 + size*i`.
+        // Elements that own no heap carry nothing past the bulk copy: each element's own
+        // `copy_claims` would return at once, after the walk listed it.  The walk stays armed
+        // for a store `LOFT_WATCH_STORE` names, as in `Stores::vector_add`.
+        if !self.type_owns_heap(content_tp)
+            && crate::keys::watch_store() != Some(to.store_nr)
+            && heap_free_vector_copy_enabled()
+        {
+            return;
+        }
         let children = self.for_each_owned_child(rec, tp).children;
         debug_assert!(
             children.is_empty() || u32::try_from(children.len()).unwrap_or(u32::MAX) == length,
