@@ -5,10 +5,13 @@
 // source, and reads the copy; every value is hand-computed.
 //
 // @falsified-at: hand-measured (sabotage, 2026-10-08) — with the skip taken for EVERY element
-//   type, h2 reads the freed source's text on --interpret and --native under LOFT_POISON=1
-//   and h3's inner vectors share the source's records.  Restored, every cell holds on both
-//   backends, under `LOFT_NO_HEAP_FREE_VECTOR_COPY=1` and under LOFT_STRICT_STORES=1,
-//   LOFT_POISON=1 and LOFT_POISON_CLAIM=1.
+//   type, h2 reads `:0,:1,:2,` (the copied elements' texts point into the source's store) on
+//   --interpret and --native, with and without LOFT_POISON=1.  A first draft copied the
+//   vector field alone (`copy = src.items`), which never reaches this copy and stayed green
+//   under the plant; h2 and h3 now copy a RECORD holding the vector.  Restored, every cell
+//   holds on --interpret, --native and --native-release, under
+//   `LOFT_NO_HEAP_FREE_VECTOR_COPY=1` and under LOFT_STRICT_STORES=1, LOFT_POISON=1,
+//   LOFT_POISON_CLAIM=1 and LOFT_NATIVE_LEAK_CHECK=1.
 
 struct Pd { q: integer, r: integer }
 struct Stroke { painted: vector<Pd>, n: integer }
@@ -39,25 +42,29 @@ fn main() {
   h1 = pd_sum(timeline[0]);
   assert(h1 == 5046 && len(timeline[0].painted) == 2, "h1: {h1}");
 
-  // h2 — elements that own a text: the copy owns its texts after the source is gone.
-  copy: vector<Named> = [];
+  // h2 — a record whose vector's elements own a text, appended to a collection (the deep
+  // copy walks each element): the copy owns its texts after the source is changed and gone.
+  hs: vector<Holder> = [];
   {
     src = make_holder(40);
-    copy = src.items;
+    hs += [src];
     src.items[1].name = "changed";
+    src.items += [Named { name: "extra", k: 9 }];
   }
   h2 = "";
-  for n in copy { h2 += "{n.name}:{n.k},"; }
+  for n in hs[0].items { h2 += "{n.name}:{n.k},"; }
   assert(h2 == "n40:0,n41:1,n42:2,", "h2: {h2}");
 
-  // h3 — a vector of vectors: the copy owns its inner vectors.
+  // h3 — a record holding a vector of vectors, appended to a collection: the copy owns its
+  // inner vectors.
+  gs: vector<Grid> = [];
   g = Grid { rows: [[1, 2], [3]] };
-  g2 = Grid { rows: g.rows };
+  gs += [g];
   g.rows[0] += [50];
   g.rows[1][0] = 300;
   h3 = 0;
-  for row in g2.rows { for x in row { h3 = h3 * 10 + x; } }
-  assert(h3 == 123 && len(g2.rows[0]) == 2, "h3: {h3}");
+  for row in gs[0].rows { for x in row { h3 = h3 * 10 + x; } }
+  assert(h3 == 123 && len(gs[0].rows[0]) == 2, "h3: {h3}");
 
   // h4 — the timeline shape at volume: 40 strokes of i % 5 points, each source rebuilt after
   // its append; sum over i of 1000 i + sum over j < i % 5 of (10 i + j).
