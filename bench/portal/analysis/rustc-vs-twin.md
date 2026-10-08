@@ -72,7 +72,9 @@ The twelve rows reduce to a handful of mechanisms.  Ordered by how many rows eac
   store.set_str(&s_val)` where `x` is already an owned `String` (`check_request`'s decode): one
   malloc, copy and free per text field written.  An emitter fix; every text field write.
 * **`len(t) > 0` counts characters** (`t_4text_len`) where the question is emptiness
-  (`arguments`).
+  (`arguments`).  **Measured and declined:** an IR rewrite to `size(t)` (exact for every
+  comparison with 0, and `< 1` / `>= 1`) cut `parse`'s instructions 4.6 % and its native
+  cycles not at all (the count runs at high IPC), the interpreter's by 1.8 %.
 * **`"{c}" == t` builds a `String` per comparison** (`arguments`' option scan).
 * **A per-byte copy loop** (`buf += [src[i] ?? 0]`, `for c in d.buf { nb += [c] }`) where the
   twin copies a block (cbor, zttext).
