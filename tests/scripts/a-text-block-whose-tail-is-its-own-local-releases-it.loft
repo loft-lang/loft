@@ -39,6 +39,7 @@
 //   backend-divergence guard — only one side can move)
 //   ARMED: `LOFT_TEXT_TIMELINE=1` for the interpret half — every value is right on both trees,
 //   so the scored channels see only the native compile; the orphan count is the leak channel.
+//   HOLDS: interpret exit, assertions, store leaks and panic are clean on both trees.
 
 fn name(k: integer) -> text? { if k % 2 == 0 { "n{k}" } else { null } }
 
