@@ -83,8 +83,9 @@ fn m6(n: integer) -> vector<Mix> {
 }
 fn c6() { r = m6(4); e = r[3]?; println("c6 {len(r)} {e.on} {e.k} {e.f} {r[0]?.on}"); }
 
-// c7 — the element owns HEAP (a text field): outside the admission (the raw slot carries
-// stale bytes where a heap handle's zero matters), the group keeps its templates.  Values right.
+// c7 — the element owns HEAP (a text field): the slot is zeroed at the mint (the heap clause)
+// and the formatted text written into the fresh element is a claim in the mint's own store
+// (`@FR-R-Mint`'s text clause), so the append fuses.  Values right.
 fn m7(n: integer) -> vector<TxtE> {
   out: vector<TxtE> = [];
   for i in 0..n { out += [TxtE { t: "x{i}", n: i }]; }
