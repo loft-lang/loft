@@ -122,6 +122,24 @@ fn test() { doublet(5); }"
     );
 }
 
+/// A `match` STATEMENT on a subject whose type is undefined reports that type, and nothing
+/// else: its arms lower to nothing, and that nothing must still read as a brace statement, not
+/// as an expression owing a `;` after its `}` (zero-trust's plugins met the `;` first).
+#[test]
+fn a_match_statement_on_an_undefined_type_reports_the_type() {
+    code!(
+        "fn get() -> Nowhere { 0 }
+fn radius() -> integer {
+  match get() { Disc { r } => { return r; }, _ => {} }
+  0
+}
+fn test() {}"
+    )
+    .error(
+        "Undefined type Nowhere at a_match_statement_on_an_undefined_type_reports_the_type:1:22",
+    );
+}
+
 /// Type-name typo (Levenshtein 1) appends `did you mean` suffix.
 /// Wires `Data::suggest_type_name` at `parser/mod.rs`'s deferred
 /// "Undefined type" emitter.
