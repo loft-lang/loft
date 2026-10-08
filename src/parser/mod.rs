@@ -3421,10 +3421,8 @@ impl Parser {
             // in `definitions.rs`: the buffer is storage, and storage is never absent —
             // the `?` belongs to the RETURN, which is a value the caller reads.
             let ret = def.returned().ret_promo_base().clone();
-            if !matches!(
-                ret,
-                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-            ) {
+            // The signature's own question (`Type::takes_ret_buffer`): a record takes none.
+            if !def.returned().takes_ret_buffer() {
                 continue;
             }
             // Already served — either the signature-time reservation fired, or pass 1

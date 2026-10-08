@@ -878,8 +878,9 @@ pub fn shadowed_by_method_lint_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_SHADOWED_BY_METHOD"))
 }
 
-/// A NULLABLE COLLECTION return gets the same hidden `__retbuf` the non-nullable one gets —
-/// **DEFAULT ON** (loft#938). Opt OUT with `LOFT_NO_NULLABLE_RETBUF`.
+/// A NULLABLE return gets the same hidden `__retbuf` its non-nullable twin gets — a collection
+/// (loft#938) and a record or record enum (loft#1934, `@FR-N-Road`) — **DEFAULT ON**. Opt OUT
+/// with `LOFT_NO_NULLABLE_RETBUF`, which restores the buffer-less `τ?` for all three.
 ///
 /// # What it is for
 ///
@@ -914,15 +915,17 @@ pub fn shadowed_by_method_lint_enabled() -> bool {
 ///
 /// # For whoever changes this
 ///
-/// The peel is deliberately narrow — `Optional(Vector)` only. Widening it to
-/// `Optional(Reference(S))` leaks one record per call, because a nullable STRUCT return is
-/// loft#896's synthetic `__nullable<S>` enum with its own delivery
-/// (`882-keyed-element-read-borrows-its-container.loft` catches it). The `?` is transparent
-/// only where the storage under it is.
+/// The peel covers every shape that takes the buffer, through one predicate
+/// (`Type::ret_promo_base`).  A `null` answer is a value the caller reads, so a delivery that
+/// copies a tail into the buffer copies PER ARM and leaves a `null` arm null, and copies a
+/// nullable local only where it is present — `materialize_vector_arms_into` for a collection,
+/// `materialize_return_into` for a record.  Copying a whole nullable tail into the buffer is the
+/// mistake every site on this path has to avoid: it answers the buffer on the null path too.
 ///
-/// A delivery that COPIES the tail into the buffer and answers the buffer cannot be reached
-/// from a nullable return: it would turn a `null` answer into an empty collection. That is why
-/// the `Bind` leg in `ref_return` deliberately does NOT peel.
+/// Widening the peel to records (loft#1934) found the sites that had assumed a dense return; the
+/// register entry, `formal/types.md` D-types-32, lists them.  The bind that receives a nullable
+/// record is the dense arm's (`use_analysis::first_bind_shape`), so the loft#1200 `__lbo_` flag
+/// stands down while this is on.
 ///
 /// Reach for [`trace_ret_promotion`] first — it prints an ENTER line per `ref_return` call and
 /// a verdict line per candidate, and the difference between "no verdict" and "no ENTER" tells

@@ -867,7 +867,11 @@ impl Parser {
                 while fallback < ls.len() && matches!(ls[fallback], Value::Line(_)) {
                     fallback += 1;
                 }
-                if fallback < ls.len() {
+                // …but never past a `return`: an init after it is dead code, and `--native`
+                // cannot even compile it (`return let …`).  A temp nothing assigns lands there
+                // when a later rewrite retargeted its one use onto the return buffer — a body
+                // that is only `return mkw().inner.rs;` (loft#1934).
+                if fallback < ls.len() && !matches!(ls[fallback].unspan(), Value::Return(_)) {
                     fallback += 1;
                 }
                 // @FR-O-Proxy asks alloc — the same null-init question as above, for the

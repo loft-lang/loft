@@ -1,0 +1,12 @@
+diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+--- a/src/use_analysis.rs
++++ b/src/use_analysis.rs
+@@ -4881,7 +4881,7 @@
+     def.returned()
+         .depend()
+         .iter()
+-        .any(|&a| a == u16::MAX || (a as usize >= visible && buffer != Some(a as usize)))
++        .any(|&a| a == u16::MAX || a as usize >= visible)
+ }
+ 
+ /// See [`HeapDelivery`].

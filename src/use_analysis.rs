@@ -3876,6 +3876,21 @@ pub fn returns_one_of_several_args(data: &Data, callee: u32) -> bool {
         > 1
 }
 
+/// `@FR-N-Road` (loft#1934) — the shape a FIRST bind of a call's answer is lowered by.  A `τ?`
+/// local is bound as its `τ` twin is: a record callee delivers through the same buffer in either
+/// spelling ([`Type::ret_promo_base`](crate::data::Type::ret_promo_base)), so the copy-or-adopt
+/// split is the same question, and the three sites that decide it (`scan_set`'s dep strips, the
+/// interpreter's and `--native`'s bind arms) read it here.  Under `LOFT_NO_NULLABLE_RETBUF=1` a
+/// `τ?` callee keeps no buffer, so this is the identity and the nullable spelling keeps its own
+/// arm ([`nullable_join_first_bind`]).
+#[must_use]
+pub fn first_bind_shape(tp: &Type) -> &Type {
+    match tp {
+        Type::Optional(inner) if crate::keys::nullable_ret_buffer() => inner,
+        other => other,
+    }
+}
+
 /// loft#1106 — does a FIRST bind of a NULLABLE heap local from this call have to go
 /// through the runtime join guard, the way its non-null twin already does?
 ///
@@ -3922,7 +3937,8 @@ pub fn nullable_join_first_bind(
     if !crate::keys::join_own_enabled() {
         return None;
     }
-    if !matches!(tp, Type::Optional(_)) {
+    // The nullable local takes the dense bind (`first_bind_shape`) while `τ?` has a buffer.
+    if !matches!(tp, Type::Optional(_)) || crate::keys::nullable_ret_buffer() {
         return None;
     }
     let (Type::Reference(rec, _) | Type::Enum(rec, true, _)) = tp.base() else {
@@ -4387,8 +4403,13 @@ pub fn binds_the_callees_minted_store(
     // Asked FIRST: the ownership reads below are defined for a heap return only, and a callee
     // returning a closure carries callee-frame deps that `returns_borrowed_view` refuses to
     // read (a lifted `use(mk_closure(), …)` reaches here through `lift_set`).
+    // loft#1934 — and a `-> S?` that takes the buffer its dense twin takes
+    // (`Type::ret_promo_peels`) is the dense case exactly: it may return its promoted local,
+    // and its bind adopts that minted store as the twin's does.
     let (shape, nullable) = def.returned().peel_optional();
-    if nullable || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _)) {
+    if (nullable && !def.returned().ret_promo_peels())
+        || !matches!(shape, Type::Reference(_, _) | Type::Enum(_, true, _))
+    {
         return false;
     }
     if !def.is_loft_defined() || def.return_adopts_fresh_store() || def.returns_borrowed_view() {
@@ -4853,10 +4874,14 @@ pub fn callee_of(data: &Data, d_nr: u32, value: &Value) -> Option<u32> {
 /// not a caller-supplied store.
 fn fnref_return_borrows_closure(def: &crate::data::Definition) -> bool {
     let visible = def.attributes().iter().filter(|a| !a.hidden).count();
+    // The hidden RETURN BUFFER is past the visible parameters too, and it is the caller's,
+    // not the closure's: a `-> S?` lambda took one once nullable records took the buffer
+    // (loft#1934), and read as a closure borrow its call was declined and aliased.
+    let buffer = def.hidden_return_buffer_attr();
     def.returned()
         .depend()
         .iter()
-        .any(|&a| a == u16::MAX || a as usize >= visible)
+        .any(|&a| a == u16::MAX || (a as usize >= visible && buffer != Some(a as usize)))
 }
 
 /// See [`HeapDelivery`].
