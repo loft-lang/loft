@@ -503,3 +503,8 @@ routine was not where the prize was.  Built, the two rules give `forms_upto` −
 interpreter (13.0 → 5.9 ms per op).  The literal form needed the refill clause first: written
 directly in a loop, `Fm { lens: [..] }` minted a store a pass and ran 27 % SLOWER than the call,
 which reused a pooled return buffer; with the clause it runs −47 %.
+The rewrite census caught the rule's first condition set too wide: it also took scalar-only
+constructors, and hex_form's `plan_new(0, 0, 20, 16, 0, false)` — a library `pub fn` the IR
+value-record pass may not reshape, which the native `(R-ValueLocal)` then carried as a register
+tuple — became a store-minted literal (`R-ValueLocal` −1 in six libraries).  The rule now needs
+a vector-literal argument; c12 pins the scalar case on the trace.

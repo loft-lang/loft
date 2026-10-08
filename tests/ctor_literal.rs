@@ -87,6 +87,12 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
             ),
             // c1, c2, c3, c5, c8, c9, c11.
             ("ctor-literal: n_fm_new written in place in n_main".to_string(), 7),
+            // c12: the profitable case only — a call of scalars stays a value record.
+            (
+                "ctor-literal: n_pt_new kept a call in n_pt_loop: no vector-literal argument (a call of scalars travels as a value record)"
+                    .to_string(),
+                1
+            ),
         ]
     );
     let off = loft(
