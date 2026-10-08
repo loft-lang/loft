@@ -5760,6 +5760,130 @@ pub struct MintLoop {
     pub mints_per_pass: u32,
 }
 
+/// `@FR-R-PushFill`'s hash clause — a counted loop that inserts records into ONE hash local:
+/// the hash, its type, the most inserts one pass runs, and the loop's counters.  Reserving
+/// the table for them up front changes capacity only — never `len` or contents — so no
+/// program answers differently; a pass whose key is already present inserts nothing, which
+/// leaves room unused, bounded by the trip count.
+pub struct HashFill {
+    pub hash: u16,
+    pub tp: u16,
+    pub per_pass: u32,
+    pub index: u16,
+    pub next: Option<u16>,
+    pub inclusive: bool,
+}
+
+/// [`HashFill`] for `lp`, or why it is no hash-fill loop.
+pub fn hash_fill_loop<'a>(
+    lp: &'a Block,
+    data: &Data,
+    stores: &Stores,
+) -> Result<(HashFill, &'a Value), &'static str> {
+    let body = plain_for_body(lp).ok_or("not a plain counted loop")?;
+    let rc = range_counters(lp, data).map_err(|_| "not a range loop")?;
+    let early = body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
+    });
+    if early {
+        return Err("the body can leave early, or loops");
+    }
+    let mint_of = |n: &Value| -> Option<(u16, u16)> {
+        let Value::Call(d, args) = n.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= data.definitions.len() || data.def(*d).name() != "OpNewRecord" {
+            return None;
+        }
+        let (Some(Value::Var(h)), Some(Value::Int(tp))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return None;
+        };
+        let tp = u16::try_from(*tp).ok()?;
+        matches!(
+            stores.types.get(tp as usize).map(|t| &t.parts),
+            Some(crate::database::Parts::Hash(..))
+        )
+        .then_some((*h, tp))
+    };
+    let mut target: Option<(u16, u16)> = None;
+    let mut two = false;
+    let mut rebound = false;
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Some(t) = mint_of(n) {
+                match target {
+                    Some(old) if old != t => two = true,
+                    _ => target = Some(t),
+                }
+            }
+            false
+        });
+    }
+    let (hash, tp) = target.ok_or("no hash insert in the body")?;
+    if two {
+        return Err("the inserts reach two hashes");
+    }
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if matches!(n, Value::Set(v, _) if *v == hash) {
+                rebound = true;
+            }
+            false
+        });
+    }
+    if rebound {
+        return Err("the hash is rebound in the body");
+    }
+    let mut banned = vec![rc.loop_var, rc.index, hash];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return Err("the range's end is not a simple invariant");
+    }
+    fn most(n: &Value, mint_of: &dyn Fn(&Value) -> Option<(u16, u16)>) -> u32 {
+        if mint_of(n).is_some() {
+            return 1;
+        }
+        match n.unspan() {
+            Value::If(c, t, e) => most(c, mint_of) + most(t, mint_of).max(most(e, mint_of)),
+            _ => {
+                let mut total = 0u32;
+                n.for_each_child(&mut |child| total += most(child, mint_of));
+                total
+            }
+        }
+    }
+    let per_pass: u32 = body.operators.iter().map(|s| most(s, &mint_of)).sum();
+    if per_pass == 0 {
+        return Err("no hash insert in the body");
+    }
+    Ok((
+        HashFill {
+            hash,
+            tp,
+            per_pass,
+            index: rc.index,
+            next: rc.next,
+            inclusive: rc.inclusive,
+        },
+        rc.hi,
+    ))
+}
+
 /// Recognise the counted RECORD-append loop (`@FR-R-PushFill`'s record clause): `for i in
 /// a..b { if … { v += [R { … }] } else { v += [S { … }] } }` — a plain `for` over a counted
 /// range whose body's only writes to the path are mint groups (the parser's reservation,

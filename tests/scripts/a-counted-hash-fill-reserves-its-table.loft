@@ -1,0 +1,75 @@
+// `@FR-R-PushFill`'s hash clause — a counted loop that inserts records into one hash reserves
+// the hash's table for `len(h) + inserts × trip count` before it runs, so the fill never
+// rebuilds the table on the way.  A reservation is capacity only: every value below is what
+// the program answers without it (hand-computed), and LOFT_NO_HASH_RESERVE=1 must agree.
+// The linked cell is loft#843's territory: a hash sharing its element type with another
+// keyed collection borrows its entries, and a reservation must not give it an arena.
+
+struct C { ck: integer, ix: integer }
+struct W { a: hash<C[ck]> }
+struct L { k: integer, v: integer }
+struct G { h: hash<L[k]>, s: sorted<L[k]> }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+fn fill(n: integer) -> hash<C[ck]> {
+  h: hash<C[ck]> = [];
+  for i in 0..n { h += [C { ck: i * 7 % 1000, ix: i }]; }
+  h
+}
+
+fn main() {
+  // c1 — 3000 inserts of keys i*7 mod 1000: 1000 distinct keys, and an insert under a key
+  // already present replaces it, so the LAST of each key stands.  Key k is hit by
+  // i = k * 143 mod 1000 (7 * 143 = 1001) plus 1000 and 2000: key 999 -> 857, 1857, 2857;
+  // key 7 -> 1, 1001, 2001; key 0 -> 0, 1000, 2000.
+  h1 = fill(3000);
+  assert(len(h1) == 1000 && h1[7]?.ix == 2001 && h1[0]?.ix == 2000 && h1[999]?.ix == 2857, "c1 {len(h1)} {h1[999]?.ix ?? -1}");
+
+  // c2 — inserts under an `if`: only the odd i, keys i.
+  h2: hash<C[ck]> = [];
+  for i in 0..200 {
+    if i % 2 == 1 { h2 += [C { ck: i, ix: i * 2 }]; }
+  }
+  assert(len(h2) == 100 && h2[199]?.ix == 398 && h2[100] == null, "c2");
+
+  // c3 — a hash that already holds entries before the loop.
+  w = W { a: [] };
+  for i in 0..10 { w.a += [C { ck: 5000 + i, ix: -i }]; }
+  for i in 0..500 { w.a += [C { ck: i, ix: i }]; }
+  assert(len(w.a) == 510 && w.a[5009]?.ix == -9 && w.a[499]?.ix == 499, "c3");
+
+  // c4 — an empty range and an inclusive one.
+  h4: hash<C[ck]> = [];
+  for i in 0..0 { h4 += [C { ck: i, ix: i }]; }
+  for i in 1..=64 { h4 += [C { ck: i, ix: i * i }]; }
+  assert(len(h4) == 64 && h4[64]?.ix == 4096 && h4[1]?.ix == 1, "c4");
+
+  // c5 — a linked group: the hash and the sorted share L, so the hash borrows its entries.
+  g = G { h: [], s: [] };
+  for i in 0..300 { g.h += [L { k: 299 - i, v: i }]; }
+  t5 = 0;
+  for e in g.s { t5 = t5 * 3 % 100003 + e.v; }
+  e5 = 0;
+  for k in 0..300 { e5 = e5 * 3 % 100003 + (299 - k); }
+  assert(len(g.h) == 300 && len(g.s) == 300 && g.h[0]?.v == 299 && t5 == e5, "c5 {t5} {e5}");
+
+  // c6 — refilled 40 times: the live record count holds once warm.
+  r1 = 0;
+  r2 = 0;
+  for r in 0..40 {
+    f = fill(500);
+    assert(len(f) == 500, "c6 {r}");
+    if r == 9 { r1 = live_records(); }
+    if r == 39 { r2 = live_records(); }
+  }
+  assert(r1 > 0 && r2 == r1, "c6 records {r1} -> {r2}");
+  println("ok");
+}

@@ -3858,6 +3858,10 @@ impl Output<'_> {
                 self.push_reserve_paths(w, &ps)?;
                 return Ok(None);
             }
+            // `@FR-R-PushFill`'s hash clause — a counted loop inserting records into one
+            // hash reserves its table for them: capacity only, so it stands beside any
+            // other reservation the loop takes.
+            self.hash_reserve(w, lp)?;
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
@@ -3961,6 +3965,30 @@ impl Output<'_> {
     /// a pass runs, the record-push header re-derived, and — where [`hoist::mint_window_ok`]
     /// admits the loop — a window opened that every mint group's slot, address and finish
     /// go through, closed by the caller after every copy of the loop.
+    /// `@FR-R-PushFill`'s hash clause: `reserve(h, len(h) + inserts × trip count)` before a
+    /// counted loop inserting records into hash `h` ([`hoist::hash_fill_loop`]).
+    fn hash_reserve(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
+        if self.push_fill_disabled || self.in_coroutine_body || !hash_reserve_enabled() {
+            return Ok(());
+        }
+        let Ok((hf, hi)) = hoist::hash_fill_loop(lp, self.data, self.stores) else {
+            return Ok(());
+        };
+        let count = self.trip_count(hf.index, hf.next, hi, hf.inclusive)?;
+        let h = format!(
+            "var_{}",
+            sanitize(self.data.def(self.def_nr).variables().name(hf.hash))
+        );
+        self.indent(w)?;
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}_u16); }} }} //@FR-R-PushFill hash reservation",
+            hf.per_pass, hf.tp
+        )?;
+        crate::rewrite_census::fired("R-PushFill/hash", 1);
+        Ok(())
+    }
+
     fn mint_reserve(
         &mut self,
         w: &mut dyn Write,
@@ -12424,4 +12452,11 @@ pub(crate) fn calls_a_frame(data: &Data, code: &Value) -> bool {
         Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
         _ => false,
     })
+}
+
+/// `LOFT_NO_HASH_RESERVE=1` — a counted loop inserting into a hash grows its table as it
+/// goes again (`@FR-R-PushFill`'s hash clause).
+fn hash_reserve_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_NO_HASH_RESERVE").is_ok_and(|v| v != "0"))
 }
