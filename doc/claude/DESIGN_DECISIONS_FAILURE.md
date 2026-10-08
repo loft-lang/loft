@@ -118,6 +118,8 @@ value is null belongs to the program's own inspection (`??`, a test) or the log.
 
 **Revisit when.** Not stated.  Decided 2026-10-08 (owner) — [record](DESIGN_DECISIONS-history.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null).
 **Holds at:** `@C142` — `./scripts/idx tag:@C142`: the hole's nullable rewrite in the parser
-(`src/parser/objects.rs`), `formal/formatting.md` `(F-FaultSafe)`, guard
-`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`.
+(`src/parser/objects.rs`) and the null test before a type's own `to_text`
+(`src/parser/collections.rs`), `formal/formatting.md` `(F-FaultSafe)`, guards
+`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` and
+`tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`.
 **Catalogue:** @F38 (arithmetic safety) · `formal/formatting.md` `(F-FaultSafe)`, `formal/operational.md` `(E-Uncomp)` · reads C66, C80.
