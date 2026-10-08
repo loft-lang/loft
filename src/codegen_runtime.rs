@@ -4820,6 +4820,12 @@ where
     let mut refs: Vec<DbRef> = vec![DbRef::NULL; n];
     for (batch, mut worker_stores) in batches {
         for (i, src_ref) in batch {
+            // A `-> S?` worker's null answer is `nullref` (@FR-L-Null): there is no record
+            // to copy, and the row delivers null to the body, as `refs` already holds.
+            // Copying it read record 0 of a store that does not exist (loft#1948).
+            if src_ref.is_null() {
+                continue;
+            }
             let dest = DbRef {
                 store_nr: result_store_nr,
                 rec: result_rec,

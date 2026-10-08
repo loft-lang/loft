@@ -93,7 +93,8 @@ enum NarrowWrap {
     /// `OpConvBoolFromInt` has null-check semantics (v != i64::MIN),
     /// not value semantics (v != 0) — the buf_get always returns
     /// 0 or 1, never i64::MIN, so the conv would yield true for
-    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping.
+    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping;
+    /// the row byte 255 — a boolean's in-band null — reads back as null.
     NeZero,
     /// ARC.md A3.6 — use a different buf_get fn-name instead of
     /// `n_parallel_buf_get_narrow`, and skip the wrap (the named
@@ -176,6 +177,28 @@ struct NarrowRoute {
 /// (wide u64 rows; Float reads via `parallel_buf_get_float`).
 /// Single routes here with `TypedBufGet` — its f32 bit pattern fits
 /// stride 4 and `parallel_buf_get_single` recovers the typed value.
+fn narrow_route_for_declared(declared: &Type) -> Option<NarrowRoute> {
+    let (shape, nullable) = declared.peel_optional();
+    // A narrow lane packs a row to the integer's STORED width, and a nullable narrow
+    // integer's null is `i64::MIN` on the stack — packing it kept the low bytes and read
+    // back `0` (loft#1948).  Its packed form has no null either: a `u8?` reserves its
+    // top value in a store (types.md § representation), which the lane does not encode.
+    // So it rides the wide lane, which carries the stack value whole.  Every other
+    // narrow shape holds its null in the packed bytes (boolean 255, character 0, enum
+    // 255, single NaN), and takes the narrow lane alike for `τ` and `τ?` (@FR-N-Shape).
+    if nullable && matches!(shape, Type::Integer(_)) {
+        return None;
+    }
+    narrow_route_for(shape)
+}
+
+/// Does a worker declared to return `declared` ride the narrow-Queue lane?  The ONE
+/// answer, read by this parser's lowering and by the native emitter's helper choice —
+/// two copies of the type list disagreed the moment one of them learnt about `?`.
+pub(crate) fn par_rides_narrow_lane(declared: &Type) -> bool {
+    narrow_route_for_declared(declared).is_some()
+}
+
 fn narrow_route_for(ret_type: &Type) -> Option<NarrowRoute> {
     match ret_type {
         Type::Integer(spec) => match spec.byte_width(true) {
@@ -5435,7 +5458,12 @@ use #count instead"
     /// and `-1` for a heap value (the worker builds it in its own store and the main
     /// thread deep-copies).  One home, because a monomorph re-derives it when it lowers a
     /// clause its template could not (loft#1040).
-    pub(crate) fn par_return_size(&mut self, ret_type: &Type, fn_d_nr: u32) -> i32 {
+    pub(crate) fn par_return_size(&mut self, declared: &Type, fn_d_nr: u32) -> i32 {
+        // @FR-N-Shape — which lane carries a result is a SHAPE question, so `τ?` takes
+        // τ's: the `?` is a marker over τ's own storage, and its null travels in band
+        // (a scalar's sentinel, a text's null string, a reference's `nullref`).  The
+        // refusal below still names the type the program wrote (loft#1948).
+        let ret_type = declared.base();
         if matches!(ret_type, Type::Text(_)) {
             0 // sentinel: text mode — workers collect Strings, main thread stores refs
         } else if crate::data::is_dbref(ret_type) {
@@ -5468,7 +5496,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "Parallel worker return type '{}' (size {sz}) is not supported",
-                    ret_type.source_name(&self.data)
+                    declared.source_name(&self.data)
                 );
             }
             // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
@@ -5597,7 +5625,7 @@ use #count instead"
         code: &mut Value,
         result_name: &str,
         fn_d_nr: u32,
-        ret_type: &Type,
+        declared_ret: &Type,
         elem_size: i32,
         return_size: i32,
         vec_expr: &Value,
@@ -5608,6 +5636,12 @@ use #count instead"
         elem_var: u16,
         elem_tp: &Type,
     ) {
+        // @FR-N-Shape / @FR-N-Road — every LANE decision below (which queue, which reader,
+        // which wrap) is a shape question and reads τ for a `τ?` worker: the `?` is a
+        // marker over τ's storage and its null rides that storage in band.  Only the
+        // result binding keeps the declared type, so `r == null` and `r.a ?? 0` still
+        // read the marker (loft#1948).
+        let ret_type = declared_ret.base();
         let ref_d_nr = self.data.def_nr("reference");
         let results_ref_type = Type::Reference(ref_d_nr, crate::data::Deps::none());
         let par_for_d_nr = self.data.def_nr("n_parallel_for");
@@ -5669,7 +5703,7 @@ use #count instead"
         //   Character — A3.5, wrap with OpConvCharacterFromInt.
         //   Enum (no payload) — A3.5, wrap with OpCastEnumFromInt.
         //   Single / Float — A3.6, deferred (no bit-cast IR Op).
-        let early_narrow_route = narrow_route_for(ret_type);
+        let early_narrow_route = narrow_route_for_declared(declared_ret);
         let early_route_int_queue = early_is_primitive_return
             && fn_d_nr != u32::MAX
             && early_ret_size_8
@@ -5763,9 +5797,15 @@ use #count instead"
             I32.clone()
         } else if let Type::Text(_) = ret_type {
             // Strip worker-internal deps — they reference variables in the worker scope.
-            Type::Text(crate::data::Deps::none())
+            // The marker is kept: a `text?` result is still read as nullable.
+            let bare = Type::Text(crate::data::Deps::none());
+            if declared_ret.peel_optional().1 {
+                Type::optional(bare)
+            } else {
+                bare
+            }
         } else {
-            ret_type.clone()
+            declared_ret.clone()
         };
         // Plan-04 B.3 follow-up v2 (b3-par-inline.md): each par block gets
         // its OWN uniquely-named `b_var`, so two par blocks sharing the
@@ -6023,7 +6063,7 @@ use #count instead"
         // Plan-06 ARC.md A3 / A3.5 — narrow primitive return routing.
         // Mirrors the early-gate logic; see comment above for shape
         // coverage.
-        let narrow_route = narrow_route_for(ret_type);
+        let narrow_route = narrow_route_for_declared(declared_ret);
         // 8b: integer-i64 returns route through `n_parallel_queue` +
         // `par_buffer_stack`.
         // 8c: text returns route through `n_parallel_queue_text` +
@@ -6158,12 +6198,23 @@ use #count instead"
                         }
                     }
                     NarrowWrap::NeZero => {
-                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`.
+                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`, except for the
+                        // row byte `255`, which is a boolean's in-band null (types.md
+                        // § representation) and must read back as null — `OpNeInt`
+                        // alone made a `-> boolean?` worker's null answer `true`
+                        // (loft#1948).  One lowering for `boolean` and `boolean?`
+                        // (@FR-N-Road): a plain `boolean` slot can hold that null too.
                         let ne_d_nr = self.data.def_nr("OpNeInt");
                         if ne_d_nr == u32::MAX {
                             raw_call
                         } else {
-                            Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)])
+                            let is_null = self.cl("OpEqInt", &[raw_call.clone(), Value::Int(255)]);
+                            let null_b = self.cl("OpConvBoolFromNull", &[]);
+                            v_if(
+                                is_null,
+                                null_b,
+                                Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)]),
+                            )
                         }
                     }
                     NarrowWrap::TypedBufGet(_) => unreachable!("handled above"),

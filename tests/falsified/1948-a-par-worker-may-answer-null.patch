@@ -1,0 +1,370 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index a2a2a7c02..23add279e 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -4824,12 +4824,6 @@ where
+     let mut refs: Vec<DbRef> = vec![DbRef::NULL; n];
+     for (batch, mut worker_stores) in batches {
+         for (i, src_ref) in batch {
+-            // A `-> S?` worker's null answer is `nullref` (@FR-L-Null): there is no record
+-            // to copy, and the row delivers null to the body, as `refs` already holds.
+-            // Copying it read record 0 of a store that does not exist (loft#1948).
+-            if src_ref.is_null() {
+-                continue;
+-            }
+             let dest = DbRef {
+                 store_nr: result_store_nr,
+                 rec: result_rec,
+diff --git b/src/generation/ops/parallel.rs a/src/generation/ops/parallel.rs
+index f5b2c508c..b3c12f3ff 100644
+--- b/src/generation/ops/parallel.rs
++++ a/src/generation/ops/parallel.rs
+@@ -54,24 +54,6 @@ enum ClosureShape {
+     Fn,
+ }
+ 
+-/// The type a worker's result LANE is chosen from: its declared return with any `?`
+-/// peeled.  @FR-N-Shape — which closure shape, which helper and which storage stride
+-/// carry a result are shape questions, and `τ?` shares τ's storage; its null rides that
+-/// storage in band.  The parser's `build_parallel_for_ir` peels the same way, and the two
+-/// must agree or the body reads a buffer the helper never filled (loft#1948).
+-fn worker_lane_type(declared: &Type) -> Type {
+-    declared.base().clone()
+-}
+-
+-/// The closure body that calls a text worker taking a `&mut String` work buffer and
+-/// answers the text it RETURNED.  The answer is the returned `Str`, not the buffer: a
+-/// worker that returns a literal (`return "two";`) or a null (`return null;` in a
+-/// `-> text?` worker, `STRING_NULL`) leaves the buffer untouched, and answering the
+-/// buffer delivered `""` for both — on `--native` only (loft#1948).
+-fn buffered_text_call(worker_name: &str, args: &str) -> String {
+-    format!("let mut _w = String::new(); {worker_name}(cell, {args}, &mut _w).str().to_owned()")
+-}
+-
+ fn closure_shape(ret: &Type) -> ClosureShape {
+     if matches!(ret, Type::Text(_)) {
+         ClosureShape::Text
+@@ -164,6 +146,31 @@ fn queue_narrow_helper_name() -> &'static str {
+     "n_parallel_queue_narrow_native"
+ }
+ 
++/// True when the worker's return type rides the narrow-Queue path
++/// (byte-packed buffer, stride 1/2/4).  Mirrors the parser-side
++/// `narrow_route_for` decision in `src/parser/collections.rs`:
++///
++/// - `Integer(spec)` with `byte_width 1/2/4` (A3 narrow Integer)
++/// - `Boolean` (A3.5)
++/// - `Character` (A3.5)
++/// - `Enum(_, false, _)` no-payload (A3.5)
++/// - `Single` (A3.6) — f32 fits stride 4 with bit-pattern preserved
++///
++/// Used by `ParallelQueueEmitter` to swap the runtime helper to the
++/// narrow variant `n_parallel_queue_narrow_native`.  Without this,
++/// the parser routes via `n_parallel_queue_narrow` (narrow buffer)
++/// while the emitter would call `n_parallel_queue_native` (wide
++/// buffer) — body's `parallel_buf_get_narrow` then reads from an
++/// empty narrow buffer and panics.
++fn is_narrow_int_return(ret: &Type) -> bool {
++    match ret {
++        Type::Integer(spec) => matches!(spec.byte_width(true), 1 | 2 | 4),
++        Type::Boolean | Type::Character | Type::Single => true,
++        Type::Enum(_, false, _) => true,
++        _ => false,
++    }
++}
++
+ /// Emit the Rust expression that reads one by-value tuple element out of the
+ /// store record `elm` at byte offset `off`.  Mirrors the scalar read helpers
+ /// the interpreter uses for tuple-typed worker arguments; `_ts` is the
+@@ -337,7 +344,7 @@ impl OpEmitter for ParallelForEmitter {
+ 
+         let worker_def = ctx.output.data.def(fn_d_nr);
+         let worker_name = worker_def.name().to_string();
+-        let worker_ret = worker_lane_type(worker_def.returned());
++        let worker_ret = worker_def.returned().clone();
+         let shape = closure_shape(&worker_ret);
+         // A literal / bufferless text worker (@P205 nwb) returns an owned `String`
+         // and takes NO `&mut String` work-buffer param — so its closure must NOT
+@@ -432,8 +439,7 @@ impl OpEmitter for ParallelForEmitter {
+             )?,
+             ClosureShape::Text => write!(
+                 ctx.w,
+-                ", |cell, elm| {{ {prep}{} }})",
+-                buffered_text_call(&worker_name, &format!("{arg}{extras}{dests}"))
++                ", |cell, elm| {{ {prep}let mut _w = String::new(); {worker_name}(cell, {arg}{extras}{dests}, &mut _w); _w }})"
+             )?,
+             ClosureShape::HeapRef => write!(
+                 ctx.w,
+@@ -508,7 +514,7 @@ impl OpEmitter for ParallelQueueEmitter {
+ 
+         let worker_def = ctx.output.data.def(fn_d_nr);
+         let worker_name = worker_def.name().to_string();
+-        let worker_ret = worker_lane_type(worker_def.returned());
++        let worker_ret = worker_def.returned().clone();
+         let shape = closure_shape(&worker_ret);
+         // A literal / bufferless text worker (@P205 nwb) returns an owned `String`
+         // and takes NO `&mut String` work-buffer param — so its closure must NOT
+@@ -528,13 +534,7 @@ impl OpEmitter for ParallelQueueEmitter {
+         // Plan-06 ARC.md A3 — narrow-Integer returns route through
+         // `n_parallel_queue_narrow_native` (byte-packed buffer);
+         // wide / non-Integer scalars stay on `n_parallel_queue_native`.
+-        // The lane decision is the parser's, read from the DECLARED return — the ONE
+-        // home (`par_rides_narrow_lane`).  This emitter kept a copy of its type list,
+-        // and the two must agree or the body reads a buffer this helper never filled
+-        // (a `τ?` narrow integer rides the WIDE lane, loft#1948).
+-        let par_fn = if crate::parser::collections::par_rides_narrow_lane(
+-            ctx.output.data.def(fn_d_nr).returned(),
+-        ) {
++        let par_fn = if is_narrow_int_return(&worker_ret) {
+             queue_narrow_helper_name()
+         } else {
+             queue_helper_name(shape)
+@@ -599,8 +599,7 @@ impl OpEmitter for ParallelQueueEmitter {
+             )?,
+             ClosureShape::Text => write!(
+                 ctx.w,
+-                ", |cell, elm| {{ {prep}{} }})",
+-                buffered_text_call(&worker_name, &format!("{arg}{extras}{dests}"))
++                ", |cell, elm| {{ {prep}let mut _w = String::new(); {worker_name}(cell, {arg}{extras}{dests}, &mut _w); _w }})"
+             )?,
+             ClosureShape::HeapRef => write!(
+                 ctx.w,
+@@ -674,7 +673,7 @@ impl OpEmitter for ParallelDiscardEmitter {
+ 
+         let worker_def = ctx.output.data.def(fn_d_nr);
+         let worker_name = worker_def.name().to_string();
+-        let worker_ret = worker_lane_type(worker_def.returned());
++        let worker_ret = worker_def.returned().clone();
+         let wants_work_buffer = matches!(closure_shape(&worker_ret), ClosureShape::Text)
+             && !crate::generation::returns_owned_string(worker_def);
+ 
+diff --git b/src/parallel.rs a/src/parallel.rs
+index 9a6bfb185..f0f6dba83 100644
+--- b/src/parallel.rs
++++ a/src/parallel.rs
+@@ -1038,9 +1038,6 @@ pub fn run_parallel_queue_ref(
+     // reassignment workers like `if neg { v = Fail{...} }` fall
+     // into this case because their codegen unconditionally
+     // `OpFreeRef`s every variant temp at end-of-fn).
+-    // `data` is no longer read: reviving a RECORD result walks none of its fields (see
+-    // `revive_record_chain`), and a tuple's members carry their own types.
+-    let _ = data;
+     let mut visited: std::collections::HashSet<u16> = std::collections::HashSet::new();
+     for r in &refs {
+         if r.store_nr == u16::MAX {
+@@ -1050,6 +1047,7 @@ pub fn run_parallel_queue_ref(
+             stores,
+             r,
+             ret_type,
++            data,
+             &mut visited,
+             &mut adopted,
+             parent_store_count,
+@@ -1080,6 +1078,7 @@ fn revive_record_chain(
+     stores: &mut Stores,
+     record_ref: &DbRef,
+     record_type: &crate::data::Type,
++    data: &crate::data::Data,
+     visited: &mut std::collections::HashSet<u16>,
+     adopted: &mut Vec<u16>,
+     parent_store_count: u16,
+@@ -1122,16 +1121,23 @@ fn revive_record_chain(
+         adopted.push(store_nr);
+     }
+ 
+-    // A RECORD result — a struct (`-> S`, `-> S?`), a struct-enum, a vector — has nothing
+-    // further to revive: every sub-record it owns (a collection field, a nested struct, a
+-    // text) lives in the record's OWN store (@FR-H-NewRec), and a field holds only a 4-byte
+-    // record id that `Stores::get_ref` completes from the holder.  This arm used to walk a
+-    // struct's fields as 12-byte `DbRef`s at their STACK offsets (`owned_elements`), which
+-    // read past a collection field into whatever followed it: a `-> B` worker with a
+-    // `vector` field revived store 0, and its `-> B?` twin revived a store an earlier `par`
+-    // loop had already freed, which then never died (loft#1948).  Only a stack-laid tuple
+-    // carries whole `DbRef`s that may name other stores.
++    // For plain `Type::Reference(struct_d, _)`, `attributes` lists
++    // the struct's fields — safe to walk for owned DbRef sub-fields.
++    // For `Type::Enum(_, true, _)`, `attributes` lists the parent
++    // enum's *variants*, NOT the active variant's fields — walking
++    // them as DbRef offsets reads garbage and segfaults.  Reaching
++    // the active variant requires reading the discriminant + type
++    // tag; deferred until a test with nested DbRef-in-variant
++    // payload exposes the gap (the spine's current corpus has no
++    // such test — Pass/Fail variants in `par_struct_to_struct_enum_t4`
++    // hold only byte / integer / text, none owned-DbRef).
+     let elem_types: Vec<Type> = match record_type {
++        Type::Reference(struct_d, _) => data
++            .def(*struct_d)
++            .attributes
++            .iter()
++            .map(|a| a.typedef.clone())
++            .collect(),
+         Type::Tuple(elems) => elems.clone(),
+         _ => return,
+     };
+@@ -1148,7 +1154,15 @@ fn revive_record_chain(
+         let cur: DbRef =
+             stores.allocations[store_nr as usize].read::<DbRef>(record_ref.rec, field_pos);
+         if cur.store_nr != u16::MAX && (cur.store_nr as usize) < stores.allocations.len() {
+-            revive_record_chain(stores, &cur, field_tp, visited, adopted, parent_store_count);
++            revive_record_chain(
++                stores,
++                &cur,
++                field_tp,
++                data,
++                visited,
++                adopted,
++                parent_store_count,
++            );
+         }
+     }
+ }
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 97eb5c639..7a5a059ea 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -93,8 +93,7 @@ enum NarrowWrap {
+     /// `OpConvBoolFromInt` has null-check semantics (v != i64::MIN),
+     /// not value semantics (v != 0) — the buf_get always returns
+     /// 0 or 1, never i64::MIN, so the conv would yield true for
+-    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping;
+-    /// the row byte 255 — a boolean's in-band null — reads back as null.
++    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping.
+     NeZero,
+     /// ARC.md A3.6 — use a different buf_get fn-name instead of
+     /// `n_parallel_buf_get_narrow`, and skip the wrap (the named
+@@ -177,28 +176,6 @@ struct NarrowRoute {
+ /// (wide u64 rows; Float reads via `parallel_buf_get_float`).
+ /// Single routes here with `TypedBufGet` — its f32 bit pattern fits
+ /// stride 4 and `parallel_buf_get_single` recovers the typed value.
+-fn narrow_route_for_declared(declared: &Type) -> Option<NarrowRoute> {
+-    let (shape, nullable) = declared.peel_optional();
+-    // A narrow lane packs a row to the integer's STORED width, and a nullable narrow
+-    // integer's null is `i64::MIN` on the stack — packing it kept the low bytes and read
+-    // back `0` (loft#1948).  Its packed form has no null either: a `u8?` reserves its
+-    // top value in a store (types.md § representation), which the lane does not encode.
+-    // So it rides the wide lane, which carries the stack value whole.  Every other
+-    // narrow shape holds its null in the packed bytes (boolean 255, character 0, enum
+-    // 255, single NaN), and takes the narrow lane alike for `τ` and `τ?` (@FR-N-Shape).
+-    if nullable && matches!(shape, Type::Integer(_)) {
+-        return None;
+-    }
+-    narrow_route_for(shape)
+-}
+-
+-/// Does a worker declared to return `declared` ride the narrow-Queue lane?  The ONE
+-/// answer, read by this parser's lowering and by the native emitter's helper choice —
+-/// two copies of the type list disagreed the moment one of them learnt about `?`.
+-pub(crate) fn par_rides_narrow_lane(declared: &Type) -> bool {
+-    narrow_route_for_declared(declared).is_some()
+-}
+-
+ fn narrow_route_for(ret_type: &Type) -> Option<NarrowRoute> {
+     match ret_type {
+         Type::Integer(spec) => match spec.byte_width(true) {
+@@ -5404,12 +5381,7 @@ use #count instead"
+     /// and `-1` for a heap value (the worker builds it in its own store and the main
+     /// thread deep-copies).  One home, because a monomorph re-derives it when it lowers a
+     /// clause its template could not (loft#1040).
+-    pub(crate) fn par_return_size(&mut self, declared: &Type, fn_d_nr: u32) -> i32 {
+-        // @FR-N-Shape — which lane carries a result is a SHAPE question, so `τ?` takes
+-        // τ's: the `?` is a marker over τ's own storage, and its null travels in band
+-        // (a scalar's sentinel, a text's null string, a reference's `nullref`).  The
+-        // refusal below still names the type the program wrote (loft#1948).
+-        let ret_type = declared.base();
++    pub(crate) fn par_return_size(&mut self, ret_type: &Type, fn_d_nr: u32) -> i32 {
+         if matches!(ret_type, Type::Text(_)) {
+             0 // sentinel: text mode — workers collect Strings, main thread stores refs
+         } else if crate::data::is_dbref(ret_type) {
+@@ -5442,7 +5414,7 @@ use #count instead"
+                     self.lexer,
+                     Level::Error,
+                     "Parallel worker return type '{}' (size {sz}) is not supported",
+-                    declared.source_name(&self.data)
++                    ret_type.source_name(&self.data)
+                 );
+             }
+             // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
+@@ -5571,7 +5543,7 @@ use #count instead"
+         code: &mut Value,
+         result_name: &str,
+         fn_d_nr: u32,
+-        declared_ret: &Type,
++        ret_type: &Type,
+         elem_size: i32,
+         return_size: i32,
+         vec_expr: &Value,
+@@ -5582,12 +5554,6 @@ use #count instead"
+         elem_var: u16,
+         elem_tp: &Type,
+     ) {
+-        // @FR-N-Shape / @FR-N-Road — every LANE decision below (which queue, which reader,
+-        // which wrap) is a shape question and reads τ for a `τ?` worker: the `?` is a
+-        // marker over τ's storage and its null rides that storage in band.  Only the
+-        // result binding keeps the declared type, so `r == null` and `r.a ?? 0` still
+-        // read the marker (loft#1948).
+-        let ret_type = declared_ret.base();
+         let ref_d_nr = self.data.def_nr("reference");
+         let results_ref_type = Type::Reference(ref_d_nr, crate::data::Deps::none());
+         let par_for_d_nr = self.data.def_nr("n_parallel_for");
+@@ -5649,7 +5615,7 @@ use #count instead"
+         //   Character — A3.5, wrap with OpConvCharacterFromInt.
+         //   Enum (no payload) — A3.5, wrap with OpCastEnumFromInt.
+         //   Single / Float — A3.6, deferred (no bit-cast IR Op).
+-        let early_narrow_route = narrow_route_for_declared(declared_ret);
++        let early_narrow_route = narrow_route_for(ret_type);
+         let early_route_int_queue = early_is_primitive_return
+             && fn_d_nr != u32::MAX
+             && early_ret_size_8
+@@ -5743,15 +5709,9 @@ use #count instead"
+             I32.clone()
+         } else if let Type::Text(_) = ret_type {
+             // Strip worker-internal deps — they reference variables in the worker scope.
+-            // The marker is kept: a `text?` result is still read as nullable.
+-            let bare = Type::Text(crate::data::Deps::none());
+-            if declared_ret.peel_optional().1 {
+-                Type::optional(bare)
+-            } else {
+-                bare
+-            }
++            Type::Text(crate::data::Deps::none())
+         } else {
+-            declared_ret.clone()
++            ret_type.clone()
+         };
+         // Plan-04 B.3 follow-up v2 (b3-par-inline.md): each par block gets
+         // its OWN uniquely-named `b_var`, so two par blocks sharing the
+@@ -6009,7 +5969,7 @@ use #count instead"
+         // Plan-06 ARC.md A3 / A3.5 — narrow primitive return routing.
+         // Mirrors the early-gate logic; see comment above for shape
+         // coverage.
+-        let narrow_route = narrow_route_for_declared(declared_ret);
++        let narrow_route = narrow_route_for(ret_type);
+         // 8b: integer-i64 returns route through `n_parallel_queue` +
+         // `par_buffer_stack`.
+         // 8c: text returns route through `n_parallel_queue_text` +
+@@ -6144,23 +6104,12 @@ use #count instead"
+                         }
+                     }
+                     NarrowWrap::NeZero => {
+-                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`, except for the
+-                        // row byte `255`, which is a boolean's in-band null (types.md
+-                        // § representation) and must read back as null — `OpNeInt`
+-                        // alone made a `-> boolean?` worker's null answer `true`
+-                        // (loft#1948).  One lowering for `boolean` and `boolean?`
+-                        // (@FR-N-Road): a plain `boolean` slot can hold that null too.
++                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`.
+                         let ne_d_nr = self.data.def_nr("OpNeInt");
+                         if ne_d_nr == u32::MAX {
+                             raw_call
+                         } else {
+-                            let is_null = self.cl("OpEqInt", &[raw_call.clone(), Value::Int(255)]);
+-                            let null_b = self.cl("OpConvBoolFromNull", &[]);
+-                            v_if(
+-                                is_null,
+-                                null_b,
+-                                Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)]),
+-                            )
++                            Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)])
+                         }
+                     }
+                     NarrowWrap::TypedBufGet(_) => unreachable!("handled above"),
