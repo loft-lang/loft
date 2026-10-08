@@ -1,0 +1,82 @@
+// `(R-MoveLast)`'s local clause — `x = y` for vector locals, where `y` is built afresh in the
+// same block and never read again before its next build, gives `y`'s store up to `x`
+// (`OpCopyRecord`'s free-source form: the stores are exchanged where they can be) instead of
+// deep-copying it.  The double-buffer prepend is the shape (zttext's `invert`).  A source
+// read, or appended to, after the rebind keeps the copy.  Both backends; every value is
+// hand-computed.
+
+struct Op { at: integer, s: text }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+/// Each step prepends one op: the result ends in reverse step order.
+fn prepend_all(n: integer) -> vector<Op> {
+  result: vector<Op> = [];
+  for i in 0..n {
+    tmp: vector<Op> = [];
+    tmp += [Op { at: i, s: "o{i}" }];
+    tmp += result;
+    result = tmp;
+  }
+  result
+}
+
+/// The source is read after the rebind: declined, the copy kept.
+fn read_after(n: integer) -> integer {
+  result: vector<integer> = [];
+  t = 0;
+  for i in 0..n {
+    tmp: vector<integer> = [];
+    tmp += [i];
+    tmp += result;
+    result = tmp;
+    t += len(tmp) * 100 + tmp[0];
+  }
+  t + len(result)
+}
+
+/// The source grows after the rebind: declined, `result` must not see the growth.
+fn grow_after(n: integer) -> integer {
+  result: vector<integer> = [];
+  for i in 0..n {
+    tmp: vector<integer> = [];
+    tmp += [i];
+    result = tmp;
+    tmp += [99];
+  }
+  len(result) * 10 + result[0]
+}
+
+fn main() {
+  // c1 — five prepends: o4 o3 o2 o1 o0, the texts intact.
+  r = prepend_all(5);
+  assert(len(r) == 5 && r[0].at == 4 && r[4].at == 0 && r[0].s == "o4" && r[3].s == "o1", "c1");
+
+  // c2 — the read-after shape: step i reads len i + 1 and first element i.
+  // sum over i < 4 of (100 (i + 1) + i) = 100 * 10 + 6, plus len 4
+  assert(read_after(4) == 1010, "c2 {read_after(4)}");
+
+  // c3 — the grow-after shape: result holds the one element of the last step.
+  assert(grow_after(3) == 12, "c3 {grow_after(3)}");
+
+  // c4 — repeated: values, and the live record count holds once warm.
+  r1 = 0;
+  r2 = 0;
+  s = 0;
+  for k in 0..40 {
+    v = prepend_all(30);
+    s += v[0].at + len(v[29].s);
+    if k == 9 { r1 = live_records(); }
+    if k == 39 { r2 = live_records(); }
+  }
+  // each: v[0].at = 29, v[29].s = "o0" (length 2) -> 31 per pass
+  assert(s == 40 * 31 && r1 > 0 && r2 == r1, "c4 {s} records {r1} -> {r2}");
+  println("ok");
+}

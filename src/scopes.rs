@@ -762,6 +762,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `(R-ExitVector)`'s record clause — a local record returned inside the exit literal
         // is built in its field of the return buffer.
         crate::exit_record::rewrite(data, database, d_nr);
+        // `(R-MoveLast)`'s local clause — a vector local rebound from a local dead after the
+        // rebind takes that local's store.
+        crate::take_local::rewrite(data, d_nr);
         // `(R-ForwardResult)` — a returned local bound from a call is built in the return
         // buffer: the call is handed the buffer the delivery copied into.
         crate::forward_result::rewrite(data, d_nr);
