@@ -444,6 +444,16 @@ box idle for a measurement, and then for the suite, is how a verified unit sat f
   names a different, smaller set and measures the wrong thing.
 
 
+## Agents beside the work: at most two that debug or fix
+
+**The rule.** A session runs at most TWO extra agents that debug or fix at the same time.  Each
+one builds its own tree and runs its own checks (`find_problems --changed`, subjects, falsify
+controls) — a full loft retest per agent — and every checkout on this box shares the CPU and
+the disk.  Past two, the agents' checks stop finishing inside their caps and each worktree's
+`target/` (tens of GB) pushes the disk toward its floor.  At two, do the next task in the main
+session or wait for one to finish; remove a finished agent's worktree once its commits are
+joined (`git worktree unlock` + `git worktree remove`), which is where the disk goes.
+
 ## After a red gate: recheck, do not restart
 
 **The rule.** One full gate per change whose reach you cannot bound.  When it goes red, fix what
