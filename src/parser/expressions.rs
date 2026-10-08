@@ -4332,7 +4332,7 @@ use a separate collection or add after the loop"
             && !matches!(s_type, Type::Optional(_))
             && matches!(s_type.base(), Type::Enum(_, false, _))
         {
-            *code = self.cl("OpConvIntFromEnum", &[code.clone()]);
+            *code = self.cl("OpConvIntFromEnum", std::slice::from_ref(code));
             s_type = crate::data::I64.clone();
         }
         // `@FR-Cap-Own` — note whether this assignment to a sandboxed local is a struct literal
@@ -6768,7 +6768,8 @@ use a separate collection or add after the loop"
                     // the clear below before the append reads it (loft#1916).  A projection
                     // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
                     // the temp then owns its copy and frees it.
-                    let projection = !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+                    let projection =
+                        !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
                     let fill_tmp = if projection {
                         vec![
                             v_set(tmp, Value::Null),

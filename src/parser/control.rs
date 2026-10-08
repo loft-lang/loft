@@ -15510,7 +15510,10 @@ impl Parser {
             Value::Block(bl) => bl.operators.last(),
             other => Some(other),
         };
-        match tail.and_then(|t| self.const_int(t)).and_then(|k| i32::try_from(k).ok()) {
+        match tail
+            .and_then(|t| self.const_int(t))
+            .and_then(|k| i32::try_from(k).ok())
+        {
             Some(k) if k > i32::MIN + 1 => Type::Integer(crate::data::IntegerSpec {
                 min: k,
                 max: i64::from(k),
@@ -15536,11 +15539,13 @@ impl Parser {
             forced_size: None,
             ..*x
         });
-        Some(if matches!(a, Type::Optional(_)) || matches!(b, Type::Optional(_)) {
-            Type::optional(base)
-        } else {
-            base
-        })
+        Some(
+            if matches!(a, Type::Optional(_)) || matches!(b, Type::Optional(_)) {
+                Type::optional(base)
+            } else {
+                base
+            },
+        )
     }
 
     /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
@@ -17673,8 +17678,7 @@ impl Parser {
                 let view = std::mem::replace(op, Value::Null);
                 let rec_tp = self.append_elem_tp(elm);
                 let clear = self.cl("OpClearVector", &[Value::Var(w)]);
-                let append =
-                    self.cl("OpAppendVector", &[Value::Var(w), view, Value::Int(rec_tp)]);
+                let append = self.cl("OpAppendVector", &[Value::Var(w), view, Value::Int(rec_tp)]);
                 *op = Value::Insert(vec![clear, append, Value::Var(w)]);
                 true
             }
