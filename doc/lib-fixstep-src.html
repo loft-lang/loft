@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>fixstep source</h1>
 <article>
-<p><a href="lib-fixstep.html">← fixstep</a> · <a href="lib-fixstep-api.html">API reference</a> · version 0.1.3</p>
-<p class="lib-legend">6 file(s), 1693 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-fixstep.html">← fixstep</a> · <a href="lib-fixstep-api.html">API reference</a> · version 0.1.4</p>
+<p class="lib-legend">7 file(s), 1711 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -48,15 +48,15 @@
 <tr><td><code>bank_restore_fraction</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-bank-loft-L239">239</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>bank_reset</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-bank-loft-L253">253</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>CLOCK_UNITS_PER_SECOND</code> <span class="search-kind">const</span></td><td><a href="#src-tick-clock-loft-L154">154</a></td><td>—</td><td><a href="#src-tick-bank-loft-L118">118</a> <a href="#src-tick-clock-loft-L261">261</a> <a href="#src-tick-clock-loft-L278">278</a></td></tr>
-<tr><td><code>TickClock</code> <span class="search-kind">struct</span></td><td><a href="#src-tick-clock-loft-L162">162</a></td><td>—</td><td><a href="#src-tick-clock-loft-L221">221</a> <a href="#src-tick-clock-loft-L222">222</a> <a href="#src-tick-clock-loft-L309">309</a> <a href="#src-tick-clock-loft-L316">316</a> <a href="#src-tick-clock-loft-L321">321</a> <a href="#src-tick-clock-loft-L332">332</a> … (15 total)</td></tr>
+<tr><td><code>TickClock</code> <span class="search-kind">struct</span></td><td><a href="#src-tick-clock-loft-L162">162</a></td><td>—</td><td><a href="#src-tick-clock-loft-L221">221</a> <a href="#src-tick-clock-loft-L222">222</a> <a href="#src-tick-clock-loft-L309">309</a> <a href="#src-tick-clock-loft-L316">316</a> <a href="#src-tick-clock-loft-L321">321</a> <a href="#src-tick-clock-loft-L332">332</a> … (16 total)</td></tr>
 <tr><td><code>clock_new</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L221">221</a></td><td>—</td><td><a href="#tests-01-doors-loft-L33">33</a> <a href="#tests-01-doors-loft-L44">44</a> <a href="#tests-01-doors-loft-L56">56</a> <a href="#tests-01-doors-loft-L69">69</a> <a href="#tests-01-doors-loft-L70">70</a> <a href="#tests-01-doors-loft-L82">82</a> … (14 total)</td></tr>
 <tr><td><code>clock_units_from_micros</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L234">234</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>clock_seconds_from_units</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L260">260</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>clock_units_from_seconds</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L276">276</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>clock_set_rate</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L309">309</a></td><td><a href="#tests-01-doors-loft-L181">FIX-007</a></td><td><a href="#tests-01-doors-loft-L188">188</a> <a href="#tests-01-doors-loft-L195">195</a> <a href="#tests-01-doors-loft-L199">199</a></td></tr>
 <tr><td><code>clock_rate_num</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L316">316</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>clock_rate_den</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L321">321</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>clock_advance</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L362">362</a></td><td><a href="#tests-01-doors-loft-L26">FIX-001</a></td><td><a href="#src-tick-clock-loft-L395">395</a> <a href="#src-tick-clock-loft-L433">433</a> <a href="#src-tick-clock-loft-L576">576</a> <a href="#tests-01-doors-loft-L37">37</a> <a href="#tests-01-doors-loft-L45">45</a> <a href="#tests-01-doors-loft-L62">62</a> … (17 total)</td></tr>
+<tr><td><code>clock_rate_den</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L321">321</a></td><td>—</td><td><a href="#tests-02-literals-loft-L17">17</a></td></tr>
+<tr><td><code>clock_advance</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L362">362</a></td><td><a href="#tests-01-doors-loft-L26">FIX-001</a></td><td><a href="#src-tick-clock-loft-L395">395</a> <a href="#src-tick-clock-loft-L433">433</a> <a href="#src-tick-clock-loft-L576">576</a> <a href="#tests-01-doors-loft-L37">37</a> <a href="#tests-01-doors-loft-L45">45</a> <a href="#tests-01-doors-loft-L62">62</a> … (18 total)</td></tr>
 <tr><td><code>clock_advance_capped</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L393">393</a></td><td><a href="#tests-01-doors-loft-L98">FIX-004</a></td><td><a href="#tests-01-doors-loft-L111">111</a></td></tr>
 <tr><td><code>clock_pump</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L421">421</a></td><td><a href="#tests-01-doors-loft-L77">FIX-003</a></td><td><a href="#tests-01-doors-loft-L87">87</a> <a href="#tests-01-doors-loft-L89">89</a> <a href="#tests-01-doors-loft-L90">90</a> <a href="#tests-01-doors-loft-L94">94</a> <a href="#tests-01-doors-loft-L95">95</a></td></tr>
 <tr><td><code>clock_step</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L465">465</a></td><td><a href="#tests-01-doors-loft-L49">FIX-002</a></td><td><a href="#tests-01-doors-loft-L58">58</a> <a href="#tests-01-doors-loft-L64">64</a> <a href="#tests-01-doors-loft-L72">72</a> <a href="#tests-01-doors-loft-L193">193</a></td></tr>
@@ -65,11 +65,11 @@
 <tr><td><code>clock_restore</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L492">492</a></td><td>—</td><td><a href="#tests-01-doors-loft-L165">165</a></td></tr>
 <tr><td><code>clock_alpha</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L537">537</a></td><td><a href="#tests-01-doors-loft-L120">FIX-005</a></td><td><a href="#tests-01-doors-loft-L135">135</a></td></tr>
 <tr><td><code>clock_drive</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-clock-loft-L574">574</a></td><td><a href="#tests-01-doors-loft-L204">FIX-008</a></td><td><a href="#tests-01-doors-loft-L218">218</a></td></tr>
-<tr><td><code>Timer</code> <span class="search-kind">struct</span></td><td><a href="#src-tick-timer-loft-L120">120</a></td><td>—</td><td><a href="#src-tick-timer-loft-L132">132</a> <a href="#src-tick-timer-loft-L133">133</a> <a href="#src-tick-timer-loft-L141">141</a> <a href="#src-tick-timer-loft-L143">143</a> <a href="#src-tick-timer-loft-L156">156</a> <a href="#src-tick-timer-loft-L163">163</a> … (14 total)</td></tr>
+<tr><td><code>Timer</code> <span class="search-kind">struct</span></td><td><a href="#src-tick-timer-loft-L120">120</a></td><td>—</td><td><a href="#src-tick-timer-loft-L132">132</a> <a href="#src-tick-timer-loft-L133">133</a> <a href="#src-tick-timer-loft-L141">141</a> <a href="#src-tick-timer-loft-L143">143</a> <a href="#src-tick-timer-loft-L156">156</a> <a href="#src-tick-timer-loft-L163">163</a> … (15 total)</td></tr>
 <tr><td><code>timer_new</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L132">132</a></td><td>—</td><td><a href="#src-tick-timer-loft-L142">142</a> <a href="#tests-01-doors-loft-L278">278</a></td></tr>
 <tr><td><code>timer_armed</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L141">141</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>timer_arm</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L156">156</a></td><td><a href="#src-fixstep-loft-L1">FIX-011</a></td><td><a href="#tests-01-doors-loft-L279">279</a> <a href="#tests-01-doors-loft-L295">295</a></td></tr>
-<tr><td><code>timer_running</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L163">163</a></td><td>—</td><td><a href="#tests-01-doors-loft-L284">284</a> <a href="#tests-01-doors-loft-L298">298</a></td></tr>
+<tr><td><code>timer_running</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L163">163</a></td><td>—</td><td><a href="#tests-01-doors-loft-L284">284</a> <a href="#tests-01-doors-loft-L298">298</a> <a href="#tests-02-literals-loft-L11">11</a></td></tr>
 <tr><td><code>timer_left</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L173">173</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>timer_spent</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L184">184</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>timer_total</code> <span class="search-kind">fn</span></td><td><a href="#src-tick-timer-loft-L190">190</a></td><td>—</td><td>none in this package</td></tr>
@@ -744,13 +744,13 @@
 <span id="src-tick-clock-loft-L163">    <span class="cm">// One simulation step, in base units.  Never zero — `clock_new`</span></span>
 <span id="src-tick-clock-loft-L164">    <span class="cm">// refuses, because a zero step makes `clock_advance` a division by</span></span>
 <span id="src-tick-clock-loft-L165">    <span class="cm">// zero and "pause" is a rate of 0 rather than a step of 0 (L4).</span></span>
-<span id="src-tick-clock-loft-L166">    step: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-clock-loft-L166">    <span class="kw">pub</span> step: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-tick-clock-loft-L167"></span>
 <span id="src-tick-clock-loft-L168">    <span class="cm">// Base units not yet spent as whole steps.  ⚠ **The remainder is</span></span>
 <span id="src-tick-clock-loft-L169">    <span class="cm">// KEPT**, which is the property plan 19 P0 measured and the one no</span></span>
 <span id="src-tick-clock-loft-L170">    <span class="cm">// measurement in this repo would survive losing: a frame that</span></span>
 <span id="src-tick-clock-loft-L171">    <span class="cm">// delivers less than a step takes no step and banks all of it.</span></span>
-<span id="src-tick-clock-loft-L172">    banked: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-clock-loft-L172">    <span class="kw">pub</span> banked: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-tick-clock-loft-L173"></span>
 <span id="src-tick-clock-loft-L174">    <span class="cm">// How fast simulated time runs against the wall, as `num / den`</span></span>
 <span id="src-tick-clock-loft-L175">    <span class="cm">// (L4).  Pause is `0 / 1`; half-speed `1 / 2`; triple `3 / 1`.</span></span>
@@ -764,8 +764,8 @@
 <span id="src-tick-clock-loft-L183">    <span class="cm">// defaulted `0 / 0` is *the behaviour you already had* —</span></span>
 <span id="src-tick-clock-loft-L184">    <span class="cm">// `plans/26` § The two rules under all of it — so the neutral</span></span>
 <span id="src-tick-clock-loft-L185">    <span class="cm">// default is not merely safe, it is the rule stated as data.</span></span>
-<span id="src-tick-clock-loft-L186">    rate_num: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-tick-clock-loft-L187">    rate_den: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-clock-loft-L186">    <span class="kw">pub</span> rate_num: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-clock-loft-L187">    <span class="kw">pub</span> rate_den: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-tick-clock-loft-L188"></span>
 <span id="src-tick-clock-loft-L189">    <span class="cm">// Wall time not yet converted into simulated time, in `den`-ths of</span></span>
 <span id="src-tick-clock-loft-L190">    <span class="cm">// a base unit.  Always in `[0, den)`.</span></span>
@@ -776,7 +776,7 @@
 <span id="src-tick-clock-loft-L195">    <span class="cm">// Folding them — scaling `banked` by `den` — would make</span></span>
 <span id="src-tick-clock-loft-L196">    <span class="cm">// `clock_banked`'s unit change with the rate, and it is a</span></span>
 <span id="src-tick-clock-loft-L197">    <span class="cm">// save/restore value.</span></span>
-<span id="src-tick-clock-loft-L198">    rate_carry: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-clock-loft-L198">    <span class="kw">pub</span> rate_carry: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-tick-clock-loft-L199"></span>
 <span id="src-tick-clock-loft-L200">    <span class="cm">// The last absolute wall reading `clock_pump` saw, and whether it</span></span>
 <span id="src-tick-clock-loft-L201">    <span class="cm">// has seen one at all.</span></span>
@@ -785,8 +785,8 @@
 <span id="src-tick-clock-loft-L204">    <span class="cm">// because a wall clock may legitimately read 0 — and a clock whose</span></span>
 <span id="src-tick-clock-loft-L205">    <span class="cm">// first pump answered `now` worth of ticks would open a server</span></span>
 <span id="src-tick-clock-loft-L206">    <span class="cm">// with the whole uptime as one burst.</span></span>
-<span id="src-tick-clock-loft-L207">    pump_at: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-tick-clock-loft-L208">    pumped:  <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-tick-clock-loft-L207">    <span class="kw">pub</span> pump_at: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-clock-loft-L208">    <span class="kw">pub</span> pumped:  <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
 <span id="src-tick-clock-loft-L209">}</span>
 <span id="src-tick-clock-loft-L210"></span>
 <span id="src-tick-clock-loft-L211"><span class="cm">// A clock ticking every `step` base units.</span></span>
@@ -1281,11 +1281,11 @@
 <span id="src-tick-timer-loft-L121">    <span class="cm">// Base units spent since it was armed.  Always in `[0, total)`</span></span>
 <span id="src-tick-timer-loft-L122">    <span class="cm">// between calls: the call that reaches `total` fires and disarms,</span></span>
 <span id="src-tick-timer-loft-L123">    <span class="cm">// so a spent timer is an unarmed one rather than a saturated one.</span></span>
-<span id="src-tick-timer-loft-L124">    spent: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-timer-loft-L124">    <span class="kw">pub</span> spent: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-tick-timer-loft-L125"></span>
 <span id="src-tick-timer-loft-L126">    <span class="cm">// The whole duration, in base units.  Zero means nothing is</span></span>
 <span id="src-tick-timer-loft-L127">    <span class="cm">// running.</span></span>
-<span id="src-tick-timer-loft-L128">    total: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-tick-timer-loft-L128">    <span class="kw">pub</span> total: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
 <span id="src-tick-timer-loft-L129">}</span>
 <span id="src-tick-timer-loft-L130"></span>
 <span id="src-tick-timer-loft-L131"><span class="cm">// A timer nobody has armed.</span></span>
@@ -1783,6 +1783,26 @@
 <span id="tests-01-doors-loft-L352">    <span class="cm">// would compare wrongly against every other bearing in the consumer.</span></span>
 <span id="tests-01-doors-loft-L353">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">wrap_deg</span>(-<span class="nm">90.0</span>) == <span class="nm">270.0</span>, <span class="st">"wrap_deg(-90) is {wrap_deg(-90.0)}"</span>);</span>
 <span id="tests-01-doors-loft-L354">}</span>
+</code></pre>
+<h2 id="tests-02-literals-loft">tests/02-literals.loft</h2>
+<pre class="src"><code><span id="tests-02-literals-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-02-literals-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-02-literals-loft-L3"><span class="cm">//</span></span>
+<span id="tests-02-literals-loft-L4"><span class="cm">// A `Timer` and a `TickClock` are built by partial literal OUTSIDE this library — the zero</span></span>
+<span id="tests-02-literals-loft-L5"><span class="cm">// defaults are part of their contract (`tick_timer.loft` § Timer, `tick_clock.loft` § the rate):</span></span>
+<span id="tests-02-literals-loft-L6"><span class="cm">// an omitted `total` is an unarmed timer, an omitted rate runs unscaled.  So every field is `pub`.</span></span>
+<span id="tests-02-literals-loft-L7"><span class="kw">use</span> fixstep::*;</span>
+<span id="tests-02-literals-loft-L8"></span>
+<span id="tests-02-literals-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_a_defaulted_timer_is_unarmed</span>() {</span>
+<span id="tests-02-literals-loft-L10">  t = <span class="en">Timer</span> { };</span>
+<span id="tests-02-literals-loft-L11">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">timer_running</span>(t), <span class="st">"a defaulted timer is not running"</span>);</span>
+<span id="tests-02-literals-loft-L12">}</span>
+<span id="tests-02-literals-loft-L13"></span>
+<span id="tests-02-literals-loft-L14"><span class="kw">fn</span> <span class="fn-call">test_a_clock_from_a_partial_literal_runs_unscaled</span>() {</span>
+<span id="tests-02-literals-loft-L15">  c = <span class="en">TickClock</span> { step: <span class="nm">10</span> };</span>
+<span id="tests-02-literals-loft-L16">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clock_advance</span>(c, <span class="nm">35</span>) == <span class="nm">3</span>, <span class="st">"35 units buy 3 steps of 10, got a different count"</span>);</span>
+<span id="tests-02-literals-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">clock_rate_den</span>(c) == <span class="nm">1</span>, <span class="st">"and reads as unscaled"</span>);</span>
+<span id="tests-02-literals-loft-L18">}</span>
 </code></pre>
 
   </article>

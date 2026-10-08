@@ -63,7 +63,7 @@
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-assets.html"><code>assets</code></a></td><td>0.4.2</td><td>A game's content pack that IS a loft store — art, audio and the scenes that place them, range-read off a static file server.  No codec, no parse step, no server-side code.</td></tr>
 <tr><td><a href="lib-audio_bus.html"><code>audio_bus</code></a></td><td>0.1.3</td><td>A mixer for game audio — buses that multiply, and a duck that restores exactly</td></tr>
-<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.3</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
+<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.4</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
 <tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.7</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
 <tr><td><a href="lib-input.html"><code>input</code></a></td><td>0.2.6</td><td>Game input for loft — action/axis bindings resolved to per-tick input state.</td></tr>
 <tr><td><a href="lib-stage.html"><code>stage</code></a></td><td>0.18.10</td><td>A retained 2-D scene for loft: a node tree you mutate, with transforms, clipping, batching, pointer routing and widget states</td></tr>
@@ -74,8 +74,8 @@
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-hex_body.html"><code>hex_body</code></a></td><td>0.3.6</td><td>The moving body — rigs, revolute joints with computed limits, pure poses, and collision proxies. hexbody's own body model, part of the hex_* family.</td></tr>
-<tr><td><a href="lib-hex_draw.html"><code>hex_draw</code></a></td><td>0.1.3</td><td>Draw a model into the field, and read its wall surface back.</td></tr>
-<tr><td><a href="lib-hex_edge.html"><code>hex_edge</code></a></td><td>0.2.5</td><td>Collision as an edge set, and the analytic surfaces behind it.</td></tr>
+<tr><td><a href="lib-hex_draw.html"><code>hex_draw</code></a></td><td>0.1.4</td><td>Draw a model into the field, and read its wall surface back.</td></tr>
+<tr><td><a href="lib-hex_edge.html"><code>hex_edge</code></a></td><td>0.2.6</td><td>Collision as an edge set, and the analytic surfaces behind it.</td></tr>
 <tr><td><a href="lib-hex_field.html"><code>hex_field</code></a></td><td>0.1.7</td><td>Exact-integer hex cell sets and their outlines — the base of the hex_* family.</td></tr>
 <tr><td><a href="lib-hex_fit.html"><code>hex_fit</code></a></td><td>0.1.5</td><td>The doorstep — refuse at authoring time what would not round-trip.</td></tr>
 <tr><td><a href="lib-hex_form.html"><code>hex_form</code></a></td><td>0.1.7</td><td>The exact turtle form on the hex lattice, and its canonical text.</td></tr>
@@ -83,9 +83,9 @@
 <tr><td><a href="lib-hex_place.html"><code>hex_place</code></a></td><td>0.1.2</td><td>Place, seat and combine — the operations a model survives.</td></tr>
 <tr><td><a href="lib-hex_recover.html"><code>hex_recover</code></a></td><td>0.1.6</td><td>Rebuild a model from the field — exactly, or with a reported residual.</td></tr>
 <tr><td><a href="lib-hex_roof.html"><code>hex_roof</code></a></td><td>0.1.9</td><td>Roof profiles as a height field, and the fit that recovers them.</td></tr>
-<tr><td><a href="lib-hex_shape.html"><code>hex_shape</code></a></td><td>0.1.6</td><td>The line primitive, the box and the arc — the shape vocabulary of the hex_* family.</td></tr>
+<tr><td><a href="lib-hex_shape.html"><code>hex_shape</code></a></td><td>0.1.8</td><td>The line primitive, the box and the arc — the shape vocabulary of the hex_* family.</td></tr>
 <tr><td><a href="lib-hex_way.html"><code>hex_way</code></a></td><td>0.1.6</td><td>A way is an exact centreline plus offsets, never a rasterised band.</td></tr>
-<tr><td><a href="lib-mesh3d.html"><code>mesh3d</code></a></td><td>0.1.4</td><td>3D geometry primitives — Vec/Mat, Mesh, Scene, Camera, Light.  Standalone (pure-loft, no GPU).</td></tr>
+<tr><td><a href="lib-mesh3d.html"><code>mesh3d</code></a></td><td>0.1.5</td><td>3D geometry primitives — Vec/Mat, Mesh, Scene, Camera, Light.  Standalone (pure-loft, no GPU).</td></tr>
 <tr><td><a href="lib-shapes.html"><code>shapes</code></a></td><td>0.5.4</td><td>2D geometry primitives — Rect, Circle, overlap tests, clamp.  Pure-loft, no other deps.</td></tr>
 </table>
 <h2 id="graphics">Graphics and 3D</h2>
@@ -93,11 +93,11 @@
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-drawing.html"><code>drawing</code></a></td><td>0.4.3</td><td>Render a .draw scene — a sprite authored as lines of text — pixel-identically to the Python renderer it replaces</td></tr>
 <tr><td><a href="lib-glb.html"><code>glb</code></a></td><td>0.1.6</td><td>glTF 2.0 binary (.glb) writer — exports Mesh / Scene as a glb file readable by Blender, three.js, gltf-validator.  Standalone (pure-loft, no GPU).</td></tr>
-<tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.9.11</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
+<tr><td><a href="lib-graphics.html"><code>graphics</code></a></td><td>0.9.12</td><td>2D canvas + 3D rendering for loft (Canvas pixel surface, Mesh / Scene / glTF, OpenGL bindings).</td></tr>
 <tr><td><a href="lib-gridmesh.html"><code>gridmesh</code></a></td><td>0.2.6</td><td>Chunk-local mesh-generation primitives for world-building algorithms.</td></tr>
 <tr><td><a href="lib-imaging.html"><code>imaging</code></a></td><td>0.4.4</td><td>PNG load/save + pixel manipulation for loft (Stage A — interpreter + native; wasm bridge deferred pending loft-host-ffi crate).</td></tr>
 <tr><td><a href="lib-lavition_ui.html"><code>lavition_ui</code></a></td><td>0.1.1</td><td>Panel layout, hit-testing and text metrics for an in-engine editor UI: rectangles and hits, with no world, no lattice, no window and no GL.</td></tr>
-<tr><td><a href="lib-mesh3d.html"><code>mesh3d</code></a></td><td>0.1.4</td><td>3D geometry primitives — Vec/Mat, Mesh, Scene, Camera, Light.  Standalone (pure-loft, no GPU).</td></tr>
+<tr><td><a href="lib-mesh3d.html"><code>mesh3d</code></a></td><td>0.1.5</td><td>3D geometry primitives — Vec/Mat, Mesh, Scene, Camera, Light.  Standalone (pure-loft, no GPU).</td></tr>
 <tr><td><a href="lib-stage.html"><code>stage</code></a></td><td>0.18.10</td><td>A retained 2-D scene for loft: a node tree you mutate, with transforms, clipping, batching, pointer routing and widget states</td></tr>
 <tr><td><a href="lib-text2d.html"><code>text2d</code></a></td><td>0.4.6</td><td>Text that always draws — a built-in face, a glyph atlas, measured metrics, wrapping and alignment, with no font file and no GL context</td></tr>
 </table>
@@ -110,7 +110,7 @@
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
 <tr><td><a href="lib-game_protocol.html"><code>game_protocol</code></a></td><td>0.1.7</td><td>The message types a multiplayer game's client and server share — envelopes, kinds and constructors; pure loft, transport-agnostic</td></tr>
-<tr><td><a href="lib-server.html"><code>server</code></a></td><td>0.7.4</td><td>HTTP + WebSocket server for loft — TCP sockets + tungstenite via cdylib.</td></tr>
+<tr><td><a href="lib-server.html"><code>server</code></a></td><td>0.7.5</td><td>HTTP + WebSocket server for loft — TCP sockets + tungstenite via cdylib.</td></tr>
 <tr><td><a href="lib-ssh.html"><code>ssh</code></a></td><td>0.1.4</td><td>SSH client for loft — drive an interactive remote shell (e.g. attach tmux) over password auth, never stored. Native-only.</td></tr>
 <tr><td><a href="lib-web.html"><code>web</code></a></td><td>0.4.5</td><td>HTTP client + WebSocket client for loft — ureq + tungstenite via cdylib.</td></tr>
 </table>
@@ -136,7 +136,7 @@
 <h2 id="time">Time</h2>
 <table class="lib-table">
 <tr><th>Library</th><th>Version</th><th>What it gives you</th></tr>
-<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.3</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
+<tr><td><a href="lib-fixstep.html"><code>fixstep</code></a></td><td>0.1.4</td><td>A fixed simulation step in exact integer time — clock, bank, one-shot timer</td></tr>
 <tr><td><a href="lib-time.html"><code>time</code></a></td><td>0.4.1</td><td>Date/time arithmetic on millisecond-since-epoch integers — proleptic Gregorian, same model as JavaScript Date.  Pure-loft; identical results on interp, --native, WASM.</td></tr>
 </table>
 <h2 id="toolchain">toolchain</h2>

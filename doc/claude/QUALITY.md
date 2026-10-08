@@ -50,7 +50,7 @@ value (`@FR-N-Shape`).  The ratchet is the count of such functions, and it must 
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **283** |
+| **282** |
 
 `python3 scripts/ir_walker_audit.py optional` reports it (the fourth figure);
 `make optional-ratchet` fails when it grows; `quality_optional_table_matches_the_audit` holds
