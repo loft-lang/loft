@@ -100,7 +100,7 @@ fn closure_shape(ret: &Type) -> ClosureShape {
 fn is_ref_return(ret: &Type) -> bool {
     ret.heap_def_nr().is_some()
         || matches!(
-            ret,
+            ret.base(),
             Type::Vector(_, _)
                 | Type::Hash(..)
                 | Type::Sorted(..)

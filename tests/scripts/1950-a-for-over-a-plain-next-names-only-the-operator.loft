@@ -4,6 +4,10 @@
 // refused, and the refusal is the one diagnostic: the loop variable binds the item the plain
 // `next` answers, so a body that assigns it to an existing variable reports nothing else
 // (loft#1950: it reported "cannot change type from text to L" first, naming the wrong cause).
+// @falsified-at: 60133ddef — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1950-a-for-over-a-plain-next-names-only-the-operator.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+//   ARMED: none — no switch is needed for either channel.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees; the exit and the expectation moved.
 
 struct L { n: integer }
 
