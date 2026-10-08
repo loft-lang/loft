@@ -56,7 +56,8 @@ opaque shape tests.  A new derived artefact is one entry in that file.
 
 An artefact that is a pure function of the tree carries `"ci": true` in
 `scripts/derived_artefacts.json`: the compiled stdlib, the target surface, the browser
-bundle, the feature shadow, the ignored-tests baseline and the reference pages.
+bundle, the gallery's sprite pack, the feature shadow, the ignored-tests baseline and the
+reference pages.
 `.github/workflows/derive.yml` regenerates exactly those (`scripts/derive_ci.py`) and commits
 the result back to the branch, so a checkout does not have to:
 
