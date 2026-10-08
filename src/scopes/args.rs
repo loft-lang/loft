@@ -6,7 +6,6 @@
 //! borrowed argument to the store it reads, and writes a `&` argument back.
 
 use super::Scopes;
-use super::handoff::copy_hands_off;
 use crate::data::{Data, Deps, Type, Value, v_set};
 use crate::variables::Function;
 
@@ -211,14 +210,8 @@ impl Scopes<'_> {
         // records the pairing.  The copy's source is arg 0.
         let moved_arg = moved_source_arg(outer_call, args, data);
         let copy_record_nr = data.def_nr("OpCopyRecord");
-        let transfer_copy = outer_call == copy_record_nr && {
-            let moved =
-                matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0);
-            moved
-                || args
-                    .get(1)
-                    .is_some_and(|d| copy_hands_off(d, function, data))
-        };
+        let transfer_copy = outer_call == copy_record_nr
+            && super::handoff::copy_record_moves_source(args, function, data);
         let has_create_stack_receiver = args.first().is_some_and(|a| {
             matches!(a.unspan(), Value::Call(d, cargs)
                 if *d == create_stack_nr

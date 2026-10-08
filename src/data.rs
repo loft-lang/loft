@@ -2508,54 +2508,68 @@ impl Type {
 
     /// The type the return-buffer machinery should treat this return as (loft#938).
     ///
-    /// `Optional(Vector(τ))` peels to `Vector(τ)`: a nullable COLLECTION return lays out
-    /// exactly like the bare one and wants the same hidden `__retbuf`, which is what stops
-    /// the caller inheriting a store the callee allocated per call.
+    /// `Optional(τ)` peels to `τ` for every shape that takes the buffer — a collection, a
+    /// record, a record enum: the `?` is a compile-time marker over τ's own storage (C90), so a
+    /// nullable return lays out exactly like the bare one and takes the same hidden `__retbuf`
+    /// (`@FR-N-Road`, loft#1934).  A `null` answer is a value the caller reads, never a buffer
+    /// it fails to receive.  Every other `Optional` stays wrapped.
     ///
-    /// Every other `Optional` stays WRAPPED, and that is the load-bearing half. A nullable
-    /// STRUCT return (`-> S?`) is loft#896's synthetic `__nullable<S>` enum — a different
-    /// representation with its own delivery — and giving it a buffer as well leaks one record
-    /// per call. The `?` is transparent only where the storage under it is.
-    ///
-    /// Gated on [`keys::nullable_ret_buffer`], **OPT-IN and default off**: with the switch
-    /// off this is the IDENTITY, so every caller reads exactly as it did before the gate
-    /// existed. See that switch for what turning it on currently fixes and what it does not.
+    /// Gated on [`keys::nullable_ret_buffer`] (default on, `LOFT_NO_NULLABLE_RETBUF=1` turns it
+    /// off): with the switch off this is the IDENTITY, and a nullable return takes no buffer.
     #[must_use]
     pub fn ret_promo_base(&self) -> &Type {
-        if !crate::keys::nullable_ret_buffer() {
-            return self;
-        }
+        self.buffered_payload().unwrap_or(self)
+    }
+
+    /// The `τ` a `τ?` return looks through its `?` to, when `τ` takes the buffer — `None` for
+    /// every other type.  The one answer the peels below share, so "which shapes peel"
+    /// cannot drift between them.
+    fn buffered_payload(&self) -> Option<&Type> {
         match self {
-            Type::Optional(inner) if matches!(inner.as_ref(), Type::Vector(_, _)) => inner,
-            other => other,
+            Type::Optional(inner)
+                if crate::keys::nullable_ret_buffer()
+                    && matches!(
+                        inner.as_ref(),
+                        Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _)
+                    ) =>
+            {
+                Some(inner)
+            }
+            _ => None,
         }
+    }
+
+    /// Does a function returning this type take the caller-allocated hidden `__retbuf`?
+    ///
+    /// One home for the three sites that reserve one — the signature, the between-passes
+    /// sweep and a generic method's stub — so they cannot disagree on a function's arity.
+    /// Read through [`ret_promo_base`](Self::ret_promo_base), so `τ?` answers as `τ` does.
+    #[must_use]
+    pub fn takes_ret_buffer(&self) -> bool {
+        matches!(
+            self.ret_promo_base(),
+            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+        )
     }
 
     /// How `ref_return` reads this return type: the heap shape whose DEPS it carries, and
     /// what peeling to reach it means — loft#974.
     ///
-    /// [`ret_promo_base`](Self::ret_promo_base) answers a DELIVERY question (does this
-    /// return get a `__retbuf` and a buffer-filling rewrite?) and deliberately peels
-    /// `Optional(Vector)` only: a nullable STRUCT return is loft#896's synthetic
-    /// `__nullable<S>`, which has its own delivery, and giving it a second one leaks a
-    /// record per call — measured, and the reason that peel is narrow.
+    /// A `τ?` that takes the buffer ([`ret_promo_base`](Self::ret_promo_base)) is
+    /// `Delivered`: its base is placed as τ's is.  A nullable KEYED return keeps its own
+    /// delivery and is `SignatureOnly`.
     ///
-    /// This answers a SIGNATURE question, which is not the same one: *does the returned
-    /// value borrow a parameter, and which?* That fact is true whatever the delivery is —
-    /// `fn get(b: Bag, k: text) -> Item? { b.items[k] }` hands back a view into `b`
-    /// whether or not a `?` is wrapped around it — and losing it makes the CALLER type
-    /// the result owned and free the caller's own record at scope exit (silent wrong
-    /// answers on both backends; a panic for the enum form).
+    /// The SIGNATURE half is true whatever the delivery is: *does the returned value borrow a
+    /// parameter, and which?* `fn get(b: Bag, k: text) -> Item? { b.items[k] }` hands back a
+    /// view into `b` whether or not a `?` is wrapped around it, and losing it makes the CALLER
+    /// type the result owned and free the caller's own record at scope exit.
     ///
     /// One function answers both halves, so "which shapes peel" and "did it peel" cannot
     /// drift apart the way two `matches!` did.
     #[must_use]
     pub fn ret_dep_shape(&self) -> (&Type, RetPeel) {
         match self {
-            Type::Optional(inner)
-                if crate::keys::nullable_ret_buffer()
-                    && matches!(inner.as_ref(), Type::Vector(_, _)) =>
-            {
+            Type::Optional(_) if let Some(inner) = self.buffered_payload() => {
                 (inner, RetPeel::Delivered)
             }
             Type::Optional(inner)
@@ -2576,8 +2590,7 @@ impl Type {
     /// same question instead of re-deriving the rule. `false` whenever the switch is off.
     #[must_use]
     pub fn ret_promo_peels(&self) -> bool {
-        crate::keys::nullable_ret_buffer()
-            && matches!(self, Type::Optional(inner) if matches!(inner.as_ref(), Type::Vector(_, _)))
+        self.buffered_payload().is_some()
     }
 
     /// This type with the `Rewritten` marker removed.

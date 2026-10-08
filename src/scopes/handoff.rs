@@ -623,7 +623,13 @@ fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Opti
     // (@PLN163: a leased capture copy returned from a lambda was released twice).
     if let Some(src) = drop_bearing_source(&args[0], function)
         && let Value::Var(dst) = args[1].unspan()
-        && (function.name(*dst).starts_with("__ref") || function.name(*dst) == "__retbuf")
+        && (function.name(*dst).starts_with("__ref")
+            || function.name(*dst) == "__retbuf"
+            // A local PROMOTED onto the return buffer is that buffer under its own name, so
+            // a copy into it moves the release the same way (loft#1934: `return b` of a
+            // `-> S?` whose other local took the buffer copied `b` into it and still ran
+            // `b`'s drop).
+            || promoted_ret_buffer(data, data.def_nr(&function.name), function, *dst))
     {
         let src = match function.tp(src).depend().as_slice() {
             [w] if *w != src
@@ -638,14 +644,23 @@ fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Opti
             return Some(moved);
         }
     }
-    let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
-    if !moved
-        && !copy_hands_off(&args[1], function, data)
-        && !appends_to_element(&args[1], function, data)
-    {
+    if !copy_record_moves_source(args, function, data) {
         return None;
     }
     drop_bearing_source(&args[0], function)
+}
+
+/// Does `OpCopyRecord(src, dest, tp)` hand its SOURCE's release over to the destination?  The
+/// `0x8000` move into a collection element, a destination that is a container FIELD, or one that
+/// is an element being appended — each is released by the container's cascade.  One home for the
+/// collector ([`copy_record_handoff`]) and the lift site (`Scopes::scan_args`), which meets the
+/// same copy after its source call became a `__lift_N`: asked at two sites, the lift once missed
+/// the appended element and the temp dropped the resource the element now holds (loft#1934).
+pub(super) fn copy_record_moves_source(args: &[Value], function: &Function, data: &Data) -> bool {
+    matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0)
+        || args.get(1).is_some_and(|d| {
+            copy_hands_off(d, function, data) || appends_to_element(d, function, data)
+        })
 }
 
 /// The hand-offs ONE node makes, added to `out` — the body of [`collect_drop_transferred`],

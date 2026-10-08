@@ -316,9 +316,10 @@ Calls `database.finish()` to compute final field byte offsets for all record typ
 ## Function calling convention — the heap-return buffer (@PLN55)
 
 Every BODY-carrying plain fn returning `Reference` / `Vector` /
-struct-`Enum` carries one hidden attribute `__retbuf` (typed as the
-return type, last position) plus a backing argument var from its pass-1
-signature parse — **arity is a pure function of the declaration**.
+struct-`Enum`, or a `?` of one (`Type::takes_ret_buffer`), carries one
+hidden attribute `__retbuf` (typed as the return type's base, last
+position) plus a backing argument var from its pass-1 signature parse —
+**arity is a pure function of the declaration**.
 
 - **Promotion** (`ref_return`): an NRVO-promotable returned local takes
   over the buffer by ROLE SWAP — the attribute is renamed to the local

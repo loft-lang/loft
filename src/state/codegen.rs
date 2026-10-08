@@ -3717,7 +3717,7 @@ impl State {
             // arm and adopts the minted one (@FR-O-Unknown decides here, @FR-B-Copy).
             self.gen_set_first_ref_fnref(stack, v, value, rec);
         } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
-            stack.function.tp(v).clone()
+            crate::use_analysis::first_bind_shape(stack.function.tp(v)).clone()
             // loft#1245 — BOTH spellings of a call, because a `CallRef` reaching a
             // definition is the same question as a `Call` reaching one and only the
             // second was asked.  Reading `Value::Call` alone sent every fn-ref bind to
@@ -3761,7 +3761,8 @@ impl State {
             // neither static answer below is right for both arms, so bind through the
             // same `OpBindOrCopy` store-identity guard the REASSIGNMENT path uses.
             if crate::keys::join_own_enabled()
-                && let Type::Reference(join_d_nr, _) = stack.function.tp(v).clone()
+                && let Type::Reference(join_d_nr, _) =
+                    crate::use_analysis::first_bind_shape(stack.function.tp(v)).clone()
                 // @PLN157 § V-g — an elided bind keeps the view and takes the plain
                 // `OpPutRef` below; `scopes` registered the identity free for the
                 // minted arm, so the join guard is not needed here.

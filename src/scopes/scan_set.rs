@@ -852,7 +852,7 @@ impl Scopes<'_> {
         // became an owner of a store it only viewed and freed it (the loft#1181 capture).  The
         // nullable spelling copies through the join guard instead (`nullable_join_first_bind`,
         // whose own strip sits below), which copies exactly the borrow it can witness.
-        let mut record_target = function.tp(v);
+        let mut record_target = crate::use_analysis::first_bind_shape(function.tp(v));
         while let Type::RefVar(inner) = record_target {
             record_target = inner.base();
         }

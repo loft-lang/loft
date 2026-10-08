@@ -241,6 +241,13 @@ pub(super) fn nullable_locals_that_displace(
     data: &Data,
     null_led_first: &HashSet<u16>,
 ) -> Vec<u16> {
+    // loft#1934, `@FR-N-Road` — while a `τ?` record return takes the buffer, a nullable local's
+    // bind takes the dense arm (`use_analysis::first_bind_shape`), which answers this question
+    // by store identity.  A flag beside it is a second release mechanism whose writes that arm
+    // never emits: two `y: S?` loops shared one stale flag and freed a buffer still in use.
+    if crate::keys::nullable_ret_buffer() {
+        return Vec::new();
+    }
     fn walk(node: &Value, seen: &mut HashSet<u16>, out: &mut Vec<u16>, data: &Data) {
         if let Value::Set(t, val) = node.unspan() {
             // A SECOND assignment is what displaces; the first allocates.
