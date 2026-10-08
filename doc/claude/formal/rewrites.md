@@ -3096,6 +3096,12 @@ on the drawing bench).
                  for it — and keeps B-Copy's deep copy when they do not: a cross-store
                  move copies every claim anyway, so the rewrite has no gain there, and
                  R-Place is what brings the source into the destination's store first.
+                 THE LOCAL CLAUSE: `x = y` for vector locals, where `y` owns its store,
+                 is built afresh EARLIER IN THE SAME STATEMENT LIST, is named there only
+                 as the destination of writes, and is read only by the rebind, gives
+                 `y` up to `x` — the free-source copy, which exchanges the two stores
+                 where it can (@FR-H-SwapIn) — and nulls `y`'s witness; a source read
+                 or grown after the rebind keeps the copy.
   (R-ExitVector) a LOCAL VECTOR whose wrapper is minted once and that reaches the
                  function's exit only inside the literal built into the return
                  buffer — `xs: vector<T> = []; …; return Out { xs: xs, … }` — has its

@@ -63,6 +63,11 @@ gets its per-turn buffer claimed in the host's store (`OpPlaceRecord` in the laz
 the source is ZEROED so the next turn's clear and the callee's refill find an empty record
 — and each exit releases the placed record as a block (`OpFreeRecordIn`).  Measured on the
 cbor decoder's bench (`--native-release`, this box): decode 42.6 ms → 34.7 ms per op.
+**`LOFT_NO_TAKE_LOCAL=1`** (`(R-MoveLast)`'s local clause, the scope pass, BOTH backends) keeps
+`x = y` for a vector local `y` built afresh each pass (the double buffer `tmp = []; …; result =
+tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
+bisect step for a wrong or emptied vector after such a rebind; `LOFT_TRACE_PLACE=1` names each
+decision (`[take-local]`).
 **`LOFT_NO_EXIT_RECORD=1`** (`(R-ExitVector)`'s record clause, the scope pass right after it,
 BOTH backends) keeps a local RECORD returned inside the exit literal (`lb = ListBox { … };
 Panel { list: lb, … }`) in a store of its own, deep-copied into the return buffer's field —
