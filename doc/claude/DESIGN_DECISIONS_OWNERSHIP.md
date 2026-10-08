@@ -237,7 +237,7 @@ read-before-write stayed invisible until a different filler ran.
 **Catalogue:** `formal/heap.md` `(H-Alloc)` `(H-NewRec)` · reads C125
 
 
-## C139 — A decoded text or byte string may be a view into the bytes it was decoded from
+## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
 
 **Decision.** Where a value is decoded out of a byte buffer, its text and byte-string fields
 may be represented as VIEWS into that buffer — an offset and a length — and every operation
