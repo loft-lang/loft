@@ -1,8 +1,8 @@
-diff --git b/src/database/types.rs a/src/database/types.rs
-index bd6853900..a19ad4576 100644
---- b/src/database/types.rs
-+++ a/src/database/types.rs
-@@ -1896,40 +1896,6 @@ impl Stores {
+diff --git a/src/database/types.rs b/src/database/types.rs
+index 4c268c7db..a19ad4576 100644
+--- a/src/database/types.rs
++++ b/src/database/types.rs
+@@ -1896,41 +1896,6 @@ impl Stores {
      /// `__nullable<S>` element keeps S's keys inside the `Some` variant's inline payload, so
      /// indexing the enum's own field list finds none of them.  Same rule as [`Self::hash`] and
      /// [`Self::create_key`] — one question, one answer, whichever kind asks it.
@@ -16,6 +16,7 @@ index bd6853900..a19ad4576 100644
 -    #[must_use]
 -    pub fn keyed_type(&self, data: &crate::data::Data, tp: &crate::data::Type) -> u16 {
 -        use crate::data::Type;
+-        let tp = tp.base();
 -        match tp {
 -            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
 -                let kind = if matches!(tp, Type::Hash(..)) {
@@ -43,7 +44,7 @@ index bd6853900..a19ad4576 100644
      pub fn field_name(&self, content: u16, key: &[String], name: &mut String) -> Vec<u16> {
          let owner = self.key_owner(content);
          let mut key_nrs = Vec::new();
-@@ -3802,23 +3768,6 @@ impl Type {
+@@ -3803,23 +3768,6 @@ impl Type {
      }
  }
  
@@ -67,10 +68,10 @@ index bd6853900..a19ad4576 100644
  #[cfg(test)]
  mod typevar_row_tests {
      use super::{Stores, TYPEVAR_ROW_PREFIX};
-diff --git b/src/generation/ops/parallel.rs a/src/generation/ops/parallel.rs
-index 462330cec..f5b2c508c 100644
---- b/src/generation/ops/parallel.rs
-+++ a/src/generation/ops/parallel.rs
+diff --git a/src/generation/ops/parallel.rs b/src/generation/ops/parallel.rs
+index 66dee1a73..f5b2c508c 100644
+--- a/src/generation/ops/parallel.rs
++++ b/src/generation/ops/parallel.rs
 @@ -92,22 +92,13 @@ fn closure_shape(ret: &Type) -> ClosureShape {
  /// can size.  A vector-returning worker was previously mis-routed to the scalar
  /// path, which cast `DbRef as i64` (E0605, the native-refreturn bug).
@@ -88,7 +89,7 @@ index 462330cec..f5b2c508c 100644
  fn is_ref_return(ret: &Type) -> bool {
 -    ret.heap_def_nr().is_some()
 -        || matches!(
--            ret,
+-            ret.base(),
 -            Type::Vector(_, _)
 -                | Type::Hash(..)
 -                | Type::Sorted(..)
@@ -115,11 +116,11 @@ index 462330cec..f5b2c508c 100644
      };
      (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
  }
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 7722dd969..7d4417ec1 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -23707,6 +23707,19 @@ fn merge_dependencies(a: &Type, b: &Type) -> Type {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index f6639c3d5..c0bb9513a 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -23824,6 +23824,19 @@ fn merge_dependencies(a: &Type, b: &Type) -> Type {
      a.joined_deps(b)
  }
  
@@ -139,10 +140,10 @@ index 7722dd969..7d4417ec1 100644
  /// Collect all `Value::Var` indices reachable anywhere in `val`.
  fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
      match val {
-diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
-index 58d644fec..b53b88ada 100644
---- b/src/parser/vectors.rs
-+++ a/src/parser/vectors.rs
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index e579c5b5d..906a9a605 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
 @@ -3,7 +3,7 @@
  
  use super::{

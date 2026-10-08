@@ -1,8 +1,8 @@
 diff --git a/src/database/allocation.rs b/src/database/allocation.rs
-index 074a1ceb6..70adab6de 100644
+index 5783a6e25..cdc018d16 100644
 --- a/src/database/allocation.rs
 +++ b/src/database/allocation.rs
-@@ -222,34 +222,6 @@ impl Stores {
+@@ -224,34 +224,6 @@ impl Stores {
          cur == DbRef::ABSENT_REC
      }
  
@@ -37,7 +37,7 @@ index 074a1ceb6..70adab6de 100644
      /// Report an edge the walk refused to follow, once per site.
      ///
      /// Loud rather than silent: refusing the edge turns a crash into a leak, which is
-@@ -398,17 +370,6 @@ impl Stores {
+@@ -400,17 +372,6 @@ impl Stores {
          let mut children = Vec::new();
          let mut container_rec = None;
          let mut extra_recs = Vec::new();
@@ -55,7 +55,7 @@ index 074a1ceb6..70adab6de 100644
          // A view over records a sibling owns: keep the spine teardown, drop the
          // element walk.  Only the per-element-record kinds can be a view — a
          // contiguous `Vector`/`Sorted` stores its elements INLINE, so it cannot
-@@ -3176,12 +3137,8 @@ impl Stores {
+@@ -3418,12 +3379,8 @@ impl Stores {
          let length = vector::length_vector(rec, &self.allocations);
          let size = u32::from(self.size(content_tp));
          let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
@@ -70,7 +70,7 @@ index 074a1ceb6..70adab6de 100644
              return;
          }
          let into = self.store_mut(to).claim(1 + (size * length).div_ceil(8));
-@@ -3618,27 +3575,7 @@ impl Stores {
+@@ -3860,27 +3817,7 @@ impl Stores {
          }
      }
  
@@ -98,7 +98,7 @@ index 074a1ceb6..70adab6de 100644
          // TODO prevent copying secondary structures
          match &self.types[tp as usize].parts {
              Parts::Base if tp == 5 => {
-@@ -5060,7 +4997,7 @@ impl Stores {
+@@ -5336,7 +5273,7 @@ impl Stores {
                  | Parts::Sorted(..)
                  | Parts::Ordered(..)
                  | Parts::Hash(..)
@@ -108,10 +108,10 @@ index 074a1ceb6..70adab6de 100644
              }
          })
 diff --git a/src/database/structures.rs b/src/database/structures.rs
-index 056c8096d..c5798cf08 100644
+index f7cc26dd2..e14c225bc 100644
 --- a/src/database/structures.rs
 +++ b/src/database/structures.rs
-@@ -1323,14 +1323,7 @@ impl Stores {
+@@ -1324,14 +1324,7 @@ impl Stores {
          // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
          // absence are different values, and only the whole-value replace may turn one into
          // the other — an `a += b` must leave `a` alone.
@@ -222,10 +222,10 @@ index 1d7618486..e36938ecd 100644
      let mut l = 0;
      for record in records(hash_ref, stores) {
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 3c933a560..439c664d5 100644
+index 69d432df4..3ccf1e171 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -6523,19 +6523,9 @@ use a separate collection or add after the loop"
+@@ -6700,19 +6700,9 @@ use a separate collection or add after the loop"
                      code.unspan(),
                      Value::Var(rv) if self.vars.tp(*rv).depend().is_empty()
                  );
@@ -246,7 +246,7 @@ index 3c933a560..439c664d5 100644
                      ops.push(append);
                      *code = Value::Insert(ops);
                  } else if matches!(code.unspan(), Value::Var(_)) {
-@@ -6547,20 +6537,19 @@ use a separate collection or add after the loop"
+@@ -6724,20 +6714,19 @@ use a separate collection or add after the loop"
                      let dep_free_tp = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
                      let tmp = self.vars.unique("_p154_rhs", &dep_free_tp, &mut self.lexer);
                      let init_tmp = v_set(tmp, Value::Null);
@@ -274,20 +274,29 @@ index 3c933a560..439c664d5 100644
                      *code = Value::Insert(ops);
                  } else {
                      let rhs_saved = code.clone();
-@@ -6593,7 +6582,7 @@ use a separate collection or add after the loop"
-                     }
-                     let set_tmp = v_set(tmp, rhs_saved);
+@@ -6777,7 +6766,7 @@ use a separate collection or add after the loop"
+                     let fill_tmp = if projection {
+                         vec![
+                             v_set(tmp, Value::Null),
+-                            self.cl(whole, &[Value::Var(tmp), rhs_saved, rec_tp.clone()]),
++                            self.cl("OpAppendVector", &[Value::Var(tmp), rhs_saved, rec_tp.clone()]),
+                         ]
+                     } else {
+                         if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
+@@ -6786,7 +6775,7 @@ use a separate collection or add after the loop"
+                         vec![v_set(tmp, rhs_saved)]
+                     };
                      let clear = self.clear_vector_field(to, &lhs_parent_tp);
 -                    let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
 +                    let append = self.cl("OpAppendVector", &[to.clone(), Value::Var(tmp), rec_tp]);
-                     let mut ops = vec![set_tmp];
+                     let mut ops = fill_tmp;
                      ops.extend(clear);
                      ops.push(append);
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 8000919c6..72f0cfc75 100644
+index 4b70df15c..d425955bd 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -7002,14 +7002,7 @@ impl Parser {
+@@ -7024,14 +7024,7 @@ impl Parser {
                              Value::Int(i32::from(vec_tp)),
                          ],
                      );
@@ -304,7 +313,7 @@ index 8000919c6..72f0cfc75 100644
                      // header prime wrote its empty handle) and a call that fills its buffer is
                      // handed the field itself, so the result is built where it lives and the
 diff --git a/src/radix_db.rs b/src/radix_db.rs
-index 1a283a617..b6e660170 100644
+index 316a6725f..18a9a7fc1 100644
 --- a/src/radix_db.rs
 +++ b/src/radix_db.rs
 @@ -147,7 +147,7 @@ pub(crate) fn key_bits(keys: &[Key]) -> u32 {
@@ -380,10 +389,10 @@ index 1a283a617..b6e660170 100644
          return Vec::new();
      }
 diff --git a/src/tree.rs b/src/tree.rs
-index 6e2e07142..4e995931d 100644
+index 36b65d1c1..be3a25084 100644
 --- a/src/tree.rs
 +++ b/src/tree.rs
-@@ -33,7 +33,7 @@ pub fn find(
+@@ -37,7 +37,7 @@ pub fn find(
      key: &[Content],
  ) -> u32 {
      let store = keys::store(data, stores);
@@ -392,7 +401,7 @@ index 6e2e07142..4e995931d 100644
      let mut result = DbRef {
          store_nr: data.store_nr,
          rec: 0,
-@@ -296,8 +296,7 @@ pub fn last(data: &DbRef, fields: u16, stores: &[Store]) -> DbRef {
+@@ -300,8 +300,7 @@ pub fn last(data: &DbRef, fields: u16, stores: &[Store]) -> DbRef {
  
  fn end(data: &DbRef, fields: u16, stores: &[Store], forward: u32) -> DbRef {
      let store = keys::store(data, stores);
@@ -402,7 +411,7 @@ index 6e2e07142..4e995931d 100644
      while i > 0 && store.get_i32_raw(i as u32, u32::from(fields) + forward) > 0 {
          i = store.get_i32_raw(i as u32, u32::from(fields) + forward);
      }
-@@ -872,7 +871,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
+@@ -876,7 +875,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
      let store = keys::store(data, stores);
      let rec = DbRef {
          store_nr: data.store_nr,
@@ -411,7 +420,7 @@ index 6e2e07142..4e995931d 100644
          pos: u32::from(fields),
      };
      if rec.rec == 0 {
-@@ -896,7 +895,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
+@@ -900,7 +899,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
  
  pub fn remove(data: &DbRef, rec: &DbRef, fields: u16, stores: &mut [Store], keys: &[Key]) {
      let mut black = false;
@@ -421,10 +430,10 @@ index 6e2e07142..4e995931d 100644
          store_nr: rec.store_nr,
          rec: rec.rec,
 diff --git a/src/trie_db.rs b/src/trie_db.rs
-index 0da775a90..20b7cef32 100644
+index 3d55ddbee..fde722139 100644
 --- a/src/trie_db.rs
 +++ b/src/trie_db.rs
-@@ -104,7 +104,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
+@@ -105,7 +105,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
          return;
      };
      let store = crate::keys::mut_store(coll, stores);
@@ -433,7 +442,7 @@ index 0da775a90..20b7cef32 100644
      if tree == 0 {
          tree = rt::rtree_init(store, 0);
          store.set_u32_raw(coll.rec, coll.pos, tree);
-@@ -118,7 +118,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
+@@ -119,7 +119,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
  #[must_use]
  pub fn find(coll: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> DbRef {
      let store = crate::keys::store(coll, stores);
@@ -442,7 +451,7 @@ index 0da775a90..20b7cef32 100644
      let rec = match keys.first() {
          Some(k) if tree != 0 => {
              // The probe reads bytes exactly as `TextOracle` does — via the same
-@@ -151,7 +151,7 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->
+@@ -152,7 +152,7 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->
          return false;
      };
      let store = crate::keys::mut_store(coll, stores);
@@ -451,7 +460,7 @@ index 0da775a90..20b7cef32 100644
      if tree == 0 {
          return false;
      }
-@@ -166,7 +166,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+@@ -167,7 +167,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
          return 0;
      }
      let store = crate::keys::store(coll, stores);
@@ -460,7 +469,7 @@ index 0da775a90..20b7cef32 100644
      if tree == 0 {
          0
      } else {
-@@ -179,7 +179,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+@@ -180,7 +180,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
  #[must_use]
  pub fn records(coll: &DbRef, stores: &[Store]) -> Vec<u32> {
      let store = crate::keys::store(coll, stores);
@@ -469,7 +478,7 @@ index 0da775a90..20b7cef32 100644
      let mut out = Vec::new();
      if tree != 0 {
          let mut it = rt::rtree_first(store, tree);
-@@ -218,7 +218,7 @@ pub fn prefix(
+@@ -219,7 +219,7 @@ pub fn prefix(
      limit: Option<usize>,
  ) -> Vec<u32> {
      let store = crate::keys::store(coll, stores);
@@ -479,10 +488,10 @@ index 0da775a90..20b7cef32 100644
      let Some(key) = keys.first() else {
          return out;
 diff --git a/src/vector.rs b/src/vector.rs
-index 0d65fa88c..3acf61626 100644
+index 6846034e6..3b20dc0cc 100644
 --- a/src/vector.rs
 +++ b/src/vector.rs
-@@ -716,13 +716,6 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
+@@ -718,13 +718,6 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
          store.release_foreign();
          return;
      }

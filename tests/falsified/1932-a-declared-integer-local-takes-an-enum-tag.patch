@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 99b00ef69..d27c62bd1 100644
+index 69d432df4..93424a4b3 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -4319,22 +4319,6 @@ use a separate collection or add after the loop"
+@@ -4323,22 +4323,6 @@ use a separate collection or add after the loop"
          } else {
              self.parse_operators(expect, code, &mut parent_tp, 0)
          };
@@ -19,7 +19,7 @@ index 99b00ef69..d27c62bd1 100644
 -            && !matches!(s_type, Type::Optional(_))
 -            && matches!(s_type.base(), Type::Enum(_, false, _))
 -        {
--            *code = self.cl("OpConvIntFromEnum", &[code.clone()]);
+-            *code = self.cl("OpConvIntFromEnum", std::slice::from_ref(code));
 -            s_type = crate::data::I64.clone();
 -        }
          // `@FR-Cap-Own` — note whether this assignment to a sandboxed local is a struct literal

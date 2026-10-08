@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 1ec714fac..b2f02e2b0 100644
+index 6f0a3ba8a..de5d68071 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -2418,12 +2418,6 @@ impl Parser {
+@@ -2462,12 +2462,6 @@ impl Parser {
              // *"expected A, got B on else"* for a join `match` accepts (loft#1117).  The
              // arm keeps its own type and `parse_if` joins the two to their enum.
              let sibling_variant = arm_of_sibling && self.arm_joins_to_enum(t, result);
@@ -15,7 +15,7 @@ index 1ec714fac..b2f02e2b0 100644
              // @FR-F-Block — the arms of a construct in STATEMENT position yield nothing
              // anybody reads, so their types need not agree.  Only one ORDER used to compile:
              // a void THEN arm makes the expected type `void`, which accepts any else arm,
-@@ -2447,8 +2441,7 @@ impl Parser {
+@@ -2491,8 +2485,7 @@ impl Parser {
                  && !if_unified
                  && !vec_match_candidate
                  && !vec_arm_handled
@@ -25,7 +25,7 @@ index 1ec714fac..b2f02e2b0 100644
              // @FR-N-Store — the tail is a STORE into the return slot.  The store face asks
              // where the tail converts; a tail that does not convert (a rewritten tuple, a
              // unified `if`, a vector match, a sibling variant) is asked here.  Anchored to
-@@ -2558,7 +2551,7 @@ impl Parser {
+@@ -2602,7 +2595,7 @@ impl Parser {
                      // E0308.  The `if`'s own join is decided in `parse_if` from the THEN
                      // arm and is unaffected.
                      t.clone()
@@ -34,7 +34,7 @@ index 1ec714fac..b2f02e2b0 100644
                      t.clone()
                  } else if let Some(w) = boxed_arm_w {
                      // The arm was boxed into `w` (loft#1350): its value is that work-ref,
-@@ -5595,13 +5588,6 @@ impl Parser {
+@@ -5735,13 +5728,6 @@ impl Parser {
                      {
                          true_type = enum_tp.clone();
                      }
@@ -48,7 +48,7 @@ index 1ec714fac..b2f02e2b0 100644
                      // loft#978 — the chain's TYPE deliberately stays out of `false_type`
                      // (above), but what it BORROWS is still a value this if-expression can
                      // deliver, so it has to reach the join below.  Without it an
-@@ -5661,14 +5647,6 @@ impl Parser {
+@@ -5803,14 +5789,6 @@ impl Parser {
                  {
                      true_type = enum_tp.clone();
                  }
@@ -63,7 +63,7 @@ index 1ec714fac..b2f02e2b0 100644
              }
              if true_type == Type::Unknown(0) {
                  if let Some(orig) = &then_tuple_nulls {
-@@ -6227,15 +6205,12 @@ impl Parser {
+@@ -6409,15 +6387,12 @@ impl Parser {
              };
  
              if pattern_name == "_" {
@@ -83,7 +83,7 @@ index 1ec714fac..b2f02e2b0 100644
                      let joined = result_type.clone();
                      self.reconvert_null_tuple_arms(&mut arms, &joined);
                  }
-@@ -7077,11 +7052,6 @@ impl Parser {
+@@ -7346,11 +7321,6 @@ impl Parser {
          if self.arm_joins_to_enum(&t, expected) {
              return t;
          }
@@ -95,7 +95,7 @@ index 1ec714fac..b2f02e2b0 100644
          // A struct-enum pattern binding yields a BORROW — `Ship { carrier } => carrier` is
          // `&text` — while a sibling arm commonly yields the owned twin (`_ => "none"`).  That
          // is one type modulo ownership: the caller reads the value either way, which is why
-@@ -10449,7 +10419,7 @@ impl Parser {
+@@ -11033,7 +11003,7 @@ impl Parser {
              {
                  // loft#1682 — the scalar arms hold `(pattern, code, type, guard)`.
                  for prev in &mut arms {
@@ -104,7 +104,7 @@ index 1ec714fac..b2f02e2b0 100644
                          let prev_orig = prev.2.clone();
                          self.convert_arm_tail(&mut prev.1, &prev_orig, &joined);
                          prev.2 = joined.clone();
-@@ -11660,7 +11630,7 @@ impl Parser {
+@@ -12245,7 +12215,7 @@ impl Parser {
                  self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
              {
                  for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
@@ -113,7 +113,7 @@ index 1ec714fac..b2f02e2b0 100644
                          let prev_orig = prev_tp.clone();
                          self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                          *prev_tp = joined.clone();
-@@ -12063,7 +12033,7 @@ impl Parser {
+@@ -12817,7 +12787,7 @@ impl Parser {
                  self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
              {
                  for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
@@ -122,7 +122,7 @@ index 1ec714fac..b2f02e2b0 100644
                          let prev_orig = prev_tp.clone();
                          self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                          *prev_tp = joined.clone();
-@@ -14603,35 +14573,6 @@ impl Parser {
+@@ -15531,35 +15501,6 @@ impl Parser {
              .is_some_and(|e| self.joins_to_enum(&e, expected, arm))
      }
  
@@ -155,10 +155,10 @@ index 1ec714fac..b2f02e2b0 100644
 -        )
 -    }
 -
-     /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
-     /// variant?
-     ///
-@@ -14870,17 +14811,6 @@ impl Parser {
+     /// `@FR-I-Join` — the type an arm is parsed EXPECTING, given the type its siblings answered
+     /// in.  An integer sibling's RANGE is that sibling's, not the construct's: an arithmetic
+     /// arm (`@FR-N-Arith`) answers a range narrower than its siblings, and expecting it of the
+@@ -15883,17 +15824,6 @@ impl Parser {
          arm_body: &mut Value,
          arm_type: &mut Type,
      ) -> Option<Type> {
@@ -176,7 +176,7 @@ index 1ec714fac..b2f02e2b0 100644
          if !self.tuple_join_open(result_type) {
              return None;
          }
-@@ -14917,7 +14847,7 @@ impl Parser {
+@@ -15930,7 +15860,7 @@ impl Parser {
      /// loft#1682 — the `EnumArm` half of the reconversion `join_null_tuple_arm` documents.
      fn reconvert_null_tuple_arms(&mut self, arms: &mut [EnumArm], joined: &Type) {
          for prev in arms.iter_mut() {
@@ -185,7 +185,7 @@ index 1ec714fac..b2f02e2b0 100644
                  let prev_orig = prev.tp.clone();
                  self.convert_arm_tail(&mut prev.code, &prev_orig, joined);
                  prev.tp = joined.clone();
-@@ -14925,13 +14855,6 @@ impl Parser {
+@@ -15938,13 +15868,6 @@ impl Parser {
          }
      }
  
@@ -198,4 +198,4 @@ index 1ec714fac..b2f02e2b0 100644
 -
      fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
          let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
-         // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
+         // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`

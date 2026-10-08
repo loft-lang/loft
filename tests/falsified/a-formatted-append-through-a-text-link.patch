@@ -1,8 +1,8 @@
 diff --git a/src/generation/text.rs b/src/generation/text.rs
-index ec2799c59..09164bed2 100644
+index dbad8e519..5f2077420 100644
 --- a/src/generation/text.rs
 +++ b/src/generation/text.rs
-@@ -325,25 +325,6 @@
+@@ -324,25 +324,6 @@ impl Output<'_> {
      }
  
      /// Use this to emit `OpFormatText`/`OpFormatStackText` as a call to `ops::format_text`.
@@ -28,7 +28,7 @@ index ec2799c59..09164bed2 100644
      pub(super) fn format_text(&mut self, w: &mut dyn Write, vals: &[Value]) -> std::io::Result<()> {
          if let [
              Value::Var(nr),
-@@ -353,6 +334,7 @@
+@@ -352,6 +333,7 @@ impl Output<'_> {
              Value::Int(token),
          ] = vals
          {
@@ -36,21 +36,19 @@ index ec2799c59..09164bed2 100644
              let val_expr = self.generate_expr_buf(val)?;
              // All text-returning calls produce either `Str` or `String` (never `&str`).
              // Wrap with `&*` so `format_text` (which expects `&str`) always gets the right type.
-@@ -387,10 +369,9 @@
+@@ -386,10 +368,9 @@ impl Output<'_> {
                  val_expr
              };
              let width_expr = self.generate_expr_buf(width)?;
 -            let dest = self.format_dest(*nr, false);
--            write!(
--                w,
+             write!(
+                 w,
 -                "ops::format_text({dest}, {val_str}, {width_expr}, {dir}, {token})"
-+            write!(
-+                w,
 +                "ops::format_text(&mut {s_nr}, {val_str}, {width_expr}, {dir}, {token})"
              )?;
              return Ok(());
          }
-@@ -420,12 +401,13 @@
+@@ -414,12 +395,13 @@ impl Output<'_> {
              Value::Int(dir),
          ] = vals
          {
@@ -58,17 +56,15 @@ index ec2799c59..09164bed2 100644
              let val_expr = self.generate_expr_buf(val)?;
              let width_expr = self.generate_expr_buf(width)?;
 -            let dest = self.format_dest(*nr, stack);
--            write!(
--                w,
--                "ops::format_long_with_tag({dest}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
 +            let prefix = if stack { "" } else { "&mut " };
-+            write!(
-+                w,
-+                "ops::format_long_with_tag({prefix}{s_nr}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
+             write!(
+                 w,
+-                "ops::format_long({dest}, {val_expr}, {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
++                "ops::format_long({prefix}{s_nr}, {val_expr}, {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
              )?;
              return Ok(());
          }
-@@ -448,14 +430,15 @@
+@@ -442,14 +424,15 @@ impl Output<'_> {
              dir,
          ] = vals
          {
@@ -78,17 +74,15 @@ index ec2799c59..09164bed2 100644
              let prec_expr = self.generate_expr_buf(prec)?;
              let dir_expr = self.generate_expr_buf(dir)?;
 -            let dest = self.format_dest(*nr, stack);
--            write!(
--                w,
--                "ops::format_float({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
 +            let prefix = if stack { "" } else { "&mut " };
-+            write!(
-+                w,
+             write!(
+                 w,
+-                "ops::format_float({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
 +                "ops::format_float({prefix}{s_nr}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
              )?;
              return Ok(());
          }
-@@ -479,14 +462,15 @@
+@@ -473,14 +456,15 @@ impl Output<'_> {
              dir,
          ] = vals
          {
@@ -98,12 +92,10 @@ index ec2799c59..09164bed2 100644
              let prec_expr = self.generate_expr_buf(prec)?;
              let dir_expr = self.generate_expr_buf(dir)?;
 -            let dest = self.format_dest(*nr, stack);
--            write!(
--                w,
--                "ops::format_single({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
 +            let prefix = if stack { "" } else { "&mut " };
-+            write!(
-+                w,
+             write!(
+                 w,
+-                "ops::format_single({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
 +                "ops::format_single({prefix}{s_nr}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
              )?;
              return Ok(());

@@ -1,8 +1,83 @@
+diff --git a/src/compiled_stdlib_gen.rs b/src/compiled_stdlib_gen.rs
+index 27c2b3bff..a05fd212d 100644
+--- a/src/compiled_stdlib_gen.rs
++++ b/src/compiled_stdlib_gen.rs
+@@ -611,7 +611,7 @@ fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mu
+   // loft:default/02_files.loft:166
+   OpGetFileText(cell, var_self, &mut var_txt);
+   // loft:default/02_files.loft:167
+-  ops::append_text(&mut (*var_result), &*(&var_txt));
++  (*var_result) += &*(&var_txt);
+   // loft:default/02_files.loft:172
+   if ((if ((((t_4text_size(cell, &*var_result)) as i64) == ((0_i64) as i64)) as u8) == 1 {({((0_i64) as i64) < (({{let db = (var_self); if db.rec == 0 { i64::MIN } else { stores.store(&db).get_int(db.rec, db.pos + (0_i64) as u32)} }}) as i64)} as u8)} else {({false} as u8)}) as u8) == 1 { //block_4: never
+     ;
+@@ -876,7 +876,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+       var___work_p2_1.clear();
+       let _pre_4 = t_4text_size(cell, &*var_t);
+       let _pre_3 = OpGetTextSub(&*var_t, 2_i64, _pre_4);
+-      ops::append_text(&mut var___work_p2_1, &*(_pre_3));
++      var___work_p2_1 += &*(_pre_3);
+       *var_t = (&var___work_p2_1).to_string();
+       } /*block_4: void*/;
+     } /*while_2*/;
+@@ -914,7 +914,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+       // loft:default/02_files.loft:1346
+       if ((var_walked) as u8) == 1 { //block_12: void
+         var___work_1.clear();
+-        ops::append_text(&mut var___work_1, &*(OpGetTextSub(&var_base, 0_i64, var_cut)));
++        var___work_1 += &*(OpGetTextSub(&var_base, 0_i64, var_cut));
+         var_base = var___work_1.clone();
+         } /*block_12: void*/ else { //block_13: void
+         var_base = "".to_string();
+@@ -923,7 +923,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+       var___work_p2_2.clear();
+       let _pre_4 = t_4text_size(cell, &*var_t);
+       let _pre_3 = OpGetTextSub(&*var_t, 3_i64, _pre_4);
+-      ops::append_text(&mut var___work_p2_2, &*(_pre_3));
++      var___work_p2_2 += &*(_pre_3);
+       *var_t = (&var___work_p2_2).to_string();
+       } /*block_7: void*/;
+     } /*while_5*/;
+@@ -939,7 +939,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
+   { //Formatted string_15: text["__work_2"]
+     *var___work_2 = ("").to_string();
+     ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
+-    ops::append_text(&mut (*var___work_2), &*("/"));
++    (*var___work_2) += &*("/");
+     ops::format_text(&mut var___work_2, &*var_t, 0_i64, 2, 32);
+     ;
+     ;
+@@ -1377,10 +1377,10 @@ fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut
+       { //block_7: void
+         // loft:default/03_text.loft:213
+         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
+-          ops::append_text(&mut (*var_result), &*(var_sep));
++          (*var_result) += &*(var_sep);
+           } /*block_8: void*/ else {()};
+         // loft:default/03_text.loft:214
+-        ops::append_text(&mut (*var_result), &*(var_p));
++        (*var_result) += &*(var_p);
+         } /*block_7: void*/;
+       var_p__count = ops::op_add_int((var_p__count), (1_i64));
+       ;
+@@ -1419,10 +1419,10 @@ fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef
+       { //block_7: void
+         // loft:default/03_text.loft:213
+         if ((((((var_p__count) as i64) == ((0_i64) as i64)) as u8) != 1) as u8) == 1 { //block_8: void
+-          ops::append_text(&mut (*var_result), &*(var_sep));
++          (*var_result) += &*(var_sep);
+           } /*block_8: void*/ else {()};
+         // loft:default/03_text.loft:214
+-        ops::append_text(&mut (*var_result), &*(var_p));
++        (*var_result) += &*(var_p);
+         } /*block_7: void*/;
+       var_p__count = ops::op_add_int((var_p__count), (1_i64));
+       ;
 diff --git a/src/generation/text.rs b/src/generation/text.rs
-index 8c6ed04d7..ec2799c59 100644
+index dbad8e519..f2652ace1 100644
 --- a/src/generation/text.rs
 +++ b/src/generation/text.rs
-@@ -287,19 +287,38 @@ impl Output<'_> {
+@@ -305,19 +305,38 @@ impl Output<'_> {
              // raises E0502 — mutable and immutable borrows of the same
              // place.  Hoist the RHS through a fresh `String` so the
              // self-borrow never overlaps the `+=` target.
@@ -49,11 +124,71 @@ index 8c6ed04d7..ec2799c59 100644
              return Ok(());
          }
          panic!("Could not parse {vals:?}");
+diff --git a/src/ops.rs b/src/ops.rs
+index cb3285d71..0b9bf1a56 100644
+--- a/src/ops.rs
++++ b/src/ops.rs
+@@ -775,52 +775,17 @@ pub fn op_exclusive_or_int(v1: i64, v2: i64) -> i64 {
+ /// doesn't exist — even though `==` works via the cross-type `PartialEq`.
+ /// Routing `OpLtText` / `OpLeText` through these helpers unifies both
+ /// provenances.  @P347.
+-///
+-/// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
+-/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
+-/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
+-/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
+-/// home both backends call, rather than at each operator site.
+ #[inline]
+ #[must_use]
+ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
+-    let (a, b) = (a.as_ref(), b.as_ref());
+-    let a_null = a == crate::state::STRING_NULL;
+-    let b_null = b == crate::state::STRING_NULL;
+-    if a_null || b_null {
+-        return a_null && !b_null;
+-    }
+-    a < b
++    a.as_ref() < b.as_ref()
+ }
+ 
+-/// Text ordering compare `<=` — see [`op_lt_text`], whose null order it shares: a null left
+-/// operand is `<=` everything, and nothing non-null is `<=` a null.
++/// Text ordering compare `<=` — see [`op_lt_text`].  @P347.
+ #[inline]
+ #[must_use]
+ pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
+-    let (a, b) = (a.as_ref(), b.as_ref());
+-    let a_null = a == crate::state::STRING_NULL;
+-    if a_null || b == crate::state::STRING_NULL {
+-        return a_null;
+-    }
+-    a <= b
+-}
+-
+-/// Text concatenation's append step, `dst += src`, on both backends — `@FR-E-NullArg`: a null
+-/// operand makes the concatenation null.  A null `dst` (an accumulator that already met a null)
+-/// stays null, and a null `src` turns `dst` null — appending the sentinel's NUL byte made
+-/// `"a" + t` the two-byte `"a\0"`, a present text no null test sees (loft#1924).
+-#[inline]
+-pub fn append_text(dst: &mut String, src: &str) {
+-    if dst.as_str() == crate::state::STRING_NULL {
+-        return;
+-    }
+-    if src == crate::state::STRING_NULL {
+-        dst.clear();
+-        dst.push_str(crate::state::STRING_NULL);
+-        return;
+-    }
+-    dst.push_str(src);
++    a.as_ref() <= b.as_ref()
+ }
+ 
+ /// Text equality — the `==` twin of [`op_lt_text`], and for the same reason.
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index c04b5184c..c34b4e9c6 100644
+index 27cc17504..b7e6aae71 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -2099,14 +2099,9 @@ impl Parser {
+@@ -2101,14 +2101,9 @@ impl Parser {
                              // not a bare `Value::Null` — for a buffer-backed return the bare null
                              // leaves the return buffer empty and interp reads "" back instead of
                              // null (the normal `else { null }` flow converts it the same way).
@@ -70,29 +205,68 @@ index c04b5184c..c34b4e9c6 100644
                              };
                              if matches!(code.unspan(), Value::Var(_)) {
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index e53278f2b..5a8fe1ce7 100644
+index e579c5b5d..5f0725f39 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -360,17 +360,11 @@ impl Parser {
-             // A `&text` argument (parameter passed by reference) appears
-             // as `Type::RefVar(Type::Text(_))` here but the OpAppend* ops
-             // accept it directly via the same code path as plain `Text`.
--            //
--            // A `text?` part is a text OPERAND too, so it is APPENDED — `@FR-E-NullArg`: the
--            // append makes the concatenation null when the part is (`ops::append_text`).  It
--            // used to take the format path below, which RENDERS a null as the word, so
--            // `"a" + t` with a null `t` answered `"anull"` (loft#1924).
-             let dispatch_tp: &Type = if let Type::RefVar(inner) = tp {
-                 inner.as_ref()
-             } else {
-                 tp
-             };
--            let dispatch_tp: &Type = dispatch_tp.base();
-             if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
-                 if *dispatch_tp == Type::Character {
-                     ls.push(self.cl("OpAppendStackCharacter", &[Value::Var(var_nr), val.clone()]));
+@@ -353,7 +353,55 @@ impl Parser {
+             orig_var
+         };
+         for (val, tp) in parts {
+-            self.append_concat_operand(&mut ls, var_nr, val, tp);
++            // Unwrap `RefVar(inner)` for the type-dispatch check below.
++            // A `&text` argument (parameter passed by reference) appears
++            // as `Type::RefVar(Type::Text(_))` here but the OpAppend* ops
++            // accept it directly via the same code path as plain `Text`.
++            let dispatch_tp: &Type = if let Type::RefVar(inner) = tp {
++                inner.as_ref()
++            } else {
++                tp
++            };
++            if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
++                if *dispatch_tp == Type::Character {
++                    ls.push(self.cl("OpAppendStackCharacter", &[Value::Var(var_nr), val.clone()]));
++                } else if matches!(dispatch_tp, Type::Text(_)) {
++                    ls.push(self.cl("OpAppendStackText", &[Value::Var(var_nr), val.clone()]));
++                } else {
++                    // @P274 — non-text/non-character parts (integer / float /
++                    // bool / vector / reference / enum / …) need a format-
++                    // dispatch step before append.  `OpAppendStackText`
++                    // assumes its argument already evaluates to text on the
++                    // stack; passing a raw `i64` from `headers.len()` is what
++                    // tripped native E0614 (`type i64 cannot be dereferenced`)
++                    // and SIGSEGV in interp.  Route through `append_data`,
++                    // which is the same dispatch path used by `"…{x}…"`
++                    // format-string interpolation and handles every formattable
++                    // type via the matching `OpFormat*` op.
++                    self.append_data(
++                        dispatch_tp.clone(),
++                        &mut ls,
++                        var_nr,
++                        u16::MAX,
++                        val,
++                        super::OUTPUT_DEFAULT,
++                    );
++                }
++            } else if *dispatch_tp == Type::Character {
++                ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), val.clone()]));
++            } else if matches!(dispatch_tp, Type::Text(_)) {
++                ls.push(self.cl("OpAppendText", &[Value::Var(var_nr), val.clone()]));
++            } else {
++                // @P274 — see RefVar branch above.
++                self.append_data(
++                    dispatch_tp.clone(),
++                    &mut ls,
++                    var_nr,
++                    u16::MAX,
++                    val,
++                    super::OUTPUT_DEFAULT,
++                );
++            }
+         }
+         let tp = Type::Text(Deps::frame1(var_nr));
+         if orig_var == u16::MAX || var_nr != orig_var {
 diff --git a/src/state/text.rs b/src/state/text.rs
-index bd4a64668..4af96f541 100644
+index 036e4837f..f8fc483d2 100644
 --- a/src/state/text.rs
 +++ b/src/state/text.rs
 @@ -310,8 +310,10 @@ impl State {
@@ -121,59 +295,3 @@ index bd4a64668..4af96f541 100644
          if let Some(fn_nr) = tl_fn {
              text_tl_grow(
                  fn_nr,
-diff --git a/src/ops.rs b/src/ops.rs
---- a/src/ops.rs
-+++ b/src/ops.rs
-@@ -868,35 +868,17 @@
- /// doesn't exist — even though `==` works via the cross-type `PartialEq`.
- /// Routing `OpLtText` / `OpLeText` through these helpers unifies both
- /// provenances.  @P347.
--///
--/// `@FR-E-NullArg` — ordering places `null` at the LOW extreme for every ordered type, `text`
--/// included: `null < v` is true, `v < null` false, `null < null` false.  The null text is the
--/// one-byte `STRING_NULL` (`"\0"`), which a plain byte compare sorts ABOVE `""` and below
--/// `"a"`, so `null < ""` answered false and `"" < null` true (loft#1924).  Asked here, the one
--/// home both backends call, rather than at each operator site.
- #[inline]
- #[must_use]
- pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
--    let (a, b) = (a.as_ref(), b.as_ref());
--    let a_null = a == crate::state::STRING_NULL;
--    let b_null = b == crate::state::STRING_NULL;
--    if a_null || b_null {
--        return a_null && !b_null;
--    }
--    a < b
--}
--
--/// Text ordering compare `<=` — see [`op_lt_text`], whose null order it shares: a null left
--/// operand is `<=` everything, and nothing non-null is `<=` a null.  @P347.
-+    a.as_ref() < b.as_ref()
-+}
-+
-+/// Text ordering compare `<=` — see [`op_lt_text`].  @P347.
- #[inline]
- #[must_use]
- pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
--    let (a, b) = (a.as_ref(), b.as_ref());
--    let a_null = a == crate::state::STRING_NULL;
--    if a_null || b == crate::state::STRING_NULL {
--        return a_null;
--    }
--    a <= b
-+    a.as_ref() <= b.as_ref()
- }
- 
- /// Text concatenation's append step, `dst += src`, on both backends — `@FR-E-NullArg`: a null
-@@ -906,11 +888,6 @@
- #[inline]
- pub fn append_text(dst: &mut String, src: &str) {
-     if dst.as_str() == crate::state::STRING_NULL {
--        return;
--    }
--    if src == crate::state::STRING_NULL {
--        dst.clear();
--        dst.push_str(crate::state::STRING_NULL);
-         return;
-     }
-     dst.push_str(src);
