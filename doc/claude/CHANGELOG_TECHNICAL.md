@@ -33,7 +33,7 @@ file's second visit (as `use pkg::(T);` is); and the `lit` / `hole_*` / `to_text
 type's methods up in the type's own source, where `def_nr`'s current-source scope lost them.
 Local map only — a type name never reaches the registry catalog.
 **Declared twin cases** (`tests/comparisons/scripts/<port>/cases.tsv`, `scripts/script_twins.sh`,
-`make script-twins`, `tests/script_twins.rs`): every port's twin invocations are one file
+`make script-twins`, the twin cell of tests/lib_process.rs): every port's twin invocations are one file
 beside its fixtures and run on every PR, both backends; the census reads `twinned (n)` from
 them.  The first full run caught `scripts/wasm_bundle_stamp` broken under the bare-`use`
 rule (@C98) and two harness portability slips (macOS `wc` padding, a `read` collapsing an

@@ -42,7 +42,7 @@ struct Row {
   /// Where the script stands: `—` not ported, `ported` (a loft twin sits beside it under
   /// the same name, extension dropped), `twinned (n)` (n declared twin cases under
   /// tests/comparisons/scripts/<port>/cases.tsv, which `make script-twins` and the
-  /// script_twins test run on both backends).  Callers move when the plan closes.
+  /// `lib_process` suite run on both backends).  Callers move when the plan closes.
   status: text,
 }
 
@@ -433,7 +433,7 @@ fn main() {
   println("");
   println("Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **{ratchet}**.");
   println("");
-  println("**Position: {ported} of {py + sh} scripts ported, {twinned} of them twinned on {cases} declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `script_twins` test — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).");
+  println("**Position: {ported} of {py + sh} scripts ported, {twinned} of them twinned on {cases} declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `lib_process` suite — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).");
   println("");
 
   print_tranche(rows, "T0", "already loft — the twin harness's first subjects");

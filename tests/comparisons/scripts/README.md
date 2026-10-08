@@ -14,7 +14,7 @@ plan closes.
 
 | what | where |
 |---|---|
-| the cases: one twin invocation per line — `case`, options, arguments, an optional `slow` — under `# orig:` / `# port:` | `<name>/cases.tsv` — `make script-twins ARGS=--list` prints them all, `make script-twins` runs them on both backends, `tests/script_twins.rs` does the same on every PR |
+| the cases: one twin invocation per line — `case`, options, arguments, an optional `slow` — under `# orig:` / `# port:` | `<name>/cases.tsv` — `make script-twins ARGS=--list` prints them all, `make script-twins` runs them on both backends, `tests/lib_process.rs` does the same on every PR |
 | an input fed to both sides (`--stdin`) | `<name>/<file>` — `opl_points/sample.opl` |
 | a recording of the tools both sides ask (`--replay`) | `<name>/replay/<case>/<NNN>-<tool>/{argv, stdin, stdout, stderr, code}` |
 | the shims that answer the ORIGINAL from a recording | `bin/<tool>` → `replay_tool.sh`, put first on PATH by `--replay` |

@@ -9,7 +9,7 @@
 
 Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **38673**.
 
-**Position: 7 of 279 scripts ported, 7 of them twinned on 12 declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `script_twins` test — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).
+**Position: 7 of 279 scripts ported, 7 of them twinned on 12 declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `lib_process` suite — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).
 
 ## T0 — already loft — the twin harness's first subjects (9 files, 1318 lines)
 
