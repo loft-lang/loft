@@ -8201,6 +8201,22 @@ impl Parser {
         ))
     }
 
+    /// Is `code` a top-level vector constant's use site — a view of the write-locked constant
+    /// store, bound to its skip-free `_const_view_N` anchor (`Parser::parse_var`'s constant
+    /// arm, loft#1936)?  The one test for the shape, so the copy decisions that must treat it
+    /// as a whole-value read (`(B-Copy)`, loft#1686 and loft#1729) cannot drift from it.
+    pub(crate) fn is_const_view(&self, code: &Value) -> bool {
+        let op = self.data.def_nr("OpConstRef");
+        match code.unspan() {
+            Value::Call(d, _) => *d == op,
+            Value::Block(bl) if bl.name == "const_view" => matches!(
+                bl.operators.first().map(Value::unspan),
+                Some(Value::Set(_, v)) if matches!(v.unspan(), Value::Call(d, _) if *d == op)
+            ),
+            _ => false,
+        }
+    }
+
     /// Does argument `nr` of a call to `callee` hand a top-level constant's view to a
     /// parameter the callee may WRITE, so that it must travel as a copy (loft#1729)?
     ///
@@ -8211,7 +8227,7 @@ impl Parser {
     /// write.  A `const` or `&` parameter and a native callee never copy; a literal-bodied
     /// function's result already declines at a user call (`const_fn`).
     fn constant_arg_needs_copy(&self, callee: u32, nr: usize, arg: &Value, param: &Type) -> bool {
-        if !matches!(arg.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef")) {
+        if !self.is_const_view(arg) {
             return false;
         }
         if !matches!(param.base(), Type::Vector(_, _)) || self.context == u32::MAX {

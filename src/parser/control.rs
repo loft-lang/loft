@@ -17582,6 +17582,21 @@ impl Parser {
             // which the caller never adopts and nothing frees (one leaked store per call, on
             // the interpreter alone, so `(O-NoDiverge)` with it).  The value is right either
             // way; only the DELIVERY was missing (loft#1618).
+            // loft#1936 — an arm answering a top-level vector CONSTANT answers a view of the
+            // write-locked constant store, which is not the buffer: it is delivered as a copy,
+            // as an arm answering a local is.  Left as it was, the arm handed the constant
+            // itself back, and a caller filling a FIELD through the buffer read the field
+            // empty on `--native` (`S { t: vif(1) }.t` gave `[]`).  Nothing is freed: the
+            // constant store is no frame's.
+            Value::Call(..) if self.is_const_view(op) => {
+                let view = std::mem::replace(op, Value::Null);
+                let rec_tp = self.append_elem_tp(elm);
+                let clear = self.cl("OpClearVector", &[Value::Var(w)]);
+                let append =
+                    self.cl("OpAppendVector", &[Value::Var(w), view, Value::Int(rec_tp)]);
+                *op = Value::Insert(vec![clear, append, Value::Var(w)]);
+                true
+            }
             Value::Var(v)
                 if *v != w
                     && !self.vars.tp(*v).depend().contains(&w)
