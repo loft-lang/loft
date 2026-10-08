@@ -158,6 +158,7 @@ const SEARCH_INDEX=[
 {name:"eprintln",kind:"fn",url:"stdlib-output-and-diagnostics.html"},
 {name:"len",kind:"fn",url:"stdlib-output-and-diagnostics.html"},
 {name:"len",kind:"fn",url:"stdlib-output-and-diagnostics.html"},
+{name:"contains",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"min_of",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"max_of",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"sum",kind:"fn",url:"stdlib-vector-aggregates.html"},

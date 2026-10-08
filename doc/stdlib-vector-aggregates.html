@@ -24,6 +24,10 @@
 <h1>Vector aggregates</h1>
 <article>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> contains &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span> &gt; (self: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, value: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Does the vector hold <code>value</code>?  Compared by content, as <code>==</code> compares every type (@C91); the empty vector holds nothing.  The membership test a script asks of a list of names — <code>changed.contains(path)</code> — beside <code>text</code>'s own <code>contains</code> (@PLN179 finding 017).</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> min_of &lt; <span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> &gt; (v: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="en">T</span>?</code></pre>
 <p>Smallest element in a vector, or null when the vector is empty (the type is honest about the empty case).  Works on any Ordered type (op &lt;).</p>
 </div>
