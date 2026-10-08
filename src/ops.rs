@@ -794,7 +794,7 @@ pub fn op_lt_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {
 }
 
 /// Text ordering compare `<=` — see [`op_lt_text`], whose null order it shares: a null left
-/// operand is `<=` everything, and nothing non-null is `<=` a null.  @P347.
+/// operand is `<=` everything, and nothing non-null is `<=` a null.
 #[inline]
 #[must_use]
 pub fn op_le_text<A: AsRef<str>, B: AsRef<str>>(a: A, b: B) -> bool {

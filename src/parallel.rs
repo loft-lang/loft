@@ -1038,7 +1038,7 @@ pub fn run_parallel_queue_ref(
     // reassignment workers like `if neg { v = Fail{...} }` fall
     // into this case because their codegen unconditionally
     // `OpFreeRef`s every variant temp at end-of-fn).
-    // `data` is no longer read: reviving a RECORD result walks none of its fields (see
+    // `data` is not read: reviving a RECORD result walks none of its fields (see
     // `revive_record_chain`), and a tuple's members carry their own types.
     let _ = data;
     let mut visited: std::collections::HashSet<u16> = std::collections::HashSet::new();
@@ -1125,12 +1125,10 @@ fn revive_record_chain(
     // A RECORD result — a struct (`-> S`, `-> S?`), a struct-enum, a vector — has nothing
     // further to revive: every sub-record it owns (a collection field, a nested struct, a
     // text) lives in the record's OWN store (@FR-H-NewRec), and a field holds only a 4-byte
-    // record id that `Stores::get_ref` completes from the holder.  This arm used to walk a
-    // struct's fields as 12-byte `DbRef`s at their STACK offsets (`owned_elements`), which
-    // read past a collection field into whatever followed it: a `-> B` worker with a
-    // `vector` field revived store 0, and its `-> B?` twin revived a store an earlier `par`
-    // loop had already freed, which then never died (loft#1948).  Only a stack-laid tuple
-    // carries whole `DbRef`s that may name other stores.
+    // record id that `Stores::get_ref` completes from the holder.  Its fields are therefore
+    // never walked as 12-byte `DbRef`s at their STACK offsets: that reads past a collection
+    // field into whatever follows it, and revives a store the record does not own.  Only a
+    // stack-laid tuple carries whole `DbRef`s that may name other stores.
     let elem_types: Vec<Type> = match record_type {
         Type::Tuple(elems) => elems.clone(),
         _ => return,

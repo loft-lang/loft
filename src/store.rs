@@ -2360,17 +2360,22 @@ impl Store {
         // The poisoned block is KEPT, never handed back: freed, it came back as this store's
         // next growth and was refilled with the same bytes at the same offsets.  A store
         // grows by a factor, so what one store keeps this way stays below its final size.
+        // The block in hand, read once: `realloc` invalidates the pointer it is GIVEN, and
+        // handing it the field itself leaves the field naming a freed block until the
+        // assignment below — which a reader of this function (or an analyser) has to take
+        // on trust.  The field is written exactly once, with the grown block.
+        let old = self.ptr;
         let grown = if crate::keys::poison_enabled() {
             let fresh = unsafe { A.alloc(Layout::from_size_align(bytes, 8).unwrap_or(l)) };
             if !fresh.is_null() {
                 unsafe {
-                    std::ptr::copy_nonoverlapping(self.ptr, fresh, old_bytes.min(bytes));
-                    self.ptr.write_bytes(0xA5, old_bytes);
+                    std::ptr::copy_nonoverlapping(old, fresh, old_bytes.min(bytes));
+                    old.write_bytes(0xA5, old_bytes);
                 }
             }
             fresh
         } else {
-            unsafe { A.realloc(self.ptr, l, bytes) }
+            unsafe { A.realloc(old, l, bytes) }
         };
         self.ptr = if grown.is_null() {
             // The old block is still valid after a failed realloc, but nothing here can
@@ -2464,7 +2469,9 @@ impl Store {
             return true;
         }
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("Problem");
-        let grown = unsafe { A.realloc(self.ptr, l, bytes) };
+        // A local, as in the growth above: `realloc` invalidates the pointer it is given.
+        let old = self.ptr;
+        let grown = unsafe { A.realloc(old, l, bytes) };
         self.ptr = if grown.is_null() {
             // The old block is still valid after a failed realloc, but nothing here can
             // continue without the new size (`Vec` aborts the same way).

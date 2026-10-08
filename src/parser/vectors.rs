@@ -369,7 +369,7 @@ impl Parser {
 
     /// One operand of a text concatenation (`a + b`, `s += x`), appended to the accumulator
     /// `acc` — `@FR-E-NullArg`: an operand that is NULL makes the concatenation null, for
-    /// every operand type (owner ruling 2026-10-08, loft#1945).  A concatenation is not a
+    /// every operand type.  A concatenation is not a
     /// second spelling of interpolation: `"{x}"` renders a null as the word `null`, and
     /// `"a" + x` is null.
     ///
@@ -427,7 +427,7 @@ impl Parser {
             };
             present.push(self.cl(op, &[Value::Var(acc), subject.clone()]));
         } else {
-            // @P274 — a non-text operand is rendered by the hole renderer, `append_data`, the
+            // A non-text operand is rendered by the hole renderer, `append_data`, the
             // dispatch `"…{x}…"` uses for every formattable type.
             self.append_data(
                 dispatch_tp.clone(),

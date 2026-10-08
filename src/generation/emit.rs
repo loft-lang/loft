@@ -3056,7 +3056,7 @@ impl Output<'_> {
     }
 
     /// `@FR-R-InPlaceLiteral`'s keyed clause: the literal's values staged in program order,
-    /// the record under the key removed and a fresh one claimed, the values written into it,
+    /// the record under the key taken out and a fresh one claimed, the values written into it,
     /// then its key written and the record linked.
     fn output_keyed_place(
         &mut self,

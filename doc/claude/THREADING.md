@@ -330,7 +330,7 @@ for b#index in 0..par_len {
 nullable form `τ?` of each: a `τ?` worker rides τ's result lane, a `null` it answers
 reaches the body as `null`, and the loop variable keeps the declared `?` (`@FR-N-Shape`; one
 exception to "τ's lane" — a nullable NARROW integer such as `i32?` rides the wide lane, whose
-row carries the stack value's `null`, loft#1948).  Extra context arguments are forwarded to workers: `par(b = scale(a, mult), N)` — here `mult`
+row carries the stack value's `null`).  Extra context arguments are forwarded to workers: `par(b = scale(a, mult), N)` — here `mult`
 is an extra argument beyond the element `a`.  **An extra context argument must be a SCALAR**
 (`integer` / `float` / `single` / `boolean` / `character` / inline `enum`) — this is load-bearing:
 each extra is pushed to the worker as a raw `i64` (`state/mod.rs` `run_parallel_*`, "Push each

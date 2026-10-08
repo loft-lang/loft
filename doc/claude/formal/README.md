@@ -189,7 +189,7 @@ the table below is derived from the chapters and says nothing the chapters do no
 
 | doc | area | status |
 |---|---|---|
-| [types.md](types.md) | type system + conversion relation (incl. integer width) | **1 open** — `D-types-32` (`N-Road`: five τ / τ? pairs still lower differently, loft#1934); the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
+| [types.md](types.md) | type system + conversion relation (incl. integer width) | **1 open** — `D-types-32` (`N-Road`: five τ / τ? pairs still lower differently); the value/null model (DN1–DN6), null-flow (`N-Prop`/`N-Domain`/`N-Cast`/`N-Store`, DN3-Float) and the narrowing rules; register in [types-history.md](types-history.md) |
 | [binding.md](binding.md) | reference types & `&` (the bind-site link law) + the `const` immutability axis | **0 open** — `&` is a type annotation (`B-Ref-*`), the bind-site link law, `B-Ref-Reshape` (disturbing a container under a live `&` is refused), the two-level `const` model; register in [binding-history.md](binding-history.md) |
 | [grammar.md](grammar.md) | concrete grammar + operator precedence | **0 open** — the 12-level precedence ladder; the prefix-`&`/infix-`&` overload and the non-CFG surface are decided edges (C81/C82) |
 | [operational.md](operational.md) | small-step semantics — the scalar core | **2 open** — the META pair `D-op-1`/`D-op-2` (conformance is differential, not definitional), inherited by every operational chapter below; the rules are complete for the scalar core; register in [operational-history.md](operational-history.md) |

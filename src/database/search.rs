@@ -726,7 +726,7 @@ impl Stores {
     }
 
     /// `@FR-R-InPlaceLiteral`'s keyed clause, the first half: what [`Self::set_keyed`] does
-    /// before it copies — the record already under `sub` removed, a fresh record claimed in
+    /// before it copies — the record already under `sub` taken out, a fresh record claimed in
     /// `coll`'s store — answering that record for the caller to write a literal's fields into.
     /// [`Self::keyed_place_finish`] writes the key and links it.  `sub` must carry every key
     /// part (the caller's subscript), as `set_keyed`'s `full` case.
