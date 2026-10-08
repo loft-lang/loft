@@ -79,12 +79,25 @@ through `lines()` with flat RSS (the back-pressure claim); (4) a `break` after o
 leaves no child behind and returns within the grace; (5) the OK notice, `c.run()` of `true`,
 timed against Python's `subprocess.run` — the performance axis on the cheapest call.
 
-**4c — recording (S).**  `LOFT_RUN_RECORD=<dir>` records each `run` by its argv and
-input, and `LOFT_RUN_REPLAY=<dir>` answers from the recording — inside `run`, so every port
-is twin-able offline without a per-tool shim.  The Python side reads the same directory
-through one small shim.
+**4c — recording (S) — BUILT (2026-10-08, `src/process_run.rs` § recording).**
+`LOFT_RUN_RECORD=<dir>` writes each collecting run as `<dir>/<NNN>-<program>/{argv, stdin,
+stdout, stderr, code}` — `argv` one word per line, numbered in the order the runs happened —
+and `LOFT_RUN_REPLAY=<dir>` answers each run from the first unused entry whose `argv` and
+`stdin` match (a repeated call walks its entries in order and stays on the last; a call with
+no entry answers -1 and says so on stderr, so a twin goes red rather than running the live
+tool).  Inside `run`, so every port is twin-able offline; `start()` is never recorded.  The
+original's side reads the same directory through `tests/comparisons/scripts/replay_tool.sh`,
+one bash shim installed under each tool's name in `tests/comparisons/scripts/bin/`, and
+`script_twin.sh --replay <dir>` arms both sides at once.  The format is plain files on
+purpose: a recording is a committed fixture, read and refreshed by hand — by running the
+ORIGINAL through the shim in record mode against a scratch repository, which is how
+`check_bundle_fresh`'s four cases were made.
 
-**4d — the tools, in the order the work list ranks them.**  `git` first (`lib/git` rewritten
+**4d — the tools, in the order the work list ranks them.**  The first port over `run` is
+`scripts/check_bundle_fresh` (2026-10-08): `git diff --name-only {base}...HEAD` as a
+`Command`, twinned on four recordings, both backends, faster than the bash original.  Until
+`process` is published a port spells `use process::*;` (the trigger surface fires from the
+registry index) and `scripts/loft.toml` names the library by path.  `git` first (`lib/git` rewritten
 over `run`, twinned against its natives, which then retire); `gh` and `cargo` as the
 originals call them; `curl` through the `web` library where the script already speaks
 JSON.  Each lands with its first consumer ported and twinned; an interface nobody calls is

@@ -1,0 +1,2 @@
+// finding 017 — still holds while a vector has no membership test.
+fn main() { v = ["a", "b"]; println(v.contains("b")); }

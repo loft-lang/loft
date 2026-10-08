@@ -72,6 +72,10 @@ result: `fn view(…) -> const vector<u8>`.
 
 ### New
 
+**A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
+its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
+1 and a message.  Under `loft test` it fails the test that called it, naming the code.
+
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
 runs the block exactly when the write did not take — an index past the end, a key the
 collection does not hold, a field reached through a null, a narrow slot the value does not fit,

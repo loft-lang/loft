@@ -12379,6 +12379,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         }
     }
     if let Some(err) = runtime_err {
+        // `exit(code)` is the program's own verdict: no message, the code as the status,
+        // the same way the generated binary's `exit_program` ends (@PLN179 finding 009).
+        if let loft::runtime_error::RuntimeErrorKind::Exit { code } = err.kind {
+            loft::runtime_error::exit_program(code);
+        }
         // The typed-error block plus the call chain captured at raise time, through the
         // renderer the generated binary also uses (`RuntimeError::report_and_exit`).
         // Rendering it here in its own spelling is how `--native` and `--interpret`

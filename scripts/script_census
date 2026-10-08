@@ -178,9 +178,11 @@ fn lang_of(path: text) -> text {
 }
 
 // Directories a walk never enters: build output, caches, the registry mirror.
+// `worktrees`: a sibling checkout under `.claude/worktrees/` (git-ignored) is the whole
+// tree again — walked, it counted every script twice and the ratchet read 2000 lines high.
 fn skip_dir(name: text) -> boolean {
   name == ".git" || name == "target" || name == "node_modules" || name == ".loft"
-    || name == "native-auto" || name == "wasm-pkg"
+    || name == "native-auto" || name == "wasm-pkg" || name == "worktrees"
 }
 
 fn strip_prefix(path: text) -> text {
@@ -246,6 +248,7 @@ fn is_sourced_by(name: text, source: text) -> boolean {
 fn is_gate(lang: text, line: text) -> boolean {
   if lang == "py" { return line.contains("sys.exit(") && !line.contains("sys.exit(0)"); }
   if lang == "sh" { return line.starts_with("exit ") && !line.starts_with("exit 0"); }
+  if lang == "loft" { return line.contains("exit(") && !line.contains("exit(0)"); }
   false
 }
 

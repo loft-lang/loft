@@ -363,6 +363,9 @@ impl Logger {
             // A relayed fault halted the library it fired in, whatever kind it
             // started as — only halting faults cross a placement boundary.
             Rk::UserPanic { .. } | Rk::StackOverflow | Rk::Relayed { .. } => Severity::Fatal,
+            // An `exit(code)` is the program's own verdict, never a fault; it reaches a log
+            // only through a host that logs every halt, and then as information.
+            Rk::Exit { .. } => Severity::Info,
             // A write to a locked store reaches the log only in production, where it is
             // discarded and the run continues (@FR-H-WriteLocked, C80).
             Rk::AssertionFailed { .. } | Rk::WriteToLockedStore { .. } => Severity::Error,

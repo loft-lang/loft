@@ -55,7 +55,9 @@ pub(crate) fn run_collect(argv: &[String], input: &[u8]) -> Finished {
     run_until(argv, input, None)
 }
 
-/// [`run_collect`], stopped with its tree at `limit`: the code is then -2.
+/// [`run_collect`], stopped with its tree at `limit`: the code is then -2.  Answered from
+/// a recording under `LOFT_RUN_REPLAY`, and written to one under `LOFT_RUN_RECORD`
+/// ([`recording`]).
 fn run_until(argv: &[String], input: &[u8], limit: Option<Duration>) -> Finished {
     let Some((program, rest)) = argv.split_first() else {
         return Finished {
@@ -64,6 +66,15 @@ fn run_until(argv: &[String], input: &[u8], limit: Option<Duration>) -> Finished
             stderr: b"an empty command: there is no program to run".to_vec(),
         };
     };
+    if let Some(f) = recording::replay(argv, input) {
+        return f;
+    }
+    let f = run_live(program, rest, input, limit);
+    recording::record(argv, input, &f);
+    f
+}
+
+fn run_live(program: &str, rest: &[String], input: &[u8], limit: Option<Duration>) -> Finished {
     let mut spawn = Spawn::new(Program::search(program)).args(rest);
     let ran = match limit {
         Some(limit) => spawn.run_for(input, limit),
@@ -84,6 +95,115 @@ fn run_until(argv: &[String], input: &[u8], limit: Option<Duration>) -> Finished
             stdout: Vec::new(),
             stderr: format!("{program}: {e}").into_bytes(),
         },
+    }
+}
+
+/// @PLN179 strand 4c — a run answered from a RECORDING, or written to one, so a port that
+/// asks `git`, `gh` or `cargo` can be twinned against its original with no live tool and
+/// no network: both sides consume the same bytes.  `LOFT_RUN_RECORD=<dir>` writes every
+/// collecting run as `<dir>/<NNN>-<program>/{argv,stdin,stdout,stderr,code}` — `argv` one
+/// word per line, `code` the exit code — numbered in the order they happened;
+/// `LOFT_RUN_REPLAY=<dir>` answers each run from the first entry whose `argv` and `stdin`
+/// match that has not been used yet (the same call twice walks its recordings in order,
+/// and stays on the last), and a call with no recording answers -1 and says so on
+/// stderr, so a twin goes red rather than quietly running the live tool.  The original's
+/// side reads the same directory through `tests/comparisons/scripts/replay_tool.sh`, a
+/// shim installed under the tool's name.  The format is plain files on purpose: a
+/// recording is a committed fixture someone reads and refreshes by hand.  `start()` is
+/// never recorded: it has no streams to replay.
+mod recording {
+    use super::Finished;
+    use crate::file_access::{self as fa, PathText};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    /// How many times each argv+stdin key was answered, so repeats walk their entries.
+    static USED: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
+
+    fn dir(var: &str) -> Option<PathText> {
+        std::env::var_os(var)
+            .filter(|v| !v.is_empty())
+            .map(|v| PathText::from_os(std::path::Path::new(&v)))
+    }
+
+    /// The `argv` file's bytes for `argv`, or `None` for a word a line cannot hold.
+    fn argv_text(argv: &[String]) -> Option<String> {
+        if argv.iter().any(|w| w.contains('\n')) {
+            return None;
+        }
+        Some(argv.iter().fold(String::new(), |mut t, w| {
+            t.push_str(w);
+            t.push('\n');
+            t
+        }))
+    }
+
+    /// The entries of `dir`, in name order (`read_dir` sorts).
+    fn entries(dir: &PathText) -> Vec<PathText> {
+        fa::read_dir(dir)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|p| fa::is_dir(p))
+            .collect()
+    }
+
+    pub(super) fn replay(argv: &[String], input: &[u8]) -> Option<Finished> {
+        let dir = dir("LOFT_RUN_REPLAY")?;
+        let no = |why: String| Finished {
+            code: -1,
+            stdout: Vec::new(),
+            stderr: format!("process: no recording in {} for: {why}", dir.native()).into_bytes(),
+        };
+        let Some(key) = argv_text(argv) else {
+            return Some(no("a word holding a newline cannot be recorded".to_string()));
+        };
+        let matching: Vec<PathText> = entries(&dir)
+            .into_iter()
+            .filter(|e| {
+                fa::read(e.join("argv")).is_ok_and(|a| a == key.as_bytes())
+                    && fa::read(e.join("stdin")).unwrap_or_default() == input
+            })
+            .collect();
+        if matching.is_empty() {
+            return Some(no(argv.join(" ")));
+        }
+        let n = {
+            let mut g = USED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let used = g.get_or_insert_with(HashMap::new).entry(key).or_insert(0);
+            let n = (*used).min(matching.len() - 1);
+            *used += 1;
+            n
+        };
+        let e = &matching[n];
+        let code = fa::read_to_string(e.join("code"))
+            .ok()
+            .and_then(|c| c.trim().parse().ok())
+            .unwrap_or(-1);
+        Some(Finished {
+            code,
+            stdout: fa::read(e.join("stdout")).unwrap_or_default(),
+            stderr: fa::read(e.join("stderr")).unwrap_or_default(),
+        })
+    }
+
+    pub(super) fn record(argv: &[String], input: &[u8], f: &Finished) {
+        let Some(dir) = dir("LOFT_RUN_RECORD") else {
+            return;
+        };
+        let Some(key) = argv_text(argv) else {
+            return;
+        };
+        let _ = fa::create_dir_all(&dir);
+        let program = fa::file_name(argv[0].as_str()).unwrap_or_else(|| "program".to_string());
+        let entry = dir.join(&format!("{:03}-{program}", entries(&dir).len() + 1));
+        let _ = fa::create_dir_all(&entry);
+        let _ = fa::write(entry.join("argv"), key);
+        let _ = fa::write(entry.join("stdin"), input);
+        let _ = fa::write(entry.join("stdout"), &f.stdout);
+        let _ = fa::write(entry.join("stderr"), &f.stderr);
+        let _ = fa::write(entry.join("code"), format!("{}\n", f.code));
     }
 }
 

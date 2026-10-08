@@ -1691,6 +1691,13 @@ pub fn assert(test: boolean, message: text, file: text, line: integer);
 /// The file and line are injected by the compiler; do not pass them manually.
 pub fn panic(message: text, file: text, line: integer);
 #impure(host_io)
+/// Ends the program at once with exit status `code`, as a shell's `exit` does: what was
+/// printed is flushed, nothing more is printed, and no diagnostic names the line — a
+/// script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a
+/// message).  Under `loft test` it ends the test instead, as a failure that names the code.
+pub fn exit(code: integer);
+#rust"loft::runtime_error::exit_program(@code)"
+#impure(host_io)
 /// Write a structured log record at the chosen severity.
 /// The file and line are injected by the compiler; do not pass them manually.
 /// Safe to call from `par` workers: the host serialises log writes across threads.

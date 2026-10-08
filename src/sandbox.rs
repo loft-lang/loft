@@ -957,7 +957,7 @@ pub enum TotalityViolation {
 /// terminate the script (a fault the host must never see), and unlike the
 /// arithmetic ops cannot be given a total result.  By stored name so the check
 /// is a set membership over the reachable refs.
-pub(crate) const ABORT_OPS: &[&str] = &["n_assert", "n_panic", "n_log_fatal"];
+pub(crate) const ABORT_OPS: &[&str] = &["n_assert", "n_panic", "n_log_fatal", "n_exit"];
 
 /// The sandboxed defs that `from` calls — the edges of the sandboxed call graph
 /// (trusted callees are not followed; they are total by the host contract).

@@ -24,7 +24,7 @@ if command -v loft > /dev/null; then loft="loft"; else loft="target/release/loft
 echo "recheck with: $(command -v "$loft") ($($loft --version 2>/dev/null | head -1))"
 dir=doc/claude/plans/179-scripts-in-loft/findings
 sha=$(git rev-parse --short HEAD)
-tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+tmp=$(mktemp); trap 'rm -f "$tmp" "$tmp.w"' EXIT
 n=0; stale=0
 for f in "$dir"/[0-9][0-9][0-9]-*.md; do
   probe=$(sed -n 's/^probe: *//p' "$f" | head -1); expect=$(sed -n 's/^expect: *//p' "$f" | head -1)
@@ -63,9 +63,14 @@ for f in "$dir"/[0-9][0-9][0-9]-*.md; do
       printf '  %s: %s ms (bar %s)\n' "$(basename "$f")" "$best" "$bar" ;;
     *) echo "script_recheck: $f: unknown expect '$expect'" >&2; continue ;;
   esac
-  sed -i "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/" "$f"
-  grep -q '^checked:' "$f" || sed -i "s/^ref:\(.*\)/ref:\1\nchecked: $sha/" "$f"
-  grep -q '^holds:' "$f" || sed -i "s/^checked:\(.*\)/checked:\1\nholds: $holds/" "$f"
+  # Through a temp file: `sed -i` takes a mandatory suffix on macOS and none on GNU, so a
+  # bare `-i` edits nothing on one of them and the register never moves.
+  rewrite() { sed "$1" "$f" > "$tmp.w" && mv "$tmp.w" "$f"; }
+  rewrite "s/^checked:.*/checked: $sha/; s/^holds:.*/holds: $holds/"
+  grep -q '^checked:' "$f" || rewrite "s/^ref:\(.*\)/ref:\1\
+checked: $sha/"
+  grep -q '^holds:' "$f" || rewrite "s/^checked:\(.*\)/checked:\1\
+holds: $holds/"
   [ "$holds" = no ] && { stale=$((stale + 1)); echo "  NO LONGER HOLDS: $(basename "$f")"; }
 done
 echo "rechecked $n findings at $sha, $stale no longer hold"

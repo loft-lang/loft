@@ -19,8 +19,19 @@ honest.  A workaround inside a port would teach every reader the wrong shape.
 ## Status (REQUIRED)
 
 Open — strand 1's census ships with the plan (`scripts/script_census`, the plan's first
-loft script, and `WORKLIST.md` it generates); six ports are twinned green on both backends
+loft script, and `WORKLIST.md` it generates); seven ports are twinned green on both backends
 ([SCOREBOARD.md](SCOREBOARD.md)), each beside its original, which every caller still calls.
+**Strand 4 is built through 4c and has its first port (2026-10-08):** `lib/process` carries
+`Command` (4a), `run` / `start` / `wait` / `stop` (4b, the collecting shape; the `lines()`
+cursor and its three probes are still to build), and recording + replay inside `run` (4c,
+`LOFT_RUN_RECORD` / `LOFT_RUN_REPLAY`, with `tests/comparisons/scripts/replay_tool.sh` as
+the original's half and `script_twin.sh --replay`).  `scripts/check_bundle_fresh` is the
+first T3 port, twinned offline on four recorded `git` answers.  Two things a port over the
+library spells today that the design says it will not: `use process::*;` (the trigger
+surface fires from the registry index, and `process` is not published), and a path
+dependency in `scripts/loft.toml`, the manifest that makes `scripts/` one package so a bare
+script finds the repo-local library from any working directory.  Both leave when the
+library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day.
 Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,
 `build-playground-examples.loft`); nothing in the Makefile, CI or the hooks runs either, so
 they are subjects for the twin harness rather than a head start.
