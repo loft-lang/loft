@@ -7263,8 +7263,15 @@ mod tests {
         full.write::<i32>(whole, last_word, 7);
         let (pos, _, claim) = full.indexed_scan(5).expect("a claimed tail is answered");
         let (wpos, wlast, wclaim) = full.walk_scan(5);
-        assert_eq!((pos, wpos), (full.size, full.size), "both end at the store's end");
-        assert!(claim >= 0 && wclaim >= 0 && wlast == whole, "on the claimed tail");
+        assert_eq!(
+            (pos, wpos),
+            (full.size, full.size),
+            "both end at the store's end"
+        );
+        assert!(
+            claim >= 0 && wclaim >= 0 && wlast == whole,
+            "on the claimed tail"
+        );
         assert_eq!(grown_claimed, 0);
     }
 
