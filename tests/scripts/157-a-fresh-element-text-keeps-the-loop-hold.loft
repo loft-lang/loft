@@ -4,7 +4,12 @@
 // fields of one record), the mint's own aliasing decision refuses the hold, text or not.  Every
 // cell grows the minted vector's store with long texts; every value is hand-computed.
 //
-// @falsified-at: pending
+// @falsified-at: hand-measured (sabotage, 2026-10-08) — with the clause admitting a text write
+//   into ANY record (freshness ignored), h4 holds `d.src` across a claim in its own store:
+//   --native and --native-release panic under LOFT_HOIST_VERIFY=1 and answer h4 = 201907 under
+//   LOFT_POISON=1, while a plain run stays green — so `tests/fresh_text_hold.rs` runs the cells
+//   under both.  Restored, every cell holds on every mode, in both switch states, under
+//   LOFT_HOIST_VERIFY=1, LOFT_POISON=1 and LOFT_STRICT_STORES=1.
 
 struct T { name: text, k: integer }
 struct Doc { src: vector<text>, out: vector<T> }
