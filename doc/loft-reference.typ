@@ -8604,7 +8604,7 @@ Number of elements in the trie.
 pub fn contains < T: Equatable > (self: const vector<T>, value: T) -> boolean
 ```
 
-Does the vector hold `value`?  Compared by content, as `==` compares every type (\@C91); the empty vector holds nothing.  The membership test a script asks of a list of names — `changed.contains(path)` — beside `text`'s own `contains` (\@PLN179 finding 017).
+Does the vector hold `value`?  Compared by content, as `==` compares every type; the empty vector holds nothing.  The membership test a script asks of a list of names — `changed.contains(path)` — beside `text`'s own `contains`.
 
 ```rust
 pub fn min_of < T: Ordered > (v: const vector<T>) -> T?
