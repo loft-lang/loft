@@ -4332,7 +4332,7 @@ use a separate collection or add after the loop"
             && !matches!(s_type, Type::Optional(_))
             && matches!(s_type.base(), Type::Enum(_, false, _))
         {
-            *code = self.cl("OpConvIntFromEnum", &[code.clone()]);
+            *code = self.cl("OpConvIntFromEnum", std::slice::from_ref(code));
             s_type = crate::data::I64.clone();
         }
         // `@FR-Cap-Own` — note whether this assignment to a sandboxed local is a struct literal

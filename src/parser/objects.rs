@@ -6657,6 +6657,10 @@ impl Parser {
         true
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over a struct literal's fields and the defaults of those it omits"
+    )]
     pub(crate) fn object_init(
         &mut self,
         list: &mut Vec<Value>,
