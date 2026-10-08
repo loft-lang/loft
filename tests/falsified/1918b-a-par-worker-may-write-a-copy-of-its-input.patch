@@ -1,0 +1,16 @@
+diff --git a/src/scopes/par_writes.rs b/src/scopes/par_writes.rs
+--- a/src/scopes/par_writes.rs
++++ b/src/scopes/par_writes.rs
+@@ -262,7 +262,11 @@
+             }
+             continue;
+         }
+-        stack.extend(def.variables.tp(v).depend());
++        let deps = def.variables.tp(v).depend();
++        if deps.is_empty() {
++            return Some(def.variables.name(v).to_string());
++        }
++        stack.extend(deps);
+     }
+     None
+ }

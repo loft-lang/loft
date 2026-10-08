@@ -12,6 +12,13 @@
 // Green 2, Blue 3.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1932-a-declared-integer-local-takes-an-enum-tag.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the control refuses `y: integer = Colour.Green` as a re-type at compile
+//   time, so no cell runs.
+//   WITNESS: `exit 1, asserts 0` on both backends (scored at 6598df45d).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 enum Colour1932 { Red, Green, Blue }
 
