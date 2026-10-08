@@ -7,6 +7,8 @@
 // plain-enum subject.
 // @falsified-at: 7ee8bfeda — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-match-statement-on-an-enum-declared-below-needs-no-semicolon.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees; only
+//   the exit moved, as the receipt above records.
 fn radius() -> integer {
   match get() { Disc { r } => { return r; }, _ => {} }
   0
