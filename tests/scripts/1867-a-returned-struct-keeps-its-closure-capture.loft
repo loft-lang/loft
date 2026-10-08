@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// loft#1867, `@FR-L-Escape` / `@FR-L-CapOwn` — a struct whose fn field holds a CAPTURING
+// loft#1867, @C75, `@FR-L-Escape` / `@FR-L-CapOwn` — a struct whose fn field holds a CAPTURING
 // closure may leave the frame that built it, and keeps what the closure captured.
 //
 // The closure record is built in place in the struct's own store (`OpChildRec`), adopts its

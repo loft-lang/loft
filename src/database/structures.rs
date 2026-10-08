@@ -1250,7 +1250,7 @@ impl Stores {
                 }
             }
             InsertKind::Trie(c) => {
-                // @FR-Col-Insert, C68 — a trie key names one record: the record already filed
+                // @FR-Col-Insert, @C68 — a trie key names one record: the record already filed
                 // under this key is displaced first, as a hash's is.  (A spatial keeps both:
                 // its key is a point, and two records may share one.)
                 displaced = self.dedup_keyed(data, rec, tp, c, secondary);
@@ -3079,7 +3079,7 @@ impl Stores {
                     self.store_mut(rec).set_float(rec.rec, rec.pos, v);
                 }
                 4 => {
-                    // @PLN17 C73 — a boolean stores tri-state (0 / 1 / 255), and 255 IS
+                    // @PLN17 @C73 — a boolean stores tri-state (0 / 1 / 255), and 255 IS
                     // its null.  Writing `false` for an absent NULLABLE boolean made it
                     // the one nullable base type whose absence read back as a VALUE; the
                     // integer, float and text arms beside it all write their sentinel.

@@ -46,6 +46,8 @@ pub const BUCKET0: u32 = 32;
 /// Words reserved before the bucket array: header, seed, and the arena's four fields.
 pub const RESERVED_WORDS: u32 = 4;
 /// Bytes per bucket slot — a `u32` entry index, 2 to a word.
+///
+/// @C105 — a slot holds the entry index only: no cached hash, no entries in the bucket table.
 pub const SLOT_BYTES: u32 = 4;
 
 /// Bytes per entry slot for an element type of `size` bytes.

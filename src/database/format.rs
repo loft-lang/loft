@@ -1213,7 +1213,7 @@ impl ShowDb<'_> {
                 write!(s, "{v}").unwrap();
             }
         } else if self.known_type == 4 {
-            // 255 = @PLN17's three-state-boolean null sentinel (C73); inert for two-state.
+            // 255 = @PLN17's three-state-boolean null sentinel (@C73); inert for two-state.
             s.push_str(match self.store().get_byte(self.rec, self.pos, 0) {
                 0 => "false",
                 255 => "null",
@@ -2153,7 +2153,7 @@ impl ShowDb<'_> {
             1 => write!(s, "{}l", self.store().get_long(self.rec, self.pos)).unwrap(), // long
             2 => write!(s, "{}f", self.store().get_single(self.rec, self.pos)).unwrap(), // single
             3 => write!(s, "{}", self.store().get_float(self.rec, self.pos)).unwrap(), // float
-            // 255 = @PLN17's three-state-boolean null sentinel (C73); inert for two-state.
+            // 255 = @PLN17's three-state-boolean null sentinel (@C73); inert for two-state.
             4 => s.push_str(match self.store().get_byte(self.rec, self.pos, 0) {
                 0 => "false",
                 255 => "null",

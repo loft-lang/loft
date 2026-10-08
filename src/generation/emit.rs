@@ -514,7 +514,7 @@ impl Output<'_> {
                     }
                     // A link to an ABSENT scalar place (`&v[10]`, a field of an absent record)
                     // holds a null pointer and reads the type's absent value — the one the
-                    // interpreter's `OpGet*` answers for a `rec == 0` reference (C80: nothing
+                    // interpreter's `OpGet*` answers for a `rec == 0` reference (@C80: nothing
                     // stops a running calculation).  A `&boolean` answers its storage byte, so
                     // an absent one reads as null here as it does there.
                     // @PLN167 decision 1 — a link to a NARROW integer place reads the field
@@ -1333,7 +1333,7 @@ impl Output<'_> {
                         // (e.g. `stores.vec_ref_or_raise_runtime(...)`,
                         // `stores.text_char_or_raise_runtime(...)`,
                         // and any other `stores.X` call introduced
-                        // by the C66 production-mode helpers) doesn't
+                        // by the @C66 production-mode helpers) doesn't
                         // overlap with the `stores.scratch.push(...)`
                         // borrow.  Without the pre-bind, rustc
                         // rejects with E0499 (`cannot borrow *stores
@@ -1923,7 +1923,7 @@ impl Output<'_> {
         }
         // `@FR-L-FnAbsent` — no candidate matches an ABSENT fn-ref (an element read out of
         // range), and the call answers the return type's null, as the interpreter's guard in
-        // `generate_call_ref` does; the program continues (C80).
+        // `generate_call_ref` does; the program continues (@C80).
         write!(w, " _ => ")?;
         if let Some(fields) = &value_fields {
             write!(
@@ -4450,7 +4450,7 @@ impl Output<'_> {
                         // expression's mutable borrow of `stores`
                         // (e.g. `stores.vec_ref_or_raise_runtime(...)`,
                         // and any other `stores.X` call introduced
-                        // by the C66 production-mode helpers) doesn't
+                        // by the @C66 production-mode helpers) doesn't
                         // overlap with the `stores.scratch.push(...)`
                         // borrow.  Without the pre-bind, rustc rejects
                         // with E0499.  Move the resulting String into

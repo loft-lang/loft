@@ -180,12 +180,12 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
 ///   carrying the name a consumer writes — `pick`, `scale`. Recording it is REQUIRED; the real
 ///   overloads live under mangled keys (`f_15integer#integer_pick`) nobody can call.
 /// * a **`both` receiver** targets the method (`t_<LEN><Type>_<name>`) it is a second spelling
-///   of. C123 measured `self` and `both` identical across every call spelling — import lists
+///   of. @C123 measured `self` and `both` identical across every call spelling — import lists
 ///   included, once methods were brought in by name — so this alias is not an independent
-///   member, and recording it makes the C123 migration it prescribes read as `removed fn`.
+///   member, and recording it makes the @C123 migration it prescribes read as `removed fn`.
 ///
 /// That is the whole defect: `regex`'s published surface carried `matches · fn · (text: fn) ->
-/// unknown` beside `text.matches`, so renaming its receiver — the migration C123 names this
+/// unknown` beside `text.matches`, so renaming its receiver — the migration @C123 names this
 /// library for — reported an API BREAK against a caller-invisible phantom.
 ///
 /// Filtered HERE and not in [`classify`], which is the canonical def→(kind, name) mapper the LSP

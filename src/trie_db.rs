@@ -99,7 +99,7 @@ fn probe_bytes(key: &[Content]) -> &[u8] {
 /// `hash`-bucket convention). A growing insert can relocate the tree, so the
 /// (possibly new) id is written back. This layer does not deduplicate — two records
 /// with one key land adjacent, differing in the id suffix (`r8b`) — because the
-/// collection insert displaces the record already under the key first (C68).
+/// collection insert displaces the record already under the key first (@C68).
 pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     let Some(key) = keys.first() else {
         return;

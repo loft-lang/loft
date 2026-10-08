@@ -13,7 +13,7 @@
 //! in range, so the discharge block is the read alone.
 //!
 //! Not for a scalar element: `v[i]?` also discharges an element whose VALUE is null (a non-null
-//! scalar type can hold the sentinel, C80), which no loop bound rules out.
+//! scalar type can hold the sentinel, @C80), which no loop bound rules out.
 //!
 //! `LOFT_NO_IN_RANGE=1` keeps every discharge; `LOFT_TRACE_IN_RANGE=1` names each loop rewritten.
 use crate::data::{Block, Data, DefType, Value};

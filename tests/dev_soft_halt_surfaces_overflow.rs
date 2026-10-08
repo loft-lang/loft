@@ -142,6 +142,9 @@ fn an_undefended_overflow_is_surfaced_and_ends_the_run_nonzero() {
     }
 }
 
+/// @C80 — a fault answers null and the calculation runs on: three overflows and a division
+/// by zero, every later row computed, exit 0, on both backends.
+///
 /// With the flag off the program is byte-for-byte what it always was: overflow is null,
 /// silently, and the run succeeds.  (E-Uncomp) is mode-independent — the report is a
 /// debugging tool layered on top, never a change to what the program computes.

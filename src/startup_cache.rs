@@ -563,6 +563,8 @@ pub fn warm_load_program(
 /// manifest for `script_abspath` (every deduped parsed source + its content
 /// hash).  The bundle is published first, then the manifest atomically — so a
 /// manifest is only ever present alongside a complete bundle.
+///
+/// @C70 — the whole-program bundle is the image; a library is never imaged on its own.
 #[cfg(feature = "mmap")]
 pub fn save_program(
     p: &Parser,

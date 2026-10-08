@@ -4222,7 +4222,7 @@ impl Store {
 
     /// A write reached a locked store (`@FR-H-WriteLocked`).  RETURNS only in a production
     /// run, which has logged the write and whose caller now DISCARDS it: the store keeps its
-    /// bytes and the program continues on them (C80 — nothing stops a production program).
+    /// bytes and the program continues on them (@C80 — nothing stops a production program).
     /// A development run halts here with the report.
     /// Enforces `@FR-R-Cold`: the refusal is outlined so the write check inlines.
     #[cold]

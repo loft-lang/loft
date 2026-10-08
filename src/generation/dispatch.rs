@@ -214,7 +214,7 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
         let name = sanitize(variables.name(var));
-        // A whole-value Var-copy OWNS its fresh store (C86) even though the oracle
+        // A whole-value Var-copy OWNS its fresh store (@C86) even though the oracle
         // reports the SOURCE var as Borrowed — mirror collect_witness_vars.
         let is_var_copy = matches!(
             to.unspan(),

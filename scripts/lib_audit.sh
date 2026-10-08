@@ -8,7 +8,7 @@
 #          an open PR, or UNTRACKED unknown work (a gate failure).
 #   Q4     correctness — interpreter + native tests vs current loft.
 #   Q5     registry currency — wraps check_registry_coverage.sh.
-#   +      advisory C86 write-through lint (scripts/c86_lint.py) — REPORT-only,
+#   +      advisory @C86 write-through lint (scripts/c86_lint.py) — REPORT-only,
 #          never gates; runs for every package incl. those with no tests/.
 #
 # THE INVARIANT: the report never says OK for something broken, never FAIL for
@@ -217,8 +217,8 @@ for repo in $REPOS; do
   for toml in "$wt"/*/loft.toml; do
     [ -e "$toml" ] || continue
     p=$(dirname "$toml"); name=$(basename "$p")
-    # C86 write-through lint — REPORT-only, never gates.  Runs BEFORE the no-tests
-    # skip so EMPTY-suite packages (their only C86 guard) are still scanned.
+    # @C86 write-through lint — REPORT-only, never gates.  Runs BEFORE the no-tests
+    # skip so EMPTY-suite packages (their only @C86 guard) are still scanned.
     if command -v python3 >/dev/null 2>&1; then
       while IFS= read -r cl; do
         [ -n "$cl" ] && C86_FINDINGS+=("$repo/${cl#"$wt"/}")
@@ -276,7 +276,7 @@ for r in "${ROWS[@]}"; do IFS='|' read -r a b c d <<<"$r"; printf '  %-26s %-14s
 
 [ ${#PRUNABLE[@]} -gt 0 ] && { head "prunable (merged) branches"; for x in "${PRUNABLE[@]}"; do say "  $x"; done; [ "$DRY" = 1 ] && say "  ${c_dim}(re-run with --prune to delete)${c_off}"; }
 
-# C86 write-through lint — advisory (REPORT), never gates.  A one-liner also lands
+# @C86 write-through lint — advisory (REPORT), never gates.  A one-liner also lands
 # in "reported (non-gating)" via report() so it shows in the summary tally.
 [ ${#C86_FINDINGS[@]} -gt 0 ] && {
   head "C86 write-through lint (advisory — plain field bind may need &)"

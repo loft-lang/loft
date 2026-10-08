@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// loft#1877, `@FR-L-Escape` / `@FR-L-CapOwn` — a struct whose fn field holds a capturing
+// loft#1877, @C75, `@FR-L-Escape` / `@FR-L-CapOwn` — a struct whose fn field holds a capturing
 // closure may be placed into another struct's field as a value, and overwriting such a field
 // releases what the displaced closure adopted.
 //

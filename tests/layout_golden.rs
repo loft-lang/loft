@@ -474,6 +474,8 @@ fn program_roots_are_the_user_types() {
 /// a token nobody bumped cannot refuse the resulting store. This pin is the only thing
 /// that would notice, which is why its failure message asks WHICH cause it is before
 /// anyone re-blesses it.
+///
+/// @C105 — the bucket slot it pins holds an entry index only: no cached hash, no entries.
 #[test]
 fn placement_contract_is_pinned() {
     use loft::keys::{Content, Str};

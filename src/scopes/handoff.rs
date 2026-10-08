@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `None` where the copy moves nothing.  `@FR-H-Drop`: responsibility moves with a copy.
 ///
 /// `t = s` deep-copies (`@FR-B-Copy`) and leaves two records holding one resource — the
-/// failure C111 names for a container and answers with a MOVE — so the copy owns the
+/// failure @C111 names for a container and answers with a MOVE — so the copy owns the
 /// resource and the SOURCE stops dropping.  Only the drop moves; both stores are still freed
 /// by the ordinary sweep.  A copy off a PARAMETER runs the other way: the caller owns the
 /// resource (calls.md F-ParamHeap — the parameter aliases it), so it is the callee's copy,

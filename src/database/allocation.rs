@@ -6702,7 +6702,7 @@ impl Stores {
     ///
     /// Empty is the honest answer for a collection that was never bound: nothing
     /// has failed. A caller distinguishing "absent" from "unreachable" asks this
-    /// AFTER a lookup answered null — the lookup itself cannot say (C80).
+    /// AFTER a lookup answered null — the lookup itself cannot say (@C80).
     #[must_use]
     pub fn lazy_error(&self, coll: &DbRef) -> String {
         self.lazy_errors

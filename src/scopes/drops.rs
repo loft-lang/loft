@@ -479,6 +479,9 @@ impl Scopes<'_> {
     /// owns too (`rhs_owned`): on the second iteration the displaced record is the one this
     /// statement built, and a view assigned here would otherwise be copied and released as
     /// if it were owned.
+    ///
+    /// @C111 — a rebind releases the record it displaces; a drop cascade runs at a container's
+    /// death, not at an element's removal.
     pub(super) fn displaced_drop(
         &mut self,
         v: u16,

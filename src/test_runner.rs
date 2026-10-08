@@ -1342,7 +1342,7 @@ pub(crate) fn run_tests(
             // instead let an unrelated warning through a library's `--deny-warnings` CI
             // unseen: `regex`'s test pinned two `shadowed-by-method` warnings, and the
             // `both-receiver-deprecated` warning on its own source printed nothing and failed
-            // nothing (C123).
+            // nothing (@C123).
             let claimed = |w: &String| {
                 ann.expect_warnings.iter().any(|s| w.contains(s.as_str()))
                     || ann
@@ -2160,7 +2160,7 @@ pub(crate) fn run_tests(
                         }
                         // @P367: assert(false) / panic / divide-by-zero / OOB /
                         // null-deref set a *typed* runtime fault and halt WITHOUT
-                        // a Rust panic (the C66 path), so catch_unwind sees Ok and
+                        // a Rust panic (the @C66 path), so catch_unwind sees Ok and
                         // the test would otherwise be scored PASSED.  Surface the
                         // fault so the runner can FAIL the test — and so an
                         // intentional fault still satisfies @EXPECT_FAIL.

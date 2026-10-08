@@ -1782,7 +1782,7 @@ impl Parser {
         // 'OpGetVector'" (loft#1819).  A `&`-linked local names a place too (loft#1376), so
         // `q = &vs[1]; q -= 2` writes the element rather than re-pointing `q`.
         //
-        // The place is read once and written once, so its addressing must run ONCE (C92): a
+        // The place is read once and written once, so its addressing must run ONCE (@C92): a
         // place whose address calls a function (`vs[next(c)] -= 1`) is bound to a `_place`
         // view first — the element's own record, which both the read and the copy reach.
         if op != "="
@@ -4779,7 +4779,7 @@ use #count instead"
                         // an `integer`'s conversion is `!= i64::MIN` and a `text`'s is
                         // out-of-band, so a `0` and an `""` element correctly kept iterating.
                         // A `boolean`'s conversion is the IDENTITY, and its null is the
-                        // three-state `255` (C73), so the loop broke on the first `false`
+                        // three-state `255` (@C73), so the loop broke on the first `false`
                         // element it was handed and yielded nothing at all.
                         let mut t = Value::Var(for_var);
                         self.call_op(
@@ -5440,6 +5440,8 @@ use #count instead"
             && fn_d_nr != u32::MAX
             && let Some(chain) = crate::scopes::worker_calls_parent_write_deep(&self.data, fn_d_nr)
         {
+            // @C93 — a par worker's captured parent state is read-only; a write to it is refused
+            // here.
             diagnostic!(
                 self.lexer,
                 Level::Error,

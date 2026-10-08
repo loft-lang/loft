@@ -16326,7 +16326,8 @@ fn run_it() -> integer {
 // closure returns (the case-C factory) stay supported.  Probes:
 // /tmp/p_followups/e*.loft; predicate: `Parser::type_carries_closure`.
 
-/// @C75 — closure-carrying struct values are frame-bound.
+/// @C75 — a closure-carrying struct keeps its closure record in a hidden field; a write to
+/// another field by name still finds that field's attribute.
 #[test]
 fn a_field_after_a_capturing_fn_field_is_written_by_name() {
     // A struct with a capturing fn field lays out a hidden `<f>__closure_rec` field with no

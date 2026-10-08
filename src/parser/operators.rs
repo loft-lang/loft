@@ -1848,6 +1848,7 @@ impl Parser {
     /// The operand of an expression: a prefix `&<place>` or whatever [`Self::parse_part`]
     /// reads: what every binary operator stands between.
     fn parse_primary(&mut self, var_tp: &Type, code: &mut Value, parent_tp: &mut Type) -> Type {
+        // @C81 — `&` stays one token; its position decides reference or bitwise-and.
         // @PLN87 B-Ref-AnnotationOnly — the FIRST primary of a binding RHS (or of a
         // statement) consumes the head marker; every operand after it sees `false`.
         // Taken before the `&` test so a non-`&` head (`1` in `1 + &a`, the `(` in
@@ -1887,6 +1888,7 @@ impl Parser {
                 });
                 return t;
             }
+            // @C77 — `&` binds a live reference, and only as a bind's whole right-hand side.
             // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
             // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
             // since loft statements are `;`-terminated — is always followed by `;`
@@ -2764,7 +2766,7 @@ impl Parser {
                         // consumption site (bind / argument / return / loop) on
                         // BOTH backends; the depth-1 `materialized_view_return`
                         // path was already copy-then-free and is the spec this
-                        // mirrors (the C86 escape rule: a view outliving its
+                        // mirrors (the @C86 escape rule: a view outliving its
                         // dying temporary materialises).  A direct CALL result
                         // (not a projection) still binds raw — `w` genuinely
                         // adopts that fresh store.
@@ -4663,7 +4665,7 @@ impl Parser {
     /// redundant-`?` warning (mirrors the redundant-`??` lint).  When `T` has no
     /// well-defined default (a bare reference, or a record with an un-defaulted
     /// non-null field) it is a COMPILE error — a static well-definedness check, fully
-    /// consistent with "no runtime errors ever" (C80).
+    /// consistent with "no runtime errors ever" (@C80).
     pub(crate) fn handle_default_fallback(
         &mut self,
         var_tp: &Type,
@@ -4712,7 +4714,7 @@ impl Parser {
         // The single well-definedness check (the home `S{}` shares): a bare reference,
         // or a record with an un-defaulted non-null field or a bare enum field with no
         // explicit choice, has no default.  `x?` needing one there is a COMPILE error —
-        // a static check, consistent with "no runtime errors ever" (C80).  `x?` is new
+        // a static check, consistent with "no runtime errors ever" (@C80).  `x?` is new
         // syntax (no program relies on it), so this always fires when the base lacks a
         // default; the message names the culprit and the remedy.
         if let Err(reason) = self.data.has_default(&base) {
@@ -4730,7 +4732,7 @@ impl Parser {
         }
         // Redundant-`?` warning — the SAME authority as the redundant-`??` lint: a
         // provably not-null operand (`expr_not_null`) whose type is not `Optional` and is
-        // not a declared-nullable call.  A C80-nullable index / field read has
+        // not a declared-nullable call.  A @C80-nullable index / field read has
         // `expr_not_null == false`, so it is correctly NOT flagged — its default is live
         // (an out-of-bounds / missing read yields null).  Like `??`, the coalesce is
         // still emitted even when redundant (the default is simply never taken).
@@ -5264,7 +5266,7 @@ impl Parser {
                     // fits; a constant the developer can see does not fit is a bug,
                     // not a null. The checked forms (`as τ?`, `?? d`) stay the
                     // sanctioned escape — they yield the null sentinel / fallback —
-                    // so gate on neither being present. Dynamic floats stay C80-null
+                    // so gate on neither being present. Dynamic floats stay @C80-null
                     // at runtime, unchanged. The range mirrors `cast_int_from_single`
                     // /`cast_int_from_float` in fill.rs: NaN or outside [-2^63, 2^63).
                     if !self.first_pass
@@ -5331,7 +5333,7 @@ impl Parser {
                     // set it iff it dispatches an allocating user conversion (`fn OpConvTFromS`).
                     self.conv_owned_result = None;
                     // @PLN102 — a nullable SCALAR source (`float?`/`single?`/`integer?`) casts by its
-                    // BASE: the null rides in-band (NaN is the float null, C90; the reserved sentinel
+                    // BASE: the null rides in-band (NaN is the float null, @C90; the reserved sentinel
                     // for integers) and the cast op propagates it (`NaN as integer` = null), so the
                     // per-type `OpCast` is keyed on the base, not the `Optional`. Peel it here so the
                     // checked `float? as integer?` resolves instead of reporting "Unknown cast"; the
@@ -5426,7 +5428,7 @@ impl Parser {
                     rt = Type::optional(rt.base().clone());
                 }
                 // A text→numeric PARSE is fit-failing: unparseable input yields the null sentinel
-                // at runtime (C80, no trap). Two regimes:
+                // at runtime (@C80, no trap). Two regimes:
                 //  · @PLN25 DN3 (default / OFF): the result auto-TYPES `τ?` (`s as integer` is
                 //    `integer?`; discharge with `?? d` or a `τ?` slot).
                 //  · @FR-N-Cast — a bare `as τ` ASSERTS the value fits; a parse cannot be
@@ -5771,8 +5773,8 @@ impl Parser {
                         "Redundant null check — '{lhs_not_null_name}' is 'not null', so this is {always} unless a null reached the slot anyway (an overflow, a NaN, or an out-of-range read)",
                     );
                     // CONDITIONAL, not mechanical.  A non-null slot CAN observably hold null:
-                    // `formal/types.md` C85 writes the reserved sentinel there on an integer
-                    // overflow (and names a `float` holding `NaN` as the parallel), and C80
+                    // `formal/types.md` @C85 writes the reserved sentinel there on an integer
+                    // overflow (and names a `float` holding `NaN` as the parallel), and @C80
                     // answers an out-of-range read with null while the index expression stays
                     // typed non-null.  So `s.a == null` on a non-null `integer` field is TRUE
                     // after `s.a = big * big`, and deleting it removes the one test that
@@ -6142,7 +6144,7 @@ impl Parser {
             } else {
                 (None, None, false)
             };
-            // @PLN25 DN3: integer `/` and `%` PRODUCE null at runtime on a zero divisor (the C80
+            // @PLN25 DN3: integer `/` and `%` PRODUCE null at runtime on a zero divisor (the @C80
             // sentinel), so the RESULT types `τ?` UNLESS the divisor is provably non-zero — a
             // constant non-zero literal (`a / 2`) or a var proven non-zero by an `if v != 0` guard
             // (the `divisor_nonzero` narrowing stack). Captured HERE, before `call_op` consumes
@@ -6162,7 +6164,7 @@ impl Parser {
             // the operand types. A nullable operand PROPAGATES through a value-preserving scalar
             // op: the runtime already carries the null sentinel / NaN through (`n+5`, `5-n`,
             // `abs(n)` on a null n all stay null). Gated on LOFT_NULLFLOW; the result is wrapped
-            // `τ?` below (beside the div wrap). C85 stays the complement — non-null operands are
+            // `τ?` below (beside the div wrap). @C85 stays the complement — non-null operands are
             // untouched here, so overflow of two non-null values still types non-null.
             // @FR-N-Prop: a nullable operand makes the result nullable — null PROPAGATES
             // through a value-preserving scalar op rather than being laundered by it.
@@ -6279,14 +6281,14 @@ impl Parser {
             // parser/mod.rs::substitute_type_in_value, generation/*).
             // @PLN102 arc-E E2 (B) — a shift by a STATICALLY-KNOWN amount
             // outside [0,63] is a compile error.  A runtime null is the
-            // FALLBACK for a *dynamic* out-of-range shift (C80); it is not a
+            // FALLBACK for a *dynamic* out-of-range shift (@C80); it is not a
             // cover for a constant the developer can see is wrong.  Dynamic
             // shift amounts still read null at runtime, unchanged.
             // A bare `<<`/`>>` with a statically-out-of-range amount ASSERTS a
             // defined result; there is none, so it is a compile error. The `?? d`
             // fallback (there is no checked-shift form) stays the sanctioned escape
             // — mirroring the cast rule below — so skip the check when a `??`
-            // follows. A *dynamic* out-of-range amount still reads null (C80/C85).
+            // follows. A *dynamic* out-of-range amount still reads null (@C80/@C85).
             if !self.first_pass && matches!(operator, "<<" | ">>") && !self.lexer.peek_token("??") {
                 // Fold the shift amount: `const_int` catches `-1` (a `neg(1)`
                 // node), `2+3`, a named constant — not just a bare `Int` literal.

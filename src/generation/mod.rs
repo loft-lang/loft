@@ -1258,9 +1258,12 @@ pub struct Output<'a> {
     /// build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
     /// division emits the processor's wrapping operator and every float comparison the
     /// plain one, as the eventual release build pass for games would (DESIGN_DECISIONS.md
-    /// C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the
+    /// @C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the
     /// language's; a row whose hash still agrees never faulted, and its time is the
     /// ceiling the checked build is measured against.
+    ///
+    /// @C129 — the processor's wrapping arithmetic only behind this probe: no build or syntax opts
+    /// in to it.
     pub release_pass_probe: bool,
     /// Per-definition cache of [`non_sentinel::non_sentinel_float_vars`],
     /// keyed by `def_nr` — computed on the first simplifiable compare a
@@ -1913,7 +1916,7 @@ pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
     // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
     // work buffer.  The discriminator is the Block body itself, NOT
     // `rust()/native()` emptiness: an auto-native library fn inlined into a
-    // consumer build (main's C71) has a Block body AND `native()` set, yet is
+    // consumer build (main's @C71) has a Block body AND `native()` set, yet is
     // still an ordinary user text fn whose buffered-vs-bufferless shape is
     // decided solely by the presence of the work-buffer attribute.  emit.rs only
     // ever runs this on Block bodies, so a non-Block (FFI-direct / `#rust` / Null)
@@ -1938,7 +1941,7 @@ pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
 ///   `LoftStr` bytes as an owned `String` (N2).  This path is taken ONLY when the
 ///   body is `Null` (no inlined `Block`), so gate on `code() == Null` to stay
 ///   aligned with the body selector — an inlined native-lib fn (`Block` body AND
-///   `native()` set, main's C71 consumer build) returns `Str`, not `String`;
+///   `native()` set, main's @C71 consumer build) returns `Str`, not `String`;
 /// - a bufferless ("nwb") user text fn (`def_returns_owned_text`).
 /// - @PLN24 arc D — a **`#c` binding** returning a C `char *`.  Its wrapper owns
 ///   the copied bytes (`output_c_direct_call` builds the `String`), exactly as an
@@ -2026,7 +2029,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Enum(_, true, _)
         | Type::Index(_, _, _)
         // N8b.1: generator variables are stored as DbRef (index into native coroutine table).
-        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (C125).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (@C125).
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
@@ -2674,7 +2677,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
         }
         let owned = match to.unspan() {
             // A whole-value copy of another heap var — native emits `OpCopyRecord`
-            // into a fresh store, so r OWNS the result (C86), regardless of the
+            // into a fresh store, so r OWNS the result (@C86), regardless of the
             // source's own ownership.
             Value::Var(src) if vars.record_copy_source(data, v, *src).is_some() => true,
             // An owned call / struct literal is Owned; an `?? `/ncc block is a
@@ -10461,7 +10464,7 @@ extern crate loft;"
             // target and `report_and_exit` printed none; the frames now come from the
             // shadow call stack inside `report_and_exit` itself, so nothing is traded away
             // — and `--interpret`, which had no frames here either, gains them too.
-            // Production mode logs and continues (C66), through the same
+            // Production mode logs and continues (@C66), through the same
             // `logged_in_production` the interpreter's `native.rs::n_assert` calls — the
             // two backends implement one documented behaviour and only the interpreter
             // used to honour it, so `loft app.loft` aborted where `loft --interpret`

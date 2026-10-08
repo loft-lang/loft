@@ -5524,7 +5524,7 @@ impl State {
         let total_arg_size = declared_size + extra;
         // `@FR-L-FnAbsent` — an ABSENT fn-ref (an element read out of range: its `d_nr` is the
         // null sentinel) is callable, and the call answers the return type's null instead of
-        // dispatching; the program continues (C80).  The arguments are evaluated first on
+        // dispatching; the program continues (@C80).  The arguments are evaluated first on
         // both paths, as `--native` binds them before its dispatch; the absent path drops them.
         let guard = std::env::var_os("LOFT_NO_ABSENT_FNREF").is_none();
         let mut absent_jump: Option<(u32, u16)> = None;

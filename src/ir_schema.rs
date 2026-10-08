@@ -9,7 +9,7 @@
 //! equivalence) and [`load_snapshot`] (file load).  Decode reuses loft's own
 //! JSON parser — never serde.  Absolute `def_nr` / `known_type` indices are
 //! stored verbatim: this is the whole-bundle image (internally consistent),
-//! not the deferred per-library form ([`DESIGN_DECISIONS.md` § C69]).
+//! not a per-library form, which @C70 declines ([`DESIGN_DECISIONS_PLATFORM.md` § C70]).
 //!
 //! ## Interim — slated for retirement (@PLN11)
 //!
@@ -22,7 +22,7 @@
 //! § Standalone upside decision.  Nothing in the live compile path calls into
 //! this module yet — only the `LOFT_DUMP_SNAPSHOT` debug hook in `main.rs`.
 //!
-//! [`DESIGN_DECISIONS.md` § C69]: ../../doc/claude/DESIGN_DECISIONS.md
+//! [`DESIGN_DECISIONS_PLATFORM.md` § C70]: ../../doc/claude/DESIGN_DECISIONS_PLATFORM.md#c70--no-per-library-ir-snapshot--cache
 
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, IntegerSpec, LinkedFieldGroup,

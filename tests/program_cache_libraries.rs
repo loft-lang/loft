@@ -101,6 +101,20 @@ fn run(home: &Path, env: &[(&str, &str)]) -> String {
 
 const ANSWER: &str = "probepkg-0.1.0 45";
 
+/// The IR images the cache holds (`*.store`), by file name.  @C70: the standard library and
+/// the whole program are imaged, and a library never is on its own — it is recorded by its
+/// artifacts in the program's manifest.
+fn ir_images(home: &Path) -> Vec<String> {
+    let mut out: Vec<String> = fa::read_dir(home.join("cache/loft"))
+        .into_iter()
+        .flatten()
+        .filter_map(|e| fa::file_name(&e.os_spelling()))
+        .filter(|n| n.ends_with(".store"))
+        .collect();
+    out.sort();
+    out
+}
+
 /// The auto-native cdylibs the saved manifest records (`alib` lines).
 fn recorded_artifacts(home: &Path) -> Vec<String> {
     let mut out = Vec::new();
@@ -124,7 +138,9 @@ fn recorded_artifacts(home: &Path) -> Vec<String> {
 /// c2 — that cdylib removed: a named miss, the same answer, and the run after warms again.
 /// c3 — `LOFT_NO_NATIVE_LIBS=1` over a bundle marked native: a miss and the
 /// same answer, never a replay of the native marks.
-/// @C70 — no per-library IR snapshot; a library is recorded as its artifacts.
+///
+/// @C70 — no per-library IR snapshot: one image for the program, a library recorded as its
+/// artifacts.
 #[test]
 fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
     let home = home_with_package("warm");
@@ -136,6 +152,17 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
     assert!(
         warm.contains("[warm] hit"),
         "c1: the second run of an unchanged program must be a warm hit (loft#1684):\n{warm}"
+    );
+    // @C70 — one image for the program and none per library: `probepkg` and the `probedep`
+    // it depends on are inside the program's bundle, not imaged beside it.
+    let images = ir_images(&home);
+    assert!(
+        images
+            .iter()
+            .all(|n| n.starts_with("stdlib-") || n.starts_with("program-"))
+            && images.iter().filter(|n| n.starts_with("program-")).count() == 1,
+        "c1: the cache holds the stdlib image and ONE program image, never one per library \
+         (@C70); found {images:?}"
     );
     let arts = recorded_artifacts(&home);
     assert!(

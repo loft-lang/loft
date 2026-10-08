@@ -4714,8 +4714,8 @@ impl Parser {
     ///
     /// Decided by the SIGNATURE the hand-off names — a declared function's, a function type's
     /// (`fn(const T)`), a builtin callback's — never by the body behind it: what a call means is
-    /// judged from the call and the declaration it names (C121), while a proof that a body does
-    /// not write stays an optimisation's to use (C122).  A `&` parameter is refused as an error
+    /// judged from the call and the declaration it names (@C121), while a proof that a body does
+    /// not write stays an optimisation's to use (@C122).  A `&` parameter is refused as an error
     /// (plan 40's rule 4), and so is a plain one, `const-to-plain-parameter` (@C124): the
     /// warning that rolled it out ended once every shipped library declared its read-only
     /// parameters `const`.  The cure is in the message.
@@ -5302,7 +5302,7 @@ impl Parser {
     /// its USABLE range: where the range fills a fixed width, one code at its edge is its null.
     /// A CONSTANT outside that range can only be stored as null, which is never what the author
     /// wrote, so it is refused the way its non-null twin refuses a constant that does not fit
-    /// (C80's compile-time valve) rather than becoming null in silence (loft#1796: `x: u8? =
+    /// (@C80's compile-time valve) rather than becoming null in silence (loft#1796: `x: u8? =
     /// 255`, `R { b: 255 }`, `[255]` all read null).
     fn nullable_narrow_constant_refusal(&self, code: &Value, dst: &Type) -> Option<String> {
         let Type::Optional(inner) = dst else {
@@ -7408,7 +7408,7 @@ impl Parser {
                 self.data.type_def_nr(test_type),
             );
             if want == have && want_nr != have_nr && want_nr != u32::MAX && have_nr != u32::MAX {
-                // C101 — the program's type shadows a standard-library one wherever the bare
+                // @C101 — the program's type shadows a standard-library one wherever the bare
                 // name is written; `std::` names the standard library's (loft#1882).
                 let std_cure = if self.data.def(have_nr).source == crate::data::STD_SOURCE
                     || self.data.def(want_nr).source == crate::data::STD_SOURCE
@@ -12399,6 +12399,7 @@ impl Parser {
                         // one arm that cannot be a name.
                         Type::Boolean => {
                             let ne = data.def_nr("OpNeBool");
+                            // @C73 — a boolean's null is 255, a third state beside 0 and 1.
                             let null_b = data.def_nr("OpConvBoolFromNull");
                             if ne == u32::MAX || null_b == u32::MAX {
                                 None
@@ -14921,7 +14922,7 @@ impl Parser {
                 // stride/value contract is the narrow-vector one, not the
                 // field-sentinel one) — `narrow_vec` selects that.
                 // loft#1615: `NarrowSlot` is the one home for a store place's ops, so a
-                // NON-nullable type that kept a top code reads that code as null (C85) here
+                // NON-nullable type that kept a top code reads that code as null (@C85) here
                 // exactly as a LOCAL of the type does — `kind.get_op()` alone decodes every
                 // code as a value, which read the overflow's `u16::MAX` back as `64535`.
                 let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
@@ -15154,7 +15155,7 @@ impl Parser {
             let cname = self.vars.name(dep).to_string();
             // @PLN130 F9 — an explicit `&` is an ownership decision, so it may not be quietly
             // downgraded to a copy: where the write cannot reach the source, REFUSE it
-            // (formal/binding.md B-Ref-Reshape, C79 revisited 2026-08-05).  Unlike the removal
+            // (formal/binding.md B-Ref-Reshape, @C79 revisited 2026-08-05).  Unlike the removal
             // and reassignment causes there is no liveness question here — the key write IS the
             // use — and no "move it later" remedy either, so the message points at re-inserting.
             if self.vars.is_amp_link(base) {
@@ -16171,7 +16172,7 @@ impl Parser {
         // `@FR-L-Escape` (loft#1877) — a struct holding a capturing closure may be placed into
         // another struct's field: a fresh value or an owned one placed once moves its closure
         // records into the field's store, and a copy of a value this function does not own is
-        // refused by `(H-Copy-Refuse)`, since such a type owns a release (C75).
+        // refused by `(H-Copy-Refuse)`, since such a type owns a release (@C75).
         let pos = self
             .database
             .position(self.data.def(d_nr).known_type(), &nm);
@@ -16244,7 +16245,7 @@ impl Parser {
                 // and the `min` cannot drift.  A NON-nullable byte that kept a top code
                 // writes through the NULLABLE setter: the plain one casts its value
                 // `as i32` before the store sees it, and `i64::MIN as i32` is `0` — a
-                // VALUE — so C85's overflow used to land in the slot as the number zero.
+                // VALUE — so @C85's overflow used to land in the slot as the number zero.
                 let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
                 // H6: the WRITE op encodes against the same `usable_min` the READ
                 // op (`get_val`) decodes against — derived from the KIND so a
@@ -18171,7 +18172,7 @@ impl Parser {
             // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
             // null there" does not describe it, and its cure (`?`) would turn the place into a
             // value.  What can go wrong is that the element is absent: a link to an absent place
-            // reads null (C80), so a callee whose `&τ` is non-null would see one.
+            // reads null (@C80), so a callee whose `&τ` is non-null would see one.
             let linked_place = scalar_place && report && !self.first_pass;
             if linked_place
                 && matches!(actual_type, Type::Optional(_))
@@ -19070,7 +19071,7 @@ impl Parser {
     // * Parser functions *
     // ********************
 
-    /// C101 — a program type that shares a standard-library type's name shadows it wherever
+    /// @C101 — a program type that shares a standard-library type's name shadows it wherever
     /// it is written, above its declaration too.  Pass 1 resolves a name it has not seen
     /// declared yet: an unknown one gets a forward-reference stub its declaration adopts, but a
     /// stdlib name is found, so everything written above the program's own `struct File` bound
@@ -20101,6 +20102,7 @@ impl Parser {
         if grouped {
             self.lexer.token(")");
         } else if names.len() > 1 {
+            // @C76 — imported names are grouped with `()`; a flat comma list is refused.
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -23353,6 +23355,7 @@ impl Parser {
     }
 
     // <function> ::= 'fn' <identifier> '(' <attributes> ] [ '->' <type> ] (';' <rust> | <code>)
+    // @C90 — each nullable scalar's null is ONE reserved in-band value; this is the table.
     pub fn null(&mut self, tp: &Type) -> Value {
         // @PLN25 slice (b): an `Optional(τ)`'s null is `τ`'s typed null (same sentinel) — peel.
         match tp.base() {

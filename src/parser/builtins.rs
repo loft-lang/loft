@@ -346,7 +346,7 @@ impl Parser {
                 );
             }
         }
-        // @PLN102 C93 / read-residual — a par worker runs on an ISOLATED store clone,
+        // @PLN102 @C93 / read-residual — a par worker runs on an ISOLATED store clone,
         // so a captured REFERENCE argument (a heap DbRef) is invalid in the worker's
         // store: it used to read empty (silent-wrong) or, mis-ordered, slot-panic at
         // codegen.  Disallow it cleanly (no runtime errors, ever — we do not allow what

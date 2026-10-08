@@ -521,7 +521,7 @@ fn rlib_candidates(exe_dir: &std::path::Path) -> [std::path::PathBuf; 2] {
 }
 
 /// @PLN11 Arc N / N0 — the canonical fingerprint of THIS loft build, for
-/// native-artifact validity (C71 "build fingerprint").  A native artifact links
+/// native-artifact validity (@C71 "build fingerprint").  A native artifact links
 /// `libloft.rlib`, so it is valid only against the loft build whose rlib it links:
 /// this is the rlib's **content** hash (sha256 → `u64`), memoised per process.  A
 /// loft codegen/runtime change, a rustc bump, or a cross-target build all rewrite
@@ -925,6 +925,8 @@ pub fn write_run_source_hash(profile_dir: &std::path::Path, hash: u64) {
 /// to notice.  A consumer's A/B harness compared an arm against itself and read the
 /// byte-identical output as the strongest possible pass.  The environment is part of it
 /// for the same reason: a lowering switch parses another program (`env_counts`, loft#1697).
+///
+/// @C70 — one cached image per program, never one per library.
 #[must_use]
 pub fn program_cache_paths(
     script_abspath: &str,
@@ -983,7 +985,7 @@ fn program_cache_budget_bytes() -> u64 {
 /// evicted (`LOFT_CACHE_TTL_HOURS`, default 24 h).  A re-use ([`touch_now`]) or a
 /// re-save refreshes the entry's mtime, so an actively-used "library set" persists
 /// indefinitely while a one-off ages out — "store common sets longer, clear when
-/// idle 24 h" (C71).  A malformed value falls back to the default.
+/// idle 24 h" (@C71).  A malformed value falls back to the default.
 #[must_use]
 fn cache_ttl() -> std::time::Duration {
     let hours = std::env::var("LOFT_CACHE_TTL_HOURS")

@@ -341,7 +341,7 @@ impl Logger {
 
     /// Plan-07 phase 4 — log a typed runtime event (`RuntimeError`)
     /// at the severity prescribed by the kind table (see DESIGN_DECISIONS
-    /// § C66).  Single-line message shape: `[<kind_label>] <kind.describe()>`
+    /// § @C66).  Single-line message shape: `[<kind_label>] <kind.describe()>`
     /// — the label is a stable machine-readable identifier for grepping
     /// log files; the describe() gives the human-readable detail with
     /// any structured-field values (idx, len, message, etc.) inline.
@@ -367,7 +367,7 @@ impl Logger {
             // only through a host that logs every halt, and then as information.
             Rk::Exit { .. } => Severity::Info,
             // A write to a locked store reaches the log only in production, where it is
-            // discarded and the run continues (@FR-H-WriteLocked, C80).
+            // discarded and the run continues (@FR-H-WriteLocked, @C80).
             Rk::AssertionFailed { .. } | Rk::WriteToLockedStore { .. } => Severity::Error,
             Rk::DivideByZero
             | Rk::IndexOutOfBounds { .. }

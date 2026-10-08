@@ -887,7 +887,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     if v_test {
         return;
     }
-    // Production mode logs and continues (C66).  The decision is
+    // Production mode logs and continues (@C66).  The decision is
     // `runtime_error::logged_in_production`, shared with the body the
     // native generator emits, because the two backends have to answer
     // this identically and once did not (loft#1263).
@@ -4260,7 +4260,7 @@ fn n_as_bool(stores: &mut Stores, stack: &mut DbRef) {
         let b = u8::from(stores.store(&v).get_byte(v.rec, value_pos, 0) != 0);
         stores.put(stack, b);
     } else {
-        // The tri-state null byte (C73 / @PLN17) the `boolean?` declaration promises — not
+        // The tri-state null byte (@C73 / @PLN17) the `boolean?` declaration promises — not
         // `false`, which a caller cannot tell from a field that really says false.
         stores.put(stack, 255u8);
     }
@@ -4803,7 +4803,7 @@ fn unwrap_float(
 
 /// `None` as in [`unwrap_long`].  It used to answer `0` here, which made an absent
 /// nullable boolean read back as the VALUE `false` instead of null — a boolean stores
-/// tri-state and 255 is its null (@PLN17 C73), and only the declaration knows whether
+/// tri-state and 255 is its null (@PLN17 @C73), and only the declaration knows whether
 /// this slot may carry it.
 fn unwrap_bool(
     stores: &mut Stores,

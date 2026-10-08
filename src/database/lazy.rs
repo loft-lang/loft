@@ -518,6 +518,8 @@ impl Stores {
     /// order to range over — and keyed on ONE column, because two numbers cannot
     /// say which value pins a composite key's leading column. A composite range
     /// is the explicit query's job until there is a shape that can carry it.
+    ///
+    /// @C104 — a range on a lazily-bound collection is this explicit call; a slice never fetches.
     #[cfg(feature = "native-extensions")]
     pub fn lazy_range(&mut self, coll: &DbRef, lo: i64, hi: i64) -> i64 {
         use crate::database::sql_query::{Mapping, QueryShape, derive_select};
@@ -815,7 +817,7 @@ fn cell_of(c: &Content) -> crate::database::sql_source::Cell {
 /// 6 character. Keeping the two spelled the same way is what makes a fetched
 /// record read back as the value the database holds.
 ///
-/// A SQL `NULL` writes loft's null for that type rather than a zero: C80 says a
+/// A SQL `NULL` writes loft's null for that type rather than a zero: @C80 says a
 /// read never raises, so absence has to be a VALUE, and `0` is a number someone
 /// may have meant.
 #[cfg(feature = "native-extensions")]

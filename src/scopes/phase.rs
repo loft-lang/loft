@@ -306,7 +306,7 @@ pub(super) fn run_scan_phase(
     }
     // ⚠ @FR-N-Road (@PLN160) — this mechanism is NULLABLE BY CONSTRUCTION, and the dense
     // spelling of the same mixed-ownership local answers the identical question by STORE
-    // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  C90 makes the two
+    // IDENTITY (`OpFreeRefIfDistinct`, plus the `_old_` guard at the rebind).  @C90 makes the two
     // spellings the same slot, so nullability does not require a runtime flag here and the
     // divergence is an accident of this site.  Reach: 5 of 1311 corpus files emit a `__lbo_`.
     // Not folded — whether it CAN be is unmeasured (the falsification was attempted and its own

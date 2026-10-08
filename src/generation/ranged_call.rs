@@ -5,7 +5,7 @@
 //! `@FR-R-RangedCall` — integer arithmetic over a helper's parameters, made plain where a
 //! guard proved the values bounded.
 //!
-//! `(R-Range)` never ranges a parameter or a record read by shape (C80): a non-null integer
+//! `(R-Range)` never ranges a parameter or a record read by shape (@C80): a non-null integer
 //! can hold the sentinel.  So the per-slot helpers of a grid walk — `nb_q(q, r, d)`'s `q + 1`,
 //! `eg_index`'s `(dr * gw + dq) * 3 + slot` — keep every checked operator, and the checked
 //! operators' null and overflow branches are what stop LLVM folding the chain.  This module

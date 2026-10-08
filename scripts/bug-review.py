@@ -73,7 +73,7 @@ KEYSTONES = [
     # of `@FR-N-Shape`: a question about how a value is lowered answers alike for `τ` and `τ?`,
     # so a divergence between the two spellings' emitted IR is an accident of its site.  Earned
     # by measurement rather than asserted: six hand-written pairs, five diverge, and every one
-    # classified as an accident with none required by C90.
+    # classified as an accident with none required by @C90.
     #
     # ⚠ Two things a reader of its row must know, because both would otherwise be read as
     # results.  FIRST, this keystone REMOVES no divergence — the plan classified and did not

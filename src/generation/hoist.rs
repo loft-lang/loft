@@ -12742,6 +12742,8 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 && let Some(fields) = out.types.get(record).map(|t| t.fields.as_slice())
                 && fields.iter().any(|(_, rt)| is_view_part(rt))
             {
+                // @C122 — a rewrite is free where its conditions are validated, and stops at the
+                // library API.
                 // @PLN164 C5 / `(R-Escape)` — a `pub` function's result can leave the
                 // unit the compiler sees whole: a library's cdylib bridge materialises a
                 // tuple field by field into the record its ABI promises, and a reference

@@ -419,7 +419,7 @@ pub struct Stores {
     /// @PLN129 arc C — why a fetch for this collection could not reach its
     /// source. Absent means healthy.
     ///
-    /// A lookup cannot report this: C80 says a value read never raises, and
+    /// A lookup cannot report this: @C80 says a value read never raises, and
     /// answering `null` would make "no such person" and "the database is
     /// unreachable" the same answer — and an UNSTABLE one, since it changes with
     /// the network. So the failure lives on a channel the value cannot carry,
@@ -1693,7 +1693,7 @@ impl Stores {
     /// rustc compile error from the s.raise call.
     ///
     /// Production-vs-development split mirrors `State::raise` per
-    /// `DESIGN_DECISIONS.md § C66`:
+    /// @C66`:
     /// - production logger attached → log via `log_runtime_kind` +
     ///   set `had_fatal` + return without populating `runtime_error`
     /// - development (no logger or non-production logger) → populate

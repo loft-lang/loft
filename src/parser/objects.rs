@@ -1299,7 +1299,7 @@ impl Parser {
                     t = Type::Never;
                 }
             } else {
-                // loft#1008 — the OTHER half. A `both` receiver (deprecated, C123) registers a
+                // loft#1008 — the OTHER half. A `both` receiver (deprecated, @C123) registers a
                 // dispatch entry under the PLAIN name (which is what makes the free-call
                 // spelling `f(x)` work), so unlike a `self` method the bare name is FOUND
                 // here — as a `Dynamic` def — and fell through to a silent null. `x = f` bound null with
@@ -1321,7 +1321,7 @@ impl Parser {
                         // A fn-typed PARAMETER seeds `expected` for its argument (`parse_call`),
                         // so there the name is being passed; anywhere else it is being bound.
                         // A `self` method reaches this branch too since it registers its bare
-                        // name (C123), and the argument site's wording is the one it had.
+                        // name (@C123), and the argument site's wording is the one it had.
                         let verb = if matches!(self.expected.base(), Type::Function(..)) {
                             "pass"
                         } else {
@@ -1753,7 +1753,7 @@ impl Parser {
         }
         let value_tp = value_attr.typedef.clone();
         let pos = Value::Int(0);
-        // `.base()`: a nullable cell's `value` is stored in-band (C90), so the READ op is its
+        // `.base()`: a nullable cell's `value` is stored in-band (@C90), so the READ op is its
         // dense twin's.  `value_tp` itself is returned unpeeled, so the expression keeps the
         // `?` and the ordinary discharge rules apply to it (loft#1408).
         let (op_name, is_bool) = match value_tp.base() {
@@ -5848,7 +5848,7 @@ impl Parser {
             // ⚠ @FR-N-Shape / @FR-N-Road (@PLN160) — this names ONE spelling: `x: S?` is
             // `Optional(Reference(S))` and does not match, so every nullable local bound from a
             // struct literal declines the in-place hint and builds into a work-ref instead,
-            // while its dense twin builds in place.  C90 makes the two the same slot, so the
+            // while its dense twin builds in place.  @C90 makes the two the same slot, so the
             // divergence is an accident of this test and the cure is `var_tp.base()`, which
             // peels the `?` and not the `&`.
             //

@@ -979,6 +979,8 @@ impl Parser {
                     // position rather than taking `report_pos`'s consumed-source default,
                     // which would put the caret on the line above.
                     let at = self.lexer.peek().clone();
+                    // @C63 — a `fn` is defined at file scope only; one inside a body or block is
+                    // refused.
                     self.lexer.specific(
                         &at,
                         Level::Error,
@@ -19517,7 +19519,7 @@ impl Parser {
                 }
             }
             // @PLN85 D-own-2 — prune a STALE visible-param return dep that no pass-2
-            // return source justifies.  `r = x` on a struct is a C86 COPY (`r` owns
+            // return source justifies.  `r = x` on a struct is a @C86 COPY (`r` owns
             // its store), but the copy dep-strip is pass-2-only, so PASS 1 records the
             // source param `x` in the return dep and PASS 2 carries it via
             // `cur.clone()` above — into a pass where `r` is owned and `x` is NOT in

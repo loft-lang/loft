@@ -20,6 +20,9 @@
 //! settled: `limit(-100, 100) size(1)` leaves 55 codes and none of them is a null, because a
 //! value that does not fit takes the type's DEFAULT before it reaches a slot.  The
 //! `*_SPARE` kinds below are that retired encoding.
+//!
+//! @C83 — a narrow value keeps its declared width at rest; storage is never widened for the
+//! implementation's convenience.
 
 /// The kinds as the interpreter's op operand spells them — `NarrowIntKind::code`.
 pub const BYTE: u8 = 0;

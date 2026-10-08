@@ -30,7 +30,7 @@
 //! - a LOCAL whose every assignment in the function body is non-sentinel and
 //!   which is never handed to a call as a bare argument (fixpoint below).
 //!
-//! NOT trusted, on purpose: parameters and record/element reads (the C80
+//! NOT trusted, on purpose: parameters and record/element reads (the @C80
 //! escape means a non-null TYPE can still hold the sentinel), and — the float
 //! twist — ARITHMETIC.  `+`/`-`/`*` over non-NaN operands can produce NaN
 //! through the infinities (`inf - inf`, `inf * 0`), so unlike the integer
@@ -108,8 +108,9 @@ pub fn non_sentinel(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
                 matches!(args[1].unspan(), Value::Int(k) if (1..64).contains(k))
                     && non_sentinel(data, vars, &args[0])
             }
+            // @C120 — the non-null proof does not close over `+`, `-`, `*`.
             // NOT closed, deliberately: `+`/`-`/`*` mint the sentinel on
-            // overflow (C85's decided edge — the REWRITE to `_nn` keeps that
+            // overflow (@C85's decided edge — the REWRITE to `_nn` keeps that
             // via checked_*, but the RESULT cannot be trusted onward), `^`
             // and `|` can compose it bitwise, `/`/`%` mint it on zero.
             _ => callee_returns_non_sentinel(data, *d_nr),
@@ -208,12 +209,12 @@ fn non_negative_literal(v: &Value) -> bool {
 ///
 /// NO self-step induction, deliberately.  An earlier cut admitted
 /// `v = v ± <proven>` (the counted-for counter's shape) on the argument
-/// that overflow-minting-MIN is C85's decided edge — and the corpus
+/// that overflow-minting-MIN is @C85's decided edge — and the corpus
 /// falsified it: `1246-a-nullable-narrow-slot-answers-null.loft` pins that
 /// a plain integer driven past `i64::MAX` reads as null AND that `??`
 /// FIRES on it, so the overflow sentinel is an observable value contract,
 /// not an ignorable edge.  A var that can step itself can overflow itself;
-/// it proves nothing here, whatever C85 says about its static TYPE.
+/// it proves nothing here, whatever @C85 says about its static TYPE.
 ///
 /// Pessimistic start, re-walk to fixpoint: each round re-evaluates every
 /// `Set` against the current map, so facts only turn true as their inputs

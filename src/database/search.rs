@@ -604,6 +604,8 @@ impl Stores {
     /// key said.  A value that may live inside the collection (`s[5] = s[30]`) is snapshotted
     /// first: the removal and the insert below move and grow that storage.  An empty `sub`
     /// keeps the value's own key.
+    ///
+    /// @C68 — `c[k] = v` replaces the record under `k`: a keyed collection never holds two.
     pub fn set_keyed(
         &mut self,
         coll: &DbRef,
@@ -857,6 +859,8 @@ impl Stores {
     /// collection (read-back nulls / `Unknown record`).  This is the
     /// `other_indexes` analogue of the @P305 `keyed_field_is_linked` update-only
     /// path already used by `OpSetKeyed`.
+    ///
+    /// @C68 — a keyed `+=` displaces the record already filed under its key.
     pub(crate) fn dedup_keyed(
         &mut self,
         data: &DbRef,

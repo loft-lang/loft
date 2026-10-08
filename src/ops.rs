@@ -85,7 +85,7 @@ pub fn note_integer_overflow(op: &str, v1: i64, v2: i64) {
 // crate deps cleanly; safe to remove from src/Cargo.toml once the
 // `random` feature flag is also retired.
 
-/// C80 / E-Uncomp (formal/operational.md) — arithmetic overflow is
+/// @C80 / E-Uncomp (formal/operational.md) — arithmetic overflow is
 /// uncomputable, so the result is the integer null sentinel (`i64::MIN`) and
 /// execution CONTINUES.  It does NOT trap.  This reverses C54.G ("overflow
 /// traps, NOT a silent null"): under the spreadsheet model a value that can't
@@ -353,6 +353,7 @@ pub fn op_mul_long(v1: i64, v2: i64) -> i64 {
     }
 }
 
+/// @C94 — integer `/` truncates toward zero.
 #[inline]
 #[must_use]
 pub fn op_div_long(v1: i64, v2: i64) -> i64 {
@@ -363,6 +364,7 @@ pub fn op_div_long(v1: i64, v2: i64) -> i64 {
     }
 }
 
+/// @C94 — integer `%` takes the dividend's sign; `floor_mod` is the wrap-around helper.
 #[inline]
 #[must_use]
 pub fn op_rem_long(v1: i64, v2: i64) -> i64 {
@@ -543,13 +545,13 @@ pub fn op_exclusive_or_long(v1: i64, v2: i64) -> i64 {
 #[must_use]
 pub fn op_shift_left_long(v1: i64, v2: i64) -> i64 {
     if v1 != i64::MIN && v2 != i64::MIN {
-        // An out-of-range shift amount is C85-null (not an internal invariant violation), so
+        // An out-of-range shift amount is @C85-null (not an internal invariant violation), so
         // return the sentinel — debug and release then AGREE (release used to wrap by coincidence).
         if !(0..64).contains(&v2) {
             return i64::MIN;
         }
         // A left shift LEGITIMATELY produces i64::MIN (e.g. `1 << 63`), which IS the null sentinel
-        // — loft treats it as null (C85), exactly what pln102-const-out-of-range expects. So do NOT
+        // — loft treats it as null (@C85), exactly what pln102-const-out-of-range expects. So do NOT
         // wrap in `sentinel_long!`: its `debug_assert!(r != i64::MIN)` is a false positive here
         // (fires under `-C debug-assertions=on` — the nightly Debug-assertions gate red). The bare
         // shift is identical in release (the assert compiles out); this only drops the bad assert.
@@ -563,7 +565,7 @@ pub fn op_shift_left_long(v1: i64, v2: i64) -> i64 {
 #[must_use]
 pub fn op_shift_right_long(v1: i64, v2: i64) -> i64 {
     if v1 != i64::MIN && v2 != i64::MIN {
-        // Out-of-range shift amount → C85-null (same as `<<`); a bare `v1 >> v2` would panic
+        // Out-of-range shift amount → @C85-null (same as `<<`); a bare `v1 >> v2` would panic
         // in debug and wrap in release on an out-of-range amount.
         if !(0..64).contains(&v2) {
             return i64::MIN;
@@ -1188,7 +1190,7 @@ mod test {
         assert_eq!(op_add_int(i64::MIN, 5), i64::MIN);
     }
 
-    // C80 / E-Uncomp (formal/operational.md): integer `+`/`-`/`*` overflow is
+    // @C80 / E-Uncomp (formal/operational.md): integer `+`/`-`/`*` overflow is
     // uncomputable — the result is the null sentinel (i64::MIN) and execution
     // CONTINUES; it does NOT panic.  This reverses the old C54.G "overflow traps,
     // NOT a silent null" contract (these tests formerly asserted `should_panic`).
@@ -1215,7 +1217,7 @@ mod test {
     }
 
     // Bitwise ops keep `sentinel_long!` (a debug-only collision assert), untouched
-    // by C80 — they cannot overflow, only land on the sentinel.
+    // by @C80 — they cannot overflow, only land on the sentinel.
     #[test]
     #[cfg(debug_assertions)]
     #[should_panic(expected = "long null-sentinel collision")]

@@ -130,7 +130,7 @@ fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 
     // author did: before C127 the first answered null and the second `0`, so widening a range
     // for an unrelated reason flipped an overflow from detectable to silent.
     //
-    // Two families keep C85's in-band sentinel:
+    // Two families keep @C85's in-band sentinel:
     //
     //   * a NULLABLE slot, which has a null by declaration;
     //   * the plain `integer` and `i32` TEMPLATES, whose reserved code lies OUTSIDE the range
@@ -533,8 +533,8 @@ pub(crate) fn substitute_value(into: &mut Value, from: &Value, to: &Value) {
     }
 }
 
-/// @PLN85 D-own-1 / C86 — the whole-value VECTOR bind verdict (see
-/// `classify_vec_bind`).  DESIGN_DECISIONS C86: a whole-value heap bind
+/// @PLN85 D-own-1 / @C86 — the whole-value VECTOR bind verdict (see
+/// `classify_vec_bind`).  @C86: a whole-value heap bind
 /// COPIES by contract; aliasing exists only as the post-parse last-use
 /// ELISION (`use_analysis::elision_plans` → `scopes::elide_borrows` —
 /// the rustc rule, as an optimization).  Projections stay views (#426).
@@ -547,7 +547,7 @@ enum VecBind {
     /// exited, P292, and left `b` slot-less on first assignment, P394).
     CopyVar,
     /// `af = bx.v` where the base struct OWNS its store (empty deps) —
-    /// the #415 whole-value field bind copies like `b = a` (C86).  A
+    /// the #415 whole-value field bind copies like `b = a` (@C86).  A
     /// BORROWED base (non-empty deps) never reaches this verdict: its
     /// field read stays a view so an in-place write-through
     /// (`cells = sc.v; cells[i] = h`) reaches the source (@PLN25 p379).
@@ -1975,7 +1975,7 @@ use a separate collection or add after the loop"
     /// Decides @FR-B-Copy vs @FR-B-View / @FR-B-View-Base for a whole-value vector bind:
     /// off an OWNED base a collection projection copies, off a BORROWED one it views.
     ///
-    /// The pure selector for the C86 whole-value vector bind at `parse_assign_op`'s copy
+    /// The pure selector for the @C86 whole-value vector bind at `parse_assign_op`'s copy
     /// branch — the rule rationale lives on the `VecBind` variants, and the branch applies
     /// mechanics only.  Runs on BOTH passes: `change_var` re-types per pass, and emission
     /// is pass-2, so a pass-1 answer that differs is a re-type, not a disagreement.
@@ -2040,7 +2040,7 @@ use a separate collection or add after the loop"
         // where the shape now lives so a sixth reader does not re-spell it.
         // loft#1686 — a top-level VECTOR constant's use site answers `OpConstRef(k)`, a
         // view of the write-locked constant store, and bound to a local it is a whole-value
-        // read exactly like a bare variable: the bind COPIES (C86, `@FR-B-Copy`).  Left an
+        // read exactly like a bare variable: the bind COPIES (@C86, `@FR-B-Copy`).  Left an
         // alias, the first write through the local reached the lock — "Write to read-only
         // store … locked by: Store::lock" on both backends, in every spelling (`v = NAMES`,
         // a `??` or `if` arm, a typed local, a parameter the callee appends to).  The view a
@@ -3830,7 +3830,7 @@ use a separate collection or add after the loop"
                 Some(f_type.base().clone())
             }
             // The same for a VECTOR element place and for a field reached through one: the `?`
-            // an untrusted index puts on the READ (`@FR-N-Domain`, C80 — an overrun reads null)
+            // an untrusted index puts on the READ (`@FR-N-Domain`, @C80 — an overrun reads null)
             // says nothing about the SLOT, whose type is what the collection or the record
             // declares.  Carried into the place it made the target `τ?`, so `@FR-N-Store` was
             // never asked: `v[i] = x as integer?` stored the null with no warning, and a narrow
@@ -7116,11 +7116,11 @@ use a separate collection or add after the loop"
         // on the second), so the __vdb_N dep is created consistently, exactly as
         // the materialise path at lines ~995 does.  Element type is read from the
         // RHS (s_type) so an untyped `b = a` (f_type Unknown) is covered too.
-        // @PLN85 D-own-1 / C86 — classify ONCE (the pure selector), then apply
+        // @PLN85 D-own-1 / @C86 — classify ONCE (the pure selector), then apply
         // the one mechanism per verdict.  Rule rationale lives on the `VecBind`
-        // variants (the C86 whole-value-copy contract, the p379 borrowed-base
+        // variants (the @C86 whole-value-copy contract, the p379 borrowed-base
         // view, the #426 routed-forward exclusions).
-        // A `& vector` bind opts into aliasing (B-Ref-Write): SKIP the C86 deep-copy so
+        // A `& vector` bind opts into aliasing (B-Ref-Write): SKIP the @C86 deep-copy so
         // the plain-assign path shares the source's DbRef and marks `d` non-owning (its
         // dep names the source).  Plain `d = v` (no `&`) still classifies + copies.
         // `@FR-B-Copy` / `@FR-O-Complete` — a vector local bound from a VALUE BRANCH
@@ -8081,7 +8081,7 @@ use a separate collection or add after the loop"
     /// or method `t_*`) — i.e. a potentially side-effecting / non-idempotent
     /// sub-expression?  Builtin `Op*` accessors/arithmetic are pure given stable
     /// args and may be re-evaluated freely; a place addressing sub-expression that
-    /// reaches a user call must be bound once (compound-assign place-once, C92).
+    /// reaches a user call must be bound once (compound-assign place-once, @C92).
     ///
     /// A WRITE is non-idempotent too, call or no call: `w[{c += 1; c}] -= 1` holds no user
     /// call, and without this arm the block ran for the read and again for the write — the
@@ -8150,6 +8150,8 @@ use a separate collection or add after the loop"
     /// when it decides whether an `ident :` opens a named argument.  A named
     /// argument is the other `ident :` that is not a binding, and it never
     /// reaches here: the argument-list parser consumes the name first.
+    ///
+    /// @C112 — a binding position mints a local whatever else carries that name.
     pub(crate) fn at_binding_name(&self) -> bool {
         (self.lexer.peek_token("=") && !self.lexer.peek_token("=="))
             || (self.lexer.peek_token(":")
@@ -9017,6 +9019,7 @@ use a separate collection or add after the loop"
                         rhs_elems.len()
                     );
                 }
+                // @C64 @C65 — a destructured tuple member binds exactly as its own type binds.
                 // `@FR-B-Copy` / `@FR-B-View-Base` — a COLLECTION member read off an OWNED
                 // tuple local COPIES (`a = t.0` is `af = bx.v`, one level off an owned base), a
                 // struct member VIEWS (`@FR-B-View`), and off a BORROWED base — a parameter, a
@@ -9638,7 +9641,7 @@ use a separate collection or add after the loop"
                     }
                     *code = to.clone();
                 }
-                // @PLN102 F2 (C92) — a compound assign evaluates its place ONCE.
+                // @PLN102 F2 (@C92) — a compound assign evaluates its place ONCE.
                 // When the place reads a heap scalar slot through a NON-idempotent
                 // accessor (`w[idx()]`, `m[i()][j()]`, `getvec()[0]` — the index or
                 // base calls a fn/method), bind that accessor's DbRef to a `_place`
@@ -9676,7 +9679,7 @@ use a separate collection or add after the loop"
                     // Hoist the ELEMENT reference and rebuild the field access on it,
                     // preserving `offset`.  Without this the accessor — and its call — was
                     // emitted twice, so a divergent index silently read from one element and
-                    // wrote another (the exact C92 corruption).  The element is a
+                    // wrote another (the exact @C92 corruption).  The element is a
                     // `Reference(struct)`; strip the dynamic-index `?` (OOB safety on the
                     // read, not the slot type) via `base()`.
                     //

@@ -729,7 +729,7 @@ thread_local! {
     ///
     /// It changes what a fault MEANS. An ordinary loft call that overflows the
     /// stack is a program bug and halting is right; the same overflow inside a
-    /// FETCH is not, because @PLN129's contract is C80 — a failed fetch reports
+    /// FETCH is not, because @PLN129's contract is @C80 — a failed fetch reports
     /// through `store_lazy_error` and the lookup answers null. So a buggy driver
     /// must not turn a lookup into a program halt, which is what moving the
     /// source from Rust to loft would otherwise have cost.
@@ -3634,7 +3634,7 @@ pub fn t_9JsonValue_as_bool(cell: &std::cell::UnsafeCell<Stores>, v: DbRef) -> u
         let value_pos = u32::from(stores.position(bool_tp, "value")) + v.pos;
         u8::from(stores.store(&v).get_byte(v.rec, value_pos, 0) != 0)
     } else {
-        // The tri-state null (C73 / @PLN17), which the `boolean?` return renders as `u8`.
+        // The tri-state null (@C73 / @PLN17), which the `boolean?` return renders as `u8`.
         255
     }
 }

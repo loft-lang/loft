@@ -171,10 +171,12 @@ Holds at `Parser::refuse_capturing_closure_in_collection`.
 
 ## C121 — a copy of a droppable takes its own lease or is refused; the release no longer moves with a copy
 
-**Decision.** A copy of a type with `OpDrop` and no `OpCopy` is refused on the line writing it (`x =
-a`, `S { h: a }`, `return s.h`, `return p`); `OpCopy` makes a second lease.  Only written positions
-move: a fresh value placed where made, a `return` of what the function owns, a block yielding its
-own variable.  **Why.** A release moving with a copy leaves a structure without its resource or
+**Decision.** A copy of a type with `OpDrop` and no `OpCopy` is refused on the line writing it when
+the function does not own what it copies — a parameter, a container's member, a loop or `match`
+binding, a capture, a spent name (`x = p`, `S { h: s.h }`, `return s.h`, `return p`); `OpCopy` makes
+a second lease.  What the function owns MOVES on the line that writes it — a fresh value placed
+where made, an owned local bound or placed whole, a `return` of what it owns, a block yielding its
+own variable — and the name it left is spent (`(H-Spent)`).  **Why.** A release moving with a copy leaves a structure without its resource or
 releases twice; inferring moves from later use lets a later line redefine an earlier one.
 
 **Revisit when.** A consumer needs a droppable OUT of a container it keeps using — that wants a
