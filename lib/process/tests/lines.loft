@@ -69,7 +69,7 @@ fn test_a_loop_left_early_then_stop_leaves_nothing_behind() {
   r = l.stop();
   assert(r.code == 128 + 15 || r.code == 128 + 9, "stop: code {r.code}");
   gone = false;
-  for i in 0..40 { if !alive.run().ok { gone = true; break; } pause(50); }
+  for _ in 0..40 { if !alive.run().ok { gone = true; break; } pause(50); }
   assert(gone, "pid {pid} outlived stop()");
 }
 
@@ -83,7 +83,7 @@ fn test_a_refused_command_yields_nothing() {
   c: Command = "printf {o}";
   l = c.lines();
   n = 0;
-  for line in l { n += 1; }
+  for _ in l { n += 1; }
   r = l.done();
   assert(n == 0 && !r.ok && r.code == -1 && r.stderr.contains("flag("), "refused: {n} {r.code} {r.stderr}");
 }

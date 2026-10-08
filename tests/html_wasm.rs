@@ -779,13 +779,15 @@ const LIB_PKGS_WASM_SKIP: &[&str] = &[
 
 /// Individual `<pkg>/<file>.loft` lib tests skipped for the WASM gate.
 const LIB_TESTS_WASM_SKIP: &[&str] = &[
-    // process/run and process/start: `run` spawns a child (`sh`, `cat`) and drains its
-    // pipes, `start` keeps one running beside the program.  A browser page has no processes,
-    // and WASI preview 2 defines no process API, so the limit is the platform's and has no
-    // end condition.  `process/command.loft` — building a command, the typed format string —
-    // still runs here; `run` and `start` run on the interpreter and `--native` gates.
+    // process/run, process/start and process/lines: `run` spawns a child (`sh`, `cat`) and
+    // drains its pipes, `start` keeps one running beside the program, `lines` reads one as it
+    // talks.  A browser page has no processes, and WASI preview 2 defines no process API, so
+    // the limit is the platform's and has no end condition.  `process/command.loft` —
+    // building a command, the typed format string — still runs here; the other three run on
+    // the interpreter and `--native` gates.
     "process/run.loft",
     "process/start.loft",
+    "process/lines.loft",
 ];
 
 /// Packages skipped ONLY on the node (browser, `wasm32-unknown-unknown`) path.
