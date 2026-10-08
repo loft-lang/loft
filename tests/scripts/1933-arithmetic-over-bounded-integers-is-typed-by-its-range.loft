@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1933, `@FR-N-Arith` / `@FR-C-Int` — `a op b` over bounded integers, `op ∈ {+, -, *}`, is
+// typed by the interval arithmetic of the operand ranges, so it is stored without a cast into
+// any slot that holds the whole range.  `u8 + u8` was typed the full `integer`, and
+// `z: u16 = x + y` was refused (so was `(x + y) as u16`); `%` and `&` already narrowed.
+//
+// Axes it MOVES: the operator (`+`, `-`, `*`), the operand types (u8, i8, u16, a `limit`, a
+// constant), the destination (a declared local, a parameter, a field, a return) and the values
+// at the range's edges.  The refusals the range must keep — a range that does NOT fit — are
+// `a4` / `a8` of the walk's matrix and stay compile errors.  Values hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct S1933 { z: u16 }
+
+fn half1933(n: u16) -> u16 { n / 2 ?? 0 }
+fn sum1933(x: u8, y: u8) -> u16 { x + y }
+
+fn test_each_operator_into_the_range_it_needs() {
+  x: u8 = 250;
+  y: u8 = 251;
+  a: u16 = x + y;
+  b: u16 = x * y;
+  i: i8 = -100;
+  j: i8 = 100;
+  c: i16 = i * j;
+  k: u8 = 3;
+  d: i16 = k - x;
+  assert(a == 501 && b == 62750 && c == -10000 && d == -247, "{a} {b} {c} {d}");
+}
+
+fn test_a_limit_and_a_constant_operand() {
+  w: integer limit(1000, 1100) = 1100;
+  v: u8 = 255;
+  e: u16 = w + v;
+  f: u16 = v + 1;
+  p: u16 = 65000;
+  q: u16 = 65000;
+  g: u32 = p * q;
+  assert(e == 1355 && f == 256 && g == 4225000000, "{e} {f} {g}");
+}
+
+fn test_every_destination_takes_it() {
+  x: u8 = 200;
+  y: u8 = 100;
+  s = S1933 { z: x + y };
+  assert(s.z == 300 && half1933(x + y) == 150 && sum1933(x, y) == 300, "{s.z}");
+}
+
+// The arms of an `if` or a `match` JOIN to the union of their ranges, so an arithmetic arm
+// does not hold its siblings to its own range, and a constant arm is the one value it is.
+fn test_arms_join_their_ranges() {
+  a: u8 = 200;
+  b: u8 = 100;
+  c = a > b;
+  w = if c { a + b } else { -1 };
+  m = match a { 200 => a * 2, _ => -5 };
+  y: u16 = if c { a + b } else { 7 };
+  assert(w == 300 && m == 400 && y == 300, "{w} {m} {y}");
+}
+
+fn main() {
+  test_arms_join_their_ranges();
+  test_each_operator_into_the_range_it_needs();
+  test_a_limit_and_a_constant_operand();
+  test_every_destination_takes_it();
+}

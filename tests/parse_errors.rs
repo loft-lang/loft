@@ -5441,7 +5441,7 @@ fn a_field_default_that_does_not_fit_is_refused() {
 #[test]
 fn an_arm_that_does_not_fit_is_refused() {
     code!("fn test() {\n  c = len(\"ab\") > 1;\n  x: u8 = if c { 256 } else { 3 };\n  println(\"{x}\");\n}")
-        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at an_arm_that_does_not_fit_is_refused:3:35");
+        .error("cannot implicitly narrow integer limit(3, 256) to u8 (may lose data) — give it a fallback with `?? <value>`, or make the destination `u8?` so a value that does not fit reads null, or make the value provably fit with a mask (`& 255`) at an_arm_that_does_not_fit_is_refused:3:35");
 }
 
 // `@FR-I-Sub` — a range flows implicitly only into one that CONTAINS it, and a same-width sign

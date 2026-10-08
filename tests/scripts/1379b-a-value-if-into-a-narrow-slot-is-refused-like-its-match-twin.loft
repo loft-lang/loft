@@ -38,7 +38,7 @@ fn test_a_local() {
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(5, 300) to u8
 fn test_a_literal_arm() {
   t = true;
   c: u8 = if t { 300 } else { 5 };
