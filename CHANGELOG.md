@@ -81,6 +81,11 @@ it used to stop the program at the write.  Copy what you change (`w = m`, a bind
 declare a parameter that only reads it `const`.  A function of yours can say the same of its
 result: `fn view(…) -> const vector<u8>`.
 
+**A concatenation with a null operand is null, whatever the operand's type.**  `"ready: " + flag`
+with a null `flag` used to read `"ready: null"`; it is now `null`, as `"a" + t` with a null text
+already was, and `t += x` with a null `x` makes `t` null.  Interpolation still prints the word:
+write `"ready: {flag}"` when you want the text either way.
+
 ### New
 
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`

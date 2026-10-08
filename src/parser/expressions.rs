@@ -6358,7 +6358,7 @@ use a separate collection or add after the loop"
         // side that is not text leaves the place a text (loft#1827).
         let text_appends_rendering = op != "="
             && matches!(place_tp.base(), Type::Text(_))
-            && !matches!(s_type.base(), Type::Text(_) | Type::Character);
+            && Self::appends_rendering(&s_type);
         if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
         }
@@ -9617,9 +9617,12 @@ use a separate collection or add after the loop"
         f_type
     }
 
-    /// Does `t += x` append the RENDERING of `x` rather than `x` itself — is `x` neither a
-    /// text nor a character?  `(E-Asgn-Compound)` makes `t += x` the `t + x` it abbreviates,
-    /// and `t + x` renders any formattable `x` the way `"{x}"` does (loft#1827).
+    /// Does `t += x` append an OPERAND that is not a text — the concatenation's other
+    /// operand kinds?  `(E-Asgn-Compound)` makes `t += x` the `t + x` it abbreviates, and
+    /// `t + x` renders any formattable `x` the way `"{x}"` does (loft#1827) — except that a
+    /// NULL operand makes it null (`@FR-E-NullArg`, loft#1945).  A character is one of those
+    /// operands: a `character?` reached the text append as a code point, and was refused as
+    /// a retype of the text.
     pub(crate) fn appends_rendering(rhs: &Type) -> bool {
         let rhs = match rhs.base() {
             Type::RefVar(inner) => inner.as_ref(),
@@ -9627,7 +9630,7 @@ use a separate collection or add after the loop"
         };
         !matches!(
             rhs.base(),
-            Type::Text(_) | Type::Character | Type::Unknown(_) | Type::Null | Type::Never
+            Type::Text(_) | Type::Unknown(_) | Type::Null | Type::Never
         )
     }
 
@@ -9641,7 +9644,8 @@ use a separate collection or add after the loop"
             _ => tp.clone(),
         };
         let mut ls = Vec::new();
-        self.append_data(tp, &mut ls, var_nr, u16::MAX, value, super::OUTPUT_DEFAULT);
+        // The concatenation's one operand home: a null operand makes the text null.
+        self.append_concat_operand(&mut ls, var_nr, value, &tp);
         // An absent text stays absent, as `t + x` answers null for it and `t += "x"` leaves
         // it: rendering into the sentinel would make a text of the sentinel and the value.
         let dest_tp = self.vars.tp(var_nr);

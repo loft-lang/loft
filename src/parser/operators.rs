@@ -2052,7 +2052,9 @@ impl Parser {
                         current_type.base().clone()
                     };
                     if matches!(effective_type, Type::Text(_) | Type::Character) {
-                        if current_type == Type::Character {
+                        // Peeled: a `character?` left operand is a character too (loft#1945) —
+                        // unpeeled it took the text path and appended a code point as a text.
+                        if effective_type == Type::Character {
                             // a Character variable cannot serve as an OpAppendText
                             // destination.  Prepend it to the parts list and use an empty
                             // text literal as the first operand so parse_append_text
