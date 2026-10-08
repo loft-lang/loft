@@ -10,6 +10,13 @@
 // prefill, not by a zero in the group) and r5 (the record is handed to a native append).
 // `--native` only; the interpreter takes the per-pass store and is the oracle.  Every value is
 // hand-computed.
+//
+// @falsified-at: hand-measured (sabotage, 2026-10-08) — with the kept record's vector empties
+//   not emitted, every value still holds and r6's live-record count grows on --native-release
+//   (the literal's zero strands each kept vector in the store).  Restored, every cell holds on
+//   --interpret, --native and --native-release, under `LOFT_NO_LOOP_RECORD_REFILL=1` and
+//   `LOFT_NO_LOOP_RECORD=1`, and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
+//   and LOFT_NATIVE_LEAK_CHECK=1.
 struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
 
 fn fm_sum(f: const Fm) -> integer {
@@ -22,6 +29,15 @@ fn fm_sum(f: const Fm) -> integer {
 fn fm_len(f: const Fm) -> integer { len(f.lens) * 100 + len(f.turns) }
 
 fn fm_push(f: Fm, x: integer) { f.lens += [x]; }
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
 
 fn main() {
   // r1 — the kept vectors grow and shrink: pass i pushes (i * 5) % 7 more elements.
@@ -57,5 +73,18 @@ fn main() {
   r5 = 0;
   for k in keep { r5 += fm_sum(k) + fm_len(k); }
   assert(r5 == 20160, "r5: {r5}");
+  // r6 — the store holds what one pass needs: the live-record count at pass 9 and at pass 39
+  // agree (a kept vector left behind by its literal's zero would add two records a pass).
+  r6 = 0;
+  rec9 = -1;
+  rec39 = -2;
+  for k in 0..40 {
+    ef = Fm { h0: k, lens: [k, k + 1], turns: [3] };
+    r6 += fm_sum(ef);
+    if k == 9 { rec9 = live_records(); }
+    if k == 39 { rec39 = live_records(); }
+  }
+  assert(r6 == 796120, "r6: {r6}");
+  assert(rec9 > 0 && rec9 == rec39, "r6 records: {rec9} then {rec39}");
   println("refill ok");
 }
