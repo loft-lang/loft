@@ -22432,7 +22432,7 @@ impl<'a> ViewWalk<'a> {
             }
             // loft#1880 — a SELF call handed views of `xs` in their own positions answers what
             // this body answers, by the induction this walk is.
-            if self.self_call_views(rhs, seen) {
+            if self.self_call_views(rhs, seen) || self.forwarded_call_views(rhs, seen) {
                 any = true;
                 continue;
             }
@@ -22447,6 +22447,33 @@ impl<'a> ViewWalk<'a> {
             any = true;
         }
         any
+    }
+
+    /// A call to ANOTHER function whose return borrows its arguments hands back a view of
+    /// what it was handed (`@FR-F-Ret`'s borrow, read off the callee's return deps): it views
+    /// `xs` when every argument position the return borrows is handed a view of `xs`.  A
+    /// callee with no return dep owns what it returns, and a hidden dep is its own buffer —
+    /// neither views anything here, which is the answer the walk gave every call before.
+    /// loft#1934 found it: `fn via<T: P>(x: T) -> T { x.pick() }` over `pick(self) -> S {
+    /// self }` read as owned, so the caller adopted its own argument's record.
+    fn forwarded_call_views(&self, rhs: &Value, seen: &[u16]) -> bool {
+        let Value::Call(d, args) = rhs.unspan() else {
+            return false;
+        };
+        if *d == self.self_d || *d as usize >= self.data.definitions() as usize {
+            return false;
+        }
+        let callee = self.data.def(*d);
+        let borrowed = callee.returned.depend();
+        !borrowed.is_empty()
+            && borrowed.iter().all(|&i| {
+                callee.attributes.get(i as usize).is_some_and(|a| !a.hidden)
+                    && match args.get(i as usize).map(Value::unspan) {
+                        Some(Value::Var(y)) => self.local_views(*y, &mut seen.to_vec()),
+                        Some(arg) => self.leaf_views(arg),
+                        None => false,
+                    }
+            })
     }
 
     fn self_call_views(&self, rhs: &Value, seen: &[u16]) -> bool {
@@ -22470,7 +22497,7 @@ impl<'a> ViewWalk<'a> {
         if let Value::Var(y) = leaf.unspan() {
             return self.local_views(*y, &mut Vec::new());
         }
-        if self.self_call_views(leaf, &[]) {
+        if self.self_call_views(leaf, &[]) || self.forwarded_call_views(leaf, &[]) {
             return true;
         }
         match crate::use_analysis::projection_container_var(self.data, leaf) {
