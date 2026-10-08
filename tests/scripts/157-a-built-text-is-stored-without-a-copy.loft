@@ -3,7 +3,13 @@
 // local, or a block that answers one (a format string or a decoded text, built into a work
 // string outside any store) is read where it lies.  A field read still copies (t3, t4).
 //
-// @falsified-at: pending
+// @falsified-at: hand-measured (sabotage, 2026-10-08) — with every text value taken as
+//   unborrowed, t3 exits 1 on --native and --native-release: a copy whose claim grows the store
+//   reads its field-read source from the block the growth left.  A first t3 grew the store only
+//   between copies and stayed green under the plant; it now copies into eleven records a
+//   round.  Restored, every cell holds on --interpret, --native and --native-release, under
+//   `LOFT_NO_TEXT_SET_BORROW=1` and under LOFT_STRICT_STORES=1, LOFT_POISON=1 and
+//   LOFT_POISON_CLAIM=1.
 
 struct T { name: text, k: integer }
 
@@ -28,19 +34,24 @@ fn main() {
   assert(t2 == "hi!:3", "t2: {t2}");
 
   // t3 — a plain field read of the SAME store, written while that store grows: the copy stays.
-  // Each round grows w[0] by 300 characters and copies it into w[1]: 2000 + 6 * 300 = 3800.
+  // Each round grows w[0] by 1000 characters and copies it into the eleven others, so most
+  // claims are these copies and the store's growth lands on one of them: every text ends at
+  // 2000 + 40 * 1000 = 42000 characters.
   long = "";
-  for i in 0..200 { long += "abcdefghij"; }
-  w: vector<T> = [T { name: long, k: 1 }, T { name: "short", k: 2 }];
+  for _ in 0..200 { long += "abcdefghij"; }
+  w: vector<T> = [];
+  for k in 0..12 { w += [T { name: long, k: k }]; }
   pad = "";
-  for i in 0..30 { pad += "0123456789"; }
-  for j in 0..6 {
+  for _ in 0..100 { pad += "0123456789"; }
+  for _ in 0..40 {
     w[0].name += pad;
-    w[1].name = w[0].name;
+    for k in 1..12 { w[k].name = w[0].name; }
   }
-  t3 = len(w[0].name) * 10000 + len(w[1].name);
-  assert(t3 == 38003800, "t3: {t3}");
-  assert(w[1].name.starts_with("abcdefghij") && w[1].name.ends_with("789"), "t3 text");
+  t3 = 0;
+  for t in w {
+    if len(t.name) == 42000 && t.name.starts_with("abcdefghij") && t.name.ends_with("789") { t3 += 1; }
+  }
+  assert(t3 == 12, "t3: {t3} of 12 texts intact");
 
   // t4 — a record's text field replaced by a format of itself.
   r = T { name: "a", k: 0 };
