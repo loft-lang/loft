@@ -1,0 +1,4 @@
+// loft#1934 shape — a GENERIC instance returning an element of its argument.  Dense half.
+struct S { a: integer }
+fn pick<T>(v: vector<T>, i: integer) -> T { v[i] }
+fn main() { q: vector<S> = [S { a: 7 }, S { a: 8 }]; t = pick(q, 1); t.a = 99; println("{t.a} {q[1].a}"); }

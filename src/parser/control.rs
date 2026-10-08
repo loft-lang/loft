@@ -16504,8 +16504,12 @@ impl Parser {
         // is: `OpCopyRecord` of the whole branch filled `w` on the null path too, so
         // `{ r = S {…}; if ok { r } else { null } }` answered a default record where it
         // held none (@FR-F-Block, @FR-N-Join: the branch is `S?`, loft#1722).  Only one arm runs, so
-        // every copying arm shares the one `w`, as `materialize_view_arms`' do.
-        if self.arms_yield_null(tail) {
+        // every copying arm shares the one `w`, as `materialize_view_arms`' do.  So is a
+        // branch with an arm that is a NULLABLE local (`match w { Pn { p } => p, _ => … }`
+        // with `p: Pt?`): the whole copy filled `w` where `p` held nothing, so a `-> Pt?`
+        // answered a record for an absent field once it took the buffer (loft#1934); per
+        // arm, that leaf takes the present-only copy below.
+        if self.arms_yield_null(tail) || self.branch_has_nullable_leaf(tail) {
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
                 Value::If(_, t, f) => {
@@ -16666,6 +16670,31 @@ impl Parser {
             Value::Insert(ops) => ops.last().map_or(0, |x| self.tail_nonnull_arm_count(x)),
             Value::If(_, t, f) => self.tail_nonnull_arm_count(t) + self.tail_nonnull_arm_count(f),
             _ => 1,
+        }
+    }
+
+    /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that
+    /// may hold nothing at run time though it is no `null` literal?  A bare local is not asked
+    /// (its own copy guards it); the arms of an `if` / `match` are, through their block and
+    /// insert tails.
+    fn branch_has_nullable_leaf(&self, v: &Value) -> bool {
+        fn leaf(p: &Parser, v: &Value) -> bool {
+            match v.unspan() {
+                Value::Var(x) => matches!(p.vars.tp(*x), Type::Optional(_)),
+                Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(p, x)),
+                Value::Insert(ops) => ops.last().is_some_and(|x| leaf(p, x)),
+                Value::If(_, t, f) => leaf(p, t) || leaf(p, f),
+                _ => false,
+            }
+        }
+        // A BLOCK ending in one is asked too — a `match` arm is `{ _mv_p = …; _mv_p }`, and
+        // its local is assigned INSIDE the block, so only a copy of the block's own tail can
+        // test it (a guard around the whole block would read it before the assignment).
+        match v.unspan() {
+            Value::If(_, t, f) => leaf(self, t) || leaf(self, f),
+            Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(self, x)),
+            Value::Insert(ops) => ops.last().is_some_and(|x| leaf(self, x)),
+            _ => false,
         }
     }
 
@@ -17401,7 +17430,13 @@ impl Parser {
             // through `ref_return`'s copy leg, so only the buffer-less return (`-> S?`, a
             // nullable record has no buffer) asks here, and it materialises per arm
             // (loft#1337, @FR-F-Ret).
-            Value::If(_, t, f) if self.return_buffer().is_none() => {
+            // …and a NULLABLE return with a buffer (loft#1934): that copy leg does not peel
+            // the `?` — copying a `null` arm into the buffer would answer a record — so its
+            // arms are asked here as well and materialised per arm, a null arm left null.
+            Value::If(_, t, f)
+                if self.return_buffer().is_none()
+                    || matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+            {
                 self.return_projects_into_local(t) || self.return_projects_into_local(f)
             }
             // A TUPLE element read is a projection like the two op calls below, spelled as
@@ -19238,6 +19273,19 @@ impl Parser {
                                     {
                                         let elm = (**elm).clone();
                                         self.materialize_vector_arms_into(&elm, tail, buf_var);
+                                    } else if let Type::Reference(td, _) | Type::Enum(td, true, _) =
+                                        inner.base()
+                                        && inner.takes_ret_buffer()
+                                    {
+                                        // loft#1934 — a nullable RECORD takes the buffer as its
+                                        // dense twin does, so it is delivered as the twin is:
+                                        // `materialize_return_into` copies per arm where a
+                                        // branch has a `null` arm, and copies a nullable local
+                                        // only where it is present, answering the sentinel
+                                        // otherwise (both loft#1337).  Left undelivered, the
+                                        // local's own store was answered while the buffer the
+                                        // rename gave another local was freed undropped.
+                                        self.materialize_return_into(*td, tail, buf_var);
                                     }
                                 }
                                 _ => {}
@@ -19261,9 +19309,15 @@ impl Parser {
                             self.data.def(self.context).name()
                         );
                         let n = self.vars.name(*v);
-                        let a =
-                            self.data
-                                .add_attribute(&mut self.lexer, self.context, n, ret.clone());
+                        // The buffer's type is the BASE, as the signature-time reservation's
+                        // is: a grown `S?` attribute was no buffer to `return_buffer` or to the
+                        // between-passes sweep, which then reserved a SECOND one (loft#1934).
+                        let a = self.data.add_attribute(
+                            &mut self.lexer,
+                            self.context,
+                            n,
+                            ret.ret_promo_base().clone(),
+                        );
                         // mark as hidden return-mechanism parameter
                         self.data.definitions[self.context as usize].attributes[a].hidden = true;
                         self.vars.become_argument(*v);

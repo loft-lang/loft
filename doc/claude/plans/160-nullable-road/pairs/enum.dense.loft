@@ -1,0 +1,4 @@
+// loft#1934 shape — a RECORD ENUM returned.  Dense half.
+enum E { A { x: integer }, B { y: text } }
+fn f(n: integer) -> E { if n > 0 { A { x: n } } else { B { y: "b" } } }
+fn main() { t = f(3); u = f(0); println("{t} {u}"); }

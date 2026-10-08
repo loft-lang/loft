@@ -1,0 +1,5 @@
+// loft#1934 shape — an `if` whose arms are a view of an argument and a mint.  Nullable half.
+struct S { a: integer }
+struct B { s: S, v: vector<S> }
+fn f(p: vector<S>, c: boolean) -> S? { if c { p[0] } else { S { a: 0 } } }
+fn main() { q: vector<S> = [S { a: 7 }]; t = f(q, true); u = f(q, false); t.a = 99; println("{t.a ?? -1} {u.a ?? -1} {q[0].a}"); }

@@ -3430,10 +3430,8 @@ impl Parser {
                 // loft#938 gate 1 of 5 — `ret_promo_base` peels `Optional(Vector)` so a
                 // NULLABLE collection return gets the buffer too.  Identity while
                 // `LOFT_NULLABLE_RETBUF` is off, which is the default.
-                && matches!(
-                    self.data.def(self.context).returned().ret_promo_base(),
-                    Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-                )
+                // loft#1934 — a RECORD return takes no buffer (`Type::takes_ret_buffer`).
+                && self.data.def(self.context).returned().takes_ret_buffer()
             {
                 // The buffer's own type is the BASE: it is storage, and storage is never
                 // absent.  The RETURN keeps its `?` — a null answer is a value the caller
@@ -6467,15 +6465,20 @@ impl Parser {
         // instantiates to a primitive whose operator has no
         // `__retbuf` (a `#rust` op), the trailing-argument trim
         // in `substitute_type_in_value` drops it again.
+        // Through `ret_promo_base`, as the concrete implementation's signature is: a `-> Self?`
+        // stub takes the buffer its `-> S?` implementation takes (loft#1934, `@FR-N-Road`), and
+        // a stub one short of its implementation leaves the instance a work-ref with no slot.
+        // The buffer is the BASE; the return keeps its `?`.
+        let buf_tp = t_ret_type.ret_promo_base().clone();
         if matches!(
-            t_ret_type,
+            buf_tp,
             crate::data::Type::Reference(_, _)
                 | crate::data::Type::Vector(_, _)
                 | crate::data::Type::Enum(_, true, _)
         ) {
-            let a =
-                self.data
-                    .add_attribute(&mut self.lexer, t_stub_nr, "__retbuf", t_ret_type.clone());
+            let a = self
+                .data
+                .add_attribute(&mut self.lexer, t_stub_nr, "__retbuf", buf_tp.clone());
             self.data.definitions[t_stub_nr as usize].attributes[a].hidden = true;
             // Mirror ref_return's finalisation on concrete
             // implementations ("returned = {__retbuf}"): the
@@ -6488,13 +6491,17 @@ impl Parser {
             // local vector's store never freed (#482, one
             // main_vector leaked per call).
             let dep = crate::data::Deps::attrs(vec![a as u16]);
-            let dep_ret = match t_ret_type.clone() {
+            let dep_ret = match buf_tp {
                 crate::data::Type::Reference(d, _) => crate::data::Type::Reference(d, dep),
                 crate::data::Type::Vector(e, _) => crate::data::Type::Vector(e, dep),
                 crate::data::Type::Enum(d, m, _) => crate::data::Type::Enum(d, m, dep),
                 other => other,
             };
-            self.data.definitions[t_stub_nr as usize].returned = dep_ret;
+            self.data.definitions[t_stub_nr as usize].returned = if t_ret_type.ret_promo_peels() {
+                crate::data::Type::optional(dep_ret)
+            } else {
+                dep_ret
+            };
         }
     }
 

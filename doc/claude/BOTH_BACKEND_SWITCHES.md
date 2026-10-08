@@ -278,6 +278,15 @@ first bisect step for a wrong value, order or count out of a loop over a literal
 
 ## Lowering: adopting and minting call buffers
 
+**`LOFT_NO_NULLABLE_RETBUF=1`** (`@FR-N-Road`, loft#938 and loft#1934, default-ON, parse time,
+BOTH backends) takes the caller-allocated `__retbuf` away from a `-> τ?` return again — with
+it on, a nullable collection, record or record enum takes the buffer its dense twin takes, and
+its caller binds the result through the dense arm (`use_analysis::first_bind_shape`).  It is the
+first bisect step for a wrong value, leak or use-after-free that appears only in the `τ?`
+spelling of a function.  `LOFT_TRACE_RETPROMO=1` names each return promotion and its verdict;
+`LOFT_STRICT_STORES=1` is the falsifier, since every value is right whether or not the delivery
+was.  The pairs `scripts/nullable_road.py` measures are the coverage.
+
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
 (`fn mk() -> P { o = P { … }; …; o }`) adopts the store the callee minted — one mint and one

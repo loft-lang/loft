@@ -696,12 +696,15 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 1.**
 
-- **D-types-32 (OPEN, loft#1934)** — violates `(N-Road)`: τ and τ? take the same lowering.  Five
-  pairs of `doc/claude/plans/160-nullable-road/pairs` still differ in their ownership machinery
-  (`scripts/nullable_road.py`): `ret-view-of-param` gives the dense half a hidden `__retbuf` and a
-  work-ref the nullable half does not, and so do `captured-local-rebind`, `element-over-param`,
-  `local-rebound-by-mint` and `ret-view-of-param-vector`.  The values agree and both halves are
-  leak-clean under `LOFT_STRICT_STORES=1`; the cost is the extra machinery on one spelling.
+- **D-types-32 (OPEN, loft#1934)** — violates `(N-Road)`: τ and τ? take the same lowering.  The
+  record return is unified: a `-> S?` takes the caller's buffer as `-> S` does
+  (`Type::ret_promo_base` peels `Optional` of a record or record enum as it peeled
+  `Optional(Vector)`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller binds
+  either spelling through one arm (`use_analysis::first_bind_shape`).  Still open:
+  `captured-local-rebind` and `local-rebound-by-mint` (`scripts/nullable_road.py`), and
+  `--native` value records, which take only the dense flat record (loft#1952).  The `??`
+  lowering is the rule's one exception, and pairs such as `ret-view-of-param` now differ in it
+  alone.  The values agree and both halves are leak-clean under `LOFT_STRICT_STORES=1`.
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
