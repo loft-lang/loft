@@ -234,3 +234,22 @@ time, instead of a runtime refusal (C80).
 Holds at `(T-Record)`, [formal/tuples.md](formal/tuples.md), `(L-Tuple)`,
 [formal/layout.md](formal/layout.md), and `(Const-Foreign)`, [formal/binding.md](formal/binding.md);
 the guards land with loft#1875, loft#1897 and loft#1898.
+
+## C143 — A rendered record shows its null fields
+
+**Decision.** A record's rendering lists every field it declares, a null one included:
+`Point { x: 3, y: null, label: null }` renders `{x:3,y:null,label:null}`, and under `:j`
+`{"x":3,"y":null,"label":null}`.  Nested records and records inside a vector follow the same
+rule; inside a record every null is the word `null` (JSON `null` under `:j`).  The fields left
+out are only the ones that are not values of the record — a variant's `enum` discriminator, an
+internal `#`-named field, a secondary view of records a sibling field owns.  There is no switch.
+**Why.** A rendering that drops a null field cannot be told apart from one whose type has no such
+field; every common language's debug print lists null fields, and most JSON libraries write
+`"key":null` by default.
+
+**Revisit when.** A consumer needs the compact form — the answer is an opt-in, never a change of
+the default.  Decided 2026-10-08 (owner) — [record](DESIGN_DECISIONS-history.md#c143--a-rendered-record-shows-its-null-fields).
+**Holds at:** `@C143` — `./scripts/idx tag:@C143`: the record walker (`src/database/format.rs`,
+both backends render through it), `formal/formatting.md` `(F-Render-Fields)`, guard
+`tests/scripts/a-record-renders-its-null-fields.loft`.
+**Catalogue:** @F1 (null model) · `formal/formatting.md` `(F-Render)`.

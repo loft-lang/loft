@@ -108,13 +108,23 @@ against.
                 enum                the variant name          null (0xFF disc) → "null"
                 vector              "[e₀,e₁,…]"  (compact, elements rendered by F-Render)
                 struct              "{field:value,…}"  (compact loft form; the `:j` spec → JSON)
+
+  (F-Render-Fields)  a struct renders EVERY field it declares, in declaration order — a null
+                field as `null`, and under `:j` as JSON `null` (@C143).  Nested records and the
+                elements of a vector follow the same rule.  The only fields left out are the ones
+                that are not values of the record: the `enum` discriminator of a variant, an
+                internal `#`-named field, and a secondary view of records a sibling field owns.
 ```
 
 **In words.** Each type has one canonical text form. A **null** of any type renders as the literal
 word `null` — the single exception is a null **character** (codepoint 0), which renders as nothing
 (so iterating text past its end appends no garbage). A vector is a compact bracketed list; a struct
 is a compact `{field:value}` form, and the `:j` spec switches it to JSON with quoted keys (verified:
-`{r:128,g:0,b:128}` vs `{"r":128,"g":0,"b":128}`).
+`{r:128,g:0,b:128}` vs `{"r":128,"g":0,"b":128}`).  A field holding null is shown, not dropped:
+`Point { x: 3, y: null, label: null }` renders `{x:3,y:null,label:null}`, and under `:j`
+`{"x":3,"y":null,"label":null}`, so a rendering says what the record holds and the JSON form
+reads back to the same value.  Inside a record or a vector a null of every type is the word
+`null` — a null character too, since an empty spelling there would not read back.
 
 > **A TUPLE has no row here, and its absence is a DECISION rather than a gap.**
 > `"{t}"` on a `(integer, integer)` is `error: Cannot format type (integer, integer)`, and
@@ -228,6 +238,9 @@ the companion [formatting-history.md](formatting-history.md).
 - **Per-type render + null (`F-Render`)** — `"{true}"` is `true`; `"{[1,2,3]}"` is `[1,2,3]`;
   `"{col}"` is `{r:128,g:0,b:128}` and `"{col:j}"` is `{"r":128,"g":0,"b":128}`; `null as integer?`
   renders `null`.
+- **Null fields (`F-Render-Fields`)** — `Point { x: 3, y: null, label: null }` renders
+  `{x:3,y:null,label:null}` and, under `:j`, `{"x":3,"y":null,"label":null}` on both backends,
+  nested and inside a vector alike (`tests/scripts/a-record-renders-its-null-fields.loft`).
 - **Format spec (`F-Spec`)** — `"{1:03}"` is `001`, `"{42:#x}"` is `0x2a`, `"{334.1:.2}"` is
   `334.10`, `"{\"abc\":>7}"` is `    abc`, `"{0.5:+.3}"` is `+0.500`.  **A differential
   oracle cannot see a flag both backends drop** — `+` was honoured on an integer and

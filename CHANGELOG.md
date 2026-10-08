@@ -91,6 +91,11 @@ write `"ready: {flag}"` when you want the text either way.
 `null(oob)` and `null(%0)`; the program still continues.  A test or a parser that matched the
 old suffix matches `null` now.  `LOFT_FORMAT_BARE_NULL` is gone: plain `null` is the only form.
 
+**A record shows its null fields.**  `Point { x: 3, y: null, label: null }` prints
+`{x:3,y:null,label:null}` where it printed `{x:3}`, and `{p:j}` writes
+`{"x":3,"y":null,"label":null}` — nested records and records in a vector too.  `Type.parse` reads
+the new form back to the same value; a test that pinned the shorter form needs the nulls added.
+
 ### New
 
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`

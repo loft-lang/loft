@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C143 / `@FR-F-Render-Fields` — a rendered record shows every field it declares, a null one
+// as `null`, in the loft form and (as JSON `null`) under `:j`; nested records and records in
+// a vector follow the same rule.  The JSON form reads back to the same value.
+//
+// Cells: a flat record with two null fields; every field null; a null of each field kind
+// (record, float, boolean, character, enum, collection, narrow integer) beside a present
+// nested record; records inside a vector; the `:j` twin of each; and the read-back — which
+// is where a `null` COLLECTION field used to write its absent marker on the record's FIRST
+// field (`{"p":{"x":1},"v":null}` read `p.x` back as 4294967295).
+//
+// @falsified-at: PENDING
+
+struct Point { x: integer, y: integer?, label: text? }
+struct Opt { a: integer?, b: text?, c: float? }
+enum E { A, B }
+struct Box { p: Point, q: Point?, f: float?, b: boolean?, c: character?, e: E?, v: vector<integer>?, n: u8? }
+
+fn test_a_flat_record_shows_its_null_fields() {
+  p = Point { x: 3, y: null, label: null };
+  assert("{p}" == "{{x:3,y:null,label:null}}", "loft form: got {p}");
+  assert("{p:j}" == "{{\"x\":3,\"y\":null,\"label\":null}}", "json: got {p:j}");
+  o = Opt { a: null, b: null, c: null };
+  assert("{o}" == "{{a:null,b:null,c:null}}", "every field null: got {o}");
+  assert("{o:j}" == "{{\"a\":null,\"b\":null,\"c\":null}}", "every field null, json: got {o:j}");
+}
+
+fn test_every_field_kind_shows_its_null() {
+  bx = Box { p: Point { x: 1, y: 2, label: "a" }, q: null, f: null, b: null, c: null, e: null, v: null, n: null };
+  assert("{bx}" == "{{p:{{x:1,y:2,label:\"a\"}},q:null,f:null,b:null,c:null,e:null,v:null,n:null}}",
+    "loft form: got {bx}");
+  assert("{bx:j}" == "{{\"p\":{{\"x\":1,\"y\":2,\"label\":\"a\"}},\"q\":null,\"f\":null,\"b\":null,\"c\":null,\"e\":null,\"v\":null,\"n\":null}}",
+    "json: got {bx:j}");
+}
+
+fn test_records_in_a_vector_show_their_null_fields() {
+  vs = [Point { x: 1, y: null, label: null }, Point { x: 2, y: 5, label: "b" }];
+  assert("{vs}" == "[{{x:1,y:null,label:null}},{{x:2,y:5,label:\"b\"}}]", "loft form: got {vs}");
+  assert("{vs:j}" == "[{{\"x\":1,\"y\":null,\"label\":null}},{{\"x\":2,\"y\":5,\"label\":\"b\"}}]", "json: got {vs:j}");
+}
+
+fn test_the_json_form_reads_back_to_the_same_value() {
+  p = Point { x: 3, y: null, label: null };
+  p2 = Point.parse("{p:j}");
+  assert(p2.x == 3 && p2.y == null && p2.label == null, "flat: got {p2}");
+  bx = Box { p: Point { x: 1, y: 2, label: "a" }, q: null, f: null, b: null, c: null, e: null, v: null, n: null };
+  b2 = Box.parse("{bx:j}");
+  assert(b2.p.x == 1 && b2.p.y == 2 && b2.p.label == "a", "the nested record survives its null siblings: got {b2}");
+  assert(b2.q == null && b2.f == null && b2.b == null && b2.c == null && b2.e == null && b2.v == null && b2.n == null,
+    "every null reads back null: got {b2}");
+  assert("{b2:j}" == "{bx:j}", "and renders the same: got {b2:j}");
+  vs = [Point { x: 1, y: null, label: null }, Point { x: 2, y: 5, label: "b" }];
+  v2 = vector<Point>.parse("{vs:j}");
+  assert("{v2:j}" == "{vs:j}", "a vector of records round-trips: got {v2:j}");
+}
