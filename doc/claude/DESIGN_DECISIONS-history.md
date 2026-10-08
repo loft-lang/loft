@@ -2840,6 +2840,17 @@ puts writable state on a path that must work with `$HOME` unset or read-only.
   toolchain-not-usable). Owner-directed 2026-07-24; T0.1 of the first-contact work
   ([FIRST_CONTACT.md](FIRST_CONTACT.md)).
 
+### Revised 2026-10-08 — the developer learns at their own moments
+
+Silence on a program run left one gap: a developer who never reads `--help` never learned
+that their machine could not build native, and `loft test`'s summary told them to run
+`loft test --native`, which cannot help without `rustc`.  The owner asked for a clean,
+non-intrusive moment.  Three were chosen, each a command only a developer runs and none a
+new line on a program run: `loft --version` gains a `native:` line naming the toolchain (or
+its absence), the `loft test` summary names the missing `rustc` where it named the command,
+and `loft new --native` lists it first in its next steps, since `native/` is a Rust crate.
+One text, `native_lib::NO_RUSTC`, says it in all three.
+
 ## C103 — `int` / `str` / `bool` are suggested, never legal (no cross-language type aliases)
 
 ### Context

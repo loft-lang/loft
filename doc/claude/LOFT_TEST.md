@@ -126,7 +126,8 @@ test result: FAILED. 1 failed; 5 passed; 6 total; 2 files  [ran on the interpret
 **The result line names the backend it came from.**  `loft test` and `loft test
 --native` each exercise exactly ONE backend, and a bare `ok` cannot tell a clean other backend
 from one never compiled.  The note rides on the DEFAULT path, because that is the run people
-read as covering both.
+read as covering both.  On a machine with no `rustc`, where `loft test --native` cannot run, it
+names that instead: `native not exercised: no rustc on PATH, …` (@C102).
 
 Under `--native` the note also reports `N skipped` — tests counted as passing
 that never ran on that backend (`@EXPECT_FAIL` / `@IGNORE`, or a file with no

@@ -3199,6 +3199,10 @@ echo "  external lib         -> loft publish + open a registry PR."
     }
     println!();
     println!("Next steps:");
+    if native && !loft::native_lib::rustc_available() {
+        // @C102 — `native/` is a Rust crate: say so where the developer is setting it up.
+        println!("  # native/ is Rust: {}", loft::native_lib::NO_RUSTC);
+    }
     println!("  cd {name}");
     println!("  loft test           # exercises the smoke test");
     println!("  $EDITOR src/{name}.loft   # add your library's API");
@@ -7403,6 +7407,12 @@ fn main() {
         }
         if a == "--version" {
             println!("loft {}", loft::manifest::LOFT_RUNNING_VERSION);
+            // @C102 — the toolchain a native build would use, on the line after the version
+            // (a reader of the first line alone sees what it always saw).
+            match loft::native_lib::rustc_version() {
+                Some(v) => println!("native: {v}"),
+                None => println!("native: {}", loft::native_lib::NO_RUSTC),
+            }
             return;
         } else if a == "--migrate-long" {
             // C54.B migration tool — rewrite `long` type references and

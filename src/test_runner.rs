@@ -2354,10 +2354,13 @@ pub(crate) fn run_tests(
     // throughout, and could only find out by running the native sweep by hand.
     // The scope is not optional and not behind a flag: it rides on the default
     // path, because that is the path that was lying.
+    // @C102 — on a machine with no `rustc`, `loft test --native` cannot help: name what would.
     let (ran, missing, missing_cmd) = if native_mode {
         ("native", "the interpreter", "loft test")
-    } else {
+    } else if loft::native_lib::rustc_available() {
         ("the interpreter", "native", "loft test --native")
+    } else {
+        ("the interpreter", "native", loft::native_lib::NO_RUSTC)
     };
     // Tests that were counted but never executed on `ran` (see `total_skipped`).
     let skipped = if total_skipped > 0 {

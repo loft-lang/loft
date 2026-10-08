@@ -121,6 +121,12 @@ fires on its `pub struct` and `pub enum` names too, wherever the package is decl
 sibling, the project's `lib/`, a `path =` dependency.  The type arrives imported by name, and
 its typed-format and `to_text` hooks work on it as they do after `use pkg::*;`.
 
+**loft says when this machine cannot build native — where a developer looks.**  `loft --version`
+now has a second line naming the Rust toolchain a native build would use, or saying there is
+none; the `loft test` summary names a missing `rustc` instead of suggesting `loft test
+--native`; and `loft new --native` lists it in its next steps.  Running a program stays quiet:
+it runs on the interpreter as before.
+
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
 runs the block exactly when the write did not take — an index past the end, a key the
 collection does not hold, a field reached through a null, a narrow slot the value does not fit,

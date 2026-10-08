@@ -1586,15 +1586,39 @@ pub fn build_shared_cdylib(
 /// native.  Callers gate the fallback on this.
 #[must_use]
 pub fn rustc_available() -> bool {
-    use std::sync::OnceLock;
-    static AVAIL: OnceLock<bool> = OnceLock::new();
-    *AVAIL.get_or_init(|| {
-        Spawn::new(Program::search("rustc"))
-            .arg("--version")
-            .run(b"")
-            .is_ok_and(|o| o.status.success())
-    })
+    rustc_version().is_some()
 }
+
+/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
+/// there is no working `rustc`.  Asked once per process.
+#[must_use]
+pub fn rustc_version() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static VERSION: OnceLock<Option<String>> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            Spawn::new(Program::search("rustc"))
+                .arg("--version")
+                .run(b"")
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("rustc")
+                        .trim()
+                        .to_string()
+                })
+        })
+        .as_deref()
+}
+
+/// @C102 — what a developer is told when this machine has no `rustc`.  A program run says
+/// nothing (it succeeds on the interpreter); the moments that belong to the developer say
+/// this: `loft --version`, the `loft test` summary, and `loft new --native`'s next steps.
+pub const NO_RUSTC: &str = "no rustc on PATH, so native builds are unavailable \
+                            (install one from https://rustup.rs)";
 
 /// Detect ENVIRONMENT failures that masquerade as compiler/linker errors.
 ///
