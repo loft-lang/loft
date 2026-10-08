@@ -28,6 +28,18 @@ fn test_a_fresh_binding_and_a_text_join() {
   assert(all == "l1l2", "both items in order: {all}");
 }
 
+struct E1950 { k: integer, v: integer }
+
+// The iterable's own type is the loop variable's for an iterator expression: a keyed slice is
+// typed by its element, and it is not a struct value with a missing `operator next`.
+fn test_a_keyed_slice_binds_its_element() {
+  s: sorted<E1950[k]> = [];
+  for i in 0..5 { s += [E1950 { k: i, v: i * 10 }]; }
+  t = 0;
+  for e in s[1..3] { t += e.v; }
+  assert(t == 30, "elements 1 and 2: {t}");
+}
+
 operator next(self: L) -> text? {
   self.n += 1;
   if self.n > 2 { return null; }
