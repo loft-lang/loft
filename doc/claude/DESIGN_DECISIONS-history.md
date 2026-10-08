@@ -4756,3 +4756,16 @@ decision).  The @PLN102 formal audit had already listed the suffix as an open qu
 the tag on the value or drop it — don't freeze the syntactic split"* — and the owner dropped it.
 The fault-to-null semantics were not in question and did not change; neither did the silent
 nullable rewrite of a hole (C66).
+
+## C143 — A rendered record shows its null fields
+
+Decided 2026-10-08 by the owner — *"show them then"* — after a survey showing that every common
+language's debug print lists null fields and most JSON libraries emit `"key":null` by default.
+Until then the record walker skipped a field whose slot read null, so
+`Point { x: 3, y: null, label: null }` rendered `{x:3}` and `{"x":3}` under `:j`, and a guard
+family (loft#1269, loft#1270, loft#1437, the narrow-width and character JSON guards) had pinned
+the omission as the convention every type followed.  No opt-out was wanted.  Writing the null
+made one reader defect reachable from loft's own output: a JSON `null` for a nullable COLLECTION
+field wrote its absent marker on the record's first field (loft#1947), fixed with it.  The
+walker also printed a plain enum's `0xFF` null as `?`; it renders `null` now, as the cast to
+text does.

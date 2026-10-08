@@ -2216,7 +2216,18 @@ impl Stores {
         // default is the FIELD's question, not the type's, and
         // [`Self::write_absent_value`] is where that question is answered.
         if matches!(parsed, crate::json::Parsed::Null) {
-            self.write_absent_value(tp, rec_tp, field, to);
+            // A COLLECTION field arrives with `to` at the struct BASE and its index in
+            // `field` (`walk_parsed_struct`'s `else` arm, as the non-null path below feeds
+            // `record_new`), so its absent marker belongs at the field's own slot.  Written
+            // at `to` it landed on the FIRST field: `{"p":{"x":1},"v":null}` read `p.x`
+            // back as 4294967295 (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a
+            // record with a null collection field once null fields are written (@C143).
+            let slot = if self.content(tp) == u16::MAX {
+                *to
+            } else {
+                self.field_ref(to, rec_tp, field)
+            };
+            self.write_absent_value(tp, rec_tp, field, &slot);
             return Ok(());
         }
         let mismatch = || WalkErr {

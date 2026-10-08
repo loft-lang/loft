@@ -63,17 +63,17 @@ struct Outer1270 { n: integer, inner: NT1270 }
 // Every way of SAYING "absent" produces the same document, whichever spelling it stored.
 fn every_absent_spelling_writes_one_document() {
   lit = NT1270 { a: 1, t: null };
-  assert("{lit:j}" == `{{"a":1}}`, "a literal null is not omitted: {lit:j}");
+  assert("{lit:j}" == `{{"a":1,"t":null}}`, "a literal null is not written null (@C143): {lit:j}");
 
   omitted = NT1270 { a: 1 };
-  assert("{omitted:j}" == `{{"a":1}}`, "an omitted field is not omitted: {omitted:j}");
+  assert("{omitted:j}" == `{{"a":1,"t":null}}`, "an omitted field is not written null: {omitted:j}");
 
   assigned = NT1270 { a: 1, t: "z" };
   assigned.t = null;
-  assert("{assigned:j}" == `{{"a":1}}`, "an assigned null is not omitted: {assigned:j}");
+  assert("{assigned:j}" == `{{"a":1,"t":null}}`, "an assigned null is not written null: {assigned:j}");
 
   from_call = NT1270 { a: 1, t: absent_text_1270() };
-  assert("{from_call:j}" == `{{"a":1}}`, "a returned null is not omitted: {from_call:j}");
+  assert("{from_call:j}" == `{{"a":1,"t":null}}`, "a returned null is not written null: {from_call:j}");
 }
 
 fn absent_text_1270() -> text? { null }
@@ -124,13 +124,13 @@ fn a_present_text_still_writes_itself() {
 fn a_null_text_never_renders_as_a_nul_byte() {
   lit = NT1270 { a: 1, t: null };
   plain = "{lit}";
-  assert(plain == `{{a:1}}`, "the plain struct form is wrong: {plain}");
+  assert(plain == `{{a:1,t:null}}`, "the plain struct form is wrong: {plain}");
 
   // the sentinel must not reach the output as text, in any shape
   assert(!plain.contains("\0"), "a NUL byte reached the plain form: {plain}");
   assert(!"{lit:j}".contains("\0"), "a NUL byte reached the JSON form: {lit:j}");
 
-  // a bare `text?` element of a vector has no field to omit, so it must RENDER `null`
+  // a bare `text?` element of a vector renders `null` as a field does
   v = [absent_text_1270(), "z"];
   assert("{v}" == `[null,"z"]`, "a null text element renders wrong: {v}");
   assert(!"{v}".contains("\0"), "a NUL byte reached a vector element: {v}");
@@ -138,12 +138,12 @@ fn a_null_text_never_renders_as_a_nul_byte() {
 
 // The walk reaches a nested struct and a vector element through different code, so each
 // gets its own cell rather than trusting the top-level one.
-fn the_omission_reaches_every_nesting_depth() {
+fn the_null_reaches_every_nesting_depth() {
   v = [NT1270 { a: 1, t: null }, NT1270 { a: 2 }, NT1270 { a: 3, t: "" }];
-  assert("{v:j}" == `[{{"a":1}},{{"a":2}},{{"a":3,"t":""}}]`,
+  assert("{v:j}" == `[{{"a":1,"t":null}},{{"a":2,"t":null}},{{"a":3,"t":""}}]`,
          "a nested element disagrees with the top level: {v:j}");
 
   o = Outer1270 { n: 9, inner: NT1270 { a: 1, t: null } };
-  assert("{o:j}" == `{{"n":9,"inner":{{"a":1}}}}`,
+  assert("{o:j}" == `{{"n":9,"inner":{{"a":1,"t":null}}}}`,
          "a nested struct disagrees with the top level: {o:j}");
 }

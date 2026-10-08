@@ -206,9 +206,8 @@ fn main() {
   //   * a plain enum variant is an OBJECT keyed by the variant name — `Green`
   //     is `{{"Green":{{}}}}`, not the string `"Green"`;
   //   * a tuple is an object with `_0`, `_1` … keys, not a JSON array;
-  //   * an absent field is normally LEFT OUT rather than written `null`, and an
-  //     absent `vector<T>?` is left out too — it is not `[]`, which is the
-  //     present-but-empty collection and a different value;
+  //   * an absent field is written `null`, an absent `vector<T>?` too — it is
+  //     not `[]`, which is the present-but-empty collection and a different value;
   //   * a keyed member of a linked collection group is left out as well, because
   //     it is an INDEX on the same rows rather than data of its own — and parsing
   //     the document back rebuilds it from them.
@@ -217,7 +216,7 @@ fn main() {
   pair = Pair { p: (7, "seven") };
   assert("{pair:j}" == `{{"p":{{"_0":7,"_1":"seven"}}}}`, "a tuple: {pair:j}");
   nothing = Holder { n: 1, rows: null };
-  assert("{nothing:j}" == `{{"n":1}}`, "an absent collection is left out: {nothing:j}");
+  assert("{nothing:j}" == `{{"n":1,"rows":null}}`, "an absent collection is written null: {nothing:j}");
   something = Holder { n: 1, rows: [] };
   assert("{something:j}" == `{{"n":1,"rows":[]}}`, "an empty one is not: {something:j}");
   assert(Holder.parse("{nothing:j}").rows == null, "absent comes back absent");

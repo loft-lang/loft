@@ -380,7 +380,7 @@ two writers spell it differently: a never-written slot keeps the zero handle a f
 starts with, while writing `null` — from a literal, an assignment, a call, or any native text
 path — allocates a record holding the sentinel bytes.  Neither writer is wrong; what is wrong is
 a reader that knows only one.  Measured (loft#1270): `Stores::is_null` tested the handle alone
-and is the predicate deciding whether a struct field is OMITTED, so `NT { a: 1, t: null }`
+and decided whether a struct field was OMITTED (a null field was left out until @C143), so `NT { a: 1, t: null }`
 serialised `{"a":1,"t":null}` while the same value parsed back serialised `{"a":1}` — one value,
 two documents, and a document that is hashed, signed or diffed changed for a value that did not.
 The render arm applied the content test only under `json`/`loft`, so the plain form put the

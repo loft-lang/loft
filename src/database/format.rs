@@ -1373,7 +1373,10 @@ impl ShowDb<'_> {
                         s.push('}');
                         return;
                     }
-                    let enum_val = if v <= 0 {
+                    // `@FR-F-Render` — a plain enum's null is the `0xFF` discriminant (`0` reads
+                    // absent too): both render `null`, as the cast to text answers.  Reaching
+                    // the `?` below for it printed `e:?` for a null enum FIELD (@C143).
+                    let enum_val = if v == 0 || v == 255 {
                         "null"
                     } else if known {
                         &vals[v as usize - 1].1
@@ -1587,7 +1590,7 @@ impl ShowDb<'_> {
         // pretty output, every non-empty struct should multi-line.
         let complex =
             self.pretty && (self.json || self.stores.types[self.known_type as usize].complex);
-        let any_visible = self.has_visible_field(fields);
+        let any_visible = Self::has_visible_field(fields);
         // TODO reference to an object inside a field instead of the object itself, show the key
         s.push('{');
         // JSON pretty mode opens the body with a newline + indent
@@ -1609,46 +1612,29 @@ impl ShowDb<'_> {
     }
 
     /// Return true iff `fields` contains at least one entry that
-    /// `write_fields` would emit (skips internal `#`-prefixed names,
-    /// the `enum` discriminator, and null-valued slots).  Used by
-    /// `write_struct` so the JSON-pretty open-brace newline only
+    /// `write_fields` would emit — every field but the ones [`Self::is_shown_field`]
+    /// leaves out.  Used by `write_struct` so the JSON-pretty open-brace newline only
     /// fires when there's something inside.
-    fn has_visible_field(&self, fields: &[Field]) -> bool {
-        for fld in fields {
-            if fld.name == "enum" {
-                continue;
-            }
-            if fld.name.starts_with('#')
-                || (!fld.other_indexes.is_empty() && fld.other_indexes[0] == u16::MAX)
-                || self.stores.is_null(
-                    self.store(),
-                    self.rec,
-                    self.pos + u32::from(fld.position),
-                    fld.content,
-                )
-            {
-                continue;
-            }
-            return true;
-        }
-        false
+    fn has_visible_field(fields: &[Field]) -> bool {
+        fields.iter().any(Self::is_shown_field)
+    }
+
+    /// `@FR-F-Render-Fields` (@C143) — a record renders EVERY field it declares, a null one as
+    /// `null` (JSON `null` under `:j`), so `{x:3,y:null}` and `{"x":3,"y":null}` say what the
+    /// record holds.  The fields left out are the ones that are not values of the record at
+    /// all: the `enum` discriminator (the variant name already says it), an internal
+    /// `#`-named field, and a secondary VIEW of records a sibling field owns (a leading
+    /// `u16::MAX` in `other_indexes`, loft#898).  None of the three is about null.
+    fn is_shown_field(fld: &Field) -> bool {
+        fld.name != "enum"
+            && !fld.name.starts_with('#')
+            && fld.other_indexes.first() != Some(&u16::MAX)
     }
 
     fn write_fields(&self, s: &mut String, fields: &[Field], indent: u16, complex: bool) {
         let mut first = true;
         for fld in fields {
-            if fld.name == "enum" {
-                continue;
-            }
-            if fld.name.starts_with('#')
-                || (!fld.other_indexes.is_empty() && fld.other_indexes[0] == u16::MAX)
-                || self.stores.is_null(
-                    self.store(),
-                    self.rec,
-                    self.pos + u32::from(fld.position),
-                    fld.content,
-                )
-            {
+            if !Self::is_shown_field(fld) {
                 continue;
             }
             if first {
@@ -2319,15 +2305,8 @@ impl ShowDb<'_> {
         s.push_str(" {");
         let mut first = true;
         for fld in fields {
+            // @C143 — a null field is shown as `null`, as the ordinary rendering shows it.
             if fld.name == "enum" || fld.name.starts_with('#') {
-                continue;
-            }
-            if self.stores.is_null(
-                self.store(),
-                self.rec,
-                self.pos + u32::from(fld.position),
-                fld.content,
-            ) {
                 continue;
             }
             if !first {
