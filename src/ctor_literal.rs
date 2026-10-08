@@ -736,75 +736,16 @@ pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usi
             continue;
         }
         let body = def.code().clone();
-        let mut ok_sites = admitted_sites(data, caller, &body, &ctors);
+        let ok_sites = admitted_sites(data, caller, &body, &ctors);
         let _census = crate::rewrite_census::InBody::enter("ir", data.def(caller).name());
-        let caller_name = data.def(caller).name().to_string();
-        let original_vars = data.definitions[caller as usize].variables.clone();
-        // Inside a loop the literal pays only as a loop record (`@FR-R-LoopRecord`'s refill
-        // clause): otherwise it mints a store every pass where the call reused a pooled one.
-        // That is a whole-function fact of the REWRITTEN body, so the body is rewritten, the
-        // loop records are read off it, and a site whose local is not one keeps its call.
-        let done = loop {
-            if ok_sites.is_empty() {
-                break Vec::new();
-            }
-            let mut code = body.clone();
-            let mut done = Vec::new();
-            rewrite_in(
-                data,
-                &caller_name,
-                &mut code,
-                &ctors,
-                &body,
-                &ok_sites,
-                false,
-                &mut done,
-            );
-            for (target, buf, _, _) in &done {
-                retire_buffer(data, &mut code, *target, *buf, free_ref);
-            }
-            data.definitions[caller as usize].code = code;
-            let kept = if loop_record_off() {
-                HashMap::new()
-            } else {
-                crate::generation::hoist::loop_records(data, stores, caller).recs
-            };
-            let lost: Vec<(u16, u16)> = done
-                .iter()
-                .filter(|(t, _, in_loop, _)| *in_loop && !kept.contains_key(t))
-                .map(|(t, b, _, _)| (*t, *b))
-                .collect();
-            if lost.is_empty() {
-                break done;
-            }
-            if trace() {
-                for (t, _) in &lost {
-                    eprintln!(
-                        "ctor-literal: kept a call in {caller_name}: inside a loop, `{}` would not be a loop record",
-                        data.def(caller).variables.name(*t)
-                    );
-                }
-            }
-            ok_sites.retain(|site| !lost.contains(site));
-            data.definitions[caller as usize].code = body.clone();
-        };
+        let done = rewrite_gated(data, stores, caller, &body, &ctors, ok_sites, free_ref);
         if done.is_empty() {
-            data.definitions[caller as usize].code = body;
-            data.definitions[caller as usize].variables = original_vars;
             continue;
         }
-        if trace() {
-            for (_, _, _, ctor) in &done {
-                eprintln!(
-                    "ctor-literal: {} written in place in {caller_name}",
-                    ctors[ctor].name
-                );
-            }
-        }
         let vars = &mut data.definitions[caller as usize].variables;
-        for (target, _, _, _) in &done {
-            if let Type::Reference(d, _) = vars.tp(*target).clone() {
-                vars.set_type(*target, Type::Reference(d, Deps::none()));
+        for d in &done {
+            if let Type::Reference(r, _) = vars.tp(d.target).clone() {
+                vars.set_type(d.target, Type::Reference(r, Deps::none()));
             }
         }
         vars.reset_intervals();
@@ -816,44 +757,143 @@ pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usi
     total
 }
 
-/// Rewrite every site under `v` whose target and buffer passed the whole-body checks,
-/// recording each rewritten site's target and buffer.
-fn rewrite_in(
-    data: &Data,
-    caller: &str,
-    v: &mut Value,
-    ctors: &HashMap<u32, Ctor>,
-    whole: &Value,
-    ok: &[(u16, u16)],
+/// One rewritten call site.
+struct Done {
+    target: u16,
+    buf: u16,
     in_loop: bool,
-    done: &mut Vec<(u16, u16, bool, u32)>,
-) {
-    let inner = in_loop || matches!(v, Value::Loop(_));
-    v.for_each_child_mut(&mut |c| rewrite_in(data, caller, c, ctors, whole, ok, inner, done));
-    let Value::Block(b) = v else {
+    ctor: u32,
+}
+
+/// One function's rewrite walk: what it reads, and what it records.
+struct Walk<'a> {
+    data: &'a Data,
+    caller: &'a str,
+    ctors: &'a HashMap<u32, Ctor>,
+    /// The function's body before the rewrite, for the whole-body checks.
+    whole: &'a Value,
+    /// The `(target, buffer)` pairs the whole-body checks admitted.
+    ok: &'a [(u16, u16)],
+    done: Vec<Done>,
+    /// Each site `expand` declined, with why — printed once, after the last attempt.
+    declined: Vec<String>,
+}
+
+/// The rewrite of `caller`, kept only where it pays.  Inside a loop the literal pays only as a
+/// loop record (`@FR-R-LoopRecord`'s refill clause): otherwise it mints a store every pass
+/// where the call reused a pooled one.  That is a whole-function fact of the REWRITTEN body, so
+/// the body is rewritten, the loop records are read off it, and a site whose local is not one
+/// keeps its call — then the rest is rewritten again.  Leaves the rewritten body installed and
+/// answers its sites, or restores `body` and answers none.
+fn rewrite_gated(
+    data: &mut Data,
+    stores: &crate::database::Stores,
+    caller: u32,
+    body: &Value,
+    ctors: &HashMap<u32, Ctor>,
+    mut ok_sites: Vec<(u16, u16)>,
+    free_ref: u32,
+) -> Vec<Done> {
+    let caller_name = data.def(caller).name().to_string();
+    loop {
+        if ok_sites.is_empty() {
+            data.definitions[caller as usize].code = body.clone();
+            return Vec::new();
+        }
+        let mut code = body.clone();
+        let mut w = Walk {
+            data,
+            caller: &caller_name,
+            ctors,
+            whole: body,
+            ok: &ok_sites,
+            done: Vec::new(),
+            declined: Vec::new(),
+        };
+        rewrite_in(&mut w, &mut code, false);
+        let (done, declined) = (w.done, w.declined);
+        for d in &done {
+            retire_buffer(data, &mut code, d.target, d.buf, free_ref);
+        }
+        data.definitions[caller as usize].code = code;
+        let kept = if loop_record_off() {
+            HashMap::new()
+        } else {
+            crate::generation::hoist::loop_records(data, stores, caller).recs
+        };
+        let lost: Vec<(u16, u16)> = done
+            .iter()
+            .filter(|d| d.in_loop && !kept.contains_key(&d.target))
+            .map(|d| (d.target, d.buf))
+            .collect();
+        if trace() {
+            for (t, _) in &lost {
+                eprintln!(
+                    "ctor-literal: kept a call in {caller_name}: inside a loop, `{}` would not be a loop record",
+                    data.def(caller).variables.name(*t)
+                );
+            }
+        }
+        if lost.is_empty() || done.is_empty() {
+            if trace() {
+                for line in &declined {
+                    eprintln!("ctor-literal: {line}");
+                }
+                for d in &done {
+                    eprintln!(
+                        "ctor-literal: {} written in place in {caller_name}",
+                        ctors[&d.ctor].name
+                    );
+                }
+            }
+            return done;
+        }
+        ok_sites.retain(|site| !lost.contains(site));
+    }
+}
+
+/// Rewrite every site under `v` whose target and buffer passed the whole-body checks,
+/// recording each rewritten site.
+fn rewrite_in(walk: &mut Walk, node: &mut Value, in_loop: bool) {
+    let inner = in_loop || matches!(node, Value::Loop(_));
+    node.for_each_child_mut(&mut |child| rewrite_in(walk, child, inner));
+    let Value::Block(block) = node else {
         return;
     };
-    let scope = b.scope;
+    let scope = block.scope;
     let mut i = 0;
-    while i < b.operators.len() {
-        let Some(site) =
-            site_of(&b.operators[i], ctors).filter(|s| ok.contains(&(s.target, s.buf)))
+    while i < block.operators.len() {
+        let Some(site) = site_of(&block.operators[i], walk.ctors)
+            .filter(|s| walk.ok.contains(&(s.target, s.buf)))
         else {
             i += 1;
             continue;
         };
-        let ctor = &ctors[&site.ctor];
-        match expand(data, &b.operators[i], ctor, &site, scope, whole) {
+        let ctor = &walk.ctors[&site.ctor];
+        match expand(
+            walk.data,
+            &block.operators[i],
+            ctor,
+            &site,
+            scope,
+            walk.whole,
+        ) {
             Ok(new) => {
                 let n = new.len();
-                b.operators.splice(i..=i, new);
-                done.push((site.target, site.buf, in_loop, site.ctor));
+                block.operators.splice(i..=i, new);
+                walk.done.push(Done {
+                    target: site.target,
+                    buf: site.buf,
+                    in_loop,
+                    ctor: site.ctor,
+                });
                 i += n;
             }
             Err(why) => {
-                if trace() {
-                    eprintln!("ctor-literal: {} kept a call in {caller}: {why}", ctor.name);
-                }
+                walk.declined.push(format!(
+                    "{} kept a call in {}: {why}",
+                    ctor.name, walk.caller
+                ));
                 i += 1;
             }
         }
