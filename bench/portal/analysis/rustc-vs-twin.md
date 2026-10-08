@@ -88,3 +88,14 @@ The twelve rows reduce to a handful of mechanisms.  Ordered by how many rows eac
   ~13 GHz): per-op counts here are the difference of two run lengths, which removes setup.
 * Pricing a lever by a hand edit is only faithful within one store; `invert`'s two levers cross
   a store boundary and are estimated from the profile, not priced.
+
+## Built
+
+* **A copy where Rust moves — the constructor case.**  `(R-CtorLiteral)` (a call of a
+  function whose body is one record literal is that literal, a vector-literal argument built
+  in its field) and `(R-LoopRecord)`'s refill clause (a record literal in a loop keeps its
+  vectors across passes).  `forms_upto` −24.5 % cycles native (priced −31 %; the rest is the
+  inlined call's own prologue the hand form also dropped), −54 % interpreted; hash unchanged.
+  Receipt: `formal/rewrites-history.md` § 2026-10-08.  A runtime fast path in
+  `Stores::vector_add` was priced first and bought −4 % here: the copy routine was not the
+  cost, the temporary was.
