@@ -28,6 +28,10 @@ fn exact_copy_claim_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("LOFT_NO_EXACT_COPY_CLAIM").is_none())
 }
+fn vadd_fits_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_NO_VADD_FITS").is_none_or(|v| v == "0"))
+}
 fn vadd_trace_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("LOFT_TRACE_VADD").is_ok())
@@ -1902,6 +1906,49 @@ impl Stores {
     ///
     /// When the source's byte length does not fit a store claim.
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// [`Self::vector_add`] when the elements own no heap and the destination already has room
+    /// for them in a record of its own: the length read once, one block copy, one length
+    /// write.  The general path reaches the same bytes through `vector_append` and
+    /// `vector_set_size`, which derive the capacity twice and `resize` on every call.  `false`
+    /// leaves everything untouched for the general path: a destination with no record yet, a
+    /// self-append (`v += v`), one that must grow, an element type that owns heap, or a store
+    /// `LOFT_WATCH_STORE` names.  `LOFT_NO_VADD_FITS=1` sends every append the general way.
+    #[inline]
+    fn vector_add_fits(&mut self, db: &DbRef, o_db: &DbRef, known: u16, o_length: u32) -> bool {
+        let size = u32::from(self.size(known));
+        if size == 0
+            || db.is_null()
+            || db.rec == 0
+            || !vadd_fits_enabled()
+            || self.type_owns_heap(known)
+            || crate::keys::watch_store() == Some(db.store_nr)
+        {
+            return false;
+        }
+        let o_rec = keys::store(o_db, &self.allocations).get_u32_raw(o_db.rec, o_db.pos);
+        let store = keys::store(db, &self.allocations);
+        let d_rec = store.collection_rec(db.rec, db.pos);
+        if d_rec == 0 || (db.store_nr == o_db.store_nr && d_rec == o_rec) {
+            return false;
+        }
+        let length = store.get_u32_raw(d_rec, 4);
+        let Some(needed) = length.checked_add(o_length) else {
+            return false;
+        };
+        if needed > vector::append_capacity(store, db, d_rec, size) {
+            return false;
+        }
+        let to = 8 + isize::try_from(u64::from(length) * u64::from(size)).unwrap_or(isize::MAX);
+        let bytes = isize::try_from(u64::from(o_length) * u64::from(size)).unwrap_or(isize::MAX);
+        if db.store_nr == o_db.store_nr {
+            keys::mut_store(db, &mut self.allocations).copy_block(o_rec, 8, d_rec, to, bytes);
+        } else {
+            self.copy_block_cross_store(o_db.store_nr, o_rec, 8, db.store_nr, d_rec, to, bytes);
+        }
+        keys::mut_store(db, &mut self.allocations).set_u32_raw(d_rec, 4, needed);
+        true
+    }
+
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
         // with the resolved stride — the instrument that settled the nested
@@ -1941,6 +1988,9 @@ impl Stores {
         // deep-copy nested heap, append u32 rec-id to dest's array).
         if self.is_linked(known) {
             self.vector_add_array(db, o_db, known, o_length);
+            return;
+        }
+        if self.vector_add_fits(db, o_db, known, o_length) {
             return;
         }
         // The source record, read BEFORE the growth.  A source in another store cannot move

@@ -55,6 +55,9 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the
     // inlined bodies) — after the value records, so a leaf it inlines is final.
     crate::leaf_inline::rewrite_program(data);
+    // `@FR-R-CtorLiteral` — a constructor's call is its literal, after the leaf inlining
+    // that leaves a constructor's scalar fields as operator expressions.
+    crate::ctor_literal::rewrite_program(data);
     // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
     crate::forward_walk::rewrite_program(data);
     // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.

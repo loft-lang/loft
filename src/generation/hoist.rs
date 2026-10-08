@@ -12839,6 +12839,115 @@ pub struct LoopRecord {
     pub loop_scope: u16,
     /// The block whose direct `Set(v, null)` declares the local per iteration.
     pub decl_block: u16,
+    /// The REFILL clause: a record whose vector fields hold no-heap elements.  Its per-pass
+    /// mint keeps the store as it stands (`OpDatabaseRefill`) and each literal zero of a
+    /// vector field empties that vector in place, so the vectors keep their records.
+    pub refill: bool,
+}
+
+/// [`loop_records`]' answer: the admitted locals, and the literal zeros of the refill-clause
+/// records' vector fields (by node address) — the empties `emit.rs` writes for
+/// `@FR-R-RefillBuffer` too.
+#[derive(Default)]
+pub struct LoopRecords {
+    pub recs: HashMap<u16, LoopRecord>,
+    pub field_zeros: HashSet<usize>,
+}
+
+/// The byte offsets of `tp`'s vector fields.
+fn vector_field_offsets(stores: &Stores, tp: u16) -> Vec<i32> {
+    let Some(crate::database::Parts::Struct(fields)) =
+        stores.types.get(tp as usize).map(|t| &t.parts)
+    else {
+        return Vec::new();
+    };
+    fields
+        .iter()
+        .filter(|f| {
+            matches!(
+                stores.types.get(f.content as usize).map(|c| &c.parts),
+                Some(crate::database::Parts::Vector(_))
+            )
+        })
+        .map(|f| i32::from(f.position))
+        .collect()
+}
+
+/// The REFILL clause's group check: every mint of `v` heads a literal group that writes
+/// every field of `tp` ([`group_covers_type`]), and every zero of a vector field of `v` is
+/// one of those groups' — answered as the set of those zeros, or `None`.  A zero anywhere
+/// else would drop a kept vector's record into the store, where the clear arm it replaces
+/// reclaimed it.
+fn loop_record_zeros(
+    body: &Value,
+    v: u16,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+) -> Option<HashSet<usize>> {
+    let offs = vector_field_offsets(stores, tp);
+    let mut ok = true;
+    let mut mints = 0usize;
+    let mut zeros: HashSet<usize> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Block(bl) = n {
+            let ops = &bl.operators;
+            for (i, stmt) in ops.iter().enumerate() {
+                let Some(Value::Call(d, args)) = Some(stmt.unspan()) else {
+                    continue;
+                };
+                if (*d as usize) >= data.definitions.len()
+                    || !matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                    || !matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                {
+                    continue;
+                }
+                mints += 1;
+                if !matches!(args.get(1).map(Value::unspan), Some(Value::Int(t)) if *t == i32::from(tp))
+                    || !group_covers_type(ops, i + 1, v, tp, data, stores)
+                {
+                    ok = false;
+                    continue;
+                }
+                for g in &ops[i + 1..] {
+                    let Value::Call(d, args) = g.unspan() else {
+                        if matches!(g.unspan(), Value::Line(_)) {
+                            continue;
+                        }
+                        break;
+                    };
+                    if (*d as usize) >= data.definitions.len()
+                        || !data.def(*d).name().starts_with("OpSet")
+                    {
+                        break;
+                    }
+                    if data.def(*d).name() == "OpSetInt4"
+                        && let [a0, Value::Int(off), zero] = &args[..]
+                        && matches!(a0.unspan(), Value::Var(w) if *w == v)
+                        && matches!(zero.unspan(), Value::Int(0))
+                        && offs.contains(off)
+                    {
+                        zeros.insert(std::ptr::from_ref(g.unspan()) as usize);
+                    }
+                }
+            }
+        }
+        false
+    });
+    // Every vector-field zero of `v` must be one the groups own.
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+            && data.def(*d).name().starts_with("OpSet")
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+            && matches!(args.get(1).map(Value::unspan), Some(Value::Int(off)) if offs.contains(off))
+            && !zeros.contains(&(std::ptr::from_ref(n) as usize))
+        {
+            ok = false;
+        }
+        false
+    });
+    (ok && mints > 0 && zeros.len() == mints * offs.len()).then_some(zeros)
 }
 
 /// `@FR-R-LoopRecord` (the `@FR-R-LoopBuffer` shape for a RECORD) — the loop records of
@@ -12861,17 +12970,18 @@ pub struct LoopRecord {
 /// The fallback is "not a loop record", which costs the reuse and never a value.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
+pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
     let def = data.def(def_nr);
     let vars = def.variables();
     let body = def.code();
-    let mut out = HashMap::new();
+    let mut out = LoopRecords::default();
     if matches!(body, Value::Null)
         || body.any_node(&mut |n| matches!(n, Value::Yield(_) | Value::Parallel(_)))
     {
         return out;
     }
     let trace = std::env::var("LOFT_TRACE_LOOP_RECORD").is_ok();
+    let refill_on = !std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0");
     // Where each candidate is declared: the innermost enclosing loop and the block holding
     // its `Set(v, null)`.
     let mut decls: HashMap<u16, LoopRecord> = HashMap::new();
@@ -12899,21 +13009,41 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
             && !matches!(vars.tp(*v), Type::Optional(_))
             && let Type::Reference(d, _) = vars.tp(*v).peel_link()
             && data.def_type(*d) == DefType::Struct
-            && all_scalar_record(data, *d)
         {
             decls.entry(*v).or_insert(LoopRecord {
                 loop_scope,
                 decl_block,
+                refill: !all_scalar_record(data, *d),
             });
         }
     });
-    for (v, rec) in decls {
+    for (v, mut rec) in decls {
         let mut minted = false;
         let mut declined: Option<&'static str> = None;
+        // The REFILL clause: the store type the mints name, refillable, every mint heading a
+        // complete literal group.  The vector fields' own ops are then part of the init family.
+        let mut vec_offs: Vec<i32> = Vec::new();
+        let mut zeros: HashSet<usize> = HashSet::new();
+        if rec.refill {
+            let tp = mint_type_of(data, def_nr, v);
+            match tp {
+                Some(tp) if refill_on && refillable_plain(stores, tp) => {
+                    match loop_record_zeros(body, v, tp, data, stores) {
+                        Some(z) => {
+                            zeros = z;
+                            vec_offs = vector_field_offsets(stores, tp);
+                        }
+                        None => declined = Some("a mint whose literal group the refill cannot see"),
+                    }
+                }
+                _ => declined = Some("a heap-owning type"),
+            }
+        }
         // Every mention of `v`, judged by its parent.
         fn check(
             n: &Value,
             v: u16,
+            vec_offs: &[i32],
             data: &Data,
             minted: &mut bool,
             declined: &mut Option<&'static str>,
@@ -12945,6 +13075,22 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
                     let native = matches!(data.def(*g).code(), Value::Null)
                         || !data.def(*g).rust().is_empty();
+                    // The REFILL clause: a vector field read in place as a native op's
+                    // operated-on vector (`OpPushInt(OpGetField(v, off, tp), x)`, a length, an
+                    // element read) names the record only for that op.
+                    let on_vec_field = native
+                        && name != "OpGetField"
+                        && matches!(args.first().map(Value::unspan), Some(Value::Call(gf, ga))
+                            if (*gf as usize) < data.definitions.len()
+                                && data.def(*gf).name() == "OpGetField"
+                                && matches!(ga.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                                && matches!(ga.get(1).map(Value::unspan), Some(Value::Int(off)) if vec_offs.contains(off)));
+                    if on_vec_field {
+                        for a in args.iter().skip(1) {
+                            check(a, v, vec_offs, data, minted, declined);
+                        }
+                        return;
+                    }
                     if first && native {
                         let fld_lit = matches!(args.get(1).map(Value::unspan), Some(Value::Int(_)));
                         let ok = match name {
@@ -12965,7 +13111,7 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         }
                         // The other operands still walk (a value may mention `v` again).
                         for a in args.iter().skip(1) {
-                            check(a, v, data, minted, declined);
+                            check(a, v, vec_offs, data, minted, declined);
                         }
                         return;
                     }
@@ -12985,7 +13131,7 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                         }
                         for a in args {
                             if !matches!(a.unspan(), Value::Var(w) if *w == v) {
-                                check(a, v, data, minted, declined);
+                                check(a, v, vec_offs, data, minted, declined);
                             }
                         }
                         return;
@@ -12993,9 +13139,9 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
                 }
                 _ => {}
             }
-            n.for_each_child(&mut |c| check(c, v, data, minted, declined));
+            n.for_each_child(&mut |c| check(c, v, vec_offs, data, minted, declined));
         }
-        check(body, v, data, &mut minted, &mut declined);
+        check(body, v, &vec_offs, data, &mut minted, &mut declined);
         if !minted {
             declined.get_or_insert("never minted by a literal");
         }
@@ -13003,13 +13149,16 @@ pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
             None => {
                 if trace {
                     eprintln!(
-                        "[loop-record] {}: {} keeps its store across iterations of loop {}",
+                        "[loop-record] {}: {} keeps its store{} across iterations of loop {}",
                         def.name(),
                         vars.name(v),
+                        if rec.refill { " and its vectors" } else { "" },
                         rec.loop_scope
                     );
                 }
-                out.insert(v, rec);
+                rec.refill = rec.refill && !zeros.is_empty();
+                out.field_zeros.extend(zeros);
+                out.recs.insert(v, rec);
             }
             Some(why) => {
                 if trace {

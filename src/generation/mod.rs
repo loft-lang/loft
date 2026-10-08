@@ -3001,7 +3001,10 @@ impl Output<'_> {
         // (§ V-u) are left to those.
         self.loop_records.clear();
         if !self.loop_record_disabled {
-            self.loop_records = hoist::loop_records(self.data, def_nr);
+            let lr = hoist::loop_records(self.data, self.stores, def_nr);
+            self.loop_records = lr.recs;
+            // The refill clause's vector-field zeros are `@FR-R-RefillBuffer`'s empties.
+            self.refill.field_zeros.extend(lr.field_zeros);
         }
         self.loop_buffers.clear();
         if !self.loop_buffer_disabled {
