@@ -16,7 +16,8 @@
 //   (the literal's zero strands each kept vector in the store).  Restored, every cell holds on
 //   --interpret, --native and --native-release, under `LOFT_NO_LOOP_RECORD_REFILL=1` and
 //   `LOFT_NO_LOOP_RECORD=1`, and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
-//   and LOFT_NATIVE_LEAK_CHECK=1.
+//   and LOFT_NATIVE_LEAK_CHECK=1.  With the appends by field number not admitted, r7's `st`
+//   declines (values hold) and `tests/ctor_literal.rs` fails on the kept count.
 struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
 
 fn fm_sum(f: const Fm) -> integer {

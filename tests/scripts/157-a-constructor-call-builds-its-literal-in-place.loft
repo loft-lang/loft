@@ -20,7 +20,9 @@
 //   --native-release.  Restored, every cell holds on --interpret, --native and
 //   --native-release, under each switch (`LOFT_NO_CTOR_LITERAL`, `LOFT_NO_LOOP_RECORD_REFILL`,
 //   `LOFT_NO_VADD_FITS`) and under LOFT_STRICT_STORES=1, LOFT_POISON=1, LOFT_POISON_CLAIM=1
-//   and LOFT_NATIVE_LEAK_CHECK=1.
+//   and LOFT_NATIVE_LEAK_CHECK=1.  With the loop-record gate disabled (no site ever restored),
+//   c13's call is rewritten and `tests/ctor_literal.rs` fails on the trace while every value
+//   holds: the gate's cost is a store a pass, which only a timing or the trace can see.
 struct Fm { h0: integer, lens: vector<integer>, turns: vector<integer> }
 
 fn hn(h: integer) -> integer { ((h % 12) + 12) % 12 }
