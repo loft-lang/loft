@@ -217,6 +217,16 @@ fn scalar_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Fu
             if vars.is_some_and(|v| is_scalar(v.tp(*t))))
 }
 
+/// The address of a TEXT local (`OpCreateStack(t)`, a `&text` hand-off such as a callee's
+/// output text) writes nothing a header describes: on `--native` a text local is a Rust
+/// `String`, outside every store, and the link is its address.  Whatever writes through it is
+/// judged on its own.
+fn text_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+            if vars.is_some_and(|v| matches!(v.tp(*t).base(), Type::Text(_))))
+}
+
 /// `@FR-R-InPlace`'s link clause — the address of a local naming a record that owns NO heap
 /// (`&rows[i]` handed to `fn f(p: &(integer, integer))`) writes nothing either: through it a
 /// callee can only write the record's scalars in place or rebind the local, and neither claims,
@@ -7014,6 +7024,24 @@ fn fresh_copy(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
         && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e))
 }
 
+/// `@FR-R-Mint`'s text clause — the first text written into an element the body has just
+/// minted (`e.f = t` between `OpNewRecord` and `OpFinishRecord`): a claim in the store the
+/// mint itself claims in, so it can move nothing the admitted mint cannot, and the mint's
+/// aliasing decision covers it.  The slot holds no text yet, so nothing is released.
+fn fresh_text_set(name: &str, args: &[Value], fresh: &HashSet<u16>) -> bool {
+    name == "OpSetText"
+        && args.len() == 3
+        && fresh_text_set_enabled()
+        && matches!(args[0].unspan(), Value::Var(e) if fresh.contains(e))
+}
+
+/// `LOFT_NO_FRESH_TEXT_SET=1` — a text written into a just-minted element blocks the loop's
+/// header hold again.
+fn fresh_text_set_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_FRESH_TEXT_SET").is_ok_and(|v| v != "0"))
+}
+
 /// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
 /// extra allowance: under `allow_in_place`, a direct [`IN_PLACE_SET_OPS`] call is
 /// not blocking (its target and value subtrees still walk, so a growing op INSIDE
@@ -7063,6 +7091,7 @@ fn blocks_header_hoist(
                 && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
                     || scalar_stack_ref(data.def(*d).name(), args, vars)
+                    || (fresh_text_set_enabled() && text_stack_ref(data.def(*d).name(), args, vars))
                     || record_stack_ref(stores, data, data.def(*d).name(), args, vars));
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
@@ -7140,6 +7169,7 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
             let fresh_copy = known && tiers.in_place && fresh_copy(data.def(*d).name(), args, fresh);
+            let fresh_text = known && tiers.mint && fresh_text_set(data.def(*d).name(), args, fresh);
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -7155,6 +7185,7 @@ fn blocks_header_hoist(
                 || fresh_delivery
                 || record_copy
                 || fresh_copy
+                || fresh_text
             {
                 false
             } else if call_writes_store(*d, data, cache, active, owned) {
