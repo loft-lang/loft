@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A file may hold its declarations in any order: an `operator next` declared BELOW the `for`
+// that uses it drives that loop (@FR-Op-Mark).  On the first pass the operator is not yet
+// visible; the loop variable then has no type yet rather than the iterable's own, which made
+// the body's assignment report a type change and refused this valid program (loft#1950).
+// Every value by hand.
+
+struct L { n: integer }
+
+fn test_operator_next_declared_below() {
+  l = L { n: 0 };
+  last = "";
+  seen = 0;
+  for line in l { last = line; seen += 1; }
+  assert(last == "l2", "the last item: {last}");
+  assert(seen == 2, "two items: {seen}");
+}
+
+fn test_a_fresh_binding_and_a_text_join() {
+  l = L { n: 0 };
+  all = "";
+  for line in l { all += line; }
+  assert(all == "l1l2", "both items in order: {all}");
+}
+
+operator next(self: L) -> text? {
+  self.n += 1;
+  if self.n > 2 { return null; }
+  "l{self.n}"
+}
