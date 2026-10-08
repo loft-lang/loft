@@ -207,6 +207,212 @@ mod recording {
     }
 }
 
+/// @PLN179 strand 4b — `lines()`: a cursor over ONE stream of a running program, each line
+/// handed over as it arrives, the other stream collected meanwhile, so a `cargo build` that
+/// talks on stderr or a `git log` of any length is read with flat memory and can never
+/// deadlock.  The moment the child exists a thread reads the chosen pipe into a channel that
+/// holds 256 lines and a second thread drains the other pipe; a slow consumer fills the
+/// channel, the reader stops reading, and the program blocks on `write` as it would under a
+/// shell — slow, never stuck, and the other pipe is still drained.  `next` blocks for the
+/// next line and answers "end" once the pipe closes; `done` waits for the program and
+/// answers its code with what the other stream held; `lstop` ends the program and its tree
+/// first.  A loop left early keeps the program running until `stop()` or the end of this
+/// program, whose exit takes every tree it started (`platform::process`).
+mod cursor {
+    use super::Finished;
+    use crate::platform::process::{Program, Running, Spawn, exit_code};
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::sync::Mutex;
+    use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+    use std::thread::JoinHandle;
+
+    struct Cursor {
+        running: Running,
+        rx: Option<Receiver<String>>,
+        reader: Option<JoinHandle<()>>,
+        other: Option<JoinHandle<Vec<u8>>>,
+        feed: Option<JoinHandle<()>>,
+        /// The cursor reads stderr; the collected stream is then stdout.
+        err: bool,
+        finished: Option<Finished>,
+    }
+
+    static CURSORS: Mutex<Option<HashMap<i64, Cursor>>> = Mutex::new(None);
+    static NEXT: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+
+    fn table<T>(f: impl FnOnce(&mut HashMap<i64, Cursor>) -> T) -> T {
+        let mut g = CURSORS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(g.get_or_insert_with(HashMap::new))
+    }
+
+    /// The lines of `pipe`, each without its `\n` and a `\r` before it, into `tx`; ends
+    /// when the pipe closes or nobody listens any more.
+    fn lines_of(pipe: impl Read + Send + 'static, tx: SyncSender<String>) -> JoinHandle<()> {
+        std::thread::spawn(move || {
+            let mut r = BufReader::new(pipe);
+            let mut buf = Vec::new();
+            loop {
+                buf.clear();
+                match r.read_until(b'\n', &mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+                if buf.last() == Some(&b'\n') {
+                    buf.pop();
+                    if buf.last() == Some(&b'\r') {
+                        buf.pop();
+                    }
+                }
+                if tx.send(String::from_utf8_lossy(&buf).into_owned()).is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    fn collect(mut pipe: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let _ = pipe.read_to_end(&mut out);
+            out
+        })
+    }
+
+    pub(super) fn open(err: bool, argv: &[String], input: &str) -> (i64, String, String) {
+        let Some((program, rest)) = argv.split_first() else {
+            return (
+                -1,
+                String::new(),
+                "an empty command: there is no program to run".to_string(),
+            );
+        };
+        let stdin = if input.is_empty() {
+            std::process::Stdio::null()
+        } else {
+            std::process::Stdio::piped()
+        };
+        let started = Spawn::new(Program::search(program))
+            .args(rest)
+            .stdin(stdin)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .start();
+        let mut running = match started {
+            Ok(r) => r,
+            Err(e) => return (-1, String::new(), format!("{program}: {e}")),
+        };
+        let feed = running.take_stdin().map(|mut pipe| {
+            let input = input.as_bytes().to_vec();
+            std::thread::spawn(move || {
+                let _ = pipe.write_all(&input);
+            })
+        });
+        let (tx, rx) = sync_channel(256);
+        let (reader, other) = if err {
+            (
+                running.take_stderr().map(|p| lines_of(p, tx)),
+                running.take_stdout().map(collect),
+            )
+        } else {
+            (
+                running.take_stdout().map(|p| lines_of(p, tx)),
+                running.take_stderr().map(collect),
+            )
+        };
+        let h = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        table(|t| {
+            t.insert(
+                h,
+                Cursor {
+                    running,
+                    rx: Some(rx),
+                    reader,
+                    other,
+                    feed,
+                    err,
+                    finished: None,
+                },
+            );
+        });
+        (h, String::new(), String::new())
+    }
+
+    /// Wait for the program to end and settle its streams, once.
+    fn finish(c: &mut Cursor, stop: bool) {
+        if c.finished.is_some() {
+            return;
+        }
+        // Nobody listens: the reader thread ends at its next line, and the pipe closes.
+        c.rx = None;
+        let status = if stop {
+            c.running.stop_tree()
+        } else {
+            c.running.finish()
+        };
+        if let Some(r) = c.reader.take() {
+            let _ = r.join();
+        }
+        let other = c
+            .other
+            .take()
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
+        if let Some(f) = c.feed.take() {
+            let _ = f.join();
+        }
+        let code = status.map_or(-1, exit_code);
+        c.finished = Some(if c.err {
+            Finished {
+                code,
+                stdout: other,
+                stderr: Vec::new(),
+            }
+        } else {
+            Finished {
+                code,
+                stdout: Vec::new(),
+                stderr: other,
+            }
+        });
+    }
+
+    pub(super) fn next(h: i64) -> (i64, String, String) {
+        // Out of the table while it blocks, so another cursor is not held up.
+        let Some(mut c) = table(|t| t.remove(&h)) else {
+            return (-1, String::new(), String::new());
+        };
+        let line = c.rx.as_ref().and_then(|rx| rx.recv().ok());
+        let answer = if let Some(l) = line {
+            (1, l, String::new())
+        } else {
+            finish(&mut c, false);
+            (0, String::new(), String::new())
+        };
+        table(|t| t.insert(h, c));
+        answer
+    }
+
+    pub(super) fn done(h: i64, stop: bool) -> (i64, String, String) {
+        let Some(mut c) = table(|t| t.remove(&h)) else {
+            return (-1, String::new(), String::new());
+        };
+        finish(&mut c, stop);
+        let f = c.finished.take().unwrap_or(Finished {
+            code: -1,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        });
+        (
+            f.code,
+            String::from_utf8_lossy(&f.stdout).into_owned(),
+            String::from_utf8_lossy(&f.stderr).into_owned(),
+        )
+    }
+}
+
 /// The programs `start()` left running, by the handle the library holds.
 static STARTED: Mutex<Option<HashMap<i64, Running>>> = Mutex::new(None);
 static NEXT_HANDLE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
@@ -229,7 +435,11 @@ fn number(w: Option<&String>) -> Option<i64> {
 /// - `wait` handle ms: 1 when it ended (`out` its code), 0 while it runs, -1 for no handle;
 /// - `alive` handle: 1 or 0;
 /// - `stop` handle: 1 and `out` its code, 0 for no handle;
-/// - `path` text: 0 and `out` the host's spelling, or -1 and why the path is refused.
+/// - `path` text: 0 and `out` the host's spelling, or -1 and why the path is refused;
+/// - `lines` out|err argv (stdin in `input`): a cursor handle (> 0), or -1 and why;
+/// - `next` handle: 1 and `out` the next line, 0 at the end of the stream, -1 for no handle;
+/// - `done` handle / `lstop` handle: the program's code once it has ended (`lstop` ends it
+///   first, with its tree), `out` and `err` what the OTHER stream collected.
 fn control(enc: &str, input: &str) -> Option<(i64, String, String)> {
     let (op, rest) = enc.strip_prefix('@')?.split_once(':')?;
     let Some(words) = decode_argv(rest) else {
@@ -279,6 +489,22 @@ fn control(enc: &str, input: &str) -> Option<(i64, String, String)> {
                 (1, code.to_string(), String::new())
             }
             None => none(),
+        },
+        "lines" => match words.split_first() {
+            Some((which, argv)) => cursor::open(which == "err", argv, input),
+            None => (-1, String::new(), MALFORMED.to_string()),
+        },
+        "next" => match number(words.first()) {
+            Some(h) => cursor::next(h),
+            None => (-1, String::new(), MALFORMED.to_string()),
+        },
+        "done" => match number(words.first()) {
+            Some(h) => cursor::done(h, false),
+            None => (-1, String::new(), MALFORMED.to_string()),
+        },
+        "lstop" => match number(words.first()) {
+            Some(h) => cursor::done(h, true),
+            None => (-1, String::new(), MALFORMED.to_string()),
         },
         "path" => {
             let raw = words.first().map_or("", String::as_str);

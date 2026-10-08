@@ -25,6 +25,10 @@ is the original's shim and `script_twin.sh --replay` arms both.  **`scripts/loft
 `scripts/` one package with `lib/process` as a path dependency, so a bare script runs from
 any working directory.  `scripts/check_bundle_fresh` is the first port over `run`.
 `scripts/script_recheck.sh` writes through a temp file: GNU `sed -i` edited nothing on macOS.
+**`lines()` / `err_lines()`** (`src/process_run.rs` § cursor): a native-backed cursor over one
+stream of a running program — a reader thread per pipe from the start, a 256-line channel for
+the chosen one, the other collected for `done()`; `stop()` ends the tree.  Its `next` is an
+`operator`, which is what `for` reaches — LOFT_CONTROL.md § Custom iterators said `fn`.
 
 ### `check_request` makes half the stores: `(R-PureReuse)`, and a `match` evaluates its subject once (2026-10-02)
 

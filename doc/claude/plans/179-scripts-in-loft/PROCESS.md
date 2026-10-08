@@ -71,6 +71,22 @@ stderr nobody reads is bounded by an option (`Streams.Collect | Inherit | Discar
 `run(c, input: text)` feeds stdin from a value.  A capability group `process#update` (running a program acts on the world; the right vocabulary is read, update, append) keeps a
 sandboxed script from running anything ungranted (SANDBOX.md S1).
 
+**Built (2026-10-08): `lines()` / `err_lines()` → `Lines`, `operator next`, `done()`,
+`stop()`** (`src/process_run.rs` § cursor, `lib/process/src/process.loft`): one reader
+thread per pipe from the moment the child exists, the chosen stream through a channel of
+256 lines, the other collected for `done()`.  Two cursors rather than a `Stream` argument,
+because the `for` walks a COPY of the iterator value (LOFT_CONTROL.md § Custom iterators),
+so a per-line "which stream" field on the cursor could not be read from the body; `Both`
+waits for a port that wants it.  There is no drop hook in the language, so a loop left early
+leaves the program running until `stop()` or the end of this program, which takes every
+tree it started; the design's "the drop ends the child" is therefore `stop()`, explicit.
+The probes' answers, `lib/process/tests/lines.loft` on both backends: (2) the first line of
+`echo first; sleep 1; echo second` arrives in well under 700 ms; (3) 50 MB in 704 226 lines
+streams through a counting loop at 29 MB maximum resident interpreted (2.0 s; collecting it
+would hold 50 MB); (4) a `break` after one line then `stop()` — the pid is gone within 2 s;
+(5) the OK notice, `c.run()` of `true` ×100: 15 ms interpreted, 13 ms native, against
+Python's `subprocess.run` at 19 ms on the same box.
+
 **Gate, before any port calls it** — the probes that can fail, on both backends: (1) a child
 writing 1 MiB to stderr while the parent reads stdout by line, against the same child under
 `subprocess.Popen(...).stdout.read()`, which hangs; (2) the first line of a 10-second

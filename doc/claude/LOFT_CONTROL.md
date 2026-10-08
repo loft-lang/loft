@@ -222,12 +222,14 @@ Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value ret
 
 ### Custom iterators (I13)
 
-Any struct or struct-enum with a `fn next(self: T) -> Item?` method can be used in a `for`
-loop.  Returning `null` from `next` terminates the loop:
+Any struct or struct-enum with an `operator next(self: T) -> Item?` method can be used in a
+`for` loop.  Returning `null` from `next` terminates the loop.  It is written `operator`,
+not `fn`, like every method an operator form reaches (`@FR-Op-Mark`): a plain `fn next` is
+an ordinary method, and a `for` over the type is refused naming it.
 
 ```
 struct Counter { current: integer, limit: integer }
-fn next(self: Counter) -> integer? {
+operator next(self: Counter) -> integer? {
     val = self.current;
     self.current = val + 1;
     if val >= self.limit { return null; }

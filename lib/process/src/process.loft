@@ -279,3 +279,68 @@ pub fn stop(self: Process) {
   }
   self.handle = 0;
 }
+
+/// A program read line by line as it talks: `for line in c.lines() { … }` yields each line
+/// of its stdout as it arrives, without the newline, while its stderr is collected — and
+/// `err_lines()` the other way round, for a tool that talks on stderr.  The memory is flat
+/// however long the output: a slow loop makes the program wait at its next write, as it
+/// would under a shell, and the other stream is still read, so nothing can deadlock.  After
+/// the loop `done()` answers the `Run` — the code, and what the other stream held.  A loop
+/// left early (`break`, `return`) leaves the program running until `stop()`, or until this
+/// program ends, which takes everything it started with it.  The loop walks a copy of the
+/// cursor, so ask `done()` or `stop()` of the one you hold.
+pub struct Lines {
+  handle: integer,
+  /// Why the command could not run; "" when it did.
+  refused: text
+}
+
+fn open_lines(self: Command, which: text, input: text) -> Lines {
+  if self.refused != "" { return Lines { handle: 0, refused: self.refused }; }
+  out = "";
+  err = "";
+  h = process_run("@lines:{word(which)}{self.encoded()}", input, out, err);
+  if h <= 0 { return Lines { handle: 0, refused: err }; }
+  Lines { handle: h, refused: "" }
+}
+
+/// The program's stdout, a line at a time, its stderr collected for `done()`.
+pub fn lines(self: Command, input: text = "") -> Lines {
+  self.open_lines("out", input)
+}
+
+/// The program's stderr, a line at a time, its stdout collected for `done()`.
+pub fn err_lines(self: Command, input: text = "") -> Lines {
+  self.open_lines("err", input)
+}
+
+/// The next line, or null once the stream has closed — what `for line in …` asks.
+pub operator next(self: Lines) -> text? {
+  if self.handle <= 0 { return null; }
+  out = "";
+  err = "";
+  if process_run("@next:{word("{self.handle}")}", "", out, err) == 1 { return out; }
+  null
+}
+
+fn settle(self: Lines, op: text) -> Run {
+  if self.handle <= 0 {
+    return Run { ok: false, code: -1, stdout: "", stderr: self.refused, timed_out: false };
+  }
+  out = "";
+  err = "";
+  code = process_run("@{op}:{word("{self.handle}")}", "", out, err);
+  self.handle = 0;
+  Run { ok: code == 0, code: code, stdout: out, stderr: err, timed_out: false }
+}
+
+/// Wait for the program to end: its code, and what the other stream held.  The lines not
+/// yet read are dropped.
+pub fn done(self: Lines) -> Run {
+  self.settle("done")
+}
+
+/// End the program and everything it started, now; the `Run` then says how it ended.
+pub fn stop(self: Lines) -> Run {
+  self.settle("lstop")
+}
