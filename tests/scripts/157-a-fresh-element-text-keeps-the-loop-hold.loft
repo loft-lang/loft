@@ -1,0 +1,53 @@
+// `@FR-R-Mint`'s text clause — the first text written into an element the loop just minted is
+// a claim in the store the mint itself claims in, so a loop that keeps another vector's header
+// keeps it across that write too.  When the read vector and the minted one share a store (two
+// fields of one record), the mint's own aliasing decision refuses the hold, text or not.  Every
+// cell grows the minted vector's store with long texts; every value is hand-computed.
+//
+// @falsified-at: pending
+
+struct T { name: text, k: integer }
+struct Doc { src: vector<text>, out: vector<T> }
+
+fn names_len(v: const vector<T>) -> integer {
+  n = 0;
+  for t in v { n += len(t.name) * 10 + t.k; }
+  n
+}
+
+fn build(src: const vector<text>, pad: text) -> vector<T> {
+  out: vector<T> = [];
+  for a in src { out += [T { name: "{a}{pad}", k: a#index }]; }
+  out
+}
+
+fn main() {
+  pad = "";
+  for _ in 0..50 { pad += "0123456789"; }
+  src: vector<text> = [];
+  for i in 0..40 { src += ["s{i}"]; }
+
+  // h1 — the read vector and the minted one in different stores: names of 2 or 3 characters
+  // plus 500, k = 0..39: 10 * (10 * 502 + 30 * 503) + 780 = 201880.
+  h1 = names_len(build(src, pad));
+  assert(h1 == 201880, "h1: {h1}");
+
+  // h2 — the same, both vectors fields of ONE record: the hold is refused, the values hold.
+  d = Doc { src: src, out: [] };
+  for a in d.src { d.out += [T { name: "{a}{pad}", k: a#index }]; }
+  h2 = names_len(d.out);
+  assert(h2 == 201880, "h2: {h2}");
+
+  // h3 — the minted element's text from the read element itself.
+  e: vector<T> = [];
+  for a in src { e += [T { name: a, k: 1 }]; }
+  h3 = names_len(e);
+  assert(h3 == (10 * 2 + 30 * 3) * 10 + 40, "h3: {h3}");
+  // h4 — a text written into an EXISTING element of the read vector's store (not a fresh mint):
+  // the hold is refused.  The last pass leaves d.out[0] = { "s39" + pad, 7 }: 201880 - 5020 +
+  // 5030 + 7 = 201897.
+  for a in d.src { d.out[0] = T { name: "{a}{pad}", k: 7 }; }
+  h4 = names_len(d.out);
+  assert(h4 == 201897, "h4: {h4}");
+  println("hold ok");
+}
