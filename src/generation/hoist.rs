@@ -5775,6 +5775,10 @@ pub struct HashFill {
 }
 
 /// [`HashFill`] for `lp`, or why it is no hash-fill loop.
+///
+/// # Errors
+///
+/// The reason the loop is no counted fill of one hash, as a trace would name it.
 pub fn hash_fill_loop<'a>(
     lp: &'a Block,
     data: &Data,
@@ -5782,20 +5786,7 @@ pub fn hash_fill_loop<'a>(
 ) -> Result<(HashFill, &'a Value), &'static str> {
     let body = plain_for_body(lp).ok_or("not a plain counted loop")?;
     let rc = range_counters(lp, data).map_err(|_| "not a range loop")?;
-    let early = body.operators.iter().any(|s| {
-        s.any_node(&mut |n| {
-            matches!(
-                n,
-                Value::Break(_)
-                    | Value::Return(_)
-                    | Value::Continue(_)
-                    | Value::Loop(_)
-                    | Value::Yield(_)
-                    | Value::Parallel(_)
-            )
-        })
-    });
-    if early {
+    if leaves_early(body) {
         return Err("the body can leave early, or loops");
     }
     let mint_of = |n: &Value| -> Option<(u16, u16)> {
@@ -5858,14 +5849,12 @@ pub fn hash_fill_loop<'a>(
         if mint_of(n).is_some() {
             return 1;
         }
-        match n.unspan() {
-            Value::If(c, t, e) => most(c, mint_of) + most(t, mint_of).max(most(e, mint_of)),
-            _ => {
-                let mut total = 0u32;
-                n.for_each_child(&mut |child| total += most(child, mint_of));
-                total
-            }
+        if let Value::If(c, t, e) = n.unspan() {
+            return most(c, mint_of) + most(t, mint_of).max(most(e, mint_of));
         }
+        let mut total = 0u32;
+        n.for_each_child(&mut |child| total += most(child, mint_of));
+        total
     }
     let per_pass: u32 = body.operators.iter().map(|s| most(s, &mint_of)).sum();
     if per_pass == 0 {
@@ -5882,6 +5871,23 @@ pub fn hash_fill_loop<'a>(
         },
         rc.hi,
     ))
+}
+
+/// Can a statement of `body` leave the loop early, or run a loop of its own?
+fn leaves_early(body: &Block) -> bool {
+    body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
+    })
 }
 
 /// Recognise the counted RECORD-append loop (`@FR-R-PushFill`'s record clause): `for i in
