@@ -288,7 +288,12 @@ its record across passes (a complete literal re-mints nothing, a partial one re-
 its declared defaults) and is freed once after the loop — and is the first bisect step for a
 stale field, a leak or a double free out of a record literal in a loop on native.  Declined
 where the local is copied, returned, captured, appended, handed to a callee whose return
-borrows it, or owns heap.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
+borrows it, or owns heap other than refillable vectors.  `LOFT_TRACE_LOOP_RECORD=1` names each kept local and each decline.
+**`LOFT_NO_LOOP_RECORD_REFILL=1`** (`@FR-R-LoopRecord`'s refill clause, default-ON, generation
+time, `--native` only) declines again a loop record whose type holds vectors of no-heap
+elements — with it off, such a record keeps its vectors across passes and each literal zero of
+a vector field empties the kept vector in place.  First bisect step for a stale element or a
+store that grows pass by pass out of a record literal with vector fields in a loop.
 
 ## Generators
 

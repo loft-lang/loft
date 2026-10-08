@@ -353,6 +353,14 @@ is the first bisect step for a wrong answer out of a small scalar function on ei
 reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 
+**A constructor's call is its literal (`@FR-R-CtorLiteral`, default-ON, both backends, after
+the leaf inliner):** `x = ctor(args)`, where `ctor`'s body is one record literal over its
+parameters, is replaced by that literal written into `x`, a vector-literal argument built in
+its field instead of in a buffer the callee copied from.  An open-world program keeps the
+calls.  **`LOFT_NO_CTOR_LITERAL=1`** keeps every call and is the first bisect step for a wrong
+field, a leak or a double free out of a constructor call on either backend;
+**`LOFT_TRACE_CTOR_LITERAL=1`** names every rewritten call and every declined site.
+
 **The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
 the leaf inliner):** each removes work the IR shows is redundant, and each has its switch and
 its trace.  **`LOFT_NO_FORWARD_WALK=1`** keeps `for x in v` an iterator where the body cannot
@@ -510,6 +518,11 @@ copy does, so a short vector in a fresh field is not a flat block (a rebuilt sto
 the from-scratch size, @PLN123; a builder written in its element keeps the size the copy
 had).  First bisect step for a wrong element or a size change out of such an append;
 `store_rebuild_b1` / `store_compact_b3` are the falsifiers.
+**`LOFT_NO_VADD_FITS=1`** (runtime, BOTH backends) sends every whole-vector append
+(`v += w`, `Rec { xs: v }`, a field copy) through `Stores::vector_add`'s general path again —
+with it off, an append of no-heap elements into a destination record that already has room,
+distinct from the source, is one block copy and one length write.  First bisect step for a
+wrong element or length out of such an append.
 
 **`LOFT_NO_PLAIN_FIELD_APPEND=1`** (runtime, BOTH backends, default-ON)
 routes a record appended to a plain vector FIELD of a plain struct — `self.items += [x]`, the

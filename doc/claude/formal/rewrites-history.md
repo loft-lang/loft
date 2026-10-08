@@ -50,6 +50,8 @@ this is where it is written down.
 | R-ForwardWalk | `forward_walk::match_walk` (the forward walk's lowered shape, a scalar read over the element accepted), `check_body`, `rewrite_in` | the `&` clause dropped: `both(w, w)` reads 2 rounds for 5 — a silent wrong answer; the read-only clause dropped: the pin sees `handed_on` rewritten (2026-10-02) | the first matcher accepted only a bare element reference and so missed every scalar walk, the commonest kind; and it declined a walk appending to a local because the scope pass had promoted that local to a result-buffer parameter — the alias question is about `&` parameters only.  The index-assignment clause is defensive: no loft source assigns `p#index` (`#remove` names the vector, which the read-only clause declines), so no plant can fail on it alone |
 | R-SameRead | `same_read::discharge`, `same` (positions ignored), `pure` (every call a pure operator), `bind_statement` | the default ignored: `two_defaults` reads 11 for 12; any call taken as pure: `written_between` reads 198 for 103 — both silent (2026-10-02) | bound nothing at first: the two `v[i]?` of one statement carry different source positions, so exact equality failed; and it only looked at assignments, while the commonest site is a function's result expression |
 | R-InlineLeaf (tuple clause) | `leaf_inline::admit`'s result clause, `pure` and `remap` over a tuple literal | — : the plant admitting any tuple passed, because a tuple holding heap is a record type (`__tuple<…>`) the scalar-result check already declines (2026-10-02) | the cell written to falsify the all-scalars condition could not: the language never types such a tuple `Type::Tuple`; the condition stays as a defence and is recorded as one |
+| R-CtorLiteral | `ctor_literal::admit` (the literal group, scalar fields over scalar parameters), `expand` / `literal_pushes` (a vector literal's pushes retargeted at the field), `buffer_only_pooled` + `retire_buffer` (the pooled buffer's prep and frees) | the literal's first push dropped: c1 red on both backends (2026-10-08) | — |
+| R-LoopRecord (refill clause) | `hoist::loop_record_zeros` (every mint heads a complete group; every vector-field zero is a group's) and the `(R-RefillBuffer)` empty in `emit.rs` | the empties not emitted: every VALUE holds and the live-record count grows two records a pass (r6, c9) — the literal's zero strands the kept vector in its store (2026-10-08) | the value cells alone: a stranded vector answers nothing wrong, so the guard carries a live-record cell |
 | R-InRange | `in_range::match_range`, `record_discharge` (the bare element read of `v` at `i`), `forward_walk::check_body` | another vector's read accepted: `another_vector` reads null for 15; the body check dropped: the cleared vector reads null for 10 — both silent (2026-10-02); a scalar discharge accepted: passes, the shape excludes it first | priced first over scalars too (`index_read` −20 %) — not exact: a scalar `v[i]?` also discharges a null VALUE, so the rule shrank to record elements before it was built |
 | R-SingleUse (statement clause) | `single_use::rewrite_program`: a `_comp_N` temporary assigned once, read once, pure, read after pure operands only | any element taken as pure: the element with a side effect moved, the pin red (2026-10-02) | fired nowhere at first, twice over: a comprehension's statements sit in a `Loop` node, which the walk did not visit, and the element value under its block is `Span`-wrapped |
 | R-DischargeInto | `discharge_into::discharge_into` (the shape and the two target clauses), the single-use count in `rewrite_in` | the null test inverted reads `[]` for `[yy]`; the default dropped reads `[null]` — both silent (2026-10-02); the target-in-read, target-in-default and single-use clauses: planted away, all green — DEFENSIVE, the parser routes an assignment naming its target through a work buffer | `tests/text_borrow.rs` pinned the discharge TEMP as a `&str`; with the temp gone the pin asks the temps of the `LOFT_NO_DISCHARGE_INTO=1` emission and the locals of both |
@@ -486,3 +488,18 @@ check then learned.  An earlier draft pinned the text clause on `(R-RefillBuffer
 buffer; the release removed is the pool's `OpClear` (`@FR-H-ClearRelease`).  Found on the
 way: a text field reassigned on a live record leaks the text it replaces, on both backends
 (loft#1873) — the same slot invariant, at every `OpSetText` site.
+
+## 2026-10-08 — a constructor's call is its literal
+
+`(R-CtorLiteral)` and `(R-LoopRecord)`'s refill clause, from `rustc-vs-twin.md`'s first
+mechanism (a copy where Rust moves).  hex_recover `forms_upto` built each candidate's two
+vectors in pooled buffers and `form_new` copied them into its `Form`.  Priced by hand
+(`bench/portal/hand_price.sh`, cycles per op on an E-core, the n=12 minus n=2 difference):
+inlining `form_new` alone −2 %, building the vectors in the fields −31 %.  A runtime fast path
+in `Stores::vector_add` (no-heap elements, room in a distinct destination: one block copy) was
+priced first, since a runtime fix reaches every program: it bought −4 % here, so the copy
+routine was not where the prize was.  Built, the two rules give `forms_upto` −24.5 % cycles on
+`--native-release` (4.95M → 3.74M per op, hash 26284275 unchanged) and −54 % on the
+interpreter (13.0 → 5.9 ms per op).  The literal form needed the refill clause first: written
+directly in a loop, `Fm { lens: [..] }` minted a store a pass and ran 27 % SLOWER than the call,
+which reused a pooled return buffer; with the clause it runs −47 %.

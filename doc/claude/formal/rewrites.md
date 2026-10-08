@@ -650,6 +650,14 @@ now.  Cell r1, pin `a_mint_left_on_its_templates_is_still_a_growth`.
                  or nullable type, a second binding, a copy to another local, a
                  return, a capture, a native op taking it otherwise, `par` and
                  `yield` decline.  A free on a `return`/`continue` path stays.
+                 THE REFILL CLAUSE: a record whose heap is vectors of no-heap elements
+                 (`(R-RefillBuffer)`'s refillable shape) is kept too, with its vectors,
+                 where every mint heads a literal group that writes every field and every
+                 zero of a vector field is one of those groups': each such zero empties the
+                 kept vector in place (`(R-RefillBuffer)`'s empty), and a vector field read
+                 in place as the operated-on vector of a native op (a push, a length, an
+                 element read) is part of the init family.  A partial literal keeps the
+                 plain mint — its prefill would zero a kept vector's slot.
 ```
 
 **In words.** The `(R-LoopBuffer)` shape for a record.  A record literal
@@ -657,12 +665,17 @@ bound inside a loop cost the free of its store at the body's end and a fresh sto
 pass — `free_named`, the free-slot search, the re-init, the claim, the zero, the tag: 39 ns
 per pass against 10 ns for a vector loop buffer's reset — where a local declared outside
 the loop already kept its store through `OpDatabase`'s clear arm.  Switch `LOFT_NO_LOOP_RECORD`
-(and `LOFT_NO_LOOP_BUFFER_REUSE`, one family); trace `LOFT_TRACE_LOOP_RECORD=1`; falsifiers
+(and `LOFT_NO_LOOP_BUFFER_REUSE`, one family; `LOFT_NO_LOOP_RECORD_REFILL` for the refill
+clause alone); trace `LOFT_TRACE_LOOP_RECORD=1`; falsifiers
 `LOFT_STRICT_STORES` / `LOFT_POISON` / `LOFT_POISON_CLAIM` / `LOFT_NATIVE_LEAK_CHECK` (a kept
 store must still be freed exactly once).  Sites: `hoist::loop_records`, the `Value::Loop`
 emission in `emit.rs` (prelude and postlude), `output_block` (the two dropped statements),
 `ops::misc_ops` (the kept-record mint).  Cells `tests/scripts/157-loop-record.loft` l1–l15,
-pins `tests/loop_record.rs`.
+pins `tests/loop_record.rs`.  The refill clause: a kept record's vectors keep their records
+and capacity, so a literal of vectors refills them where the plain form claimed new ones
+every pass.  Sites `hoist::loop_record_zeros` (the groups and their zeros) and the
+`(R-RefillBuffer)` empty in `emit.rs`; cells `tests/scripts/157-a-loop-record-keeps-its-vectors.loft`,
+pins `tests/ctor_literal.rs`.
 
 ### A return buffer refills the store a rebind released
 
@@ -4184,6 +4197,45 @@ both backends, the cells where each rule must NOT fire beside those where it doe
 `tests/leaf_inline.rs` (which rule fires on which cell, read off the trace; every switch; the
 hash loop calls no leaf); `leaf_inline::tests` (the fold never answers an overflow or the
 sentinel; the scale fold's conditions).
+
+### A constructor's call is its literal
+
+```
+  (R-CtorLiteral) A call of a CONSTRUCTOR — a function whose body is its return buffer's
+                 mint followed by a literal group that writes every field (a scalar field
+                 from operators over scalar parameters, a vector field's zero, a vector
+                 parameter appended whole into its field), answering the buffer — at a
+                 statement `x = ctor(args)` that is x's only assignment, is replaced in the
+                 IR by that literal over `x`: `x` declared null and minted with the
+                 callee's type, each write copied with the parameters read as their
+                 arguments.  A vector-literal argument is built IN ITS FIELD — the
+                 literal's pushes retargeted at the field, its own buffer left unminted —
+                 and a vector-variable argument is appended whole, as the callee did.
+                 Admitted where every argument is an operator expression over variables
+                 and literals (no store read, no call), a vector literal of such elements,
+                 or a vector variable, none reading `x`; where `x` is a plain record local,
+                 not a parameter; and where the call's pooled return buffer is mentioned by
+                 nothing but its declaration, its prep and its frees — the prep goes, the
+                 target's free that skipped the buffer frees the target, and the buffer's
+                 free that skipped the target goes.  Not in an `open_world` program, nor in
+                 one compiled for a run that observes function entries.
+```
+
+**In words.** Applies in: the IR phase, both backends.  The call built each vector argument
+in a store of its own and the callee copied it whole into its result — the copy a Rust move
+does not make; the literal builds it where it lives, and in a loop the literal form is a
+`(R-LoopRecord)` whose vectors are kept across passes (its refill clause).  The argument
+condition is what makes the interleaving exact: the callee's writes now run between the
+argument evaluations, so an argument may read nothing a write can change and do nothing a
+reordering could expose.  A literal of at most eleven elements drops its reservation — the
+first push claims as much, and a kept vector already has its record.
+`LOFT_NO_CTOR_LITERAL=1` keeps every call; `LOFT_TRACE_CTOR_LITERAL=1` names each rewritten
+call, each declined call site and each declined `*_new` constructor.  Site:
+`ctor_literal::rewrite_program`.
+
+**Guards.** `tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft` (values
+and a live-record count, three modes); `tests/ctor_literal.rs` (which sites are rewritten and
+which keep the call, read off the trace; every switch; the store falsifiers).
 
 ## Proposed — the next eliminations, by reach
 
