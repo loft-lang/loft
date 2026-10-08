@@ -257,3 +257,26 @@ between two kinds of value — the compiler proves where a view is the same valu
 (the boundary: a decoded value keeps its bytes when its frame is written, grown, cleared or
 gone).
 **Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)
+
+## C140 — A collection's size() reports its representation, which the compiler may size
+
+**Decision.** `size()` of a collection reports the memory its representation takes — for a
+`hash`, the whole bucket table, its empty slots included — and that representation is the
+compiler's to choose wherever the program's values are the ones the plain form gives: a
+counted loop that fills a hash may reserve the table for the loop's inserts up front, and
+`size(h)` then answers the reserved table.  What a program reads from a collection — its
+length, its entries, its order — never moves.  **Why.** The contract is semantics, never
+representation (C122): a reservation is the same capacity choice a user's own `reserve(h, n)`
+makes, and a vector's `size` already leaves its reserve out for exactly this reason.  Holding
+the growth ladder fixed would have kept every keyed fill rebuilding and re-hashing its table
+at each doubling (gridmesh `build_index`: −45 % with the reservation).
+
+**Revisit when.** A program is found that relies on `size(h)` of a filled hash to mean the
+growth ladder's step — then `size` grows a second, layout-free spelling, not the ladder back.
+Decided 2026-10-08 — [record](DESIGN_DECISIONS-history.md#c140--a-collections-size-reports-its-representation-which-the-compiler-may-size).
+**Holds at:** `@C140` — `(R-PushFill)`'s hash clause in [formal/rewrites.md](formal/rewrites.md);
+guard `tests/scripts/a-counted-hash-fill-reserves-its-table.loft` (the reserved table's size
+beside unchanged values); `tests/scripts/pln110-size-hash.loft` measures the growth ladder
+with fills the clause does not take.
+**Catalogue:** `bench/portal/analysis/keyed.md` · reads C122
+

@@ -4701,3 +4701,14 @@ three options: views where the compiler proves confinement, a view as a run-time
 field copied on escape, or no views and the levers that need no decision (≈ 5.5×).  The owner:
 *"In the optimizations everything is possible as long as the semantics of the original program
 is kept.  So giving a view with operations per character is fine."*
+
+## C140 — A collection's size() reports its representation, which the compiler may size
+
+Asked 2026-10-08 while working the worst native routines: gridmesh `build_index` (8.3× Rust)
+spends its time rebuilding and re-hashing the hash's table as 100,000 inserts fill it, and a
+reservation before the counted loop measured −45 %.  The reservation flipped
+`pln110-size-hash.loft`, which pins `size(h)` as the bucket table's bytes along the growth
+ladder.  Presented as: `size()` is a representation report the compiler may change; `size()`
+binds the optimiser (drop the clause); or the clause opt-in until a design pass.  The owner
+chose the first.
+

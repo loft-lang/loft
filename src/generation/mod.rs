@@ -3966,7 +3966,8 @@ impl Output<'_> {
     /// admits the loop — a window opened that every mint group's slot, address and finish
     /// go through, closed by the caller after every copy of the loop.
     /// `@FR-R-PushFill`'s hash clause: `reserve(h, len(h) + inserts × trip count)` before a
-    /// counted loop inserting records into hash `h` ([`hoist::hash_fill_loop`]).
+    /// counted loop inserting records into hash `h` ([`hoist::hash_fill_loop`]).  An ABSENT
+    /// hash (a discharged receiver, loft#1214's shape) reserves nothing.
     fn hash_reserve(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
         if self.push_fill_disabled || self.in_coroutine_body || !hash_reserve_enabled() {
             return Ok(());
@@ -3982,7 +3983,7 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "{{ let _pn = {count}; if _pn > 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}_u16); }} }} //@FR-R-PushFill hash reservation",
+            "{{ let _pn = {count}; if _pn > 0 && {h}.store_nr != u16::MAX && {h}.rec != 0 {{ let _hn = i64::from(hash::count(&{h}, &stores.allocations)); stores.reserve_hash(&{h}, _hn.saturating_add(_pn.saturating_mul({}_i64)), {}_u16); }} }} //@FR-R-PushFill hash reservation",
             hf.per_pass, hf.tp
         )?;
         crate::rewrite_census::fired("R-PushFill/hash", 1);

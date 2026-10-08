@@ -77,6 +77,14 @@ fn main() {
   // every key present: sum of 0..299
   assert(len(hl) == 300 && s5 == 44850 && hl[897]?.v == 299, "c5b {s5}");
 
+  // c7 — @C140: `size()` reports the representation — the reserved table holds a counted
+  // fill of 64 at once, so it is no smaller than the table the growth ladder ends on (64
+  // entries rebuild at 16 -> 38 -> 82 -> 170 slots: 680 bytes), while len and every entry
+  // are the fill's.
+  h7: hash<C[ck]> = [];
+  for i in 0..64 { h7 += [C { ck: i, ix: i }]; }
+  assert(len(h7) == 64 && h7[63]?.ix == 63 && size(h7) >= 256, "c7 {size(h7)}");
+
   // c6 — refilled 40 times: the live record count holds once warm.
   r1 = 0;
   r2 = 0;
