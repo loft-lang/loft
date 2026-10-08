@@ -412,6 +412,20 @@ const CODES: &[(&str, &str)] = &[
         "value struct D { ms: integer }\nfn OpLt(self: D, other: D) -> boolean { self.ms < other.ms }\n\
          fn main() { a = D { ms: 1 }; print(\"{OpLt(a, a)}\"); }",
     ),
+    // `Disp-Ambiguous` — two definitions take the call and neither is more specific: an
+    // integer converts into either `float` or `single` (loft#1925).
+    (
+        "ambiguous-call",
+        "fn f(a: float) -> text { \"F {a}\" }\nfn f(a: single) -> text { \"S {a}\" }\n\
+         fn main() { i = 3; print(f(i)); }",
+    ),
+    // `Disp-Hint` — a name with several definitions types no lambda (loft#1926).
+    (
+        "untyped-lambda-at-overload-set",
+        "fn ap(f: fn(integer) -> integer) -> integer { f(2) }\n\
+         fn ap(f: fn(text) -> text) -> text { f(\"a\") }\n\
+         fn main() { print(\"{ap(|x| { x })}\"); }",
+    ),
 ];
 
 /// @PLN131 — codes with no MINIMAL trigger, each with why.

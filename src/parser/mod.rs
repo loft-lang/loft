@@ -460,6 +460,12 @@ pub struct Parser {
     /// token the profile does not grant.  Reads are default-allow, so only a field
     /// the host marked with a `#read` link is ever recorded here.
     pub(crate) sandbox_field_reads: HashMap<u32, Vec<(String, crate::lexer::Position)>>,
+    /// `@FR-Cap-Own` — in a sandboxed def, the locals every assignment of which is a struct
+    /// LITERAL, keyed `(def, var)` → still literal-only.  Filled on pass 1, which sees the whole
+    /// body, and read on pass 2: such a local is data the script BUILT, so reading a `#read`
+    /// field of it reveals only what the script put there.  A parameter, a loop variable, a
+    /// copy or a call result never enters as `true` — a copy of host data is still host data.
+    pub(crate) sandbox_built: HashMap<(u32, u16), bool>,
     /// @PLN86 P6.4 (F5) — sandboxed UPDATES (raw writes) of a host field that carries an
     /// `#update` capability link, keyed by the writing def → each `(struct def_nr, field,
     /// position)`.  A field write WITH an update link is diverted here (admission admits
@@ -539,7 +545,7 @@ pub struct Parser {
     /// @PLN187 — the facts a keyed lookup's key fields are declared with, for `parse_key`.
     pub(crate) pending_key_facts: Vec<crate::data::AliasFact>,
     /// @PLN187 — the definition the last `call_with_named` selected, or `u32::MAX`: a call
-    /// lowered to an operator (`sort` → `OpSortVector`) no longer names it.
+    /// lowered to an operator (`sort` → `OpSortVector`) does not name it.
     pub(crate) last_called: u32,
     /// @PLN187 — the member name the current postfix step read (`v.insert(…)`).
     pub(crate) postfix_member: String,
@@ -744,7 +750,7 @@ pub struct Parser {
     /// Auto-`use` per-file scan cache: a file's `(lib:: refs, .method() calls)`
     /// are deterministic, so it is read + scanned at most once (keyed by path)
     /// and reused across the second pass and any `todo_files` re-parse.
-    auto_use_scan_cache: std::collections::HashMap<String, (Vec<String>, Vec<String>)>,
+    auto_use_scan_cache: std::collections::HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>,
     /// Per-directory cache for the dep-shadowing guard in `lib_path`: the
     /// nearest ancestor manifest's package root + its declared dependency
     /// names.  `None` = no manifest above that directory.
@@ -817,6 +823,13 @@ pub struct Parser {
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
     auto_use_trigger_map: Option<std::collections::HashMap<String, String>>,
+    /// The type half of the same surface: `type name -> providing package`, from the
+    /// current package's and its trigger-enabled dependencies' `pub struct` / `pub enum`
+    /// names (`triggers.rs`).  Built with `auto_use_trigger_map`; local only — a type name
+    /// never reaches the registry catalog, so an unknown type loads only a package the
+    /// author declared.  What lets `c: Command = "…"` load `process` with nothing in the
+    /// script naming it (@PLN179 strand 4).
+    auto_use_type_map: std::collections::HashMap<String, String>,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -991,13 +1004,19 @@ pub struct Parser {
     /// destination without naming it.
     amp_vector_link_partners: std::collections::HashMap<(u32, String), Vec<String>>,
     /// loft#945 — every `(function, variable)` whose vector LITERAL turned out to be the
-    /// RECEIVER of a `.map`/`.filter`/`.reduce` chain (`d = [1, 2, 3].map(…)`).
+    /// RECEIVER of a `.map`/`.filter`/`.reduce` chain (`d = [1, 2, 3].map(…)`) or of a
+    /// subscript (`a = [10, 20][1]`, `s = [1, 2, 3][1..]`, loft#1923).
     ///
     /// Deliberately NOT cleared between the passes: by the end of such a statement the
     /// variable holds the CHAIN's type, and the variable table outlives the pass, so pass 2
     /// would otherwise build the literal against a type it is not — a `vector<text>` for an
     /// integer literal, or an integer for a vector one.
-    literal_chain_lhs: std::collections::HashSet<(u32, u16)>,
+    ///
+    /// Keyed by the literal's own SOURCE POSITION as well (`line`, `pos` of its `[`): one
+    /// variable takes several literals, and only the one that IS a receiver may decline the
+    /// destination.  Keyed by the variable alone, `b: vector<integer> = []` lost its
+    /// declared type on pass 2 because a LATER `b = [1, 2][0..1]` was a receiver (loft#1923).
+    literal_chain_lhs: std::collections::HashSet<(u32, u16, u32, u32)>,
     /// @PLN125 — every bound-method stub built on pass 1, as
     /// `(stub, the interface method it stands in for, the holder that replaced `Self`)`.
     /// Consumed by `refresh_bound_method_stubs` between the passes, where a forward-
@@ -1194,6 +1213,13 @@ pub struct Parser {
     /// Set by `dynamic_dispatcher` when it refused a leaf, so the call site returns rather
     /// than falling to the ladder and reporting the same site a second way.
     pub(crate) reported_dynamic_refusal: bool,
+    /// `@FR-Disp-Hint` — while an argument of a call to an overload set is parsed without a
+    /// hint, the set's definitions as a refusal names them; a short lambda whose parameter
+    /// thereby has no type takes it and says so, naming them (`parse_lambda_short`).
+    pub(crate) unhinted_set: Option<String>,
+    /// That refusal was made: the call it belongs to ends there, so the definitions are not
+    /// reported a second time against an argument typed `fn(unknown)`.
+    pub(crate) unhinted_set_refused: bool,
     /// A call refused because two parameters bind one type variable to two types (@PLN165
     /// C1, F9): the refusal names both, and `call` answers nothing further for it.
     pub(crate) reported_binding_clash: bool,
@@ -1830,6 +1856,7 @@ impl Parser {
             declared_capabilities: HashSet::new(),
             member_access: HashMap::new(),
             sandbox_field_reads: HashMap::new(),
+            sandbox_built: HashMap::new(),
             sandbox_field_updates: HashMap::new(),
             sandbox_field_appends: HashMap::new(),
             last_field_target: None,
@@ -1953,6 +1980,7 @@ impl Parser {
             program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
+            auto_use_type_map: std::collections::HashMap::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,
@@ -1967,6 +1995,8 @@ impl Parser {
             lambda_counter: 0,
             expected: Type::Unknown(0),
             reported_dynamic_refusal: false,
+            unhinted_set: None,
+            unhinted_set_refused: false,
             reported_binding_clash: false,
             declared_fn_names: HashMap::new(),
             positionless_loops: HashSet::new(),
@@ -3406,10 +3436,8 @@ impl Parser {
             // in `definitions.rs`: the buffer is storage, and storage is never absent —
             // the `?` belongs to the RETURN, which is a value the caller reads.
             let ret = def.returned().ret_promo_base().clone();
-            if !matches!(
-                ret,
-                Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-            ) {
+            // The signature's own question (`Type::takes_ret_buffer`): a record takes none.
+            if !def.returned().takes_ret_buffer() {
                 continue;
             }
             // Already served — either the signature-time reservation fired, or pass 1
@@ -4980,6 +5008,25 @@ impl Parser {
     /// matters more here than it looks, because taking the branch mints an
     /// accumulator variable, and a mint that fired on only one pass would shift
     /// the name-keyed variable tables underneath every later work variable.
+    /// The method `method` of the type `d_nr` by its mangled name, looked up in the source
+    /// that DEFINES the type: `def_nr` searches the current source and the stdlib, so a
+    /// type imported by name (`use pkg::(T);`, or a type trigger) kept its methods out of
+    /// reach of the hooks that ask for them by name — `lit`, `hole_*`, `to_text` — while a
+    /// call on it dispatched fine through the receiver.  `u32::MAX` when there is none.
+    pub(crate) fn type_method(&self, d_nr: u32, method: &str) -> u32 {
+        let def = self.data.def(d_nr);
+        let nm = def.name();
+        if nm.is_empty() {
+            return u32::MAX;
+        }
+        let mangled = crate::data::Data::mangle_method(nm, method);
+        let found = self.data.def_nr(&mangled);
+        if found != u32::MAX {
+            return found;
+        }
+        self.data.source_nr(def.source, &mangled)
+    }
+
     pub(crate) fn interpolation_target(&self, tp: &Type) -> u32 {
         let Type::Reference(d_nr, _) = tp else {
             return u32::MAX;
@@ -4987,13 +5034,7 @@ impl Parser {
         if self.data.def_type(*d_nr) != DefType::Struct {
             return u32::MAX;
         }
-        let nm = self.data.def(*d_nr).name();
-        if nm.is_empty()
-            || self
-                .data
-                .def_nr(&crate::data::Data::mangle_method(nm, "lit"))
-                == u32::MAX
-        {
+        if self.type_method(*d_nr, "lit") == u32::MAX {
             return u32::MAX;
         }
         *d_nr
@@ -5813,6 +5854,32 @@ impl Parser {
             }
             return false;
         }
+        // `@FR-E-Truthy-1` — an UNTYPED `[]` is a vector VALUE like any other, so a truthiness
+        // position reads it as present.  With no element type to size a store it parses to the
+        // value-less placeholder (`parse_vector`), which reached the condition as nothing at
+        // all: the interpreter's jump read a stack byte (and the next local took the damage)
+        // and `--native` emitted `if ()` (loft#1919).  The literal has no effect to keep.
+        if !self.first_pass && Self::is_untyped_empty_literal(code, tp) {
+            *code = Value::Boolean(true);
+            return true;
+        }
+        // `(Slice-Value)` — a vector slice is a FRESH vector, owed at every position a value
+        // is read, and a condition reads one: it is materialised exactly as a bind would
+        // (`iterator_as_vector`) and then tested like any vector.  Left an iterator, its
+        // `Value::Iter` reached the scopes pass outside the loop its `break` belongs to — an
+        // internal compiler error on both backends (loft#1922).
+        if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            let vec_tp = Type::Vector(elm.clone(), Deps::none());
+            if self.iterator_as_vector(code, tp, &vec_tp).is_some() {
+                if !self.first_pass {
+                    let not_null = self.coalesce_not_null(&code.clone(), &vec_tp);
+                    *code = not_null;
+                }
+                return true;
+            }
+        }
         if Self::is_heap_handle(tp) {
             if !self.first_pass {
                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
@@ -5821,6 +5888,13 @@ impl Parser {
             return true;
         }
         self.convert_admitting(code, tp, &Type::Boolean)
+    }
+
+    /// The value-less placeholder an UNTYPED standalone `[]` parses to (`parse_vector`): an
+    /// `Insert` of the incoming value, typed by an expected type that was itself unknown.
+    pub(crate) fn is_untyped_empty_literal(code: &Value, tp: &Type) -> bool {
+        tp.is_unknown()
+            && matches!(code.unspan(), Value::Insert(v) if v.len() == 1 && matches!(v[0], Value::Null))
     }
 
     /// The STORE face of [`convert`](Parser::convert) — @FR-N-Store's home for every store
@@ -5989,7 +6063,7 @@ impl Parser {
     /// Is every VALUE position of `code` a vector slice — the `Value::Iter` a range
     /// subscript builds (its step a block), reached through the arms of an `if` and the
     /// tail of a block?  The shape [`Parser::iterator_as_vector`] materialises.
-    fn slice_shaped(code: &Value) -> bool {
+    pub(crate) fn slice_shaped(code: &Value) -> bool {
         match code.unspan() {
             Value::Iter(_, _, n, _) => matches!(n.as_ref(), Value::Block(_)),
             Value::If(_, a, b) => Self::slice_shaped(a) && Self::slice_shaped(b),
@@ -6952,11 +7026,7 @@ impl Parser {
                         return true;
                     }
                 }
-            } else if self.data.attributes(dnr) > 0
-                && (self.data.attr_type(dnr, 0).is_equal(check_type)
-                    || self.data.attr_type(dnr, 0).is_equal(is_type))
-                && self.data.def(dnr).returned().is_equal(should)
-            {
+            } else if self.data.converts_with(dnr, check_type, is_type, should) {
                 // @PLN99 Arc C — for a `Reference` source, `check_type` was flattened to the
                 // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
                 // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),
@@ -7474,6 +7544,34 @@ impl Parser {
         false
     }
 
+    /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex` with
+    /// the per-record link offset (`database.fields`), a constant only the parser knows once the
+    /// type is registered — which is why no stdlib `len(self: index)` can carry it (@FR-Col-Len).
+    /// An `index<…>?` counts 0 when absent, through `@FR-N-Store`'s store as every keyed `len`.
+    /// `None` when the type or the op is not registered yet.
+    pub(crate) fn index_len(
+        &mut self,
+        code: &mut Value,
+        recv: &Type,
+        mut args: Vec<Value>,
+        at: Option<&Position>,
+    ) -> Option<Type> {
+        let (base, absent) = recv.peel_optional();
+        let base = base.clone();
+        let known = self.get_type(&base);
+        let op_d_nr = self.data.def_nr("OpLengthIndex");
+        if known == u16::MAX || op_d_nr == u32::MAX {
+            return None;
+        }
+        let fields = self.database.fields(known);
+        if absent && let Some(first) = args.first_mut() {
+            self.convert_store(first, recv, &base, "parameter 1 of `len`", at);
+        }
+        args.push(Value::Int(i32::from(fields)));
+        *code = Value::Call(op_d_nr, args);
+        Some(crate::data::I64.clone())
+    }
+
     /// Search for definitions with the given name and call that with the given parameters.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -7754,19 +7852,8 @@ impl Parser {
             // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
             // "Unknown function len".  This route bypasses `convert`, so it asks
             // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
-            let (base, absent) = recv.peel_optional();
-            let base = base.clone();
-            let known = self.get_type(&base);
-            let op_d_nr = self.data.def_nr("OpLengthIndex");
-            if known != u16::MAX && op_d_nr != u32::MAX {
-                let fields = self.database.fields(known);
-                let mut args = list.to_vec();
-                if absent && let Some(first) = args.first_mut() {
-                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
-                }
-                args.push(Value::Int(i32::from(fields)));
-                *code = Value::Call(op_d_nr, args);
-                return crate::data::I64.clone();
+            if let Some(tp) = self.index_len(code, recv, list.to_vec(), arg_pos.first()) {
+                return tp;
             }
             // Type or op not registered — drop to the standard
             // error path so the user sees the same diagnostic shape
@@ -8156,6 +8243,22 @@ impl Parser {
         ))
     }
 
+    /// Is `code` a top-level vector constant's use site — a view of the write-locked constant
+    /// store, bound to its skip-free `_const_view_N` anchor (`Parser::parse_var`'s constant
+    /// arm, loft#1936)?  The one test for the shape, so the copy decisions that must treat it
+    /// as a whole-value read (`(B-Copy)`, loft#1686 and loft#1729) cannot drift from it.
+    pub(crate) fn is_const_view(&self, code: &Value) -> bool {
+        let op = self.data.def_nr("OpConstRef");
+        match code.unspan() {
+            Value::Call(d, _) => *d == op,
+            Value::Block(bl) if bl.name == "const_view" => matches!(
+                bl.operators.first().map(Value::unspan),
+                Some(Value::Set(_, v)) if matches!(v.unspan(), Value::Call(d, _) if *d == op)
+            ),
+            _ => false,
+        }
+    }
+
     /// Does argument `nr` of a call to `callee` hand a top-level constant's view to a
     /// parameter the callee may WRITE, so that it must travel as a copy (loft#1729)?
     ///
@@ -8166,7 +8269,7 @@ impl Parser {
     /// write.  A `const` or `&` parameter and a native callee never copy; a literal-bodied
     /// function's result already declines at a user call (`const_fn`).
     fn constant_arg_needs_copy(&self, callee: u32, nr: usize, arg: &Value, param: &Type) -> bool {
-        if !matches!(arg.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef")) {
+        if !self.is_const_view(arg) {
             return false;
         }
         if !matches!(param.base(), Type::Vector(_, _)) || self.context == u32::MAX {
@@ -9249,72 +9352,7 @@ impl Parser {
             new_returned,
         );
         self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings);
-        // @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
-        // `ref_return` is skipped (the promotion is deferred to instantiation), so the
-        // `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
-        // read as a fresh owner while its body hands the ARGUMENT up.  The caller then bound
-        // the argument's own store and a write through the result wrote the argument, on both
-        // backends (QUALITY-history.md B7t: struct/vector, whole/local/early/arm).  Ask the ONE
-        // derivation the body itself answers to — the oracle's return summary — and let the
-        // instance's declared return say what its twin's says, so the caller copies a
-        // borrowed return exactly as it does for a named function (loft#1346).
-        //
-        // A pure BORROW only.  A `Join` — a mint on one arm and the argument on the other —
-        // is delivered through a return buffer on a named function (`ref_return`'s per-arm
-        // leg), which a monomorph does not have yet; a dep alone would make the caller copy
-        // the mint arm and orphan the minted store.  That shape stays as it is, named in
-        // QUALITY-history.md B7t as the residual with its cure.
-        //
-        // And only where every return LEAF is the parameter itself.  A local bound from it
-        // (`y: T = x; y`) COPIES at codegen for a record (@FR-B-Copy) — a copy the IR does
-        // not show, so the oracle reads the local as a borrow of `x` — and declaring that a
-        // borrow made the caller decline its lift and free nothing: three corpus generics
-        // leaked one record per call under `LOFT_STRICT_STORES`.  What comes back through a
-        // local is owned, and the caller adopts it as before.
-        if new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned) {
-            let attrs_n = self.data.def(d_nr).attributes().len();
-            // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
-            // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
-            // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
-            // The self call still names the TEMPLATE here (`instantiate_nested_generics` runs
-            // below), and handed the same parameter it can only reach this instance.
-            if let crate::use_analysis::Own::Borrowed { base }
-            | crate::use_analysis::Own::Join { base } =
-                crate::use_analysis::return_ownership(&self.data, d_nr)
-                && (base as usize) < attrs_n
-                && !self.data.def(d_nr).attributes()[base as usize].hidden
-                && matches!(&self.data.def(d_nr).code, Value::Block(bl)
-                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
-            {
-                // Written directly: `set_returned` refuses a second write on purpose (a return
-                // type must not change), and this does not change it — it adds the deps the
-                // type was declared without.
-                //
-                // ATTR space, not frame: `base` is an attribute index — the guard above tests
-                // it against `attributes().len()` — and `Definition.returned` is a DEF-space
-                // home, so `Deps::attrs` is what states it.  `Type::depending` builds
-                // `Deps::frame1`, which tags the same number as a caller FRAME variable, and
-                // `call_dependencies` reads this list with `as_attr_indices`.
-                let with_dep = self
-                    .data
-                    .def(d_nr)
-                    .returned()
-                    .clone()
-                    .with_deps(&crate::data::Deps::attrs(vec![base]));
-                self.data.definitions[d_nr as usize].returned = with_dep;
-            } else if let Some(params) = self.monomorph_views_of_params(d_nr, g_nr) {
-                // loft#1880 — no ONE parameter, but a SET of them: a recursion that swaps its
-                // arguments (`sw(b, a, i - 1)`, base case `a[0]`) hands back a view of `a` or of
-                // `b`, which its twin declares `-> T["a", "b"]`.
-                let with_dep = self
-                    .data
-                    .def(d_nr)
-                    .returned()
-                    .clone()
-                    .with_deps(&crate::data::Deps::attrs(params));
-                self.data.definitions[d_nr as usize].returned = with_dep;
-            }
-        }
+        self.derive_monomorph_return_deps(d_nr, g_nr);
         // loft#1023 — a template declared BELOW its caller has not had its pass-2 body
         // parsed yet when the call instantiates, so the monomorph above was built from the
         // PASS-1 body.  Record it and re-derive once the whole file is through.
@@ -9322,6 +9360,10 @@ impl Parser {
             self.stale_monomorphs.push((d_nr, g_nr, bindings.clone()));
         }
         self.instantiate_nested_generics(d_nr, &bindings);
+        // loft#1934 — and again once the nested calls name their INSTANCES: a tail that
+        // forwards a nested generic's borrow (`g5<T>(x) -> T { g1(x) }`) read the TEMPLATE's
+        // dep-free `-> T` above.  Only where no dep was derived, so nothing is written twice.
+        self.derive_monomorph_return_deps(d_nr, g_nr);
         // The body's text-return promotion ran while its tail call still named the nested
         // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
         // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
@@ -10932,6 +10974,20 @@ impl Parser {
             })
     }
 
+    /// Does `tp` name one of the interface `iface_method` belongs to's ASSOCIATED types anywhere
+    /// in it (`Self.Rows`, `vector<Self.Item>`)?  Such a type stands for whatever companion the
+    /// implementor supplies, which `associated_bindings` matches; satisfaction asks nothing of
+    /// it.
+    fn names_associated_type(&self, iface_method: u32, tp: &Type) -> bool {
+        let iface = self.data.def(iface_method).parent;
+        iface != u32::MAX
+            && tp.any_node(&mut |t| {
+                matches!(t.base(), Type::Reference(d, _)
+                    if self.data.def(*d).parent == iface
+                        && matches!(self.data.def_type(*d), DefType::Struct))
+            })
+    }
+
     fn return_type_mismatch(
         &self,
         iface_method: u32,
@@ -10955,7 +11011,29 @@ impl Parser {
             _ => None,
         };
         let (Some(w), Some(g)) = (named(&want), named(&got)) else {
-            return None;
+            // `@FR-G-Sat` — the return is part of the signature for every type, not only for a
+            // named one: a `-> float` member met `-> integer` and the generic read the float's
+            // bits as an integer (loft#1927).  A return typed by the interface's own associated
+            // type asks nothing, as such a parameter does (`bound_params_at`).  A member whose
+            // interface member returns nothing may return a value: the generic discards it.
+            if matches!(want.base(), Type::Void) || self.names_associated_type(iface_method, &want)
+            {
+                return None;
+            }
+            return (!self.data.return_fits(&got, &want)).then(|| {
+                let shown = |t: &Type| {
+                    if matches!(t.base(), Type::Void) {
+                        "nothing".to_string()
+                    } else {
+                        format!("'{}'", t.source_name(&self.data))
+                    }
+                };
+                format!(
+                    "'{method}' returns {} but the interface declares {}",
+                    shown(&got),
+                    shown(&want)
+                )
+            });
         };
         if w == g {
             return None;
@@ -14310,15 +14388,17 @@ impl Parser {
     /// `parse()` entry), so without this record the manifest misses
     /// them and an edited library keeps executing from the stale
     /// cached program.
+    #[track_caller]
     fn switch_to_dep(&mut self, f: &str) {
         // A `pub` the use region consumed belongs to the file being left; that file is
         // re-parsed from its start when it resumes.
         self.pub_taken = false;
         if std::env::var("LOFT_LIB_ORDER").is_ok() {
             eprintln!(
-                "[liborder] switch {} -> {}",
+                "[liborder] switch {} -> {} (from {})",
                 self.lexer.pos().file,
-                f.rsplit('/').next().unwrap_or(f)
+                f.rsplit('/').next().unwrap_or(f),
+                std::panic::Location::caller()
             );
         }
         if self.track_sources && !self.parsed_sources.iter().any(|s| s == f) {
@@ -14441,6 +14521,78 @@ impl Parser {
         }
         ops.push(to.clone());
         v_block(ops, tp.clone(), "displaced_closures")
+    }
+
+    /// The return deps an instance's `-> T` record return was declared without, from its body.
+    ///
+    /// @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
+    /// `ref_return` is skipped (the promotion is deferred to instantiation), so the
+    /// `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
+    /// read as a fresh owner while its body hands the ARGUMENT up.  The caller then bound
+    /// the argument's own store and a write through the result wrote the argument, on both
+    /// backends (QUALITY-history.md B7t: struct/vector, whole/local/early/arm).  Ask the ONE
+    /// derivation the body itself answers to — the oracle's return summary — and let the
+    /// instance's declared return say what its twin's says, so the caller copies a
+    /// borrowed return exactly as it does for a named function (loft#1346).
+    ///
+    /// A pure BORROW only.  A `Join` — a mint on one arm and the argument on the other —
+    /// is delivered through a return buffer on a named function (`ref_return`'s per-arm
+    /// leg), which a monomorph does not have yet; a dep alone would make the caller copy
+    /// the mint arm and orphan the minted store.  That shape stays as it is, named in
+    /// QUALITY-history.md B7t as the residual with its cure.
+    ///
+    /// And only where every return LEAF is the parameter itself.  A local bound from it
+    /// (`y: T = x; y`) COPIES at codegen for a record (@FR-B-Copy) — a copy the IR does
+    /// not show, so the oracle reads the local as a borrow of `x` — and declaring that a
+    /// borrow made the caller decline its lift and free nothing: three corpus generics
+    /// leaked one record per call under `LOFT_STRICT_STORES`.  What comes back through a
+    /// local is owned, and the caller adopts it as before.
+    fn derive_monomorph_return_deps(&mut self, d_nr: u32, g_nr: u32) {
+        let new_returned = self.data.def(d_nr).returned().clone();
+        if !(new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned)) {
+            return;
+        }
+        let attrs_n = self.data.def(d_nr).attributes().len();
+        // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
+        // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
+        // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
+        // The self call still names the TEMPLATE here (`instantiate_nested_generics` runs
+        // below), and handed the same parameter it can only reach this instance.
+        if let crate::use_analysis::Own::Borrowed { base } | crate::use_analysis::Own::Join { base } =
+            crate::use_analysis::return_ownership(&self.data, d_nr)
+            && (base as usize) < attrs_n
+            && !self.data.def(d_nr).attributes()[base as usize].hidden
+            && matches!(&self.data.def(d_nr).code, Value::Block(bl)
+                if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
+        {
+            // Written directly: `set_returned` refuses a second write on purpose (a return
+            // type must not change), and this does not change it — it adds the deps the
+            // type was declared without.
+            //
+            // ATTR space, not frame: `base` is an attribute index — the guard above tests
+            // it against `attributes().len()` — and `Definition.returned` is a DEF-space
+            // home, so `Deps::attrs` is what states it.  `Type::depending` builds
+            // `Deps::frame1`, which tags the same number as a caller FRAME variable, and
+            // `call_dependencies` reads this list with `as_attr_indices`.
+            let with_dep = self
+                .data
+                .def(d_nr)
+                .returned()
+                .clone()
+                .with_deps(&crate::data::Deps::attrs(vec![base]));
+            self.data.definitions[d_nr as usize].returned = with_dep;
+        } else if let Some(params) = self.monomorph_views_of_params(d_nr, g_nr) {
+            // loft#1880 — no ONE parameter, but a SET of them: a recursion that swaps its
+            // arguments (`sw(b, a, i - 1)`, base case `a[0]`) hands back a view of `a` or of
+            // `b`, which its twin declares `-> T["a", "b"]`.
+            let with_dep = self
+                .data
+                .def(d_nr)
+                .returned()
+                .clone()
+                .with_deps(&crate::data::Deps::attrs(params));
+            self.data.definitions[d_nr as usize].returned = with_dep;
+        }
     }
 
     /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into
@@ -16772,24 +16924,23 @@ impl Parser {
     ///
     /// * printed under `LOFT_TRACE_VISIBILITY=1` — the census (`scripts/pub_census.sh`), so the
     ///   census lists exactly what is still missing and is empty once everything is migrated;
-    /// * refused under `LOFT_PUB_ENFORCE=1` — the rule, with the item, its file and the cure.
+    /// * refused — the rule, with the item, its file and the cure.
     ///
     /// Building a type that is not `pub` at all is [`Self::refuse_building_a_name_only_type`]'s.
     pub(crate) fn check_visibility(&mut self, kind: &str, d_nr: u32, f_nr: usize) {
         let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_VISIBILITY").is_some());
-        let enforce = crate::env_once!(std::env::var_os("LOFT_PUB_ENFORCE").is_some());
-        if self.first_pass || !(trace || enforce) || d_nr >= self.data.definitions() {
+        if self.first_pass || d_nr >= self.data.definitions() {
             return;
         }
         let def = self.data.def(d_nr);
         // A variant's fields and name are its enum's: the enum's file is the one that decides.
-        let owner = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
-            self.data.def(def.parent)
+        let owner_nr = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+            def.parent
         } else {
-            def
+            d_nr
         };
-        // A generic INSTANCE carries the source it was minted in and its template's position:
-        // the file it was declared in is the position's.
+        // A generic instance's visibility is its template's.
+        let owner = self.data.def(self.data.visibility_def(owner_nr));
         if owner.source == self.data.source
             || owner.position.file == self.lexer.pos().file
             || owner.name.starts_with("__")
@@ -16861,9 +17012,7 @@ impl Parser {
         if trace {
             self.print_census_site(kind, d_nr, f_nr);
         }
-        if enforce {
-            diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
-        }
+        diagnostic!(self.lexer, Level::Error, "{why}.\n  fix: {fix}");
     }
 
     /// @PLN187 (@C140, @FR-F-Visible) — a type that is NAME ONLY outside its file (not `pub`, but named by a
@@ -16876,11 +17025,13 @@ impl Parser {
             return;
         }
         let def = self.data.def(td_nr);
-        let owner_nr = if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
-            def.parent
-        } else {
-            td_nr
-        };
+        let owner_nr = self.data.visibility_def(
+            if matches!(def.def_type, DefType::EnumValue) && def.parent != u32::MAX {
+                def.parent
+            } else {
+                td_nr
+            },
+        );
         let owner = self.data.def(owner_nr);
         if owner.source == self.data.source
             || owner.source == crate::data::STD_SOURCE
@@ -19167,7 +19318,7 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls) =
+            let (refs, calls, type_refs) =
                 if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file.as_str()) {
                     c.clone()
                 } else {
@@ -19178,9 +19329,16 @@ impl Parser {
                             || Self::read_source(auto_use_scan_file.as_str()),
                             str::to_string,
                         );
+                    // A type the file DECLARES is its own, never a trigger: a script with
+                    // its own `struct Path` must not load a package that also has one.
+                    let declared = crate::libscan::scan_type_declarations(&src);
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
                         crate::libscan::scan_method_calls(&src),
+                        crate::libscan::scan_type_refs(&src)
+                            .into_iter()
+                            .filter(|t| !declared.contains(t))
+                            .collect(),
                     );
                     self.auto_use_scan_cache
                         .insert(auto_use_scan_file.to_string(), pair.clone());
@@ -19217,6 +19375,43 @@ impl Parser {
                         && !self.data.use_exists(&pkg)
                         && !to_load.contains(&pkg)
                     {
+                        to_load.push(pkg);
+                    }
+                }
+            }
+            // Tier-1, the type half: `c: Command = …` names a type a trigger-enabled
+            // dependency declares.  Local map only (no catalog): a type the file does not
+            // define and no declared package provides stays the ordinary "Undefined type".
+            // A loaded package binds only its `pkg::` qualifier (@C98), so each type that
+            // fired is also imported by name, as `use pkg::(Type);` would — a name the file
+            // reached for, never the whole library.
+            // The import is queued once the package IS loaded: this file resumes from its
+            // start after the dependency has been parsed (`todo_files`), the scan runs
+            // again, and the name then resolves — the same two visits an explicit
+            // `use pkg::(Type);` makes.
+            if !type_refs.is_empty() {
+                let _ = self.trigger_map(auto_use_scan_file.as_str());
+                for t in type_refs {
+                    let Some(pkg) = self.auto_use_type_map.get(&t).cloned() else {
+                        continue;
+                    };
+                    if self.data.use_exists(&pkg) {
+                        let lib_source = self.data.get_source(&pkg);
+                        let cur = self.data.source;
+                        if !self.data.import_name(lib_source, cur, &t, &t, false)
+                            && !self.pending_imports.iter().any(|pi| {
+                                pi.for_source == cur
+                                    && matches!(&pi.spec, ImportSpec::Names(n) if n.iter().any(|(a, _)| *a == t))
+                            })
+                        {
+                            self.pending_imports.push(PendingImport {
+                                for_source: cur,
+                                lib_source,
+                                spec: ImportSpec::Names(vec![(t.clone(), t)]),
+                                public: false,
+                            });
+                        }
+                    } else if !to_load.contains(&pkg) {
                         to_load.push(pkg);
                     }
                 }
@@ -19464,21 +19659,38 @@ impl Parser {
             return m.clone();
         }
         let mut map = std::collections::HashMap::new();
+        let mut types = std::collections::HashMap::new();
         let mut dir = std::path::Path::new(from_file)
             .parent()
             .map(std::path::Path::to_path_buf);
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
             if crate::file_access::exists(&toml) {
-                Self::add_pkg_triggers(&toml, &d, &mut map);
+                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
-                    for (dep, _ver) in &man.dependencies {
-                        if let Some(entry) = self.lib_path_manifest(&d.to_string_lossy(), dep)
+                    for (dep, value) in &man.dependencies {
+                        // PURE lookups only: a sibling package, a `path =` dependency, the
+                        // project's `lib/<dep>` — by path, never through `lib_path`, whose
+                        // side effects queue every dependency of the manifest found above
+                        // the file as a dependency of that file (a root manifest with
+                        // registry packages loaded `graphics` into a one-line script and
+                        // crashed the compiler in `imaging`).  A registry dependency's
+                        // triggers come from the catalogue instead.
+                        let entry = self
+                            .lib_path_manifest_resolve(&d.to_string_lossy(), dep)
+                            .map(|r| r.entry)
+                            .or_else(|| Self::dep_entry_by_path(&d, dep, value));
+                        if let Some(entry) = entry
                             && let Some(root) = std::path::Path::new(&entry)
                                 .parent()
                                 .and_then(|p| p.parent())
                         {
-                            Self::add_pkg_triggers(&root.join("loft.toml"), root, &mut map);
+                            Self::add_pkg_triggers(
+                                &root.join("loft.toml"),
+                                root,
+                                &mut map,
+                                &mut types,
+                            );
                         }
                     }
                 }
@@ -19487,7 +19699,26 @@ impl Parser {
             dir = d.parent().map(std::path::Path::to_path_buf);
         }
         self.auto_use_trigger_map = Some(map.clone());
+        self.auto_use_type_map = types;
         map
+    }
+
+    /// The entry file of a dependency declared by PATH — `dep = { path = "…" }` relative to
+    /// the manifest's directory `d`, or the project's `lib/<dep>` — read from the package's
+    /// own manifest and touching nothing else; `None` for a registry dependency.
+    fn dep_entry_by_path(d: &std::path::Path, dep: &str, value: &str) -> Option<String> {
+        let root = match crate::manifest::extract_path_dep(value) {
+            Some(path) => d.join(path),
+            None => d.join("lib").join(dep),
+        };
+        let toml = root.join("loft.toml");
+        if !crate::file_access::exists(&toml) {
+            return None;
+        }
+        let man = crate::manifest::read_manifest(&toml.to_string_lossy())?;
+        let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
+        let entry = root.join(entry);
+        crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
     }
 
     /// Add a package's derived text-method triggers (`method -> package`) to
@@ -19496,6 +19727,7 @@ impl Parser {
         toml: &std::path::Path,
         pkg_root: &std::path::Path,
         map: &mut std::collections::HashMap<String, String>,
+        types: &mut std::collections::HashMap<String, String>,
     ) {
         let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
             return;
@@ -19506,8 +19738,12 @@ impl Parser {
         let Some(name) = man.name else { return };
         let entry = man.entry.unwrap_or_else(|| format!("src/{name}.loft"));
         let src = crate::file_access::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
-        for mt in crate::triggers::derive_triggers(&src).methods {
+        let derived = crate::triggers::derive_triggers(&src);
+        for mt in derived.methods {
             map.entry(mt.name).or_insert_with(|| name.clone());
+        }
+        for t in derived.types {
+            types.entry(t).or_insert_with(|| name.clone());
         }
     }
 
@@ -23588,19 +23824,6 @@ fn merge_dependencies(a: &Type, b: &Type) -> Type {
     a.joined_deps(b)
 }
 
-fn field_id(key: &[(String, bool)], name: &mut String) {
-    for (k_nr, (k, asc)) in key.iter().enumerate() {
-        if k_nr > 0 {
-            *name += ",";
-        }
-        if !asc {
-            *name += "-";
-        }
-        *name += k;
-    }
-    *name += "]>";
-}
-
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
 fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {
@@ -24427,7 +24650,7 @@ mod plan86_nesting_guard_tests {
             "capability stats\ncapability bag\n\
              struct Item { v: integer }\n\
              struct Entity { id: integer, health: integer stats#read stats#update, \
-             loot: Item bag#read bag#append }\n\
+             loot: vector<Item> bag#read bag#append }\n\
              fn main() { }\n",
         );
         let e = p.data.def_nr("Entity");
@@ -25781,6 +26004,92 @@ mod plan86_admission_tests {
                     ),
                 ),
             ),
+            // loft#1930 — `owned(e)` is PROVENANCE: a view of a parameter is the caller's data
+            // whatever its type.  The types here are the program's own and `prog` is not an
+            // allowed library, which is the case the type rule read as script-owned.
+            (
+                "raw-write: a loop variable over a parameter's collection (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct Ent { hp: integer }\nstruct W { ents: vector<Ent> }\nfn evil(w: W) { for e in w.ents { e.hp = 0 } }\n",
+                ),
+            ),
+            (
+                "raw-write: a parameter's element bound to a local (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct Ent { hp: integer }\nstruct W { ents: vector<Ent> }\nfn evil(w: W) -> integer { x = w.ents[1]; x.hp = 7; x.hp }\n",
+                ),
+            ),
+            (
+                "raw-write: a `&` to a parameter's element (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct Ent { hp: integer }\nstruct W { ents: vector<Ent> }\nfn evil(w: W) { r = &w.ents[0]; r.hp = 5 }\n",
+                ),
+            ),
+            (
+                "append: a vector parameter (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "fn evil(v: vector<integer>) { v += [9] }\n",
+                ),
+            ),
+            (
+                "append: a `&` alias of a parameter's field (loft#1930)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "struct W { xs: vector<integer> }\nfn evil(w: W) { q = &w.xs; q += [8] }\n",
+                ),
+            ),
+            // loft#1929 — a whole-value read reads every field: rendering the value, as text
+            // or JSON, and a `match` binding a `#read` field are reads of it.
+            (
+                "read: a `#read` field rendered with its struct (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { \"{p}\" }\n",
+                ),
+            ),
+            (
+                "read: a `#read` field rendered as JSON (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { \"{p:j}\" }\n",
+                ),
+            ),
+            (
+                "read: a `#read` field bound by a match (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { match p { P { hidden } => hidden } }\n",
+                ),
+            ),
+            (
+                "read: a copy of a parameter is still the host's (loft#1929)",
+                adm(
+                    &["fn:evil"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn evil(p: P) -> text { c = P { hidden: \"x\", name: \"\" }; c = p; c.hidden }\n",
+                ),
+            ),
         ];
         for (name, e) in &escapes {
             assert!(!e.is_empty(), "ESCAPE NOT REJECTED — {name}");
@@ -25859,10 +26168,86 @@ mod plan86_admission_tests {
                     "fn ok() -> integer { v = [1, 2, 3]; v[0] = 9; v[0] }\n",
                 ),
             ),
+            // loft#1929 — `Cap-Own`: a value the function BUILT reveals only what the script
+            // put in it, so its `#read` field is free to read, field by field or whole.
+            (
+                "read: a `#read` field of a value built here (loft#1929)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn ok() -> text { x = P { hidden: \"mine\", name: \"\" }; x.hidden }\n",
+                ),
+            ),
+            (
+                "read: a value built here rendered and matched (loft#1929)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "capability secret\nstruct P { hidden: text secret#read, name: text }\nfn ok() -> text { x = P { hidden: \"mine\", name: \"n\" }; \"{x} {match x { P { hidden } => hidden }}\" }\n",
+                ),
+            ),
+            (
+                // loft#1930 — a compiler operator with no capability gate is the language core:
+                // a vector constant, `reverse()` and a fn-ref call were "library `files`"
+                // (where the stdlib declares them) and needed every file operation allowed.
+                "core: a vector constant, reverse() and a fn-ref under `code` only (loft#1930)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "NUMS = [3, 4, 5];\nfn ok() -> integer { s = 0; for n in NUMS { s += n; } v = [3, 1, 2]; v.reverse(); s + v[0] }\n",
+                ),
+            ),
+            (
+                "write: a local vector appended to (loft#1930's control)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "fn ok() -> integer { v = [1]; v += [2]; len(v) }\n",
+                ),
+            ),
         ];
         for (name, e) in &controls {
             assert!(e.is_empty(), "CLEAN SCRIPT REJECTED — {name}: {e:?}");
         }
+    }
+
+    /// loft#1930, `@FR-Cap-Write` — `r = append ⟹ m : collection`.  An `#append` link on a scalar
+    /// field is refused where it is declared, and a scalar `+=` is an UPDATE: it needs the
+    /// field's `#update` grant and no `#append` grant stands in for one.
+    #[test]
+    fn a_scalar_field_has_no_append_right() {
+        let declared = parse_admit_libs(
+            &["fn:f"],
+            &["code"],
+            &["bag#append"],
+            "capability bag\nstruct M { sc: integer bag#append }\nfn f(m: M) { m.sc += 1 }\n",
+        );
+        assert!(
+            declared
+                .diagnostics
+                .lines()
+                .iter()
+                .any(|l| l.contains("`bag#append` on `sc`: an append grows a collection")),
+            "the scalar `#append` link is refused: {:?}",
+            declared.diagnostics.lines()
+        );
+        let src = "capability bag\nstruct M { sc: integer bag#update }\nfn f(m: M) { m.sc += 1 }\n";
+        let granted = parse_admit_libs(&["fn:f"], &["code"], &["bag#update"], src);
+        assert!(
+            granted.diagnostics.level() < crate::diagnostics::Level::Error
+                && granted.sandbox_admission_errors().is_empty(),
+            "a scalar `+=` under its update grant is admitted: {:?}",
+            granted.sandbox_admission_errors()
+        );
+        let ungranted = parse_admit_libs(&["fn:f"], &["code"], &[], src);
+        assert!(
+            !ungranted.sandbox_admission_errors().is_empty(),
+            "a scalar `+=` without its update grant is refused"
+        );
     }
 
     /// @PLN86 P8.2 (F13) — the RED/GREEN ACCESS corpus: the committed battery over the

@@ -6,7 +6,7 @@ fix: a smaller stdlib — strand 8's direction OUT (fewer of the 748 definitions
 ref: 
 probe: 001.probe.loft
 expect: startup-over:12
-checked: 23155096
+checked: 647c14b83
 holds: yes
 
 start-up of a `hello`, INSTALLED binary, idle box, 2026-09-30, 5 runs: `--interpret` 15–22 ms (Python 15–19, bash 5) — at the bar; the DEFAULT path (native, warm cache) 32–37 ms — 2× Python.  The from-source binary's 78–84 ms was rule 4 (program cache off), not the language

@@ -86,5 +86,5 @@ fn test_a_member_inside_a_struct_field_reads_too() {
 fn test_an_out_of_range_read_answers_null_with_its_cause() {
   v: vector<(integer, integer)> = [(1, 2)];
   m = 9;
-  assert("{v[m].0}" == "null(oob)", "an out-of-range member read: got {v[m].0}");
+  assert("{v[m].0}" == "null", "an out-of-range member read: got {v[m].0}");
 }

@@ -64,7 +64,7 @@ name = \"eh_aud_server_leg\"
 version = \"0.0.0\"
 
 [dependencies]
-server = \"0.7.1\"
+server = \"0.7.4\"
 ";
 
 const SERVER_LOCK: &str = "\
@@ -73,16 +73,16 @@ schema_version = 1
 
 [[package]]
 name = \"web\"
-version = \"0.4.2\"
-url = \"https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.2/web-0.4.2.tar.gz\"
-sha256 = \"44d0469d0ecc3ca08006b80d4c507e8c2a4005c650e01fa59ca3a866da123e25\"
+version = \"0.4.5\"
+url = \"https://github.com/loft-lang/loft-libs-net/releases/download/web-v0.4.5/web-0.4.5.tar.gz\"
+sha256 = \"11beaa8103bb9fcbb8f9616ff0e4d9acbf58979a735fe9f9535489d881046944\"
 source = \"registry\"
 
 [[package]]
 name = \"server\"
-version = \"0.7.1\"
-url = \"https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.1/server-0.7.1.tar.gz\"
-sha256 = \"08bbdc7abcc1fc2e508de942592b3c2875d7aa06c5c6f456c74b20d65bcfd2db\"
+version = \"0.7.4\"
+url = \"https://github.com/loft-lang/loft-libs-net/releases/download/server-v0.7.4/server-0.7.4.tar.gz\"
+sha256 = \"bd162acac31dc18a153ea4c136aadbc39291516efbc023cbc228dbb4023f6d23\"
 source = \"registry\"
 deps = [\"web\"]
 ";

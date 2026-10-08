@@ -71,6 +71,43 @@ fn both_backends_answer_the_same() {
     }
 }
 
+fn own_tail_script() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// loft#1907 — a text block whose tail is a local of its own scope (every `?? return`,
+/// `?? continue` and `?? break` over a text, and an author's `{ s = …; s }`) releases that
+/// local.  The values were always right; the interpreter orphaned one `String` per evaluation.
+#[test]
+fn a_text_block_whose_tail_is_its_own_local_releases_it() {
+    let path = own_tail_script();
+    let (ok, stdout, stderr) = run(&["--interpret", &path], &[("LOFT_TEXT_TIMELINE", "1")]);
+    assert!(
+        ok && stdout.contains("own text tails ok"),
+        "the guard must run every cell on --interpret\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("NO text leak"),
+        "a text block's own tail local was never released\nstderr:\n{stderr}"
+    );
+}
+
+/// Its value half, on both backends.
+#[test]
+fn own_text_tails_answer_alike() {
+    let path = own_tail_script();
+    for backend in ["--interpret", "--native"] {
+        let (ok, stdout, stderr) = run(&[backend, &path], &[]);
+        assert!(
+            ok && stdout.contains("own text tails ok"),
+            "{backend}: every cell must answer its hand-computed value\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
 /// A `main` that yields frames is resumed to its end under `--tests`, as the CLI resumes it:
 /// the runner used to return after the first `yield_frame` and leave the frame's formatted
 /// texts unreleased (the release sweep runs every script under `--tests`, so this was the

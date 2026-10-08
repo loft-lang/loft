@@ -53,7 +53,9 @@ fi
 
 BASE="${1:-origin/main}"
 
-contract=$(grep -oP 'pub const CONTRACT_VERSION: u32 = \K[0-9]+' "$MANIFEST")
+# `sed -n`, not `grep -oP`: BSD grep (macOS) has no `-P`, and this gate was red there.
+contract=$(sed -nE 's/^pub const CONTRACT_VERSION: u32 = ([0-9]+);.*/\1/p' "$MANIFEST" | head -1)
+[ -n "$contract" ] || exit 1
 
 # Did any frozen golden move vs the base?  (A real change always rewrites the golden;
 # an additive corpus entry also rewrites it — conservative/fail-closed, flags for a human.)

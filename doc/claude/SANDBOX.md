@@ -174,7 +174,7 @@ API + vetted pure-loft libraries. No file / network / env / process / FFI native
   capabilities a script reaches; `capability_totality_violations` gates whether those
   capabilities can *fault the host*. It is the host-side mirror of the script-side abort-op
   exclusion (3.3): over every `#cap`-tagged function it flags those whose call tree reaches
-  an abort op (`assert`/`panic`/`log_fatal`), so the host makes them total (validate + return
+  an abort op (`assert`/`panic`/`log_fatal`/`exit`), so the host makes them total (validate + return
   a clean error, never abort) before exposing them. Catches the **loft-bodied** (library)
   capability surface; a **native** capability's Rust is opaque to the lint — the host vouches
   for native totality separately.
@@ -290,7 +290,7 @@ border**. The border is the admission set, decided before the first instruction 
 - **Check:** a host loads a mod → runs admission (pass ⇒ the mod's functions are callable; fail ⇒
   the mod is simply not integrated and the running game is untouched) → calls an admitted entry
   each frame. The call runs to completion at trusted speed with **zero injected runtime checks**.
-  There is nothing to catch: admission excludes the abort ops (`assert`/`panic`/`log_fatal`),
+  There is nothing to catch: admission excludes the abort ops (`assert`/`panic`/`log_fatal`/`exit`),
   unbounded loops, and recursion, and total ops make the residual faults yield `null` and
   continue (C80) rather than halt.
 - **Status: 🟢 MODEL COMPLETE (no runtime work by decision).** The load-time gate exists

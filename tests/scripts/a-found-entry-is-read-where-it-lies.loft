@@ -1,0 +1,104 @@
+// `@FR-R-ViewReturn` — a lookup that returns a VIEW of its parameter's entry (`return e.value`)
+// is answered as that entry's address when the caller only reads it in the statement around
+// the call: no buffer is minted, nothing is copied, and a result the lookup BUILT (its
+// not-found literal) is still the caller's to free.  The interpreter copies as before and is
+// the oracle; every value is hand-computed, and the record census pins that neither a view
+// nor a built result is left behind.
+//
+// @falsified-at: none — the clause and this guard land together; the planted defects are
+//   recorded with `@falsified-by:` below (every result treated as owned: the view's store is
+//   freed, a panic), and were measured both ways (every result treated as a view: c5's record
+//   count grows by the misses).
+// @falsified-by: tests/falsified/a-found-entry-is-read-where-it-lies.patch — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a backend-divergence guard — only one side can move)
+
+enum Val {
+  VNone,
+  VInt { value: integer },
+  VText { value: text },
+  VList { items: vector<integer> },
+}
+struct Entry { key: text, value: Val }
+struct Doc { entries: vector<Entry> }
+
+/// The finder: a view of the entry on a hit, a built `VNone` on a miss.
+fn get(d: Doc, key: text) -> Val {
+  for e in d.entries {
+    if e.key == key { return e.value; }
+  }
+  VNone
+}
+
+// The callers — each reads its result only through tags, scalars and texts.
+fn int_of(d: Doc, key: text) -> integer {
+  match get(d, key) { VInt { value } => { return value; }, _ => {} }
+  -1
+}
+fn text_of(d: Doc, key: text) -> text {
+  match get(d, key) { VText { value } => { return "{value}"; }, _ => {} }
+  "-"
+}
+fn is_none(d: Doc, key: text) -> boolean {
+  match get(d, key) { VNone => { return true; }, _ => {} }
+  false
+}
+
+/// A caller that WRITES the document between the lookup and its read: the window declines,
+/// and the copy it keeps is what makes the old value survive the write.
+fn text_then_clear(d: Doc, key: text) -> text {
+  match get(d, key) {
+    VText { value } => { d.entries[0].key = "gone"; return "{value}"; },
+    _ => {}
+  }
+  "-"
+}
+
+fn live_records() -> integer {
+  t = store_memory();
+  i = t.find("records ") ?? -1;
+  if i < 0 { return -1; }
+  rest = t[i + 8..];
+  e = rest.find(" ") ?? len(rest);
+  (rest[0..e] as integer?) ?? -1
+}
+
+fn doc() -> Doc {
+  Doc { entries: [
+    Entry { key: "a", value: VInt { value: 41 } },
+    Entry { key: "b", value: VText { value: "beta" } },
+    Entry { key: "c", value: VList { items: [3, 5, 7] } },
+    Entry { key: "d", value: VInt { value: -9 } },
+  ] }
+}
+
+fn main() {
+  d = doc();
+  // c1 — a hit read as a scalar, a hit of another variant, a miss (the built VNone).
+  assert(int_of(d, "a") == 41 && int_of(d, "d") == -9, "c1 int");
+  assert(int_of(d, "b") == -1 && int_of(d, "zz") == -1, "c1 other");
+
+  // c2 — a hit read as a text, copied out by the format; the entry keeps its value.
+  assert(text_of(d, "b") == "beta" && text_of(d, "a") == "-" && text_of(d, "q") == "-", "c2");
+  assert(text_of(d, "b") == "beta", "c2 again");
+
+  // c3 — the miss's own variant, matched by name: the built record answers it.
+  assert(is_none(d, "nope") && !is_none(d, "a") && !is_none(d, "c"), "c3");
+
+  // c4 — the window writes the document: the copy is kept, the old text survives.
+  d4 = doc();
+  assert(text_then_clear(d4, "b") == "beta" && d4.entries[0].key == "gone", "c4");
+
+  // c5 — the document read after a thousand lookups is unchanged, and the live record
+  // count holds: no view freed as if owned, no miss left unfreed.
+  r1 = live_records();
+  s = 0;
+  for _ in 0..1000 {
+    s += int_of(d, "a") + int_of(d, "zz") + len(text_of(d, "b")) + len(text_of(d, "x"));
+    if is_none(d, "y") { s += 1; }
+  }
+  r2 = live_records();
+  assert(s == 1000 * (41 - 1 + 4 + 1 + 1), "c5 sum {s}");
+  assert(r1 > 0 && r2 == r1, "c5 records {r1} -> {r2}");
+  assert(len(d.entries) == 4 && d.entries[1].key == "b" && text_of(d, "b") == "beta", "c5 doc");
+  match d.entries[2].value { VList { items } => { assert(len(items) == 3 && items[2] == 7, "c5 list"); }, _ => { assert(false, "c5 variant"); } }
+  println("ok");
+}

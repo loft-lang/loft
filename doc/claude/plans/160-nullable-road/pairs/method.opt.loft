@@ -1,0 +1,5 @@
+// loft#1934 shape — a METHOD returning a mint of its receiver.  Nullable half.
+struct S { a: integer }
+struct B { s: S, v: vector<S> }
+fn bump(self: S, d: integer) -> S? { S { a: self.a + d } }
+fn main() { s = S { a: 7 }; t = s.bump(2); println("{(t.a ?? -1) + 1} {s.a}"); }

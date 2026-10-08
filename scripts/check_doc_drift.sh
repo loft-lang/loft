@@ -535,10 +535,10 @@ examples_defs_in_tree() {
     # "Is a directory", losing every later file in that xargs batch behind the
     # 2>/dev/null.  The index then silently drops rows the resolver still sees.
     if [ -n "$skip" ]; then
-      find . -type f -name '*.loft' -not -path './.*' -not -path './target/*' \
+      find . -type f -name '*.loft' -not -path './.*' -not -path './target/*' -not -path './fuzz/corpus/*' \
         -not -path "$skip/*" -print0 2>/dev/null
     else
-      find . -type f -name '*.loft' -not -path './.*' -not -path './target/*' -print0 2>/dev/null
+      find . -type f -name '*.loft' -not -path './.*' -not -path './target/*' -not -path './fuzz/corpus/*' -print0 2>/dev/null
     fi \
     | xargs -0 awk '
         FNR==1 { f=FILENAME; sub(/^\.\//,"",f); p=""; cited=0 }

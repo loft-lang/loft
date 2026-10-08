@@ -75,7 +75,7 @@ fn owned_or_null(take: boolean) -> Leaf? { x = Leaf { v: 13 }; if take { x } els
 fn param_or_null(p: Leaf, take: boolean) -> Leaf? { if take { p } else { null } }
 fn param(p: Leaf) -> Leaf? { p }
 fn walked_dense() -> Pair {
-  c = Pair { v: 4 };
+  c = Pair { v: 4, other: null };
   b = Pair { v: 2, other: c };
   a = Pair { v: 1, other: b };
   x: Pair = a;

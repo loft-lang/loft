@@ -214,7 +214,7 @@ jobs:
       # main CI Test job's Linux install so a published library validates under
       # the same provisioning its own source repo's CI had.
       - name: Install mold + ALSA + headless GL
-        run: sudo apt-get update -y && sudo apt-get install -y mold libasound2-dev xvfb libgl1-mesa-dri
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libasound2-dev xvfb libgl1-mesa-dri
 
       - name: Update to latest stable rustc
         run: rustup update stable && rustc --version

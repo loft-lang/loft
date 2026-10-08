@@ -5308,12 +5308,34 @@ impl Parser {
     /// and is exactly what `(E-Truthy)` licenses.  Read through `Type::peel_optional`, the
     /// `@FR-N-Shape` home, because a bare `matches!(tp, Type::Optional(_))` is what
     /// `ir_walker_audit.py optional` counts as an OPAQUE site.
-    fn warn_constant_condition(&mut self, tp: &Type, at: &crate::lexer::Position, kw: &str) {
+    fn warn_constant_condition(
+        &mut self,
+        tp: &Type,
+        code: &Value,
+        at: &crate::lexer::Position,
+        kw: &str,
+    ) {
         // Pass 1 parses every body a second time, so an unguarded report lands twice — measured
         // exactly 2x on every cell before this line existed.
         if self.first_pass || !crate::keys::constant_condition_enabled() {
             return;
         }
+        // Two spellings of a vector VALUE reach here typed as something else, and are the same
+        // constant (loft#1919, loft#1922): a vector slice, typed as the iterator it is lowered
+        // from until `convert_condition` materialises it (`(Slice-Value)`: a FRESH vector),
+        // and an untyped `[]`, whose element type is unknown.
+        let slice_tp;
+        let tp = if Self::is_untyped_empty_literal(code, tp) {
+            slice_tp = Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none());
+            &slice_tp
+        } else if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            slice_tp = Type::Vector(elm.clone(), crate::data::Deps::none());
+            &slice_tp
+        } else {
+            tp
+        };
         let (base, nullable) = tp.peel_optional();
         if nullable {
             return;
@@ -5348,7 +5370,10 @@ impl Parser {
         ) {
             return;
         }
-        let shown = base.source_name(&self.data);
+        let shown = match base {
+            Type::Vector(elm, _) if elm.is_unknown() => "vector".to_string(),
+            _ => base.source_name(&self.data),
+        };
         diagnostic_at!(
             self.lexer,
             at,
@@ -5542,7 +5567,7 @@ impl Parser {
         let cond_fact = std::mem::take(&mut self.operand_fact);
         self.check_subject(&cond_fact, "branching on it"); // @PLN187
         self.in_control_head = outer_head;
-        self.warn_constant_condition(&tp, &cond_at, "if");
+        self.warn_constant_condition(&tp, &test, &cond_at, "if");
         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
         // the arms below, and an `else if` chain's own conditions, are past the pair.
         self.fit_in_condition = false;
@@ -5645,6 +5670,14 @@ impl Parser {
         // already an error and synthesises a `null` else for recovery; the DN1 widening below must
         // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
         let had_else = self.lexer.has_token("else");
+        // `(Slice-Value)` — a THEN arm whose value is a vector slice is the fresh vector, owed
+        // at every value position (`Parser::slice_shaped` already walks `if` arms).  Left the
+        // iterator it is lowered from, it typed the whole `if` as an iterator and the else arm's
+        // vector was refused as a generator body's discarded tail (loft#1941).  Only where an
+        // else follows: an `if` without one has no value.
+        if had_else {
+            true_type = self.slice_arm_as_vector(&mut true_code, true_type);
+        }
         // Where the else arm starts: a tuple arm pair that does not join is reported there.
         let else_pos = *self.lexer.pos();
         if had_else {
@@ -5685,7 +5718,7 @@ impl Parser {
                 let chain_expected = if matches!(true_type, Type::Void) {
                     Type::Unknown(0)
                 } else {
-                    true_type.clone()
+                    Self::arm_expectation(&true_type)
                 };
                 let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
                 false_fact = std::mem::take(&mut self.operand_fact);
@@ -5729,7 +5762,8 @@ impl Parser {
                 // type that serves both: it is what the arms actually join to, and it still
                 // carries the context those spellings need.
                 let variant_enum = self.variant_parent_enum(&true_type);
-                false_type = self.parse_block("else", &mut false_code, &true_type);
+                false_type =
+                    self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
                 // loft#1540 — two functions join to the parameters BOTH declare `const`: the
@@ -5854,6 +5888,13 @@ impl Parser {
         // the caller to declare `τ?` or discharge. Only fires when exactly one branch yields null
         // and the other is a non-null scalar (heap types stay nullable; both-null stays as-is).
         let mut result_tp = merge_dependencies(&true_type, &false_type);
+        // `@FR-I-Join` — the two arms' integer ranges join to their union.
+        if let Some(union) = Self::integer_arm_union(
+            &self.arm_contribution(&true_code, &true_type),
+            &self.arm_contribution(&false_code, &false_type),
+        ) {
+            result_tp = union;
+        }
         if let Some(chain) = &chain_borrow {
             result_tp = result_tp.joined_deps(chain);
         }
@@ -7094,9 +7135,12 @@ impl Parser {
             }
         }
 
-        // When not a valid enum, just emit Null (errors were already reported).
+        // When not a valid enum, emit nothing (errors were already reported) — as an empty
+        // BLOCK, because a `match` is a brace statement: the statement loop asks the lowered
+        // node whether a `;` is due, and a `Null` there demanded one after the `}` on pass 1
+        // of a valid file whose enum is declared lower down.
         if !valid_enum {
-            *code = Value::Null;
+            *code = v_block(Vec::new(), Type::Void, "unresolved match");
             if subject_unresolved {
                 // ...except on the FIRST pass nothing was reported: the diagnostic above is
                 // `!first_pass`-gated, because the subject may simply be declared lower in the
@@ -7147,6 +7191,56 @@ impl Parser {
 
     /// The type a match arm is expected to answer in: what the arms have agreed on so
     /// far, or `Unknown` while nothing is settled yet.
+    /// `(Slice-Value)` — an `if` or `match` ARM whose value is a vector slice answers the fresh
+    /// vector a bind would make of it ([`Parser::iterator_as_vector`]), so its siblings join a
+    /// vector rather than the iterator the slice is lowered from (loft#1941).  Any other arm is
+    /// returned as it is.
+    fn slice_arm_as_vector(&mut self, code: &mut Value, tp: Type) -> Type {
+        if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            let vec_tp = Type::Vector(elm.clone(), crate::data::Deps::none());
+            if let Some(t) = self.iterator_as_vector(code, &tp, &vec_tp) {
+                // The arm answers the materialised LOCAL, whose store is a function-scoped
+                // backing (`["__vdb_N"]`): its type carries that dep, and the arm's must too.
+                // Typed dep-free, a `match` whose FIRST arm was the slice gave its result the
+                // dep-free type, so the bound local read as the store's OWNER and freed it at
+                // the end of every round while the backing still named it — a use after free
+                // on `--native` from the second round on.
+                if !self.first_pass
+                    && let Some(tail) = Self::block_tail_var(code)
+                {
+                    let held = self.vars.tp(tail).clone();
+                    if matches!(held.base(), Type::Vector(..)) {
+                        Self::retype_tail_blocks(code, &held);
+                        return held;
+                    }
+                }
+                return t;
+            }
+        }
+        tp
+    }
+
+    /// The variable a value's tail is, through spans and block tails.
+    fn block_tail_var(code: &Value) -> Option<u16> {
+        match code.unspan() {
+            Value::Var(v) => Some(*v),
+            Value::Block(bl) => bl.operators.last().and_then(Self::block_tail_var),
+            _ => None,
+        }
+    }
+
+    /// Give every block on the path to a value's tail the type `tp`.
+    fn retype_tail_blocks(code: &mut Value, tp: &Type) {
+        if let Value::Block(bl) = code.unspan_mut() {
+            bl.result = tp.clone();
+            if let Some(last) = bl.operators.last_mut() {
+                Self::retype_tail_blocks(last, tp);
+            }
+        }
+    }
+
     fn match_arm_expected(&self, result_type: &Type) -> Type {
         if result_type.is_unknown()
             || Self::match_result_unsettled(result_type)
@@ -7154,7 +7248,7 @@ impl Parser {
         {
             Type::Unknown(0)
         } else {
-            result_type.clone()
+            Self::arm_expectation(result_type)
         }
     }
 
@@ -7183,6 +7277,9 @@ impl Parser {
         self.vars.clear_write_state();
         let block_arm = self.lexer.peek_token("{");
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        // `(Slice-Value)` — an arm's value is a value position, so a vector slice there is the
+        // fresh vector (loft#1941).
+        let tp = self.slice_arm_as_vector(arm_code, tp);
         if self.abstract_on() {
             let fact = std::mem::take(&mut self.operand_fact);
             self.match_arm_facts.push(fact); // @PLN187
@@ -7519,6 +7616,7 @@ impl Parser {
                     self.check_visibility("pattern-field", e_nr, attr_idx);
                 }
                 if attr_idx != usize::MAX {
+                    self.sandbox_read_member(e_nr, &field_name, subject_val);
                     let field_val = self.get_field(e_nr, attr_idx, subject_val.clone());
                     let field_type = self.data.attr_type(e_nr, attr_idx);
                     if self.lexer.has_token(":") {
@@ -8004,6 +8102,7 @@ impl Parser {
             match attr_idx_and_type {
                 Some((attr_idx, field_type)) => {
                     self.check_visibility("pattern-field", variant_def_nr, attr_idx);
+                    self.sandbox_read_member(variant_def_nr, &field_name, subject_val);
                     let field_read = self.get_field(variant_def_nr, attr_idx, subject_val.clone());
                     if self.lexer.has_token(":") {
                         // `@FR-P-Point` — a bare lowercase NAME as a field's sub-pattern is a
@@ -15461,6 +15560,91 @@ impl Parser {
         )
     }
 
+    /// `@FR-I-Join` — the type an arm is parsed EXPECTING, given the type its siblings answered
+    /// in.  An integer sibling's RANGE is that sibling's, not the construct's: an arithmetic
+    /// arm (`@FR-N-Arith`) answers a range narrower than its siblings, and expecting it of the
+    /// next arm refused `-1` beside `a * 100 + z`.  The arms join ([`Self::integer_arm_union`])
+    /// and the destination checks the joined range, so an integer expectation is the full
+    /// `integer`; every other type is expected as it is.
+    ///
+    /// A NAMED width (`u8`, `i16` — a `forced_size`) is a declaration, typically the
+    /// destination's own, and keeps holding its siblings: `c: u8 = if … { a } else { a + b }`
+    /// refuses the arm that does not fit, as it always has.
+    pub(super) fn arm_expectation(sibling: &Type) -> Type {
+        match sibling.base() {
+            Type::Integer(sp) if sp.forced_size.is_some() => sibling.clone(),
+            Type::Integer(_) if matches!(sibling, Type::Optional(_)) => {
+                Type::optional(crate::data::I64.clone())
+            }
+            Type::Integer(_) => crate::data::I64.clone(),
+            _ => sibling.clone(),
+        }
+    }
+
+    /// The range an integer arm CONTRIBUTES to a join: a constant tail is the one value it is
+    /// (`else { 7 }` is `[7, 7]`, not the full `integer` a literal is typed), any other arm its
+    /// own type.
+    pub(super) fn arm_contribution<'t>(
+        &self,
+        arm: &Value,
+        tp: &'t Type,
+    ) -> std::borrow::Cow<'t, Type> {
+        use std::borrow::Cow;
+        // Only a literal's own, unbounded `integer`: an arm already held to a declared width
+        // (`u8`) contributes that width, and was refused there if it did not fit.
+        // An optional arm keeps its type: the `?` it carries is what the join must keep.
+        // Borrowed wherever the arm's own type is the answer: this runs for every `if` arm of
+        // every type, and a cloned record or vector type allocates its dep list (+1 200
+        // allocations on the front-end pin's medium corpus).
+        if matches!(tp, Type::Optional(_)) {
+            return Cow::Borrowed(tp);
+        }
+        match tp.base() {
+            Type::Integer(sp) if sp.min <= i32::MIN + 1 && sp.max >= i64::from(i32::MAX) => {}
+            _ => return Cow::Borrowed(tp),
+        }
+        let tail = match arm.unspan() {
+            Value::Block(bl) => bl.operators.last(),
+            other => Some(other),
+        };
+        match tail
+            .and_then(|t| self.const_int(t))
+            .and_then(|k| i32::try_from(k).ok())
+        {
+            Some(k) if k > i32::MIN + 1 => Cow::Owned(Type::Integer(crate::data::IntegerSpec {
+                min: k,
+                max: i64::from(k),
+                forced_size: None,
+                ..crate::data::IntegerSpec::wide()
+            })),
+            _ => Cow::Borrowed(tp),
+        }
+    }
+
+    /// `@FR-I-Join` — two integer arms join to the UNION of their ranges, optional when either
+    /// is (`@FR-N-Join`); `None` when either arm is not an integer, or the ranges are one.
+    pub(super) fn integer_arm_union(a: &Type, b: &Type) -> Option<Type> {
+        let (Type::Integer(x), Type::Integer(y)) = (a.base(), b.base()) else {
+            return None;
+        };
+        if x == y {
+            return None;
+        }
+        let base = Type::Integer(crate::data::IntegerSpec {
+            min: x.min.min(y.min),
+            max: x.max.max(y.max),
+            forced_size: None,
+            ..*x
+        });
+        Some(
+            if matches!(a, Type::Optional(_)) || matches!(b, Type::Optional(_)) {
+                Type::optional(base)
+            } else {
+                base
+            },
+        )
+    }
+
     /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
     /// variant?
     ///
@@ -15763,6 +15947,10 @@ impl Parser {
 
     fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
         let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
+        // `@FR-I-Join` — two integer arms join to the UNION of their ranges: `joined_deps`
+        // keeps the first arm's, which an arithmetic arm (`@FR-N-Arith`) makes narrower.
+        let joined =
+            Self::integer_arm_union(&joined, &self.arm_contribution(arm, tp)).unwrap_or(joined);
         // loft#1540 — two functions join to the parameters BOTH declare `const` (see `parse_if`).
         let joined = match (joined.function_consts(), tp.function_consts()) {
             (Some(jc), Some(ac)) if jc.common(ac) != jc => {
@@ -16306,8 +16494,12 @@ impl Parser {
         // is: `OpCopyRecord` of the whole branch filled `w` on the null path too, so
         // `{ r = S {…}; if ok { r } else { null } }` answered a default record where it
         // held none (@FR-F-Block, @FR-N-Join: the branch is `S?`, loft#1722).  Only one arm runs, so
-        // every copying arm shares the one `w`, as `materialize_view_arms`' do.
-        if self.arms_yield_null(tail) {
+        // every copying arm shares the one `w`, as `materialize_view_arms`' do.  So is a
+        // branch with an arm that is a NULLABLE local (`match w { Pn { p } => p, _ => … }`
+        // with `p: Pt?`): the whole copy filled `w` where `p` held nothing, so a `-> Pt?`
+        // answered a record for an absent field once it took the buffer (loft#1934); per
+        // arm, that leaf takes the present-only copy below.
+        if self.arms_yield_null(tail) || self.branch_has_nullable_leaf(tail) {
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
                 Value::If(_, t, f) => {
@@ -16468,6 +16660,31 @@ impl Parser {
             Value::Insert(ops) => ops.last().map_or(0, |x| self.tail_nonnull_arm_count(x)),
             Value::If(_, t, f) => self.tail_nonnull_arm_count(t) + self.tail_nonnull_arm_count(f),
             _ => 1,
+        }
+    }
+
+    /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that
+    /// may hold nothing at run time though it is no `null` literal?  A bare local is not asked
+    /// (its own copy guards it); the arms of an `if` / `match` are, through their block and
+    /// insert tails.
+    fn branch_has_nullable_leaf(&self, v: &Value) -> bool {
+        fn leaf(p: &Parser, v: &Value) -> bool {
+            match v.unspan() {
+                Value::Var(x) => matches!(p.vars.tp(*x), Type::Optional(_)),
+                Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(p, x)),
+                Value::Insert(ops) => ops.last().is_some_and(|x| leaf(p, x)),
+                Value::If(_, t, f) => leaf(p, t) || leaf(p, f),
+                _ => false,
+            }
+        }
+        // A BLOCK ending in one is asked too — a `match` arm is `{ _mv_p = …; _mv_p }`, and
+        // its local is assigned INSIDE the block, so only a copy of the block's own tail can
+        // test it (a guard around the whole block would read it before the assignment).
+        match v.unspan() {
+            Value::If(_, t, f) => leaf(self, t) || leaf(self, f),
+            Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(self, x)),
+            Value::Insert(ops) => ops.last().is_some_and(|x| leaf(self, x)),
+            _ => false,
         }
     }
 
@@ -17203,7 +17420,13 @@ impl Parser {
             // through `ref_return`'s copy leg, so only the buffer-less return (`-> S?`, a
             // nullable record has no buffer) asks here, and it materialises per arm
             // (loft#1337, @FR-F-Ret).
-            Value::If(_, t, f) if self.return_buffer().is_none() => {
+            // …and a NULLABLE return with a buffer (loft#1934): that copy leg does not peel
+            // the `?` — copying a `null` arm into the buffer would answer a record — so its
+            // arms are asked here as well and materialised per arm, a null arm left null.
+            Value::If(_, t, f)
+                if self.return_buffer().is_none()
+                    || matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+            {
                 self.return_projects_into_local(t) || self.return_projects_into_local(f)
             }
             // A TUPLE element read is a projection like the two op calls below, spelled as
@@ -17577,6 +17800,20 @@ impl Parser {
             // which the caller never adopts and nothing frees (one leaked store per call, on
             // the interpreter alone, so `(O-NoDiverge)` with it).  The value is right either
             // way; only the DELIVERY was missing (loft#1618).
+            // loft#1936 — an arm answering a top-level vector CONSTANT answers a view of the
+            // write-locked constant store, which is not the buffer: it is delivered as a copy,
+            // as an arm answering a local is.  Left as it was, the arm handed the constant
+            // itself back, and a caller filling a FIELD through the buffer read the field
+            // empty on `--native` (`S { t: vif(1) }.t` gave `[]`).  Nothing is freed: the
+            // constant store is no frame's.
+            Value::Call(..) if self.is_const_view(op) => {
+                let view = std::mem::replace(op, Value::Null);
+                let rec_tp = self.append_elem_tp(elm);
+                let clear = self.cl("OpClearVector", &[Value::Var(w)]);
+                let append = self.cl("OpAppendVector", &[Value::Var(w), view, Value::Int(rec_tp)]);
+                *op = Value::Insert(vec![clear, append, Value::Var(w)]);
+                true
+            }
             Value::Var(v)
                 if *v != w
                     && !self.vars.tp(*v).depend().contains(&w)
@@ -18246,6 +18483,19 @@ impl Parser {
             return RetPromotion::SkipDelivered;
         }
         let n = self.vars.name(v);
+        // loft#1936 — a CONSTANT's anchor (`_const_view_N`, minted at the constant's use site):
+        // the value is a view of the write-locked constant store, never assigned to the
+        // anchor, so the return must deliver a COPY into the buffer.  Renamed into the buffer
+        // it would hand the constant itself to the caller, whose first write reaches the lock.
+        if n.starts_with("_const_view_")
+            && let Some((buf_attr, buf_var)) = self.return_buffer()
+        {
+            return RetPromotion::Bind {
+                buf_attr,
+                buf_var,
+                substitute: false,
+            };
+        }
         let is_work_ref = n.starts_with("__ref_") || n.starts_with("__rref_");
         // A1b (@PLN90 W1, gated) — the tail borrows a temporary subject the fn
         // constructs. For the SITE-VALUE work-ref (g's buffer) suppress the Rename
@@ -19013,6 +19263,19 @@ impl Parser {
                                     {
                                         let elm = (**elm).clone();
                                         self.materialize_vector_arms_into(&elm, tail, buf_var);
+                                    } else if let Type::Reference(td, _) | Type::Enum(td, true, _) =
+                                        inner.base()
+                                        && inner.takes_ret_buffer()
+                                    {
+                                        // loft#1934 — a nullable RECORD takes the buffer as its
+                                        // dense twin does, so it is delivered as the twin is:
+                                        // `materialize_return_into` copies per arm where a
+                                        // branch has a `null` arm, and copies a nullable local
+                                        // only where it is present, answering the sentinel
+                                        // otherwise (both loft#1337).  Left undelivered, the
+                                        // local's own store was answered while the buffer the
+                                        // rename gave another local was freed undropped.
+                                        self.materialize_return_into(*td, tail, buf_var);
                                     }
                                 }
                                 _ => {}
@@ -19036,9 +19299,15 @@ impl Parser {
                             self.data.def(self.context).name()
                         );
                         let n = self.vars.name(*v);
-                        let a =
-                            self.data
-                                .add_attribute(&mut self.lexer, self.context, n, ret.clone());
+                        // The buffer's type is the BASE, as the signature-time reservation's
+                        // is: a grown `S?` attribute was no buffer to `return_buffer` or to the
+                        // between-passes sweep, which then reserved a SECOND one (loft#1934).
+                        let a = self.data.add_attribute(
+                            &mut self.lexer,
+                            self.context,
+                            n,
+                            ret.ret_promo_base().clone(),
+                        );
                         // mark as hidden return-mechanism parameter
                         self.data.definitions[self.context as usize].attributes[a].hidden = true;
                         self.vars.become_argument(*v);
@@ -19863,10 +20132,9 @@ impl Parser {
             } else {
                 list[0].clone()
             };
-            if self.first_pass {
-                *val = Value::Null;
-                return Type::Void;
-            }
+            // Emitted on the first pass too: a `?? panic("…")` default is recognised by the
+            // call it is, and a pass that left `Null` there typed the coalesce from a void
+            // default instead (@PLN179 finding 019).
             let d_nr = self.data.def_nr("n_panic");
             *val = Value::Call(
                 d_nr,
@@ -20130,7 +20398,18 @@ impl Parser {
                             if self.data.def(*t).name().starts_with("__tuple<")))
             });
             self.prepare_lambda_argument(name, arg_idx, &arg_aliases); // @PLN187
+            // `@FR-Disp-Hint` — an argument a set's definitions do not hint is parsed knowing
+            // which set it is for, so an untyped lambda in it is refused naming them.
+            self.unhinted_set = if self.first_pass
+                || fn_def_nr.is_some()
+                || self.free_call_hint(name, &types) != u32::MAX
+            {
+                None
+            } else {
+                self.unhinted_set_names(name, types.first())
+            };
             let mut t = self.expression(&mut p);
+            self.unhinted_set = None;
             self.tuple_place_wanted = prev_place;
             // A member of a call result handed on as an argument is read where it lives
             // (`call_member_view`): the argument binds without copying, so the copy the terminal
@@ -20179,6 +20458,10 @@ impl Parser {
             }
         }
         self.last_called = u32::MAX;
+        // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
+        if std::mem::take(&mut self.unhinted_set_refused) {
+            return Type::Never;
+        }
         let ret = self.dispatch_call(
             val,
             source,
@@ -21566,6 +21849,9 @@ impl Parser {
         let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
             return u32::MAX;
         };
+        if self.data.receiver_shared_in_set(name, receiver) {
+            return u32::MAX;
+        }
         match self.data.candidates(u16::MAX, name, receiver).as_slice() {
             [one] if self.data.def(*one).name().starts_with("t_") => *one,
             _ => u32::MAX,
@@ -21690,8 +21976,11 @@ impl Parser {
                         // The slot holds the SET itself (a `self` set that dispatches past its
                         // receiver, with no enum-level definition): there is no routine to
                         // fall back to, and the answer is the bare spelling's refusal.
+                        // Nor is there one when several members take this receiver: the
+                        // slot's routine is only the FIRST of them (`@FR-Disp-Exhaustive`).
                         if !self.reported_dynamic_refusal
-                            && self.data.def(*fallback).def_type == DefType::Dynamic
+                            && (self.data.def(*fallback).def_type == DefType::Dynamic
+                                || self.data.receiver_shared_in_set(name, dispatch))
                         {
                             if !self.first_pass {
                                 self.report_selection(name, &routed, &sel, None);
@@ -21940,7 +22229,17 @@ impl Parser {
             arg_pos.push(*self.lexer.peek_pos());
             let before = self.method_facts.0.clone();
             self.prepare_lambda_argument(method, list.len(), &before); // @PLN187
+            // `@FR-Disp-Hint` — as the bare spelling does (`parse_call`).
+            self.unhinted_set = match select {
+                MethodSelect::ByName { name, dispatch, .. }
+                    if !self.first_pass && hint_nr == u32::MAX =>
+                {
+                    self.unhinted_set_names(name, Some(dispatch))
+                }
+                _ => None,
+            };
             let t = self.expression(&mut p);
+            self.unhinted_set = None;
             self.expected = Type::Unknown(0);
             let fact = std::mem::take(&mut self.operand_fact);
             self.method_facts.0.push(fact);
@@ -21953,6 +22252,10 @@ impl Parser {
         self.lexer.token(")");
         // @PLN187 — what the arguments called is not this call (a special form records none)
         self.last_called = u32::MAX;
+        // The untyped lambda refused above is the whole answer (`@FR-Disp-Hint`).
+        if std::mem::take(&mut self.unhinted_set_refused) {
+            return Type::Never;
+        }
         let selected = self.select_method_def(select, &types);
         // `Disp-Exhaustive` refused the call inside the selection (loft#1780): the refusal is
         // the whole answer, as `Parser::call` makes it for the bare spelling.
@@ -22312,7 +22615,7 @@ impl<'a> ViewWalk<'a> {
             }
             // loft#1880 — a SELF call handed views of `xs` in their own positions answers what
             // this body answers, by the induction this walk is.
-            if self.self_call_views(rhs, seen) {
+            if self.self_call_views(rhs, seen) || self.forwarded_call_views(rhs, seen) {
                 any = true;
                 continue;
             }
@@ -22327,6 +22630,33 @@ impl<'a> ViewWalk<'a> {
             any = true;
         }
         any
+    }
+
+    /// A call to ANOTHER function whose return borrows its arguments hands back a view of
+    /// what it was handed (`@FR-F-Ret`'s borrow, read off the callee's return deps): it views
+    /// `xs` when every argument position the return borrows is handed a view of `xs`.  A
+    /// callee with no return dep owns what it returns, and a hidden dep is its own buffer —
+    /// neither views anything here, which is the answer the walk gave every call before.
+    /// loft#1934 found it: `fn via<T: P>(x: T) -> T { x.pick() }` over `pick(self) -> S {
+    /// self }` read as owned, so the caller adopted its own argument's record.
+    fn forwarded_call_views(&self, rhs: &Value, seen: &[u16]) -> bool {
+        let Value::Call(d, args) = rhs.unspan() else {
+            return false;
+        };
+        if *d == self.self_d || *d as usize >= self.data.definitions() as usize {
+            return false;
+        }
+        let callee = self.data.def(*d);
+        let borrowed = callee.returned.depend();
+        !borrowed.is_empty()
+            && borrowed.iter().all(|&i| {
+                callee.attributes.get(i as usize).is_some_and(|a| !a.hidden)
+                    && match args.get(i as usize).map(Value::unspan) {
+                        Some(Value::Var(y)) => self.local_views(*y, &mut seen.to_vec()),
+                        Some(arg) => self.leaf_views(arg),
+                        None => false,
+                    }
+            })
     }
 
     fn self_call_views(&self, rhs: &Value, seen: &[u16]) -> bool {
@@ -22350,7 +22680,7 @@ impl<'a> ViewWalk<'a> {
         if let Value::Var(y) = leaf.unspan() {
             return self.local_views(*y, &mut Vec::new());
         }
-        if self.self_call_views(leaf, &[]) {
+        if self.self_call_views(leaf, &[]) || self.forwarded_call_views(leaf, &[]) {
             return true;
         }
         match crate::use_analysis::projection_container_var(self.data, leaf) {

@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN179 finding 019 — a call that never returns is a `??` default: `x ?? exit(1)` and
+// `x ?? panic("…")` are the absent case stopping the program, as `?? return` leaves the
+// function (`(C-Never)`, @FR-N-Coal).  The present arms here, on an integer and on a `text?`
+// variable (the shape that crashed when the first pass typed the coalesce from a void
+// default); the halting arms are tests/panic_halts_both_backends.rs, where a process can end.
+// @falsified-at: none — the halting arms are the falsifier, in the Rust test on both backends
+fn version(s: text) -> integer? { if s == "" { return null; } 7 }
+fn main() {
+  a = version("x") ?? exit(3);
+  assert(a == 7, "exit default, present: {a}");
+  t: text? = null;
+  if len(arguments()) == 0 { t = "set"; }
+  u = t ?? panic("no t");
+  assert(u == "set", "panic default, present: {u}");
+  b: integer = (version("y") ?? exit(4)) + 1;
+  assert(b == 8, "in an expression: {b}");
+  println("ok");
+}

@@ -88,6 +88,24 @@ impl Output<'_> {
         // Compute the DbRef inline and call vector::clear_vector.
         if let [val] = vals {
             let expr = self.generate_expr_buf(val)?;
+            // @FR-H-ClearRelease owes a release only for elements that own heap; for any
+            // other element the release-aware clear IS the length reset, after asking the
+            // type table at run time which field of the record `db.pos` names — a search
+            // over the fields per clear (`undo_push`'s `s.us_redo = []`, 7 % of its row).
+            // The field's vector type is the emitter's: `OpGetField`'s third operand.
+            if let Value::Call(g, args) = val.unspan()
+                && self.data.def(*g).name() == "OpGetField"
+                && let Some(Value::Int(vec_tp)) = args.get(2).map(Value::unspan)
+                && let Ok(vec_tp) = u16::try_from(*vec_tp)
+                && let Some(crate::database::Parts::Vector(elem)) =
+                    self.stores.types.get(vec_tp as usize).map(|t| &t.parts)
+                && !self.stores.owns_heap(*elem)
+            {
+                return write!(
+                    w,
+                    "{{ let _cv = {expr}; if _cv.rec != 0 {{ vector::clear_vector(&_cv, &mut stores.allocations); }} }}"
+                );
+            }
             write!(
                 w,
                 "{{ let _cv = {expr}; if _cv.rec != 0 {{ stores.clear_vector_release(&_cv); }} }}"
@@ -287,38 +305,19 @@ impl Output<'_> {
             // raises E0502 — mutable and immutable borrows of the same
             // place.  Hoist the RHS through a fresh `String` so the
             // self-borrow never overlaps the `+=` target.
-            // @PLN25 slice (c): a nullable dest (`text?` local, an owned `String`) skips the
-            // append when it holds the null sentinel — `s += x` on a null `s` stays null
-            // (propagate). Gated on `Optional` so plain-text / `&mut String` work-buffer
-            // appends (never null, and not always owned Strings) keep the bare emission.
-            // A `&text?` parameter's nullability sits inside the reference.
-            let dest_nullable = match self.data.def(self.def_nr).variables().tp(*nr) {
-                Type::Optional(_) => true,
-                Type::RefVar(pointee) => matches!(pointee.as_ref(), Type::Optional(_)),
-                _ => false,
-            };
+            // `@FR-E-NullArg` — one append step for both backends (`ops::append_text`, the
+            // interpreter's `append_text` calls it too): a null dest stays null and a null
+            // source turns the dest null.  A bare `+=` pushed the sentinel's NUL byte, so
+            // `"a" + t` with a null `t` answered the present two-byte `"a\0"` (loft#1924), and
+            // a non-`Optional` dest holding null took `"\0x"`.
             if val.reads_var(*nr) {
-                if dest_nullable {
-                    write!(
-                        w,
-                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += &__p222_tmp; }} }}"
-                    )?;
-                } else {
-                    write!(
-                        w,
-                        "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); {s_nr} += &__p222_tmp; }}"
-                    )?;
-                }
-                return Ok(());
-            }
-            if dest_nullable {
                 write!(
                     w,
-                    "{{ let __app_tmp: &str = &*({val_expr}); if {s_nr}.as_str() != loft::state::STRING_NULL {{ {s_nr} += __app_tmp; }} }}"
+                    "{{ let __p222_tmp: String = (&*({val_expr})).to_string(); ops::append_text(&mut {s_nr}, &__p222_tmp); }}"
                 )?;
-            } else {
-                write!(w, "{s_nr} += &*({val_expr})")?;
+                return Ok(());
             }
+            write!(w, "ops::append_text(&mut {s_nr}, &*({val_expr}))")?;
             return Ok(());
         }
         panic!("Could not parse {vals:?}");
@@ -397,12 +396,7 @@ impl Output<'_> {
         panic!("Could not parse {vals:?}");
     }
 
-    /// Use this to emit `OpFormatInt` as a call to
-    /// `ops::format_long_with_tag` — the tag-aware wrapper that
-    /// renders `null(<reason>)` when the preceding `OpTagFault`
-    /// (4e.1 format-scope swap sibling) set a fault kind on
-    /// `stores.format_fault_tag`.  Bare `null` rendering for
-    /// genuine null values stays unchanged.
+    /// Use this to emit `OpFormatInt`/`OpFormatStackInt` as a call to `ops::format_long`.
     pub(super) fn format_long(
         &mut self,
         w: &mut dyn Write,
@@ -425,7 +419,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_long_with_tag({dest}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
+                "ops::format_long({dest}, {val_expr}, {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
             )?;
             return Ok(());
         }

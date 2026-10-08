@@ -39,6 +39,11 @@ struct Row {
   contract: text,
   tranche: text,
   source: text,
+  /// Where the script stands: `—` not ported, `ported` (a loft twin sits beside it under
+  /// the same name, extension dropped), `twinned (n)` (n declared twin cases under
+  /// tests/comparisons/scripts/<port>/cases.tsv, which `make script-twins` and the
+  /// `lib_process` suite run on both backends).  Callers move when the plan closes.
+  status: text,
 }
 
 // The identifier-shaped tokens of one line — brackets and operators split, so
@@ -136,13 +141,8 @@ fn tokens(line: text, lang: text) -> vector<text> {
   lex.result
 }
 
-fn has(words: vector<text>, w: text) -> boolean {
-  for x in words { if x == w { return true; } }
-  false
-}
-
 fn add_unique(list: vector<text>, w: text) -> vector<text> {
-  if has(list, w) { return list; }
+  if list.contains(w) { return list; }
   r = list;
   r += [w];
   r
@@ -178,9 +178,11 @@ fn lang_of(path: text) -> text {
 }
 
 // Directories a walk never enters: build output, caches, the registry mirror.
+// `worktrees`: a sibling checkout under `.claude/worktrees/` (git-ignored) is the whole
+// tree again — walked, it counted every script twice and the ratchet read 2000 lines high.
 fn skip_dir(name: text) -> boolean {
   name == ".git" || name == "target" || name == "node_modules" || name == ".loft"
-    || name == "native-auto" || name == "wasm-pkg"
+    || name == "native-auto" || name == "wasm-pkg" || name == "worktrees"
 }
 
 fn strip_prefix(path: text) -> text {
@@ -226,7 +228,7 @@ fn never(name: text) -> boolean {
 // (`"$@"`), an `exec`, or a command held in a variable (`"$LOFT" --native f`,
 // `$cmd`).  Strand 4's `run` is what such a script needs before anything else.
 fn runs_a_program(line: text, w: vector<text>) -> boolean {
-  if has(w, "exec") || line.contains("\"$@\"") { return true; }
+  if w.contains("exec") || line.contains("\"$@\"") { return true; }
   if line.starts_with("\"$") || (line.starts_with("$") && !line.starts_with("$(")) {
     return !line.contains("=") || line.contains(" ");
   }
@@ -246,6 +248,7 @@ fn is_sourced_by(name: text, source: text) -> boolean {
 fn is_gate(lang: text, line: text) -> boolean {
   if lang == "py" { return line.contains("sys.exit(") && !line.contains("sys.exit(0)"); }
   if lang == "sh" { return line.starts_with("exit ") && !line.starts_with("exit 0"); }
+  if lang == "loft" { return line.contains("exit(") && !line.contains("exit(0)"); }
   false
 }
 
@@ -262,12 +265,12 @@ fn is_write(lang: text, line: text) -> boolean {
 fn tranche_of(lang: text, name: text, t: vector<text>, m: vector<text>) -> text {
   if lang == "loft" { return "T0"; }
   if never(name) { return "T9"; }
-  if has(t, "run") { return "T5"; }
-  if has(m, "sibling") { return "T7"; }
-  if has(t, "cargo") || has(t, "rustc") { return "T4"; }
-  if has(t, "git") || has(t, "gh") || has(t, "curl") { return "T3"; }
-  if has(m, "re") || has(m, "tomllib") || has(m, "toml") || has(m, "json") || has(m, "argparse")
-     || has(m, "subprocess") || has(t, "grep") || has(t, "sed") || has(t, "awk") || has(t, "jq") {
+  if t.contains("run") { return "T5"; }
+  if m.contains("sibling") { return "T7"; }
+  if t.contains("cargo") || t.contains("rustc") { return "T4"; }
+  if t.contains("git") || t.contains("gh") || t.contains("curl") { return "T3"; }
+  if m.contains("re") || m.contains("tomllib") || m.contains("toml") || m.contains("json") || m.contains("argparse")
+     || m.contains("subprocess") || t.contains("grep") || t.contains("sed") || t.contains("awk") || t.contains("jq") {
     return "T2";
   }
   "T1"
@@ -286,11 +289,11 @@ fn classify(path: text) -> Row {
     if line.starts_with("#") || line.starts_with("//") { continue; }
     w = tokens(line, lang);
     for tool in ["gh", "git", "cargo", "rustc", "jq", "curl", "grep", "sed", "awk", "python3"] {
-      if has(w, tool) { t = add_unique(t, tool); }
+      if w.contains(tool) { t = add_unique(t, tool); }
     }
     if lang == "py" && (line.starts_with("import ") || line.starts_with("from ")) {
       for mod in ["re", "json", "tomllib", "toml", "argparse", "subprocess"] {
-        if has(w, mod) { m = add_unique(m, mod); }
+        if w.contains(mod) { m = add_unique(m, mod); }
       }
       // `import x` / `from x import` where x.py sits beside this script: a sibling module.
       second = "";
@@ -308,8 +311,25 @@ fn classify(path: text) -> Row {
   tranche = tranche_of(lang, name, t, m);
   Row {
     path: path, lang: lang, lines: len(src), tools: t, mods: m, callers: [],
-    contract: contract, tranche: tranche, source: src.join("\n"),
+    contract: contract, tranche: tranche, source: src.join("\n"), status: "—",
   }
+}
+
+// How many twin cases tests/comparisons/scripts/<port>/cases.tsv declares; 0 without one.
+fn twin_cases(port: text) -> integer {
+  n = 0;
+  for line in (file("tests/comparisons/scripts/{port}/cases.tsv").content() ?? "").split('\n') {
+    if line != "" && !line.starts_with("#") { n += 1; }
+  }
+  n
+}
+
+// The port's path for an original: the same name with the extension dropped; "" for a bare
+// executable (`scripts/idx`, a hook), whose port would be a swap under its own name.
+fn port_path(path: text) -> text {
+  if path.ends_with(".py") { return path[0..len(path) - 3]; }
+  if path.ends_with(".sh") { return path[0..len(path) - 3]; }
+  ""
 }
 
 // Every file a caller could name a script from: the Makefile, the workflows, the hooks.
@@ -329,14 +349,14 @@ fn print_tranche(rows: vector<Row>, label: text, title: text) {
   for r in rows { if r.tranche == label { cnt += 1; total += r.lines; } }
   println("## {label} — {title} ({cnt} files, {total} lines)");
   println("");
-  println("| script | lang | lines | tools | py modules | callers | contract |");
-  println("|---|---|---|---|---|---|---|");
+  println("| script | lang | lines | tools | py modules | callers | contract | status |");
+  println("|---|---|---|---|---|---|---|---|");
   for r in rows {
     if r.tranche != label { continue; }
     tl = r.tools.join(" ");
     md = r.mods.join(" ");
     cl = r.callers.join(",");
-    println("| `{r.path}` | {r.lang} | {r.lines} | {tl} | {md} | {cl} | {r.contract} |");
+    println("| `{r.path}` | {r.lang} | {r.lines} | {tl} | {md} | {cl} | {r.contract} | {r.status} |");
   }
   println("");
 }
@@ -373,6 +393,24 @@ fn main() {
     }
   }
 
+  // The position: a port beside its original, and the twin cases declared for the pair.
+  ports: vector<text> = [];
+  for row in rows { if row.lang == "loft" { ports += [row.path]; } }
+  ported = 0;
+  twinned = 0;
+  cases = 0;
+  for i in 0..len(rows) {
+    if rows[i].lang == "loft" { continue; }
+    port = port_path(rows[i].path);
+    // The port is a file beside the original, wherever the original lives — not only the
+    // loft rows the walk lists under scripts/.
+    if port == "" || (!ports.contains(port) && !is_file(port)) { continue; }
+    ported += 1;
+    rows[i].status = "ported";
+    n = twin_cases(port.basename());
+    if n > 0 { rows[i].status = "twinned ({n})"; twinned += 1; cases += n; }
+  }
+
   py = 0; sh = 0; lf = 0; py_lines = 0; sh_lines = 0;
   for row in rows {
     if row.lang == "py" { py += 1; py_lines += row.lines; }
@@ -389,6 +427,8 @@ fn main() {
   println("| loft (under scripts/) | {lf} | — |");
   println("");
   println("Ratchet — Python+bash lines under `scripts/`, the count that must not grow: **{ratchet}**.");
+  println("");
+  println("**Position: {ported} of {py + sh} scripts ported, {twinned} of them twinned on {cases} declared cases** (the `status` column: `ported` = a loft twin beside the original under the same name; `twinned (n)` = n cases in `tests/comparisons/scripts/<port>/cases.tsv`, run on both backends by `make script-twins` and the `lib_process` suite — `make script-twins ARGS=--list` names them; the verdicts' numbers are the [SCOREBOARD](SCOREBOARD.md); callers move when the plan closes).");
   println("");
 
   print_tranche(rows, "T0", "already loft — the twin harness's first subjects");

@@ -1172,13 +1172,14 @@ pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
     if db.rec == 0 {
         std::ptr::null()
     } else {
-        // SAFETY: `rec` is a claimed record and `pos` a field offset inside it, so the
-        // offset stays within the allocation `base_ptr` was made for.
-        unsafe {
-            stores[db.store_nr as usize]
-                .base_ptr()
-                .add(db.rec as usize * 8 + db.pos as usize)
-        }
+        // Counted from the record's byte 8, which `elem_base` answers for an owned record
+        // and for a FOREIGN store's record alike (@PLN174: its elements sit at `pos` 8
+        // onward in the span, as an owned vector's do in its record).  Taken from
+        // `base_ptr` alone, an element of a foreign vector read bytes of the empty store.
+        stores[db.store_nr as usize]
+            .elem_base(db.rec)
+            .wrapping_add(db.pos as usize)
+            .wrapping_sub(8)
     }
 }
 

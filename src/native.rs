@@ -94,6 +94,7 @@ fn input_kind_for_first_arg(def: &crate::data::Definition) -> InputKind {
 pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_assert", n_assert),
     ("n_panic", n_panic),
+    ("n_exit", n_exit),
     ("n_log_info", n_log_info),
     ("n_log_warn", n_log_warn),
     ("n_log_error", n_log_error),
@@ -936,6 +937,15 @@ fn n_panic(stores: &mut Stores, stack: &mut DbRef) {
         v_file.str(),
         v_line as u32,
     )));
+    stores.had_fatal = true;
+}
+
+/// `exit(code)`: halt the dispatch loop through the runtime-error path with an `Exit`
+/// kind, which `main.rs` turns into the process status in silence.  Not through
+/// `logged_in_production`: ending the program is what was asked for, in every mode.
+fn n_exit(stores: &mut Stores, stack: &mut DbRef) {
+    let v_code = stores.get::<i64>(stack);
+    stores.raise_runtime_error(Box::new(crate::runtime_error::RuntimeError::exit(v_code)));
     stores.had_fatal = true;
 }
 
@@ -1867,6 +1877,7 @@ fn n_parallel_discard(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                const_refs: Arc::clone(&ctx.const_refs),
                 frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },
@@ -2046,6 +2057,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
             stack_trace_lib_nr: ctx.stack_trace_lib_nr,
             data_ptr: ctx.data.clone(),
             fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+            const_refs: Arc::clone(&ctx.const_refs),
             frame_headroom: Arc::clone(&ctx.frame_headroom),
             line_numbers: Arc::new(std::collections::BTreeMap::new()),
         };
@@ -2291,6 +2303,7 @@ fn n_parallel_fold(stores: &mut Stores, stack: &mut DbRef) {
                 stack_trace_lib_nr: ctx.stack_trace_lib_nr,
                 data_ptr: ctx.data.clone(),
                 fn_positions: Arc::new(data.definitions.iter().map(|d| d.code_position).collect()),
+                const_refs: Arc::clone(&ctx.const_refs),
                 frame_headroom: Arc::clone(&ctx.frame_headroom),
                 line_numbers: Arc::new(std::collections::BTreeMap::new()),
             },

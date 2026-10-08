@@ -142,7 +142,7 @@ jobs:
       # itself, so no toolchain action here — one would only pin the wrong compiler.
       - name: Install musl tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y musl-tools
 
       - name: Rebuild the release and compare
         shell: bash

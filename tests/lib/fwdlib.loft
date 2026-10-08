@@ -10,12 +10,12 @@ fn fwd_pub_enum() -> FwdPubE { FwdPubE.FpRed }
 pub fn fwd_hid_enum() -> integer { e = FwdHidE.FhBlue; if e == FwdHidE.FhRed { 3 } else { 4 } }
 fn fwd_pub_type() -> integer { x: FwdPubT = 5; x }
 struct FwdHolder { inner: FwdFieldS }
-pub struct FwdPubS { v: integer }
+pub struct FwdPubS { pub v: integer }
 struct FwdHidS { v: integer }
 pub enum FwdPubE { FpRed, FpBlue }
 enum FwdHidE { FhRed, FhBlue }
 pub type FwdPubT = integer;
-pub struct FwdFieldS { v: integer }
+pub struct FwdFieldS { pub v: integer }
 pub fn fwd_total() -> integer {
   fwd_pub_struct().v + fwd_hid_struct() + fwd_hid_enum() + fwd_pub_type()
     + FwdHolder { inner: FwdFieldS { v: 6 } }.inner.v + if fwd_pub_enum() == FwdPubE.FpRed { 7 } else { 0 }

@@ -15,12 +15,12 @@
 //   HOLDS: nothing else in the file compiles differently.
 struct H { b: vector<u8> }
 struct P { x: integer, n: u8 }
-// @EXPECT_ERROR: a nullable `integer(0, 255)?` cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: a nullable `u8?` cannot be stored into the assignment target of the non-null type `u8`
 fn a1(i: integer) -> u8 { w: vector<u8> = [7 as u8, 9 as u8]; w[i] = 300 as u8?; w[i] ?? 1 }
-// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `u8`
 fn a2(i: integer) -> u8 { h = H { b: [7 as u8] }; h.b[i] = 300 as u8?; h.b[i] ?? 1 }
-// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `u8`
 fn a3(px: &vector<u8>, i: integer) { px[i] = 300 as u8?; }
-// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `u8`
 fn a4(i: integer) -> u8 { ps = [P { x: 1, n: 2 }]; ps[i].n = 300 as u8?; ps[0]?.n ?? 1 }
 fn main() { v: vector<u8> = [1 as u8]; a3(v, 0); println("{a1(0)} {a2(0)} {v[0] ?? 1} {a4(0)}"); }

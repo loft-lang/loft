@@ -28,6 +28,17 @@ list, and does not descend into a replacement (the caller's expression, whose va
 caller's).  Guard `tests/scripts/a-default-reads-the-earlier-arguments-of-its-call.loft`.
 Found walking `(T-Syn)`: a parameter default is the one place pass 1's TREE is replayed.
 
+### D-call-28 — OPENED 2026-10-06, CLOSED 2026-10-07 (@PLN187): the C140 refusals were behind a switch
+
+Violated `(F-Visible)`: a private field read, written or matched outside its file, a literal of
+a `pub` type with a private field, a variant of a non-`pub` enum, and the abstract-alias
+refusals were refused only under `LOFT_PUB_ENFORCE=1`, so the published libraries could carry
+their `pub` first (@PLN187 step 5) and no consumer of a release broke.  Naming and the build
+refusal for a name-only type held on every build from the start.  **Closed** by @PLN187 step 6:
+the switch is gone and every refusal holds on every build; the in-tree packages' library floors
+moved to the first releases carrying `pub`.  Guard `tests/pub_visibility.rs` (`@C140`), every
+cell now on the default build.
+
 ### D-call-29 — OPENED AND CLOSED (2026-10-07, @PLN187): an abstract alias the checker did not follow
 
 Opened with the abstract-alias rule (7598b6537): the fact rode one alias per operand, so an

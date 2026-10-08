@@ -316,6 +316,18 @@ versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` deci
                  — and a chain that forks or leaves the table answers nothing.
                  `LOFT_NO_DISTINCT_GROWTH` keeps every base off under any growth; the
                  verify form re-derives the base at every use as before.
+                 THE RESOLVE CLAUSE: a byte, boolean or character element read of a
+                 path whose header is held WITHOUT a base — the function clause of
+                 (R-Header), a loop that grows a store not proven apart — is the same
+                 range test and one load, the base taken from the store AT THE READ
+                 (`elem_base` of the header's record).  The header alone proves the
+                 vector's record and length, and the read takes the store's buffer as
+                 it is now, so a store that grew since answers its new buffer.  No
+                 condition beyond the header's.  `LOFT_NO_BYTE_RESOLVE` keeps the
+                 template where no base is held; the falsifier is `LOFT_POISON=1`,
+                 under which a store's growth moves its bytes and poisons the block it
+                 leaves, so an address held across a growth reads the poison where a
+                 `realloc` left the old bytes readable and equal.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -1106,7 +1118,18 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  enum payloads is (R-Scalar)'s: a hoisted scalar is keyed by (type,
                  offset), and two variants put different fields at one offset.  The
                  synthetic `__nullable<S>` stays out: its absence is a discriminant,
-                 not a null record.
+                 not a null record.  THE TUPLE CLAUSE: a record carried as a VALUE
+                 (R-ValueRecord) is read out of a store record — `return
+                 v[i]?` of a value-returning function — and written into one — a
+                 copy from a value local or a forward — through one address taken
+                 where the copy starts: the record evaluated once, its address and
+                 lock state once, then one load or store per field of a kind the
+                 address serves (a `boolean` keeps its own accessor, to the same
+                 bytes).  No block proof is needed: the copy's parts are tuple
+                 elements or loads, so nothing between the address and its last
+                 use grows, moves or frees a store.  A view part declines the
+                 write (its append may grow the store), and a view whose block
+                 already holds an address reads and writes through that one.
 ```
 
 **In words.** The drawing library's crossing loop (`pg_cur = pg_table[i]?`,
@@ -1122,8 +1145,11 @@ falsifier `LOFT_HOIST_VERIFY=1` (`vector::rec_get` re-derives the address and re
 the store at every use); trace `LOFT_TRACE_RECPTR=1`.  Sites: `hoist::record_view_ptr`,
 `Output::bind_record_ptr`, `Output::rec_ptr_read` (the twin input),
 `ops::vector_ops::emit_hoisted_scalar_or_default` and `FusedElementWriteEmitter`
-(the read and the write), `vector::rec_ptr` / `rec_get` / `rec_set`.  Cells
-`tests/scripts/157-record-ptr.loft`, pins `tests/record_ptr.rs`.  The `for e in v` loop
+(the read and the write), `Output::output_record_tuple` and
+`Output::write_tuple_through_address` (the tuple clause), `vector::rec_ptr` / `rec_get` /
+`rec_set`.  Cells `tests/scripts/157-record-ptr.loft` and
+`tests/scripts/a-value-record-is-copied-through-one-address.loft`, pins
+`tests/record_ptr.rs`.  The `for e in v` loop
 variable is a `Set(e, Iter…)` of the NULLABLE element type (its null ends the loop), so
 the same gate admits it once the `Optional` is peeled — the loop body reads every field of
 `e` through one address per iteration (`polygon_generic`'s first loop, `thin_line`; the
@@ -3138,7 +3164,17 @@ on the drawing bench).
                  field of a FRESH record — an appended element or a construction
                  temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
                  that field the same way; nothing can read a fresh record while it
-                 is built, so it needs no staging of its own.
+                 is built, so it needs no staging of its own.  The KEYED clause:
+                 `h[k] = R { … }` with a FULL subscript of pure keys is written into
+                 the record the collection claims for it — the literal's values and
+                 the statements computing them run first, in program order (a value
+                 may read the record under `k`), then that record is removed (Col-
+                 Assign), a fresh one is claimed in the collection's store and
+                 written, and the SUBSCRIPT's key is written and the record linked;
+                 the plain form's order without its temporary store and its copy.
+                 A text field declines (a staged text may borrow the store the claim
+                 mutates), as does a partial subscript (its key is the literal's
+                 own) and a literal whose buffer is named outside it.
   (R-Prefill)    the default prefill of a minted record — the declared defaults, the
                  null sentinels and the variant tag a partial literal leaves to the
                  type — is ONE block write of a per-type IMAGE computed once from the
@@ -4558,44 +4594,56 @@ Native only; the interpreter copies and is the reference.
 
 ```
   (R-Destination) a call whose result record r the caller consumes ONLY by moving
-                 one heap-free field r.v (OpMoveField) into a fresh element e of a
+                 its one heap field r.v (OpMoveField) into a fresh element e of a
                  container the caller owns, and by reading r's remaining fields as
-                 scalars at most once each, is emitted as the callee's DESTINATION
-                 TWIN: the twin takes e's address for r.v — every write the body
-                 makes to r.v lands at e, every sub-record it places in r's store
-                 is placed in e's store — and answers the remaining fields as a
-                 tuple of scalars; the caller mints e before the call without its
-                 prefill (the twin's writes cover r.v whole, R-CompleteWrite) and
-                 makes it visible (OpFinishRecord) only on the path where it moved
-                 r.v.  Admission asks the CALLEE: on every return path r.v is
-                 written whole before r is returned, r.v's writes name no address
-                 but r's, and r is not read back by the body after a write to r.v.
-                 The twin receives e's address and no path through which the
-                 container's record can be reached, so the container's header
-                 stays valid across the call.
+                 scalars, is emitted as the callee's DESTINATION TWIN f__d: the twin
+                 is f's body with its return buffer BOUND TO e's slot — r.v must sit
+                 at offset 0 of r, so every write the body makes to r.v (its
+                 sub-records, its placements in the buffer's store) lands at e as it
+                 stands — and its scalar fields, which would land past e, written to
+                 locals the twin answers as a tuple.  The caller mints e BEFORE the
+                 call without its move (the twin's writes cover r.v whole), finishes
+                 it (OpFinishRecord) only on the path where the plain form moved, and
+                 on the failing path releases what the twin placed in e.  Admission
+                 asks the CALLEE: every mention of its buffer is its mint guard, a
+                 write or sub-record INSIDE r.v, a write to a scalar field by that
+                 field's own setter, a placement in the buffer's store, a free
+                 compared against it, or its `return` — counted mention by mention,
+                 so a use no form accounts for declines.  It asks the CALLER: r is
+                 read only by the `ok` test, the one move and scalar reads, every
+                 mention of r lies in the window, the element is minted in the `ok`
+                 arm, and no argument of the call reaches the container (the element
+                 waits unfinished across the call).  THE CHAIN CLAUSE: calls whose
+                 results fill ONE element together — a map entry's key and value,
+                 each call guarded by the one before — are a chain of such windows:
+                 each level's `ok` arm holds the next, the last holds the mint and one
+                 move per result (straight, or through an alias local `kv = kd.v`),
+                 each into its own field of e.  The mint is hoisted above the first
+                 call, a later call reads an earlier result's scalars from its tuple,
+                 and a failing level releases EVERY destination filled so far.
 ```
 
 **In words.** `sub = read_value(…); if sub.ok { items += [sub.value]; p = sub.next }` builds
-`value` in a pooled buffer, reads `ok`, mints an element, prefills it, moves `value` in and
-reads `next`, where the twin does one `push`: this is `(R-Place)` one call deeper — the
-child built where it will live.  The ok-false path is the ownership question, and the
-answer is the one `(R-PushRec)` already gives a minted element: an element minted but not
-finished is NOT a member of the container (`vector_finish` is the one visibility step), its
-slot is capacity the next append reuses, and whatever heap the failed child placed is
-released by the CALLER: where the plain form drops the failed result, the twin's caller runs
-the record's release walk over e — the same walk, over the same record shape, that freeing
-the discarded result runs — so the callee changes nothing but where it writes.  A failure is
-then identical to the plain form's in every value, member and live record; only spare
-capacity differs, which is representation (C122).  A caller that leaves e unfinished
-without releasing it, or finishes it on a failing path, is the deviation to guard.  Priced on cbor `decode` (over-9x.md): with D2, D3,
-D5 and D6 it takes the row 12.04 → 6.49 M ns/op, and it is the one step without which that
-ladder stops at 8.3×.  Sites: `(R-Callee)`'s admission (a second emission like
-`(R-Inputs)`' `__inv`), `Output::user_fn_call_body` for the tuple answer, the append
-lowering's mint, `src/exit_vector.rs` for the return-path analysis.  Switch
-`LOFT_NO_DESTINATION`; falsifier `LOFT_HOIST_VERIFY=1` (the twin re-reads e after each write
-and compares with the plain form's buffer).  Guard: a nested array and a map, each truncated
-at every byte position (ok=false at every depth), hand-computed on both backends, with the
-live-record count equal to the plain form's; a finish planted on the failing path must go red.
+`value` in a pooled buffer, reads `ok`, mints an element, moves `value` in and reads `next`,
+where the twin does one `push`: this is `(R-Place)` one call deeper — the child built where it
+will live.  The ok-false path is the ownership question, and the answer is the one
+`(R-PushRec)` already gives a minted element: an element minted but not finished is NOT a
+member of the container (`vector_finish` is the one visibility step), and whatever heap the
+failed child placed is released by the CALLER, the release walk freeing the discarded result
+runs; a failure is then identical to the plain form's in every value, member and live record,
+and only spare capacity differs, which is representation (C122).  The offset-0 condition is
+what binding the buffer to the element costs: a moved field anywhere else would be written
+that far past the element.  The chain clause's release is visible only in LIVE RECORDS — a
+key built into an element whose value then failed stays in the store the kept results live in,
+and neither a value nor the store-level leak check sees it.  The live-reload arm hands the
+parked interpreter call its own buffer (the element would be overrun by a whole record),
+relocates the field into e and reads the scalars back.
+
+**BUILT** (`src/generation/destination.rs` — `shape` for the callee, `site` for the chain;
+the twin's hooks in `emit.rs`, its call name in `calls.rs`, its emission and live arm in
+`mod.rs`; `LOFT_NO_DESTINATION`, `LOFT_TRACE_DESTINATION`; guard
+`tests/scripts/a-call-result-moved-into-an-element-is-built-there.loft`, two patch receipts).
+Native only; the interpreter moves as before and is the reference.
 
 ### A fn-ref whose every target answers a value record answers the tuple
 
@@ -4641,37 +4689,104 @@ guard `tests/scripts/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft`; 
 ### A lookup's found entry is answered as a view the caller reads in place
 
 ```
-  (R-ViewReturn) a function whose result at some exit is a VIEW V of a sub-record
-                 reached by a pure path rooted at a `const` (or never-written)
-                 PARAMETER p — `return e.value` for `e = p.entries[i]?`, or a match
-                 binding of such a view — answers that exit as V's address (the
-                 parser's materialised copy of the view is not emitted) when EVERY
-                 caller consumes the result INSIDE the statement that binds it: the
-                 result is the subject of a `match` (or a field read) whose arms
-                 read scalars, read texts as VALUES (R-TextBorrow's sense) or copy
-                 a field into their own slot, and no arm writes, grows, frees or
-                 rebinds any store reachable from p before its last read.  Every
-                 other exit keeps its form; a function with one caller that cannot
-                 be so proven is emitted as today.
+  (R-ViewReturn) a function F whose result at some exit is a VIEW V of a sub-record
+                 that the parser materialises (a buffer minted, V deep-copied into it
+                 — `return e.value` for `e` an element of a parameter's vector) is
+                 given a TWIN that answers (address, owned): a materialised exit
+                 answers V's address and `false`, every other exit the store it
+                 built and `true`.  A call takes the twin, and its caller mints no
+                 buffer and frees the result only when owned, when ALL of:
+                 (1) F writes no store but those it minted itself, calls no user
+                     function, and names its buffer only in its materialised exits;
+                 (2) the call's arguments are variables or reads — the stores V
+                     lies in are held by the caller across the call's statement;
+                 (3) the WINDOW — the statements after the call in its block —
+                     writes no store and calls no user function, and reads the
+                     result only through getters that copy (a tag, a scalar, a
+                     text);
+                 (4) the result's variable is bound once and named only in the
+                     window; the buffer only in its prep, the call and its frees.
+                 Every exit keeps the ownership it had, so a built result (a
+                 not-found literal) is freed as before.
 ```
 
-**In words.** `(R-ReturnField)` answers a field of an OWNED local as its store at a position
+**In words.**  `(R-ReturnField)` answers a field of an OWNED local as its store at a position
 and declines a parameter, because a view of a parameter's record dangles the moment the
-caller frees or grows that record; here the referent is the caller's own argument and the
-whole use of the result is the one statement around the call, so the dangling window is
-empty by construction — the check is on the caller's consuming statement.  Conditions: p is
-reached only through pure paths in the callee and never written there; the consuming
-statement neither writes nor releases p's store before the bindings' last read (an
-`OpDatabase`, an `OpFreeRef`, an append, a rebind of the argument inside an arm each
-decline); the absent arm hands up `DbRef::NULL`, which the tag read answers as "no variant",
-so a caller that matches the null variant BY NAME declines.  Profitable where the found value
-holds heap.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy
-and its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  An
-ownership decision for the owner before it is built.  Switch `LOFT_NO_VIEW_RETURN`; trace
-`LOFT_TRACE_VIEW_RETURN` names the declining condition per call site.  Falsifier: the hash
-and `LOFT_NATIVE_LEAK_CHECK=1` on both backends (a view freed as if owned shows as a double
-release); a planted arm that appends to `p.entries` before reading the binding must decline;
-`LOFT_POISON=1` catches a read through a view whose record moved.
+caller frees or grows that record.  Here the referent is the caller's own argument and the
+result is read only in the statements right after the call, which change nothing, so the
+dangling window is empty by construction.  The twin decides per call site, so a caller that
+holds the result longer, or writes in between (the guard's `text_then_clear`), keeps the
+copy.  Priced on pluginabi `check_request` (over-9x.md): −10 % — the mint, the deep copy and
+its text claim per lookup; `pa_get` is the shape of every `match`-based finder.  The
+ownership question it raised is settled by C122 and @C139: a representation is the
+compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN`; trace
+`LOFT_TRACE_VIEW_RETURN` names each call site's admission or declining condition.  Built:
+`src/generation/view_return.rs`; guard `tests/scripts/a-found-entry-is-read-where-it-lies.loft`.
+
+### A decoded text or byte string is a view into the frame
+
+```
+  (R-DecodeView) (@C141) a `text` or `vector<u8>` FIELD f of a record R whose value
+                 at R's construction is a span B[a..b] of a byte vector B — read by
+                 (R-TextRun), copied by (R-ByteCopy)'s vector clause, or a slice —
+                 holds the SPAN (B's
+                 store, a, b - a) instead of an owned copy, when ALL of:
+                 (1) B is not written from the construction of R to the last read
+                     of f through any holder: no append, assignment, clear, element
+                     write or `&` hand-off of B, and no release of B;
+                 (2) R is CONFINED to frames that hold B: every holder of R — the
+                     local it is bound to, a record or collection it is stored in,
+                     each return that hands it up — lives in a frame whose activation
+                     B outlives.  A return hands R to a caller only where that call
+                     passed B (or a value B is reached from) as an argument, and the
+                     condition is decided over EVERY call site in the unit (R-Escape);
+                     one site that cannot be shown confined declines the function, and
+                     every site keeps owned fields;
+                 (3) no holder lets R cross a boundary: a return out of the frame that
+                     owns B, a store into a collection or field that outlives B, a
+                     native or bridge call, a `par` worker, a placed library, a yield,
+                     a closure capture, a persisted or file-backed store (C135);
+                 (4) f is read only as a VALUE: an equality or ordering test, a
+                     prefix or search test, a length, a per-character or per-byte
+                     read or walk, a format, a copy into an owned slot (which builds
+                     the owned value there).  An assignment to f, an append to it, a
+                     `&f` link or an element write declines;
+                 (5) for a `text` field, the span's bytes ARE the text the owned form
+                     holds: text_from_bytes leaves them unchanged (valid UTF-8, tested
+                     once at construction).  A span that would be converted builds the
+                     owned text, so every read answers what the program as written
+                     answers.
+                 The representation is decided at COMPILE time.  R's type T is given a
+                 twin layout in which each admitted field is a span, and every function
+                 of the confined region that touches T is emitted as a twin over that
+                 layout — the way (R-Callee) emits a twin over its inputs.  No code
+                 outside the region ever sees the twin layout, so no other read of a
+                 `text` or vector field pays a test.  R's release frees no bytes for a
+                 span field; B is released by its owner as before.
+                 Declines, keeping owned fields: any of (1)-(5) unproved; a recursive
+                 type whose twin cannot be closed over the region; a generator.
+```
+
+**In words.**  The Rust reference decodes into `&str` and `&[u8]` slices of the frame; loft
+copies four texts and two byte strings out of it per request to read one key.  C139 permits
+the slice form wherever the results are kept.  Its one invariant is that a span answers what
+the owned copy would, which holds exactly when B outlives the span and does not change under
+it: (1) and (2) are those two facts, (3) lists the places the compiler cannot follow, and (4)
+keeps every use one that reads.  (5) is the one way a span and a copy can differ in content.
+A run-time tag in the field ("owned or span?") was the other representation.  It is
+declined here because every `text` field read in every program would test it (C125).
+
+The ceiling, measured on pluginabi `check_request` (over-9x.md): building no text or byte
+string at all takes the row from 3.95 to 2.54 ms (−36 %); the spans' own bookkeeping comes
+out of that.  Reach: every decoder of a frame read once (cbor's `decode`, the web stack's
+request handlers).  Switch `LOFT_NO_DECODE_VIEW`; trace `LOFT_TRACE_DECODE_VIEW` names the
+holder or site that declined.  Falsifier: `LOFT_HOIST_VERIFY=1` re-reads each span as the
+owned text and compares; cells on both backends with hand-computed values — the
+`check_request` shape; B appended to after decode and before the lookup (declines, value
+right); R stored into a vector that outlives B (declines); invalid UTF-8 in a text span (the
+converted owned text); a decoded value returned from the function that owns B (declines); and
+a planted defect that admits a site writing B must read the wrong bytes under the verify
+switch.
 
 ### Proposed clauses on existing rules
 

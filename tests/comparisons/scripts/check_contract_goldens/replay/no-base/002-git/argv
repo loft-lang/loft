@@ -1,0 +1,6 @@
+git
+diff
+--quiet
+nope
+--
+tests/golden/behavior/corpus.out

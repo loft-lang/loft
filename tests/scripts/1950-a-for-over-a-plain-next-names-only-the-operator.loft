@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `for` reaches only an `operator next` (@FR-Op-Mark).  A type with a plain `fn next` is
+// refused, and the refusal is the one diagnostic: the loop variable binds the item the plain
+// `next` answers, so a body that assigns it to an existing variable reports nothing else
+// (loft#1950: it reported "cannot change type from text to L" first, naming the wrong cause).
+// @falsified-at: 60133ddef — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1950-a-for-over-a-plain-next-names-only-the-operator.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+//   ARMED: none — no switch is needed for either channel.
+//   HOLDS: assertions, leak, panic, free-refusal are equal on both trees; the exit and the expectation moved.
+
+struct L { n: integer }
+
+fn next(self: L) -> text? {
+  self.n += 1;
+  if self.n > 2 { return null; }
+  "l{self.n}"
+}
+
+// @EXPECT_ERROR: but `for` reaches only one written with `operator`: declare it `operator next(self: L) -> …`
+fn test_assigned_to_an_existing_variable() {
+  l = L { n: 0 };
+  last = "";
+  for line in l { last = line; }
+  assert(last == "", "never runs");
+}

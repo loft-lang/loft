@@ -25,7 +25,9 @@ loft    = ">=0.8"
 # which C124 requires (0.3.0 passed a `const` to a plain parameter and is now refused).
 # graphics 0.9.4, glb 0.1.3 and mesh3d 0.1.2 are the C98 releases: mesh3d passes its
 # modules' names on with `pub use` (so it, and every consumer of it, needs loft 2026.10.0).
+# graphics 0.9.10, glb 0.1.6 and mesh3d 0.1.4 are the C140 releases: a field read outside its
+# file needs `pub`, and mesh3d reads its own `math` module's fields from `mesh`.
 [dependencies]
-graphics = "=0.9.4"
-glb = "=0.1.3"
-mesh3d = "=0.1.2"
+graphics = "=0.9.10"
+glb = "=0.1.6"
+mesh3d = "=0.1.4"

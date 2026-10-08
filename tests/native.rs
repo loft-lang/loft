@@ -2610,7 +2610,7 @@ fn one_sql_interface_drives_four_different_c_libraries() -> std::io::Result<()> 
     // cell with no server to be unreachable, so there it can only be missing if
     // something upstream broke.
     println!("@PLN23 backends exercised: {ran:?}");
-    // @PLN184 C2 approved exemption (owner, 2026-10-07): a system sqlite the CI image guarantees (`LOFT_REQUIRE_SQLITE=1`) exists on Linux only; Windows substitute: the cells run where `winsqlite3` loads, and `ran` is printed
+    // approved exemption: a system sqlite the CI image guarantees (`LOFT_REQUIRE_SQLITE=1`) exists on Linux only; Windows substitute: the cells run where `winsqlite3` loads, and `ran` is printed
     if cfg!(target_os = "linux") {
         assert!(
             ran.contains(&"sqlite"),
@@ -4396,7 +4396,7 @@ fn run_lib_test_in_temp_cwd(
     let mut args: Vec<&str> = extra_args.to_vec();
     args.push("test");
     args.push(stem);
-    // @PLN184 C2 approved exemption (owner, 2026-10-07): the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
+    // approved exemption: the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(unix)]
     {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -4420,7 +4420,7 @@ fn run_lib_test_in_temp_cwd(
         let _ = fa::remove_dir_all(&tmp);
         out
     }
-    // @PLN184 C2 approved exemption (owner, 2026-10-07): the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
+    // approved exemption: the per-run cwd is built from symlinks, which need the symlink privilege on Windows; Windows substitute: the run in the package directory below
     #[cfg(not(unix))]
     {
         loft::platform::process::harness_command(loft_bin)
@@ -4474,8 +4474,8 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     )?;
     fa::write(
         pkg.join("src/shadowlib.loft"),
-        "pub struct W { w_n: integer, w_tag: text }\n\
-         pub struct H { h_q: integer, h_r: integer }\n\
+        "pub struct W { pub w_n: integer, pub w_tag: text }\n\
+         pub struct H { pub h_q: integer, pub h_r: integer }\n\
          pub fn make(n: integer) -> W { W { w_n: n, w_tag: \"lib\" } }\n\
          pub fn bump(w: W, n: integer) -> integer { w.w_n + n }\n\
          fn defaulted(w: W) -> boolean { w.w_n > 0 }\n\

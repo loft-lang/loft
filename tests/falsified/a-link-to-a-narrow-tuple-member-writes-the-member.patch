@@ -1,86 +1,19 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index a820c2c58..4164ddf4e 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -10060,13 +10060,10 @@ use a separate collection or add after the loop"
-         (*cond.unspan() == expected).then_some(v)
-     }
-     /// `@FR-B-Ref-Lvalue` — can a link name member `i` of the tuple local `t`?  `Ok` with the
--    /// member's type when it can, `Err` with it when it cannot.  A tuple is a record
--    /// (`@FR-T-Record`), so a scalar member is a field a link names: a NARROW member of a
--    /// by-value tuple holds its field encoding once a link names it
--    /// (`tuple_links::linked_narrow_members`, both backends), as a linked narrow LOCAL does.
--    /// A narrow member reached through a `&(…)` link is still refused: that tuple is the
--    /// caller's, in either of its two representations, and neither encodes the member.  A heap
--    /// member is not a scalar place at all.
-+    /// member's type when it can, `Err` with it when it cannot: a member is stored at its full
-+    /// width, so a link reads it at that width, and a NARROW member would need the narrow
-+    /// encoding a linked LOCAL is given (`set_linked_narrow`), which a member's fixed layout
-+    /// cannot take.  A heap member is not a scalar place at all.
-     pub(crate) fn linkable_tuple_member(&self, t: u16, i: u16) -> Result<Type, Type> {
-         // A member of a `&(…)` link (a parameter, or a local link) is the CALLER's tuple at the
-         // member's offset: the link's reference plus that offset, as the member read through
-@@ -10080,10 +10077,7 @@ use a separate collection or add after the loop"
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index eb7ced62a..1eb473295 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -10260,13 +10260,11 @@
              _ => None,
          };
          let elem = elem.unwrap_or(Type::Unknown(0));
 -        let by_value = matches!(self.vars.tp(t).base(), Type::Tuple(_));
--        if crate::data::is_scalar(&elem)
--            && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none())
--        {
-+        if crate::data::is_scalar(&elem) && crate::data::NarrowSlot::of_type(&elem).is_none() {
+         // A TEXT member is the tuple's own text where the tuple owns it (`@FR-T-Record`,
+         // `Function::tuple_owns_text`): a link names that `String` as `&s` names a text local.
+         let owned_text = matches!(elem.base(), Type::Text(_)) && self.vars.tuple_owns_text(t);
+         if owned_text
+-            || (crate::data::is_scalar(&elem)
+-                && (by_value || crate::data::NarrowSlot::of_type(&elem).is_none()))
++            || (crate::data::is_scalar(&elem) && crate::data::NarrowSlot::of_type(&elem).is_none())
+         {
              Ok(elem)
          } else {
-             Err(elem)
-@@ -10115,8 +10109,7 @@ use a separate collection or add after the loop"
-         let why = if !crate::data::is_scalar(elem) {
-             "a link to a member names a scalar place, and this member is not a scalar"
-         } else if crate::data::NarrowSlot::of_type(elem).is_some() {
--            "the tuple is reached through a `&` link, and a link to a narrow member of a linked \
--             tuple is not supported"
-+            "a narrow member is stored at full width, and a link reads at the member's own width"
-         } else {
-             "the tuple is itself reached through a `&` link, and a link into it is not supported"
-         };
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 534cdf844..d1b0e3cf1 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -22548,32 +22548,15 @@ impl Parser {
-         // The bind is a `Set` of the link too, so the writes are measured on the body with the
-         // binds blanked: a link only READ leaves its target unwritten.
-         // A link to a tuple MEMBER (`c = &t.0`, `OpCreateStack(TupleGet(t, i))`) names a place
--        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).  A member of a
--        // `&(…)` tuple is the second spelling of the same link: that tuple is the caller's
--        // `__tuple<…>` record (`@FR-T-Ref-Rep`), so its member link is `OpGetField(p, i)`.
--        // Only a tuple record is followed: a struct's fields propagate without the `&`, so a
--        // field link on a `&S` parameter leaves the advice to drop the `&` standing.
--        let vars = &self.vars;
-+        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).
-         let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
-             if let Value::Set(v, rhs) = n.unspan()
-                 && let Value::Call(op, args) = rhs.unspan()
-+                && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
-+                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
-+                    args.first().map(Value::unspan)
-             {
--                let name = data.def(*op).name();
--                if matches!(name, "OpCreateStack" | "OpVarRef")
--                    && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
--                        args.first().map(Value::unspan)
--                {
--                    return Some((*v, *src));
--                }
--                if name == "OpGetField"
--                    && matches!(vars.tp(*v), Type::RefVar(_))
--                    && let Some(Value::Var(src)) = args.first().map(Value::unspan)
--                    && matches!(vars.tp(*src).base(), Type::RefVar(inner)
--                        if matches!(inner.base(), Type::Reference(d, _)
--                            if data.def(*d).name().starts_with("__tuple<")))
--                {
--                    return Some((*v, *src));
--                }
-+                return Some((*v, *src));
-             }
-             None
-         };

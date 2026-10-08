@@ -1,0 +1,86 @@
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index 4782bc699..c1b976035 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
+@@ -387,20 +387,6 @@ impl Parser {
+             self.first_pass,
+         );
+         if fnr == usize::MAX {
+-            // `ix.len()` — the method spelling of `len(ix)`, which no stdlib definition can
+-            // carry (see `index_len`).  Both passes, so first-pass inference sees `integer`.
+-            if field == "len"
+-                && matches!(t.peel_optional().0, Type::Index(_, _, _))
+-                && self.lexer.peek_token("(")
+-            {
+-                self.lexer.token("(");
+-                self.lexer.token(")");
+-                let recv = t.clone();
+-                if let Some(tp) = self.index_len(code, &recv, vec![code.clone()], None) {
+-                    return tp;
+-                }
+-                return crate::data::I64.clone();
+-            }
+             // Plan-17 phase 01 (B) — bounded-T method dispatch must run
+             // on BOTH passes so the call's return type propagates into
+             // first-pass type inference of the enclosing variable.
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 9144ff330..18fb4265a 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -7477,34 +7477,6 @@ impl Parser {
+     /// Search for definitions with the given name and call that with the given parameters.
+     #[allow(clippy::too_many_arguments)]
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+-    /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex` with
+-    /// the per-record link offset (`database.fields`), a constant only the parser knows once the
+-    /// type is registered — which is why no stdlib `len(self: index)` can carry it (@FR-Col-Len).
+-    /// An `index<…>?` counts 0 when absent, through `@FR-N-Store`'s store as every keyed `len`.
+-    /// `None` when the type or the op is not registered yet.
+-    pub(crate) fn index_len(
+-        &mut self,
+-        code: &mut Value,
+-        recv: &Type,
+-        mut args: Vec<Value>,
+-        at: Option<&Position>,
+-    ) -> Option<Type> {
+-        let (base, absent) = recv.peel_optional();
+-        let base = base.clone();
+-        let known = self.get_type(&base);
+-        let op_d_nr = self.data.def_nr("OpLengthIndex");
+-        if known == u16::MAX || op_d_nr == u32::MAX {
+-            return None;
+-        }
+-        let fields = self.database.fields(known);
+-        if absent && let Some(first) = args.first_mut() {
+-            self.convert_store(first, recv, &base, "parameter 1 of `len`", at);
+-        }
+-        args.push(Value::Int(i32::from(fields)));
+-        *code = Value::Call(op_d_nr, args);
+-        Some(crate::data::I64.clone())
+-    }
+-
+     fn call(
+         &mut self,
+         code: &mut Value,
+@@ -7782,8 +7754,19 @@ impl Parser {
+             // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
+             // "Unknown function len".  This route bypasses `convert`, so it asks
+             // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
+-            if let Some(tp) = self.index_len(code, recv, list.to_vec(), arg_pos.first()) {
+-                return tp;
++            let (base, absent) = recv.peel_optional();
++            let base = base.clone();
++            let known = self.get_type(&base);
++            let op_d_nr = self.data.def_nr("OpLengthIndex");
++            if known != u16::MAX && op_d_nr != u32::MAX {
++                let fields = self.database.fields(known);
++                let mut args = list.to_vec();
++                if absent && let Some(first) = args.first_mut() {
++                    self.convert_store(first, recv, &base, "parameter 1 of `len`", arg_pos.first());
++                }
++                args.push(Value::Int(i32::from(fields)));
++                *code = Value::Call(op_d_nr, args);
++                return crate::data::I64.clone();
+             }
+             // Type or op not registered — drop to the standard
+             // error path so the user sees the same diagnostic shape

@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1916, `@FR-H-CopySelf` — a whole value delivered onto the place that already holds it is
+// a no-op, and a value delivered from INSIDE its destination keeps its elements.
+//
+// A collection field two or more steps deep, assigned onto itself, came back EMPTY on both
+// backends: the right-hand side was bound to a temporary that VIEWED the destination, then the
+// destination was cleared, then the (now empty) view was appended.  Depth 1 was elided as a
+// syntactic no-op and never reached that path.  A right-hand side that is a projection is now
+// copied before the clear.
+//
+// Axes it MOVES: the depth of the place (one step, two, three), the step kinds (a field, a
+// vector element, a nested hash), the source (the place itself, a sibling's field, a vector held
+// INSIDE the destination's own elements), and a loop (one statement, many evaluations).  Each
+// cell checks the VALUE and the LENGTH; the leak gate checks the copy is released.  Values are
+// hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1916-a-nested-collection-assigned-onto-itself-keeps-its-elements.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — a self-assigned place comes back empty on the control.
+//   WITNESS: `exit 1, 1 assertion failure` on both backends (scored at 6598df45d).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct I1916 { sub: vector<integer> }
+struct O1916 { inner: I1916, vv: vector<vector<integer>> }
+struct W1916 { o: O1916 }
+struct N1916 { kids: vector<N1916>, tag: integer }
+struct K1916 { k: integer, v: integer }
+struct H1916 { h: hash<K1916[k]> }
+struct HO1916 { inner: H1916 }
+
+fn test_two_and_three_steps_deep() {
+  o = O1916 { inner: I1916 { sub: [5, 6, 7] }, vv: [[1, 2], [3]] };
+  o.inner.sub = o.inner.sub;
+  assert("{o.inner.sub}" == "[5,6,7]", "o.inner.sub: {o.inner.sub}");
+  o.vv[0] = o.vv[0];
+  assert("{o.vv}" == "[[1,2],[3]]", "o.vv[0]: {o.vv}");
+  w = W1916 { o: O1916 { inner: I1916 { sub: [8] }, vv: [] } };
+  w.o.inner.sub = w.o.inner.sub;
+  assert("{w.o.inner.sub}" == "[8]", "w.o.inner.sub: {w.o.inner.sub}");
+}
+
+fn test_an_element_step() {
+  v = [I1916 { sub: [8, 9] }, I1916 { sub: [10] }];
+  v[0].sub = v[0].sub;
+  v[1].sub = v[0].sub;
+  assert("{v[0].sub} {v[1].sub}" == "[8,9] [8,9]", "elements: {v[0].sub} {v[1].sub}");
+}
+
+fn test_depth_one_stays_a_no_op() {
+  i = I1916 { sub: [1, 2] };
+  i.sub = i.sub;
+  assert("{i.sub}" == "[1,2]", "depth one: {i.sub}");
+}
+
+fn test_a_source_inside_the_destination() {
+  n = N1916 { kids: [N1916 { kids: [N1916 { kids: [], tag: 3 }, N1916 { kids: [], tag: 4 }], tag: 2 }], tag: 1 };
+  n.kids = n.kids[0].kids;
+  assert(n.kids.len() == 2 && n.kids[0].tag == 3 && n.kids[1].tag == 4, "kids: {n.kids.len()}");
+}
+
+fn test_a_nested_hash() {
+  b = HO1916 { inner: H1916 { h: [K1916 { k: 1, v: 10 }, K1916 { k: 2, v: 20 }] } };
+  b.inner.h = b.inner.h;
+  assert(b.inner.h.len() == 2 && (b.inner.h[2].v ?? -1) == 20, "hash: {b.inner.h.len()}");
+}
+
+fn test_in_a_loop() {
+  o = O1916 { inner: I1916 { sub: [4, 5] }, vv: [] };
+  for r in 0..3 { o.inner.sub = o.inner.sub; o.inner.sub += [r]; }
+  assert("{o.inner.sub}" == "[4,5,0,1,2]", "loop: {o.inner.sub}");
+}
+
+fn main() {
+  test_two_and_three_steps_deep();
+  test_an_element_step();
+  test_depth_one_stays_a_no_op();
+  test_a_source_inside_the_destination();
+  test_a_nested_hash();
+  test_in_a_loop();
+}

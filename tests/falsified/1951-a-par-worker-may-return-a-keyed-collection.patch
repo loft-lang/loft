@@ -1,0 +1,216 @@
+diff --git b/src/database/types.rs a/src/database/types.rs
+index bd6853900..a19ad4576 100644
+--- b/src/database/types.rs
++++ a/src/database/types.rs
+@@ -1896,40 +1896,6 @@ impl Stores {
+     /// `__nullable<S>` element keeps S's keys inside the `Some` variant's inline payload, so
+     /// indexing the enum's own field list finds none of them.  Same rule as [`Self::hash`] and
+     /// [`Self::create_key`] — one question, one answer, whichever kind asks it.
+-    /// The registered database type of a keyed collection, or `u16::MAX` when this program
+-    /// never registered it.  ONE home for the names [`Parser::get_type`] registers under
+-    /// (`hash<T[k]>`, `spatial<T[k]>`, `trie<T[k]>`, `sorted<…>` or its `ordered<…>` spelling,
+-    /// `index<…>`), so the parser's lookup and the native `par` emitter, which sizes a
+-    /// worker's keyed result by it, cannot disagree.
+-    ///
+-    /// [`Parser::get_type`]: crate::parser::Parser
+-    #[must_use]
+-    pub fn keyed_type(&self, data: &crate::data::Data, tp: &crate::data::Type) -> u16 {
+-        use crate::data::Type;
+-        match tp {
+-            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
+-                let kind = if matches!(tp, Type::Hash(..)) {
+-                    "hash"
+-                } else {
+-                    "spatial"
+-                };
+-                let mut name = format!("{kind}<{}[", data.def(*d).name());
+-                self.field_name(data.def(*d).known_type(), key, &mut name);
+-                self.name(&name)
+-            }
+-            Type::Trie(d, key, _) => self.name(&format!("trie<{}[{key}]>", data.def(*d).name())),
+-            Type::Sorted(d, key, _) => {
+-                let r = self.name(&keyed_name("sorted", data.def(*d).name(), key));
+-                if r != u16::MAX {
+-                    return r;
+-                }
+-                self.name(&keyed_name("ordered", data.def(*d).name(), key))
+-            }
+-            Type::Index(d, key, _) => self.name(&keyed_name("index", data.def(*d).name(), key)),
+-            _ => u16::MAX,
+-        }
+-    }
+-
+     pub fn field_name(&self, content: u16, key: &[String], name: &mut String) -> Vec<u16> {
+         let owner = self.key_owner(content);
+         let mut key_nrs = Vec::new();
+@@ -3802,23 +3768,6 @@ impl Type {
+     }
+ }
+ 
+-/// `<kind><T[k1,-k2]>` — the spelling an ordered keyed collection is registered under: each
+-/// key field by name, a descending one prefixed `-`.
+-pub(crate) fn keyed_name(kind: &str, content: &str, key: &[(String, bool)]) -> String {
+-    let mut name = format!("{kind}<{content}[");
+-    for (k_nr, (k, asc)) in key.iter().enumerate() {
+-        if k_nr > 0 {
+-            name += ",";
+-        }
+-        if !asc {
+-            name += "-";
+-        }
+-        name += k;
+-    }
+-    name += "]>";
+-    name
+-}
+-
+ #[cfg(test)]
+ mod typevar_row_tests {
+     use super::{Stores, TYPEVAR_ROW_PREFIX};
+diff --git b/src/generation/ops/parallel.rs a/src/generation/ops/parallel.rs
+index 462330cec..f5b2c508c 100644
+--- b/src/generation/ops/parallel.rs
++++ a/src/generation/ops/parallel.rs
+@@ -92,22 +92,13 @@ fn closure_shape(ret: &Type) -> ClosureShape {
+ /// can size.  A vector-returning worker was previously mis-routed to the scalar
+ /// path, which cast `DbRef as i64` (E0605, the native-refreturn bug).
+ ///
+-/// Keyed collections (`Sorted`/`Hash`/`Index`/`Radix`/`Trie`) are DbRef returns too
+-/// (the parser groups them with `return_size = -1`): each is a record of its own
+-/// database type, which `heap_ref_kt` sizes through [`Stores::keyed_type`].
+-///
+-/// [`Stores::keyed_type`]: crate::database::Stores::keyed_type
++/// Keyed collections (`Sorted`/`Hash`/`Index`/`Radix`) are also DbRef returns
++/// (the parser groups them with `return_size = -1`) but have no `main_<kind><T>`
++/// storage wrapper for `heap_ref_kt` to size, so they stay off this path for now
++/// — a worker returning one still fails to compile loudly rather than copying at
++/// the wrong stride.  Extending `heap_ref_kt` to them is the follow-up.
+ fn is_ref_return(ret: &Type) -> bool {
+-    ret.heap_def_nr().is_some()
+-        || matches!(
+-            ret,
+-            Type::Vector(_, _)
+-                | Type::Hash(..)
+-                | Type::Sorted(..)
+-                | Type::Index(..)
+-                | Type::Radix(..)
+-                | Type::Trie(..)
+-        )
++    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _))
+ }
+ 
+ /// The `(struct_size, known_type)` a `HeapRef` worker return is copied as by
+@@ -135,13 +126,7 @@ fn heap_ref_kt(ctx: &EmitCtx<'_, '_>, ret: &Type) -> (i32, i32) {
+         }
+         data.def(wrapper).known_type()
+     } else {
+-        // A keyed collection is a reference to a record of its own database type — the one
+-        // `OpDatabase` allocates for it — which the copy walks whole, its index included.
+-        let k = ctx.output.stores.keyed_type(data, ret);
+-        if k == u16::MAX {
+-            return (0, 0);
+-        }
+-        k
++        return (0, 0);
+     };
+     (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
+ }
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 7722dd969..7d4417ec1 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -23707,6 +23707,19 @@ fn merge_dependencies(a: &Type, b: &Type) -> Type {
+     a.joined_deps(b)
+ }
+ 
++fn field_id(key: &[(String, bool)], name: &mut String) {
++    for (k_nr, (k, asc)) in key.iter().enumerate() {
++        if k_nr > 0 {
++            *name += ",";
++        }
++        if !asc {
++            *name += "-";
++        }
++        *name += k;
++    }
++    *name += "]>";
++}
++
+ /// Collect all `Value::Var` indices reachable anywhere in `val`.
+ fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
+     match val {
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 58d644fec..b53b88ada 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3,7 +3,7 @@
+ 
+ use super::{
+     Argument, DefType, Function, I32, Level, Parser, ToString, Type, Value, diagnostic_format,
+-    v_block, v_if, v_loop, v_set,
++    field_id, v_block, v_if, v_loop, v_set,
+ };
+ use crate::data::Deps;
+ 
+@@ -8082,7 +8082,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             Type::Function(..) => self.database.int(0, false),
+             Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
+             Type::Hash(tp, key, _) => {
+-                let r = self.database.keyed_type(&self.data, in_t);
++                let mut name = "hash<".to_string() + self.data.def(*tp).name() + "[";
++                self.database
++                    .field_name(self.data.def(*tp).known_type(), key, &mut name);
++                let r = self.database.name(&name);
+                 if r != u16::MAX {
+                     return r;
+                 }
+@@ -8097,7 +8100,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 // @PLN48 — mirror Hash: resolve the spatial<T[…]> db type id, and
+                 // register it on demand for a local-only var (whose type would else
+                 // be absent from the schema, so iteration/`get_type` sees u16::MAX).
+-                let r = self.database.keyed_type(&self.data, in_t);
++                let mut name = "spatial<".to_string() + self.data.def(*tp).name() + "[";
++                self.database
++                    .field_name(self.data.def(*tp).known_type(), key, &mut name);
++                let r = self.database.name(&name);
+                 if r != u16::MAX {
+                     return r;
+                 }
+@@ -8111,7 +8117,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 // The Radix shape, for a trie: resolve the registered id, and register
+                 // on demand for a local-only var whose type is otherwise absent from
+                 // the schema.  Same spelling `Stores::trie` uses.
+-                let r = self.database.keyed_type(&self.data, in_t);
++                let name = format!("trie<{}[{key}]>", self.data.def(*tp).name());
++                let r = self.database.name(&name);
+                 if r != u16::MAX {
+                     return r;
+                 }
+@@ -8122,7 +8129,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 self.database.trie(c_tp, key)
+             }
+             Type::Sorted(tp, key, _) => {
+-                let r = self.database.keyed_type(&self.data, in_t);
++                let mut name = "sorted<".to_string() + self.data.def(*tp).name() + "[";
++                field_id(key, &mut name);
++                let r = self.database.name(&name);
++                if r != u16::MAX {
++                    return r;
++                }
++                let mut ordered = "ordered<".to_string() + self.data.def(*tp).name() + "[";
++                field_id(key, &mut ordered);
++                let r = self.database.name(&ordered);
+                 if r != u16::MAX {
+                     return r;
+                 }
+@@ -8138,7 +8153,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 self.database.sorted(c_tp, key)
+             }
+             Type::Index(tp, key, _) => {
+-                let r = self.database.keyed_type(&self.data, in_t);
++                let mut name = "index<".to_string() + self.data.def(*tp).name() + "[";
++                field_id(key, &mut name);
++                let r = self.database.name(&name);
+                 if r != u16::MAX {
+                     return r;
+                 }

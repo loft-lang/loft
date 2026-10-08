@@ -7,4 +7,6 @@ loft    = ">=2026.10.0"
 entry = "src/audience_crystal.loft"
 
 [dependencies]
-gridmesh = ">=0.2.3"
+# Floors at the first releases that carry `pub` on what this reads: a field is private
+# to its file without it (C140).
+gridmesh = ">=0.2.6"

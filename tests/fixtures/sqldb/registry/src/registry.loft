@@ -116,7 +116,7 @@ pub fn db_dialect(self: AnyDb) -> Dialect? {
 
 /// The string one backend's `db_open` wants, or a refusal saying why this string
 /// cannot become one.
-pub struct Dsn { const value: text, refusal: text = "" }
+pub struct Dsn { pub const value: text, pub refusal: text = "" }
 
 pub fn dsn_ok(self: Dsn) -> boolean { return self.refusal == ""; }
 

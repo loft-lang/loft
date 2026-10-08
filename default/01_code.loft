@@ -160,9 +160,11 @@ fn OpConstTrue() -> boolean;
 fn OpConstFalse() -> boolean;
 #hot
 #rust"false"
+// A null boolean casts to the null TEXT (`STRING_NULL`), which a hole renders as `null`: the
+// null stays a null.  The word itself would be a present text no reader can tell from the null.
 fn OpCastTextFromBool(v1: boolean) -> text;
 #cold
-#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"null\"}} else {{\"false\"}}"
+#rust"if @v1 == 1 {{\"true\"}} else if @v1 == 255 {{\"\\0\"}} else {{\"false\"}}"
 fn OpVarBool(pos: const u16) -> boolean;
 #hot
 #rust"s.get_var::<u8>(@pos)"
@@ -297,10 +299,9 @@ fn OpMinIntNullable(v1: integer, v2: integer) -> integer;
 fn OpMulIntNullable(v1: integer, v2: integer) -> integer;
 #rust"ops::op_mul_int_nullable(@v1, @v2)"
 fn OpDivIntNullable(v1: integer, v2: integer) -> integer;
-// loft#1169 — a null that only PASSES THROUGH this op must not wear its fault tag.
-#rust"{{ let r = ops::op_div_int_nullable(@v1, @v2); ops::note_format_fault(1, r == i64::MIN && @v1 != i64::MIN && @v2 != i64::MIN); r }}"
+#rust"ops::op_div_int_nullable(@v1, @v2)"
 fn OpRemIntNullable(v1: integer, v2: integer) -> integer;
-#rust"{{ let r = ops::op_rem_int_nullable(@v1, @v2); ops::note_format_fault(2, r == i64::MIN && @v1 != i64::MIN && @v2 != i64::MIN); r }}"
+#rust"ops::op_rem_int_nullable(@v1, @v2)"
 fn OpLandInt(v1: integer, v2: integer) -> integer;
 #hot
 #rust"ops::op_logical_and_int(@v1, @v2)"
@@ -405,10 +406,10 @@ fn OpRemSingle(v1: single, v2: single) -> single;
 #rust"{{ if @v2 == 0.0 {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::DivideByZero); }} @v1 % @v2 }}"
 fn OpDivSingleNullable(v1: single, v2: single) -> single;
 #cold
-#rust"{{ let r = @v1 / @v2; ops::note_format_fault(1, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 / @v2"
 fn OpRemSingleNullable(v1: single, v2: single) -> single;
 #cold
-#rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 % @v2"
 fn OpMathFuncSingle(fn_id: const i8, v1: single) -> single;
 #cold
 #rust"match @fn_id {{ 0 => @v1.cos(), 1 => @v1.sin(), 2 => @v1.tan(), 3 => @v1.acos(), 4 => @v1.asin(), 5 => @v1.atan(), 6 => @v1.ceil(), 7 => @v1.floor(), 8 => @v1.round(), 9 => @v1.sqrt(), _ => f32::NAN }}"
@@ -747,10 +748,10 @@ fn OpRemFloat(v1: float, v2: float) -> float;
 // IEEE-behaviour peers — emitted only when defended.
 fn OpDivFloatNullable(v1: float, v2: float) -> float;
 #hot
-#rust"{{ let r = @v1 / @v2; ops::note_format_fault(1, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 / @v2"
 fn OpRemFloatNullable(v1: float, v2: float) -> float;
 #cold
-#rust"{{ let r = @v1 % @v2; ops::note_format_fault(2, r.is_nan() && !@v1.is_nan() && !@v2.is_nan()); r }}"
+#rust"@v1 % @v2"
 fn OpEqFloat(v1: float, v2: float) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
 fn OpNeFloat(v1: float, v2: float) -> boolean;
@@ -969,7 +970,7 @@ fn OpTextCharacter(v1: text, v2: integer) -> character;
 // char as its end-of-iteration signal.  Mirrors the
 // OpGetVector / OpGetVectorNullable split.
 fn OpTextCharacterNullable(v1: text, v2: integer) -> character;
-#rust"{{ let ch = ops::text_character(@v1, @v2); ops::note_format_fault(3, ch == char::from(0) && @v2 != i64::MIN && !@v1.is_empty()); ch }}"
+#rust"ops::text_character(@v1, @v2)"
 fn OpConvBoolFromCharacter(v1: character) -> boolean;
 #rust"ops::op_conv_bool_from_character(@v1)"
 fn OpClearText(pos: const u16);
@@ -1019,9 +1020,10 @@ fn OpPutEnum(pos: const u16, value: enumerate);
 // variant of any enum.
 fn OpConvBoolFromEnum(v1: enumerate) -> boolean;
 #rust"@v1 != 255 && @v1 != 0"
+// The absent discriminant casts to the null TEXT, as `OpCastTextFromBool` does and for its reason.
 fn OpCastTextFromEnum(v1: enumerate, enum_tp: const u16) -> text;
 #cold
-#rust"Str::new(s.database.enum_val(@enum_tp, @v1))"
+#rust"Str::new(if @v1 == 0 || @v1 == 255 {{\"\\0\"}} else {{s.database.enum_val(@enum_tp, @v1)}})"
 fn OpCastEnumFromText(v1: text, enum_tp: const u16) -> enumerate;
 #cold
 #rust"s.database.to_enum(@enum_tp, @v1)"
@@ -1291,18 +1293,6 @@ type sorted size(4);
 // All vectors are referenced by the field that points towards them.
 fn OpVarVector(pos: const u16) -> vector;
 #rust"s.get_var::<DbRef>(@pos)"
-// Plan-07 phase 4e.3 — tag the next format-string null render with a
-// fault-kind label.  Emitted by 4e.1's format-scope swap immediately
-// before each fault-prone Nullable peer so the format conversion op
-// renders `null(/0)` / `null(oob)` / etc. instead of bare `null` —
-// genuine null values stay bare (no tag set).  Numeric kind id keeps
-// the IR stable across label-string changes (Stores::set_format_fault
-// owns the id → label mapping).  See doc/claude/plans/07-error-messages.
-fn OpTagFault(kind: const u8);
-#cold
-// loft#1169 — ARMS the hole; the op that actually faults records the cause.  `kind`
-// is kept in the signature so the IR is unchanged and the emitter needs no edit.
-#rust"{{ let _ = @kind; ops::arm_format_fault(); }}"
 // The length of vectors is written at the start of their allocation.
 fn OpLengthVector(r: vector) -> integer;
 #rust"i64::from(vector::length_vector(&@r, &s.database.allocations))"
@@ -1430,12 +1420,9 @@ fn OpVectorRef(r: vector, index: integer) -> reference[r];
 // or an explicit user expression (raising).  Mirrors the
 // OpDivInt / OpDivIntNullable C54.G-hybrid pattern.
 fn OpGetVectorNullable(r: vector, size: const u16, index: integer) -> reference[r];
-// loft#1169 — see OpDivIntNullable.  A SUCCESSFUL read (rec != 0) did not fault, so an
-// element that is itself null renders bare; a null vector or a null index is an
-// inherited null, not an out-of-bounds one.
-#rust"{{ let el = vector::get_vector(&@r, u32::from(@size), @index, &s.database.allocations); ops::note_format_fault(3, el.rec == 0 && @index != i64::MIN && !@r.is_null()); el }}"
+#rust"vector::get_vector(&@r, u32::from(@size), @index, &s.database.allocations)"
 fn OpVectorRefNullable(r: vector, index: integer) -> reference[r];
-#rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); ops::note_format_fault(3, el.rec == 0 && @index != i64::MIN && !@r.is_null()); stores.get_ref(&el, 0) }}"
+#rust"{{ let el = vector::get_vector(&@r, 4, @index, &s.database.allocations); stores.get_ref(&el, 0) }}"
 fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 #cold
 #rust"s.db_from_text(@val, @db_tp)"
@@ -1690,6 +1677,13 @@ pub fn assert(test: boolean, message: text, file: text, line: integer);
 /// In production mode (--production), logs a fatal entry and execution continues.
 /// The file and line are injected by the compiler; do not pass them manually.
 pub fn panic(message: text, file: text, line: integer);
+#impure(host_io)
+/// Ends the program at once with exit status `code`, as a shell's `exit` does: what was
+/// printed is flushed, nothing more is printed, and no diagnostic names the line — a
+/// script's verdict is its own, where `assert` and `panic` answer loft's (status 1 and a
+/// message).  Under `loft test` it ends the test instead, as a failure that names the code.
+pub fn exit(code: integer);
+#rust"loft::runtime_error::exit_program(@code)"
 #impure(host_io)
 /// Write a structured log record at the chosen severity.
 /// The file and line are injected by the compiler; do not pass them manually.
@@ -2208,6 +2202,16 @@ fn OpReserveVector(r: vector, count: integer, elem_size: const u16);
 #cold
 #rust"vector::reserve_vector(&@r, @count, u32::from(@elem_size), &mut s.database.allocations);"
 // --- Vector aggregates ---
+/// Does the vector hold `value`?  Compared by content, as `==` compares every type; the
+/// empty vector holds nothing.  The membership test a script asks of a list of names —
+/// `changed.contains(path)` — beside `text`'s own `contains`.
+pub fn contains < T: Equatable > (self: const vector<T>, value: T) -> boolean {
+  for x in self {
+    if x == value { return true }
+  };
+  false
+}
+#pure
 /// Smallest element in a vector, or null when the vector is empty (the type is
 /// honest about the empty case).  Works on any Ordered type (op <).
 /// Example: @STD-004

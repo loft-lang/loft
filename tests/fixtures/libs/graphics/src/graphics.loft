@@ -566,7 +566,7 @@ struct GroupVbo {
 }
 
 pub struct GroupVboSet {
-  slots:     hash<GroupVbo[gk]>,
+  pub slots:     hash<GroupVbo[gk]>,
   stride:    integer not null,   // floats per vertex (e.g. 14 crystal, 10 ground)
   draw_mode: integer not null,   // DRAW_TRIANGLES / DRAW_LINES / …
 }
@@ -1039,9 +1039,9 @@ void main() {{
 /// `draw_rect_at`, `draw_sprite_at`, and `draw_texture_at` to render.
 pub struct Painter2D {
   p2_flat: integer not null,        // flat color shader
-  p2_tex: integer not null,         // textured quad shader (V-flipped)
-  p2_vao: integer not null,         // shared unit-quad VAO
-  p2_proj: vector<float>,           // orthographic projection (16 floats)
+  pub p2_tex: integer not null,         // textured quad shader (V-flipped)
+  pub p2_vao: integer not null,         // shared unit-quad VAO
+  pub p2_proj: vector<float>,           // orthographic projection (16 floats)
 }
 
 /// Create a Painter2D for a window of size `screen_w` x `screen_h`.

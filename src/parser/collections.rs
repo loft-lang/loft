@@ -93,7 +93,8 @@ enum NarrowWrap {
     /// `OpConvBoolFromInt` has null-check semantics (v != i64::MIN),
     /// not value semantics (v != 0) — the buf_get always returns
     /// 0 or 1, never i64::MIN, so the conv would yield true for
-    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping.
+    /// both.  `OpNeInt` gives the right 0 → false / 1 → true mapping;
+    /// the row byte 255 — a boolean's in-band null — reads back as null.
     NeZero,
     /// ARC.md A3.6 — use a different buf_get fn-name instead of
     /// `n_parallel_buf_get_narrow`, and skip the wrap (the named
@@ -176,6 +177,28 @@ struct NarrowRoute {
 /// (wide u64 rows; Float reads via `parallel_buf_get_float`).
 /// Single routes here with `TypedBufGet` — its f32 bit pattern fits
 /// stride 4 and `parallel_buf_get_single` recovers the typed value.
+fn narrow_route_for_declared(declared: &Type) -> Option<NarrowRoute> {
+    let (shape, nullable) = declared.peel_optional();
+    // A narrow lane packs a row to the integer's STORED width, and a nullable narrow
+    // integer's null is `i64::MIN` on the stack — packing it kept the low bytes and read
+    // back `0` (loft#1948).  Its packed form has no null either: a `u8?` reserves its
+    // top value in a store (types.md § representation), which the lane does not encode.
+    // So it rides the wide lane, which carries the stack value whole.  Every other
+    // narrow shape holds its null in the packed bytes (boolean 255, character 0, enum
+    // 255, single NaN), and takes the narrow lane alike for `τ` and `τ?` (@FR-N-Shape).
+    if nullable && matches!(shape, Type::Integer(_)) {
+        return None;
+    }
+    narrow_route_for(shape)
+}
+
+/// Does a worker declared to return `declared` ride the narrow-Queue lane?  The ONE
+/// answer, read by this parser's lowering and by the native emitter's helper choice —
+/// two copies of the type list disagreed the moment one of them learnt about `?`.
+pub(crate) fn par_rides_narrow_lane(declared: &Type) -> bool {
+    narrow_route_for_declared(declared).is_some()
+}
+
 fn narrow_route_for(ret_type: &Type) -> Option<NarrowRoute> {
     match ret_type {
         Type::Integer(spec) => match spec.byte_width(true) {
@@ -2168,6 +2191,30 @@ impl Parser {
         // becomes a backstop that this path can no longer trip, since the value reaching
         // it is already in range — clamping is idempotent, and `set_byte`'s out-of-range
         // return is discarded, so nothing is judged or reported twice.
+        // `@FR-I-Join` — an INFERRED local's type is the join of EVERY write, a compound step
+        // included: `m = x % 7; m += 1000` widened nothing, so the step took the narrow
+        // range's default and answered 0, where `m = m + 1000` widened `m` and answered 1005
+        // (loft#1944).  A DECLARED local stays its declaration (`(N-Decl)`, C127's guard).
+        let widened;
+        let f_type = if op != "="
+            && let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+            && !self.vars.is_annotated(*v)
+            && !self.vars.is_argument(*v)
+            && matches!(self.vars.tp(*v).base(), Type::Integer(_))
+            && matches!(composed.base(), Type::Integer(_))
+        {
+            // `change_var_type` cannot do it: `is_equal` collapses every integer width.  The
+            // `=` path widens with `widen_int` for the same reason (`parse_assign_op_inner`).
+            let before = self.vars.tp(*v).clone();
+            if Self::is_narrowing_int(&composed, &before) && !self.int_value_fits(&code, &before) {
+                self.vars.widen_int(*v, &crate::data::I64);
+            }
+            widened = self.vars.tp(*v).clone();
+            &widened
+        } else {
+            f_type
+        };
         if op != "=" && !self.first_pass {
             // A compound step through a link steps the linked slot (loft#1604).
             let f_type = crate::parser::expressions::linked_store_target(f_type, src_tp);
@@ -2747,6 +2794,60 @@ use #count instead"
         ));
     }
 
+    /// `@FR-F-FaultSafe` (@C142) — a hole whose value is null renders `null`, and a type's own
+    /// `operator to_text` is never called with a null `self`: it was, and a body like
+    /// `"T{self.x}"` printed `Tnull` for an absent `T?` on both backends.  The null test
+    /// stands BEFORE the call, so the user function does not run at all; the subject is read
+    /// once — a non-repeatable one (a call result) is bound to a local first.  Null is the
+    /// handle's store-number sentinel or a `rec` of 0 (`nullref`, `DbRef::or_null`).
+    fn append_user_text_unless_null(
+        &mut self,
+        list: &mut Vec<Value>,
+        start: &str,
+        var: Value,
+        format: &Value,
+        mut text_call: Value,
+        state: OutputState,
+    ) {
+        let subject = if Self::is_repeatable_place(&self.data, format) {
+            format.clone()
+        } else {
+            let tp = self.data.attr_type(
+                match text_call.unspan() {
+                    Value::Call(stub, _) => *stub,
+                    _ => unreachable!("try_bound_to_text_call answers a call"),
+                },
+                0,
+            );
+            let holder = self.create_unique("hole_subject", &tp);
+            self.vars.defined(holder);
+            list.push(v_set(holder, format.clone()));
+            if let Value::Call(_, args) = &mut text_call {
+                args[0] = Value::Var(holder);
+            }
+            Value::Var(holder)
+        };
+        let null_handle = self.cl("OpRefIsNull", std::slice::from_ref(&subject));
+        let present = self.cl("OpConvBoolFromRef", &[subject]);
+        let no_record = self.cl("OpNot", &[present]);
+        let is_null = v_if(null_handle, Value::Boolean(true), no_record);
+        let null_text = self.cl("OpConvTextFromNull", &[]);
+        let null_arm = self.cl(
+            &(start.to_owned() + "Text"),
+            &[
+                var.clone(),
+                null_text,
+                state.width.clone(),
+                Value::Int(state.dir),
+                Value::Int(i32::from(state.token.as_bytes()[0])),
+            ],
+        );
+        let mut value_arm = Vec::new();
+        self.append_data_text(&mut value_arm, start, var, text_call, state);
+        let value_arm = value_arm.pop().expect("append_data_text pushes one op");
+        list.push(v_if(is_null, null_arm, value_arm));
+    }
+
     /// P242: when `d_nr` is the type variable of the current
     /// generic-function context AND that variable's bound
     /// supplies a `to_text(self: Self) -> text` method, return a
@@ -2983,6 +3084,7 @@ use #count instead"
             Type::Optional(inner) => *inner,
             other => other,
         };
+        self.sandbox_read_whole(&tp, format);
         // `@FR-F-Render` — a tuple has no rendering, and that answer holds wherever the walk
         // REACHES one.  The refusal below is the `_` arm of the match on this type, so it
         // caught `"{t}"` and nothing else: a vector of tuples, a tuple FIELD of a struct and a
@@ -3262,7 +3364,7 @@ use #count instead"
                 // path; `re_resolve_call` substitutes it with the
                 // concrete type's impl at instantiation time.
                 if let Some(text_call) = self.try_bound_to_text_call(d_nr, format, state.spec) {
-                    self.append_data_text(list, start, var, text_call, state);
+                    self.append_user_text_unless_null(list, start, var, format, text_call, state);
                 } else if self.data.is_type_var_placeholder(d_nr) {
                     // loft#845 — the same fault P242 fixed for a BOUND type variable, for
                     // an unbounded one, where there is no `to_text` to route through.
@@ -3426,6 +3528,35 @@ use #count instead"
     /// program wrote.  They differ only from the second loop over a name onward, and the
     /// two are read for different questions: companions and the binding itself are keyed
     /// off `id`, while the shadow guards ask what `src_id` denotes right now.
+    /// The loop variable of a `for` over a struct VALUE that has no visible `operator next`.
+    /// `for_type` answers the iterable's own type there, which is right for an iterator
+    /// expression (a keyed slice `s[lo..hi]` is already typed by its element) and wrong for a
+    /// struct value: on the first pass its `operator next` may be declared further down, and
+    /// otherwise the iteration refuses the loop naming the cause (`@FR-Op-Mark`).  Typed as
+    /// the struct, the body reported a type error against it first — refusing a valid program
+    /// and hiding the real diagnostic (loft#1950).  A plain `fn next`'s item is what the author
+    /// meant the loop to bind, so it types the body and the refusal stays the one diagnostic;
+    /// with no `next` at all the variable has no type yet.
+    fn struct_value_loop_type(&self, in_type: &Type, expr: &Value, var_tp: Type) -> Type {
+        if matches!(expr, Value::Iter(..)) || var_tp != *in_type {
+            return var_tp;
+        }
+        let Type::Reference(..) = in_type.base() else {
+            return var_tp;
+        };
+        let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
+        if next_d_nr == u32::MAX {
+            return Type::Unknown(0);
+        }
+        if self.data.def(next_d_nr).operator_form() {
+            return var_tp;
+        }
+        match self.data.def(next_d_nr).returned().clone() {
+            Type::Optional(inner) => *inner,
+            other => other,
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     pub(crate) fn parse_for_iter_setup(
         &mut self,
@@ -3436,6 +3567,7 @@ use #count instead"
         destructure_names: Option<&[String]>,
     ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
         let var_tp = self.for_type(in_type);
+        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
         let (iter_var, pre_var) = if walks_text(in_type) {
             let pos_var = self.create_var(&format!("{id}#next"), &I32);
@@ -5356,7 +5488,12 @@ use #count instead"
     /// and `-1` for a heap value (the worker builds it in its own store and the main
     /// thread deep-copies).  One home, because a monomorph re-derives it when it lowers a
     /// clause its template could not (loft#1040).
-    pub(crate) fn par_return_size(&mut self, ret_type: &Type, fn_d_nr: u32) -> i32 {
+    pub(crate) fn par_return_size(&mut self, declared: &Type, fn_d_nr: u32) -> i32 {
+        // @FR-N-Shape — which lane carries a result is a SHAPE question, so `τ?` takes
+        // τ's: the `?` is a marker over τ's own storage, and its null travels in band
+        // (a scalar's sentinel, a text's null string, a reference's `nullref`).  The
+        // refusal below still names the type the program wrote (loft#1948).
+        let ret_type = declared.base();
         if matches!(ret_type, Type::Text(_)) {
             0 // sentinel: text mode — workers collect Strings, main thread stores refs
         } else if crate::data::is_dbref(ret_type) {
@@ -5389,7 +5526,7 @@ use #count instead"
                     self.lexer,
                     Level::Error,
                     "Parallel worker return type '{}' (size {sz}) is not supported",
-                    ret_type.source_name(&self.data)
+                    declared.source_name(&self.data)
                 );
             }
             // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
@@ -5518,7 +5655,7 @@ use #count instead"
         code: &mut Value,
         result_name: &str,
         fn_d_nr: u32,
-        ret_type: &Type,
+        declared_ret: &Type,
         elem_size: i32,
         return_size: i32,
         vec_expr: &Value,
@@ -5529,6 +5666,12 @@ use #count instead"
         elem_var: u16,
         elem_tp: &Type,
     ) {
+        // @FR-N-Shape / @FR-N-Road — every LANE decision below (which queue, which reader,
+        // which wrap) is a shape question and reads τ for a `τ?` worker: the `?` is a
+        // marker over τ's storage and its null rides that storage in band.  Only the
+        // result binding keeps the declared type, so `r == null` and `r.a ?? 0` still
+        // read the marker (loft#1948).
+        let ret_type = declared_ret.base();
         let ref_d_nr = self.data.def_nr("reference");
         let results_ref_type = Type::Reference(ref_d_nr, crate::data::Deps::none());
         let par_for_d_nr = self.data.def_nr("n_parallel_for");
@@ -5590,7 +5733,7 @@ use #count instead"
         //   Character — A3.5, wrap with OpConvCharacterFromInt.
         //   Enum (no payload) — A3.5, wrap with OpCastEnumFromInt.
         //   Single / Float — A3.6, deferred (no bit-cast IR Op).
-        let early_narrow_route = narrow_route_for(ret_type);
+        let early_narrow_route = narrow_route_for_declared(declared_ret);
         let early_route_int_queue = early_is_primitive_return
             && fn_d_nr != u32::MAX
             && early_ret_size_8
@@ -5684,9 +5827,15 @@ use #count instead"
             I32.clone()
         } else if let Type::Text(_) = ret_type {
             // Strip worker-internal deps — they reference variables in the worker scope.
-            Type::Text(crate::data::Deps::none())
+            // The marker is kept: a `text?` result is still read as nullable.
+            let bare = Type::Text(crate::data::Deps::none());
+            if declared_ret.peel_optional().1 {
+                Type::optional(bare)
+            } else {
+                bare
+            }
         } else {
-            ret_type.clone()
+            declared_ret.clone()
         };
         // Plan-04 B.3 follow-up v2 (b3-par-inline.md): each par block gets
         // its OWN uniquely-named `b_var`, so two par blocks sharing the
@@ -5944,7 +6093,7 @@ use #count instead"
         // Plan-06 ARC.md A3 / A3.5 — narrow primitive return routing.
         // Mirrors the early-gate logic; see comment above for shape
         // coverage.
-        let narrow_route = narrow_route_for(ret_type);
+        let narrow_route = narrow_route_for_declared(declared_ret);
         // 8b: integer-i64 returns route through `n_parallel_queue` +
         // `par_buffer_stack`.
         // 8c: text returns route through `n_parallel_queue_text` +
@@ -6079,12 +6228,23 @@ use #count instead"
                         }
                     }
                     NarrowWrap::NeZero => {
-                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`.
+                        // Boolean wrap: `OpNeInt(buf_get, 0) -> boolean`, except for the
+                        // row byte `255`, which is a boolean's in-band null (types.md
+                        // § representation) and must read back as null — `OpNeInt`
+                        // alone made a `-> boolean?` worker's null answer `true`
+                        // (loft#1948).  One lowering for `boolean` and `boolean?`
+                        // (@FR-N-Road): a plain `boolean` slot can hold that null too.
                         let ne_d_nr = self.data.def_nr("OpNeInt");
                         if ne_d_nr == u32::MAX {
                             raw_call
                         } else {
-                            Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)])
+                            let is_null = self.cl("OpEqInt", &[raw_call.clone(), Value::Int(255)]);
+                            let null_b = self.cl("OpConvBoolFromNull", &[]);
+                            v_if(
+                                is_null,
+                                null_b,
+                                Value::Call(ne_d_nr, vec![raw_call, Value::Int(0)]),
+                            )
                         }
                     }
                     NarrowWrap::TypedBufGet(_) => unreachable!("handled above"),

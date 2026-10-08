@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1918's CONTROL, `@FR-C-Impure` / `@FR-B-Copy` — a `par` worker may write a COPY of its
+// input: a whole-value bind (`x = e`, `x = e.list`) copies, so the write stays in the worker and
+// the parent's records are untouched.  The refusal that closed loft#1918 follows a local's DEPS
+// to the parameter it views; a copy has none, and must not be refused.  Values hand-computed:
+// each worker answers 100 + the copied field, and the parent reads its own values afterwards.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1918b-a-par-worker-may-write-a-copy-of-its-input.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is a CONSTRUCTED over-reach, not a reverted fix: a refusal that reads a local with
+//   no deps as "provenance unknown, refuse" — the wider rule this control exists to keep out.
+//   CHANNEL: the EXIT — the over-wide control refuses both copies at compile time.
+//   WITNESS: "par() worker whole1918b writes captured `x`" and "… list1918b writes captured
+//   `__vdb_1`" on the control, both backends.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct I1918b { k: integer }
+struct E1918b { inner: I1918b, list: vector<I1918b> }
+
+fn whole1918b(e: E1918b) -> integer { x = e; x.inner.k = 100 + x.inner.k; x.inner.k }
+fn list1918b(e: E1918b) -> integer { l = e.list; l += [I1918b { k: 9 }]; 100 + len(l) }
+
+fn test_a_written_copy_leaves_the_parent_alone() {
+  v = [E1918b { inner: I1918b { k: 1 }, list: [I1918b { k: 2 }] }, E1918b { inner: I1918b { k: 3 }, list: [] }];
+  s = 0;
+  for e in v par(b = whole1918b(e), 2) { s += b; }
+  t = 0;
+  for e in v par(b = list1918b(e), 2) { t += b; }
+  assert(s == 204 && t == 203, "worker answers: {s} {t}");
+  assert(v[0].inner.k == 1 && v[1].inner.k == 3 && len(v[0].list) == 1, "parent untouched");
+}
+
+fn main() {
+  test_a_written_copy_leaves_the_parent_alone();
+}

@@ -59,8 +59,7 @@ fn main() {
   // test, and production) — one bad calculation never halts the run.
   // Where the divisor is a literal zero in your source, loft can see it before the
   // program runs and warns (next section). Where it is only zero at RUN time there is
-  // no warning — you get null, and when loft knows the reason it prints it, so a bare
-  // '{12 / a}' shows 'null(/0)' rather than a bare 'null'. Recover with '??', or test
+  // no warning — you get null, and '{12 / a}' prints 'null'. Recover with '??', or test
   // the result for null: nothing else tells you, so a divide whose divisor could be
   // zero is one you handle rather than one you are reminded about.
   a = 2 * 2;

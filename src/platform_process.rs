@@ -32,7 +32,7 @@
 //!   between a watcher process per tree and an exemption.
 //!
 //! **The terminal.**  A child in a group of its own has left the terminal's foreground group,
-//! so a `Ctrl-C` no longer reaches it directly.  loft therefore forwards the terminal's
+//! so a `Ctrl-C` typed at the terminal does not reach it.  loft therefore forwards the terminal's
 //! signals (`SIGINT`, `SIGQUIT`, `SIGHUP`) and `SIGTERM` to every owned group it holds, then
 //! lets the signal do to loft what it would have done.  An owned child must not read the
 //! terminal: a background group that does is stopped by `SIGTTIN`.  A run to completion never
@@ -470,7 +470,7 @@ impl Running {
     /// Stop the child and everything it started, and reap it.  On unix the group is asked to
     /// end (`SIGTERM`) and killed (`SIGKILL`) once the child has ended or two seconds have
     /// passed, so the status usually reads as ended by `SIGTERM`.  A child already reaped
-    /// answers its own status: once reaped, what it left behind can no longer be told apart
+    /// answers its own status: once reaped, what it left behind cannot be told apart
     /// from a stranger.
     ///
     /// # Errors

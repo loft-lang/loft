@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1935 — a value block whose tail is a text local COPIED out of a record the block owns
+// frees that record.  @FR-F-Call: the frame frees the stores it owns.  `s = r.name` types `s`
+// as `text["r"]`, and the block's exit read the tail's deps as stores leaving the frame, so
+// `r` was never released — one store per evaluation, on both backends, with every value
+// right.  A text local owns a `String` the bind copied the bytes into; its dep names where
+// they came from, not a store it still views.
+//
+// Axes this file MOVES:  where the record sits (the block's own local, a field of the block's
+//                        record, an outer block around a nested tail block); how the text is
+//                        read (a field, a nested field, into a `text?`); where it runs
+//                        (straight line, a `for` body, per pass).
+// Axes it HOLDS FIXED:   the record holds one text; single-threaded; no closure captures.
+//
+// The controls were already clean: the tail IS the read (`{ r = …; r.name }`), the same shape
+// at function level, and a text copied from a PARAMETER's record (the caller's store).
+//
+// Every value is hand-computed; the leak is the exit's "stores not freed" report, which the
+// corpus leak gate and `make falsify`'s leak channel read.
+//
+// @falsified-at: 653383a5a — measured by hand on both backends: interpret leaked kt=96 R×12,
+//   kt=97 H×6 -> clean, native leaked kt=96 R×12, kt=97 H×6 -> clean
+// @falsified-by: tests/falsified/a-text-copied-out-of-a-blocks-record-frees-the-record.patch — interpret leaked kt=96 R×12, kt=97 H×6 -> clean, native leaked kt=96 R×12, kt=97 H×6 -> clean
+//   ARMED: nothing — the exit's "stores not freed" report is printed by every `main`-ful run.
+//   HOLDS: exit, assertions and panic are clean on both trees and both backends; every value
+//   was always right, so the leak column is the only channel that moves.
+
+struct R { name: text }
+struct H { r: R, n: integer }
+
+fn straight(k: integer) -> text { t = { r = R { name: "f{k}" }; s = r.name; s }; "{t}." }
+fn per_pass(n: integer) -> text { out = ""; for k in 0..n { out += { r = R { name: "d{k}" }; s = r.name; s } } out }
+fn nested(k: integer) -> text { t = { r = R { name: "g{k}" }; { s = r.name; s } }; "{t}." }
+fn deep(n: integer) -> text { out = ""; for i in 0..n { out += { h = H { r: R { name: "h{i}" }, n: i }; s = h.r.name; s } } out }
+fn nullable(k: integer) -> integer { len(({ r = R { name: "q{k}" }; s: text? = r.name; s }) ?? "zz") }
+
+// Controls.
+fn tail_is_read(k: integer) -> text { t = { r = R { name: "a{k}" }; r.name }; "{t}." }
+fn fn_level(k: integer) -> text { r = R { name: "b{k}" }; s = r.name; s }
+fn param_src(p: R) -> text { t = { s = p.name; s }; "{t}!" }
+
+fn main() {
+  assert(straight(9) == "f9.", "straight: {straight(9)}");
+  assert(per_pass(3) == "d0d1d2", "per pass: {per_pass(3)}");
+  assert(nested(1) == "g1.", "nested tail block: {nested(1)}");
+  assert(deep(3) == "h0h1h2", "a field of the block's record: {deep(3)}");
+  // "q42" is 3 long.
+  assert(nullable(42) == 3, "into a text?: {nullable(42)}");
+  assert(tail_is_read(1) == "a1.", "control, the tail is the read: {tail_is_read(1)}");
+  assert(fn_level(2) == "b2", "control, function level: {fn_level(2)}");
+  p = R { name: "p" };
+  assert(param_src(p) == "p!", "control, a parameter's record: {param_src(p)}");
+}

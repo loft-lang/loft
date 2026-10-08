@@ -226,6 +226,20 @@ graphics/native/src/window.rs
 graphics/native/tests/gold.rs
 graphics/src/glb.loft
 graphics/src/graphics.loft
+# --- C140 (@PLN187) fields are private by default --------------------------------
+# A field read from outside its package must be declared `pub`; the pinned tags predate
+# the rule, so these fixtures carry the `pub` the census named (2a3d46596).  Drop these
+# lines and re-pin when each library ships its @PLN187 republish.
+arguments/src/arguments.loft
+game_protocol/src/game_protocol.loft
+graphics/src/math.loft
+graphics/src/mesh.loft
+graphics/src/scene.loft
+shapes/src/shapes.loft
+# The two the browser bundle compiles Brick Buster against and the census missed: the fields
+# their libraries' own @PLN187 republish (assets 0.4.2, graphics 0.9.10) made `pub`.  The
+# gallery's page read "field `pages` of `Pack` is not `pub`" once C140 held on every build.
+assets/src/assets.loft
 EOF
 )
 

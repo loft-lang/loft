@@ -81,7 +81,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | S1c | the pooled clause — the return buffer whose elements are kept survives its caller's activation (`token_width` per token), lifted as `(R-WorkBuffer)` lifts a work buffer | M | `flow_layout_full` −8 % alone, −31 % with S1b (priced on today's emission) | over-9x.md § zttext |
 | S2 | `(R-Apart)` instance 2 — a fixed-length vector field inside a value record, across admitted calls | new gate over the IR | `mat4_mul` → 0.63× | apart.md |
 | S3 | `(R-Apart)` instance 3 — an inline buffer with a spill, never a bare `Vec` | after S2, same gate | `rig_world_frame3` → 2.75×; `draw_bezier`'s two stacks → 2.3× | apart.md |
-| S4 | `(R-Destination)` — a child built in its element (D7); beside it `(R-CompleteWrite)` counting a field MOVE (D6) and the fixed-width `move_field_out` (D2) | M + S + S | `decode` → 6.0× with C1's two XS steps (required: without D7 the ladder stops at 8.3×); `check_request` is 84 % the same `decode` | over-9x.md, under-10x.md § cbor |
+| S4 | BUILT — `(R-Destination)` with its chain clause: a child built in its element, a map entry's key and value in its two halves (D7).  The pooled buffer's release (D6's target) and the move (D2) went with it | M | `decode` 13.5 → 7.89 ms on one core (−41 %), hash unchanged, the hand price exactly; D5 (no one-element reserve) measured +3 % and dropped.  In its lane: `decode` 8.6× → 4.0×, `check_request` 12.0× → 9.4× (3.87 → 3.11 ms on one core, −20 %).  What is left on `decode`: the twin's body 35 %, the element append machinery ~40 % (`vector_append`, `vector_finish`, the element prefill, `record_new`, the reservation) — the push window held across the recursive call is the next step | over-9x.md, under-10x.md § cbor |
 | S5 | BUILT — `(R-FnRefValue)`: a fn-ref whose every target answers a value record answers the tuple, and a record parameter every arm takes as a tuple is passed as one | M | `flow_layout_full` −34.5 % on the flow-only driver (the price −33 %), hash unchanged | over-9x.md § zttext |
 | S6 | `(R-TextBorrow)`: the split-table verdict (BUILT for the walk) and the match-binding clause | XS/S + S/M | `check_request` L2; `encode_bytes`' owned match bindings; every `match`-based finder | over-9x.md |
 | S7 | `(R-FoldCompare)` — BUILT for a synthesised fold; its operand clause is next | S + XS | `header` 7.4× → 3.87× with S6's split-table verdict (x86-64); the operand clause priced −14 % more | over-9x.md |
@@ -112,7 +112,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | `decode` | 3.6–3.8× | no further lever named |
 | `flow_layout_full` | 3.6× | no further lever named |
 | `draw_bezier` | 3.66× measured on x86-64 (graphics 0.9.8 with the keep-range clause) | under the bar only through S3 (2.3×) |
-| `check_request` | ≈ 5.5×, ≈ 17× aligned | a design: decoded texts and byte strings as views into the frame (§ 6) |
+| `check_request` | ≈ 5.5×, ≈ 17× aligned | decided (C141): `(R-DecodeView)` — the copy loops are already one copy each (`(R-ByteCopy)`'s vector clause, `(R-TextRun)`, built); a slice spelled as a field value (`CBytes { value: bytes[a..b] }`) mints a store and copies twice (+94 % hand-measured), a gap of its own — ceiling with no text or byte string built: 3.95 → 2.54 ms (−36 %), formal/rewrites.md |
 | `build_walls` | ≈ 3.3× | no further lever named |
 
 ## 4. Named steps with no price
@@ -127,7 +127,7 @@ Each is named in an analysis as the row's next step; none has a hand price for t
 | `mesh_to_floats` | `(R-RecPtr)` for a nullable view whose store is the parameter's | records.md |
 | `map_json` | PRICED: 86 % is `Map.parse` — the source lexer stepping through JSON 67 %, the `Parsed` tree written into the store 19 % — and `"{m:j}"` 6 %.  The lexer's per-token `Arc<str>` reference count (`Position.file`) was ~21 % of cycles: BUILT as `FileName` (an interned name, identity-first equality), −15 % cycles, same hash.  Next: the `Parsed` → store walk (two passes where the twin parses straight into structs) and the lexer's per-character stepping; a separate JSON byte scanner is ruled out (@PLN109: one lexer).  The parser's own allocations (string compares, key clones) priced at −0.8 % — not worth a change | profiled 2026-10-06 |
 | `flow_layout_full` | lever B is built (S5); S1c is next.  The bench itself works around fn-ref records not freed until a plain-value frame ends (`zttext/bench/bench.loft` `flow_op`) — a leak to file or fix | over-9x.md |
-| `truncate_to` | NOT the move through a by-value parameter: hand-priced (`e` placed in the timeline's store, `history_push`'s copy a shallow move) it costs +16 %, because the pooled `e` already keeps its vectors across pushes and the placed one claims them anew.  `drop_oldest` is already in place (`keep_vector_range`).  The row is claim-for-claim the twin's malloc-for-malloc (two each per push); what differs is each one's price: `OpCopyRecord` 36 % and the release walk 27 % go through `copy_claims` / `owned_walk` / `remove_struct_claims` for a `Stroke` whose layout the emitter knows.  Next: a copy and a release specialised to the static type (unpriced) | records.md § Order item 4 |
+| `truncate_to` | NOT the move through a by-value parameter: hand-priced (`e` placed in the timeline's store, `history_push`'s copy a shallow move) it costs +16 %, because the pooled `e` already keeps its vectors across pushes and the placed one claims them anew.  `drop_oldest` is already in place (`keep_vector_range`).  The row is claim-for-claim the twin's malloc-for-malloc (two each per push); what differs is each one's price: `OpCopyRecord` 36 % and the release walk 27 % go through `copy_claims` / `owned_walk` / `remove_struct_claims` for a `Stroke` whose layout the emitter knows.  Next: a copy and a release specialised to the static type (unpriced).  Profiled alone: `Store::claim` is 18–20 %, and it is `claim_scan` — the timeline's store stays in `@FR-H-LazyFree`'s phase for good (each push frees what the next claims, so the untracked words never reach the bound), the freed vectors merge with their neighbours (8 + 13 → 21 words), and every miss walks the chain from the store's first block (480 walks per call).  Measured and dropped: ending the phase once the walks cost a sweep (+3 %: the free tree then costs what the walks did) and exact-size lists of lazily freed blocks (+5 %: 55 hits in 1866 claims, the merged sizes never match).  Untried: a walk that resumes where the last one stopped (next fit) | records.md § Order item 4 |
 | `panel_build` | the "bound null" window of `(R-RecPtr)`; a heap-owning tree's stores reused across a rebind (a rule that does not exist) | rules.md, records.md § Order item 5 |
 
 ## 5. Rows with no price — the pricing pass
@@ -144,7 +144,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 | float-kernel (5) | `ease`, `terrain_fbm`, `terrain_surface_at`, `roof_match`, `roof_cone` | @PLN185 D2; `ease` is over the bar on arm64 macOS only — it counts as over until both agree |
 | record-field (5) | `fill_polygon`, `stencil_rotate`, `locate`, `terrain_relief_pass`, cbor `encode` | a class with a median over the bar; `terrain_relief_pass` reads a type through a nullable record per cell |
 | text-scan (4) | `arguments/parse`, `mapfile_to_painted`, `seg`, `time/parse` | — |
-| record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | — |
+| record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | `slope_path_with_undo` PRICED and BUILT: each copy of the seven-field `Hex` tuple into or out of a store record resolved the store per field (`(R-RecPtr)`'s tuple clause, −32 %), and `s.us_redo = []` searched the record's fields at run time for a no-heap element type (−7 %): 440 → 267 µs, same hash.  What is left: the chunk walks the twin shares (~37 %), `length_vector` / `get_vector` out of line for `k.items[idx]` in a matched chunk (~23 %, both already `#[inline]`), the undo entry's append (~10 %) |
 | vector-write (2) | `canvas`, `fill_rect` | the lock-test fix moved `fill_rect` 9 % |
 | alloc-temp (3) | `draft_fit_p`, `catalog_churn`, `slugify` | `draft_fit_p` hands its temporary to callees in another library (apart.md triage) |
 | vector-build (2) | `emit_segment`, `field_union` | nine parallel narrow appends per segment |
@@ -159,9 +159,11 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
   the CALLER releases what the failed child placed (the release walk the plain form's
   discarded result runs).  Identical in values, members and live records; spare capacity is
   not part of the contract (owner).
-- **A decoded value whose texts and byte strings are views into the input frame** — the only
-  form the analysis names that reaches even 6× on `check_request` against an aligned twin; a
-  borrowed field inside a store record does not exist (APART_VALUES.md, @PLN174).
+- **A decoded value whose texts and byte strings are views into the input frame**: DECIDED
+  (C139) — a view with per-character operations on it is allowed wherever the results are the
+  owned form's; the compiler proves the buffer outlives every read and is not written meanwhile.
+  The only form the analysis names that reaches even 6× on `check_request` against an aligned
+  twin.
 - **A move through a by-value parameter**: it changes what a callee may assume of its
   parameter's store after an append.
 - **Relational range facts** (`index < len(v)`) in `generation::range` (C9's second half).

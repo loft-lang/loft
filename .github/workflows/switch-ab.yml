@@ -108,7 +108,7 @@ jobs:
 
       - name: Install mold
         if: steps.sel.outputs.run == 'true'
-        run: sudo apt-get update -y && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       - name: Cache cargo + loft build
         if: steps.sel.outputs.run == 'true'

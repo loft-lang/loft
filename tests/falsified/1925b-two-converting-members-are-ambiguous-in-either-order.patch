@@ -1,0 +1,133 @@
+diff --git a/src/data.rs b/src/data.rs
+index 75099f067..132a6e970 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -7887,25 +7887,6 @@ impl Data {
+         &self.possible[start]
+     }
+ 
+-    /// Does the conversion `dnr` (an `OpConv…`, not a `…FromNull`) take a value of `is_type` —
+-    /// flattened to `check_type` for a handle or a plain enum, as [`crate::parser::Parser`]'s
+-    /// `convert` flattens it — into a slot of type `should`?  The one question both the
+-    /// implicit conversion and overload selection ask (`@FR-Disp-Applicable`: a definition
+-    /// takes a call when the call's own argument check would accept it).
+-    #[must_use]
+-    pub fn converts_with(
+-        &self,
+-        dnr: u32,
+-        check_type: &Type,
+-        is_type: &Type,
+-        should: &Type,
+-    ) -> bool {
+-        self.attributes(dnr) > 0
+-            && (self.attr_type(dnr, 0).is_equal(check_type)
+-                || self.attr_type(dnr, 0).is_equal(is_type))
+-            && self.def(dnr).returned().is_equal(should)
+-    }
+-
+     /// The operator definition whose SIGNATURE matches — same candidate list the concrete
+     /// path walks, asked with the arity and receiver instead of the name alone.
+     ///
+diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
+index 149bef662..ba38166f6 100644
+--- a/src/parser/dispatch.rs
++++ b/src/parser/dispatch.rs
+@@ -99,7 +99,7 @@ impl Parser {
+         {
+             // @FR-C-Var — a variant satisfies its enum: the one widening the enum lattice has.
+             WIDENED
+-        } else if self.can_convert(a, p) || self.converts_implicitly(a, p) {
++        } else if self.can_convert(a, p) {
+             CONVERTED
+         } else {
+             return None;
+@@ -112,28 +112,6 @@ impl Parser {
+         Some(base.saturating_add(step))
+     }
+ 
+-    /// `@FR-Disp-Applicable` — does a call's argument of type `arg` reach a `param` slot through
+-    /// one of the stdlib's implicit conversions (`integer` into `float`, `single` or
+-    /// `character`, a value into `boolean`, …)?  [`Parser::can_convert`] answers the
+-    /// conversions that emit nothing; these are the ones `convert` emits an `OpConv…` for, and a
+-    /// lone definition takes them, so a member of a set must too.  Asked through the same
+-    /// predicate `convert` scans with ([`crate::data::Data::converts_with`]), the handle and
+-    /// plain-enum flattening included, so the two cannot disagree about which conversion exists.
+-    fn converts_implicitly(&self, arg: &Type, param: &Type) -> bool {
+-        let check = match arg.base() {
+-            Type::Reference(_, _) => Type::Reference(self.data.def_nr("reference"), Deps::none()),
+-            Type::Enum(_, false, _) => Type::Enum(0, false, Deps::none()),
+-            _ => arg.clone(),
+-        };
+-        self.data
+-            .get_possible("OpConv", &self.lexer)
+-            .iter()
+-            .any(|&d| {
+-                !self.data.def(d).name().ends_with("FromNull")
+-                    && self.data.converts_with(d, &check, arg, param)
+-            })
+-    }
+-
+     /// Every overload of `name` that takes the routed argument types, with its rank vector,
+     /// or `None` when the name has no overload set or an argument has no spelling.
+     fn ranked_overloads(
+@@ -664,9 +642,6 @@ impl Parser {
+         at: Option<&crate::lexer::Position>,
+     ) {
+         let shown: Vec<String> = given.iter().map(|t| t.source_name(&self.data)).collect();
+-        // `@FR-Disp-Ambiguous` is the one refusal of the two with a frozen code: a tie is
+-        // where a program that compiled under a coarser rule meets this one.
+-        let ambiguous = matches!(sel, Selection::Ambiguous(_));
+         let text = match sel {
+             Selection::Ambiguous(taken) => {
+                 let by: Vec<String> = taken
+@@ -700,29 +675,11 @@ impl Parser {
+             }
+             _ => return,
+         };
+-        let level = crate::diagnostics::Level::Error;
+-        match (at, ambiguous) {
+-            (Some(pos), true) => {
+-                crate::diagnostic_at!(self.lexer, pos, level, code = "ambiguous-call", "{text}");
+-            }
+-            (None, true) => {
+-                crate::diagnostic!(self.lexer, level, code = "ambiguous-call", "{text}")
++        match at {
++            Some(pos) => {
++                crate::diagnostic_at!(self.lexer, pos, crate::diagnostics::Level::Error, "{text}")
+             }
+-            (Some(pos), false) => crate::diagnostic_at!(self.lexer, pos, level, "{text}"),
+-            (None, false) => crate::diagnostic!(self.lexer, level, "{text}"),
+-        }
+-        if ambiguous {
+-            self.lexer.fix_last(crate::diagnostics::Fix {
+-                kind: crate::diagnostics::FixKind::Conditional,
+-                title: "convert the argument to the type one definition declares (`i as float`)"
+-                    .to_string(),
+-                condition: Some(
+-                    "that definition is the one meant — the compiler cannot tell which".to_string(),
+-                ),
+-                edit: None,
+-                concept: "multiple dispatch",
+-                concept_ref: "@F122",
+-            });
++            None => crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}"),
+         }
+     }
+ }
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 650be68fa..9f0a3619b 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -6952,7 +6952,11 @@ impl Parser {
+                         return true;
+                     }
+                 }
+-            } else if self.data.converts_with(dnr, check_type, is_type, should) {
++            } else if self.data.attributes(dnr) > 0
++                && (self.data.attr_type(dnr, 0).is_equal(check_type)
++                    || self.data.attr_type(dnr, 0).is_equal(is_type))
++                && self.data.def(dnr).returned().is_equal(should)
++            {
+                 // @PLN99 Arc C — for a `Reference` source, `check_type` was flattened to the
+                 // generic `reference` (line ~2408) so stdlib `OpConv…FromRef` match any handle.
+                 // That hides a specific struct→struct user conversion (`fn OpConvBFromA(a: A)`),

@@ -48,6 +48,8 @@ conditional one (each is one fix line), and the concept door they open onto.
 | `shift-amount-out-of-range` | error | A constant shift outside `0..=63`, which has no defined result. | Shift by an amount inside the range. | C C · `@F37` `@F2` |
 | `c-binding-not-interpretable` | error | A `#c` binding takes more C arguments than the contract covers (`MAX_C_ARITY`, 32) — refused on BOTH backends, at the declaration in your own code and at any call site. | Wrap it in an ANSI-C shim taking at most 32 parameters. | M · `@F92` |
 | `superseded-call` | advice | A call to a `#superseded` symbol, from source you own. The old form keeps working — this is a signpost, never a removal. | Call the successor instead. | M · `@F109` |
+| `ambiguous-call` | error | Two definitions of an overload set take the call and neither is more specific — each needs a conversion the other does not, or one converts where the other instantiates a generic (`formal/dispatch.md` `Disp-Ambiguous`, `D-Rank`). The compiler never picks by declaration order. | Convert the argument to the type the intended definition declares (`i as float`), or drop one definition. | C · `@F122` |
+| `untyped-lambda-at-overload-set` | error | A short `\|x\|` lambda passed to a name with several definitions at that call: none of them gives the lambda its parameter types (`formal/dispatch.md` `Disp-Hint`), so typing it by one would pick that definition. | Spell the lambda with its types: `fn(x: integer) -> integer { … }`. | C · `@F122` |
 | `unknown-function` | error | A call to a name that does not resolve, where a similarly-spelled function exists. | Rename to the suggested function. | M · `@F16` |
 | `unknown-field` | error | A field or method that does not exist on the type, where a similarly-spelled one does. | Rename to the suggested field. | M · `@F12` |
 | `unknown-variable` | error | A name that is not in scope, where a similarly-spelled binding exists. | Rename to the suggested binding. | M · `@F16` |
@@ -425,7 +427,10 @@ seen is a message they cannot act on.
 | `Type::name` | **the schema key** — *which type is this?* `typedef.rs` builds wrapper types from it (`main_vector<…>`) and `state` looks stores up by it, so re-spelling a keyed type here RE-IDENTIFIES it: generated `init()` replays a different type order and the emitted Rust references a temp no line binds (rustc E0425, `tests/lazy_sql_source.rs`). |
 | `Type::source_name` | **the source spelling** — *what did they write?* This is the one a message asks for. |
 
-They differ at the keyed collections and nowhere else. `name` renders the key list with
+They differ at two leaves and nowhere else.  An INTEGER's key is its range, `integer(0, 255)`;
+its source spelling is its alias (`u8`, a program's `type Lim = …`) or the range as written,
+`integer limit(0, 255)` (`Data::integer_spec_name`).  The keyed collections:
+`name` renders the key list with
 `{:?}`, so `index<Rec[id]>` comes out `index<Rec,[("id", true)]>` — a Rust tuple and a boolean
 whose meaning (ascending) has no spelling in the language. That is not a rendering of what the
 author wrote; it is a notation they have never seen, and a refusal that names it sends its
@@ -607,8 +612,7 @@ an opt-out for one run; the lint's cure is always an edit at the site it names.
 user renderer — `pretty` (default: `file:line:col` + source line + caret) vs `compact`
 (single line; the test harness pins this). Diagnostic toggles (default-on opt-outs, except
 the last two which are opt-in): `LOFT_NO_WARN_RUNTIME` (undefended-fault-site warning) ·
-`LOFT_NO_HINT_NOT_NULL` (`not null` field hint) · `LOFT_FORMAT_BARE_NULL` (drop the `(reason)`
-suffix on `null`) · `LOFT_NO_DEAD_STORES` (@PLN107 dead-store lint: a copy mutated but never
+`LOFT_NO_HINT_NOT_NULL` (`not null` field hint) · `LOFT_NO_DEAD_STORES` (@PLN107 dead-store lint: a copy mutated but never
 read, e.g. `d = self.data; d[i]=x` where the bind COPIES so the write is lost — a `len(d)`
 BOUND GUARD does not count as reading it, since a length cannot witness an element write;
 that hole made the lint silent on `if i < len(d) { d[i]=x }`, the exact shape the `v[i]`

@@ -896,7 +896,6 @@ width (`f += (n as i32)`).
 
 ---
 
-
 ## Nullable defaults, the copy-write hazard, and null-checking reads
 
 **A plain `vector<T>` field is non-null and defaults to `[]`** (@PLN25 DN1) — declare

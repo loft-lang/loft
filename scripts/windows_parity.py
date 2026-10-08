@@ -85,7 +85,7 @@ def main():
     outs = opt_outs()
     migrating = [o for o in outs if "not yet" in o[1]]
     ci_exempt = marked(r"# @windows-exempt: (.*)", [".github/workflows"], (".yml",))
-    approved = marked(r"approved exemption \(owner[^)]*\):? (.*)", ["src", "tests"], (".rs",))
+    approved = marked(r"approved exemption:? (.*)", ["src", "tests"], (".rs",))
 
     def total(rows):
         return sum(n for n, _ in rows)

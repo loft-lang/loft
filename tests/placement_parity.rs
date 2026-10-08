@@ -22,7 +22,7 @@
 //
 // Any divergence here falsifies the invariant, which is exactly what it is for.
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
+// approved exemption: library placement (`lib_placement::wire`, an mmap wire, is `cfg(unix)` in src) has no Windows equivalent yet; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;
@@ -393,7 +393,7 @@ fn a_warning_in_the_library_does_not_decide_whether_it_can_be_placed() {
 fn placed_and_unplaceable_calls_interleave() {
     let library = "pub fn placed_add(a: integer, b: integer) -> integer { a + b }\n\
                    pub fn version() -> text { \"1.0.0\" }\n\
-                   pub struct Point { x: integer, y: integer }\n\
+                   pub struct Point { pub x: integer, pub y: integer }\n\
                    pub fn make_point(x: integer, y: integer) -> Point { Point { x: x, y: y } }\n\
                    pub fn sum_point(p: Point) -> integer { p.x + p.y }\n\
                    pub fn placed_txt(s: text) -> text { \"<{s}>\" }\n";
@@ -433,9 +433,9 @@ fn placed_and_unplaceable_calls_interleave() {
 /// the same store — so the refusal does not apply, and this is what says so.
 #[test]
 fn compound_values_cross_in_both_directions() {
-    let library = "pub struct P { x: integer, y: integer }\n\
-                   pub struct N { id: integer, label: text }\n\
-                   pub struct O { tag: text, inner: P, tail: vector<integer> }\n\
+    let library = "pub struct P { pub x: integer, pub y: integer }\n\
+                   pub struct N { pub id: integer, pub label: text }\n\
+                   pub struct O { pub tag: text, pub inner: P, pub tail: vector<integer> }\n\
                    pub fn sum_p(p: P) -> integer { p.x + p.y }\n\
                    pub fn make_p(x: integer, y: integer) -> P { P { x: x, y: y } }\n\
                    pub fn describe(n: N) -> text { \"{n.id}:{n.label}\" }\n\
@@ -554,7 +554,7 @@ fn compound_values_cross_in_both_directions() {
 /// rec-id that means something else there.
 #[test]
 fn a_callee_writing_to_a_compound_parameter_is_seen_by_the_caller() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn bump(p: P) -> integer {\n\
                    \x20   p.x = p.x + 100;\n\
                    \x20   p.label = \"{p.label}!\";\n\
@@ -617,7 +617,7 @@ fn a_callee_writing_to_a_compound_parameter_is_seen_by_the_caller() {
 /// a growing file rather than as a wrong value.
 #[test]
 fn a_value_that_outgrows_the_arena_still_crosses() {
-    let library = "pub struct N { id: integer, label: text }\n\
+    let library = "pub struct N { pub id: integer, pub label: text }\n\
                    pub fn range_v(n: integer) -> vector<integer> {\n\
                    \x20   out: vector<integer> = [];\n\
                    \x20   for i in 0..n { out += [i]; }\n\
@@ -687,7 +687,7 @@ fn a_value_that_outgrows_the_arena_still_crosses() {
 /// anything this plan changed.
 #[test]
 fn placement_does_not_change_how_many_stores_a_run_needs() {
-    let library = "pub struct P { x: integer, y: integer }\n\
+    let library = "pub struct P { pub x: integer, pub y: integer }\n\
                    pub fn make_p(x: integer) -> P { P { x: x, y: x * 2 } }\n\
                    pub fn sum_p(p: P) -> integer { p.x + p.y }\n\
                    pub fn range_v(n: integer) -> vector<integer> {\n\
@@ -767,7 +767,7 @@ fn placement_does_not_change_how_many_stores_a_run_needs() {
 /// identical either way.
 #[test]
 fn a_compound_the_arena_does_not_carry_still_behaves_identically() {
-    let library = "pub struct P { a: integer, b: integer }\n\
+    let library = "pub struct P { pub a: integer, pub b: integer }\n\
                    pub enum Shape { Circle { r: integer }, Square { s: integer } }\n\
                    pub fn area(sh: Shape) -> integer {\n\
                    \x20   match sh { Circle { r } => r * r * 3, Square { s } => s * s }\n\
@@ -904,7 +904,7 @@ fn a_placed_library_sees_the_same_working_directory() {
 ///   clean.
 #[test]
 fn the_ownership_oracle_is_clean_over_a_placed_program() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
                    \x20   out: vector<P> = [];\n\
                    \x20   for i in 0..n { out += [P { x: i, label: \"e{i}\" }]; }\n\
@@ -980,7 +980,7 @@ fn the_ownership_oracle_is_clean_over_a_placed_program() {
 /// `RetBuf` (a vector builder) would quietly un-place most of a library.
 #[test]
 fn a_return_that_borrows_its_argument_is_not_placed() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn head(v: vector<P>) -> P { v[0] }\n\
                    pub fn make_p(x: integer) -> P { P { x: x, label: \"m{x}\" } }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
@@ -1030,7 +1030,7 @@ fn a_return_that_borrows_its_argument_is_not_placed() {
 /// the answers must match.
 #[test]
 fn a_const_parameter_crosses_without_a_copy_back() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn read_c(p: const P) -> integer { p.x * 100 + len(p.label) }\n\
                    pub fn read_m(p: P) -> integer { p.x * 100 + len(p.label) }\n\
                    pub fn sum_c(v: const vector<P>) -> integer {\n\
@@ -1085,7 +1085,7 @@ fn a_const_parameter_crosses_without_a_copy_back() {
 /// wrong value.
 #[test]
 fn a_placed_call_from_a_par_arm_is_the_same_call() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn score(p: const P) -> integer { p.x * 11 }\n\
                    pub fn make_v(n: integer) -> vector<P> {\n\
                    \x20   out: vector<P> = [];\n\
@@ -1149,7 +1149,7 @@ fn a_placed_call_from_a_par_arm_is_the_same_call() {
 /// image of the bug the copy-back fixes.
 #[test]
 fn a_callee_rebinding_its_parameter_changes_nothing_either_way() {
-    let library = "pub struct P { x: integer, label: text }\n\
+    let library = "pub struct P { pub x: integer, pub label: text }\n\
                    pub fn replace_all(v: vector<P>) -> integer {\n\
                    \x20   v = [];\n\
                    \x20   for i in 0..3 { v += [P { x: i * 5, label: \"r{i}\" }]; }\n\
@@ -1223,7 +1223,7 @@ fn a_worker_killed_with_a_compound_in_flight_leaves_the_caller_intact() {
         "process",
         // The argument is a real graph — 2000 records with a text field each —
         // so the arena genuinely carries something when the worker dies.
-        "pub struct P { x: integer, label: text }\n\
+        "pub struct P { pub x: integer, pub label: text }\n\
          pub fn make_v(n: integer) -> vector<P> {\n\
          \x20   out: vector<P> = [];\n\
          \x20   for i in 0..n { out += [P { x: i, label: \"p{i}\" }]; }\n\

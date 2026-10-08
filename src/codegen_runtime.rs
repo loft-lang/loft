@@ -1114,8 +1114,7 @@ pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
 /// `parts = text.split(c)` collected as slices — answering what the NULLABLE element read
 /// of the `vector<text>` it replaces answers (`OpGetVectorNullable` then `OpGetText`): a
 /// negative index counts from the end; the null index is the null text; an index outside
-/// the table is the null text too, and notes the out-of-bounds fault a formatted hole
-/// renders, exactly as the op's template does.
+/// the table is the null text too, exactly as the op's template answers.
 #[inline]
 #[must_use]
 pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
@@ -1125,7 +1124,6 @@ pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
     let len = table.len() as i64;
     let at = if from < 0 { from + len } else { from };
     if at < 0 || at >= len {
-        crate::ops::note_format_fault(3, true);
         crate::state::STRING_NULL
     } else {
         table[at as usize]
@@ -4822,6 +4820,12 @@ where
     let mut refs: Vec<DbRef> = vec![DbRef::NULL; n];
     for (batch, mut worker_stores) in batches {
         for (i, src_ref) in batch {
+            // A `-> S?` worker's null answer is `nullref` (@FR-L-Null): there is no record
+            // to copy, and the row delivers null to the body, as `refs` already holds.
+            // Copying it read record 0 of a store that does not exist (loft#1948).
+            if src_ref.is_null() {
+                continue;
+            }
             let dest = DbRef {
                 store_nr: result_store_nr,
                 rec: result_rec,

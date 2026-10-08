@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Does the SERVED sprite pack (doc/assets/bb.*, what the gallery page fetches) still load with
+// this compiler's record layout?  A pack is stored records, so a layout rule that moves a
+// field (@FR-L-Align, a tuple packed like a record) leaves the committed pack unreadable and
+// the page draws nothing — loft#1956.  Exit 0 when it loads, 1 when it is refused; the
+// derived-artefacts entry `sprite-pack` regenerates it on a 1.
+use graphics;
+use assets;
+
+fn main() {
+  pk = assets::new_pack();
+  if !assets::pack_read(pk, "../../doc/assets/bb") {
+    eprintln("check_pack: doc/assets/bb is refused by this compiler's layout — run pack_atlas.loft and copy assets/bb.* to doc/assets/");
+    exit(1);
+  }
+}

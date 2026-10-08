@@ -242,7 +242,7 @@ not yet graduated to that oracle. Design + phase↔rule map:
 - ☐ **P-Opt** — present ⟹ bound, absent ⟹ null capture, cursor intact. *Pin: P5.*
 - ☐ **P-Rep** — `(a)*` collects a `vector<τ>` (count + values + length + leak); `+` needs ≥1; a
   separator is consumed, not captured. *Pin: P6.*
-- ✗ **P-Anchor / P-Revert** — **NOT SHIPPED**: `OpMatchAnchor` and `OpMatchRevert` appear
+- ✗ **P-Anchor / P-Revert** — no machinery: `OpMatchAnchor` and `OpMatchRevert` appear
   nowhere in `src/`.  An iterator subject is MATERIALISED into a vector instead
   (`Parser::collect_iterator_subject`), which agrees with the memoising cursor on every
   observable of a side-effect-free source.  *No pin — no machinery to pin.*

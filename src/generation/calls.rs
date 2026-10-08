@@ -191,6 +191,54 @@ impl Output<'_> {
         true
     }
 
+    /// `@FR-R-Destination` — the caller-side rewrite's call, matched by callee and argument
+    /// slice: it calls the destination twin, which no other twin form applies to.  Records the
+    /// request for the twin.
+    fn dest_call(&mut self, vals: &[Value]) -> bool {
+        let dest = self
+            .dest_site_next
+            .is_some_and(|(c, at, _)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        if dest && let Some((c, _, vo)) = self.dest_site_next.take() {
+            if !self.dest_requests.contains(&(c, vo)) {
+                self.dest_requests.push((c, vo));
+            }
+            crate::rewrite_census::fired("R-Destination", 1);
+        }
+        dest
+    }
+
+    /// `@FR-R-ViewReturn` — the call its buffer prep was dropped for: the twin, which
+    /// answers the record and whether it is owned; the flag goes to the site's local.
+    /// Answers whether the call was emitted.
+    fn vr_call(
+        &mut self,
+        w: &mut dyn Write,
+        def_fn: &Definition,
+        vals: &[Value],
+    ) -> std::io::Result<bool> {
+        let vr = self
+            .vr_site_next
+            .is_some_and(|(c, at)| c == self.current_call_def && at == vals.as_ptr() as usize);
+        if !vr {
+            return Ok(false);
+        }
+        self.vr_site_next = None;
+        let callee_nr = self.current_call_def;
+        if !self.vr_requests.contains(&callee_nr) {
+            self.vr_requests.push(callee_nr);
+        }
+        crate::rewrite_census::fired("R-ViewReturn", 1);
+        let flag = self.vr_flag_pending.take().unwrap_or_default();
+        write!(w, "{{ let __vr = {}__vr(cell", self.fn_ident(def_fn))?;
+        self.vr_drop_buf = true;
+        let r = self.emit_user_call_args(w, def_fn, vals, false);
+        self.vr_drop_buf = false;
+        r?;
+        self.current_call_def = callee_nr;
+        write!(w, "); {flag} = __vr.1; __vr.0 }}")?;
+        Ok(true)
+    }
+
     /// Internal helper: emits the user-fn / Op-stub call body.  Reachable
     /// from `crate::generation::ops::default::DefaultEmitter` when
     /// `def_fn.rust.is_empty()`.  Behaviour is byte-identical to the
@@ -224,10 +272,16 @@ impl Output<'_> {
         // `@FR-R-AppendTwin` — the call appends into a destination: the caller-side rewrite's
         // call, or, inside an append twin, a call handed the twin's buffer as its own.  It
         // calls the plain-bodied twin, so no other twin form applies to it.
-        let append = (self.current_call_def as usize) < self.data.definitions.len()
+        let dest = self.dest_call(vals);
+        if !dest && self.vr_call(w, def_fn, vals)? {
+            return Ok(());
+        }
+        let append = !dest
+            && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.append_call(self.current_call_def, vals);
         let twin_args = if !append
+            && !dest
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
         {
@@ -252,6 +306,7 @@ impl Output<'_> {
         // within its bound.  Not for a forward site, which spells its own call shape.
         let ranged = forward.is_none()
             && !append
+            && !dest
             && (self.current_call_def as usize) < self.data.definitions.len()
             && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
             && self.ranged_call(self.current_call_def, vals, twin_args.is_some());
@@ -259,16 +314,17 @@ impl Output<'_> {
             w,
             def_fn,
             vals,
-            twin_args.is_some() || ranged || forward.is_some() || append,
+            twin_args.is_some() || ranged || forward.is_some() || append || dest,
         )?;
         write!(
             w,
-            "{}{}{}{}{}(",
+            "{}{}{}{}{}{}(",
             self.fn_ident(def_fn),
             if twin_args.is_some() { "__inv" } else { "" },
             if ranged { "__rg" } else { "" },
             if refill_twin { "__rt" } else { "" },
-            if append { "__ap" } else { "" }
+            if append { "__ap" } else { "" },
+            if dest { "__d" } else { "" }
         )?;
         let mut first_arg = true;
         if matches!(abi, crate::codegen_runtime::Abi::Cell) {
@@ -338,10 +394,7 @@ impl Output<'_> {
         // signature had dropped it).  `current_call_def` is what `output_call_inner`
         // threads here for exactly this reason.
         let callee_nr = self.current_call_def;
-        let drop_buf = self
-            .value_records
-            .fns
-            .contains_key(&callee_nr)
+        let drop_buf = (self.vr_drop_buf || self.value_records.fns.contains_key(&callee_nr))
             .then(|| super::hoist::ret_buffer_attr(def_fn))
             .flatten();
         for (idx, v) in vals.iter().enumerate() {

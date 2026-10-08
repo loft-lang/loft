@@ -54,6 +54,24 @@ enum ClosureShape {
     Fn,
 }
 
+/// The type a worker's result LANE is chosen from: its declared return with any `?`
+/// peeled.  @FR-N-Shape — which closure shape, which helper and which storage stride
+/// carry a result are shape questions, and `τ?` shares τ's storage; its null rides that
+/// storage in band.  The parser's `build_parallel_for_ir` peels the same way, and the two
+/// must agree or the body reads a buffer the helper never filled (loft#1948).
+fn worker_lane_type(declared: &Type) -> Type {
+    declared.base().clone()
+}
+
+/// The closure body that calls a text worker taking a `&mut String` work buffer and
+/// answers the text it RETURNED.  The answer is the returned `Str`, not the buffer: a
+/// worker that returns a literal (`return "two";`) or a null (`return null;` in a
+/// `-> text?` worker, `STRING_NULL`) leaves the buffer untouched, and answering the
+/// buffer delivered `""` for both — on `--native` only (loft#1948).
+fn buffered_text_call(worker_name: &str, args: &str) -> String {
+    format!("let mut _w = String::new(); {worker_name}(cell, {args}, &mut _w).str().to_owned()")
+}
+
 fn closure_shape(ret: &Type) -> ClosureShape {
     if matches!(ret, Type::Text(_)) {
         ClosureShape::Text
@@ -74,13 +92,22 @@ fn closure_shape(ret: &Type) -> ClosureShape {
 /// can size.  A vector-returning worker was previously mis-routed to the scalar
 /// path, which cast `DbRef as i64` (E0605, the native-refreturn bug).
 ///
-/// Keyed collections (`Sorted`/`Hash`/`Index`/`Radix`) are also DbRef returns
-/// (the parser groups them with `return_size = -1`) but have no `main_<kind><T>`
-/// storage wrapper for `heap_ref_kt` to size, so they stay off this path for now
-/// — a worker returning one still fails to compile loudly rather than copying at
-/// the wrong stride.  Extending `heap_ref_kt` to them is the follow-up.
+/// Keyed collections (`Sorted`/`Hash`/`Index`/`Radix`/`Trie`) are DbRef returns too
+/// (the parser groups them with `return_size = -1`): each is a record of its own
+/// database type, which `heap_ref_kt` sizes through [`Stores::keyed_type`].
+///
+/// [`Stores::keyed_type`]: crate::database::Stores::keyed_type
 fn is_ref_return(ret: &Type) -> bool {
-    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _))
+    ret.heap_def_nr().is_some()
+        || matches!(
+            ret.base(),
+            Type::Vector(_, _)
+                | Type::Hash(..)
+                | Type::Sorted(..)
+                | Type::Index(..)
+                | Type::Radix(..)
+                | Type::Trie(..)
+        )
 }
 
 /// The `(struct_size, known_type)` a `HeapRef` worker return is copied as by
@@ -108,7 +135,13 @@ fn heap_ref_kt(ctx: &EmitCtx<'_, '_>, ret: &Type) -> (i32, i32) {
         }
         data.def(wrapper).known_type()
     } else {
-        return (0, 0);
+        // A keyed collection is a reference to a record of its own database type — the one
+        // `OpDatabase` allocates for it — which the copy walks whole, its index included.
+        let k = ctx.output.stores.keyed_type(data, ret);
+        if k == u16::MAX {
+            return (0, 0);
+        }
+        k
     };
     (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
 }
@@ -144,31 +177,6 @@ fn queue_helper_name(shape: ClosureShape) -> &'static str {
 /// instead of the wide `Vec<u64>` queue.
 fn queue_narrow_helper_name() -> &'static str {
     "n_parallel_queue_narrow_native"
-}
-
-/// True when the worker's return type rides the narrow-Queue path
-/// (byte-packed buffer, stride 1/2/4).  Mirrors the parser-side
-/// `narrow_route_for` decision in `src/parser/collections.rs`:
-///
-/// - `Integer(spec)` with `byte_width 1/2/4` (A3 narrow Integer)
-/// - `Boolean` (A3.5)
-/// - `Character` (A3.5)
-/// - `Enum(_, false, _)` no-payload (A3.5)
-/// - `Single` (A3.6) — f32 fits stride 4 with bit-pattern preserved
-///
-/// Used by `ParallelQueueEmitter` to swap the runtime helper to the
-/// narrow variant `n_parallel_queue_narrow_native`.  Without this,
-/// the parser routes via `n_parallel_queue_narrow` (narrow buffer)
-/// while the emitter would call `n_parallel_queue_native` (wide
-/// buffer) — body's `parallel_buf_get_narrow` then reads from an
-/// empty narrow buffer and panics.
-fn is_narrow_int_return(ret: &Type) -> bool {
-    match ret {
-        Type::Integer(spec) => matches!(spec.byte_width(true), 1 | 2 | 4),
-        Type::Boolean | Type::Character | Type::Single => true,
-        Type::Enum(_, false, _) => true,
-        _ => false,
-    }
 }
 
 /// Emit the Rust expression that reads one by-value tuple element out of the
@@ -344,7 +352,7 @@ impl OpEmitter for ParallelForEmitter {
 
         let worker_def = ctx.output.data.def(fn_d_nr);
         let worker_name = worker_def.name().to_string();
-        let worker_ret = worker_def.returned().clone();
+        let worker_ret = worker_lane_type(worker_def.returned());
         let shape = closure_shape(&worker_ret);
         // A literal / bufferless text worker (@P205 nwb) returns an owned `String`
         // and takes NO `&mut String` work-buffer param — so its closure must NOT
@@ -439,7 +447,8 @@ impl OpEmitter for ParallelForEmitter {
             )?,
             ClosureShape::Text => write!(
                 ctx.w,
-                ", |cell, elm| {{ {prep}let mut _w = String::new(); {worker_name}(cell, {arg}{extras}{dests}, &mut _w); _w }})"
+                ", |cell, elm| {{ {prep}{} }})",
+                buffered_text_call(&worker_name, &format!("{arg}{extras}{dests}"))
             )?,
             ClosureShape::HeapRef => write!(
                 ctx.w,
@@ -514,7 +523,7 @@ impl OpEmitter for ParallelQueueEmitter {
 
         let worker_def = ctx.output.data.def(fn_d_nr);
         let worker_name = worker_def.name().to_string();
-        let worker_ret = worker_def.returned().clone();
+        let worker_ret = worker_lane_type(worker_def.returned());
         let shape = closure_shape(&worker_ret);
         // A literal / bufferless text worker (@P205 nwb) returns an owned `String`
         // and takes NO `&mut String` work-buffer param — so its closure must NOT
@@ -534,7 +543,13 @@ impl OpEmitter for ParallelQueueEmitter {
         // Plan-06 ARC.md A3 — narrow-Integer returns route through
         // `n_parallel_queue_narrow_native` (byte-packed buffer);
         // wide / non-Integer scalars stay on `n_parallel_queue_native`.
-        let par_fn = if is_narrow_int_return(&worker_ret) {
+        // The lane decision is the parser's, read from the DECLARED return — the ONE
+        // home (`par_rides_narrow_lane`).  This emitter kept a copy of its type list,
+        // and the two must agree or the body reads a buffer this helper never filled
+        // (a `τ?` narrow integer rides the WIDE lane, loft#1948).
+        let par_fn = if crate::parser::collections::par_rides_narrow_lane(
+            ctx.output.data.def(fn_d_nr).returned(),
+        ) {
             queue_narrow_helper_name()
         } else {
             queue_helper_name(shape)
@@ -599,7 +614,8 @@ impl OpEmitter for ParallelQueueEmitter {
             )?,
             ClosureShape::Text => write!(
                 ctx.w,
-                ", |cell, elm| {{ {prep}let mut _w = String::new(); {worker_name}(cell, {arg}{extras}{dests}, &mut _w); _w }})"
+                ", |cell, elm| {{ {prep}{} }})",
+                buffered_text_call(&worker_name, &format!("{arg}{extras}{dests}"))
             )?,
             ClosureShape::HeapRef => write!(
                 ctx.w,
@@ -673,7 +689,7 @@ impl OpEmitter for ParallelDiscardEmitter {
 
         let worker_def = ctx.output.data.def(fn_d_nr);
         let worker_name = worker_def.name().to_string();
-        let worker_ret = worker_def.returned().clone();
+        let worker_ret = worker_lane_type(worker_def.returned());
         let wants_work_buffer = matches!(closure_shape(&worker_ret), ClosureShape::Text)
             && !crate::generation::returns_owned_string(worker_def);
 

@@ -1,0 +1,170 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 98fe371d3..0fbf8978a 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -5308,34 +5308,12 @@ impl Parser {
+     /// and is exactly what `(E-Truthy)` licenses.  Read through `Type::peel_optional`, the
+     /// `@FR-N-Shape` home, because a bare `matches!(tp, Type::Optional(_))` is what
+     /// `ir_walker_audit.py optional` counts as an OPAQUE site.
+-    fn warn_constant_condition(
+-        &mut self,
+-        tp: &Type,
+-        code: &Value,
+-        at: &crate::lexer::Position,
+-        kw: &str,
+-    ) {
++    fn warn_constant_condition(&mut self, tp: &Type, at: &crate::lexer::Position, kw: &str) {
+         // Pass 1 parses every body a second time, so an unguarded report lands twice — measured
+         // exactly 2x on every cell before this line existed.
+         if self.first_pass || !crate::keys::constant_condition_enabled() {
+             return;
+         }
+-        // Two spellings of a vector VALUE reach here typed as something else, and are the same
+-        // constant (loft#1919, loft#1922): a vector slice, typed as the iterator it is lowered
+-        // from until `convert_condition` materialises it (`(Slice-Value)`: a FRESH vector),
+-        // and an untyped `[]`, whose element type is unknown.
+-        let slice_tp;
+-        let tp = if Self::is_untyped_empty_literal(code, tp) {
+-            slice_tp = Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none());
+-            &slice_tp
+-        } else if let Type::Iterator(elm, _) = tp.base()
+-            && Self::slice_shaped(code)
+-        {
+-            slice_tp = Type::Vector(elm.clone(), crate::data::Deps::none());
+-            &slice_tp
+-        } else {
+-            tp
+-        };
+         let (base, nullable) = tp.peel_optional();
+         if nullable {
+             return;
+@@ -5370,10 +5348,7 @@ impl Parser {
+         ) {
+             return;
+         }
+-        let shown = match base {
+-            Type::Vector(elm, _) if elm.is_unknown() => "vector".to_string(),
+-            _ => base.source_name(&self.data),
+-        };
++        let shown = base.source_name(&self.data);
+         diagnostic_at!(
+             self.lexer,
+             at,
+@@ -5567,7 +5542,7 @@ impl Parser {
+         let cond_fact = std::mem::take(&mut self.operand_fact);
+         self.check_subject(&cond_fact, "branching on it"); // @PLN187
+         self.in_control_head = outer_head;
+-        self.warn_constant_condition(&tp, &test, &cond_at, "if");
++        self.warn_constant_condition(&tp, &cond_at, "if");
+         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
+         // the arms below, and an `else if` chain's own conditions, are past the pair.
+         self.fit_in_condition = false;
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 1607da47b..9f0a3619b 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -5813,32 +5813,6 @@ impl Parser {
+             }
+             return false;
+         }
+-        // `@FR-E-Truthy-1` — an UNTYPED `[]` is a vector VALUE like any other, so a truthiness
+-        // position reads it as present.  With no element type to size a store it parses to the
+-        // value-less placeholder (`parse_vector`), which reached the condition as nothing at
+-        // all: the interpreter's jump read a stack byte (and the next local took the damage)
+-        // and `--native` emitted `if ()` (loft#1919).  The literal has no effect to keep.
+-        if !self.first_pass && Self::is_untyped_empty_literal(code, tp) {
+-            *code = Value::Boolean(true);
+-            return true;
+-        }
+-        // `(Slice-Value)` — a vector slice is a FRESH vector, owed at every position a value
+-        // is read, and a condition reads one: it is materialised exactly as a bind would
+-        // (`iterator_as_vector`) and then tested like any vector.  Left an iterator, its
+-        // `Value::Iter` reached the scopes pass outside the loop its `break` belongs to — an
+-        // internal compiler error on both backends (loft#1922).
+-        if let Type::Iterator(elm, _) = tp.base()
+-            && Self::slice_shaped(code)
+-        {
+-            let vec_tp = Type::Vector(elm.clone(), Deps::none());
+-            if self.iterator_as_vector(code, tp, &vec_tp).is_some() {
+-                if !self.first_pass {
+-                    let not_null = self.coalesce_not_null(&code.clone(), &vec_tp);
+-                    *code = not_null;
+-                }
+-                return true;
+-            }
+-        }
+         if Self::is_heap_handle(tp) {
+             if !self.first_pass {
+                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
+@@ -5849,13 +5823,6 @@ impl Parser {
+         self.convert_admitting(code, tp, &Type::Boolean)
+     }
+ 
+-    /// The value-less placeholder an UNTYPED standalone `[]` parses to (`parse_vector`): an
+-    /// `Insert` of the incoming value, typed by an expected type that was itself unknown.
+-    pub(crate) fn is_untyped_empty_literal(code: &Value, tp: &Type) -> bool {
+-        tp.is_unknown()
+-            && matches!(code.unspan(), Value::Insert(v) if v.len() == 1 && matches!(v[0], Value::Null))
+-    }
+-
+     /// The STORE face of [`convert`](Parser::convert) — @FR-N-Store's home for every store
+     /// that converts: `what` names the slot for the diagnostic ("the field", "parameter 2 of
+     /// `f`", "the return value"), `at` anchors it (a block tail reports at the tail, not the
+@@ -6022,7 +5989,7 @@ impl Parser {
+     /// Is every VALUE position of `code` a vector slice — the `Value::Iter` a range
+     /// subscript builds (its step a block), reached through the arms of an `if` and the
+     /// tail of a block?  The shape [`Parser::iterator_as_vector`] materialises.
+-    pub(crate) fn slice_shaped(code: &Value) -> bool {
++    fn slice_shaped(code: &Value) -> bool {
+         match code.unspan() {
+             Value::Iter(_, _, n, _) => matches!(n.as_ref(), Value::Block(_)),
+             Value::If(_, a, b) => Self::slice_shaped(a) && Self::slice_shaped(b),
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 9748a4082..e53278f2b 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -433,14 +433,9 @@ impl Parser {
+         precedence: usize,
+         is_or: bool,
+     ) {
+-        // An operand of `&&`/`||` is a TRUTHINESS position (`@FR-E-Truthy`), the reading an
+-        // `if` condition gets, so it converts through the SAME home, `convert_condition`:
+-        // @FR-N-Store admits the read, and `@FR-E-Truthy-1` reads every non-null value as
+-        // true.  Converted as a plain boolean, a heap operand had no `OpConv*FromX` and
+-        // reached the jump as its raw `DbRef`: a vector LEFT operand read false on the
+-        // interpreter (its pointer's first byte) and a RIGHT one did not compile natively
+-        // (loft#1919).
+-        if !self.convert_condition(code, tp) && !self.first_pass {
++        // An operand of `&&`/`||` is READ as a boolean, not stored — @FR-N-Store admits it,
++        // as `convert_condition` does for the same reading in an `if`.
++        if !self.convert_admitting(code, tp, &Type::Boolean) && !self.first_pass {
+             self.can_convert(tp, &Type::Boolean);
+         }
+         let mut second_code = Value::Null;
+@@ -453,7 +448,9 @@ impl Parser {
+             precedence + 1,
+         );
+         self.known_var_or_type(&second_code, &second_pos);
+-        if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
++        if !self.convert_admitting(&mut second_code, &second_type, &Type::Boolean)
++            && !self.first_pass
++        {
+             self.can_convert(&second_type, &Type::Boolean);
+         }
+         // `&&`/`||` do not route through `call_op_as`, so its deferral counter cannot see an
+@@ -643,13 +640,8 @@ impl Parser {
+             // non-boolean: *"is x null?"*.  A heap handle has no `Not` operator, so
+             // without this the documented spelling was refused — `!v` on a vector read
+             // *"No matching operator Not on vector<integer>"* while `if v` compiled.
+-            // Routed through the ONE condition coercion, so the two cannot part ways.  A
+-            // vector SLICE and an untyped `[]` are vector values too (loft#1922, loft#1919),
+-            // typed otherwise until that coercion materialises them.
+-            if Self::is_heap_handle(&t)
+-                || (matches!(t.base(), Type::Iterator(..)) && Self::slice_shaped(&arg))
+-                || Self::is_untyped_empty_literal(&arg, &t)
+-            {
++            // Routed through the ONE condition coercion, so the two cannot part ways.
++            if Self::is_heap_handle(&t) {
+                 let mut present = arg;
+                 self.convert_condition(&mut present, &t);
+                 *val = self.cl("OpNot", &[present]);

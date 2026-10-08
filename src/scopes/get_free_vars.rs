@@ -23,6 +23,18 @@ use crate::data::{Data, Type, Value, v_if, v_set};
 use crate::fxhash::FxHashSet as HashSet;
 use crate::variables::Function;
 
+/// Does local `v` own its text — a `String` of its own that a bind COPIED the bytes into?
+///
+/// Then a dep it carries names where the bytes came FROM (`s = r.name` reads `text["r"]`), not a
+/// store it still views, so it keeps nothing alive.  A never-free text (`skip_free`, the `??`
+/// temp whose present-path value is a view of its subject) is the one text local that does view.
+/// @FR-F-Call — the store the bytes were copied out of is this frame's to free: read as the tail
+/// value's backing, a block's record (`{ r = R { … }; s = r.name; s }`) was held past its scope
+/// with nothing left to free it, one store per evaluation on both backends.
+fn owns_text_copy(function: &Function, v: u16) -> bool {
+    matches!(function.tp(v).base(), Type::Text(_)) && !function.is_skip_free(v)
+}
+
 /// The members of a TUPLE local whose values live in a backing registered in an OUTER scope,
 /// as `(member index, backing)`: a vector member's `__vdb_N`, or the `__ref_N` a whole-tuple
 /// bind copied a record member into (loft#1361).  Both are minted at the function's head so the
@@ -452,7 +464,9 @@ impl Scopes<'_> {
                 let leaves_frame = ret_borrows_v
                     || backs_return_source
                     || (link_delivered.contains(&v) && !self.closure_keep.decides_link(v))
-                    || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
+                    || ret_var != u16::MAX
+                        && function.tp(ret_var).depend().contains(&v)
+                        && !owns_text_copy(function, ret_var)
                     // …and a CLOSURE RECORD this return delivers.  `ret_borrows_v` decodes the
                     // declared return's `CalleeFrame` note, and that note is published once per
                     // lambda and OVERWRITTEN — so where a function builds more than one it names

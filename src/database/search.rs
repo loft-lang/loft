@@ -725,6 +725,27 @@ impl Stores {
         }
     }
 
+    /// `@FR-R-InPlaceLiteral`'s keyed clause, the first half: what [`Self::set_keyed`] does
+    /// before it copies — the record already under `sub` removed, a fresh record claimed in
+    /// `coll`'s store — answering that record for the caller to write a literal's fields into.
+    /// [`Self::keyed_place_finish`] writes the key and links it.  `sub` must carry every key
+    /// part (the caller's subscript), as `set_keyed`'s `full` case.
+    pub fn keyed_place_begin(&mut self, coll: &DbRef, db: u16, sub: &[Content]) -> DbRef {
+        let existing = self.find(coll, db, sub);
+        if existing.rec != 0 {
+            self.remove_owned(coll, &existing, db);
+        }
+        self.record_new(coll, db, u16::MAX)
+    }
+
+    /// The second half of [`Self::keyed_place_begin`]: the subscript's key written into the
+    /// record and the record linked by it — the tail of `insert_keyed_copy_at`.
+    pub fn keyed_place_finish(&mut self, coll: &DbRef, new: &DbRef, db: u16, sub: &[Content]) {
+        let keys = self.types[db as usize].keys.clone();
+        keys::set_key(new, &mut self.allocations, &keys, sub);
+        self.record_finish(coll, new, db, u16::MAX);
+    }
+
     /// loft#1159 — fill the keyed collection `dest` with a deep COPY of every record the
     /// plain vector `src` holds, keyed by each record's own key fields.
     ///

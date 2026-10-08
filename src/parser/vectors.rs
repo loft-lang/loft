@@ -3,7 +3,7 @@
 
 use super::{
     Argument, DefType, Function, I32, Level, Parser, ToString, Type, Value, diagnostic_format,
-    field_id, v_block, v_if, v_loop, v_set,
+    v_block, v_if, v_loop, v_set,
 };
 use crate::data::Deps;
 
@@ -337,74 +337,23 @@ impl Parser {
         let mut ls = Vec::new();
         let var_nr = if orig_var == u16::MAX {
             let v = self.vars.work_text(&mut self.lexer);
-            if matches!(self.vars.tp(v), Type::RefVar(_)) {
-                ls.push(self.cl("OpClearStackText", &[Value::Var(v)]));
-                ls.push(self.cl("OpAppendStackText", &[Value::Var(v), code.clone()]));
-            } else if tp == &Type::Character {
-                ls.push(self.cl("OpClearText", &[Value::Var(v)]));
-                ls.push(self.cl("OpAppendCharacter", &[Value::Var(v), code.clone()]));
-            } else {
-                ls.push(self.cl("OpClearText", &[Value::Var(v)]));
-                ls.push(self.cl("OpAppendText", &[Value::Var(v), code.clone()]));
-            }
+            let stack = matches!(self.vars.tp(v).base(), Type::RefVar(_));
+            ls.push(self.cl(
+                if stack {
+                    "OpClearStackText"
+                } else {
+                    "OpClearText"
+                },
+                &[Value::Var(v)],
+            ));
+            self.append_concat_operand(&mut ls, v, code, tp);
             v
-        } else if matches!(self.vars.tp(orig_var), Type::RefVar(_)) {
-            ls.push(self.cl("OpAppendStackText", &[Value::Var(orig_var), code.clone()]));
-            orig_var
         } else {
-            ls.push(self.cl("OpAppendText", &[Value::Var(orig_var), code.clone()]));
+            self.append_concat_operand(&mut ls, orig_var, code, tp);
             orig_var
         };
         for (val, tp) in parts {
-            // Unwrap `RefVar(inner)` for the type-dispatch check below.
-            // A `&text` argument (parameter passed by reference) appears
-            // as `Type::RefVar(Type::Text(_))` here but the OpAppend* ops
-            // accept it directly via the same code path as plain `Text`.
-            let dispatch_tp: &Type = if let Type::RefVar(inner) = tp {
-                inner.as_ref()
-            } else {
-                tp
-            };
-            if matches!(self.vars.tp(var_nr), Type::RefVar(_)) {
-                if *dispatch_tp == Type::Character {
-                    ls.push(self.cl("OpAppendStackCharacter", &[Value::Var(var_nr), val.clone()]));
-                } else if matches!(dispatch_tp, Type::Text(_)) {
-                    ls.push(self.cl("OpAppendStackText", &[Value::Var(var_nr), val.clone()]));
-                } else {
-                    // @P274 — non-text/non-character parts (integer / float /
-                    // bool / vector / reference / enum / …) need a format-
-                    // dispatch step before append.  `OpAppendStackText`
-                    // assumes its argument already evaluates to text on the
-                    // stack; passing a raw `i64` from `headers.len()` is what
-                    // tripped native E0614 (`type i64 cannot be dereferenced`)
-                    // and SIGSEGV in interp.  Route through `append_data`,
-                    // which is the same dispatch path used by `"…{x}…"`
-                    // format-string interpolation and handles every formattable
-                    // type via the matching `OpFormat*` op.
-                    self.append_data(
-                        dispatch_tp.clone(),
-                        &mut ls,
-                        var_nr,
-                        u16::MAX,
-                        val,
-                        super::OUTPUT_DEFAULT,
-                    );
-                }
-            } else if *dispatch_tp == Type::Character {
-                ls.push(self.cl("OpAppendCharacter", &[Value::Var(var_nr), val.clone()]));
-            } else if matches!(dispatch_tp, Type::Text(_)) {
-                ls.push(self.cl("OpAppendText", &[Value::Var(var_nr), val.clone()]));
-            } else {
-                // @P274 — see RefVar branch above.
-                self.append_data(
-                    dispatch_tp.clone(),
-                    &mut ls,
-                    var_nr,
-                    u16::MAX,
-                    val,
-                    super::OUTPUT_DEFAULT,
-                );
-            }
+            self.append_concat_operand(&mut ls, var_nr, val, tp);
         }
         let tp = Type::Text(Deps::frame1(var_nr));
         if orig_var == u16::MAX || var_nr != orig_var {
@@ -418,6 +367,132 @@ impl Parser {
         Type::Rewritten(Box::new(tp))
     }
 
+    /// One operand of a text concatenation (`a + b`, `s += x`), appended to the accumulator
+    /// `acc` — `@FR-E-NullArg`: an operand that is NULL makes the concatenation null, for
+    /// every operand type (owner ruling 2026-10-08, loft#1945).  A concatenation is not a
+    /// second spelling of interpolation: `"{x}"` renders a null as the word `null`, and
+    /// `"a" + x` is null.
+    ///
+    /// A text operand is appended as it is, and the append (`ops::append_text`) already makes
+    /// a null text contagious.  Every other type is asked the language's own null test
+    /// (`null_test`, what `x == null` answers): when it holds, the accumulator takes the null
+    /// text; otherwise the operand is rendered as before — a character appended, anything
+    /// else through `append_data`, the renderer `"{x}"` uses.  An operand that is not free to
+    /// read twice is bound to a local first, so it is evaluated once.
+    pub(crate) fn append_concat_operand(
+        &mut self,
+        ls: &mut Vec<Value>,
+        acc: u16,
+        val: &Value,
+        tp: &Type,
+    ) {
+        // A `&τ` operand appends as a `τ`, and a `τ?` as a `τ` (`peel_link` peels both).
+        let dispatch_tp: Type = tp.peel_link().clone();
+        let stack = matches!(self.vars.tp(acc).base(), Type::RefVar(_));
+        if matches!(dispatch_tp.base(), Type::Text(_)) {
+            let op = if stack {
+                "OpAppendStackText"
+            } else {
+                "OpAppendText"
+            };
+            ls.push(self.cl(op, &[Value::Var(acc), val.clone()]));
+            return;
+        }
+        // The null test and its holder are pass-2 work: pass 1's code is discarded, and a
+        // holder minted on pass 1 for an operand whose type is not settled yet (a struct
+        // literal is not a heap handle there) shifted the numbering of every later holder, so
+        // a pass-2 holder named a pass-1 variable of another scope — no stack slot.
+        let repeatable = self.first_pass
+            || matches!(val.unspan(), Value::Var(_))
+            || Self::concat_operand_repeatable(&self.data, val);
+        let (subject, bind) = if repeatable {
+            (val.clone(), None)
+        } else if Self::is_heap_handle(&dispatch_tp) {
+            // A heap operand is held in a WORK-ref, the function-scoped holder a null test
+            // binds a built value to (`null_test`), so the scopes pass frees what it built.
+            let w = self.vars.work_refs(&dispatch_tp, &mut self.lexer);
+            self.vars.mark_inline_ref(w);
+            (Value::Var(w), Some(v_set(w, val.clone())))
+        } else {
+            let tmp = self.create_unique("concat", &dispatch_tp);
+            self.vars.defined(tmp);
+            (Value::Var(tmp), Some(v_set(tmp, val.clone())))
+        };
+        let mut present = Vec::new();
+        if dispatch_tp == Type::Character {
+            let op = if stack {
+                "OpAppendStackCharacter"
+            } else {
+                "OpAppendCharacter"
+            };
+            present.push(self.cl(op, &[Value::Var(acc), subject.clone()]));
+        } else {
+            // @P274 — a non-text operand is rendered by the hole renderer, `append_data`, the
+            // dispatch `"…{x}…"` uses for every formattable type.
+            self.append_data(
+                dispatch_tp.clone(),
+                &mut present,
+                acc,
+                u16::MAX,
+                &subject,
+                super::OUTPUT_DEFAULT,
+            );
+        }
+        if let Some(b) = bind {
+            ls.push(b);
+        }
+        // `x == null`'s own lowering where it has one; the `??` presence test otherwise (a
+        // character, which `==` compares against its sentinel instead).
+        if self.first_pass {
+            ls.extend(present);
+            return;
+        }
+        let is_null = match self.null_test(subject.clone(), &dispatch_tp, false) {
+            Some(test) => Some(test),
+            None if !matches!(dispatch_tp, Type::Unknown(_) | Type::Never | Type::Null) => {
+                let present = self.coalesce_not_null(&subject, &dispatch_tp);
+                Some(self.cl("OpNot", &[present]))
+            }
+            None => None,
+        };
+        match is_null {
+            Some(is_null) => {
+                let null_text = self.cl("OpConvTextFromNull", &[]);
+                let op = if stack {
+                    "OpAppendStackText"
+                } else {
+                    "OpAppendText"
+                };
+                let to_null = self.cl(op, &[Value::Var(acc), null_text]);
+                let step = v_if(
+                    is_null,
+                    to_null,
+                    v_block(present, Type::Void, "concat operand"),
+                );
+                // An accumulator that an earlier operand made null STAYS null: the renderers
+                // write into it whatever it holds, so `"a" + ni() + 2` would read "\02".  A
+                // text operand's append already keeps it (`ops::append_text`).
+                let mut acc_present = Value::Var(acc);
+                let acc_tp = self.vars.tp(acc).clone();
+                if self.convert_admitting(&mut acc_present, &acc_tp, &Type::Boolean) {
+                    ls.push(v_if(acc_present, step, Value::Null));
+                } else {
+                    ls.push(step);
+                }
+            }
+            None => ls.extend(present),
+        }
+    }
+
+    /// Is this concatenation operand free to evaluate twice (a null test, then the render)?
+    /// A literal, or a place `is_repeatable_place` admits.
+    fn concat_operand_repeatable(data: &crate::data::Data, v: &Value) -> bool {
+        matches!(
+            v.unspan(),
+            Value::Int(_) | Value::Long(_) | Value::Float(_) | Value::Boolean(_)
+        ) || Self::is_repeatable_place(data, v)
+    }
+
     /// Rewrite boolean operators into an `IF` statement to prevent the calculation of the second
     /// expression when it is unneeded.
     pub(crate) fn boolean_operator(
@@ -427,9 +502,14 @@ impl Parser {
         precedence: usize,
         is_or: bool,
     ) {
-        // An operand of `&&`/`||` is READ as a boolean, not stored — @FR-N-Store admits it,
-        // as `convert_condition` does for the same reading in an `if`.
-        if !self.convert_admitting(code, tp, &Type::Boolean) && !self.first_pass {
+        // An operand of `&&`/`||` is a TRUTHINESS position (`@FR-E-Truthy`), the reading an
+        // `if` condition gets, so it converts through the SAME home, `convert_condition`:
+        // @FR-N-Store admits the read, and `@FR-E-Truthy-1` reads every non-null value as
+        // true.  Converted as a plain boolean, a heap operand had no `OpConv*FromX` and
+        // reached the jump as its raw `DbRef`: a vector LEFT operand read false on the
+        // interpreter (its pointer's first byte) and a RIGHT one did not compile natively
+        // (loft#1919).
+        if !self.convert_condition(code, tp) && !self.first_pass {
             self.can_convert(tp, &Type::Boolean);
         }
         let mut second_code = Value::Null;
@@ -442,9 +522,7 @@ impl Parser {
             precedence + 1,
         );
         self.known_var_or_type(&second_code, &second_pos);
-        if !self.convert_admitting(&mut second_code, &second_type, &Type::Boolean)
-            && !self.first_pass
-        {
+        if !self.convert_condition(&mut second_code, &second_type) && !self.first_pass {
             self.can_convert(&second_type, &Type::Boolean);
         }
         // `&&`/`||` do not route through `call_op_as`, so its deferral counter cannot see an
@@ -634,8 +712,13 @@ impl Parser {
             // non-boolean: *"is x null?"*.  A heap handle has no `Not` operator, so
             // without this the documented spelling was refused — `!v` on a vector read
             // *"No matching operator Not on vector<integer>"* while `if v` compiled.
-            // Routed through the ONE condition coercion, so the two cannot part ways.
-            if Self::is_heap_handle(&t) {
+            // Routed through the ONE condition coercion, so the two cannot part ways.  A
+            // vector SLICE and an untyped `[]` are vector values too (loft#1922, loft#1919),
+            // typed otherwise until that coercion materialises them.
+            if Self::is_heap_handle(&t)
+                || (matches!(t.base(), Type::Iterator(..)) && Self::slice_shaped(&arg))
+                || Self::is_untyped_empty_literal(&arg, &t)
+            {
                 let mut present = arg;
                 self.convert_condition(&mut present, &t);
                 *val = self.cl("OpNot", &[present]);
@@ -910,6 +993,11 @@ impl Parser {
         } else if self.lexer.peek_token("{") {
             self.parse_block("block", val, &Type::Unknown(0))
         } else if self.lexer.has_token("[") {
+            // The literal's own position: the key `literal_chain_lhs` records it under.
+            let lit_at = {
+                let p = self.lexer.pos();
+                (p.line, p.pos)
+            };
             // #432 — a bare vector literal in call-argument position arrives with
             // `var_tp` unknown (the parameter type is dropped by `expression`).
             // Build it at the parameter's element width via `vector_hint`, so a
@@ -968,8 +1056,52 @@ impl Parser {
             // is where the chain is recognised and recorded; here is where the next pass
             // acts on it.  Building into a fresh accumulator is what the chain case does
             // anyway, so this only brings pass 2 forward to the same decision.
-            let known_receiver =
-                orig_lhs.is_some_and(|n| self.literal_chain_lhs.contains(&(self.context, n)));
+            let known_receiver = orig_lhs.is_some_and(|n| {
+                self.literal_chain_lhs
+                    .contains(&(self.context, n, lit_at.0, lit_at.1))
+            });
+            // loft#1923 — a SUBSCRIPTED literal (`s = [1, 2][0..1]`, `h.v = [1, 2][1..]`,
+            // `a = [10, 20][1]`) is not the value its destination receives: built into that
+            // destination — a variable or a FIELD — the subscript then read it back while
+            // writing it.  Asked by a scan BEFORE the literal is parsed, so both passes
+            // decide alike.  A scan that cannot see past the literal (a string element that
+            // opens a hole) leaves a VARIABLE to the post-parse rename below, which catches
+            // it; a FIELD has no such rename, so it builds in a temporary of its own — the
+            // value written is the same either way.
+            //
+            // A DECLARED destination still says what the literal is: a slice of it has the
+            // destination's own type, and an element of it is one of the literal's elements,
+            // so `b: vector<u8> = [1, 2, 3][1..]` builds a `vector<u8>` — unseeded, the literal
+            // inferred `vector<integer>` and the store was refused as a retype.
+            use crate::lexer::LiteralSubscript as Ls;
+            let is_field = orig_lhs.is_none() && self.is_field(val);
+            let follow = if orig_lhs.is_some() || is_field {
+                self.lexer.peek_literal_subscript()
+            } else {
+                None
+            };
+            // A FIELD has no post-parse rename, so a literal the scan cannot see past is
+            // recognised after it is parsed, on pass 1, and recorded under the field marker
+            // `u16::MAX`; pass 2 then declines up front (see `field_unknown` below).
+            let field_recorded = is_field
+                && follow.is_none()
+                && self
+                    .literal_chain_lhs
+                    .contains(&(self.context, u16::MAX, lit_at.0, lit_at.1));
+            let subscripted =
+                matches!(follow, Some(Ls::Index | Ls::Slice | Ls::Unknown)) || field_recorded;
+            let field_unknown = is_field && follow.is_none() && !field_recorded;
+            let declared_dest = (is_field || orig_lhs.is_some_and(|n| self.author_declared(n)))
+                && !var_tp.is_unknown();
+            let subscript_seed = match follow {
+                Some(Ls::Slice) if subscripted && declared_dest => Some(var_tp.clone()),
+                Some(Ls::Index) if subscripted && declared_dest => Some(Type::Vector(
+                    Box::new(var_tp.clone()),
+                    crate::data::Deps::none(),
+                )),
+                _ => None,
+            };
+            let known_receiver = known_receiver || subscripted;
             if known_receiver {
                 *val = Value::Null;
             }
@@ -991,7 +1123,10 @@ impl Parser {
             let seeded;
             let unseeded = Type::Unknown(0);
             let link_tp;
-            let elem_tp = if known_receiver {
+            let elem_tp = if let Some(seed) = &subscript_seed {
+                seeded = seed.without_deps();
+                &seeded
+            } else if known_receiver {
                 &unseeded
             } else if link_keyed {
                 link_tp = var_tp.peel_link().without_deps();
@@ -1002,28 +1137,47 @@ impl Parser {
             } else {
                 var_tp
             };
-            let t = self.parse_vector(elem_tp, val, parent_tp);
+            // A subscripted literal's temp belongs to no field owner: the destination's
+            // parent is the FIELD's holder, and a temp minted against it is a borrow of that
+            // holder that no scope ever declares.
+            let unowned = Type::Unknown(0);
+            let lit_parent = if subscripted { &unowned } else { &*parent_tp };
+            let t = self.parse_vector(elem_tp, val, lit_parent);
+            // The field half of the post-parse recognition: record it for pass 2, and mint
+            // the accumulator pass 2 will build in, so both passes number their temps alike.
+            if field_unknown && self.first_pass && self.lexer.peek_token("[") {
+                self.literal_chain_lhs
+                    .insert((self.context, u16::MAX, lit_at.0, lit_at.1));
+                let built = t.unrewritten();
+                let acc_tp = if let Type::Vector(e, _) = built.base() {
+                    Type::Vector(e.clone(), crate::data::Deps::none())
+                } else {
+                    Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none())
+                };
+                self.create_unique("vec", &acc_tp);
+            }
             // The literal is now fully parsed (a safe point to peek — no lexer
             // backtrack).  If it reused the LHS var AND a `.method(..)` chain follows
             // (`[1,2,3].map(..)`), rename the accumulator to a fresh synthetic local so
             // the LHS is free to receive the chain's result, and wrap the (now void,
             // in-place) build so it YIELDS that local — making a literal receiver behave
-            // exactly like a variable one.  Scoped to a `.` method chain: `.map` /
-            // `.filter` / `.reduce` route the receiver through their `#builtin` method,
-            // and the map/filter cases keep the vector's element type so the LHS's
-            // parsed type stays valid across passes.  (A trailing `[i]` index yields a
-            // SCALAR, so the LHS's parsed vector type would clash with the index result
-            // on the second pass — that rarer form keeps its existing clean "cannot
-            // change type" diagnostic.)  Runs in both passes so `create_unique`
+            // exactly like a variable one.  A `.` method chain and a `[` SUBSCRIPT both
+            // make the literal a receiver: built into the LHS, `s = [1][1..1]` sliced the
+            // LHS into itself (an internal compiler error, or `[]` for a longer literal)
+            // and `a = [10, 20][1]` was refused as a retype (loft#1923).  The pass-2 clash
+            // of an index's SCALAR with the literal's vector type is what `known_receiver`
+            // settles: pass 2 builds the receiver in an accumulator of its own and never
+            // types the LHS as the literal.  Runs in both passes so `create_unique`
             // numbering stays aligned.
             if let Some(lhs) = orig_lhs
-                && self.lexer.peek_token(".")
+                && (self.lexer.peek_token(".") || self.lexer.peek_token("["))
             {
                 // loft#945 — record it, so the NEXT pass knows this literal is a receiver
                 // before it starts building (see `known_receiver` above).  By the end of
                 // this statement the LHS holds the CHAIN's type, which is not a type the
                 // literal can be built against.
-                self.literal_chain_lhs.insert((self.context, lhs));
+                self.literal_chain_lhs
+                    .insert((self.context, lhs, lit_at.0, lit_at.1));
                 // Inherit the LHS's parsed vector type — it carries the `["__vdb_N"]`
                 // borrow dep on the literal's backing store, so the chain BORROWS the
                 // receiver and the backing is freed once at scope exit (matching a
@@ -1038,8 +1192,13 @@ impl Parser {
                 crate::parser::collections::rename_var(val, lhs, recv);
                 // The literal poisoned the LHS's inferred type (it typed it as the
                 // vector); clear it so the outer assignment re-infers from the CHAIN
-                // result.
-                self.vars.set_type(lhs, Type::Unknown(0));
+                // result.  A DECLARED LHS keeps the type its author wrote — `@FR-N-Decl` —
+                // and the assignment converts into it: cleared, it was re-inferred from
+                // nothing, and `b: vector<integer> = []; b = [1, 2][0..1]` reached the
+                // scopes pass with the slice unmaterialised (loft#1923).
+                if !self.author_declared(lhs) {
+                    self.vars.set_type(lhs, Type::Unknown(0));
+                }
                 let build = std::mem::replace(val, Value::Null);
                 *val = v_block(vec![build, Value::Var(recv)], recv_tp.clone(), "Vector");
                 recv_tp
@@ -1784,7 +1943,10 @@ or build a local and use that."
         self.lambda_counter += 1;
         let stored_name = format!("n_{lambda_name}");
 
-        // Capture hint types before entering the new context.
+        // Capture hint types before entering the new context.  The overload set this lambda is
+        // a direct argument of (`Self::unhinted_set`) is taken here, so a lambda in its body
+        // does not read it as its own call's.
+        let unhinted_set = self.unhinted_set.take();
         let hint_params_ret = self.lambda_hint();
         let (hint_params, hint_consts): (Vec<Type>, crate::data::ConstParams) =
             if let Type::Function(pts, _, _, consts) = &hint_params_ret {
@@ -1849,7 +2011,35 @@ or build a local and use that."
         // Error on second pass for any parameter whose type is still Unknown.
         if !self.first_pass {
             for a in &arguments {
-                if a.typedef.is_unknown() {
+                if a.typedef.is_unknown()
+                    && let Some(set) = unhinted_set.as_ref()
+                {
+                    // `@FR-Disp-Hint` — the call is to a name with several definitions, so none
+                    // of them types the lambda; the refusal names them, as a free set's does.
+                    self.unhinted_set_refused = true;
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        code = "untyped-lambda-at-overload-set",
+                        "cannot infer the type of lambda parameter '{}': {set}, so no single \
+                         definition types the lambda — write its types, `fn({}: <type>) -> <ret> {{ … }}`",
+                        a.name,
+                        a.name
+                    );
+                    self.lexer.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: format!(
+                            "spell the lambda `fn({}: <type>) -> <ret> {{ … }}` with the types the intended definition takes",
+                            a.name
+                        ),
+                        condition: Some(
+                            "the type picks the definition the call is meant to reach".to_string(),
+                        ),
+                        edit: None,
+                        concept: "multiple dispatch",
+                        concept_ref: "@F122",
+                    });
+                } else if a.typedef.is_unknown() {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -7892,10 +8082,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             Type::Function(..) => self.database.int(0, false),
             Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
             Type::Hash(tp, key, _) => {
-                let mut name = "hash<".to_string() + self.data.def(*tp).name() + "[";
-                self.database
-                    .field_name(self.data.def(*tp).known_type(), key, &mut name);
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -7910,10 +8097,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // @PLN48 — mirror Hash: resolve the spatial<T[…]> db type id, and
                 // register it on demand for a local-only var (whose type would else
                 // be absent from the schema, so iteration/`get_type` sees u16::MAX).
-                let mut name = "spatial<".to_string() + self.data.def(*tp).name() + "[";
-                self.database
-                    .field_name(self.data.def(*tp).known_type(), key, &mut name);
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -7927,8 +8111,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // The Radix shape, for a trie: resolve the registered id, and register
                 // on demand for a local-only var whose type is otherwise absent from
                 // the schema.  Same spelling `Stores::trie` uses.
-                let name = format!("trie<{}[{key}]>", self.data.def(*tp).name());
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -7939,15 +8122,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.database.trie(c_tp, key)
             }
             Type::Sorted(tp, key, _) => {
-                let mut name = "sorted<".to_string() + self.data.def(*tp).name() + "[";
-                field_id(key, &mut name);
-                let r = self.database.name(&name);
-                if r != u16::MAX {
-                    return r;
-                }
-                let mut ordered = "ordered<".to_string() + self.data.def(*tp).name() + "[";
-                field_id(key, &mut ordered);
-                let r = self.database.name(&ordered);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }
@@ -7963,9 +8138,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.database.sorted(c_tp, key)
             }
             Type::Index(tp, key, _) => {
-                let mut name = "index<".to_string() + self.data.def(*tp).name() + "[";
-                field_id(key, &mut name);
-                let r = self.database.name(&name);
+                let r = self.database.keyed_type(&self.data, in_t);
                 if r != u16::MAX {
                     return r;
                 }

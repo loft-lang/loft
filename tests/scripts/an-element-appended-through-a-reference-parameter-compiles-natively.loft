@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1942 — a struct literal appended to a vector reached through a `&` parameter: the element
+// is minted at the declaration, and the container must be read as any read of it is (a `&`
+// parameter is dereferenced).  Both mint shapes: a whole `&vector<T>` and a vector FIELD of a
+// `&` struct.  A local vector, a plain vector parameter and a push inside a loop (the held
+// header) take other paths and are the controls.  `add_field`'s `&` is the axis under test, so
+// the `slow-reference-parameter` advice it draws is expected.
+// @falsified-at: f188f58be — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/an-element-appended-through-a-reference-parameter-compiles-natively.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+struct Th { tx: integer, ty: integer, hs: vector<float> }
+struct Bag { items: vector<Th>, n: integer }
+
+fn add_whole(ts: &vector<Th>, k: integer) {
+  hh: vector<float> = [];
+  hh += [1.5];
+  ts += [Th { tx: k, ty: k * 2, hs: hh }];
+}
+
+fn add_field(s: &Bag, k: integer) {
+  hh: vector<float> = [];
+  hh += [2.5];
+  s.items += [Th { tx: k, ty: k * 3, hs: hh }];
+}
+
+fn add_plain(ts: vector<Th>, k: integer) {
+  hh: vector<float> = [];
+  hh += [3.5];
+  ts += [Th { tx: k, ty: k * 4, hs: hh }];
+}
+
+fn fill(ts: &vector<Th>, n: integer) {
+  for i in 0..n {
+    hh: vector<float> = [];
+    hh += [4.5];
+    ts += [Th { tx: i, ty: i * 5, hs: hh }];
+  }
+}
+
+fn main() {
+  v: vector<Th> = [];
+  add_whole(v, 3);
+  add_whole(v, 5);
+  assert(len(v) == 2 && v[1].ty == 10 && v[0].hs[0] == 1.5, "whole: {len(v)} {v[1].ty} {v[0].hs[0]}");
+  b = Bag { n: 0 };
+  add_field(b, 3);
+  add_field(b, 7);
+  assert(len(b.items) == 2 && b.items[1].ty == 21 && b.items[0].hs[0] == 2.5,
+         "field: {len(b.items)} {b.items[1].ty} {b.items[0].hs[0]}");
+  p: vector<Th> = [];
+  add_plain(p, 2);
+  add_plain(p, 6);
+  assert(len(p) == 2 && p[1].ty == 24 && p[0].hs[0] == 3.5, "plain: {len(p)} {p[1].ty} {p[0].hs[0]}");
+  f: vector<Th> = [];
+  fill(f, 3);
+  fill(f, 2);
+  assert(len(f) == 5 && f[2].ty == 10 && f[4].tx == 1 && f[4].hs[0] == 4.5,
+         "loop: {len(f)} {f[2].ty} {f[4].tx} {f[4].hs[0]}");
+  println("ok");
+}

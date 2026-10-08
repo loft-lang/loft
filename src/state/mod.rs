@@ -3441,6 +3441,7 @@ impl State {
             stack_trace_lib_nr: self.stack_trace_lib_nr,
             data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
+            const_refs: Arc::new(self.const_refs.clone()),
             frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         };
@@ -7060,6 +7061,7 @@ impl State {
             data: data_ptr,
             stack_trace_lib_nr: stk_lib_nr,
             frame_headroom: Arc::clone(&self.frame_headroom),
+            const_refs: Arc::new(self.const_refs.clone()),
         }));
 
         self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();
@@ -8342,6 +8344,7 @@ impl State {
             stack_trace_lib_nr,
             data_ptr: self.data_ptr.clone(),
             fn_positions: Arc::new(self.fn_positions.clone()),
+            const_refs: Arc::new(self.const_refs.clone()),
             frame_headroom: Arc::clone(&self.frame_headroom),
             line_numbers: Arc::new(self.line_numbers.clone()),
         }
@@ -9188,6 +9191,7 @@ impl State {
             data: data_ptr,
             stack_trace_lib_nr: stk_lib_nr,
             frame_headroom: Arc::clone(&self.frame_headroom),
+            const_refs: Arc::new(self.const_refs.clone()),
         }));
         if self.fn_positions.is_empty() {
             self.fn_positions = data.definitions.iter().map(|d| d.code_position).collect();

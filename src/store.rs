@@ -2353,7 +2353,25 @@ impl Store {
         // it was and the report describes the growth that was stopped.
         crate::store_budget::grow(self.known_type, old_bytes, bytes, self.created_at);
         let l = Layout::from_size_align(old_bytes, 8).expect("Problem");
-        let grown = unsafe { A.realloc(self.ptr, l, bytes) };
+        // `LOFT_POISON=1` — the growth always MOVES the bytes and scribbles the block it
+        // leaves: an address taken into the store before the growth (a held element base, a
+        // record address) then reads the poison instead of the old bytes, which a `realloc`
+        // leaves readable and equal, so the stale read answered right and no value showed it.
+        // The poisoned block is KEPT, never handed back: freed, it came back as this store's
+        // next growth and was refilled with the same bytes at the same offsets.  A store
+        // grows by a factor, so what one store keeps this way stays below its final size.
+        let grown = if crate::keys::poison_enabled() {
+            let fresh = unsafe { A.alloc(Layout::from_size_align(bytes, 8).unwrap_or(l)) };
+            if !fresh.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(self.ptr, fresh, old_bytes.min(bytes));
+                    self.ptr.write_bytes(0xA5, old_bytes);
+                }
+            }
+            fresh
+        } else {
+            unsafe { A.realloc(self.ptr, l, bytes) }
+        };
         self.ptr = if grown.is_null() {
             // The old block is still valid after a failed realloc, but nothing here can
             // continue without the new size (`Vec` aborts the same way).

@@ -5894,6 +5894,37 @@ pub fn mint_loop<'a>(
     ))
 }
 
+/// Does the body copy a WHOLE RECORD that owns heap fields into one of the fresh elements?
+///
+/// Such a copy is the element's own bytes only while the record owns no heap: a `text` or a
+/// collection field is deep-copied into the VECTOR's store, which can grow and move under a push
+/// window's cached base (`push_window`).  A generic instance delivers that way, having no return
+/// buffer: its `v += [same(q)]` is `__lift = same(q); OpCopyRecord(__lift, elm)`, and the window
+/// wrote through a stale base — a segfault once the store grew (loft#1934).  An unknown copy
+/// type, or no schema to ask, answers yes: declining a window costs speed, admitting it wrongly
+/// costs memory safety.
+fn copies_heap_into_fresh(
+    body: &Block,
+    fresh: &HashSet<u16>,
+    data: &Data,
+    stores: Option<&Stores>,
+) -> bool {
+    let copy_d = data.def_nr("OpCopyRecord");
+    body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(n, Value::Call(d, args) if *d == copy_d
+            && args.len() == 3
+            && matches!(args[1].unspan(), Value::Var(e) if fresh.contains(e))
+            && match (args[2].unspan(), stores) {
+                (Value::Int(tp), Some(st)) => {
+                    st.owns_heap((*tp as u16) & crate::keys::COPY_TP_MASK)
+                }
+                _ => true,
+            })
+        })
+    })
+}
+
 /// `@FR-R-PushFill`'s record clause — may the record-append loop `lp`, which [`mint_loop`]
 /// answered `m` for, run its mints through a [`crate::vector::PushWindow`]?  The scalar
 /// window's condition, with a mint group's own ops as "the pushes": the fresh element's
@@ -6007,6 +6038,9 @@ pub fn mint_window_ok(
             }
             _ => parts.push(n),
         }
+    }
+    if copies_heap_into_fresh(body, &fresh, data, stores) {
+        return Err("a whole-record copy into the element owns heap fields".to_string());
     }
     let mut parts: Vec<&Value> = Vec::new();
     for s in &body.operators {
@@ -15964,9 +15998,8 @@ mod store_free_sentinel {
         "OpVecGetIntNullable",
         "OpVecSetInt",
         "OpVecEndJump",
-        // Reach a store, a fault slot or another frame through the `const` channel.
+        // Reach a store or another frame through the `const` channel.
         "OpDatabase",
-        "OpTagFault",
         "OpDropFnRef",
         "OpFnRefDetachShared",
         "OpParallelBegin",

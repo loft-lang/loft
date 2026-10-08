@@ -57,11 +57,11 @@ struct NH1269 { a: integer, h: hash<R1269[k]>? }
 struct NS1269 { a: integer, s: sorted<R1269[k]>? }
 struct PV1269 { a: integer, v: vector<R1269> }
 
-// A null VECTOR is OMITTED from the document, the way every other nullable field's null is,
+// A null VECTOR is written `null`, the way every other nullable field's null is (@C143),
 // and comes back null.
 fn a_null_vector_survives_a_json_round_trip() {
   nv = NV1269 { a: 1, v: null };
-  assert("{nv:j}" == `{{"a":1}}`, "a null vector is not omitted: {nv:j}");
+  assert("{nv:j}" == `{{"a":1,"v":null}}`, "a null vector is not written null: {nv:j}");
   assert(NV1269.parse("{nv:j}").v == null, "the null did not come back");
 }
 
@@ -72,11 +72,11 @@ fn a_null_vector_survives_a_json_round_trip() {
 // stopped before reaching the line that crashes.  A guard has to reach the cell it names.
 fn a_null_keyed_collection_serialises_instead_of_crashing() {
   nh = NH1269 { a: 1, h: null };
-  assert("{nh:j}" == `{{"a":1}}`, "a null hash is not omitted: {nh:j}");
+  assert("{nh:j}" == `{{"a":1,"h":null}}`, "a null hash is not written null: {nh:j}");
   assert(NH1269.parse("{nh:j}").h == null, "the hash null did not come back");
 
   ns = NS1269 { a: 1, s: null };
-  assert("{ns:j}" == `{{"a":1}}`, "a null sorted is not omitted: {ns:j}");
+  assert("{ns:j}" == `{{"a":1,"s":null}}`, "a null sorted is not written null: {ns:j}");
   assert(NS1269.parse("{ns:j}").s == null, "the sorted null did not come back");
 }
 
@@ -111,6 +111,9 @@ fn the_document_decides_which_of_the_three_states_arrives() {
   assert(absent.v == null, "an absent key is not null");
   explicit = NV1269.parse(`{{"a":1,"v":null}}`);
   assert(explicit.v == null, "an explicit null is not null");
+  // The explicit null's absent marker belongs at the field's own slot: it used to land on
+  // the record's FIRST field, so `a` read back as a different number (@C143).
+  assert(explicit.a == 1, "an explicit null collection overwrote a sibling: a={explicit.a}");
   empty = NV1269.parse(`{{"a":1,"v":[]}}`);
   assert(!(empty.v == null), "an empty array arrived as null");
   filled = NV1269.parse(`{{"a":1,"v":[{{"k":2,"v":"y"}}]}}`);

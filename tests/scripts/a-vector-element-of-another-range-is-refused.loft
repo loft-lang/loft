@@ -16,10 +16,10 @@ fn main() {
   vo: vector<Off> = [100, 200, 355];
   vu: vector<u8> = [0, 1, 2];
   to: vector<(Off, u8)> = [(150, 1)];
-  // @EXPECT_ERROR: expected vector<integer(0, 255)>, got vector<integer(100, 355)>
+  // @EXPECT_ERROR: expected vector<u8>, got vector<Off>
   println("{sum_u8(vo)}");
-  // @EXPECT_ERROR: expected vector<integer(100, 355)>, got vector<integer(0, 255)>
+  // @EXPECT_ERROR: expected vector<Off>, got vector<u8>
   println("{sum_off(vu)}");
-  // @EXPECT_ERROR: expected vector<(integer(0, 255), integer(0, 255))>, got vector<(integer(100, 355), integer(0, 255))>
+  // @EXPECT_ERROR: expected vector<(u8, u8)>, got vector<(Off, u8)>
   println("{pairs_u8(to)}");
 }

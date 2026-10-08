@@ -398,3 +398,129 @@ fn production_mode_logs_and_continues_on_both_backends() {
         );
     }
 }
+
+/// `exit(code)` is the program's own verdict (@PLN179 finding 009): it ends the program with
+/// `code` as the status, says nothing, and keeps what was printed — on BOTH backends, and
+/// from inside a method called in a loop, where the interpreter's halt is a dispatch-loop
+/// stop and the native's is a `process::exit` at the call site.  Three properties apart, as
+/// above: it STOPS (nothing after it runs), the status is the CODE (and one byte of it, as a
+/// shell sees `exit 300`), and it is SILENT (no diagnostic for a verdict that is not a fault).
+/// `exit(0)` is the fourth cell: a halt that is also a success.
+#[test]
+fn exit_ends_the_program_with_its_code_silently_on_both_backends() {
+    const SRC: &str = "struct Acc { n: integer }\n\
+                       fn step(self: Acc, i: integer) {\n  self.n += i;\n  \
+                       if self.n > 5 { print(\"stopping at {i}\"); exit(arguments()[0] as integer ?? 1); }\n}\n\
+                       fn main() {\n  a = Acc { n: 0 };\n  for i in 1..100 { a.step(i); }\n  \
+                       println(\"AFTER-EXIT\");\n}\n";
+    let run_with = |backend: &str, code: &str, tag: &str| {
+        let dir = std::env::temp_dir().join(format!("loft_exit_{}_{tag}", std::process::id()));
+        fa::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("p.loft");
+        fa::write(&path, SRC).expect("write");
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args([backend, path.to_str().unwrap(), code])
+            .env("LOFT_TIMEOUT", "120")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("spawn loft");
+        let _ = fa::remove_dir_all(&dir);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let mut backends = vec!["--interpret"];
+    if have_rustc() {
+        backends.push("--native");
+    } else {
+        println!("exit_ends...: --native leg skipped (no rustc)");
+    }
+    // (asked, the status a shell sees) — 300 is 44 after the one byte a status holds.
+    for (asked, status) in [("3", 3), ("0", 0), ("300", 44)] {
+        for backend in &backends {
+            let (code, stdout, stderr) =
+                run_with(backend, asked, &format!("{asked}{}", &backend[2..3]));
+            assert!(
+                !stdout.contains("AFTER-EXIT"),
+                "[{backend} exit({asked})] execution continued past exit().\nstdout: {stdout:?}"
+            );
+            assert_eq!(
+                stdout, "stopping at 3",
+                "[{backend} exit({asked})] what was printed before exit() must reach stdout, flushed, and nothing after it"
+            );
+            assert_eq!(
+                code, status,
+                "[{backend} exit({asked})] the process status is not the code asked for.\nstderr: {stderr}"
+            );
+            assert_eq!(
+                stderr, "",
+                "[{backend} exit({asked})] exit() is a verdict, not a fault: nothing goes to stderr"
+            );
+        }
+    }
+}
+
+/// @PLN179 finding 019 — `x ?? exit(5)` and `x ?? panic("…")` halt when the subject is null,
+/// on both backends, and the value is the subject's when it is not: a call that never
+/// returns is a `??` default, as `?? return` is.  The present arms print first, so a run
+/// that halts without them would be a different defect.
+#[test]
+fn a_halting_call_is_a_coalesce_default() {
+    const SRC: &str = "fn version(s: text) -> integer? { if s == \"\" { return null; } 7 }\n\
+                       fn main() {\n  a = version(\"x\") ?? exit(3);\n  print(\"a={a} \");\n  \
+                       t: text? = null;\n  if len(arguments()) > 0 { t = \"set\"; }\n  \
+                       u = t ?? panic(\"no t\");\n  print(\"u={u} \");\n  \
+                       b = version(\"\") ?? exit(5);\n  println(\"AFTER {b}\");\n}\n";
+    let run_with = |backend: &str, arg: &[&str], tag: &str| {
+        let dir = std::env::temp_dir().join(format!("loft_ncc_{}_{tag}", std::process::id()));
+        fa::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("p.loft");
+        fa::write(&path, SRC).expect("write");
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args([backend, path.to_str().unwrap()])
+            .args(arg)
+            .env("LOFT_TIMEOUT", "120")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("spawn loft");
+        let _ = fa::remove_dir_all(&dir);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let mut backends = vec!["--interpret"];
+    if have_rustc() {
+        backends.push("--native");
+    }
+    for backend in &backends {
+        // Present, present, absent: the third `??` exits with 5 after the two prints.
+        let (code, stdout, stderr) = run_with(backend, &["x"], &backend[2..3]);
+        assert_eq!(
+            (code, stdout.as_str()),
+            (5, "a=7 u=set "),
+            "[{backend}] `?? exit(5)` on a null subject must halt with 5 after the present arms.\nstderr: {stderr}"
+        );
+        assert!(
+            !stdout.contains("AFTER"),
+            "[{backend}] execution continued past `?? exit`"
+        );
+        // Present, absent: `?? panic` halts with the panic's own report and status 1.
+        let (code, stdout, stderr) = run_with(backend, &[], &format!("p{}", &backend[2..3]));
+        assert_eq!(
+            code, 1,
+            "[{backend}] `?? panic` must halt with 1.\nstderr: {stderr}"
+        );
+        assert_eq!(
+            stdout, "a=7 ",
+            "[{backend}] the present arm before the panic prints, nothing after"
+        );
+        assert!(
+            stderr.contains("no t"),
+            "[{backend}] the panic's message reaches stderr: {stderr}"
+        );
+    }
+}

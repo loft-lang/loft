@@ -295,6 +295,12 @@ Functions for interacting with the host operating system.
 | `user_directory(v: &text = "") -> text` | Returns the current user's home directory, optionally with `v` appended. |
 | `program_directory(v: &text = "") -> text` | Returns the directory containing the running executable, optionally with `v` appended. |
 
+### Ending the program
+
+| Function | Description |
+|----------|-------------|
+| `exit(code: integer)` | Ends the program at once with `code` as its exit status, as a shell's `exit` does: what was printed is flushed, nothing more is printed, and no diagnostic names the line — on both backends.  A script's verdict is its own (`2` for a usage error, `1` for a failed gate), where `assert` and `panic` answer loft's: status 1 and a message on stderr.  The status is one byte, so `exit(300)` is seen as 44, as `exit 300` is in a shell.  Under `loft test` it ends the TEST, as a failure that names the code (`exit(2)`), and the run goes on to the next test.  In a sandboxed script it is refused at admission with `assert` and `panic`: ending the host's program is not the script's to do. |
+
 ### Memory diagnostics
 
 | Function | Description |

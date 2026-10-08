@@ -1029,7 +1029,47 @@ impl Output<'_> {
             Value::Set(var, to) => self.output_set(w, *var, to)?,
             Value::If(test, true_v, false_v) => self.output_if(w, test, true_v, false_v)?,
             Value::Call(def_nr, vals) => {
-                self.output_call(w, *def_nr, vals)?;
+                // `@FR-R-Destination` — inside a destination twin, a write to a scalar field
+                // of the return buffer is the tuple element's: the field lies past the
+                // caller's element the buffer stands for.
+                let scalar = self.dest_twin.as_ref().and_then(|dt| {
+                    let [base, off, _] = &vals[..] else {
+                        return None;
+                    };
+                    if !matches!(base.unspan(), Value::Var(b) if *b == dt.rb) {
+                        return None;
+                    }
+                    let Value::Int(off) = off.unspan() else {
+                        return None;
+                    };
+                    let k = dt.scalars.iter().position(|sc| sc.off == i64::from(*off))?;
+                    (dt.scalars[k].setter == self.data.def(*def_nr).name())
+                        .then_some((k, dt.scalars[k].rust))
+                });
+                if let Some((k, rust)) = scalar {
+                    write!(w, "{{ __ds_{k} = (")?;
+                    self.output_code_inner(w, &vals[2])?;
+                    write!(w, ") as {rust}; }}")?;
+                } else {
+                    self.output_call(w, *def_nr, vals)?;
+                }
+            }
+            Value::Return(val)
+                if self
+                    .dest_twin
+                    .as_ref()
+                    .is_some_and(|dt| matches!(val.unspan(), Value::Var(b) if *b == dt.rb)) =>
+            {
+                let n = self.dest_twin.as_ref().map_or(0, |dt| dt.scalars.len());
+                let parts: Vec<String> = (0..n).map(|k| format!("__ds_{k}")).collect();
+                let tail = if n == 1 { "," } else { "" };
+                write!(w, "return ({}{tail})", parts.join(", "))?;
+            }
+            Value::Return(val) if self.vr_twin => {
+                // `@FR-R-ViewReturn`'s twin — every exit but a view answers its own store.
+                write!(w, "return (")?;
+                self.output_code_inner(w, val)?;
+                write!(w, ", true)")?;
             }
             Value::Return(val) => {
                 let returned = self.data.def(self.def_nr).returned();
@@ -2044,10 +2084,52 @@ impl Output<'_> {
             .get(&tp)
             .map(|t| t.fields.clone())
             .unwrap_or_default();
+        // `@FR-R-RecPtr`'s tuple clause, the read half: `src` evaluated once and its
+        // address taken once, every field of a kind the address serves one load through it
+        // (the null record's address is null, so each answers its getter's sentinel).
+        // Field by field, each getter resolved the store and bounded the read again — the
+        // seven reads of `map_get_hex`'s `return chunk.hexes[idx]?`.  Nothing between the
+        // address and its last use runs but loads.  A view whose block holds an address
+        // already reads through that one, and a value local or a sub-record of one is a
+        // tuple with no address: its getters name tuple elements.
+        let kinds: Vec<Option<(&str, &str)>> = fields
+            .iter()
+            .map(|(_, rt)| {
+                if super::hoist::is_view_part(rt) {
+                    None
+                } else {
+                    super::hoist::scalar_kind(super::hoist::value_getter(rt))
+                }
+            })
+            .collect();
+        let through = !self.record_ptr_disabled
+            && kinds.iter().any(Option::is_some)
+            && !matches!(src.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
+            && !self.in_value_local(src);
+        let src = if through {
+            write!(w, "{{ let __rt: DbRef = ")?;
+            self.output_code_inner(w, src)?;
+            write!(
+                w,
+                "; let __rp = vector::rec_ptr(&__rt, &stores.allocations); "
+            )?;
+            Value::RawExpr("__rt".to_string())
+        } else {
+            src.clone()
+        };
+        let src = &src;
+        let verify = self.hoist_verify;
         write!(w, "(")?;
         for (i, (off, rt)) in fields.iter().enumerate() {
             if i > 0 {
                 write!(w, ", ")?;
+            }
+            if through && let Some((ty, absent)) = kinds[i] {
+                write!(
+                    w,
+                    "unsafe {{ vector::rec_get::<{ty}>(__rp, &__rt, ({off}_i64) as u32, {absent}, &stores.allocations, {verify}) }}"
+                )?;
+                continue;
             }
             // @PLN164 C5 — a VIEW-LEAF field of a viewed record is its own field SLOT:
             // `OpGetField` answers exactly the reference the leaf delivers, so the view's
@@ -2069,7 +2151,11 @@ impl Output<'_> {
         if fields.len() == 1 {
             write!(w, ",")?;
         }
-        write!(w, ")")
+        write!(w, ")")?;
+        if through {
+            write!(w, " }}")?;
+        }
+        Ok(())
     }
 
     pub(super) fn write_typed_null(w: &mut dyn Write, tp: &Type) -> std::io::Result<()> {
@@ -2969,6 +3055,194 @@ impl Output<'_> {
         Ok(())
     }
 
+    /// `@FR-R-InPlaceLiteral`'s keyed clause: the literal's values staged in program order,
+    /// the record under the key removed and a fresh one claimed, the values written into it,
+    /// then its key written and the record linked.
+    fn output_keyed_place(
+        &mut self,
+        w: &mut dyn Write,
+        ks: &super::keyed_place::Site<'_>,
+    ) -> std::io::Result<()> {
+        self.dest_counter += 1;
+        let site = self.dest_counter;
+        self.indent(w)?;
+        writeln!(w, "{{ //@FR-R-InPlaceLiteral keyed clause")?;
+        let mut writes: Vec<Value> = Vec::new();
+        let mut nth = 0usize;
+        for op in &ks.body {
+            let Value::Call(d, args) = op.unspan() else {
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
+                continue;
+            };
+            if !args
+                .first()
+                .is_some_and(|a| matches!(a.unspan(), Value::Var(x) if *x == ks.buf))
+            {
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
+                continue;
+            }
+            let mut staged: Vec<Value> = Vec::with_capacity(args.len());
+            for (i, a) in args.iter().enumerate() {
+                if i == 0 {
+                    staged.push(Value::RawExpr(format!("__kp{site}")));
+                } else if super::keyed_place::constant(a) {
+                    staged.push(a.clone());
+                } else {
+                    self.indent(w)?;
+                    write!(w, "let __kv{site}_{nth} = ")?;
+                    self.output_code_inner(w, a)?;
+                    writeln!(w, ";")?;
+                    staged.push(Value::RawExpr(format!("__kv{site}_{nth}")));
+                    nth += 1;
+                }
+            }
+            writes.push(Value::Call(*d, staged));
+        }
+        let key_types: Vec<i8> = self
+            .stores
+            .types
+            .get(ks.tp as usize)
+            .map(|t| t.keys.iter().map(|k| k.type_nr).collect())
+            .unwrap_or_default();
+        let mut keys = String::from("&[");
+        for (i, key) in ks.keys.iter().enumerate() {
+            if i > 0 {
+                keys.push_str(", ");
+            }
+            let mut buf: Vec<u8> = Vec::new();
+            self.emit_content(&mut buf, key, key_types.get(i).copied().unwrap_or(1))?;
+            keys.push_str(&String::from_utf8_lossy(&buf));
+        }
+        keys.push(']');
+        let coll = self.expr_string(ks.coll)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let __kp{site} = stores.keyed_place_begin(&({coll}), {}_u16, {keys});",
+            ks.tp
+        )?;
+        for wr in &writes {
+            self.indent(w)?;
+            self.output_code_inner(w, wr)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        writeln!(
+            w,
+            "stores.keyed_place_finish(&({coll}), &__kp{site}, {}_u16, {keys});",
+            ks.tp
+        )?;
+        self.indent(w)?;
+        writeln!(w, "}}")?;
+        crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
+        Ok(())
+    }
+
+    /// `@FR-R-Destination`'s caller half: the element's mint, hoisted above the chain, then
+    /// each call into its destination and its `ok` arm with the moves gone — the element
+    /// finished only where the plain form moved every result, and each destination filled so
+    /// far released on a failing path.
+    fn output_destination_site(
+        &mut self,
+        w: &mut dyn Write,
+        site: &super::destination::Site<'_>,
+    ) -> std::io::Result<()> {
+        for m in &site.mint {
+            self.indent(w)?;
+            self.output_code_inner(w, m)?;
+            writeln!(w, ";")?;
+        }
+        let mut names: Vec<usize> = Vec::new();
+        let mut filled: Vec<(Value, u16)> = Vec::new();
+        self.output_destination_level(w, &site.top, &mut names, &mut filled)
+    }
+
+    /// Resolve the chain's `__ds#m#.` placeholders to the tuples already named.
+    fn destination_names(v: &Value, names: &[usize]) -> Value {
+        let mut v = v.clone();
+        v.map_nodes(&mut |n| {
+            if let Value::RawExpr(e) = n
+                && e.contains("__ds#")
+            {
+                for (m, k) in names.iter().enumerate() {
+                    *e = e.replace(&format!("__ds#{m}#."), &format!("__ds{k}."));
+                }
+            }
+        });
+        v
+    }
+
+    fn output_destination_level(
+        &mut self,
+        w: &mut dyn Write,
+        level: &super::destination::Level<'_>,
+        names: &mut Vec<usize>,
+        filled: &mut Vec<(Value, u16)>,
+    ) -> std::io::Result<()> {
+        self.dest_counter += 1;
+        let n = self.dest_counter;
+        let mut args: Vec<Value> = level
+            .call_args
+            .iter()
+            .map(|a| Self::destination_names(a, names))
+            .collect();
+        args[level.at] = level.dest.clone();
+        let call = Value::Call(level.callee, args);
+        if let Value::Call(_, a) = &call {
+            self.dest_site_next = Some((level.callee, a.as_ptr() as usize, level.shape.vo));
+        }
+        self.indent(w)?;
+        write!(w, "let __ds{n} = ")?;
+        self.output_code_inner(w, &call)?;
+        writeln!(w, "; //@FR-R-Destination")?;
+        assert!(
+            self.dest_site_next.take().is_none(),
+            "@FR-R-Destination: the rewritten call of {} was emitted without its twin's name",
+            self.data.def(level.callee).name()
+        );
+        names.push(n);
+        filled.push((level.dest.clone(), level.shape.vt));
+        self.indent(w)?;
+        writeln!(w, "if __ds{n}.{} == 1 {{", level.ok)?;
+        for op in &level.pre {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = Self::destination_names(op, names);
+            self.indent(w)?;
+            self.output_code_inner(w, &op)?;
+            writeln!(w, ";")?;
+        }
+        if let Some(inner) = &level.inner {
+            self.output_destination_level(w, inner, names, filled)?;
+        }
+        for op in &level.post {
+            if matches!(op, Value::Line(_)) {
+                continue;
+            }
+            let op = Self::destination_names(op, names);
+            self.indent(w)?;
+            self.output_code_inner(w, &op)?;
+            writeln!(w, ";")?;
+        }
+        self.indent(w)?;
+        write!(w, "}} else {{ ")?;
+        for (d, vt) in filled.iter().rev() {
+            write!(w, "stores.remove_claims(&(")?;
+            self.output_code_inner(w, d)?;
+            write!(w, "), ({vt}_u16)); ")?;
+        }
+        self.output_code_inner(w, level.else_v)?;
+        writeln!(w, " }};")?;
+        filled.pop();
+        names.pop();
+        Ok(())
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
@@ -3664,6 +3938,108 @@ impl Output<'_> {
                         continue;
                     }
                     _ => {}
+                }
+            }
+            // `@FR-R-ViewReturn` — the buffer prep of a call whose callee answers a view: the
+            // prep is dropped, the call takes the twin, and the result is freed only when the
+            // twin answers it owned.
+            if super::view_return::enabled()
+                && !self.in_coroutine_body
+                && let Some(vs) = {
+                    let data = self.data;
+                    let memo = &mut self.vr_memo;
+                    super::view_return::site(operators, vnr, data, self.def_nr, &mut |f| {
+                        *memo
+                            .entry(f)
+                            .or_insert_with(|| super::view_return::callee(data, f))
+                    })
+                }
+            {
+                self.dest_counter += 1;
+                let flag = format!("__vro_{}", self.dest_counter);
+                self.indent(w)?;
+                writeln!(w, "let mut {flag}: bool = true; //@FR-R-ViewReturn")?;
+                self.vr_owned.insert(vs.subject, flag.clone());
+                self.vr_flag_pending = Some(flag);
+                self.vr_site_next = Some((vs.callee, vs.args_at));
+                let _ = vs.buf;
+                continue;
+            }
+            if let Value::Call(fd, fa) = v.unspan()
+                && self.data.def(*fd).name() == "OpFreeRefIfDistinct"
+                && let Some(Value::Var(sv)) = fa.first().map(Value::unspan)
+                && let Some(flag) = self.vr_owned.get(sv).cloned()
+            {
+                self.indent(w)?;
+                write!(w, "if {flag} {{ ")?;
+                self.output_code_inner(w, v)?;
+                writeln!(w, "; }}")?;
+                continue;
+            }
+            // `@FR-R-ViewReturn`'s twin — a materialised view exit answers the view.
+            if self.vr_twin
+                && let Some(rb) =
+                    super::hoist::ret_buffer_attr(self.data.def(self.def_nr)).map(|ai| {
+                        let def = self.data.def(self.def_nr);
+                        def.variables().var(&def.attributes()[ai].name)
+                    })
+                && let Some(src) = super::view_return::view_exit(self.data, v, rb)
+                && let Value::Block(bl) = v.unspan()
+            {
+                let ops: Vec<&Value> = bl
+                    .operators
+                    .iter()
+                    .filter(|o| !matches!(o, Value::Line(_)))
+                    .collect();
+                for f in &ops[2..ops.len() - 1] {
+                    self.indent(w)?;
+                    self.output_code_inner(w, f)?;
+                    writeln!(w, ";")?;
+                }
+                self.indent(w)?;
+                write!(w, "return (")?;
+                self.output_code_inner(w, src)?;
+                writeln!(w, ", false);")?;
+                continue;
+            }
+            // `@FR-R-InPlaceLiteral`'s keyed clause — `h[k] = R { … }` written into the record
+            // the collection claims for it, not built in a store of its own and copied.
+            if super::keyed_place::enabled()
+                && !self.in_coroutine_body
+                && let Some(ks) = super::keyed_place::site(v, self.data, self.def_nr)
+                // A partial subscript takes the key from the literal's own fields
+                // (`Stores::set_keyed`'s `full`); only a full one names the record's key.
+                && self
+                    .stores
+                    .types
+                    .get(ks.tp as usize)
+                    .is_some_and(|t| t.keys.len() == ks.keys.len())
+            {
+                self.output_keyed_place(w, &ks)?;
+                continue;
+            }
+            // `@FR-R-Destination` — a call whose result's heap field is moved whole into a
+            // fresh element: the element is minted first and the callee's twin builds there.
+            if super::destination::enabled() && !self.in_coroutine_body {
+                let mut memo = std::mem::take(&mut self.dest_memo);
+                let site = super::destination::site(
+                    operators,
+                    vnr,
+                    self.data,
+                    self.stores,
+                    self.def_nr,
+                    &mut memo,
+                );
+                self.dest_memo = memo;
+                if let Some(site) = site
+                    && site
+                        .callees()
+                        .iter()
+                        .all(|c| !self.value_records.fns.contains_key(c))
+                {
+                    self.output_destination_site(w, &site)?;
+                    repeat_skip = Some(site.last);
+                    continue;
                 }
             }
             // `@FR-R-AppendTwin` — `X += f(args)` where f has an append twin: f's twin builds
@@ -4401,7 +4777,6 @@ impl Output<'_> {
         }
         let pair = &self.elem_first.pairs[pi];
         let dvars = self.data.def(self.def_nr).variables();
-        let outn = sanitize(dvars.name(pair.out));
         let elmn = sanitize(dvars.name(pair.elm));
         let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
         self.indent(w)?;
@@ -4432,15 +4807,19 @@ impl Output<'_> {
                 "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &({operand}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
             );
         }
+        // The container is rendered as any read of it is, so a `&` parameter is dereferenced.
+        let mut out: Vec<u8> = Vec::new();
+        self.output_code_inner(&mut out, &Value::Var(pair.out))?;
+        let out = String::from_utf8_lossy(&out).into_owned();
         if fld == 65535 {
             writeln!(
                 w,
-                "{{vector::pre_alloc_vector(&(var_{outn}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
+                "{{vector::pre_alloc_vector(&({out}), (1_i64) as u32, ({size}_i64) as u32, &mut stores.allocations);}}; var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, 65535_i32); //@PLN157 § V-z element minted at the declaration"
             )
         } else {
             writeln!(
                 w,
-                "var_{elmn} = OpNewRecord(cell, var_{outn}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
+                "var_{elmn} = OpNewRecord(cell, {out}, {tp}_i32, {fld}_i32); //@PLN164 E-2 element minted at the declaration"
             )
         }
     }

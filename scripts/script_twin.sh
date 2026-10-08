@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # @PLN179 strand 2 — the twin: does a port leave the same world as the script it replaces?
 #
-#   scripts/script_twin.sh [--files DIR [--by-content] | --tracked DIR] [--stdin FILE] [--runs N] ORIG PORT [-- ARG...]
+#   scripts/script_twin.sh [--files DIR [--by-content] | --tracked DIR] [--stdin FILE] [--replay DIR] [--runs N] ORIG PORT [-- ARG...]
 #   scripts/script_twin.sh --self-test
 #
 # Runs ORIG and PORT from the repository root with the same ARGs and compares four
@@ -12,7 +12,10 @@
 # GENERATOR whose output is committed: each side regenerates into DIR and the channel is
 # what `git` then sees there — a clean tree on both sides means both wrote the committed
 # bytes, and a diff names the side that did not.  --stdin FILE feeds both sides the same
-# input, for a filter script.  --runs N times each
+# input, for a filter script.  --replay DIR answers every tool both sides run (`git`, `gh`,
+# …) from the recording in DIR — the port through `lib/process` (`LOFT_RUN_REPLAY`), the
+# original through the shims in tests/comparisons/scripts/bin put first on PATH — so a twin
+# never needs the live tool or the network.  --runs N times each
 # side N times and reports the best wall clock, so the performance verdict is beside the
 # behaviour one.  Exit 0 when every channel agrees, 1 on a divergence, 2 on usage.
 #
@@ -22,13 +25,14 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-files_dir=""; by_content=0; runs=1; tracked_dir=""; stdin_file=/dev/null
+files_dir=""; by_content=0; runs=1; tracked_dir=""; stdin_file=/dev/null; replay_dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --files) files_dir="$2"; shift 2 ;;
     --by-content) by_content=1; shift ;;
     --tracked) tracked_dir="$2"; shift 2 ;;
     --stdin) stdin_file="$2"; shift 2 ;;
+    --replay) replay_dir="$2"; shift 2 ;;
     --runs) runs="$2"; shift 2 ;;
     --self-test) exec bash "$0" --run-self-test ;;
     --run-self-test) self_test=1; shift ;;
@@ -61,7 +65,7 @@ orig="$1"; port="$2"; shift 2
 [ "${1:-}" = "--" ] && shift
 [ -x "$orig" ] || { echo "script_twin: $orig is not executable" >&2; exit 2; }
 [ -x "$port" ] || { echo "script_twin: $port is not executable" >&2; exit 2; }
-if [ -n "$files_dir" ] && [ "$(git ls-files "$files_dir" 2>/dev/null | wc -l)" != 0 ]; then
+if [ -n "$files_dir" ] && [ "$(git ls-files "$files_dir" 2>/dev/null | wc -l | tr -d ' ')" != 0 ]; then
   echo "script_twin: $files_dir holds tracked files; a twin only empties untracked output" >&2; exit 2
 fi
 
@@ -71,6 +75,11 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+if [ -n "$replay_dir" ]; then
+  [ -d "$replay_dir" ] || { echo "script_twin: --replay $replay_dir is not a directory" >&2; exit 2; }
+  export LOFT_RUN_REPLAY="$(cd "$replay_dir" && pwd)"
+  export PATH="$PWD/tests/comparisons/scripts/bin:$PATH"
+fi
 
 # run SIDE (orig|port) SCRIPT: captures the four channels and the best wall clock.
 run_side() {
@@ -80,7 +89,9 @@ run_side() {
     [ -n "$files_dir" ] && rm -rf "$files_dir"
     local s e ms
     s=$(date +%s%N)
-    "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
+    # The CI ledgers are the gate's instrumentation, not the script's stderr: unset for both
+    # sides, or a `[loft-timing]` line is a red err channel on every port.
+    env -u LOFT_TIMING_LEDGER -u LOFT_SKIP_LEDGER "$script" "$@" < "$stdin_file" > "$work/$side.out" 2> "$work/$side.err"
     echo $? > "$work/$side.exit"
     e=$(date +%s%N)
     ms=$(( (e - s) / 1000000 ))

@@ -9,7 +9,7 @@
 // Kept because the answer can regress: a change to symbol resolution would
 // otherwise surface as a lazy fetch that mysteriously finds nothing.
 
-// @PLN184 approved exemption (owner, 2026-10-07): needs the host's sqlite library name from platform (winsqlite3.dll on Windows); future work outside @PLN184
+// approved exemption: needs the host's sqlite library name from platform (winsqlite3.dll on Windows); future work outside @PLN184
 #![cfg(all(feature = "native-extensions", unix))]
 
 mod common;
@@ -24,7 +24,7 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 /// versioned `.so.0` on Linux, the plain `.dylib` macOS ships in its shared
 /// cache.  One name for both would not fail; it would SKIP, which is the outcome
 /// a whole platform's coverage disappears into.
-// @PLN184 approved exemption (owner, 2026-10-07): needs the host's sqlite library name from platform (winsqlite3.dll on Windows); future work outside @PLN184
+// approved exemption: needs the host's sqlite library name from platform (winsqlite3.dll on Windows); future work outside @PLN184
 const SQLITE_LIB: &str = if cfg!(target_os = "macos") {
     "libsqlite3.dylib"
 } else {

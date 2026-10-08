@@ -29,15 +29,19 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
   (Disp-Key)        a definition is keyed by its parameter TYPES, never a parameter's name.  A name
                     with ONE definition keys as before (`n_<name>`, or `t_<τ>_<name>` for a method);
                     a name with several is an overload set: one dispatcher whose members are keyed
-                    by their full parameter spelling.  The key is as coarse as a type's key —
-                    `vector<integer>` and `vector<text>` spell alike, so two definitions differing
-                    only there are a redefinition.  One SOURCE is one set; a library's set reaches
+                    by their full parameter spelling.  The spelling is each type's full identity
+                    — a collection's element, an integer's width and a `τ?`'s nullability
+                    included — so `vector<integer>` and `vector<text>`, or `integer` and `u8`,
+                    key two members; two definitions differing only in a parameter's name or a
+                    dependency list are a redefinition.  One SOURCE is one set; a library's set reaches
                     every import spelling of its consumers whole, and a consumer's definition of
                     ANOTHER spelling joins it, while one the set already carries is a
                     redefinition.
 
   (Disp-Applicable) a definition takes a call when every argument may satisfy its parameter, as
-                    the call's own argument check (`can_convert`) decides — after (F-Recv)'s
+                    the call's own argument check decides for a lone definition — the
+                    conversions that emit nothing and the stdlib's implicit ones (`integer` into
+                    `float`, `single`, `character` or `boolean`, …) alike — after (F-Recv)'s
                     nullability routing, so a nullable argument reaches the `τ?` member where
                     one is declared.  A trailing parameter with a default may be omitted.
 
@@ -70,7 +74,10 @@ pairs of `Disp-Specific` and `D-Rank`, `Disp-Exhaustive` and `Disp-Hint` are thi
   (Disp-Hint)       a name with several definitions offers no parse hint: its arguments are typed
                     from their own spelling, and one that cannot be (an untyped `|x|` lambda, a
                     literal needing a width) is refused at the call, naming the definitions and the
-                    typed spelling that cures it.  A name with one definition keeps its hint.
+                    typed spelling that cures it.  A name with one definition keeps its hint, and
+                    so does a `self` set whose members take different receivers: in either
+                    spelling the receiver is typed before the arguments (F-Recv), and it names
+                    one member.
 
   (Disp-Closed)     selection for a call whose argument types are statically concrete runs at
                     compile time and lowers to a direct call to the selected definition — no
@@ -121,7 +128,8 @@ value-shaped decision, and value clauses would make coverage undecidable.
 | rule | site | guard |
 |---|---|---|
 | Disp-Key | `Parser` key building (`f_` / `t_…#…` keys) | `tests/scripts/a-library-exports-an-overload-set.loft` |
-| Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `rank_no_worse`, `select_overload`) | `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, the refusals in `tests/parse_errors.rs` |
+| Disp-Applicable, Disp-Specific, D-Rank, Disp-Select, Disp-Ambiguous | `parser/dispatch.rs` (`dispatch_rank`, `converts_implicitly`, `rank_no_worse`, `select_overload`) | `tests/scripts/1811-a-method-overload-set-is-one-set-in-either-declaration-order.loft`, `1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`, `1925b-two-converting-members-are-ambiguous-in-either-order.loft`, the refusals in `tests/parse_errors.rs` |
+| Disp-Hint | `Data::receiver_shared_in_set` (the method and free hints), `Parser::unhinted_set_names` (the refusal) | `tests/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`, `1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft` |
 | Disp-Exhaustive | `Parser::refuse_uncovered_variants`, the call refusal | `tests/parse_errors.rs` |
 | Disp-Closed | selection at parse time | `tests/introspect_dispatch.rs` |
 | Disp-Dynamic, Disp-Return | `parser::dispatch::dynamic_dispatcher` | `tests/scripts/a-method-at-the-enum-is-the-wildcard-for-variants-without-their-own.loft`, `tests/scripts/a-nullable-enum-argument-is-dispatched-on-its-variant.loft` |
@@ -130,5 +138,5 @@ value-shaped decision, and value clauses would make coverage undecidable.
 
 ## Deviations
 
-**OPEN: 0.**  D-disp-1 (the `self` set over variants) and D-disp-2 (a nullable enum position)
-are closed; the record is in [dispatch-history.md](dispatch-history.md).
+**OPEN: 0.**  The register — D-disp-1 to D-disp-4, each with what resolved it — is
+[dispatch-history.md](dispatch-history.md).

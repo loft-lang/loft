@@ -59,7 +59,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install mold
-        run: sudo apt-get update && sudo apt-get install -y mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
 
       # Private `probe-*` namespace so this never disturbs the nightly gate's
       # cache, and a cold/warm A/B here stays reproducible in isolation.
@@ -131,7 +131,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install mold + binaryen
-        run: sudo apt-get update && sudo apt-get install -y mold binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
 
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh
@@ -142,7 +142,7 @@ jobs:
             echo "browser present"
           else
             wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-            sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+            timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y ./google-chrome-stable_current_amd64.deb
           fi
           "$(command -v google-chrome || command -v chromium || command -v chromium-browser)" --version
 

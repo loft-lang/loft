@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1928 — `(G-Regular)`: a template may name itself in its fields only at its own
+// variables, unchanged.  The declaration check read a template's OWN attributes, which for a
+// struct are its fields and for an enum are its variants — so a variant's field naming the
+// enum at a growing instance (`vector<Lst<vector<T>>>` inside `Lst<T>`), at swapped variables
+// (`Two<U, T>`), or at a concrete argument (`One<integer>`) was accepted where the struct twin
+// (`a-generic-struct-that-names-itself-irregularly-is-refused`) is refused.  Such an enum has no
+// finite set of instances, so it is refused at the declaration as the struct is.
+//
+// Axes this file MOVES:  the irregular argument (a growing instance · swapped variables · a
+//                        concrete type), the variant holding it (first · second), the former
+//                        around it (vector · nullable).
+// Axes it HOLDS FIXED:   enum templates only; unused declarations (the refusal is at the
+//                        declaration, never at a use).
+//
+// @falsified-by: tests/falsified/1928-a-generic-enum-that-names-itself-irregularly-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control accepts all three declarations and prints `ok`.
+//   ARMED: nothing.
+//   WITNESS: none recorded beyond the channel.
+//   HOLDS: the struct twin's refusal (its own guard) on both trees.
+// @EXPECT_ERROR: `Lst<vector<T>>` inside `Lst<T>` has no finite set of instances — an enum may name itself only at its own type variables
+// @EXPECT_ERROR: `Two<U, T>` inside `Two<T, U>` has no finite set of instances — an enum may name itself only at its own type variables
+// @EXPECT_ERROR: `One<integer>` inside `One<T>` has no finite set of instances — an enum may name itself only at its own type variables
+
+enum Lst<T> { Nil, Cons { h: T, t: vector<Lst<vector<T>>> } }
+enum Two<T, U> { Node { kids: vector<Two<U, T>> }, Leaf { a: T, b: U } }
+enum One<T> { Here { v: T }, There { o: One<integer>? } }
+
+fn main() {
+  println("ok");
+}

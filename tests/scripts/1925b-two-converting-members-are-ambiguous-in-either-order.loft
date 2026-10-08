@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1925 — `(Disp-Ambiguous)`: two applicable definitions with neither more specific are
+// refused, naming both — the compiler never picks by declaration order.  With an integer
+// converting into `float` (and `single`), each pair below is taken by both members, and each
+// member converts where the other does not (or converts where the other instantiates, `D-Rank`'s
+// own example).  Before the fix selection saw neither member as applicable; the METHOD spelling
+// then fell to the attribute slot's routine — the FIRST member declared — and answered with it,
+// so swapping two declarations swapped the answer (`IF 1 2` / `FI 1 2`), on both backends.
+//
+// Axes this file MOVES:  the declaration order (`m` / `n` are one set declared both ways), the
+//                        spelling (method · free), the shape of the tie (crossed positions ·
+//                        two converting members, to a number or to `boolean` · a
+//                        conversion against an instantiation).
+// Axes it HOLDS FIXED:   integer arguments; one receiver type.
+//
+// @falsified-by: tests/falsified/1925b-two-converting-members-are-ambiguous-in-either-order.patch — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — on the control the method calls compile and answer by declaration
+//   order (`IF 1 2` from `m`, `FI 1 2` from `n`), `f(i)` answers `generic`, and the free twins
+//   that ARE refused say *no definition takes*, never *ambiguous*.
+//   ARMED: nothing.
+//   WITNESS: the control's output for `p.m(i, j)` and `n(p, i, j)` differs with the order.
+//   HOLDS: the program is refused on this tree, on both backends.
+// @EXPECT_ERROR: `m(P, integer, integer)` is ambiguous — it is taken by m(P, integer, float) and m(P, float, integer)
+// @EXPECT_ERROR: `n(P, integer, integer)` is ambiguous — it is taken by n(P, float, integer) and n(P, integer, float)
+// @EXPECT_ERROR: `w(P, integer)` is ambiguous — it is taken by w(P, float) and w(P, single)
+// @EXPECT_ERROR: `f(integer)` is ambiguous — it is taken by f(float) and f<T>(T)
+// @EXPECT_ERROR: `bo(P, integer)` is ambiguous — it is taken by bo(P, boolean) and bo(P, float)
+
+struct P { x: integer }
+fn m(self: P, a: integer, b: float) -> text { "IF {a} {b}" }
+fn m(self: P, a: float, b: integer) -> text { "FI {a} {b}" }
+fn n(self: P, a: float, b: integer) -> text { "FI {a} {b}" }
+fn n(self: P, a: integer, b: float) -> text { "IF {a} {b}" }
+fn w(self: P, a: float) -> text { "F {a}" }
+fn w(self: P, a: single) -> text { "S {a}" }
+fn bo(self: P, a: boolean) -> text { "B {a}" }
+fn bo(self: P, a: float) -> text { "F {a}" }
+fn f(x: float) -> text { "concrete-float {x}" }
+fn f<T>(x: T) -> text { "generic" }
+
+fn main() {
+  p = P { x: 1 };
+  i: integer = 1;
+  j: integer = 2;
+  println(p.m(i, j));
+  println(n(p, i, j));
+  println(p.w(i));
+  println(f(i));
+  println(p.bo(i));
+}

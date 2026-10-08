@@ -226,13 +226,16 @@ else
 fi
 
 build() { # <dir> <target-dir> -> path to binary
+  # `--lib` as well: the native leg links `<target>/debug/libloft.rlib`, which `--bin` alone
+  # never refreshes — so a plant in the RUNTIME (src/database, src/store.rs) reached the
+  # interpreter leg and not the native one, and a native-only runtime defect scored INERT.
   mkdir -p "$(dirname "$2")"
   if have_flock; then
     ( flock 9 || exit 1
-      cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1
+      cd "$1" && cargo build --lib --bin loft --target-dir "$2" >/dev/null 2>&1
     ) 9>"$2.lock" || return 1
   else
-    ( cd "$1" && cargo build --bin loft --target-dir "$2" >/dev/null 2>&1 ) || return 1
+    ( cd "$1" && cargo build --lib --bin loft --target-dir "$2" >/dev/null 2>&1 ) || return 1
   fi
   echo "$2/debug/loft"
 }
@@ -402,10 +405,10 @@ if [ -n "$BULK" ]; then
     # sweeps at once would write it together.
     if have_flock; then
       ( flock 9 || exit 1
-        cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
+        cd "$wt" && cargo build --lib --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null
       ) 9>"$SHARED.lock"; bulk_built=$?
     else
-      ( cd "$wt" && cargo build --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); bulk_built=$?
+      ( cd "$wt" && cargo build --lib --bin loft --target-dir "$SHARED" >/dev/null 2>&1 </dev/null ); bulk_built=$?
     fi
     if [ "$bulk_built" -ne 0 ]; then
       awk -F'\t' -v r="$ref" '$2==r {printf "%s\t%s\tno-build\t\n", $1, r}' "$BULK"

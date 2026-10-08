@@ -1,11 +1,11 @@
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index d817aa749..d43ecafd3 100644
+index 9f0a3619b..cfc8ecd59 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -6284,7 +6284,7 @@ impl Parser {
+@@ -6386,7 +6386,7 @@
              // integer member is affected — a heap member never escalates either way.
              let (what, at, lenient, dense) = match self.store_ctx.last() {
-                 Some(c) => (c.what.clone(), c.at.clone(), c.never_error, c.dense),
+                 Some(c) => (c.what.clone(), c.at, c.never_error, c.dense),
 -                None => ("this tuple".to_string(), None, false, false),
 +                None => ("this tuple".to_string(), None, true, false),
              };

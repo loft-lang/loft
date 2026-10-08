@@ -10,6 +10,39 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `exit(code)`, a subprocess run answered from a recording, and the first script over `run` (2026-10-08)
+
+**`exit(code)`** (`default/01_code.loft`): the program ends with `code` as its status, in
+silence, what was printed flushed.  Interpreted it is a `RuntimeErrorKind::Exit` halt the
+dispatch loop stops on and `main.rs` turns into the status without rendering; on `--native`
+the `#rust` body is `runtime_error::exit_program`, a flush and `process::exit` at the call
+site (the generated code has no loop to halt).  Under `loft test` it fails the test by name;
+sandbox admission refuses it with the abort ops.  Guard: `tests/panic_halts_both_backends.rs`.
+**Recording and replay inside `run`** (`src/process_run.rs` § recording, @PLN179 4c):
+`LOFT_RUN_RECORD=<dir>` / `LOFT_RUN_REPLAY=<dir>`, plain files per call, repeats walked in
+order, a missing entry answered -1 with a message; `tests/comparisons/scripts/replay_tool.sh`
+is the original's shim and `script_twin.sh --replay` arms both.  **`scripts/loft.toml`** makes
+`scripts/` one package with `lib/process` as a path dependency, so a bare script runs from
+any working directory.  `scripts/check_bundle_fresh` is the first port over `run`.
+`scripts/script_recheck.sh` writes through a temp file: GNU `sed -i` edited nothing on macOS.
+**The type half of the trigger surface** (`libscan::scan_type_refs`, the parser's
+`auto_use_type_map` + `type_method`): `triggers.rs` derived type triggers and nothing read
+them.  The auto-use scan now collects type positions; a trigger-enabled dependency resolves
+through `lib_path` when it is not a sibling package; a fired type is imported by name on the
+file's second visit (as `use pkg::(T);` is); and the `lit` / `hole_*` / `to_text` hooks look a
+type's methods up in the type's own source, where `def_nr`'s current-source scope lost them.
+Local map only — a type name never reaches the registry catalog.
+**Declared twin cases** (`tests/comparisons/scripts/<port>/cases.tsv`, `scripts/script_twins.sh`,
+`make script-twins`, the twin cell of tests/lib_process.rs): every port's twin invocations are one file
+beside its fixtures and run on every PR, both backends; the census reads `twinned (n)` from
+them.  The first full run caught `scripts/wasm_bundle_stamp` broken under the bare-`use`
+rule (@C98) and two harness portability slips (macOS `wc` padding, a `read` collapsing an
+empty tab column).  The type-trigger scan skips names the file itself declares.
+**`lines()` / `err_lines()`** (`src/process_run.rs` § cursor): a native-backed cursor over one
+stream of a running program — a reader thread per pipe from the start, a 256-line channel for
+the chosen one, the other collected for `done()`; `stop()` ends the tree.  Its `next` is an
+`operator`, which is what `for` reaches — LOFT_CONTROL.md § Custom iterators said `fn`.
+
 ### `check_request` makes half the stores: `(R-PureReuse)`, and a `match` evaluates its subject once (2026-10-02)
 
 **`(R-PureReuse)`** (`src/pure_reuse.rs`, the start of the scope pass, both backends): a

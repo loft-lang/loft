@@ -248,6 +248,87 @@ pub fn scan_method_calls(content: &str) -> Vec<String> {
 /// first line on (C101: the program's definition shadows the stdlib's wherever it is written),
 /// not only below its declaration.  Order-preserving, de-duplicated.
 #[must_use]
+/// Type names a file REFERENCES, for the type half of the auto-`use` trigger surface
+/// (`triggers.rs` § Type triggers): a capitalised identifier in a type position — after
+/// `:`, `->`, `as` or `<`, or before `{` (a record literal) or `.Variant`.  Strings and
+/// comments are skipped as `scan_method_calls` skips them.  A name a file DEFINES is still
+/// reported (`c: Command` in the file that declares `Command`); the caller drops the names
+/// it already knows, as it does for `lib::` references.  Deduplicated, in first-seen order.
+pub fn scan_type_refs(content: &str) -> Vec<String> {
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    let mut types: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    // The last token before the identifier, as a slice of `content` — the scan runs on
+    // every file of every compile, so it allocates only for a hit.
+    let mut prev: &str = "";
+    while i < len {
+        let ch = bytes[i];
+        if ch == b'/' && i + 1 < len && bytes[i + 1] == b'/' {
+            while i < len && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if ch == b'"' || ch == b'`' {
+            // A literal, with `{…}` interpolation nested inside a `"` one.
+            let quote = ch;
+            let mut depth = 0usize;
+            i += 1;
+            while i < len {
+                match bytes[i] {
+                    b'\\' if quote == b'"' => i += 1,
+                    b'{' if quote == b'"' => depth += 1,
+                    b'}' if quote == b'"' => depth = depth.saturating_sub(1),
+                    byte if byte == quote && depth == 0 => break,
+                    _ => {}
+                }
+                i += 1;
+            }
+            i += 1;
+            prev = "";
+            continue;
+        }
+        if is_ident_start(ch) {
+            let start = i;
+            while i < len && is_ident_char(bytes[i]) {
+                i += 1;
+            }
+            let word = &content[start..i];
+            if ch.is_ascii_uppercase() {
+                let mut after = i;
+                while after < len && (bytes[after] == b' ' || bytes[after] == b'\t') {
+                    after += 1;
+                }
+                let before = matches!(prev, ":" | "->" | "as" | "<");
+                let literal = after < len && bytes[after] == b'{';
+                let variant = after + 1 < len
+                    && bytes[after] == b'.'
+                    && bytes[after + 1].is_ascii_uppercase();
+                if (before || literal || variant) && !types.iter().any(|t| t == word) {
+                    types.push(word.to_string());
+                }
+            }
+            prev = word;
+            continue;
+        }
+        if ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' {
+            i += 1;
+            continue;
+        }
+        if ch == b'-' && i + 1 < len && bytes[i + 1] == b'>' {
+            prev = "->";
+            i += 2;
+            continue;
+        }
+        // Only ASCII punctuation can be a "previous token"; a byte of a wider character is
+        // skipped as one byte, never sliced — a slice inside `ä` or `→` is a panic.
+        prev = if ch.is_ascii() { &content[i..=i] } else { "" };
+        i += 1;
+    }
+    types
+}
+
 pub fn scan_type_declarations(content: &str) -> Vec<String> {
     let b = content.as_bytes();
     let n = b.len();
@@ -342,6 +423,26 @@ mod tests {
         assert_eq!(
             scan_type_declarations(src),
             vec!["File", "Format", "Meters"]
+        );
+    }
+
+    #[test]
+    fn finds_type_references_in_type_positions() {
+        let src = "// c: Commented = 1\nfn f(a: Alpha, n: integer) -> Beta? { x = (\"g: Quoted\" as Gamma); \
+                   d = Delta { k: 1 }; e = Epsilon.One; v: vector<Zeta> = []; lower {} \
+                   println(\"{Eta.Two}\"); Theta }";
+        assert_eq!(
+            scan_type_refs(src),
+            vec!["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"]
+        );
+    }
+
+    #[test]
+    fn a_wide_character_outside_a_literal_is_skipped_not_sliced() {
+        // `ä` and `→` outside strings and comments: the scanner steps over their bytes.
+        assert_eq!(
+            scan_type_refs("fn f(a: Alpha) { ä = 1; x → Beta; c: Gamma = 1 }"),
+            vec!["Alpha", "Gamma"]
         );
     }
 

@@ -121,6 +121,10 @@ pub enum RuntimeErrorKind {
     UserPanic { message: String },
     /// `assert(test, "msg", file, line)` builtin called with `test == false`.
     AssertionFailed { message: String },
+    /// `exit(code)` builtin: the program ends with `code` as its status — not a fault,
+    /// but it halts the dispatch loop the way one does, and `main.rs` turns it into the
+    /// process's exit status in silence (@PLN179 finding 009).
+    Exit { code: i64 },
     /// A fault raised inside a PLACED library and relayed across the crossing.
     ///
     /// `label` and `detail` are the ORIGINAL fault's, carried over the wire
@@ -148,6 +152,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::StackOverflow => "stack_overflow",
             RuntimeErrorKind::UserPanic { .. } => "user_panic",
             RuntimeErrorKind::AssertionFailed { .. } => "assertion_failed",
+            RuntimeErrorKind::Exit { .. } => "exit",
             RuntimeErrorKind::Relayed { label, .. } => label,
         }
     }
@@ -193,6 +198,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::AssertionFailed { message } => {
                 format!("assertion failed: {message}")
             }
+            RuntimeErrorKind::Exit { code } => format!("exit({code})"),
             // Already rendered on the far side; describing it again would
             // prefix a second `panic:` onto one that is already there.
             RuntimeErrorKind::Relayed { detail, .. } => detail.clone(),
@@ -200,7 +206,41 @@ impl RuntimeErrorKind {
     }
 }
 
+/// `exit(code)` on the `--native` backend: flush what the program printed and end the
+/// process with `code` as its status, saying nothing.  The generated code has no
+/// dispatch loop to halt, so the one body a `#rust` template can give `exit` ends the
+/// process at the call site, as `n_panic`'s generated body does through
+/// [`RuntimeError::report_and_exit`].  The status is the low eight bits on every host,
+/// which is what a shell sees of `exit 256` too.
+pub fn exit_program(code: i64) -> ! {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a status is one byte by contract"
+    )]
+    std::process::exit(code as i32)
+}
+
 impl RuntimeError {
+    /// `exit(code)` on the interpreter: an `Exit` halt with no position, which the dispatch
+    /// loop stops on like any other and `main.rs` turns into the exit status without a
+    /// message.
+    #[must_use]
+    pub fn exit(code: i64) -> Self {
+        let kind = RuntimeErrorKind::Exit { code };
+        let message = kind.describe();
+        Self {
+            kind,
+            position: None,
+            op_pc: u32::MAX,
+            message,
+            call_chain: Vec::new(),
+            crossed_placement: false,
+        }
+    }
+
     /// Construct a `UserPanic` error at the loft surface call site.
     /// `file` / `line` come from the `panic("msg", file, line)` stub
     /// arguments injected by the parser at the loft call site.
@@ -666,6 +706,7 @@ mod tests {
             RuntimeErrorKind::AssertionFailed {
                 message: "a".into(),
             },
+            RuntimeErrorKind::Exit { code: 2 },
         ];
         let mut labels: Vec<&str> = kinds.iter().map(RuntimeErrorKind::label).collect();
         labels.sort_unstable();

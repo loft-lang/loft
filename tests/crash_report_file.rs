@@ -20,7 +20,7 @@
 //! process-wide and resolves the destination ONCE: sharing a process with
 //! another test that installs first would silently pin a different path.
 
-// @PLN184 C2 approved exemption (owner, 2026-10-07): `fork` and the POSIX signal handler the crash reporter rides (unix-only by design) have no Windows equivalent; Windows substitute: none
+// approved exemption: `fork` and the POSIX signal handler the crash reporter rides (unix-only by design) have no Windows equivalent; Windows substitute: none
 #![cfg(unix)]
 
 use loft::file_access as fa;

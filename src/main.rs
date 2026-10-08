@@ -7156,7 +7156,7 @@ fn main() {
     // between calls by design, and the caller's `LOFT_TIMEOUT` is a bound on the
     // caller's work, not on how long a library is allowed to sit waiting to be
     // asked. Arming it here would kill a healthy worker mid-run.
-    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg(unix)]
     if std::env::args().nth(1).is_some_and(|a| a == "--lib-worker") {
         let a: Vec<String> = std::env::args().skip(1).collect();
@@ -7186,7 +7186,7 @@ fn main() {
     // where the library should run. It takes over the process and never returns,
     // and it is armed before the watchdog for the same reason a worker is —
     // sitting idle waiting to be asked is what it is FOR.
-    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg(unix)]
     if std::env::args().nth(1).is_some_and(|a| a == "--lib-server") {
         let a: Vec<String> = std::env::args().skip(1).collect();
@@ -9744,7 +9744,7 @@ fn main() {
     // the whole-program binary, so its calls never reach a worker however they
     // were marked. Marking anyway would leave a dispatch symbol nothing routes
     // and start a worker process to sit idle for the run.
-    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg(unix)]
     if !native_requested {
         for (_, pkg_dir, _) in &placed_libs {
@@ -9898,7 +9898,7 @@ fn main() {
     // functions at it. After `byte_code`, because the stubs this replaces are
     // what `byte_code` registered — and only where marking happened, since a
     // worker with nothing routed to it is a process that idles for the run.
-    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg(unix)]
     if !placed_libs.is_empty() && !native_requested {
         let stdlib = std::path::PathBuf::from(&default_str);
@@ -12353,7 +12353,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     // covers every `exit` path below and an outright kill; this is the graceful
     // one, and it runs after the leak check so a worker teardown can never be
     // what a leak report is describing.
-    // @PLN184 approved exemption (owner, 2026-10-07): placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
+    // approved exemption: placement on Windows (a shared-memory mapping and a parent-death watch) is future work outside @PLN184; a placed library runs in-process there
     #[cfg(unix)]
     loft::lib_placement::dispatch::shutdown();
     // @PLN130 F8 — LOFT_STRICT_STORES makes both store-lifetime faults fatal: a reference
@@ -12379,6 +12379,11 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         }
     }
     if let Some(err) = runtime_err {
+        // `exit(code)` is the program's own verdict: no message, the code as the status,
+        // the same way the generated binary's `exit_program` ends (@PLN179 finding 009).
+        if let loft::runtime_error::RuntimeErrorKind::Exit { code } = err.kind {
+            loft::runtime_error::exit_program(code);
+        }
         // The typed-error block plus the call chain captured at raise time, through the
         // renderer the generated binary also uses (`RuntimeError::report_and_exit`).
         // Rendering it here in its own spelling is how `--native` and `--interpret`

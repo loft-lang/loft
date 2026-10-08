@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>mesh3d source</h1>
 <article>
-<p><a href="lib-mesh3d.html">← mesh3d</a> · <a href="lib-mesh3d-api.html">API reference</a> · version 0.1.4</p>
-<p class="lib-legend">8 file(s), 1149 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-mesh3d.html">← mesh3d</a> · <a href="lib-mesh3d-api.html">API reference</a> · version 0.1.5</p>
+<p class="lib-legend">8 file(s), 1157 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -62,31 +62,31 @@
 <tr><td><code>add_vertex</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L46">46</a></td><td><a href="#tests-worked-examples-loft-L29">MSH-001</a></td><td><a href="#src-mesh-loft-L73">73</a> <a href="#src-mesh-loft-L74">74</a> <a href="#src-mesh-loft-L75">75</a> <a href="#src-mesh-loft-L76">76</a> <a href="#src-mesh-loft-L79">79</a> <a href="#src-mesh-loft-L80">80</a> … (41 total)</td></tr>
 <tr><td><code>add_triangle</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L54">54</a></td><td><a href="#tests-worked-examples-loft-L29">MSH-001</a></td><td><a href="#src-mesh-loft-L62">62</a> <a href="#src-mesh-loft-L63">63</a> <a href="#tests-mesh-loft-L28">28</a> <a href="#tests-worked-examples-loft-L49">49</a> <a href="#tests-worked-examples-loft-L54">54</a></td></tr>
 <tr><td><code>add_quad</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L61">61</a></td><td><a href="#tests-worked-examples-loft-L133">MSH-003</a></td><td><a href="#src-mesh-loft-L77">77</a> <a href="#src-mesh-loft-L83">83</a> <a href="#src-mesh-loft-L89">89</a> <a href="#src-mesh-loft-L95">95</a> <a href="#src-mesh-loft-L101">101</a> <a href="#src-mesh-loft-L107">107</a> … (9 total)</td></tr>
-<tr><td><code>cube</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L70">70</a></td><td>—</td><td><a href="#src-mesh-loft-L71">71</a> <a href="#tests-mesh-loft-L36">36</a> <a href="#tests-mesh-loft-L37">37</a> <a href="#tests-mesh-loft-L38">38</a> <a href="#tests-mesh-loft-L39">39</a> <a href="#tests-scene-loft-L17">17</a> … (7 total)</td></tr>
+<tr><td><code>cube</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L70">70</a></td><td>—</td><td><a href="#src-mesh-loft-L71">71</a> <a href="#tests-mesh-loft-L36">36</a> <a href="#tests-mesh-loft-L37">37</a> <a href="#tests-mesh-loft-L38">38</a> <a href="#tests-mesh-loft-L39">39</a> <a href="#tests-scene-loft-L25">25</a> … (7 total)</td></tr>
 <tr><td><code>plane</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L114">114</a></td><td><a href="#tests-worked-examples-loft-L133">MSH-003</a></td><td><a href="#tests-mesh-loft-L43">43</a> <a href="#tests-mesh-loft-L44">44</a> <a href="#tests-mesh-loft-L45">45</a> <a href="#tests-mesh-loft-L46">46</a> <a href="#tests-worked-examples-loft-L67">67</a> <a href="#tests-worked-examples-loft-L120">120</a> … (8 total)</td></tr>
 <tr><td><code>sphere</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L131">131</a></td><td>—</td><td><a href="#tests-mesh-loft-L53">53</a> <a href="#tests-mesh-loft-L54">54</a> <a href="#tests-mesh-loft-L56">56</a> <a href="#tests-mesh-loft-L58">58</a></td></tr>
 <tr><td><code>mesh_to_floats_uv</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L173">173</a></td><td><a href="#tests-worked-examples-loft-L83">MSH-002</a></td><td><a href="#tests-worked-examples-loft-L100">100</a> <a href="#tests-worked-examples-loft-L121">121</a></td></tr>
 <tr><td><code>mesh_to_floats</code> <span class="search-kind">fn</span></td><td><a href="#src-mesh-loft-L190">190</a></td><td><a href="#tests-worked-examples-loft-L83">MSH-002</a></td><td><a href="#tests-worked-examples-loft-L50">50</a> <a href="#tests-worked-examples-loft-L55">55</a> <a href="#tests-worked-examples-loft-L99">99</a> <a href="#tests-worked-examples-loft-L105">105</a> <a href="#tests-worked-examples-loft-L116">116</a></td></tr>
 <tr><td><code>Material</code> <span class="search-kind">struct</span></td><td><a href="#src-scene-loft-L11">11</a></td><td>—</td><td><a href="#src-scene-loft-L24">24</a> <a href="#src-scene-loft-L25">25</a> <a href="#src-scene-loft-L33">33</a> <a href="#src-scene-loft-L34">34</a> <a href="#src-scene-loft-L41">41</a> <a href="#src-scene-loft-L42">42</a> … (9 total)</td></tr>
-<tr><td><code>material</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L24">24</a></td><td>—</td><td><a href="#tests-scene-loft-L25">25</a> <a href="#tests-scene-loft-L28">28</a> <a href="#tests-scene-loft-L36">36</a></td></tr>
+<tr><td><code>material</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L24">24</a></td><td>—</td><td><a href="#tests-scene-loft-L33">33</a> <a href="#tests-scene-loft-L36">36</a> <a href="#tests-scene-loft-L44">44</a></td></tr>
 <tr><td><code>material_color</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L33">33</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>material_metal</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L41">41</a></td><td>—</td><td>none in this package</td></tr>
-<tr><td><code>set_color</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L50">50</a></td><td>—</td><td><a href="#tests-scene-loft-L26">26</a></td></tr>
+<tr><td><code>set_color</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L50">50</a></td><td>—</td><td><a href="#tests-scene-loft-L34">34</a></td></tr>
 <tr><td><code>Node</code> <span class="search-kind">struct</span></td><td><a href="#src-scene-loft-L59">59</a></td><td>—</td><td><a href="#src-scene-loft-L70">70</a> <a href="#src-scene-loft-L71">71</a> <a href="#src-scene-loft-L75">75</a> <a href="#src-scene-loft-L76">76</a> <a href="#src-scene-loft-L155">155</a> <a href="#src-scene-loft-L181">181</a></td></tr>
-<tr><td><code>node</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L70">70</a></td><td>—</td><td><a href="#tests-scene-loft-L37">37</a> <a href="#tests-scene-loft-L39">39</a> <a href="#tests-scene-loft-L40">40</a></td></tr>
+<tr><td><code>node</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L70">70</a></td><td>—</td><td><a href="#tests-scene-loft-L45">45</a> <a href="#tests-scene-loft-L47">47</a> <a href="#tests-scene-loft-L48">48</a></td></tr>
 <tr><td><code>node_at</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L75">75</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>Camera</code> <span class="search-kind">struct</span></td><td><a href="#src-scene-loft-L83">83</a></td><td>—</td><td><a href="#src-scene-loft-L100">100</a> <a href="#src-scene-loft-L101">101</a> <a href="#src-scene-loft-L156">156</a> <a href="#src-scene-loft-L186">186</a></td></tr>
-<tr><td><code>camera</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L100">100</a></td><td>—</td><td><a href="#tests-scene-loft-L44">44</a> <a href="#tests-scene-loft-L48">48</a> <a href="#tests-worked-examples-loft-L255">255</a></td></tr>
+<tr><td><code>camera</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L100">100</a></td><td>—</td><td><a href="#tests-scene-loft-L11">11</a> <a href="#tests-scene-loft-L12">12</a> <a href="#tests-scene-loft-L52">52</a> <a href="#tests-scene-loft-L56">56</a> <a href="#tests-worked-examples-loft-L255">255</a></td></tr>
 <tr><td><code>LightType</code> <span class="search-kind">enum</span></td><td><a href="#src-scene-loft-L113">113</a></td><td>—</td><td><a href="#src-scene-loft-L119">119</a></td></tr>
 <tr><td><code>Light</code> <span class="search-kind">struct</span></td><td><a href="#src-scene-loft-L117">117</a></td><td>—</td><td><a href="#src-scene-loft-L130">130</a> <a href="#src-scene-loft-L131">131</a> <a href="#src-scene-loft-L140">140</a> <a href="#src-scene-loft-L141">141</a> <a href="#src-scene-loft-L157">157</a> <a href="#src-scene-loft-L191">191</a></td></tr>
 <tr><td><code>directional_light</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L130">130</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>point_light</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L140">140</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>Scene</code> <span class="search-kind">struct</span></td><td><a href="#src-scene-loft-L151">151</a></td><td>—</td><td><a href="#src-scene-loft-L162">162</a> <a href="#src-scene-loft-L163">163</a> <a href="#src-scene-loft-L167">167</a> <a href="#src-scene-loft-L174">174</a> <a href="#src-scene-loft-L181">181</a> <a href="#src-scene-loft-L186">186</a> … (7 total)</td></tr>
-<tr><td><code>scene</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L162">162</a></td><td>—</td><td><a href="#src-mesh3d-loft-L49">49</a> <a href="#tests-scene-loft-L5">5</a> <a href="#tests-scene-loft-L8">8</a> <a href="#tests-scene-loft-L9">9</a> <a href="#tests-scene-loft-L16">16</a> <a href="#tests-scene-loft-L24">24</a> … (12 total)</td></tr>
-<tr><td><code>add_mesh</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L167">167</a></td><td>—</td><td><a href="#tests-scene-loft-L18">18</a> <a href="#tests-scene-loft-L35">35</a></td></tr>
-<tr><td><code>add_material</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L174">174</a></td><td>—</td><td><a href="#tests-scene-loft-L27">27</a> <a href="#tests-scene-loft-L36">36</a></td></tr>
-<tr><td><code>add_node</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L181">181</a></td><td>—</td><td><a href="#tests-scene-loft-L38">38</a></td></tr>
-<tr><td><code>add_camera</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L186">186</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>scene</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L162">162</a></td><td>—</td><td><a href="#src-mesh3d-loft-L49">49</a> <a href="#tests-scene-loft-L5">5</a> <a href="#tests-scene-loft-L10">10</a> <a href="#tests-scene-loft-L16">16</a> <a href="#tests-scene-loft-L17">17</a> <a href="#tests-scene-loft-L24">24</a> … (13 total)</td></tr>
+<tr><td><code>add_mesh</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L167">167</a></td><td>—</td><td><a href="#tests-scene-loft-L26">26</a> <a href="#tests-scene-loft-L43">43</a></td></tr>
+<tr><td><code>add_material</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L174">174</a></td><td>—</td><td><a href="#tests-scene-loft-L35">35</a> <a href="#tests-scene-loft-L44">44</a></td></tr>
+<tr><td><code>add_node</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L181">181</a></td><td>—</td><td><a href="#tests-scene-loft-L46">46</a></td></tr>
+<tr><td><code>add_camera</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L186">186</a></td><td>—</td><td><a href="#tests-scene-loft-L11">11</a></td></tr>
 <tr><td><code>add_light</code> <span class="search-kind">fn</span></td><td><a href="#src-scene-loft-L191">191</a></td><td>—</td><td>none in this package</td></tr>
 </table>
 <h2 id="src-math-loft">src/math.loft</h2>
@@ -745,7 +745,7 @@
 <span id="src-scene-loft-L153">  <span class="kw">pub</span> meshes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;mesh::<span class="en">Mesh</span>&gt;,</span>
 <span id="src-scene-loft-L154">  <span class="kw">pub</span> materials: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Material</span>&gt;,</span>
 <span id="src-scene-loft-L155">  <span class="kw">pub</span> nodes: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Node</span>&gt;,</span>
-<span id="src-scene-loft-L156">  cameras: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Camera</span>&gt;,</span>
+<span id="src-scene-loft-L156">  <span class="kw">pub</span> cameras: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Camera</span>&gt;,</span>
 <span id="src-scene-loft-L157">  <span class="kw">pub</span> lights: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Light</span>&gt;</span>
 <span id="src-scene-loft-L158">}</span>
 <span id="src-scene-loft-L159"></span>
@@ -937,49 +937,57 @@
 <span id="tests-scene-loft-L4"><span class="kw">use</span> mesh3d::*;</span>
 <span id="tests-scene-loft-L5"><span class="kw">use</span> scene::*;</span>
 <span id="tests-scene-loft-L6"></span>
-<span id="tests-scene-loft-L7"><span class="kw">fn</span> <span class="fn-call">test_scene_create</span>() {</span>
-<span id="tests-scene-loft-L8">  sc = scene::<span class="fn-call">scene</span>(<span class="st">"test scene"</span>);</span>
-<span id="tests-scene-loft-L9">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.name == <span class="st">"test scene"</span>, <span class="st">"scene name"</span>);</span>
-<span id="tests-scene-loft-L10">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.meshes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"no meshes"</span>);</span>
-<span id="tests-scene-loft-L11">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.materials.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"no materials"</span>);</span>
-<span id="tests-scene-loft-L12">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.nodes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"no nodes"</span>);</span>
+<span id="tests-scene-loft-L7"><span class="cm">// A consumer reads back the cameras a scene holds (moros's map scene does): the field is</span></span>
+<span id="tests-scene-loft-L8"><span class="cm">// readable outside this library, like the scene's other collections.</span></span>
+<span id="tests-scene-loft-L9"><span class="kw">fn</span> <span class="fn-call">test_a_scene_lists_its_cameras</span>() {</span>
+<span id="tests-scene-loft-L10">  sc = <span class="fn-call">scene</span>(<span class="st">"view"</span>);</span>
+<span id="tests-scene-loft-L11">  sc.<span class="fn-call">add_camera</span>(<span class="fn-call">camera</span>(<span class="st">"main"</span>));</span>
+<span id="tests-scene-loft-L12">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(sc.cameras) == <span class="nm">1</span> &amp;&amp; sc.cameras[<span class="nm">0</span>].position.z == <span class="nm">5.0</span>, <span class="st">"one camera at z 5, got {len(sc.cameras)}"</span>);</span>
 <span id="tests-scene-loft-L13">}</span>
 <span id="tests-scene-loft-L14"></span>
-<span id="tests-scene-loft-L15"><span class="kw">fn</span> <span class="fn-call">test_scene_add_mesh</span>() {</span>
-<span id="tests-scene-loft-L16">  sm_s = scene::<span class="fn-call">scene</span>(<span class="st">"s"</span>);</span>
-<span id="tests-scene-loft-L17">  sm_m = mesh::<span class="fn-call">cube</span>();</span>
-<span id="tests-scene-loft-L18">  sm_i = sm_s.<span class="fn-call">add_mesh</span>(sm_m);</span>
-<span id="tests-scene-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sm_i == <span class="nm">0</span>, <span class="st">"first mesh index"</span>);</span>
-<span id="tests-scene-loft-L20">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sm_s.meshes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">1</span>, <span class="st">"one mesh"</span>);</span>
+<span id="tests-scene-loft-L15"><span class="kw">fn</span> <span class="fn-call">test_scene_create</span>() {</span>
+<span id="tests-scene-loft-L16">  sc = scene::<span class="fn-call">scene</span>(<span class="st">"test scene"</span>);</span>
+<span id="tests-scene-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.name == <span class="st">"test scene"</span>, <span class="st">"scene name"</span>);</span>
+<span id="tests-scene-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.meshes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"no meshes"</span>);</span>
+<span id="tests-scene-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.materials.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"no materials"</span>);</span>
+<span id="tests-scene-loft-L20">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sc.nodes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">0</span>, <span class="st">"no nodes"</span>);</span>
 <span id="tests-scene-loft-L21">}</span>
 <span id="tests-scene-loft-L22"></span>
-<span id="tests-scene-loft-L23"><span class="kw">fn</span> <span class="fn-call">test_scene_add_material</span>() {</span>
-<span id="tests-scene-loft-L24">  smat_s = scene::<span class="fn-call">scene</span>(<span class="st">"s"</span>);</span>
-<span id="tests-scene-loft-L25">  smat_m = scene::<span class="fn-call">material</span>(<span class="st">"red"</span>);</span>
-<span id="tests-scene-loft-L26">  smat_m.<span class="fn-call">set_color</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
-<span id="tests-scene-loft-L27">  smat_i = smat_s.<span class="fn-call">add_material</span>(smat_m);</span>
-<span id="tests-scene-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(smat_i == <span class="nm">0</span>, <span class="st">"first material index"</span>);</span>
-<span id="tests-scene-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(smat_s.materials[<span class="nm">0</span>].base_color_r == <span class="nm">1.0</span>, <span class="st">"red"</span>);</span>
-<span id="tests-scene-loft-L30">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(smat_s.materials[<span class="nm">0</span>].base_color_g == <span class="nm">0.0</span>, <span class="st">"not green"</span>);</span>
-<span id="tests-scene-loft-L31">}</span>
-<span id="tests-scene-loft-L32"></span>
-<span id="tests-scene-loft-L33"><span class="kw">fn</span> <span class="fn-call">test_scene_with_node</span>() {</span>
-<span id="tests-scene-loft-L34">  sn_s = scene::<span class="fn-call">scene</span>(<span class="st">"complete"</span>);</span>
-<span id="tests-scene-loft-L35">  sn_mi = sn_s.<span class="fn-call">add_mesh</span>(mesh::<span class="fn-call">mesh</span>(<span class="st">"simple"</span>));</span>
-<span id="tests-scene-loft-L36">  sn_mati = sn_s.<span class="fn-call">add_material</span>(scene::<span class="fn-call">material</span>(<span class="st">"default"</span>));</span>
-<span id="tests-scene-loft-L37">  sn_n = scene::<span class="fn-call">node</span>(<span class="st">"cube1"</span>, sn_mi, sn_mati);</span>
-<span id="tests-scene-loft-L38">  sn_s.<span class="fn-call">add_node</span>(sn_n);</span>
-<span id="tests-scene-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.nodes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">1</span>, <span class="st">"one node"</span>);</span>
-<span id="tests-scene-loft-L40">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.nodes[<span class="nm">0</span>].name == <span class="st">"cube1"</span>, <span class="st">"node name"</span>);</span>
-<span id="tests-scene-loft-L41">}</span>
-<span id="tests-scene-loft-L42"></span>
-<span id="tests-scene-loft-L43"><span class="kw">fn</span> <span class="fn-call">test_camera</span>() {</span>
-<span id="tests-scene-loft-L44">  cam = scene::<span class="fn-call">camera</span>(<span class="st">"main"</span>);</span>
-<span id="tests-scene-loft-L45">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.fov == <span class="nm">60.0</span>, <span class="st">"default fov"</span>);</span>
-<span id="tests-scene-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.near == <span class="nm">0.1</span>, <span class="st">"default near"</span>);</span>
-<span id="tests-scene-loft-L47">  cam.position = math::<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">5.0</span>, <span class="nm">10.0</span>);</span>
-<span id="tests-scene-loft-L48">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.position.y == <span class="nm">5.0</span>, <span class="st">"camera y"</span>);</span>
+<span id="tests-scene-loft-L23"><span class="kw">fn</span> <span class="fn-call">test_scene_add_mesh</span>() {</span>
+<span id="tests-scene-loft-L24">  sm_s = scene::<span class="fn-call">scene</span>(<span class="st">"s"</span>);</span>
+<span id="tests-scene-loft-L25">  sm_m = mesh::<span class="fn-call">cube</span>();</span>
+<span id="tests-scene-loft-L26">  sm_i = sm_s.<span class="fn-call">add_mesh</span>(sm_m);</span>
+<span id="tests-scene-loft-L27">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sm_i == <span class="nm">0</span>, <span class="st">"first mesh index"</span>);</span>
+<span id="tests-scene-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sm_s.meshes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">1</span>, <span class="st">"one mesh"</span>);</span>
+<span id="tests-scene-loft-L29">}</span>
+<span id="tests-scene-loft-L30"></span>
+<span id="tests-scene-loft-L31"><span class="kw">fn</span> <span class="fn-call">test_scene_add_material</span>() {</span>
+<span id="tests-scene-loft-L32">  smat_s = scene::<span class="fn-call">scene</span>(<span class="st">"s"</span>);</span>
+<span id="tests-scene-loft-L33">  smat_m = scene::<span class="fn-call">material</span>(<span class="st">"red"</span>);</span>
+<span id="tests-scene-loft-L34">  smat_m.<span class="fn-call">set_color</span>(<span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-scene-loft-L35">  smat_i = smat_s.<span class="fn-call">add_material</span>(smat_m);</span>
+<span id="tests-scene-loft-L36">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(smat_i == <span class="nm">0</span>, <span class="st">"first material index"</span>);</span>
+<span id="tests-scene-loft-L37">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(smat_s.materials[<span class="nm">0</span>].base_color_r == <span class="nm">1.0</span>, <span class="st">"red"</span>);</span>
+<span id="tests-scene-loft-L38">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(smat_s.materials[<span class="nm">0</span>].base_color_g == <span class="nm">0.0</span>, <span class="st">"not green"</span>);</span>
+<span id="tests-scene-loft-L39">}</span>
+<span id="tests-scene-loft-L40"></span>
+<span id="tests-scene-loft-L41"><span class="kw">fn</span> <span class="fn-call">test_scene_with_node</span>() {</span>
+<span id="tests-scene-loft-L42">  sn_s = scene::<span class="fn-call">scene</span>(<span class="st">"complete"</span>);</span>
+<span id="tests-scene-loft-L43">  sn_mi = sn_s.<span class="fn-call">add_mesh</span>(mesh::<span class="fn-call">mesh</span>(<span class="st">"simple"</span>));</span>
+<span id="tests-scene-loft-L44">  sn_mati = sn_s.<span class="fn-call">add_material</span>(scene::<span class="fn-call">material</span>(<span class="st">"default"</span>));</span>
+<span id="tests-scene-loft-L45">  sn_n = scene::<span class="fn-call">node</span>(<span class="st">"cube1"</span>, sn_mi, sn_mati);</span>
+<span id="tests-scene-loft-L46">  sn_s.<span class="fn-call">add_node</span>(sn_n);</span>
+<span id="tests-scene-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.nodes.<span class="bi"><a href="stdlib-text.html">len</a></span>() == <span class="nm">1</span>, <span class="st">"one node"</span>);</span>
+<span id="tests-scene-loft-L48">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sn_s.nodes[<span class="nm">0</span>].name == <span class="st">"cube1"</span>, <span class="st">"node name"</span>);</span>
 <span id="tests-scene-loft-L49">}</span>
+<span id="tests-scene-loft-L50"></span>
+<span id="tests-scene-loft-L51"><span class="kw">fn</span> <span class="fn-call">test_camera</span>() {</span>
+<span id="tests-scene-loft-L52">  cam = scene::<span class="fn-call">camera</span>(<span class="st">"main"</span>);</span>
+<span id="tests-scene-loft-L53">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.fov == <span class="nm">60.0</span>, <span class="st">"default fov"</span>);</span>
+<span id="tests-scene-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.near == <span class="nm">0.1</span>, <span class="st">"default near"</span>);</span>
+<span id="tests-scene-loft-L55">  cam.position = math::<span class="fn-call">vec3</span>(<span class="nm">0.0</span>, <span class="nm">5.0</span>, <span class="nm">10.0</span>);</span>
+<span id="tests-scene-loft-L56">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cam.position.y == <span class="nm">5.0</span>, <span class="st">"camera y"</span>);</span>
+<span id="tests-scene-loft-L57">}</span>
 </code></pre>
 <h2 id="tests-worked-examples-loft">tests/worked-examples.loft</h2>
 <pre class="src"><code><span id="tests-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

@@ -312,8 +312,13 @@ impl Scopes<'_> {
                 // store on some paths and borrows on others (@FR-O-Latest, the D-own-16
                 // shape), and this free is its ONLY one — `get_free_vars` skips every return
                 // source.  So that one stays in, and the runtime comparison decides.
+                // The PROMOTED return buffer is the one argument that is a local this frame
+                // mints into (loft#1078): a `-> S?` local renamed onto it (loft#1934) keeps its
+                // conditional free, and the entry witness below stops it releasing the store the
+                // caller handed in.
+                let d_nr = self.d_nr;
                 let store_is_the_callers = |function: &Function, v: u16| {
-                    (function.is_argument(v)
+                    ((function.is_argument(v) && !promoted_ret_buffer(data, d_nr, function, v))
                         || function
                             .tp(v)
                             .depend()
@@ -342,7 +347,10 @@ impl Scopes<'_> {
                     if matches!(
                         function.tp(v).base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
-                    ) && live_here.contains(&v)
+                    ) && (live_here.contains(&v)
+                        // An argument is live in every scope, and `variables` lists none; the
+                        // promoted buffer is the argument this asks about (loft#1934).
+                        || promoted_ret_buffer(data, self.d_nr, function, v))
                         && !store_is_the_callers(function, v)
                     {
                         null_arm_record_sources.push(v);
@@ -1222,11 +1230,17 @@ impl Scopes<'_> {
                 // NOT registered in `var_scope`: it holds the value being transferred
                 // to the caller, and a scope-exit free of it would free what the caller
                 // adopts.
+                // The premise fails for any var the caller HANDS IN as well, record or not:
+                // a `-> S?` local promoted onto the caller's buffer arrives as that live
+                // record, and a null arm folded onto it answered the record (loft#1934 —
+                // `return if c { d } else { null }` never answered null once `S?` took the
+                // buffer).
                 let null_arm_needs_the_value = ret_var != u16::MAX
                     && frees_follow
                     && !expr_is_terminal
                     && (ret_var as usize) < function.count() as usize
-                    && crate::parser::vectors::is_collection(function.tp(ret_var))
+                    && (crate::parser::vectors::is_collection(function.tp(ret_var))
+                        || function.is_argument(ret_var))
                     && return_has_null_arm(expr, data.def_nr("OpNullRefSentinel"));
                 if null_arm_needs_the_value {
                     self.ret_temp_counter += 1;

@@ -81,6 +81,9 @@ pub struct ParallelCtx {
     pub stack_trace_lib_nr: u16,
     /// `@FR-R-FrameHeadroom` — the per-function frame heights, shared with every worker.
     pub frame_headroom: Arc<Vec<u32>>,
+    /// The running program's constant table (`State::const_refs`), handed to every worker
+    /// `State` so `OpConstRef` resolves there as in the parent (loft#1917).
+    pub const_refs: Arc<Vec<DbRef>>,
 }
 
 impl ParallelCtx {
@@ -1911,32 +1914,6 @@ impl Stores {
                 ),
             );
         }
-    }
-
-    /// The format-fault cause lives in [`crate::ops`], per thread, rather than on `Stores` —
-    /// a codegen constraint as much as a design one. The native emitter inlines an op's
-    /// `#rust` body into whatever expression contains it, so a body that writes through
-    /// `stores` lands inside another `stores.` call's arguments and rustc rejects it with
-    /// E0502 (loft#1169). Free functions over thread-local state borrow nothing and compose in
-    /// any position. These are thin delegates so existing call sites read the same.
-    pub fn set_format_fault(&mut self, kind_id: u8) {
-        crate::ops::note_format_fault(kind_id, true);
-    }
-
-    /// See [`crate::ops::note_format_fault`].
-    pub fn note_format_fault(&mut self, kind_id: u8, faulted: bool) {
-        crate::ops::note_format_fault(kind_id, faulted);
-    }
-
-    /// See [`crate::ops::arm_format_fault`].
-    pub fn arm_format_fault(&mut self) {
-        crate::ops::arm_format_fault();
-    }
-
-    /// See [`crate::ops::take_format_fault`].
-    #[must_use]
-    pub fn take_format_fault(&mut self) -> Option<&'static str> {
-        crate::ops::take_format_fault()
     }
 
     /// Plan-07 phase 4c — Stores-side counterpart of

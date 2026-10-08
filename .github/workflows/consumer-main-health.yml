@@ -160,7 +160,7 @@ jobs:
 
       - name: Install mold and a virtual display
         if: steps.tok.outputs.run == 'true'
-        run: sudo apt-get update -y && sudo apt-get install -y mold xvfb
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold xvfb
 
       - name: Cache cargo + loft build
         if: steps.tok.outputs.run == 'true'
@@ -214,7 +214,7 @@ jobs:
           )"
           if [ -n "$deps" ]; then
             echo "declared build-deps: $deps"
-            sudo apt-get install -y $deps
+            timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y $deps
           else
             echo "no dependency declares system build-deps"
           fi

@@ -2052,7 +2052,9 @@ impl Parser {
                         current_type.base().clone()
                     };
                     if matches!(effective_type, Type::Text(_) | Type::Character) {
-                        if current_type == Type::Character {
+                        // Peeled: a `character?` left operand is a character too (loft#1945) —
+                        // unpeeled it took the text path and appended a code point as a text.
+                        if effective_type == Type::Character {
                             // a Character variable cannot serve as an OpAppendText
                             // destination.  Prepend it to the parts list and use an empty
                             // text literal as the first operand so parse_append_text
@@ -2099,9 +2101,14 @@ impl Parser {
                             // not a bare `Value::Null` — for a buffer-backed return the bare null
                             // leaves the return buffer empty and interp reads "" back instead of
                             // null (the normal `else { null }` flow converts it the same way).
+                            // ADMITTING: this null is the compiler's propagate arm, typed
+                            // `text?` by the `Type::optional` below, not a store the author
+                            // wrote — asked through the store face, @FR-N-Store warned
+                            // *"`null` is stored into a slot of the non-null scalar type
+                            // `text`"* on every `t? + "a"`.
                             let null_arm = |this: &mut Self| {
                                 let mut n = Value::Null;
-                                this.convert(&mut n, &Type::Null, &base_text);
+                                this.convert_admitting(&mut n, &Type::Null, &base_text);
                                 n
                             };
                             if matches!(code.unspan(), Value::Var(_)) {
@@ -3177,105 +3184,11 @@ impl Parser {
     /// `Value` tree and swaps every fault-prone call to its Nullable
     /// peer.  Used in format-string contexts (`"{expr}"` interpolation)
     /// where the interpolated expression may contain arbitrarily nested
-    /// fault-prone ops (`"{a + v[i] / b}"`).  Per C66 +
-    /// `DESIGN_DECISIONS.md` 2026-05-11: format strings are the user's
-    /// observability surface and must NEVER halt, log, or warn — so
-    /// every interpolated fault site routes through its silent peer.
-    ///
-    /// Phase 4e.3 — also returns the OUTERMOST fault kind id (as
-    /// recognised by the swap table) so the caller (the format-
-    /// string emitter in `parser/objects.rs::parse_format`) can
-    /// prepend an `OpTagFault(kind_id)` sibling statement.  When
-    /// the next format-conversion op (`OpFormatInt` /
-    /// `OpAppendCharacter`) sees the type's null sentinel AND the
-    /// tag is set, it renders `null(<reason>)` instead of bare
-    /// `null`.  Returns `None` for non-fault outer calls (the
-    /// expression may still contain inner faults that get swapped,
-    /// but only the outermost one tags — inner faults have no
-    /// renderer to feed the tag to).
-    pub(crate) fn rewrite_subtree_to_nullable_kind(
-        code: &mut Value,
-        data: &crate::data::Data,
-    ) -> Option<u8> {
-        // Determine the kind BEFORE the swap.  For integer-vector
-        // indexing the IR shape is `OpGetInt(OpGetVector(v, 4, i), 0)`
-        // — the outer is `GetInt`, the fault-prone op is the inner
-        // `GetVector`.  Mirror the recurse-one-level case from
-        // `rewrite_outer_arith_to_nullable` so the kind id matches
-        // the inner op when wrapped.
-        fn classify(name: &str) -> Option<u8> {
-            match name {
-                "DivInt" | "DivFloat" | "DivSingle" => Some(1),
-                "RemInt" | "RemFloat" | "RemSingle" => Some(2),
-                "GetVector" | "VectorRef" | "TextCharacter" => Some(3),
-                _ => None,
-            }
-        }
-        // The OUTERMOST classifiable node ANYWHERE in the hole, not just at the top.
-        //
-        // Arming used to require the top node itself to be fault-prone, on the reasoning that
-        // *"inner faults have no renderer to feed the tag to"*.  That conflates the outermost
-        // OP with the HOLE: the hole always has a renderer, and an inner fault's null
-        // propagates to it.  So `{v[9] / 2}` reported `null(oob)` while `{v[9] + 1}` reported
-        // bare `null` — the same overrun, the same null, and a cause only when the arithmetic
-        // around it happened to be divisive.  Measured on both backends for `+`, `-`, `*`, a
-        // fault on the RIGHT operand, and two faults in one hole; `@FR-F-FaultSafe` says the
-        // render is *"'null' annotated with the fault cause"* without qualifying it by what
-        // encloses the fault.
-        //
-        // The KIND this returns is only the initial value: `note_format_fault` is a SET, so
-        // whichever op actually faults overwrites it, and a peer that did not fault leaves it
-        // alone.  That is why `{v[9] / z}` answers `oob` and not `/0` — the overrun is what
-        // produced the null.  Arming at all is the load-bearing half; the kind is a fallback.
-        fn outermost_kind(code: &Value, data: &crate::data::Data) -> Option<u8> {
-            fn classify_call(def_nr: u32, args: &[Value], data: &crate::data::Data) -> Option<u8> {
-                let name = data.def(def_nr).original_name();
-                if let Some(k) = classify(&name) {
-                    return Some(k);
-                }
-                // For an integer-vector read the IR is `OpGetInt(OpGetVector(v, 4, i), 0)`:
-                // the outer is the width accessor and the fault-prone op is the inner read.
-                if matches!(
-                    name.as_str(),
-                    "GetInt" | "GetInt4" | "GetByte" | "GetShortRaw"
-                ) && let Some(Value::Call(inner_nr, _)) = args.first().map(Value::unspan)
-                {
-                    return classify(&data.def(*inner_nr).original_name());
-                }
-                None
-            }
-            match code.unspan() {
-                Value::Call(def_nr, args) => classify_call(*def_nr, args, data)
-                    .or_else(|| args.iter().find_map(|a| outermost_kind(a, data))),
-                Value::CallRef(_, args)
-                | Value::Tuple(args)
-                | Value::Insert(args)
-                | Value::Parallel(args) => args.iter().find_map(|a| outermost_kind(a, data)),
-                Value::Block(b) | Value::Loop(b) => {
-                    b.operators.iter().find_map(|c| outermost_kind(c, data))
-                }
-                Value::If(cond, then_b, else_b) => outermost_kind(cond, data)
-                    .or_else(|| outermost_kind(then_b, data))
-                    .or_else(|| outermost_kind(else_b, data)),
-                Value::Set(_, src)
-                | Value::Return(src)
-                | Value::Drop(src)
-                | Value::Yield(src)
-                | Value::TuplePut(_, _, src) => outermost_kind(src, data),
-                Value::Iter(_, init, step, body) => outermost_kind(init, data)
-                    .or_else(|| outermost_kind(step, data))
-                    .or_else(|| outermost_kind(body, data)),
-                // Every other variant carries no nested fault-prone call — the same set
-                // `rewrite_subtree_to_nullable` below treats as leaves, so the two walks
-                // cover the same tree and a shape one reaches cannot be missed by the other.
-                _ => None,
-            }
-        }
-        let outer_kind = outermost_kind(code, data);
-        Self::rewrite_subtree_to_nullable(code, data);
-        outer_kind
-    }
-
+    /// fault-prone ops (`"{a + v[i] / b}"`).  Per C66: format strings
+    /// are the user's observability surface and must NEVER halt, log,
+    /// or warn — so every interpolated fault site routes through its
+    /// silent peer, and the hole renders the null it yields as a plain
+    /// `null` (`@FR-F-FaultSafe`, @C142).
     pub(crate) fn rewrite_subtree_to_nullable(code: &mut Value, data: &crate::data::Data) {
         // Helper mirrors the swap table in
         // `rewrite_outer_arith_to_nullable`; kept inline (no shared
@@ -3313,23 +3226,6 @@ impl Parser {
                 for arg in args {
                     Self::rewrite_subtree_to_nullable(arg, data);
                 }
-                // Phase 4e.3 (slice 2 — deferred): the design adds a
-                // sibling `OpTagFault(kind)` immediately before each
-                // swapped Nullable peer in format-string scope so the
-                // format-conversion op renders `null(<reason>)`
-                // instead of bare `null`.  The runtime infrastructure
-                // (`Stores::set_format_fault` /
-                // `Stores::take_format_fault` / `format_fault_tag`
-                // field / `OpTagFault` opcode) is in place; the
-                // Block-wrapping insertion proved fragile when run
-                // through the format-string emitter (the Block's
-                // result type isn't filled in time for `append_data`
-                // to pick the right `OpAppend*` op, producing wrong-
-                // type bytecode and SIGSEGV).  Wiring slice 2 needs
-                // a different emit shape — likely new dedicated
-                // `Op*Fmt` peers (one per fault kind) that fold the
-                // tag into the Nullable peer's body instead of
-                // sequencing.  Tracked in plan-07 phase 4e.3 row.
             }
             Value::CallRef(_, args) => {
                 for arg in args {
@@ -4069,6 +3965,18 @@ impl Parser {
             };
             self.parse_operators(rhs_hint, &mut rhs, parent_tp, rhs_precedence)
         };
+        // A default that never returns — `?? exit(1)`, `?? panic("…")` — is the absent case
+        // stopping the program, the way `?? return` leaves the function and `?? break` the
+        // loop (`(C-Never)`, @FR-N-Coal's `d ⇐ τ`): the value is the subject's, and there is
+        // no default type to match (@PLN179 finding 019).  The halting builtins by name, as
+        // `sandbox::ABORT_OPS` lists them; `assert` returns and is not one.
+        if let Value::Call(d, _) = rhs.unspan()
+            && matches!(self.data.def(*d).name(), "n_exit" | "n_panic")
+        {
+            let halt = std::mem::replace(&mut rhs, Value::Null);
+            self.null_coalesce_exit(code, ctp, lhs_type, halt);
+            return;
+        }
         // loft#1003 — the default's END, for the `redundant-coalesce` deletion span.
         // Taken HERE and not at the caller's tail: by then the cursor has moved past the
         // statement terminator, and a span that swallows the `;` is a rewrite that
@@ -6067,6 +5975,30 @@ impl Parser {
             // call_op consumes them, so the result range of `&`/`%` can be narrowed
             // (a masked/modded value becomes provably-fit for a later narrowing
             // cast, removing DN4's `(x & 255) as u8` friction).
+            // `@FR-N-Arith` for `+ - *` — the operands' RANGES, read before `call_op` consumes
+            // them: a constant operand is the one value it is, a declared or inferred range is
+            // its bounds, and a plain `integer` is unbounded (no range is derived from it).
+            let arith_ranges = if matches!(operator, "+" | "-" | "*") {
+                let range = |p: &Self, tp: &Type, c: &Value| -> Option<(i64, i64)> {
+                    if let Some(k) = p.const_int(c) {
+                        return Some((k, k));
+                    }
+                    // A plain `integer` is unbounded whichever template spells it — the
+                    // 32-bit one (`i32::MIN + 1 ..= i32::MAX`) or the wide one — so only a
+                    // range strictly inside that window is a range to compute with.
+                    match tp.base() {
+                        Type::Integer(sp)
+                            if sp.min > i32::MIN + 1 || sp.max < i64::from(i32::MAX) =>
+                        {
+                            Some((i64::from(sp.min), sp.max))
+                        }
+                        _ => None,
+                    }
+                };
+                range(self, ctp, code).zip(range(self, &second_type, &second_code))
+            } else {
+                None
+            };
             let (and_bound, mod_const, lhs_nonneg) = if matches!(operator, "&" | "%") {
                 let and_bound = [
                     self.nonneg_bound(ctp, code),
@@ -6127,7 +6059,42 @@ impl Parser {
             // the operation guarantees), and only ever a tightening of call_op's
             // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or
             // [0, |c|-1] when `a` is non-negative.
-            if let Type::Integer(s) = &*ctp {
+            if let Type::Integer(s) = ctp.clone() {
+                let s = &s;
+                // `@FR-N-Arith` — `a op b` over bounded integers is typed `Integer[r]`, r the
+                // interval arithmetic of the operand ranges (loft#1933: `u8 + u8` typed the full
+                // `integer`, so it could not be stored into a `u16`).  A range the spec cannot
+                // name stays the full `integer`.
+                if let Some(((al, ah), (bl, bh))) = arith_ranges {
+                    let (lo, hi) = match operator {
+                        "+" => (al.saturating_add(bl), ah.saturating_add(bh)),
+                        "-" => (al.saturating_sub(bh), ah.saturating_sub(bl)),
+                        _ => {
+                            let p = [
+                                al.saturating_mul(bl),
+                                al.saturating_mul(bh),
+                                ah.saturating_mul(bl),
+                                ah.saturating_mul(bh),
+                            ];
+                            (*p.iter().min().unwrap_or(&0), *p.iter().max().unwrap_or(&0))
+                        }
+                    };
+                    let both_constant = al == ah && bl == bh;
+                    if !both_constant
+                        && lo > i64::from(i32::MIN)
+                        // `u32::MAX` is the wide template's marker for "wider than 32 bits"
+                        // (`IntegerSpec::wide`), so a range must stay strictly below it.
+                        && hi < i64::from(u32::MAX)
+                        && (lo > i64::from(s.min) || hi < s.max)
+                    {
+                        *ctp = Type::Integer(IntegerSpec {
+                            min: i32::try_from(lo).unwrap_or(s.min),
+                            max: hi,
+                            forced_size: None,
+                            ..*s
+                        });
+                    }
+                }
                 let narrowed = match operator {
                     "&" => and_bound.map(|m| (0i32, m)),
                     "%" => mod_const.filter(|c| *c != 0).map(|c| {

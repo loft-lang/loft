@@ -12,17 +12,17 @@
 // landed at `record + 65535` — in the NEIGHBOURS' bytes — so a guard that checks
 // only the forward field would miss the damage the bug actually did.
 pub struct F797Sess {
-  s_before: integer,
-  s_roofs: F797Roofs,
-  s_middle: integer,
-  s_many: vector<F797Walls>,
-  s_maybe: F797Roofs?,
-  s_after: integer,
+  pub s_before: integer,
+  pub s_roofs: F797Roofs,
+  pub s_middle: integer,
+  pub s_many: vector<F797Walls>,
+  pub s_maybe: F797Roofs?,
+  pub s_after: integer,
 }
 
 // A host whose field is a struct that is itself waiting — the layout answer has
 // to be transitive, because an inline field stores its content's bytes.
-pub struct F797Outer { o_sess: F797Sess, o_tail: integer }
+pub struct F797Outer { pub o_sess: F797Sess, pub o_tail: integer }
 
 pub fn f797_make() -> F797Outer {
   return F797Outer {

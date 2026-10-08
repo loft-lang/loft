@@ -422,7 +422,7 @@ impl Wire {
 // ── wait / wake on the shared word ─────────────────────────────────────────
 //
 // One contract on every platform (`platform::shared_word_wait`): `futex_wait` returns when
-// the word may no longer equal `expect`, when `limit` passes, or spuriously — every caller
+// the word may differ from `expect`, when `limit` passes, or spuriously — every caller
 // re-reads the word in a loop (`await_past`) — and `futex_wake` wakes one waiter.  The word
 // lives in a file mapping shared by two processes, so the platform uses the SHARED form of
 // its wait, or polls where it has none.

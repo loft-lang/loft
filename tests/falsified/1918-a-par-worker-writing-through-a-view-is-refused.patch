@@ -1,0 +1,72 @@
+diff --git a/src/scopes/par_writes.rs b/src/scopes/par_writes.rs
+index 63ab6829a..1cfe8ebd1 100644
+--- a/src/scopes/par_writes.rs
++++ b/src/scopes/par_writes.rs
+@@ -188,9 +188,8 @@ fn first_arg_is_local_var(args: &[Value], current_fn: u32, data: &Data) -> bool
+         return false;
+     }
+     let def = &data.definitions[current_fn as usize];
+-    // A local that VIEWS a parameter is not the worker's own (`captured_param_viewed_by`).
+     if !def.variables.is_argument(*v) {
+-        return captured_param_viewed_by(def, *v).is_none();
++        return true;
+     }
+     // Plan-06 phase 5b' G5 — heap-typed return values are passed
+     // via a hidden destination argument promoted by ref_return().
+@@ -238,33 +237,15 @@ fn raw_write_to_captured(
+         return None;
+     }
+     let def = &data.definitions[current_fn as usize];
+-    // `@FR-C-Impure`, C93 — the captured state is what the root VIEWS, not only a root that
+-    // is itself a parameter: `x = e.inner; x.k = …`, `x = &e.items`, `for l in e.list { l.k
+-    // = … }` write the parent's record through a local, and compiled to a runtime halt on the
+-    // read-only store (loft#1918).  A whole-value copy (`x = e`) has no dep and stays local.
+-    let name = captured_param_viewed_by(def, root)?;
+-    Some(name)
+-}
+-
+-/// The parameter `root` is, or VIEWS through its dep chain, naming it — `None` when the chain
+-/// reaches no parameter, or reaches only the hidden return buffer (the worker's own output).
+-fn captured_param_viewed_by(def: &crate::data::Definition, root: u16) -> Option<String> {
+-    let mut stack = vec![root];
+-    let mut seen = std::collections::HashSet::new();
+-    while let Some(v) = stack.pop() {
+-        if !seen.insert(v) || v >= def.variables.count() {
+-            continue;
+-        }
+-        if def.variables.is_argument(v) {
+-            let name = def.variables.name(v).to_string();
+-            if !def.attributes.iter().any(|a| a.hidden && a.name == name) {
+-                return Some(name);
+-            }
+-            continue;
+-        }
+-        stack.extend(def.variables.tp(v).depend());
++    if !def.variables.is_argument(root) {
++        return None; // a worker-local write — fine
++    }
++    let name = def.variables.name(root).to_string();
++    // hidden return-buffer destination = the worker's own output, not parent state.
++    if def.attributes.iter().any(|a| a.hidden && a.name == name) {
++        return None;
+     }
+-    None
++    Some(name)
+ }
+ 
+ #[allow(dead_code)]
+@@ -290,14 +271,6 @@ fn call_deep_parent_write(
+         Purity::Impure(ImpureCategory::ParentWrite) => {
+             if first_arg_is_local_var(args, current_fn, data) {
+                 None
+-            } else if def.name.starts_with("Op")
+-                && current_fn != u32::MAX
+-                && let Some(root) = args.first().and_then(|a| accessor_root_var(a, data))
+-            {
+-                // An operator is how the write is SPELLED in the IR (`v += [3]` is
+-                // `OpPushInt`), not a name the author wrote: say what it writes.
+-                let name = data.definitions[current_fn as usize].variables.name(root);
+-                Some(format!(" writes captured `{name}`"))
+             } else {
+                 Some(format!(
+                     " → {}",

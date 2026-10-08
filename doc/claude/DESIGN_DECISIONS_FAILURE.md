@@ -103,3 +103,23 @@ default keeps the promised type, and the warning says where the default can be t
 or `is`, not a wider cast.  Decided 2026-09-29 (owner) — [record](DESIGN_DECISIONS-history.md#c131--a-cast-to-a-variant-answers-the-variant-a-provable-miss-is-refused-an-unproven-one-defaults-and-warns).
 **Holds at:** `@C131` — `./scripts/idx tag:@C131`.
 **Catalogue:** @F5 (checked cast), @F30 (is variant check) · `formal/types.md` `(N-Cast)`, `(D-Rec)`.
+
+## C142 — A null inside a `{…}` hole renders plain `null`, never the reason it is null
+
+**Decision.** A hole whose value is null renders `null` — the rendering `(F-Render)` gives a null
+of its type — whether the null was stored, inherited or produced by a fault inside the hole
+(`{a / b}` with `b = 0`, `{v[9]}`, `{5.0 % 0.0}`).  No hole kind annotates it with a cause, on
+either backend, and nothing switches one on.  The fault itself is unchanged: it yields the null
+value and the program continues (C80, `(E-Uncomp)`), and formatting never traps (C66).
+**Why.** The same null rendered differently by where the fault sat — `"{a/b}"` against
+`c = a / b; "{c}"` — and keeping a cause attached to a hole's null cost four defects in a row,
+each a cause shown, lost or worn by the wrong hole.  The value is what a hole shows; *why* a
+value is null belongs to the program's own inspection (`??`, a test) or the log.
+
+**Revisit when.** Not stated.  Decided 2026-10-08 (owner) — [record](DESIGN_DECISIONS-history.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null).
+**Holds at:** `@C142` — `./scripts/idx tag:@C142`: the hole's nullable rewrite in the parser
+(`src/parser/objects.rs`) and the null test before a type's own `to_text`
+(`src/parser/collections.rs`), `formal/formatting.md` `(F-FaultSafe)`, guards
+`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` and
+`tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`.
+**Catalogue:** @F38 (arithmetic safety) · `formal/formatting.md` `(F-FaultSafe)`, `formal/operational.md` `(E-Uncomp)` · reads C66, C80.

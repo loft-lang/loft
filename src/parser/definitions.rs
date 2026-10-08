@@ -80,6 +80,21 @@ impl Parser {
             }
             return;
         }
+        // @FR-Col-Spatial — an axis is an integer-not-null coordinate.  A float or single axis
+        // was accepted and then encoded so that a point lookup missed the collection's own
+        // records, and a float box query did not compile on `--native` (loft#1913).
+        if !want_text && !is_text && !matches!(tp.base(), Type::Integer(_)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a spatial index interleaves integer coordinates into a Morton code, and the \
+                 axis `{field}` is `{}` — store the coordinate as an integer in a unit fine \
+                 enough for it (millimetres, not metres), or key on the VALUE with `sorted` / \
+                 `index`",
+                tp.source_name(&self.data)
+            );
+            return;
+        }
         if is_text == want_text {
             return;
         }
@@ -1149,6 +1164,10 @@ impl Parser {
         }
         if !self.parse_enum_values(d_nr) {
             return false;
+        }
+        // `@FR-G-Regular` — an enum template names itself only regularly, as a struct does.
+        if !conflict && self.data.def_type(d_nr) == DefType::TypeTemplate {
+            self.template_is_regular(d_nr, &[]);
         }
         // Skip type-completion when this enum conflicts with a builtin of the
         // same name (e.g. `enum hash`): `d_nr` is then the existing builtin, and
@@ -3411,10 +3430,8 @@ impl Parser {
                 // loft#938 gate 1 of 5 — `ret_promo_base` peels `Optional(Vector)` so a
                 // NULLABLE collection return gets the buffer too.  Identity while
                 // `LOFT_NULLABLE_RETBUF` is off, which is the default.
-                && matches!(
-                    self.data.def(self.context).returned().ret_promo_base(),
-                    Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
-                )
+                // loft#1934 — a RECORD return takes no buffer (`Type::takes_ret_buffer`).
+                && self.data.def(self.context).returned().takes_ret_buffer()
             {
                 // The buffer's own type is the BASE: it is storage, and storage is never
                 // absent.  The RETURN keeps its `?` — a null answer is a value the caller
@@ -5223,6 +5240,9 @@ impl Parser {
                             if f.len() == 1 {
                                 self.check_key_is_text(sub_nr, &f[0], true);
                                 Type::Trie(sub_nr, f[0].clone(), crate::data::Deps::none())
+                            } else if f.is_empty() {
+                                // `parse_fields` refused the empty key list.
+                                Type::Unknown(0)
                             } else {
                                 diagnostic!(
                                     self.lexer,
@@ -5412,6 +5432,18 @@ impl Parser {
             }
         }
         self.lexer.token("]");
+        // @FR-Col-Hash / @FR-Col-Sorted / @FR-Col-Index / @FR-Col-Spatial — a keyed collection is
+        // `kind<T[k…]>` with at least one key.  `[]` names none, so every record would share
+        // the empty key and each insert would replace the last (loft#1912).
+        if result.is_empty() {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a keyed collection needs at least one key field — `[]` names none, so every \
+                 record would share one key; name the field to key on, as in `hash<Row[id]>`, \
+                 or hold the records in a `vector<…>`"
+            );
+        }
         self.lexer.closing_angle();
     }
 
@@ -5673,8 +5705,36 @@ impl Parser {
     /// struct field's type (`health: int stats#read stats#update`), recording each
     /// on `(struct, field)` for the admission walk.  Consumed every pass, recorded
     /// once (first pass) so the per-field link list does not double on re-parse.
-    pub(crate) fn parse_field_links(&mut self, d_nr: u32, a_name: &str) {
+    pub(crate) fn parse_field_links(&mut self, d_nr: u32, a_name: &str, a_type: &Type) {
         while let Some(token) = self.try_cap_link() {
+            // `@FR-Cap-Write`: `r = append ⟹ m : collection`.  An `#append` link on a scalar
+            // field names a right that cannot exist — a scalar `+=` is an update — and it was
+            // accepted, then admitted that update under the append grant (loft#1930).
+            if token.ends_with("#append")
+                && !matches!(
+                    a_type.base(),
+                    Type::Vector(..)
+                        | Type::Hash(..)
+                        | Type::Sorted(..)
+                        | Type::Index(..)
+                        | Type::Radix(..)
+                        | Type::Trie(..)
+                        | Type::Unknown(_)
+                )
+            {
+                if self.first_pass {
+                    continue;
+                }
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{token}` on `{a_name}`: an append grows a collection, and `{a_name}` is `{}` \
+                     — a `+=` on it changes the value in place, which is an update; link it \
+                     `…#update`",
+                    a_type.source_name(&self.data)
+                );
+                continue;
+            }
             if self.first_pass {
                 self.record_member_link(d_nr, a_name, token);
             }
@@ -6405,15 +6465,20 @@ impl Parser {
         // instantiates to a primitive whose operator has no
         // `__retbuf` (a `#rust` op), the trailing-argument trim
         // in `substitute_type_in_value` drops it again.
+        // Through `ret_promo_base`, as the concrete implementation's signature is: a `-> Self?`
+        // stub takes the buffer its `-> S?` implementation takes (loft#1934, `@FR-N-Road`), and
+        // a stub one short of its implementation leaves the instance a work-ref with no slot.
+        // The buffer is the BASE; the return keeps its `?`.
+        let buf_tp = t_ret_type.ret_promo_base().clone();
         if matches!(
-            t_ret_type,
+            buf_tp,
             crate::data::Type::Reference(_, _)
                 | crate::data::Type::Vector(_, _)
                 | crate::data::Type::Enum(_, true, _)
         ) {
-            let a =
-                self.data
-                    .add_attribute(&mut self.lexer, t_stub_nr, "__retbuf", t_ret_type.clone());
+            let a = self
+                .data
+                .add_attribute(&mut self.lexer, t_stub_nr, "__retbuf", buf_tp.clone());
             self.data.definitions[t_stub_nr as usize].attributes[a].hidden = true;
             // Mirror ref_return's finalisation on concrete
             // implementations ("returned = {__retbuf}"): the
@@ -6426,13 +6491,17 @@ impl Parser {
             // local vector's store never freed (#482, one
             // main_vector leaked per call).
             let dep = crate::data::Deps::attrs(vec![a as u16]);
-            let dep_ret = match t_ret_type.clone() {
+            let dep_ret = match buf_tp {
                 crate::data::Type::Reference(d, _) => crate::data::Type::Reference(d, dep),
                 crate::data::Type::Vector(e, _) => crate::data::Type::Vector(e, dep),
                 crate::data::Type::Enum(d, m, _) => crate::data::Type::Enum(d, m, dep),
                 other => other,
             };
-            self.data.definitions[t_stub_nr as usize].returned = dep_ret;
+            self.data.definitions[t_stub_nr as usize].returned = if t_ret_type.ret_promo_peels() {
+                crate::data::Type::optional(dep_ret)
+            } else {
+                dep_ret
+            };
         }
     }
 
@@ -7021,7 +7090,7 @@ impl Parser {
                     // '= expr' shorthand for a field default value
                     self.parse_stored_default(d_nr, a_name, &mut a_type, &mut value);
                     // @PLN86 P6.4 — links after a scalar/named field type.
-                    self.parse_field_links(d_nr, a_name);
+                    self.parse_field_links(d_nr, a_name, &a_type.clone());
                 }
             } else if let Some(tp) = {
                 self.type_fact = AliasFact::Plain;
@@ -7045,7 +7114,7 @@ impl Parser {
                 // both, so the two spellings of a field type stay in step.
                 self.parse_stored_default(d_nr, a_name, &mut a_type, &mut value);
                 // @PLN86 P6.4 — links after a vector/generic/tuple field type.
-                self.parse_field_links(d_nr, a_name);
+                self.parse_field_links(d_nr, a_name, &a_type.clone());
                 self.parse_field_assert(&mut check, &mut check_message);
                 break;
             } else {
@@ -7168,7 +7237,7 @@ impl Parser {
     /// One home for both field-type branches of `parse_field`.  Answers whether a check
     /// was consumed, so the identifier branch can keep using it as the head of its
     /// if-chain while the tuple branch, which ends the field itself, calls it directly.
-    /// @PLN165 D7 — `D-Regular` (@FR-G-Regular): a generic struct may name itself in its fields only at its
+    /// @PLN165 D7 — `D-Regular` (@FR-G-Regular): a generic struct or enum may name itself in its fields only at its
     /// own type variables, unchanged (`kids: vector<Tree<T>>`), for then every instance is a
     /// finite type.  At other arguments (`Bad<vector<T>>` inside `Bad<T>`) it has no finite
     /// set of instances: refused here, on the pass that parses it first, and marked so no
@@ -7181,15 +7250,26 @@ impl Parser {
         field_at: &[(String, crate::lexer::Position)],
     ) -> bool {
         let own: Vec<u32> = self.data.def(d_nr).type_params.clone();
-        let fields: Vec<(String, Type)> = self
-            .data
-            .def(d_nr)
-            .attributes()
-            .iter()
-            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
-            .map(|a| (a.name.clone(), a.typedef.clone()))
-            .collect();
-        for (name, tp) in fields {
+        // An enum's fields are its variants' (loft#1928): `Cons { t: vector<Lst<vector<T>>> }`
+        // names `Lst` irregularly as surely as a struct field would.
+        let is_enum = matches!(self.data.def(d_nr).returned().base(), Type::Enum(..));
+        let mut owners = vec![d_nr];
+        if is_enum {
+            owners.extend(
+                self.data
+                    .children_of(d_nr)
+                    .filter(|&c| self.data.def_type(c) == DefType::EnumValue),
+            );
+        }
+        let mut fields: Vec<(u32, String, Type)> = Vec::new();
+        for &owner in &owners {
+            for a in self.data.def(owner).attributes() {
+                if !matches!(a.typedef.base(), Type::Routine(_)) {
+                    fields.push((owner, a.name.clone(), a.typedef.clone()));
+                }
+            }
+        }
+        for (owner, name, tp) in fields {
             let mut irregular: Option<u32> = None;
             tp.any_node(&mut |t| {
                 if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
@@ -7219,15 +7299,20 @@ impl Parser {
                 .collect();
             let regular = format!("{tname}<{}>", vars.join(", "));
             let shown = Type::Reference(r, crate::data::Deps::none()).source_name(&self.data);
-            let at = field_at
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map_or_else(|| *self.lexer.pos(), |(_, p)| *p);
+            let at = if owner == d_nr {
+                field_at
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map_or_else(|| *self.lexer.pos(), |(_, p)| *p)
+            } else {
+                *self.data.def(owner).position()
+            };
+            let kind = if is_enum { "an enum" } else { "a struct" };
             diagnostic_at!(
                 self.lexer,
                 &at,
                 Level::Error,
-                "`{shown}` inside `{regular}` has no finite set of instances — a struct may \
+                "`{shown}` inside `{regular}` has no finite set of instances — {kind} may \
                  name itself only at its own type variables, unchanged: `{regular}`"
             );
             return false;

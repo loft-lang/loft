@@ -344,6 +344,7 @@ impl Parser {
         // to a host field is independently rejected by 2.4, and a field is rarely both
         // read-linked and written — F5 reworks the write path.)
         if fnr != usize::MAX && self.in_sandbox && !self.first_pass {
+            let built = self.sandbox_built_local(code);
             let reads: Vec<String> = self
                 .member_access
                 .get(&(dnr, field.clone()))
@@ -355,8 +356,10 @@ impl Parser {
                         .collect()
                 })
                 .unwrap_or_default();
-            let read_count = reads.len();
-            if !reads.is_empty() {
+            let read_count = if built { 0 } else { reads.len() };
+            // `@FR-Cap-Own` — a field of a value this function built reveals nothing of the
+            // host's (loft#1929: reading it was refused).
+            if !reads.is_empty() && !built {
                 let pos = *self.lexer.peek_pos();
                 let entry = self.sandbox_field_reads.entry(self.context).or_default();
                 for t in reads {
@@ -387,6 +390,20 @@ impl Parser {
             self.first_pass,
         );
         if fnr == usize::MAX {
+            // `ix.len()` — the method spelling of `len(ix)`, which no stdlib definition can
+            // carry (see `index_len`).  Both passes, so first-pass inference sees `integer`.
+            if field == "len"
+                && matches!(t.peel_optional().0, Type::Index(_, _, _))
+                && self.lexer.peek_token("(")
+            {
+                self.lexer.token("(");
+                self.lexer.token(")");
+                let recv = t.clone();
+                if let Some(tp) = self.index_len(code, &recv, vec![code.clone()], None) {
+                    return tp;
+                }
+                return crate::data::I64.clone();
+            }
             // Plan-17 phase 01 (B) — bounded-T method dispatch must run
             // on BOTH passes so the call's return type propagates into
             // first-pass type inference of the enclosing variable.
@@ -730,7 +747,11 @@ impl Parser {
             // `Disp-Hint` (@PLN162): the arguments parse under the ONE `t_` candidate the name
             // has at this receiver, else under the slot's routine; the definition the call
             // reaches is selected once the argument types exist (`parse_method_selecting`).
+            // A set in which several members take this receiver offers no hint at all: the
+            // slot's routine is its FIRST member, and hinting with it typed an untyped `|x|`
+            // by declaration order (loft#1926).
             let hint_nr = match self.data.candidates(u16::MAX, &field, &dispatch).as_slice() {
+                _ if self.data.receiver_shared_in_set(&field, &dispatch) => u32::MAX,
                 [one] if self.data.def(*one).name.starts_with("t_") => *one,
                 _ => r_nr,
             };
@@ -3758,6 +3779,108 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             ls.push(Value::Keys(
                 self.database.types[known as usize].keys.clone(),
             ));
+        }
+    }
+}
+
+// `@FR-Cap-Read` / `@FR-Cap-Own` — the sandbox's read records for the operations that read a
+// field without a `.field` site of their own.
+impl Parser {
+    /// Is `subject` a local this sandboxed function only ever assigned struct literals
+    /// ([`Parser::sandbox_built`])?  Such data is the script's own.
+    pub(crate) fn sandbox_built_local(&self, subject: &Value) -> bool {
+        matches!(subject.unspan(), Value::Var(v)
+            if self.sandbox_built.get(&(self.context, *v)) == Some(&true))
+    }
+
+    /// A sandboxed read of member `field` of `sd` other than through `.field` — a `match`
+    /// pattern binding it or testing it.  Recorded when the member carries a `#read` link and
+    /// `subject` is not data this function built.
+    pub(crate) fn sandbox_read_member(&mut self, sd: u32, field: &str, subject: &Value) {
+        if !self.in_sandbox || self.first_pass || self.sandbox_built_local(subject) {
+            return;
+        }
+        let reads: Vec<String> = self
+            .member_links(sd, field)
+            .iter()
+            .filter(|t| t.ends_with("#read"))
+            .cloned()
+            .collect();
+        if reads.is_empty() {
+            return;
+        }
+        let pos = *self.lexer.peek_pos();
+        let entry = self.sandbox_field_reads.entry(self.context).or_default();
+        for t in reads {
+            entry.push((t, pos));
+        }
+    }
+
+    /// A sandboxed WHOLE-value read — the value rendered as text or JSON reads every field it
+    /// reaches, so each `#read`-linked member anywhere in `tp` is a read (loft#1929: `"{p}"`
+    /// printed a field `p.hidden` was refused for).
+    pub(crate) fn sandbox_read_whole(&mut self, tp: &Type, subject: &Value) {
+        if !self.in_sandbox || self.first_pass || self.sandbox_built_local(subject) {
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut reads = Vec::new();
+        self.collect_read_links(tp, &mut seen, &mut reads);
+        if reads.is_empty() {
+            return;
+        }
+        let pos = *self.lexer.peek_pos();
+        let entry = self.sandbox_field_reads.entry(self.context).or_default();
+        for t in reads {
+            entry.push((t, pos));
+        }
+    }
+
+    fn collect_read_links(
+        &self,
+        tp: &Type,
+        seen: &mut std::collections::HashSet<u32>,
+        out: &mut Vec<String>,
+    ) {
+        match tp.base() {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                if !seen.insert(*d) {
+                    return;
+                }
+                for a in 0..self.data.attributes(*d) {
+                    let name = self.data.attr_name(*d, a);
+                    out.extend(
+                        self.member_links(*d, &name)
+                            .iter()
+                            .filter(|t| t.ends_with("#read"))
+                            .cloned(),
+                    );
+                    let inner = self.data.attr_type(*d, a);
+                    self.collect_read_links(&inner, seen, out);
+                }
+                let variants: Vec<u32> = self.data.children_of(*d).collect();
+                for v in variants {
+                    self.collect_read_links(
+                        &Type::Reference(v, crate::data::Deps::none()),
+                        seen,
+                        out,
+                    );
+                }
+            }
+            Type::Vector(e, _) => self.collect_read_links(e, seen, out),
+            Type::Hash(d, _, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _) => {
+                self.collect_read_links(&Type::Reference(*d, crate::data::Deps::none()), seen, out);
+            }
+            Type::Tuple(elems) => {
+                for e in elems {
+                    self.collect_read_links(e, seen, out);
+                }
+            }
+            _ => {}
         }
     }
 }

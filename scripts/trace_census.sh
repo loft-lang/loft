@@ -9,7 +9,9 @@
 #   libraries  every `loft-lang/loft-libs-*` repo, freshly cloned at `main` — never a local
 #              clone, which can lag it (@PLN112);
 #   consumers  a SNAPSHOT (`git archive HEAD`) of each consumer application beside this checkout
-#              — read-only: a check writes caches, and their trees are someone else's work.
+#              — read-only: a check writes caches, and their trees are someone else's work;
+#   dir:<path> every `.loft` file under one directory, IN PLACE (its git files when it is a
+#              repo), labelled `dir` — for a project measuring its own tree.
 #
 # Its callers own the switch and the report: `eq_census.sh` (@C91, `LOFT_TRACE_EQ_IDENTITY`,
 # `[eq-identity]`) and `pub_census.sh` (@PLN187, `LOFT_TRACE_VISIBILITY`, `[visibility]`).
@@ -31,6 +33,9 @@ LOFT=${LOFT:-$ROOT/target/release/loft}
 TREES=${CENSUS_TREES:-loft libraries consumers}
 CONSUMERS=${CENSUS_CONSUMERS:-crawler dryopea hexbody moros Moros-Economy-Development routing zero-trust-shared-files}
 JOBS=${CENSUS_JOBS:-12}
+# Extra `loft` flags for every check — a project's own `--lib` dirs, so its files compile the way
+# its Makefile runs them (a file that does not compile hides its sites).
+CENSUS_FLAGS=${CENSUS_FLAGS:-}
 
 [ -x "$LOFT" ] || { echo "census: no loft binary at $LOFT (cargo build --release --bin loft)" >&2; exit 2; }
 rm -rf "$WORK" && mkdir -p "$WORK/raw"
@@ -44,14 +49,14 @@ check_one() {
     [ -f "$dir/loft.toml" ] || dir=$(dirname "$file")
     key=$(printf '%s' "$file" | md5sum | cut -c1-16)
     (cd "$dir" && env LOFT_NO_CACHE=1 LOFT_STDLIB_CACHE=1 "$TRACE=1" \
-        timeout 60 "$LOFT" --check "$file" >/dev/null 2>"$WORK/raw/$key.err")
+        timeout 60 "$LOFT" $CENSUS_FLAGS --check "$file" >/dev/null 2>"$WORK/raw/$key.err")
     rc=$?
     grep "^\[$TAG\]" "$WORK/raw/$key.err" | sed "s|^\[$TAG\] |$tree\t|" >"$WORK/raw/$key.sites"
     [ $rc -eq 0 ] || printf '%s\t%s\n' "$tree" "$file" >"$WORK/raw/$key.failed"
     rm -f "$WORK/raw/$key.err"
 }
 export -f check_one
-export LOFT WORK TRACE TAG
+export LOFT WORK TRACE TAG CENSUS_FLAGS
 
 list=$WORK/files.tsv
 : >"$list"
@@ -77,12 +82,21 @@ for tree in $TREES; do
             git -C "$src" archive HEAD | tar -x -C "$WORK/consumers/$app"
             (cd "$WORK/consumers/$app" && find . -name '*.loft' | sed "s|^\./|consumers\t$WORK/consumers/$app/|") >>"$list"
         done ;;
+    dir:*)
+        d=$(cd "${tree#dir:}" 2>/dev/null && pwd) || { echo "census: no directory ${tree#dir:}" >&2; exit 2; }
+        if git -C "$d" rev-parse --show-toplevel >/dev/null 2>&1; then
+            git -C "$d" ls-files '*.loft' | sed "s|^|dir\t$d/|" >>"$list"
+        else
+            find "$d" -name '*.loft' -not -path '*/.loft/*' -not -path '*/target/*' | sed "s|^|dir\t|" >>"$list"
+        fi ;;
     *) echo "census: unknown tree '$tree'" >&2; exit 2 ;;
     esac
 done
 
 tr '\t' '\n' <"$list" | xargs -P "$JOBS" -d '\n' -n 2 bash -c 'check_one "$0" "$1"'
 
-cat "$WORK"/raw/*.sites 2>/dev/null | sed "s|$WORK/[a-z]*/||g; s|$ROOT/||g" | sort -u >"$WORK/sites.tsv"
+# Paths are shortened to the tree they live in; a `dir` tree keeps them absolute, so a project
+# inside this checkout still resolves against its own root.
+cat "$WORK"/raw/*.sites 2>/dev/null | sed "s|$WORK/[a-z]*/||g; /^dir	/!s|$ROOT/||g" | sort -u >"$WORK/sites.tsv"
 cat "$WORK"/raw/*.failed 2>/dev/null >"$WORK/failed.tsv"
 echo "$WORK"

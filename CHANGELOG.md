@@ -16,6 +16,17 @@ invariants, internal phase numbers)?  See
 
 ### May need a change in your code
 
+**A field is private to the file that declares it.**  Reading, writing or matching a field
+from another file needs `pub` on that field (`struct Unit { pub name: text, hp: integer }`); a
+struct literal outside its file needs every field `pub`, and an enum's variants need `pub enum`.
+A type your `pub fn` returns can still be named, passed and stored by its caller without `pub`
+— it just cannot be built there.  A `type Handle = integer` that is not `pub` but is returned by
+a `pub fn` hides its integer: callers can pass a `Handle` back and compare two, but not add to
+one.  Each refusal names the field or type, its file and the fix.  For a library you use, update
+to its release that marks its fields `pub`; for your own package of several files,
+`scripts/pub_census.sh` and `scripts/pub_migrate.py` add the `pub` the refusals ask for
+([COMPATIBILITY.md](doc/claude/COMPATIBILITY.md)).
+
 **`operator` is a keyword.**  It starts a definition an operator form reaches (below), so a
 variable, field or function named `operator` no longer compiles: rename it.
 
@@ -70,7 +81,45 @@ it used to stop the program at the write.  Copy what you change (`w = m`, a bind
 declare a parameter that only reads it `const`.  A function of yours can say the same of its
 result: `fn view(…) -> const vector<u8>`.
 
+**A concatenation with a null operand is null, whatever the operand's type.**  `"ready: " + flag`
+with a null `flag` used to read `"ready: null"`; it is now `null`, as `"a" + t` with a null text
+already was, and `t += x` with a null `x` makes `t` null.  Interpolation still prints the word:
+write `"ready: {flag}"` when you want the text either way.
+
+**A null inside `{…}` prints `null`, never why it is null.**  `"{a / b}"` with `b = 0`,
+`"{v[9]}"` past the end and `"{5.0 % 0.0}"` now all print `null` where they printed `null(/0)`,
+`null(oob)` and `null(%0)`; the program still continues.  A test or a parser that matched the
+old suffix matches `null` now.  `LOFT_FORMAT_BARE_NULL` is gone: plain `null` is the only form.
+A null whose type has its own `operator to_text` prints `null` as well, and that function is no
+longer called with a null `self` (it printed things like `Tnull`).
+
+**A record shows its null fields.**  `Point { x: 3, y: null, label: null }` prints
+`{x:3,y:null,label:null}` where it printed `{x:3}`, and `{p:j}` writes
+`{"x":3,"y":null,"label":null}` — nested records and records in a vector too.  `Type.parse` reads
+the new form back to the same value; a test that pinned the shorter form needs the nulls added.
+
 ### New
+
+**A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
+its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
+1 and a message.  Under `loft test` it fails the test that called it, naming the code.
+
+**A backtick literal can hold a backtick.**  `` \` `` is a backtick in either quote form, so a
+block of text that quotes code is one multi-line literal instead of a print per line.
+
+**A vector answers whether it holds a value.**  `names.contains("x")` reads any vector by
+content, as `==` compares — a text, a number, a record — beside `text`'s own `contains`; it was
+a four-line loop in every script that held a list of names.
+
+**`?? exit(2)` and `?? panic("…")`.**  A call that never returns may be a `??` default, the
+way `?? return` already was: `n = version(text) ?? exit(1)` reads the value or stops the
+program with that status, with no sentinel and no `if` for the absent case.
+
+**Naming a library's type loads the library.**  `c: Command = "git log -n {n}"` brings in
+`process` the way `line.matches(p)` brings in `regex`: a package that opts into triggers now
+fires on its `pub struct` and `pub enum` names too, wherever the package is declared — a
+sibling, the project's `lib/`, a `path =` dependency.  The type arrives imported by name, and
+its typed-format and `to_text` hooks work on it as they do after `use pkg::*;`.
 
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
 runs the block exactly when the write did not take — an index past the end, a key the

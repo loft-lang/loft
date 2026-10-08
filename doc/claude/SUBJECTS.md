@@ -249,9 +249,13 @@ is read-only and a write to it is a compile error. Under WASM it runs sequential
 **loft's answer.** Embedded expressions in a text literal; every string is a format string.
 `print` stays text-only — no bare `print(value)`, no variadic `print`.
 
-**Rationale.** [C100](DESIGN_DECISIONS.md) (`print` stays text-only)
+**Rationale.** [C100](DESIGN_DECISIONS.md) (`print` stays text-only) ·
+[C142](DESIGN_DECISIONS.md) (a null in a `{…}` hole renders plain `null`, never its cause) ·
+[C143](DESIGN_DECISIONS.md) (a rendered record shows its null fields)
 
-**Verified by.** `tests/docs/30-formatting.loft` · **`tests/comparisons/formatting.loft`**
+**Verified by.** `tests/docs/30-formatting.loft` · **`tests/comparisons/formatting.loft`** ·
+`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` ·
+`tests/scripts/a-record-renders-its-null-fields.loft`
 
 **Seen from.** vs Rust §13 · vs Python §6
 

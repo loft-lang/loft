@@ -1,25 +1,8 @@
-diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 3c933a560..454859a72 100644
---- a/src/parser/expressions.rs
-+++ b/src/parser/expressions.rs
-@@ -4707,12 +4707,6 @@ use a separate collection or add after the loop"
-                 }
-             } else if let Some(src) = link_src {
-                 amp_unlowered = false;
--                // `@FR-O-Borrow-Scalar` — the link this one copies must live as long, and the
--                // place behind it with it: the slot allocator follows the chain from the
--                // record on each target.  Unrecorded, `x = 250; c = &x; d = &c` let a later
--                // local take `x`'s slot once `c` was last named, and the interpreter read
--                // the usurper's value through `d` while native answered 250.
--                self.vars.record_amp_link(var_nr, src);
-                 if self.vars.is_store_text_link(src) {
-                     self.bind_text_link_kind(var_nr, true);
-                 } else if matches!(self.vars.tp(src).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 4278d7611..ed2705e40 100644
+index 9f0a3619b..b967dc04a 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -22205,66 +22205,6 @@ impl Parser {
+@@ -22826,83 +22826,6 @@
              }
          }
          written.extend(propagated);
@@ -31,15 +14,32 @@ index 4278d7611..ed2705e40 100644
 -        // The bind is a `Set` of the link too, so the writes are measured on the body with the
 -        // binds blanked: a link only READ leaves its target unwritten.
 -        // A link to a tuple MEMBER (`c = &t.0`, `OpCreateStack(TupleGet(t, i))`) names a place
--        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).
+-        // inside `t`, so a write through it writes `t` (`@FR-B-Ref-Lvalue`).  A member of a
+-        // `&(…)` tuple is the second spelling of the same link: that tuple is the caller's
+-        // `__tuple<…>` record (`@FR-T-Ref-Rep`), so its member link is `OpGetField(p, i)`.
+-        // Only a tuple record is followed: a struct's fields propagate without the `&`, so a
+-        // field link on a `&S` parameter leaves the advice to drop the `&` standing.
+-        let vars = &self.vars;
 -        let link_bind = |data: &Data, n: &Value| -> Option<(u16, u16)> {
 -            if let Value::Set(v, rhs) = n.unspan()
 -                && let Value::Call(op, args) = rhs.unspan()
--                && matches!(data.def(*op).name(), "OpCreateStack" | "OpVarRef")
--                && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
--                    args.first().map(Value::unspan)
 -            {
--                return Some((*v, *src));
+-                let name = data.def(*op).name();
+-                if matches!(name, "OpCreateStack" | "OpVarRef")
+-                    && let Some(Value::Var(src) | Value::TupleGet(src, _)) =
+-                        args.first().map(Value::unspan)
+-                {
+-                    return Some((*v, *src));
+-                }
+-                if name == "OpGetField"
+-                    && matches!(vars.tp(*v).base(), Type::RefVar(_))
+-                    && let Some(Value::Var(src)) = args.first().map(Value::unspan)
+-                    && matches!(vars.tp(*src).base(), Type::RefVar(inner)
+-                        if matches!(inner.base(), Type::Reference(d, _)
+-                            if data.def(*d).name().starts_with("__tuple<")))
+-                {
+-                    return Some((*v, *src));
+-                }
 -            }
 -            None
 -        };

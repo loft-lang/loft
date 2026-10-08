@@ -426,7 +426,10 @@ struct JParser<'a> {
     bytes: &'a [u8],
     map: ByteMapper,
     dialect: Dialect,
-    path: Vec<String>,
+    /// The JSON pointer of a failing value, built only while the error unwinds: each
+    /// array or object level adds its own segment, innermost first.  Kept on the success
+    /// path it was a `String` per element and per key that nothing read.
+    err_path: Vec<String>,
     /// Byte offset just past the value most recently parsed, in the RAW input.
     /// loft's number lexer over-consumes JSON-invalid forms (`007`, `0x1f`,
     /// `1_0`) as a single token, so the lexer's next-token position would hide
@@ -443,7 +446,7 @@ impl<'a> JParser<'a> {
             bytes: input.as_bytes(),
             map: ByteMapper::new(input),
             dialect,
-            path: Vec::new(),
+            err_path: Vec::new(),
             value_end: 0,
         }
     }
@@ -640,7 +643,7 @@ impl<'a> JParser<'a> {
             };
             // `Tag{…}` — a type-tagged constructor (kept distinct from Object).
             if let Parsed::Ident(tag) = &value
-                && self.lx.peek().has == LexItem::Token("{".to_string())
+                && self.lx.peek_token("{")
             {
                 let obj = self.parse_object()?; // sets value_end past `}`
                 return Ok(Parsed::Constructor(tag.clone(), off, Box::new(obj)));
@@ -672,7 +675,7 @@ impl<'a> JParser<'a> {
         let start = self.byte_of(&self.lx.peek().position); // the `[`
         self.lx.cont();
         let mut items: Vec<Parsed> = Vec::new();
-        if self.lx.peek().has == LexItem::Token("]".to_string()) {
+        if self.lx.peek_token("]") {
             self.lx.cont();
             self.value_end = self.peek_pos();
             return Ok(Parsed::Array(items));
@@ -681,9 +684,13 @@ impl<'a> JParser<'a> {
         let mut at = skip_ws(self.bytes, start + 1);
         let mut idx = 0usize;
         loop {
-            self.path.push(idx.to_string());
-            let v = self.parse_value(at)?;
-            self.path.pop();
+            let v = match self.parse_value(at) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.err_path.push(idx.to_string());
+                    return Err(e);
+                }
+            };
             items.push(v);
             // The delimiter must appear at the RAW position after the value; the
             // lexer's peek could be past it if the value was an over-consumed
@@ -713,7 +720,7 @@ impl<'a> JParser<'a> {
         let start = self.byte_of(&self.lx.peek().position); // the `{`
         self.lx.cont();
         let mut fields: Vec<(String, usize, Parsed)> = Vec::new();
-        if self.lx.peek().has == LexItem::Token("}".to_string()) {
+        if self.lx.peek_token("}") {
             self.lx.cont();
             self.value_end = self.peek_pos();
             return Ok(Parsed::Object(fields));
@@ -721,7 +728,7 @@ impl<'a> JParser<'a> {
         loop {
             let (name, key_at) = self.parse_object_key(start)?;
             let colon = self.lx.peek();
-            if colon.has != LexItem::Token(":".to_string()) {
+            if !matches!(&colon.has, LexItem::Token(t) if t == ":") {
                 let off = if colon.has == LexItem::None {
                     self.bytes.len()
                 } else {
@@ -732,9 +739,13 @@ impl<'a> JParser<'a> {
             let colon = self.byte_of(&colon.position);
             self.lx.cont(); // consume `:`
             let at = skip_ws(self.bytes, colon + 1);
-            self.path.push(name.clone());
-            let v = self.parse_value(at)?;
-            self.path.pop();
+            let v = match self.parse_value(at) {
+                Ok(v) => v,
+                Err(e) => {
+                    self.err_path.push(name);
+                    return Err(e);
+                }
+            };
             fields.push((name, key_at, v));
             // Delimiter at the RAW position after the value (see `parse_array`).
             let d = self.after_value();
@@ -802,7 +813,7 @@ fn parse_lexer(input: &str, dialect: Dialect) -> Result<Parsed, ParseError> {
             return Err(ParseError {
                 message,
                 byte_offset,
-                path: render_path(&p.path),
+                path: render_path(&p.err_path.iter().rev().cloned().collect::<Vec<_>>()),
             });
         }
     };
@@ -813,7 +824,7 @@ fn parse_lexer(input: &str, dialect: Dialect) -> Result<Parsed, ParseError> {
         return Err(ParseError {
             message: format!("unexpected trailing byte at offset {end}"),
             byte_offset: end,
-            path: render_path(&p.path),
+            path: render_path(&p.err_path.iter().rev().cloned().collect::<Vec<_>>()),
         });
     }
     Ok(value)

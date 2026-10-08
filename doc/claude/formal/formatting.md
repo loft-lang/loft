@@ -38,7 +38,8 @@ of interleaved literal runs `sᵢ` and interpolations `{eᵢ:fᵢ}`.
               are STATIC errors (`format-unescaped-brace`, `format-unclosed-hole`) — never
               copied, because either reading of the author's intent is a guess; the cure,
               doubling, is what `loft fix --apply` writes.  Both quote forms, `"…"` and
-              `` `…` ``, and every position a text literal can stand in obey it alike.
+              `` `…` ``, and every position a text literal can stand in obey it alike; and
+              in both, `` \` `` is a backtick, as `\"` is a quote.
 ```
 
 **In words.** `"hi {name}, {a + b} left"` renders the literals unchanged and splices each
@@ -108,13 +109,23 @@ against.
                 enum                the variant name          null (0xFF disc) → "null"
                 vector              "[e₀,e₁,…]"  (compact, elements rendered by F-Render)
                 struct              "{field:value,…}"  (compact loft form; the `:j` spec → JSON)
+
+  (F-Render-Fields)  a struct renders EVERY field it declares, in declaration order — a null
+                field as `null`, and under `:j` as JSON `null` (@C143).  Nested records and the
+                elements of a vector follow the same rule.  The only fields left out are the ones
+                that are not values of the record: the `enum` discriminator of a variant, an
+                internal `#`-named field, and a secondary view of records a sibling field owns.
 ```
 
 **In words.** Each type has one canonical text form. A **null** of any type renders as the literal
 word `null` — the single exception is a null **character** (codepoint 0), which renders as nothing
 (so iterating text past its end appends no garbage). A vector is a compact bracketed list; a struct
 is a compact `{field:value}` form, and the `:j` spec switches it to JSON with quoted keys (verified:
-`{r:128,g:0,b:128}` vs `{"r":128,"g":0,"b":128}`).
+`{r:128,g:0,b:128}` vs `{"r":128,"g":0,"b":128}`).  A field holding null is shown, not dropped:
+`Point { x: 3, y: null, label: null }` renders `{x:3,y:null,label:null}`, and under `:j`
+`{"x":3,"y":null,"label":null}`, so a rendering says what the record holds and the JSON form
+reads back to the same value.  Inside a record or a vector a null of every type is the word
+`null` — a null character too, since an empty spelling there would not read back.
 
 > **A TUPLE has no row here, and its absence is a DECISION rather than a gap.**
 > `"{t}"` on a `(integer, integer)` is `error: Cannot format type (integer, integer)`, and
@@ -196,19 +207,23 @@ That composition decides the one edge worth stating: a **null character renders 
 (`F-Render`), so `{nc:>3}` is three pad characters — a full field of them, not an empty string.
 Nothing is still a rendering, and a width pads whatever the rendering is.
 
-### Fault-safety — an uncomputable inside `{…}` renders a tagged null, never halts
+### Fault-safety — an uncomputable inside `{…}` renders `null`, never halts
 
 ```
   (F-FaultSafe)  a fault-prone operation inside an interpolation (÷0, index OOB, a field of null)
                  follows operational.md E-Uncomp: it yields the null VALUE, and the interpolation
-                 renders it as "null" annotated with the fault cause, e.g. "null(/0)".  Formatting
+                 renders it as `null` — the same rendering any null of its type gets (F-Render),
+                 never annotated with the fault's cause (@C142).  The program continues: formatting
                  a value NEVER traps or halts — the template always produces text.
 ```
 
-**In words.** `"{a / b}"` with `b = 0` renders `null(/0)` rather than crashing the program — the
+**In words.** `"{a / b}"` with `b = 0` renders `null` rather than crashing the program — the
 formatter rewrites fault-prone operations in interpolation position to their nullable peers (C66 /
-@P376), so building a diagnostic string can never itself fault. The tag (`/0`, an out-of-range
-index, …) names *why* the value is null, which is exactly what a `"{x}"` in a log line wants.
+@P376), so building a diagnostic string can never itself fault.  The null a fault yields is the
+null any other null is: `"{a / b}"`, `"{v[9]}"` and `"{c}"` after `c = a / b` all render `null`,
+whatever type the hole has, so a rendering never depends on where in the expression the fault sat.
+A null whose type has its own `operator to_text` renders `null` too: the hole tests for the null
+first, so the user's function is never called with a null `self`.
 
 ---
 
@@ -226,6 +241,9 @@ the companion [formatting-history.md](formatting-history.md).
 - **Per-type render + null (`F-Render`)** — `"{true}"` is `true`; `"{[1,2,3]}"` is `[1,2,3]`;
   `"{col}"` is `{r:128,g:0,b:128}` and `"{col:j}"` is `{"r":128,"g":0,"b":128}`; `null as integer?`
   renders `null`.
+- **Null fields (`F-Render-Fields`)** — `Point { x: 3, y: null, label: null }` renders
+  `{x:3,y:null,label:null}` and, under `:j`, `{"x":3,"y":null,"label":null}` on both backends,
+  nested and inside a vector alike (`tests/scripts/a-record-renders-its-null-fields.loft`).
 - **Format spec (`F-Spec`)** — `"{1:03}"` is `001`, `"{42:#x}"` is `0x2a`, `"{334.1:.2}"` is
   `334.10`, `"{\"abc\":>7}"` is `    abc`, `"{0.5:+.3}"` is `+0.500`.  **A differential
   oracle cannot see a flag both backends drop** — `+` was honoured on an integer and
@@ -233,8 +251,11 @@ the companion [formatting-history.md](formatting-history.md).
   agreed throughout (loft#1087).  The `+`-on-a-float cells are in
   `tests/scripts/14-formatting.loft` for that reason: what pins a rule is a cell that
   spells out the expected string, not the agreement of two implementations.
-- **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null(/0)` on both backends, and
-  the program continues.
+- **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null` on both backends, and
+  the program continues; so are `"{v[9]}"` on `v = [1, 2]` and `"{5.0 % 0.0}"` — no hole kind
+  shows a fault's cause (`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`); a
+  null `T?` whose type has an `operator to_text` renders `null` without calling it
+  (`tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`).
 - **Target (`F-Target`)** — with `lit` + `hole_text` + `hole_int` on `Query`,
   `q: Query = "SELECT * FROM t WHERE name = {name} AND id = {n}"` leaves `len(q.parts) == 2` and
   `q.values == ["ada", "7"]` — identical on both backends; the same template assigned to `text`

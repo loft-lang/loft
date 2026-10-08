@@ -13,7 +13,8 @@
 //   WITNESS: *"Unknown variable 'v'"* for the first, *"Expect token }"* for the second.
 //   HOLDS: each program is refused either way; only WHICH refusal moves.
 // @falsified-by: tests/falsified/a-struct-pattern-arm-refusals.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 2/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 2/2 (the suite's verdict, not a count of matches)
-//   Step 2 reverted whole (the durable receipt).
+//   Re-derived at 653383a5a as step 2's three pieces: `field: name` read as a value, one
+//   pattern per arm, and no `@FR-M-Wild` refusal (the arms loop stops instead).
 //   CHANNEL: the expected diagnostics, on BOTH backends.
 //   ARMED: nothing.
 //   WITNESS: as above.

@@ -204,6 +204,9 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // `OpDatabase` line goes in both native arms: 85/127 → 75/117, the interpreter unchanged.
     // And a complete-literal callee refills the store such a rebind released
     // (`@FR-R-RefillBuffer`): 75/117 → 65/107 (`LOFT_NO_REFILL_BUFFER=1` gives back the old pair).
+    // 2026-10-08: a `-> P?` return takes the buffer its dense twin takes (loft#1934), so each
+    // call site of `maybe` mints its `__ref_N` as a `-> P` site does: 86/134 → 90/140 on the
+    // interpreter, 65/107 → 66/109 on native (`LOFT_NO_NULLABLE_RETBUF=1` gives back both pairs).
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -212,11 +215,11 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (86, 134), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (90, 140), "interpret mints (on, off)");
     let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
     assert!(
         n_on < n_off,
         "native: {n_on} mints with adoption, {n_off} without"
     );
-    assert_eq!((n_on, n_off), (65, 107), "native mints (on, off)");
+    assert_eq!((n_on, n_off), (66, 109), "native mints (on, off)");
 }

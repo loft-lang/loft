@@ -1269,7 +1269,7 @@ impl Output<'_> {
         let record_def = if self.declared.contains(&var) {
             variables.tp(var).base().heap_def_nr()
         } else {
-            match variables.tp(var).peel_optional() {
+            match crate::use_analysis::first_bind_shape(variables.tp(var)).peel_optional() {
                 (_, true) => None,
                 (shape, false) => shape.heap_def_nr(),
             }

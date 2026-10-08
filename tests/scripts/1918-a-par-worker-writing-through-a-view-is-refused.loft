@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @EXPECT_ERROR: par() worker w1918a writes captured `e`
+// @EXPECT_ERROR: par() worker w1918b writes captured `e`
+// @EXPECT_ERROR: par() worker w1918c writes captured `e`
+// @EXPECT_ERROR: par() worker w1918d writes captured `e`
+//
+// loft#1918, `@FR-C-Impure` (C93, C80) — a `par` worker's captured state is read-only, and a
+// write to it is a COMPILE error at the write, however the place is reached.  The check
+// followed a write rooted at the parameter itself and at a callee's parameter, but not one
+// rooted at a local that VIEWS the parameter, so these compiled and then halted at run time on
+// the read-only store ("Write to read-only store … locked by: borrow_locked_for_light_worker"),
+// on both backends.  The check now follows the local's dep chain to the parameter it views.
+// The four views: a field bound to a local, a `&` to a field, an element bound to a local, and
+// a `for` variable over a member collection.  Whole-value copies stay legal — the control file
+// `1918b-a-par-worker-may-write-a-copy-of-its-input.loft`.
+//
+// @falsified-by: tests/falsified/1918-a-par-worker-writing-through-a-view-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+//   CHANNEL: the EXPECTATION — the control compiles the four writes through a view, so none of
+//   the four refusals appears.
+//   WITNESS: `FAIL/4` on both backends against `0/4` here (scored at 6598df45d).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct I1918 { k: integer }
+struct E1918 { inner: I1918, list: vector<I1918> }
+
+fn w1918a(e: E1918) -> integer { x = e.inner; x.k = 50; x.k }
+fn w1918b(e: E1918) -> integer { x = &e.inner; x.k = 51; x.k }
+fn w1918c(e: E1918) -> integer { x = e.list[0]; x.k = 52; x.k }
+fn w1918d(e: E1918) -> integer { for l in e.list { l.k = 53; } 1 }
+
+fn main() {
+  v = [E1918 { inner: I1918 { k: 1 }, list: [I1918 { k: 2 }] }];
+  s = 0;
+  for e in v par(b = w1918a(e), 2) { s += b; }
+  for e in v par(b = w1918b(e), 2) { s += b; }
+  for e in v par(b = w1918c(e), 2) { s += b; }
+  for e in v par(b = w1918d(e), 2) { s += b; }
+  println("{s}");
+}

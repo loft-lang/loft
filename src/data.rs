@@ -2508,54 +2508,68 @@ impl Type {
 
     /// The type the return-buffer machinery should treat this return as (loft#938).
     ///
-    /// `Optional(Vector(τ))` peels to `Vector(τ)`: a nullable COLLECTION return lays out
-    /// exactly like the bare one and wants the same hidden `__retbuf`, which is what stops
-    /// the caller inheriting a store the callee allocated per call.
+    /// `Optional(τ)` peels to `τ` for every shape that takes the buffer — a collection, a
+    /// record, a record enum: the `?` is a compile-time marker over τ's own storage (C90), so a
+    /// nullable return lays out exactly like the bare one and takes the same hidden `__retbuf`
+    /// (`@FR-N-Road`, loft#1934).  A `null` answer is a value the caller reads, never a buffer
+    /// it fails to receive.  Every other `Optional` stays wrapped.
     ///
-    /// Every other `Optional` stays WRAPPED, and that is the load-bearing half. A nullable
-    /// STRUCT return (`-> S?`) is loft#896's synthetic `__nullable<S>` enum — a different
-    /// representation with its own delivery — and giving it a buffer as well leaks one record
-    /// per call. The `?` is transparent only where the storage under it is.
-    ///
-    /// Gated on [`keys::nullable_ret_buffer`], **OPT-IN and default off**: with the switch
-    /// off this is the IDENTITY, so every caller reads exactly as it did before the gate
-    /// existed. See that switch for what turning it on currently fixes and what it does not.
+    /// Gated on [`keys::nullable_ret_buffer`] (default on, `LOFT_NO_NULLABLE_RETBUF=1` turns it
+    /// off): with the switch off this is the IDENTITY, and a nullable return takes no buffer.
     #[must_use]
     pub fn ret_promo_base(&self) -> &Type {
-        if !crate::keys::nullable_ret_buffer() {
-            return self;
-        }
+        self.buffered_payload().unwrap_or(self)
+    }
+
+    /// The `τ` a `τ?` return looks through its `?` to, when `τ` takes the buffer — `None` for
+    /// every other type.  The one answer the peels below share, so "which shapes peel"
+    /// cannot drift between them.
+    fn buffered_payload(&self) -> Option<&Type> {
         match self {
-            Type::Optional(inner) if matches!(inner.as_ref(), Type::Vector(_, _)) => inner,
-            other => other,
+            Type::Optional(inner)
+                if crate::keys::nullable_ret_buffer()
+                    && matches!(
+                        inner.as_ref(),
+                        Type::Vector(_, _) | Type::Reference(_, _) | Type::Enum(_, true, _)
+                    ) =>
+            {
+                Some(inner)
+            }
+            _ => None,
         }
+    }
+
+    /// Does a function returning this type take the caller-allocated hidden `__retbuf`?
+    ///
+    /// One home for the three sites that reserve one — the signature, the between-passes
+    /// sweep and a generic method's stub — so they cannot disagree on a function's arity.
+    /// Read through [`ret_promo_base`](Self::ret_promo_base), so `τ?` answers as `τ` does.
+    #[must_use]
+    pub fn takes_ret_buffer(&self) -> bool {
+        matches!(
+            self.ret_promo_base(),
+            Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
+        )
     }
 
     /// How `ref_return` reads this return type: the heap shape whose DEPS it carries, and
     /// what peeling to reach it means — loft#974.
     ///
-    /// [`ret_promo_base`](Self::ret_promo_base) answers a DELIVERY question (does this
-    /// return get a `__retbuf` and a buffer-filling rewrite?) and deliberately peels
-    /// `Optional(Vector)` only: a nullable STRUCT return is loft#896's synthetic
-    /// `__nullable<S>`, which has its own delivery, and giving it a second one leaks a
-    /// record per call — measured, and the reason that peel is narrow.
+    /// A `τ?` that takes the buffer ([`ret_promo_base`](Self::ret_promo_base)) is
+    /// `Delivered`: its base is placed as τ's is.  A nullable KEYED return keeps its own
+    /// delivery and is `SignatureOnly`.
     ///
-    /// This answers a SIGNATURE question, which is not the same one: *does the returned
-    /// value borrow a parameter, and which?* That fact is true whatever the delivery is —
-    /// `fn get(b: Bag, k: text) -> Item? { b.items[k] }` hands back a view into `b`
-    /// whether or not a `?` is wrapped around it — and losing it makes the CALLER type
-    /// the result owned and free the caller's own record at scope exit (silent wrong
-    /// answers on both backends; a panic for the enum form).
+    /// The SIGNATURE half is true whatever the delivery is: *does the returned value borrow a
+    /// parameter, and which?* `fn get(b: Bag, k: text) -> Item? { b.items[k] }` hands back a
+    /// view into `b` whether or not a `?` is wrapped around it, and losing it makes the CALLER
+    /// type the result owned and free the caller's own record at scope exit.
     ///
     /// One function answers both halves, so "which shapes peel" and "did it peel" cannot
     /// drift apart the way two `matches!` did.
     #[must_use]
     pub fn ret_dep_shape(&self) -> (&Type, RetPeel) {
         match self {
-            Type::Optional(inner)
-                if crate::keys::nullable_ret_buffer()
-                    && matches!(inner.as_ref(), Type::Vector(_, _)) =>
-            {
+            Type::Optional(_) if let Some(inner) = self.buffered_payload() => {
                 (inner, RetPeel::Delivered)
             }
             Type::Optional(inner)
@@ -2576,8 +2590,7 @@ impl Type {
     /// same question instead of re-deriving the rule. `false` whenever the switch is off.
     #[must_use]
     pub fn ret_promo_peels(&self) -> bool {
-        crate::keys::nullable_ret_buffer()
-            && matches!(self, Type::Optional(inner) if matches!(inner.as_ref(), Type::Vector(_, _)))
+        self.buffered_payload().is_some()
     }
 
     /// This type with the `Rewritten` marker removed.
@@ -3546,11 +3559,10 @@ impl Type {
             // A width declared through a stdlib alias reads as the alias the author wrote
             // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
             // debugger seed annotated with it could not be evaluated (@PLN165 D10).
-            Type::Integer(spec)
-                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
-            {
-                data.integer_alias(spec).unwrap_or("integer").to_string()
-            }
+            // loft#1938 — every integer, at any depth (a vector's element, a tuple member, a
+            // parameter), by the name `integer_spec_name` gives it: its alias or its range as
+            // the parser reads it back.
+            Type::Integer(spec) if source => data.integer_spec_name(spec),
             Type::Integer(spec) if spec.source_name().is_some() => {
                 spec.source_name().unwrap_or("integer").to_string()
             }
@@ -7887,6 +7899,25 @@ impl Data {
         &self.possible[start]
     }
 
+    /// Does the conversion `dnr` (an `OpConv…`, not a `…FromNull`) take a value of `is_type` —
+    /// flattened to `check_type` for a handle or a plain enum, as [`crate::parser::Parser`]'s
+    /// `convert` flattens it — into a slot of type `should`?  The one question both the
+    /// implicit conversion and overload selection ask (`@FR-Disp-Applicable`: a definition
+    /// takes a call when the call's own argument check would accept it).
+    #[must_use]
+    pub fn converts_with(
+        &self,
+        dnr: u32,
+        check_type: &Type,
+        is_type: &Type,
+        should: &Type,
+    ) -> bool {
+        self.attributes(dnr) > 0
+            && (self.attr_type(dnr, 0).is_equal(check_type)
+                || self.attr_type(dnr, 0).is_equal(is_type))
+            && self.def(dnr).returned().is_equal(should)
+    }
+
     /// The operator definition whose SIGNATURE matches — same candidate list the concrete
     /// path walks, asked with the arity and receiver instead of the name alone.
     ///
@@ -8004,6 +8035,33 @@ impl Data {
             v != u32::MAX && self.def(v).def_type == DefType::EnumValue && self.def(v).parent == e
         };
         h == w || variant_of(h, w) || variant_of(w, h)
+    }
+
+    /// `@FR-G-Sat` — may a member returning `have` stand where an interface member declares the
+    /// return `want` (`Self` already replaced)?  The return is part of the signature
+    /// `[Self ↦ C](p̄ -> R)` the generic body was typed with: a `float` read where `integer`
+    /// was promised is its bits, a `text` its handle.  Compared as a parameter is
+    /// ([`Self::param_fits`]) at every position of the type — a collection's element, a
+    /// function type's parameters and result — with nullability peeled at each, as a nullable
+    /// parameter takes its dense type.  A `want` naming a type variable or unknown asks
+    /// nothing; `have` returning NOTHING meets only a `want` of nothing.
+    #[must_use]
+    pub fn return_fits(&self, have: &Type, want: &Type) -> bool {
+        let (h, w) = (have.base(), want.base());
+        if w.is_unknown() || self.mentions_type_var(w) || self.mentions_type_var(h) {
+            return true;
+        }
+        if matches!(h, Type::Void) || matches!(w, Type::Void) {
+            return matches!(h, Type::Void) == matches!(w, Type::Void);
+        }
+        if !h.has_child_types() && !w.has_child_types() {
+            return self.param_fits(h, w);
+        }
+        if std::mem::discriminant(h) != std::mem::discriminant(w) {
+            return false;
+        }
+        h.zip_children(w)
+            .is_some_and(|pairs| pairs.into_iter().all(|(a, b)| self.return_fits(a, b)))
     }
 
     /// The member of `start`'s overload set whose visible parameters are `params`
@@ -8652,9 +8710,28 @@ impl Data {
                              `{tn}?` (defaults null)"
                         ));
                     }
-                    // A genuinely nullable field defaults to `null`.
-                    if at.nullable || matches!(ftp, Type::Optional(_)) {
+                    // A genuinely nullable field defaults to `null`.  `@FR-D-NoRef` — a
+                    // `reference<T>` POINTER field keeps `nullable` set whatever it is spelled
+                    // (#328's layout), so its flag says nothing: only `reference<T>?` defaults
+                    // to null, and a bare one has no default (loft#1931).
+                    let pointer =
+                        matches!(ftp.base(), Type::Reference(_, deps) if deps.is_pointer_marker());
+                    if (at.nullable && !pointer) || matches!(ftp, Type::Optional(_)) {
                         continue;
+                    }
+                    if pointer {
+                        let fname = self.attr_name(*d_nr, a);
+                        let tn = self
+                            .def(match ftp.base() {
+                                Type::Reference(t, _) => *t,
+                                _ => *d_nr,
+                            })
+                            .name()
+                            .to_string();
+                        return Err(format!(
+                            "record `{rec}` has no default: field `{fname}: reference<{tn}>` is a \
+                             pointer with no default — make it `reference<{tn}>?` (defaults null)"
+                        ));
                     }
                     if self.has_default(&ftp).is_err() {
                         let fname = self.attr_name(*d_nr, a);
@@ -8962,6 +9039,40 @@ impl Data {
     }
 
     /// The parameter types a caller writes for `d_nr` — its hidden buffers left out.
+    /// `@FR-Disp-Hint` — does the call `name(receiver, …)` (either spelling) reach an overload set
+    /// in which SEVERAL members take `receiver`?  Then no single definition may steer how the
+    /// arguments parse: an untyped `|x|` lambda, or a literal needing a width, would be typed by
+    /// whichever member is asked — the first declared — and the call would then select that
+    /// member because of the type the hint gave it.  A set whose members take DIFFERENT receivers
+    /// keeps the receiver's own member as its hint: the receiver is typed before the arguments
+    /// are read (`F-Recv`), so it already names one definition.
+    #[must_use]
+    pub fn receiver_shared_in_set(&self, name: &str, receiver: &Type) -> bool {
+        let source = self.receiver_overload_source(name, receiver);
+        let main = self.source_nr(source, name);
+        if main == u32::MAX || self.def(main).def_type != DefType::Dynamic {
+            return false;
+        }
+        let receiver = match receiver.base() {
+            Type::RefVar(inner) => inner.base().clone(),
+            other => other.clone(),
+        };
+        self.def(main)
+            .attributes
+            .iter()
+            .filter_map(|a| match a.typedef.base() {
+                Type::Routine(r) => Some(*r),
+                _ => None,
+            })
+            .filter(|&r| {
+                self.visible_params(r)
+                    .first()
+                    .is_some_and(|p| self.param_fits(&receiver, p))
+            })
+            .count()
+            > 1
+    }
+
     pub(crate) fn visible_params(&self, d_nr: u32) -> Vec<&Type> {
         self.def(d_nr)
             .attributes
@@ -9525,6 +9636,18 @@ impl Data {
     /// generic struct (@PLN165 D6), the receiver's own definition otherwise.
     #[must_use]
     pub fn method_family(&self, type_nr: u32) -> u32 {
+        match self.definitions.get(type_nr as usize) {
+            Some(d) if d.instance_of != u32::MAX => d.instance_of,
+            _ => type_nr,
+        }
+    }
+
+    /// The definition whose `pub` and file decide a type's visibility (@FR-F-Visible): the
+    /// template of an instance of a generic type, the type itself otherwise.  An instance is
+    /// minted wherever it is first spelled, so its own `pub_visible` says only whether a `pub`
+    /// item's parse minted it.
+    #[must_use]
+    pub fn visibility_def(&self, type_nr: u32) -> u32 {
         match self.definitions.get(type_nr as usize) {
             Some(d) if d.instance_of != u32::MAX => d.instance_of,
             _ => type_nr,
@@ -11412,12 +11535,17 @@ impl Data {
         // alias, and the diagnostic fell back to `integer(1000, 1100)`, which is true and is
         // no spelling the parser reads (loft#1641).  The same flag caught `non_null_reads_null`
         // out the same day, from the other side (C127).
+        // The alias's WIDTH is its `size(N)`, which the definition carries beside the range it
+        // returns (`Definition::forced_size`); a use of the alias carries it in the spec.  Asked
+        // of the spec alone, `type Lim = integer limit(1000, 1100) size(2)` never named a
+        // `vector<Lim>` element (loft#1938).
         let matches_spec = |d: &Definition| {
             d.def_type == DefType::Type
                 && matches!(d.returned.base(), Type::Integer(s)
                     if s.min == spec.min
                         && s.max == spec.max
-                        && s.forced_size == spec.forced_size)
+                        && s.forced_size.map(NonZeroU8::get).or(d.forced_size)
+                            == spec.forced_size.map(NonZeroU8::get))
         };
         self.definitions
             .iter()
@@ -13920,15 +14048,20 @@ impl Data {
         // plain integer is named by its range here (@FR-N-Shape: the nullability is asked, not
         // left to a missing arm).
         let (inner, nullable) = t.peel_optional();
-        let Type::Integer(s) = inner else {
-            return t.source_name(self);
-        };
-        if nullable {
-            return t.source_name(self);
+        match inner {
+            Type::Integer(s) if !nullable => self.integer_spec_name(s),
+            _ => t.source_name(self),
         }
+    }
+
+    /// [`Self::integer_name`] for a spec — the one home of an integer's SOURCE spelling, which
+    /// every message also reads through [`Type::source_name`] (loft#1938: an element or a
+    /// parameter written `u8` read `integer(0, 255)`, a key no parser reads back).
+    #[must_use]
+    pub fn integer_spec_name(&self, s: &IntegerSpec) -> String {
         if s.forced_size.is_none() {
-            if s.is_wide_template() || s.is_signed32_template() {
-                return t.source_name(self);
+            if let Some(name) = s.source_name() {
+                return name.to_string();
             }
             return self.integer_alias_any_source(s, false).map_or_else(
                 || format!("integer limit({}, {})", s.min, s.max),
@@ -13947,10 +14080,10 @@ impl Data {
         if let Some(n) = named {
             return n.to_string();
         }
-        if let Some(name) = self.integer_alias_any_source(s, false) {
-            return name.to_string();
-        }
-        t.source_name(self)
+        self.integer_alias_any_source(s, false).map_or_else(
+            || format!("integer limit({}, {})", s.min, s.max),
+            str::to_string,
+        )
     }
 
     fn type_name_with(&self, tp: &Type, named: bool) -> String {

@@ -19,8 +19,26 @@ honest.  A workaround inside a port would teach every reader the wrong shape.
 ## Status (REQUIRED)
 
 Open — strand 1's census ships with the plan (`scripts/script_census`, the plan's first
-loft script, and `WORKLIST.md` it generates); six ports are twinned green on both backends
+loft script, and `WORKLIST.md` it generates); eight ports are twinned green on both backends
 ([SCOREBOARD.md](SCOREBOARD.md)), each beside its original, which every caller still calls.
+**Strand 4 is built through 4c and has its first port (2026-10-08):** `lib/process` carries
+`Command` (4a), `run` / `start` / `wait` / `stop` and the `lines()` / `err_lines()` cursor with its
+probes answered (4b, PROCESS.md § Built), and recording + replay inside `run` (4c,
+`LOFT_RUN_RECORD` / `LOFT_RUN_REPLAY`, with `tests/comparisons/scripts/replay_tool.sh` as
+the original's half and `script_twin.sh --replay`).  `scripts/check_bundle_fresh` is the
+first T3 port, twinned offline on four recorded `git` answers, `scripts/check_contract_goldens`
+the second (finding 019: a never-returning call is not a `??` default), and nothing in
+either names the library: the TYPE trigger the design rests on fires now (finding 018 — derived from the
+start, never read).  What a port still carries is the path dependency in `scripts/loft.toml`,
+the manifest that makes `scripts/` one package so a bare script finds the repo-local
+library from any working directory; it leaves when the library is published.  **Strand 8's `script` library exists (2026-10-08):** `script` 0.1.0 —
+`dir.walk(suffix)`, `src.copy_to(dst)`, `pattern.glob()`, `glob_match` — merged to
+loft-libs-core (#42), released at `script-v0.1.0`, staged for the registry as
+loft-lang/registry#32; the maintainer's signing run folds it, and the three ports that wrote
+these by hand (findings 004, 005, 008) switch to it the day `loft install script` answers.
+Finding 009 closed with `exit(code)` in the stdlib the same day, and
+016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
+`lib/process/tests/command.loft`).
 Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,
 `build-playground-examples.loft`); nothing in the Makefile, CI or the hooks runs either, so
 they are subjects for the twin harness rather than a head start.
@@ -70,7 +88,9 @@ and `status: fixed`; an issue is filed only when a finding turns into work someo
 up, never per finding.  [`REASONS.md`](REASONS.md) is rendered from those files by
 `make script-reasons` (a loft script), grouped by state, with the open count as the
 headline — nothing else is maintained by hand.  **The register's open count is the plan's headline
-number and it must reach zero**; `WORKLIST.md` is what is left to port, `REASONS.md` is what
+number and it must reach zero**; `WORKLIST.md` is what is left to port — its `status`
+column and **Position** line say per script whether a port sits beside it and whether the
+pair is twinned, the way `make rule-coverage` reads the rule register — `REASONS.md` is what
 is left to fix, and the second is the one the goal is stated in.  Two readings keep it
 honest: a reason is recorded when a port MEETS it, never guessed in advance, and it is
 struck only when the port that met it re-measures green on that axis.
@@ -195,7 +215,12 @@ crate builds on first use, and both backends then resolve `use <name>;`.  That i
 
 `scripts/script_twin.sh` (bash, deliberately: it must run while no loft binary exists, and
 it is the last script this plan ports) + `tests/comparisons/scripts/README.md` + the
-divergent self-test.  Gate: the self-test goes red on each channel; the two existing loft
+divergent self-test.  **The cases are declared, not remembered (2026-10-08):** each port's
+`tests/comparisons/scripts/<port>/cases.tsv` lists its twin invocations, `scripts/script_twins.sh`
+(`make script-twins`, `ARGS=--list` to name them) runs every one on both backends, and
+`tests/lib_process.rs` runs them on every PR (`every_declared_twin_case_agrees_on_both_backends`).  The first run of all twelve found a port that
+had broken silently — `wasm_bundle_stamp`'s bare `use crypto;` stopped importing `sha256`
+under @C98 — which is what a twin that is run only once cannot see.  Gate: the self-test goes red on each channel; the two existing loft
 scripts run under it against the JS files they generate (the committed file is the
 "original" side).  Nothing else depends on this strand, and it can fail alone.
 

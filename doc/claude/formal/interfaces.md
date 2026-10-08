@@ -32,9 +32,10 @@ generic header; a **bound** `T: I₁ + … + Iₖ` constrains it. `C ⊨ I` read
   (G-Iface)   interface I { fn m₁(self: Self, p̄₁) -> R₁  …  fn mₙ(self: Self, p̄ₙ) -> Rₙ }
               declares I as the set {m₁ … mₙ} of method SIGNATURES.  Each method's first
               parameter is `self: Self` (Self = the implementing type, filled in per instance);
-              the interface has NO bodies.  An operator method may use sugar
-              `op <tok> (self: Self, …) -> R`, met by the type's `operator` method (`<` ⟶
-              `operator compare`, formal/operators.md (Op-Bound)).
+              the interface has NO bodies.  A member requiring an operator is spelled as the
+              `operator` definition that meets it (`<` ⟶ `operator compare(self: Self, other:
+              Self) -> Ordering`, formal/operators.md (Op-Bound)); a program's `op <tok>`
+              member is refused, naming that spelling.
 ```
 
 **In words.** An interface is a named list of method shapes a type must provide — for example
@@ -124,9 +125,10 @@ step feeding one shared IR to both backends, generics behave identically under `
              variable through an instance's arguments as through any other former, and through
              a callback's RETURN when no argument binds it earlier (`map_grid<T, U>(g, f: fn(T) ->
              U)` with `|t| { t.height }` is `U = integer`).
-  (G-Regular) a template may name itself in its fields only at its own variables, unchanged:
-             `Tree<T>` inside `Tree<T>` (through a collection or a pointer) — `Bad<vector<T>>`
-             inside `Bad<T>` has no finite set of instances and is refused at the declaration.
+  (G-Regular) a template may name itself in its fields — an enum's are its variants' — only
+             at its own variables, unchanged: `Tree<T>` inside `Tree<T>` (through a collection
+             or a pointer) — `Bad<vector<T>>` inside `Bad<T>` has no finite set of instances
+             and is refused at the declaration.
 ```
 
 **In words.** `struct Grid<T> { w: integer, cells: vector<T> }` declares no type until it is
@@ -245,7 +247,8 @@ The record, and every closed deviation, are in the companion
   `a-library-carries-generic-types-across-the-boundary`, `the-goal-program-of-flexible-generics`
   (`tests/scripts/`).
 - **A template names itself regularly (`G-Regular`)** — `a-generic-struct-names-itself-regularly`,
-  `a-generic-struct-that-names-itself-irregularly-is-refused` (`tests/scripts/`).
+  `a-generic-struct-that-names-itself-irregularly-is-refused`,
+  `1928-a-generic-enum-that-names-itself-irregularly-is-refused` (`tests/scripts/`).
 - **Bounded generic dispatch (`G-Gen` / `G-Mono`)** — `fn total<T: Sizable>(xs: vector<T>) ->
   integer { s=0; for x in xs { s += x.size() } s }` over `[Box{2,3}, Box{4,5}]` is `26`, identical
   on both backends.
@@ -272,6 +275,16 @@ The record, and every closed deviation, are in the companion
   it and the one the monomorph binds (`Data::operator_member_with` answers both).  `==` is the
   content comparison for every type (`(G-Sat-Eq)`), as the concrete `a == b` is.  Oracle:
   `tests/scripts/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft`.
+- **The RETURN is part of the signature (`G-Sat`)** — `fn size(self: A) -> float` leaves `A` short
+  of `interface Sz { fn size(self: Self) -> integer }`, refused as *"'size' returns 'float' but
+  the interface declares 'integer'"*; the generic was typed with the interface's return and would
+  read the member's answer as that type.  The return is compared as a parameter is, at every
+  position of the type (a collection's element, a function type's signature), nullability
+  peeled; a member returning nothing meets only a member declared to return nothing, and a
+  member whose interface member returns nothing may return a value, which the generic discards.
+  A return typed by the interface's associated type asks nothing.  Oracles:
+  `tests/scripts/1927-a-member-returning-another-type-does-not-satisfy-a-bound.loft`,
+  `tests/scripts/1927b-a-member-returning-the-declared-type-satisfies-a-bound.loft`.
 - **A template member is not a concrete function (`G-Sat`)** — `operator plus<U>(self: W, o: U)`
   alone leaves `W` short of `Addable`, refused as *"'plus' is a template, and a bound takes a
   concrete 'plus' of its signature"*.  A concrete member of the set beside the template

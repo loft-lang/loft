@@ -1,9 +1,9 @@
 // A library exporting OVERLOAD SETS (@PLN162 Disp-Key): a free set and a method set, plus a
 // function that calls its own overloads — the shape every consumer spelling is measured against.
-pub struct Fire { n: integer }
-pub struct Ice { n: integer }
-pub struct Wall { n: integer }
-pub struct Crate { n: integer }
+pub struct Fire { pub n: integer }
+pub struct Ice { pub n: integer }
+pub struct Wall { pub n: integer }
+pub struct Crate { pub n: integer }
 
 pub fn hit(f: Fire) -> text { "fire {f.n}" }
 pub fn hit(i: Ice) -> text { "ice {i.n}" }

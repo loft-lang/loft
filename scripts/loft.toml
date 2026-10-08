@@ -1,0 +1,17 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# @PLN179 — the repository's scripts as one package, so a bare script under scripts/ reaches
+# the repo-local libraries by name from any working directory (the nearest manifest above the
+# entry is the project; `lib/process` is not published, so a path dependency names it).
+
+[package]
+name    = "scripts"
+version = "0.1.0"
+loft    = ">=0.8"
+
+[dependencies]
+process = { path = "../lib/process" }
+
+# The registry packages the ported scripts use (`wasm_bundle_stamp`).
+crypto = ">=0.3"

@@ -438,7 +438,7 @@ fn i826_parse(entry: &std::path::Path) -> Vec<String> {
 fn i826_call_into_importer_names_the_boundary() {
     let entry = i826_pkg(
         "fn",
-        "pub struct Thing { t_n: integer }\npub fn make() -> Thing { Thing { t_n: 1 } }\n",
+        "pub struct Thing { pub t_n: integer }\npub fn make() -> Thing { Thing { t_n: 1 } }\n",
         &[("helper", "pub fn via_fn() -> integer { make().t_n }\n")],
     );
     let d = i826_parse(&entry);
@@ -472,7 +472,7 @@ fn i826_call_into_importer_names_the_boundary() {
 fn i826_two_used_files_are_not_a_multi_package_collision() {
     let entry = i826_pkg(
         "ambig",
-        "pub struct Thing { t_n: integer }\npub fn make() -> Thing { Thing { t_n: 1 } }\n",
+        "pub struct Thing { pub t_n: integer }\npub fn make() -> Thing { Thing { t_n: 1 } }\n",
         &[
             ("helper", "pub fn bump(x: Thing) -> integer { x.t_n + 1 }\n"),
             (
@@ -510,7 +510,7 @@ fn shared_sibling_carries_types_and_functions() {
         &[
             (
                 "shared",
-                "pub struct Thing { t_n: integer }\npub fn make() -> Thing { Thing { t_n: 1 } }\n",
+                "pub struct Thing { pub t_n: integer }\npub fn make() -> Thing { Thing { t_n: 1 } }\n",
             ),
             (
                 "helper",
@@ -546,7 +546,7 @@ fn i826_mutual_use_names_the_import_cure() {
             ),
             (
                 "errand",
-                "use spawn::*;\npub struct Errand { e_n: integer }\n\
+                "use spawn::*;\npub struct Errand { pub e_n: integer }\n\
                  pub fn errand_new() -> Errand { Errand { e_n: 4 } }\n",
             ),
         ],
@@ -562,7 +562,7 @@ fn i826_mutual_use_names_the_import_cure() {
         &[
             (
                 "errand",
-                "use spawn::*;\npub struct Errand { e_n: integer }\n\
+                "use spawn::*;\npub struct Errand { pub e_n: integer }\n\
                  pub fn errand_new() -> Errand { Errand { e_n: 4 } }\n",
             ),
             (
@@ -596,7 +596,7 @@ fn i826_mutual_use_names_the_import_cure() {
 /// Each cell is run in both orders with a hand-computed answer.
 #[test]
 fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
-    let errand = "use spawn::*;\npub struct Errand { e_n: integer }\npub enum Kind { Walk, Run }\n\
+    let errand = "use spawn::*;\npub struct Errand { pub e_n: integer }\npub enum Kind { Walk, Run }\n\
                   pub type Id = integer;\npub fn r1(n: integer) -> Errand { Errand { e_n: n } }\n\
                   pub fn hurt(e: Enemy) -> integer { e.e_hp - 1 + e.route.e_n }\n";
     let plain = "e = Enemy { e_hp: 5, route: r1(10) }; println(\"{hurt(e)}\");";
@@ -604,14 +604,14 @@ fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
     let cells: &[(&str, &str, &str, Result<&str, &str>)] = &[
         (
             "qualified_field",
-            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand }\n",
+            "use errand;\npub struct Enemy { pub e_hp: integer, pub route: errand::Errand }\n",
             plain,
             Ok("14"),
         ),
         (
             "qualified_return_vector_enum",
-            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand, \
-             more: vector<errand::Errand>, k: errand::Kind }\n\
+            "use errand;\npub struct Enemy { pub e_hp: integer, pub route: errand::Errand, \
+             pub more: vector<errand::Errand>, pub k: errand::Kind }\n\
              pub fn mk(n: integer) -> errand::Errand { errand::r1(n * 2) }\n",
             "e = Enemy { e_hp: 5, route: mk(21), more: [r1(100), r1(200)], k: Run }; s = 0; \
              for m in e.more { s += m.e_n; } println(\"{hurt(e)} {s} {e.k}\");",
@@ -619,37 +619,37 @@ fn a_mutual_use_pair_answers_the_same_in_both_load_orders() {
         ),
         (
             "qualified_missing",
-            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand, x: errand::Nope }\n",
+            "use errand;\npub struct Enemy { pub e_hp: integer, pub route: errand::Errand, pub x: errand::Nope }\n",
             plain,
             Err("Undefined type errand::Nope"),
         ),
         (
             "bare_name_behind_bare_use",
-            "use errand;\npub struct Enemy { e_hp: integer, route: Errand }\n",
+            "use errand;\npub struct Enemy { pub e_hp: integer, pub route: Errand }\n",
             plain,
             Err("`use errand::*;`"),
         ),
         (
             "bare_alias_behind_bare_use",
-            "use errand;\npub struct Enemy { e_hp: integer, route: errand::Errand, id: Id }\n",
+            "use errand;\npub struct Enemy { pub e_hp: integer, pub route: errand::Errand, pub id: Id }\n",
             plain,
             Err("`use errand::*;`"),
         ),
         (
             "mutual_glob",
-            "use errand::*;\npub struct Enemy { e_hp: integer, route: Errand, id: Id }\n",
+            "use errand::*;\npub struct Enemy { pub e_hp: integer, pub route: Errand, pub id: Id }\n",
             "e = Enemy { e_hp: 5, route: r1(10), id: 3 }; println(\"{hurt(e)} {e.id}\");",
             Ok("14 3"),
         ),
         (
             "by_name",
-            "use errand::(Errand);\npub struct Enemy { e_hp: integer, route: Errand }\n",
+            "use errand::(Errand);\npub struct Enemy { pub e_hp: integer, pub route: Errand }\n",
             plain,
             Ok("14"),
         ),
         (
             "by_name_missing",
-            "use errand::(Errand, Nope);\npub struct Enemy { e_hp: integer, route: Errand }\n",
+            "use errand::(Errand, Nope);\npub struct Enemy { pub e_hp: integer, pub route: Errand }\n",
             plain,
             Err("Name 'Nope' not found in library"),
         ),

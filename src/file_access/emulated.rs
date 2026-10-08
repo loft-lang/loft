@@ -145,7 +145,8 @@ pub(super) fn stream_base(path: &PathText, real: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        create_dir_all, exists, read_dir, read_to_string, remove_dir_all, with_program_host, write,
+        create_dir_all, exists, read_dir, read_to_string, remove_dir_all, remove_file,
+        with_program_host, write,
     };
     use super::*;
 
@@ -273,10 +274,15 @@ mod tests {
             return; // the host IS Windows: the rules above are its own
         }
         let d = scratch("off");
+        // Case is the file SYSTEM's rule, not the platform's: macOS's default volume folds
+        // it, so there `b.txt` and `B.txt` are one name.  Asked of this volume, not assumed.
+        write(d.join("case-probe"), "x").unwrap();
+        let folds_case = exists(d.join("CASE-PROBE"));
+        remove_file(d.join("case-probe")).unwrap();
         for n in ["q?.txt", "trail.", "aux.txt", "a:b.txt", "b.txt", "B.txt"] {
             write(d.join(n), n).unwrap();
         }
-        assert_eq!(names(&d).len(), 6);
+        assert_eq!(names(&d).len(), if folds_case { 5 } else { 6 });
         remove_dir_all(&d).unwrap();
     }
 }

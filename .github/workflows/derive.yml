@@ -59,7 +59,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install mold + binaryen
-        run: sudo apt-get update && sudo apt-get install -y mold binaryen
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold binaryen
 
       - name: Install wasm-pack
         run: curl -sSLf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh

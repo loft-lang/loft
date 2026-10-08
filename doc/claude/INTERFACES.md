@@ -74,8 +74,9 @@ the call site.
 
 5. **Methods only** — interface method signatures use `self: Self` as the
    first parameter, matching loft's existing method convention. An operator
-   requirement is spelled `op ⊕`, and a type meets it with its `operator` method
-   (formal/operators.md).
+   requirement is spelled as the `operator` member that meets it (`operator compare`
+   for `<`), and a type meets it with its own `operator` method (formal/operators.md);
+   `op ⊕` in an interface is refused, naming that spelling.
 
 ---
 
@@ -93,8 +94,8 @@ interface Printable {
 }
 ```
 
-⚠ The name here is `Comparable` on purpose: the stdlib's `Ordered` asks for `op <`, which a
-type meets with `operator compare`, so a type defining `less_than` does not satisfy it. The method form is for
+⚠ The name here is `Comparable` on purpose: the stdlib's `Ordered` asks for `operator compare`,
+which a type meets with its own `operator compare`, so a type defining `less_than` does not satisfy it. The method form is for
 interfaces you declare yourself — see the Note under § Bound checking.
 
 `interface` is a new top-level keyword. Each method is a bare signature
@@ -271,8 +272,8 @@ fn scale_all<T: Scalable>(v: vector<T>, factor: float) -> vector<T> {
 
 The satisfaction check (I6) matches the second parameter as a concrete type,
 not `Self`. At the operator dispatch site (I8), when `x * factor` is
-encountered with `x: T` and `factor: float`, the interface's `op * (Self, float)`
-signature matches and the call is allowed.  A program's type meets it with `operator
+encountered with `x: T` and `factor: float`, the interface's `operator times(self: Self,
+factor: float)` signature matches and the call is allowed.  A program's type meets it with `operator
 times(self: T, factor: float) -> T`.
 
 Concrete types on the **left** side (`concrete op T -> T`) are not supported
@@ -300,7 +301,7 @@ fn average<T: Averageable>(v: vector<T>) -> float {
 ```
 
 In the generic body, `total / len(v)` has type `float` (the declared return
-type of the `op /` member), not `T`. Step I8 must propagate the return type from the
+type of the `divided_by` member), not `T`. Step I8 must propagate the return type from the
 interface signature to the IR expression type. `Self` in the return position
 is replaced with `T`; any concrete type is used as-is.
 
@@ -602,7 +603,7 @@ are not the same gap — an associated type names a COMPANION, while collapsing
 | Dynamic dispatch | Yes — interface values carry a vtable | No — bounds only, no vtables |
 | Interface as a type | `var x io.Reader = ...` | Not allowed |
 | Generic bounds | `[T interface{ M() }]` (Go 1.18+) | `<T: Interface>` (same concept) |
-| Operator requirements | Not natively expressible | `op ⊕` members, met by `operator` methods |
+| Operator requirements | Not natively expressible | `operator` members, met by `operator` methods |
 | Multiple bounds | `[T A ∩ B]` | `<T: A + B>` — supported |
 | Default methods | No | No |
 

@@ -551,6 +551,16 @@ pub enum CapViolation {
 #[must_use]
 pub fn def_library(data: &Data, def_nr: u32) -> Option<String> {
     let def = data.def(def_nr);
+    // A compiler OPERATOR with no capability gate is the language core, wherever the stdlib
+    // happens to declare it.  `02_files.loft` declares the vector, coroutine, fn-ref and
+    // constant operators beside the file ones, so `v.reverse()`, a `for` over a vector
+    // constant and a generator were "library `files`" and refused in a sandbox unless that
+    // library — and with it every file operation — was allowed.  The file operators carry
+    // their `fs#…` gate and stay gated by it.
+    if def.name().starts_with("Op") && def.cap().is_empty() && def.source == crate::data::STD_SOURCE
+    {
+        return Some("code".to_string());
+    }
     let file = def.position().file;
     let stem = crate::file_access::file_stem(file.as_str())?;
     let base = stem.as_str();
@@ -800,6 +810,18 @@ pub fn describe_violation(
         }
     };
     match v {
+        // The sandboxed code's OWN library cannot be allow-listed (#631,
+        // `self_allow_list_violations` refuses that policy), so the grant is the only fix.
+        CapViolation::UngrantedCap { group, .. }
+            if lib.is_some() && lib == def_library(data, from) =>
+        {
+            format!(
+                "{pos}: sandboxed `{from_name}` reaches `{sym_name}`, which needs capability \
+                 `{group}` — not granted.\n  fix: add `{group}` to `allow` (its library \
+                 `{libhint}` holds the sandboxed code and cannot be allow-listed).\n  {}",
+                grants(false)
+            )
+        }
         CapViolation::UngrantedCap { group, .. } => format!(
             "{pos}: sandboxed `{from_name}` reaches `{sym_name}`, which needs capability \
              `{group}` — not granted.\n  fix: add `{group}` to `allow`, or add its \
@@ -957,7 +979,7 @@ pub enum TotalityViolation {
 /// terminate the script (a fault the host must never see), and unlike the
 /// arithmetic ops cannot be given a total result.  By stored name so the check
 /// is a set membership over the reachable refs.
-pub(crate) const ABORT_OPS: &[&str] = &["n_assert", "n_panic", "n_log_fatal"];
+pub(crate) const ABORT_OPS: &[&str] = &["n_assert", "n_panic", "n_log_fatal", "n_exit"];
 
 /// The sandboxed defs that `from` calls — the edges of the sandboxed call graph
 /// (trusted callees are not followed; they are total by the host contract).

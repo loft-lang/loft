@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @EXPECT_ERROR: the axis `x` is `float`
+// @EXPECT_ERROR: the axis `y` is `single`
+// @EXPECT_ERROR: the axis `c` is `character`
+//
+// loft#1913, `@FR-Col-Spatial` / `@FR-Col-Axis` — a spatial axis is an integer-not-null
+// coordinate.  A float or single axis was accepted, and the encoding then missed the
+// collection's own records: `s[e.x, e.y]` answered null for every `e` the iteration yielded,
+// and a float box query did not compile on `--native`.  Every non-integer scalar is refused at
+// the declaration; integer axes of every width keep working (the `1431-…` and `col_spatial`
+// cells).
+//
+// @falsified-at: 27e83e117 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1913-a-spatial-axis-is-an-integer.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//   CHANNEL: the EXPECTATION — the control accepts all three axes.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
+
+struct Pf1913 { const x: float, const y: single, n: integer }
+struct Pc1913 { const c: character, n: integer }
+
+fn main() {
+  s: spatial<Pf1913[x, y]> = [Pf1913 { x: 1.5, y: 2.5 as single, n: 7 }];
+  c: spatial<Pc1913[c]> = [Pc1913 { c: 'a', n: 1 }];
+  println("{s.len()} {c.len()}");
+}

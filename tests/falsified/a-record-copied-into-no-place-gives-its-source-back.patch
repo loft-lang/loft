@@ -1,8 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 10e2b2ee2..6db5991c4 100644
+index 5778750da..a5261ac84 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -1247,13 +1247,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
+@@ -1326,13 +1326,6 @@
      // out-of-range element write hands this a null PLACE (loft#1374 made an absent read
      // answer `nullref`); there is nothing to write into, so the write is dropped.
      if to.store_nr == u16::MAX {
@@ -13,20 +13,20 @@ index 10e2b2ee2..6db5991c4 100644
 -        {
 -            stores.release_copy_source(&data, &to);
 -        }
-         return;
-     }
-     // mirror `state/io.rs::copy_record`'s tag handling and
+         // @FR-E-Report — the dropped write's report, the setters' cold branch's twin.
+         if to.absence_unreported() {
+             stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::WriteDropped);
 diff --git a/src/state/io.rs b/src/state/io.rs
-index 9008d7c8e..f3493713d 100644
+index f02f51fe7..9112cd2e6 100644
 --- a/src/state/io.rs
 +++ b/src/state/io.rs
-@@ -1698,9 +1698,6 @@ impl State {
+@@ -1705,9 +1705,6 @@
          // process dies on a program the compiler accepted.  The source half above and this
          // one are one rule read from its two ends.
          if to.store_nr == u16::MAX {
 -            if free_source {
 -                self.database.release_copy_source(&data, &to);
 -            }
-             return;
-         }
-         // `@FR-H-SwapIn` — a given-up source copied into a reset root is the stores exchanged:
+             if to.absence_unreported() {
+                 self.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+             }

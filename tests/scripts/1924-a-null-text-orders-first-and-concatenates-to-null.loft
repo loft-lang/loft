@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1924 — `@FR-E-NullArg` for `text`: ordering places `null` at the LOW extreme, below
+// `""`, and a concatenation with a null operand on EITHER side is null.
+//
+// The null text is the one-byte sentinel `"\0"`, so a plain byte compare sorted it between
+// `""` and `"a"`; and a concatenation appended the sentinel's NUL byte (a non-`Optional`
+// operand: `"a" + t` was the present two-byte `"a\0"`) or RENDERED it (a `text?` operand:
+// `"anull"`).  Only a null LEFT operand propagated.  The order is asked in `ops::op_lt_text` /
+// `op_le_text` and the append in `ops::append_text`, which both backends call.
+//
+// Cells: each comparison against the empty text and against a non-empty one, from both
+// sides; null against null; the concatenation with the null on the right, the left, the
+// middle and both sides; a `+=`; a `text` parameter holding null; a null accumulator; and
+// the non-null controls.
+//
+// @falsified-by: tests/falsified/1924-a-null-text-orders-first-and-concatenates-to-null.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+//   CHANNEL: value — the cells assert the order and the concatenation, on both backends.
+//   WITNESS: on the control `{nt() < ""} {"" < nt()}` reads `false true`, `"a" + n` is
+//   `"anull"`, and `"a" + t` for a `text` holding null is the two-byte `"a\0"`.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees; the
+//   null-accumulator and non-null controls pass on both.  The patch is the fix reverted by
+//   hand: `ops::append_text` stays (the compiled stdlib calls it) without its null-source arm.
+
+fn nt() -> text? { null }
+
+fn wrap(t: text?) -> text? { "[" + t + "]" }
+
+fn test_null_orders_below_every_text() {
+  // `null < v` true, `v < null` false, `null < null` false, `null <= null` true.
+  assert("{nt() < ""} {"" < nt()} {nt() < "a"} {nt() < nt()} {nt() <= nt()}" == "true false true false true",
+    "lt: got {nt() < ""} {"" < nt()} {nt() < "a"} {nt() < nt()} {nt() <= nt()}");
+  assert("{nt() > "a"} {"a" > nt()} {"" >= nt()} {nt() >= ""} {nt() <= ""}" == "false true true false true",
+    "gt: got {nt() > "a"} {"a" > nt()} {"" >= nt()} {nt() >= ""} {nt() <= ""}");
+  e = "";
+  n: text? = nt();
+  assert("{n < e} {e < n} {n < "zz"} {"zz" < n}" == "true false true false",
+    "vars: got {n < e} {e < n} {n < "zz"} {"zz" < n}");
+}
+
+fn test_a_null_operand_on_either_side_makes_the_concatenation_null() {
+  n: text? = nt();
+  right = "a" + n;
+  left = n + "a";
+  middle = "a" + n + "b";
+  both = n + n;
+  assert(right == null, "right: got '{right}'");
+  assert(left == null, "left: got '{left}'");
+  assert(middle == null, "middle: got '{middle}'");
+  assert(both == null, "both: got '{both}'");
+  assert("[{"a" + nt()}] [{nt() + "a"}]" == "[null] [null]", "in a hole: got [{"a" + nt()}] [{nt() + "a"}]");
+}
+
+fn test_a_text_holding_null_appends_no_nul_byte() {
+  t: text = nt();
+  a = "a" + t;
+  assert(a == null, "a non-optional null right operand: got len {len(a)}");
+  d = "x";
+  d += t;
+  assert(d == null, "+= a null: got len {len(d)}");
+  assert(wrap(t) == null, "through a parameter: got {wrap(t)}");
+}
+
+fn test_a_null_accumulator_stays_null() {
+  acc: text? = nt();
+  acc += "z";
+  assert(acc == null, "got '{acc}'");
+}
+
+fn test_control_non_null_text() {
+  assert("{"a" < "b"} {"b" < "a"} {"" < "a"} {"a" <= "a"}" == "true false true true",
+    "order: got {"a" < "b"} {"b" < "a"} {"" < "a"} {"a" <= "a"}");
+  s = "a" + "b";
+  s += "c";
+  assert(s == "abc" && len(s) == 3, "concat: got '{s}'");
+  assert(wrap("x") == "[x]", "wrap: got {wrap("x")}");
+  assert(compare("", "a") == Less, "compare: got {compare("", "a")}");
+}

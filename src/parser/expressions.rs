@@ -867,7 +867,11 @@ impl Parser {
                 while fallback < ls.len() && matches!(ls[fallback], Value::Line(_)) {
                     fallback += 1;
                 }
-                if fallback < ls.len() {
+                // …but never past a `return`: an init after it is dead code, and `--native`
+                // cannot even compile it (`return let …`).  A temp nothing assigns lands there
+                // when a later rewrite retargeted its one use onto the return buffer — a body
+                // that is only `return mkw().inner.rs;` (loft#1934).
+                if fallback < ls.len() && !matches!(ls[fallback].unspan(), Value::Return(_)) {
                     fallback += 1;
                 }
                 // @FR-O-Proxy asks alloc — the same null-init question as above, for the
@@ -1973,7 +1977,7 @@ use a separate collection or add after the loop"
         // local's uses, never this verdict's; a literal-bodied function stays the road to it.
         let is_bare_var = matches!(code, Value::Var(_))
             || self.reads_a_capture_whole(code)
-            || matches!(code.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef"));
+            || self.is_const_view(code);
         // @FR-O-Proxy asks copy — the verdict is a `VecBind` (`CopyVar` / `CopyOwnedField` /
         // `SelfAssign`), and every arm of it copies or does nothing.  A wrong answer picks the
         // wrong lowering, not a release.
@@ -4319,6 +4323,45 @@ use a separate collection or add after the loop"
         } else {
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
+        // `@FR-T-Sub` / `@FR-C-Var` — a plain enum converts to its integer tag at EVERY checking
+        // position, and a local DECLARED `integer` is one: the argument, return, field and
+        // element positions took `Colour.Green` as 2 while `y: integer = Colour.Green` (and a
+        // reassignment of `y`, and an `if` joining into it) was refused as a re-type
+        // (loft#1932).  The conversion is the one `convert` emits at those positions.
+        if op == "="
+            && let Value::Var(v) = to.unspan()
+            && *v < self.vars.count()
+            && self.vars.is_annotated(*v)
+            && matches!(self.vars.tp(*v).base(), Type::Integer(_))
+            && !matches!(s_type, Type::Optional(_))
+            && matches!(s_type.base(), Type::Enum(_, false, _))
+        {
+            *code = self.cl("OpConvIntFromEnum", std::slice::from_ref(code));
+            s_type = crate::data::I64.clone();
+        }
+        // `@FR-Cap-Own` — note whether this assignment to a sandboxed local is a struct literal
+        // built into it (`Parser::sandbox_built`); one other assignment anywhere in the body
+        // makes the local's provenance unknown.
+        if self.in_sandbox
+            && self.first_pass
+            && op == "="
+            && let Value::Var(v) = to.unspan()
+        {
+            // A literal built INTO the local: `Set(v, null); OpDatabase(v, …); field sets…`.
+            let op_database = self.data.def_nr("OpDatabase");
+            let literal = match code.unspan() {
+                Value::Insert(ops) => matches!(
+                    (ops.first().map(Value::unspan), ops.get(1).map(Value::unspan)),
+                    (Some(Value::Set(s, init)), Some(Value::Call(d, args)))
+                        if *s == *v && matches!(init.unspan(), Value::Null)
+                            && *d == op_database
+                            && matches!(args.first().map(Value::unspan), Some(Value::Var(a)) if *a == *v)
+                ),
+                Value::Block(b) => b.name == "Object",
+                _ => false,
+            };
+            *self.sandbox_built.entry((self.context, *v)).or_insert(true) &= literal;
+        }
         // loft#1840 — `(B-Copy)` for a text: `t = s.name` copies the text into `t`, so a `+=`
         // into it that nothing reads is a lost write.  A text has no copy lowering of its own
         // (the bind is the `Set`), so the verdict is recorded here, from the same place test
@@ -6319,7 +6362,7 @@ use a separate collection or add after the loop"
         // side that is not text leaves the place a text (loft#1827).
         let text_appends_rendering = op != "="
             && matches!(place_tp.base(), Type::Text(_))
-            && !matches!(s_type.base(), Type::Text(_) | Type::Character);
+            && Self::appends_rendering(&s_type);
         if !compound_keeps_place && !text_appends_rendering {
             self.change_var(to, &s_type);
         }
@@ -6722,13 +6765,29 @@ use a separate collection or add after the loop"
                     // `LOFT_POISON` gate makes the loop shape a SIGSEGV instead,
                     // because `b.items = add(b.items, k)` then reads a record
                     // overwritten with 0xDEADBEEF.
-                    if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
-                        self.vars.set_skip_free(tmp);
-                    }
-                    let set_tmp = v_set(tmp, rhs_saved);
+                    //
+                    // @FR-H-CopySelf — and a PROJECTION may be the destination itself
+                    // (`o.inner.sub = o.inner.sub`) or live inside it (`n.kids =
+                    // n.kids[0].kids`), so a temp that only names it is emptied or freed by
+                    // the clear below before the append reads it (loft#1916).  A projection
+                    // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
+                    // the temp then owns its copy and frees it.
+                    let projection =
+                        !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+                    let fill_tmp = if projection {
+                        vec![
+                            v_set(tmp, Value::Null),
+                            self.cl(whole, &[Value::Var(tmp), rhs_saved, rec_tp.clone()]),
+                        ]
+                    } else {
+                        if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
+                            self.vars.set_skip_free(tmp);
+                        }
+                        vec![v_set(tmp, rhs_saved)]
+                    };
                     let clear = self.clear_vector_field(to, &lhs_parent_tp);
                     let append = self.cl(whole, &[to.clone(), Value::Var(tmp), rec_tp]);
-                    let mut ops = vec![set_tmp];
+                    let mut ops = fill_tmp;
                     ops.extend(clear);
                     ops.push(append);
                     *code = Value::Insert(ops);
@@ -7758,9 +7817,16 @@ use a separate collection or add after the loop"
             return true;
         }
         match self.vars.tp(root) {
-            // A script-defined struct LOCAL is the mod's own (mutable); a host-library struct
-            // local (or one the profile does not include) is host — the TYPE catches aliasing
-            // like `x = player; x.health = …`.
+            // `@FR-Cap-Own` is a PROVENANCE fact (`owned(e)`, formal/capabilities.md): a struct
+            // local that VIEWS a parameter — a `for` variable over one of its collections, an
+            // element or field bound to a local, a `&` alias — is the caller's data whatever its
+            // type, and a write through it is a host write (loft#1930).  Asked first, as the
+            // Vector arm below asks it.
+            Type::Reference(_, _) if self.root_aliases_argument(root, &args) => true,
+            // Otherwise the TYPE decides: a struct of a library the profile allows may have come
+            // from a host call (`x = player(); x.health = …`), so it is host; a struct of the
+            // script's own, or of a library the profile cannot reach, can only have been built
+            // here, and building is free (Cap-Own, § Construction is unrestricted).
             Type::Reference(struct_def, _) => {
                 let Some(lib) = crate::sandbox::def_library(&self.data, *struct_def) else {
                     return true;
@@ -9162,6 +9228,31 @@ use a separate collection or add after the loop"
                 {
                     self.vars.defined(*v_nr);
                 }
+                // `@FR-Cap-Write` — an APPEND to a collection the caller owns, spelled on a
+                // bare variable: the parameter itself (`v += […]`) or a `&` alias of one of its
+                // fields (`r = &w.xs; r += […]`).  Neither reaches the field/index check below,
+                // which keys on a non-`Var` place, so both grew host data with no grant
+                // (loft#1930).  No field is named here to look a grant up on, so it is the raw
+                // write the field path falls back to — append to the field itself, where its
+                // `#append` link is read.
+                if self.in_sandbox
+                    && !self.first_pass
+                    && op == "+="
+                    && let Value::Var(v) = code.unspan()
+                    && matches!(
+                        self.vars.tp(*v).base(),
+                        Type::Vector(..)
+                            | Type::Hash(..)
+                            | Type::Sorted(..)
+                            | Type::Index(..)
+                            | Type::Radix(..)
+                            | Type::Trie(..)
+                    )
+                    && self.root_aliases_argument(*v, &self.vars.arguments())
+                {
+                    let pos = *self.lexer.peek_pos();
+                    self.sandbox_raw_writes.entry(self.context).or_insert(pos);
+                }
                 // @PLN86 2.4 — a NON-`Var` LHS here is a field/index target
                 // (`e.health = v` / `v[i] = v`).  Ownership-aware: a write to the
                 // script's OWN data (a local of a script-defined struct type) is
@@ -9207,7 +9298,23 @@ use a separate collection or add after the loop"
                         // @PLN86 F6 — a `+=` to an `#append`-linked field is an APPEND
                         // (grow the collection); otherwise an `#update`-linked write is
                         // an UPDATE (F5).  Neither → the coarse 2.4 reject.
-                        if op == "+=" && has("#append") {
+                        // `@FR-Cap-Write`: `r = append ⟹ m : collection` — a scalar `+=`
+                        // changes the value in place, an UPDATE, whatever link it carries
+                        // (loft#1930: `m.sc += 1` passed on `bag#append`).
+                        let collection = {
+                            let a = self.data.attr(sd, &field);
+                            a != usize::MAX
+                                && matches!(
+                                    self.data.attr_type(sd, a).base(),
+                                    Type::Vector(..)
+                                        | Type::Hash(..)
+                                        | Type::Sorted(..)
+                                        | Type::Index(..)
+                                        | Type::Radix(..)
+                                        | Type::Trie(..)
+                                )
+                        };
+                        if op == "+=" && collection && has("#append") {
                             Some((sd, field, read_count, true))
                         } else if has("#update") {
                             Some((sd, field, read_count, false))
@@ -9514,9 +9621,12 @@ use a separate collection or add after the loop"
         f_type
     }
 
-    /// Does `t += x` append the RENDERING of `x` rather than `x` itself — is `x` neither a
-    /// text nor a character?  `(E-Asgn-Compound)` makes `t += x` the `t + x` it abbreviates,
-    /// and `t + x` renders any formattable `x` the way `"{x}"` does (loft#1827).
+    /// Does `t += x` append an OPERAND that is not a text — the concatenation's other
+    /// operand kinds?  `(E-Asgn-Compound)` makes `t += x` the `t + x` it abbreviates, and
+    /// `t + x` renders any formattable `x` the way `"{x}"` does (loft#1827) — except that a
+    /// NULL operand makes it null (`@FR-E-NullArg`, loft#1945).  A character is one of those
+    /// operands: a `character?` reached the text append as a code point, and was refused as
+    /// a retype of the text.
     pub(crate) fn appends_rendering(rhs: &Type) -> bool {
         let rhs = match rhs.base() {
             Type::RefVar(inner) => inner.as_ref(),
@@ -9524,7 +9634,7 @@ use a separate collection or add after the loop"
         };
         !matches!(
             rhs.base(),
-            Type::Text(_) | Type::Character | Type::Unknown(_) | Type::Null | Type::Never
+            Type::Text(_) | Type::Unknown(_) | Type::Null | Type::Never
         )
     }
 
@@ -9538,7 +9648,8 @@ use a separate collection or add after the loop"
             _ => tp.clone(),
         };
         let mut ls = Vec::new();
-        self.append_data(tp, &mut ls, var_nr, u16::MAX, value, super::OUTPUT_DEFAULT);
+        // The concatenation's one operand home: a null operand makes the text null.
+        self.append_concat_operand(&mut ls, var_nr, value, &tp);
         // An absent text stays absent, as `t + x` answers null for it and `t += "x"` leaves
         // it: rendering into the sentinel would make a text of the sentinel and the value.
         let dest_tp = self.vars.tp(var_nr);

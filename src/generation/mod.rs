@@ -11,16 +11,19 @@ use std::io::Write;
 pub mod append_twin;
 mod calls;
 mod coroutine;
+pub mod destination;
 mod dispatch;
 mod emit;
 pub mod fnref;
 pub mod hoist;
+pub mod keyed_place;
 pub mod non_sentinel;
 pub(crate) mod ops;
 mod pre_eval;
 pub mod range;
 mod ranged_call;
 mod text;
+pub mod view_return;
 
 /// One hoisted binding produced by `collect_pre_evals`:
 /// `(name, match_code, bind_code, counter, replace_all)` — `name` is the
@@ -897,11 +900,39 @@ pub struct Output<'a> {
     /// The caller-side rewrite's call, `(callee, argument slice)`, waiting for its name: a
     /// call left unnamed here would hand X to the plain callee, which clears it.
     pub ap_site_next: Option<(u32, usize)>,
+    /// `@FR-R-Destination` — the shape of the destination twin being emitted (`None` outside
+    /// one), the twins calls have asked for by `(callee, moved field offset)`, the ones already
+    /// emitted, the admission answers, the caller-side rewrite's call waiting for its `__d`
+    /// name, and the counter naming each site's result tuple.
+    pub dest_twin: Option<destination::Shape>,
+    /// `@FR-R-ViewReturn` — emitting a callee's `__vr` twin.
+    pub vr_twin: bool,
+    /// The callees view-return calls asked twins of, and those emitted.
+    pub vr_requests: Vec<u32>,
+    pub vr_emitted: HashSet<u32>,
+    /// Callee admission, per definition.
+    pub vr_memo: HashMap<u32, bool>,
+    /// The next call to take the twin: (callee, argument slice).
+    pub vr_site_next: Option<(u32, usize)>,
+    /// Per subject variable of the function being emitted: its ownership flag.
+    pub vr_owned: HashMap<u16, String>,
+    /// The flag the next twin call writes its ownership into.
+    pub vr_flag_pending: Option<String>,
+    /// While a twin call's arguments are emitted: its buffer argument is left out.
+    pub vr_drop_buf: bool,
+    pub dest_requests: Vec<(u32, i64)>,
+    pub dest_emitted: HashSet<(u32, i64)>,
+    pub dest_memo: HashMap<(u32, i64), Option<destination::Shape>>,
+    pub dest_site_next: Option<(u32, usize, i64)>,
+    pub dest_counter: usize,
     /// Set while a refill twin's body is emitted: its return buffer, whose literal text sets
     /// refill their slots; its name takes `__rt`.
     pub refill_twin_buf: Option<u16>,
     /// `LOFT_NO_BYTE_READ=1` — a `vector<u8>` element read keeps its template.
     pub byte_read_disabled: bool,
+    /// `LOFT_NO_BYTE_RESOLVE=1` — `@FR-R-Base`'s byte clause needs a held BASE again: a
+    /// header held without one keeps the template (the resolve clause off).
+    pub byte_resolve_disabled: bool,
     /// `LOFT_NO_TEXT_SET_BORROW=1` — every `OpSetText` copies its value first, as before.
     pub text_set_copy_kept: bool,
     /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
@@ -2380,6 +2411,7 @@ impl<'a> Output<'a> {
             header_dbref_disabled: std::env::var("LOFT_NO_HEADER_DBREF").is_ok_and(|v| v != "0"),
             text_set_copy_kept: std::env::var("LOFT_NO_TEXT_SET_BORROW").is_ok_and(|v| v != "0"),
             byte_read_disabled: std::env::var("LOFT_NO_BYTE_READ").is_ok_and(|v| v != "0"),
+            byte_resolve_disabled: std::env::var("LOFT_NO_BYTE_RESOLVE").is_ok_and(|v| v != "0"),
             refill_keep_disabled: std::env::var("LOFT_NO_REFILL_KEEP").is_ok_and(|v| v != "0"),
             refill_text: hoist::RefillTextSites::default(),
             refill_text_disabled: std::env::var("LOFT_NO_REFILL_TEXT").is_ok_and(|v| v != "0"),
@@ -2394,6 +2426,20 @@ impl<'a> Output<'a> {
             ap_emitted: HashSet::new(),
             ap_memo: HashMap::new(),
             ap_site_next: None,
+            dest_twin: None,
+            vr_twin: false,
+            vr_requests: Vec::new(),
+            vr_emitted: HashSet::new(),
+            vr_memo: HashMap::new(),
+            vr_site_next: None,
+            vr_owned: HashMap::new(),
+            vr_flag_pending: None,
+            vr_drop_buf: false,
+            dest_requests: Vec::new(),
+            dest_emitted: HashSet::new(),
+            dest_memo: HashMap::new(),
+            dest_site_next: None,
+            dest_counter: 0,
             refill_twin_buf: None,
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
@@ -2827,7 +2873,10 @@ impl Output<'_> {
         if let Some(b) = self.refill_twin_buf {
             self.complete_writes.db_vars.remove(&b);
         }
-        self.refill = if crate::keys::refill_buffer_enabled() && self.append_twin_buf.is_none() {
+        self.refill = if crate::keys::refill_buffer_enabled()
+            && self.append_twin_buf.is_none()
+            && self.dest_twin.is_none()
+        {
             hoist::refill_buffers(self.data, self.stores, def_nr)
         } else {
             // `@FR-R-AppendTwin` — a twin's buffer is never cleared or refilled: it holds the
@@ -2961,7 +3010,10 @@ impl Output<'_> {
         // `@FR-R-AppendTwin` — a twin never adopts: adoption makes the result local BE the
         // buffer at emission time, which the IR the twin's eligibility read does not say, and
         // its bind clears that buffer — the caller's elements.
-        self.ret_adopt = if self.retbuf_adopt_disabled || self.append_twin_buf.is_some() {
+        self.ret_adopt = if self.retbuf_adopt_disabled
+            || self.append_twin_buf.is_some()
+            || self.dest_twin.is_some()
+        {
             None
         } else {
             hoist::ret_adopt(self.data, def_nr)
@@ -3007,6 +3059,7 @@ impl Output<'_> {
         };
         self.group_ends.clear();
         self.declared.clear();
+        self.vr_owned.clear();
         self.local_record_link.clear();
         self.retbuf_witness.clear();
         self.rebind_handed.clear();
@@ -5781,6 +5834,9 @@ impl Output<'_> {
         let Some(fields) = self.value_records.types.get(&tp).map(|t| t.fields.clone()) else {
             return Ok(());
         };
+        if self.write_tuple_through_address(w, &fields, dst, tuple)? {
+            return Ok(());
+        }
         for (i, (off, rt)) in fields.iter().enumerate() {
             let part = Value::RawExpr(format!("{tuple}.{i}"));
             let off_v = Value::Int(i32::try_from(*off).unwrap_or(i32::MAX));
@@ -5814,6 +5870,83 @@ impl Output<'_> {
             write!(w, "; ")?;
         }
         Ok(())
+    }
+
+    /// `@FR-R-RecPtr`'s tuple clause, the write half — the tuple `tuple` written into the
+    /// record `dst` through ONE address: `dst` evaluated once, its address and lock state
+    /// taken once, then one store per scalar field.  Field by field through the setters,
+    /// each write resolved the store and asked its bounds and lock again — seven times
+    /// for one seven-field record (`map_set_hex`, `undo_push`).  Sound without a block
+    /// proof: the parts are tuple elements already computed, so nothing between the
+    /// address and its last use can grow, move or free a store.  Declines (answers
+    /// `false`, nothing written) when a field is a view part — its append may grow the
+    /// store — when no field is a kind the address serves, when the destination is a
+    /// view whose block already holds an address (its setters use that one), when the
+    /// destination lies inside a value local (a tuple has no address), and under
+    /// `LOFT_NO_RECORD_PTR`.  A field of another kind keeps its setter, to the same bytes.
+    /// Is `v` a value local or a sub-record of one (`(R-ValueLocal)`): a TUPLE, or a range of
+    /// one, with no record and so no address — its field accessors name tuple elements.
+    pub(crate) fn in_value_local(&self, v: &Value) -> bool {
+        let root = match v.unspan() {
+            Value::Var(r) => Some(*r),
+            _ => hoist::sub_record(self.data, v).map(|(r, _, _)| r),
+        };
+        root.is_some_and(|r| self.value_record_locals.contains_key(&r))
+    }
+
+    fn write_tuple_through_address(
+        &mut self,
+        w: &mut dyn Write,
+        fields: &[(i64, &'static str)],
+        dst: &Value,
+        tuple: &str,
+    ) -> std::io::Result<bool> {
+        let kinds: Vec<Option<&str>> = fields
+            .iter()
+            .map(|(_, rt)| hoist::setter_kind(hoist::value_setter(rt)))
+            .collect();
+        if self.record_ptr_disabled
+            || fields.iter().any(|(_, rt)| hoist::is_view_part(rt))
+            || kinds.iter().all(Option::is_none)
+            || matches!(dst.unspan(), Value::Var(v) if self.active_rec_ptr(*v).is_some())
+            || self.in_value_local(dst)
+        {
+            return Ok(false);
+        }
+        let verify = self.hoist_verify;
+        write!(w, "{{ ")?;
+        // A caller that derived the destination once already named it `__cd`.
+        if !matches!(dst.unspan(), Value::RawExpr(e) if e == "__cd") {
+            write!(w, "let __cd: DbRef = ")?;
+            self.output_code_inner(w, dst)?;
+            write!(w, "; ")?;
+        }
+        write!(
+            w,
+            "let __cp = vector::rec_ptr(&__cd, &stores.allocations); \
+             let __cl = vector::rec_locked(&__cd, &stores.allocations); "
+        )?;
+        for (i, ((off, rt), kind)) in fields.iter().zip(&kinds).enumerate() {
+            if let Some(ty) = kind {
+                write!(
+                    w,
+                    "unsafe {{ vector::rec_set::<{ty}>(__cp, __cl, &__cd, ({off}_i64) as u32, {tuple}.{i}, &stores.allocations, {verify}) }}; "
+                )?;
+            } else {
+                let setter = Value::Call(
+                    self.data.def_nr(hoist::value_setter(rt)),
+                    vec![
+                        Value::RawExpr("__cd".to_string()),
+                        Value::Int(i32::try_from(*off).unwrap_or(i32::MAX)),
+                        Value::RawExpr(format!("{tuple}.{i}")),
+                    ],
+                );
+                self.output_code_inner(w, &setter)?;
+                write!(w, "; ")?;
+            }
+        }
+        write!(w, "}}; ")?;
+        Ok(true)
     }
 
     /// @PLN157 § V-aa (`@FR-R-ValueRecord`) — the per-field VALUES an `Object` block
@@ -6205,7 +6338,16 @@ impl Output<'_> {
         };
         let path = hoist::vector_path(self.data, vector)?;
         let header = self.active_vec_header(&path)?.to_owned();
-        let base = self.active_vec_base(&path)?.to_owned();
+        // THE RESOLVE CLAUSE — a header held with no base (the function clause, a loop that
+        // grows a store) still proves the vector's record and length; the base is taken from
+        // the store AT the read, so a store that grew in between answers its new buffer.
+        let base = match self.active_vec_base(&path) {
+            Some(b) => b.to_owned(),
+            None if !self.byte_resolve_disabled => {
+                format!("stores.allocations[{header}.store_nr as usize].elem_base({header}.rec)")
+            }
+            None => return None,
+        };
         Some(ByteRead {
             elem_op: *elem_op,
             elem_args,
@@ -6567,6 +6709,41 @@ impl Output<'_> {
             .for_each_child(&mut |child| Self::collect_returned_vars(child, out));
     }
 
+    /// [`Self::live_entry_check`]'s arm for a destination twin (`@FR-R-Destination`).
+    fn dest_live_arm(
+        def: &crate::data::Definition,
+        dt: &destination::Shape,
+        idx: usize,
+        thunk: &str,
+        pre: &str,
+        pushes: &str,
+        post: &str,
+    ) -> String {
+        let rb = sanitize(def.variables().name(dt.rb));
+        let reads: Vec<String> = dt
+            .scalars
+            .iter()
+            .map(|sc| {
+                let off = sc.off;
+                match sc.rust {
+                    "u8" => {
+                        format!("(__s.store(&__lr).get_byte(__lr.rec, __lr.pos + {off}, 0) as u8)")
+                    }
+                    "f64" => format!("__s.store(&__lr).get_float(__lr.rec, __lr.pos + {off})"),
+                    "f32" => format!("__s.store(&__lr).get_single(__lr.rec, __lr.pos + {off})"),
+                    _ => format!("__s.store(&__lr).get_int(__lr.rec, __lr.pos + {off})"),
+                }
+            })
+            .collect();
+        let tail = if reads.len() == 1 { "," } else { "" };
+        format!(
+            "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &mut Stores = unsafe {{ &mut *cell.get() }}; __s.move_field_out(&DbRef {{ store_nr: __lr.store_nr, rec: __lr.rec, pos: __lr.pos + {vo} }}, &var_{rb}, {vt}_u16); let __t = ({}{tail}); OpFreeRef(cell, __lr, \"__lr\"); return __t; }}\n",
+            reads.join(", "),
+            vo = dt.vo,
+            vt = dt.vt
+        )
+    }
+
     fn live_entry_check(&mut self, def: &crate::data::Definition) -> Option<String> {
         if def.name() == "n_main" {
             return None;
@@ -6618,7 +6795,17 @@ impl Output<'_> {
                 | Type::Sorted(_, _, _)
                 | Type::Hash(_, _, _)
                 | Type::Index(_, _, _) => {
-                    let _ = write!(pushes, " st.put_stack(var_{});", sanitize(&a.name));
+                    // `@FR-R-Destination` — a twin's buffer is the caller's ELEMENT, which
+                    // the parked call's whole record would overrun: it gets its own.
+                    let dest_buf = self
+                        .dest_twin
+                        .as_ref()
+                        .is_some_and(|dt| def.variables().var(&a.name) == dt.rb);
+                    if dest_buf {
+                        let _ = write!(pushes, " st.put_stack(DbRef::NULL);");
+                    } else {
+                        let _ = write!(pushes, " st.put_stack(var_{});", sanitize(&a.name));
+                    }
                 }
                 _ => return None,
             }
@@ -6643,6 +6830,13 @@ impl Output<'_> {
         // shape, a `DbRef` into the interpreter's record, while an admitted function's
         // signature says tuple.  Read the fields back out of that record, in field
         // order, so the reload path and the value path agree on what a call returns.
+        // `@FR-R-Destination` — the parked call answers its record; its moved field relocates
+        // into the caller's element and its scalars come back as the twin's tuple.
+        if let Some(dt) = &self.dest_twin {
+            return Some(Self::dest_live_arm(
+                def, dt, idx, thunk, &pre, &pushes, &post,
+            ));
+        }
         if let Some(fields) = self.value_records.fn_fields(self.def_nr) {
             // The tuple read back out of the record: ONE spelling (`hoist::tuple_reads`),
             // shared with the cdylib bridge, the trailing comma of a 1-tuple included.
@@ -9268,7 +9462,68 @@ extern crate loft;"
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
-        self.output_append_twins(w, program_store.as_ref())
+        // A twin's body asks for twins of either kind; until neither kind is left.
+        loop {
+            self.output_append_twins(w, program_store.as_ref())?;
+            let dest = self.output_dest_twins(w, program_store.as_ref())?;
+            if !self.output_vr_twins(w, program_store.as_ref())? && !dest {
+                return Ok(());
+            }
+        }
+    }
+
+    /// `@FR-R-Destination` — the destination twins calls asked for: each callee's body with
+    /// its return buffer standing for the caller's element and its scalar fields answered as a
+    /// tuple.  A twin's own calls may ask for more.  Answers whether any was emitted.
+    fn output_dest_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        let mut any = false;
+        while let Some(at) = self
+            .dest_requests
+            .iter()
+            .position(|r| !self.dest_emitted.contains(r))
+        {
+            let (dnr, vo) = self.dest_requests[at];
+            self.dest_emitted.insert((dnr, vo));
+            let Some(Some(shape)) = self.dest_memo.get(&(dnr, vo)).cloned() else {
+                continue;
+            };
+            self.dest_twin = Some(shape);
+            let r = self.output_function(w, dnr, program_store);
+            self.dest_twin = None;
+            r?;
+            any = true;
+            self.output_ranged_variants(w, program_store)?;
+            self.output_refill_twins(w, program_store)?;
+        }
+        Ok(any)
+    }
+
+    /// `@FR-R-ViewReturn` — the view-return twins calls asked for.  Answers whether any was
+    /// emitted.
+    fn output_vr_twins(
+        &mut self,
+        w: &mut dyn Write,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<bool> {
+        let mut any = false;
+        while let Some(at) = self
+            .vr_requests
+            .iter()
+            .position(|r| !self.vr_emitted.contains(r))
+        {
+            let dnr = self.vr_requests[at];
+            self.vr_emitted.insert(dnr);
+            self.vr_twin = true;
+            let r = self.output_function(w, dnr, program_store);
+            self.vr_twin = false;
+            r?;
+            any = true;
+        }
+        Ok(any)
     }
 
     /// `@FR-R-AppendTwin` — the append twins calls asked for: each callee's body with its
@@ -10105,6 +10360,10 @@ extern crate loft;"
                 "__rt"
             } else if self.append_twin_buf.is_some() {
                 "__ap"
+            } else if self.dest_twin.is_some() {
+                "__d"
+            } else if self.vr_twin {
+                "__vr"
             } else {
                 ""
             }
@@ -10112,7 +10371,11 @@ extern crate loft;"
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
         let value_rec = self.value_records.fn_tuple(def_nr).map(str::to_owned);
-        let dropped = value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def));
+        let dropped = if self.vr_twin {
+            hoist::ret_buffer_attr(def)
+        } else {
+            value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def))
+        };
         for (i, a) in def.attributes().iter().enumerate() {
             if dropped == Some(i) {
                 continue;
@@ -10171,6 +10434,13 @@ extern crate loft;"
             // shared-store bridge), so the signature and the body never disagree.
             if let Some(t) = &value_rec {
                 write!(w, "-> {t} ")?;
+            } else if let Some(dt) = &self.dest_twin {
+                // `@FR-R-Destination` — the moved field is written into the caller's element;
+                // the scalar fields come back in registers.
+                write!(w, "-> {} ", dt.tuple())?;
+            } else if self.vr_twin {
+                // `@FR-R-ViewReturn` — the record's address and whether the caller owns it.
+                write!(w, "-> (DbRef, bool) ")?;
             } else if returns_owned_string(def) {
                 write!(w, "-> String ")?;
             } else {
@@ -10191,6 +10461,29 @@ extern crate loft;"
         // first body `Set(v, Null)` still emits `null_named` + `OpDatabase`
         // at its IR position via `predeclared`.
         let mut vdb_prologue = String::new();
+        // `@FR-R-ViewReturn` — the twin's return buffer is no parameter; it stays null, which
+        // every free the body names of it skips.
+        if self.vr_twin
+            && let Some(ai) = hoist::ret_buffer_attr(def)
+        {
+            use std::fmt::Write as _;
+            let _ = write!(
+                vdb_prologue,
+                "\n  let mut var_{}: DbRef = DbRef::NULL;",
+                sanitize(&def.attributes()[ai].name)
+            );
+        }
+        // `@FR-R-Destination` — the twin's scalar fields, which its `return` answers.
+        if let Some(dt) = &self.dest_twin {
+            use std::fmt::Write as _;
+            for (k, sc) in dt.scalars.iter().enumerate() {
+                let _ = write!(
+                    vdb_prologue,
+                    "\n  let mut __ds_{k}: {} = Default::default();",
+                    sc.rust
+                );
+            }
+        }
         {
             let vars = def.variables();
             // loft#1178 — and every VIEW a `return` NAMES, for the reason loft#731 gives one

@@ -2698,7 +2698,21 @@ impl Parser {
                     // will be deep-copied at the call site — the caller's
                     // gen_set_first_ref_call_copy handles the CopyRecord.
                     *code = self.cl("OpConstRef", &[Value::Int(d_nr as i32)]);
-                    return const_tp;
+                    // The declaration's deps name variables of the context that BUILT the
+                    // constant; read here they point at an unrelated local of this function,
+                    // or past its table — the ownership oracle then indexed the table with
+                    // them and the compiler panicked (loft#1936, loft#666's class).  The read
+                    // is a BORROW of the constant store, which nothing in this frame owns: it
+                    // depends on a skip-free anchor of this function's own, never assigned,
+                    // so every reader of the dep finds a real variable and no free follows.
+                    let anchor =
+                        self.vars
+                            .unique("const_view", &const_tp.without_deps(), &mut self.lexer);
+                    self.vars.set_skip_free(anchor);
+                    // A constant returned whole is COPIED into the caller's buffer: the
+                    // return ladder binds an anchor (`classify_ret_promotion_inner`), never
+                    // renames it into the buffer, which would return the constant itself.
+                    return const_tp.without_deps().depending(anchor);
                 }
                 // A text constant builds its value in a buffer whose NUMBER is only
                 // valid where the constant was parsed — re-point it at one this
@@ -3186,35 +3200,12 @@ impl Parser {
                 self.expression(&mut format)
             };
             self.in_format_expr = saved_in_fmt;
-            // Plan-07 phase 4e.1 — format strings are the user's
-            // observability surface and must NEVER halt, log, or warn
-            // (per C66 + DESIGN_DECISIONS 2026-05-11).  Walk the
-            // interpolated expression tree and swap every fault-prone
-            // op to its Nullable peer so `println("{a / b}")` /
-            // `println("{user.name}")` / `println("{v[i]}")` always
-            // render the silent sentinel ("null") instead of taking
-            // out the print statement that the developer is using to
-            // diagnose the problem in the first place.
-            //
-            // Phase 4e.3 — when the OUTERMOST swapped op is
-            // fault-prone (div / mod / vector-index / text-index),
-            // append an `OpTagFault(kind)` SIBLING statement to the
-            // statement list BEFORE the format-conversion op so the
-            // conversion op sees the tag and renders `null(<reason>)`
-            // instead of bare `null` on the null sentinel.  Inner
-            // faults (`"{a + v[i] / b}"`) get their Nullable peer
-            // swap from the recursion but do NOT tag — there's no
-            // renderer to consume their tag in mid-expression.
-            let outer_fault_kind = if self.first_pass {
-                None
-            } else {
-                Self::rewrite_subtree_to_nullable_kind(&mut format, &self.data)
-            };
-            if let Some(kind) = outer_fault_kind
-                && self.data.def_nr("OpTagFault") != u32::MAX
-            {
-                let tag_call = self.cl("OpTagFault", &[Value::Int(i32::from(kind))]);
-                list.push(tag_call);
+            // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
+            // hole is swapped to its silent nullable peer (C66), so `"{a / b}"`, `"{v[i]}"`
+            // and `"{user.name}"` yield the null VALUE and the hole renders it as a plain
+            // `null`, never the fault's cause.
+            if !self.first_pass {
+                Self::rewrite_subtree_to_nullable(&mut format, &self.data);
             }
             self.un_ref(&mut tp, &mut format);
             // @P376 — the format expression resolved to `Unknown`: a directly
@@ -3241,10 +3232,7 @@ impl Parser {
             // both take this branch.
             let custom_fmt = if let Type::Reference(fd, _) = &tp {
                 self.data.def_type(*fd) == DefType::Struct && {
-                    let nm = self.data.def(*fd).name().to_string();
-                    let m = self
-                        .data
-                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"));
+                    let m = self.type_method(*fd, "to_text");
                     // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
                     m != u32::MAX && self.data.def(m).operator_form()
                 }
@@ -3554,10 +3542,7 @@ impl Parser {
         if text.is_empty() {
             return;
         }
-        let nm = self.data.def(target).name();
-        let d_nr = self
-            .data
-            .def_nr(&crate::data::Data::mangle_method(nm, "lit"));
+        let d_nr = self.type_method(target, "lit");
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             return;
         }
@@ -3633,10 +3618,7 @@ impl Parser {
             );
         }
         let nm = self.data.def(target).name().to_string();
-        let d_nr = self.data.def_nr(&crate::data::Data::mangle_method(
-            &nm,
-            &format!("hole_{kind}"),
-        ));
+        let d_nr = self.type_method(target, &format!("hole_{kind}"));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             if !self.first_pass {
                 diagnostic!(
@@ -6608,6 +6590,10 @@ impl Parser {
         true
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over a struct literal's fields and the defaults of those it omits"
+    )]
     pub(crate) fn object_init(
         &mut self,
         list: &mut Vec<Value>,
@@ -6720,6 +6706,18 @@ impl Parser {
                 && deps.contains(&u16::MAX)
                 && default == Value::Null
             {
+                // `@FR-D-NoRef` — a bare pointer has no default: the null sentinel is the
+                // default of `reference<T>?` only, and an omitted bare one read back null
+                // with no diagnostic (loft#1931).  The `S{}` half of the rule `x?` enforces.
+                if !self.first_pass {
+                    let tn = format!("reference<{}>", tp.base().source_name(&self.data));
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "field `{nm}: {tn}` is a pointer with no default — set it in the \
+                         constructor, or make it `{tn}?` (defaults null)"
+                    );
+                }
                 let sentinel = self.cl("OpNullRefSentinel", &[]);
                 list.push(self.set_field_no_check(td_nr, aid, pos, code.clone(), sentinel));
                 continue;

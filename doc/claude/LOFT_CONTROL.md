@@ -72,9 +72,9 @@ Inside a loop, the iteration variable supports several attributes using `#`:
 
 | Attribute | `vector` | `sorted` | `index` | `hash` |
 |-----------|----------|----------|---------|--------|
-| `#first`  | ✓        | ✓        | ✓       | N/A — cannot iterate directly |
-| `#count`  | ✓        | ✓        | ✓       | N/A |
-| `#index`  | ✓ (0-based) | ✓ (0-based array position) | ✗ compile error | N/A |
+| `#first`  | ✓        | ✓        | ✓       | ✓ (key order) |
+| `#count`  | ✓        | ✓        | ✓       | ✓ |
+| `#index`  | ✓ (0-based) | ✓ (0-based array position) | ✗ compile error | ✓ (0-based position in key order) |
 | `#remove` | ✓ (filtered) | ✓ (filtered) | ✓ (filtered) | use `h[key] = null` |
 
 **Gotcha — `#index` does not mean the same thing on text and vector.** On a text
@@ -218,16 +218,27 @@ row = next_row(src) ?? break; // stop at the first absent row
 A labelled jump (`i#break`, `i#continue`) is allowed there too.  Outside a loop each is
 refused as the bare word is.
 
-Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return`, `?? break` and `?? continue` are `(E-Coalesce)` with a jump in the fallback, which `(C-Never)` in [formal/types.md](formal/types.md) admits at any type.
+`?? exit(code)` and `?? panic("…")` do the same for the program: on a null it stops with that
+status, or with the panic's report, and otherwise the value is bound — the shape a script
+writes where a shell writes `|| exit 1`:
+```
+contract = version(manifest) ?? exit(1);     // no manifest version: status 1, nothing printed
+```
+A call that never returns is the only kind admitted there; `assert` returns, so it is a
+default like any value and is refused by type.
+
+Rules: [formal/calls.md](formal/calls.md) `(F-Return)`, `(F-Ret)` (the value returned is a fresh, independent value); `?? return`, `?? break`, `?? continue`, `?? exit(…)` and `?? panic(…)` are `(E-Coalesce)` with a jump in the fallback, which `(C-Never)` in [formal/types.md](formal/types.md) admits at any type — a call that never returns is such a jump.
 
 ### Custom iterators (I13)
 
-Any struct or struct-enum with a `fn next(self: T) -> Item?` method can be used in a `for`
-loop.  Returning `null` from `next` terminates the loop:
+Any struct or struct-enum with an `operator next(self: T) -> Item?` method can be used in a
+`for` loop.  Returning `null` from `next` terminates the loop.  It is written `operator`,
+not `fn`, like every method an operator form reaches (`@FR-Op-Mark`): a plain `fn next` is
+an ordinary method, and a `for` over the type is refused naming it.
 
 ```
 struct Counter { current: integer, limit: integer }
-fn next(self: Counter) -> integer? {
+operator next(self: Counter) -> integer? {
     val = self.current;
     self.current = val + 1;
     if val >= self.limit { return null; }

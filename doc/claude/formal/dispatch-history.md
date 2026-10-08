@@ -70,3 +70,36 @@ OPEN: **0**.
   `tests/live_world.rs` (`a_nullable_dynamic_site_keeps_its_null_leaf_across_a_rebuild`,
   which fails with the spelling step removed).
 
+
+## Deviations found by the formal-rule walk of 2026-10-07
+
+OPEN: **0**.
+
+- **D-disp-3 — CLOSED 2026-10-07** (opened the same day, loft#1925).  `(Disp-Applicable)` reads
+  *the call's own argument check*, and selection asked only `can_convert` — the conversions that
+  emit nothing.  The stdlib's implicit ones (`integer` into `float`, `single`, `character` or
+  `boolean`; a `single` into `float`; a value into `boolean`), which a lone definition takes
+  through `convert`'s `OpConv…` scan, made no member applicable.  Three shapes followed, on both
+  backends: a free set `g(float), g(text)` refused an integer its lone twin takes; `D-Rank`'s own
+  example, `f(x: float)` beside `f<T>(x: T)` at an integer, reached the template without a word;
+  and a `self` set none of whose members applied fell to the attribute slot's routine — its FIRST
+  member — so `m(self: P, a: integer, b: float)` beside `m(self: P, a: float, b: integer)`
+  answered `IF 1 2` or `FI 1 2` by declaration order.  `dispatch_rank` now asks the same
+  predicate `convert` scans with (`Data::converts_with`), so the converting member ranks
+  `CONVERTED` and the ties are `Disp-Ambiguous`'s, refused with the code `ambiguous-call`.  Plan
+  165's STEPS.md had recorded the missing step on 2026-09-21 as a finding, and demonstrated the
+  incomparability with an enum into an `integer` instead.  Guards:
+  `tests/scripts/1925-a-set-member-takes-the-conversions-its-lone-twin-takes.loft`,
+  `tests/scripts/1925b-two-converting-members-are-ambiguous-in-either-order.loft`.
+
+- **D-disp-4 — CLOSED 2026-10-07** (opened the same day, loft#1926).  `(Disp-Hint)`: a free set
+  offered no hint, but a `self` set hinted its arguments with the attribute slot's routine —
+  again its FIRST member — so an untyped `|x|` lambda took that member's parameter type and the
+  call then selected that member because of it (`int 2` / `text a` by declaration order, both
+  spellings, both backends), and a bare vector literal took the first member's element width.
+  `Data::receiver_shared_in_set` withholds the hint where several members take the receiver; a
+  lambda left untyped is refused naming the members (`untyped-lambda-at-overload-set`), and a
+  literal that then fits no member is `Disp-Exhaustive`'s refusal in both spellings.  A `self`
+  set split by receiver keeps each receiver's hint, as the rule now says in words.  Guards:
+  `tests/scripts/1926-an-untyped-lambda-to-a-self-set-is-refused-naming-its-members.loft`,
+  `tests/scripts/1926b-a-typed-lambda-picks-its-member-and-a-lone-member-keeps-its-hint.loft`.
