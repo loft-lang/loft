@@ -4729,10 +4729,7 @@ decided by the file's own `pub` signatures; enum variant fields follow the struc
 non-`pub` type named in a `pub` signature is name only rather than a leak to warn about.
 **Not adopted:** fully hidden non-record types; read-only-outside fields.  Lands before
 contract 1 because it adds refusals.
-## C139 — A decoded text or byte string may be a view into the bytes it was decoded from
-
-(Numbered C139 on the native branch while the tuple-is-a-record entry above took C139 on the
-main line; the two met in the 2026-10-08 join and this one is renumbered at its end.)
+## C141 — A decoded text or byte string may be a view into the bytes it was decoded from
 
 Asked 2026-10-07 while working the worst native routines: `pluginabi`'s `check_request` (12.0×
 Rust) spends half of `decode` claiming, zeroing, copying and freeing the texts and byte strings
