@@ -18,6 +18,14 @@
 // ARGUMENT back.  Values are hand-computed.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-at: 8fbe86ce2 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   No patch: 8fbe86ce2 is the fix's parent, and loft#1934 landed after it, so a source diff to
+//   it is both changes.
+//   CHANNEL: the VALUE — the `-> T?` instance hands the caller its own argument.
+//   WITNESS: `assertion failed: nullable: generic 99 concrete 7` on the control, both backends.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 interface Pk1949 { fn pick(self: Self) -> Self }
 interface Ch1949 { fn choose(self: Self, o: Self) -> Self }
