@@ -157,7 +157,7 @@ fn check_writes(
     let scalar_params: Vec<u16> = params
         .iter()
         .copied()
-        .filter(|p| !matches!(fv.tp(*p), Type::Vector(_, _)))
+        .filter(|p| !matches!(fv.tp(*p).base(), Type::Vector(_, _)))
         .collect();
     let mut vec_uses: HashMap<u16, usize> = HashMap::new();
     for w in writes {
@@ -207,7 +207,7 @@ fn check_writes(
     }
     // Every vector parameter is used exactly once, by its fill; the unused locals stay unused.
     for p in params {
-        if matches!(fv.tp(*p), Type::Vector(_, _)) && vec_uses.get(p).copied() != Some(1) {
+        if matches!(fv.tp(*p).base(), Type::Vector(_, _)) && vec_uses.get(p).copied() != Some(1) {
             return Err("a vector parameter read other than once, whole");
         }
     }
@@ -671,8 +671,10 @@ fn admitted_sites(
                 Some("the target is assigned more than once")
             } else if vars.is_argument(site.target) {
                 Some("the target is a parameter (the function's own return buffer)")
+            } else if vars.tp(site.target).peel_optional().1 {
+                Some("the target is nullable")
             } else if vars.is_captured(site.target)
-                || !matches!(vars.tp(site.target), Type::Reference(_, _))
+                || !matches!(vars.tp(site.target).base(), Type::Reference(_, _))
             {
                 Some("the target is not a plain record local")
             } else if !buffer_only_pooled(data, body, site.buf, site.target) {
@@ -744,7 +746,7 @@ pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usi
         }
         let vars = &mut data.definitions[caller as usize].variables;
         for d in &done {
-            if let Type::Reference(r, _) = vars.tp(d.target).clone() {
+            if let Type::Reference(r, _) = vars.tp(d.target).base().clone() {
                 vars.set_type(d.target, Type::Reference(r, Deps::none()));
             }
         }
