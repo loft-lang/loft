@@ -3254,7 +3254,7 @@ impl Parser {
             };
             self.in_format_expr = saved_in_fmt;
             // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
-            // hole is swapped to its silent nullable peer (C66), so `"{a / b}"`, `"{v[i]}"`
+            // hole is swapped to its silent nullable peer (@C66), so `"{a / b}"`, `"{v[i]}"`
             // and `"{user.name}"` yield the null VALUE and the hole renders it as a plain
             // `null`, never the fault's cause.
             if !self.first_pass {

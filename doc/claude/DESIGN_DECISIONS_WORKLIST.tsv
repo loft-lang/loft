@@ -98,3 +98,5 @@ C138	code	src/store.rs; src/calc.rs	ok	-
 C139	code	src/tuple_links.rs; src/parser/definitions.rs	ok	-	
 C140	code	src/api_surface.rs; src/parser/definitions.rs	ok	-	
 C141	pending	-	weak	build	(R-DecodeView) is proposed, not built; its guard records no falsification until it is
+C142	code	src/parser/objects.rs::formatting never traps: every fault-prone op in the; src/parser/collections.rs::a hole whose value is null renders `null`	ok	-	
+C143	code	src/database/format.rs::a record renders EVERY field it declares	ok	-	

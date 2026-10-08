@@ -3316,7 +3316,7 @@ impl Parser {
     /// `Value` tree and swaps every fault-prone call to its Nullable
     /// peer.  Used in format-string contexts (`"{expr}"` interpolation)
     /// where the interpolated expression may contain arbitrarily nested
-    /// fault-prone ops (`"{a + v[i] / b}"`).  Per C66: format strings
+    /// fault-prone ops (`"{a + v[i] / b}"`).  Per @C66: format strings
     /// are the user's observability surface and must NEVER halt, log,
     /// or warn — so every interpolated fault site routes through its
     /// silent peer, and the hole renders the null it yields as a plain
