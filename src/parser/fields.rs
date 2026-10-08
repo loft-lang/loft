@@ -3856,7 +3856,11 @@ impl Parser {
                 }
                 let variants: Vec<u32> = self.data.children_of(*d).collect();
                 for v in variants {
-                    self.collect_read_links(&Type::Reference(v, crate::data::Deps::none()), seen, out);
+                    self.collect_read_links(
+                        &Type::Reference(v, crate::data::Deps::none()),
+                        seen,
+                        out,
+                    );
                 }
             }
             Type::Vector(e, _) => self.collect_read_links(e, seen, out),

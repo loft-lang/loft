@@ -6085,7 +6085,7 @@ impl Parser {
             let arith_ranges = if matches!(operator, "+" | "-" | "*") {
                 let range = |p: &Self, tp: &Type, c: &Value| -> Option<(i64, i64)> {
                     if let Some(k) = p.const_int(c) {
-                        return Some((i64::from(k), i64::from(k)));
+                        return Some((k, k));
                     }
                     // A plain `integer` is unbounded whichever template spells it — the
                     // 32-bit one (`i32::MIN + 1 ..= i32::MAX`) or the wide one — so only a
@@ -6185,7 +6185,7 @@ impl Parser {
                     };
                     let both_constant = al == ah && bl == bh;
                     if !both_constant
-                        && lo >= i64::from(i32::MIN) + 1
+                        && lo > i64::from(i32::MIN)
                         // `u32::MAX` is the wide template's marker for "wider than 32 bits"
                         // (`IntegerSpec::wide`), so a range must stay strictly below it.
                         && hi < i64::from(u32::MAX)

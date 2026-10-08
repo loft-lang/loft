@@ -2706,7 +2706,8 @@ impl Parser {
                     // depends on a skip-free anchor of this function's own, never assigned,
                     // so every reader of the dep finds a real variable and no free follows.
                     let anchor =
-                        self.vars.unique("const_view", &const_tp.without_deps(), &mut self.lexer);
+                        self.vars
+                            .unique("const_view", &const_tp.without_deps(), &mut self.lexer);
                     self.vars.set_skip_free(anchor);
                     // A constant returned whole is COPIED into the caller's buffer: the
                     // return ladder binds an anchor (`classify_ret_promotion_inner`), never
@@ -6612,6 +6613,10 @@ impl Parser {
         true
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over a struct literal's fields and the defaults of those it omits"
+    )]
     pub(crate) fn object_init(
         &mut self,
         list: &mut Vec<Value>,

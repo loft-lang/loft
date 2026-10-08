@@ -192,7 +192,13 @@ def run_pair_half(path, native):
     if "strict-store" in text:
         return (text.strip().split("\n")[-1], "LEAK")
     body = [l for l in out.stdout.strip().split("\n") if l.strip()]
-    return (body[-1] if body else "", "")
+    # A half that did not run is not a value: two refused halves printed nothing and agreed,
+    # which scored a pair that measured nothing as `ok`.
+    if out.returncode != 0:
+        return (body[-1] if body else "", f"EXIT {out.returncode}")
+    if not body:
+        return ("", "NO OUTPUT")
+    return (body[-1], "")
 
 
 def verify():

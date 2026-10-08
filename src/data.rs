@@ -8656,18 +8656,20 @@ impl Data {
                     // `reference<T>` POINTER field keeps `nullable` set whatever it is spelled
                     // (#328's layout), so its flag says nothing: only `reference<T>?` defaults
                     // to null, and a bare one has no default (loft#1931).
-                    let pointer = matches!(ftp.base(), Type::Reference(_, deps) if deps.is_pointer_marker());
+                    let pointer =
+                        matches!(ftp.base(), Type::Reference(_, deps) if deps.is_pointer_marker());
                     if (at.nullable && !pointer) || matches!(ftp, Type::Optional(_)) {
                         continue;
                     }
                     if pointer {
                         let fname = self.attr_name(*d_nr, a);
-                        let tn = self.def(match ftp.base() {
-                            Type::Reference(t, _) => *t,
-                            _ => *d_nr,
-                        })
-                        .name()
-                        .to_string();
+                        let tn = self
+                            .def(match ftp.base() {
+                                Type::Reference(t, _) => *t,
+                                _ => *d_nr,
+                            })
+                            .name()
+                            .to_string();
                         return Err(format!(
                             "record `{rec}` has no default: field `{fname}: reference<{tn}>` is a \
                              pointer with no default — make it `reference<{tn}>?` (defaults null)"
