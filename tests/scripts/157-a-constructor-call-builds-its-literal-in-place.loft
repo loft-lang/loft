@@ -5,7 +5,7 @@
 // whose vectors are kept across passes (the refill clause).
 //
 // Rewritten here: c1, c2, c3, c5, c8 (an argument the leaf inliner turned into an operator
-// expression).  Kept a call: c4 (`(R-Place)` builds the record into `keep` already) and
+// expression), c9 and c11 (outside a loop).  Kept a call: c4 (`(R-Place)` builds the record into `keep` already) and
 // `make` (the target is the function's own return buffer).  A vector VARIABLE argument is
 // still copied (c2).  Applies in the IR phase, so the interpreter and `--native-release` take
 // it; plain `--native` compiles open-world and keeps the calls.  Every value is hand-computed.
