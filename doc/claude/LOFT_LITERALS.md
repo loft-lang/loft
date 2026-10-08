@@ -222,7 +222,7 @@ See [THREADING.md](THREADING.md) § fn Expression for how function references ar
 ## String literals
 
 Loft has two string literal syntaxes. Both support `{expr}` interpolation. The strict rules for
-interpolation and value→text rendering (per-type forms, format specs, fault-safe `{a/b}` → `null(/0)`)
+interpolation and value→text rendering (per-type forms, format specs, fault-safe `{a/b}` → `null`)
 are [formal/formatting.md](formal/formatting.md).
 
 ### Double-quoted strings (`"..."`)

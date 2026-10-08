@@ -129,7 +129,7 @@ fn main() {
   v: vector<I980Point> = [];
   v += [I980Point { px: 1, py: 2 }];
   assert(v[0].px == 1, "an in-range element still reads its field: {v[0].px}");
-  assert("{v[5].px}" == "null(oob)", "and an out-of-range one is still null: {v[5].px}");
+  assert("{v[5].px}" == "null", "and an out-of-range one is still null: {v[5].px}");
 
   // ── Control: a receiver that is not a place keeps the unchecked access, because the
   // guard reads the receiver twice. The oracle is the CALL COUNT, not the value.

@@ -18,30 +18,6 @@
 #![allow(dead_code)]
 use std::cmp::Ordering;
 
-// ── the format-fault cause (loft#1169) ───────────────────────────────────────────────────
-//
-// `null(<reason>)` in an interpolation names the fault that HAPPENED. Two facts have to meet
-// for that: the hole ASKED for a cause (`OpTagFault`, emitted at parse time before the hole's
-// outermost fault-prone op) and an op actually FAULTED (a run-time fact only the op has).
-//
-// This lives in a THREAD-LOCAL rather than on `Stores`, and that is a codegen constraint as
-// much as a design one. The native emitter inlines an op's `#rust` body into whatever
-// expression contains it, so a body that writes through `stores` lands inside another
-// `stores.` call's argument list and rustc rejects it:
-//
-//     stores.enum_val(80, ({ … stores.note_format_fault(3, …) … }))
-//     ^^^^^^ immutable borrow        ^^^^^^ mutable borrow  →  E0502
-//
-// The interpreter never saw it, because `fill.rs` emits each body as its own statement. Free
-// functions over thread-local state borrow nothing and compose in any position.
-//
-// Per-thread is also the right scope: a `par` worker renders its own format strings, so a
-// fault it raises must not be visible to — or overwritten by — another thread's.
-thread_local! {
-    static FORMAT_FAULT_TAG: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
-    static FORMAT_FAULT_ARMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 // ── the `--dev-soft-halt` overflow report (loft#1265) ────────────────────────────────────
 //
 // `(E-Report)` promises the flag surfaces the recoverable faults uniformly -- div0, overflow,
@@ -58,8 +34,7 @@ thread_local! {
 //
 // A free function over process-level state, not a method on `Stores`: the native emitter
 // inlines an op's `#rust` body into the surrounding expression, and a body writing through
-// `stores` lands inside another `stores.` call's argument list (E0502) -- the same constraint
-// that put `note_format_fault` above in a thread-local.
+// `stores` lands inside another `stores.` call's argument list (E0502).
 static OVERFLOW_SURFACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `--dev-soft-halt` / `LOFT_DEV_SOFT_HALT=1`, read once per process.
@@ -99,74 +74,6 @@ pub fn note_integer_overflow(op: &str, v1: i64, v2: i64) {
     crate::loft_eprintln!("soft-halt: integer overflow: {v1} {op} {v2}");
 }
 
-/// `LOFT_FORMAT_BARE_NULL=1` drops the `(reason)` suffix for deployments that show format
-/// strings to end users. Read once per process so the render path stays branch-light.
-fn format_bare_null() -> bool {
-    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *FLAG.get_or_init(|| {
-        std::env::var("LOFT_FORMAT_BARE_NULL").is_ok_and(|v| v == "1" || v == "true")
-    })
-}
-
-/// The label a fault kind renders as. Numeric ids keep the IR stable across label changes.
-#[must_use]
-pub fn format_fault_label(kind_id: u8) -> Option<&'static str> {
-    match kind_id {
-        1 => Some("/0"),
-        2 => Some("%0"),
-        3 => Some("oob"),
-        4 => Some("neg"),
-        _ => None,
-    }
-}
-
-/// Arm the hole being rendered: clear the previous hole's cause and let this one record its
-/// own. Emitted as `OpTagFault` immediately before the hole's outermost fault-prone op.
-///
-/// Arming is what confines all of this to format scope. The same fault-prone `*Nullable`
-/// peers are emitted for a `??` discharge, and a fault there has no renderer to feed — without
-/// arming it would leave a cause behind for the next unrelated hole to wear.
-pub fn arm_format_fault() {
-    FORMAT_FAULT_TAG.with(|t| t.set(None));
-    FORMAT_FAULT_ARMED.with(|a| a.set(true));
-}
-
-/// Record that this op faulted, so the hole renders its cause rather than the cause of
-/// whichever op it happens to sit under.
-///
-/// **A peer that did NOT fault leaves the tag alone rather than clearing it**, which is why
-/// this is a set and not a keep-or-clear. One hole can hold several fault-prone ops while only
-/// the outermost is armed, so a clearing peer would erase a cause an inner op just recorded —
-/// `{v[0] / z}`, a real division by zero after a successful read, lost its `/0` that way.
-/// Leaving it also means an inherited null keeps the cause of wherever it was born, so
-/// `{v[9] / 2}` reports the overrun that actually produced its null.
-#[inline]
-pub fn note_format_fault(kind_id: u8, faulted: bool) {
-    if faulted {
-        note_format_fault_slow(kind_id);
-    }
-}
-
-/// The out-of-line half of [`note_format_fault`]: the thread-local reads and the label
-/// store.  Split so the caller's test is on `faulted` alone -- a bool the emitted
-/// arithmetic already computed -- and inlines across the rlib boundary; the whole
-/// function out of line costs a call plus the caller's xmm spills on EVERY float
-/// division, which is a third of the drawing bench's hash row (@PLN157 § The floor).
-#[cold]
-#[inline(never)]
-fn note_format_fault_slow(kind_id: u8) {
-    if FORMAT_FAULT_ARMED.with(std::cell::Cell::get) && !format_bare_null() {
-        FORMAT_FAULT_TAG.with(|t| t.set(format_fault_label(kind_id)));
-    }
-}
-
-/// Read and clear the cause. Called by the format-conversion ops when they meet a type's null
-/// sentinel; taken unconditionally so a cause can never leak into a later hole.
-#[must_use]
-pub fn take_format_fault() -> Option<&'static str> {
-    FORMAT_FAULT_ARMED.with(|a| a.set(false));
-    FORMAT_FAULT_TAG.with(std::cell::Cell::take)
-}
 // @PLAN12 phase 3.5a (2026-05-24) — `RNG` thread-local + the
 // associated `rand_int` / `rand_seed` / `shuffle_ints` helpers
 // removed.  random's drain to lib/random/native/ makes the cdylib
@@ -952,46 +859,6 @@ pub fn op_shift_right_int(v1: i64, v2: i64) -> i64 {
     op_shift_right_long(v1, v2)
 }
 
-/// Plan-07 phase 4e.3 — `format_long` with an optional fault-tag
-/// label.  When `val == i64::MIN` AND `tag.is_some()`, render
-/// `null(<tag>)` instead of bare `null`.  Native codegen for
-/// `OpFormatInt` emits a call to this helper preceded by
-/// `let _tag = stores.take_format_fault();` so the same per-fault
-/// nudge from `OpTagFault` (4e.1's format-scope swap sibling) reaches
-/// the native binary.  The interpreter's `State::format_int` and
-/// `State::format_stack_int` call this same function, so the tagged
-/// and bare null render identically on both backends by construction
-/// rather than by three copies agreeing.
-///
-/// # Panics
-/// Inherits `format_long`'s panic on unknown radix values.
-#[allow(clippy::too_many_arguments)]
-pub fn format_long_with_tag(
-    s: &mut String,
-    val: i64,
-    tag: Option<&str>,
-    radix: u8,
-    width: i64,
-    token: u8,
-    plus: bool,
-    note: bool,
-    dir: i8,
-) {
-    if val == i64::MIN
-        && let Some(label_str) = tag
-    {
-        // @FR-F-Spec — the tagged null obeys the SAME alignment the bare one does.  `dir == 2` is
-        // the parser's "unset", which numbers resolve to right-align; an explicit
-        // `<` / `^` / `>` is honoured.  Passing a literal `1` here made `{a / b:<12}`
-        // right-align while `{n:<12}` on a plain null left-aligned, so the alignment
-        // a hole was given depended on whether its null carried a fault cause.
-        let label = format!("null({label_str})");
-        format_text(s, &label, width, if dir == 2 { 1 } else { dir }, token);
-        return;
-    }
-    format_long(s, val, radix, width, token, plus, note, dir);
-}
-
 /// The character that pads a `null` out to its field.
 ///
 /// @FR-F-Spec-Zero — a zero pad fills a NUMBER, and `null` is a sentinel, not a number:
@@ -1199,90 +1066,6 @@ pub fn format_single(
     }
     sign_a_number(&mut res, plus);
     format_signed(s, &res, width, dir, token);
-}
-
-/// `@FR-F-FaultSafe` — the float renderer of an interpolation hole: a null the hole's own
-/// fault produced renders `null(<cause>)`, as [`format_long_with_tag`] does for an integer.
-/// The tag is the one the hole's renderer TOOK (`take_format_fault`), so a hole that did
-/// not fault passes `None` and renders exactly as [`format_float`] (loft#1939).
-#[allow(clippy::too_many_arguments)]
-pub fn format_float_with_tag(
-    s: &mut String,
-    val: f64,
-    tag: Option<&str>,
-    width: i64,
-    precision: i64,
-    token: u8,
-    plus: bool,
-    dir: i8,
-) {
-    if val.is_nan()
-        && let Some(cause) = tag
-    {
-        format_tagged_null(s, cause, width, if dir == 2 { 1 } else { dir }, token);
-        return;
-    }
-    format_float(s, val, width, precision, token, plus, dir);
-}
-
-/// The `single` twin of [`format_float_with_tag`].
-#[allow(clippy::too_many_arguments)]
-pub fn format_single_with_tag(
-    s: &mut String,
-    val: f32,
-    tag: Option<&str>,
-    width: i64,
-    precision: i64,
-    token: u8,
-    plus: bool,
-    dir: i8,
-) {
-    if val.is_nan()
-        && let Some(cause) = tag
-    {
-        format_tagged_null(s, cause, width, if dir == 2 { 1 } else { dir }, token);
-        return;
-    }
-    format_single(s, val, width, precision, token, plus, dir);
-}
-
-/// The text twin of [`format_float_with_tag`]: a null text (`STRING_NULL`) the hole's own
-/// fault produced renders `null(<cause>)`, aligned as text is (left by default).  A boolean
-/// hole renders through here too, cast to text first.
-pub fn format_text_with_tag(
-    s: &mut String,
-    val: &str,
-    tag: Option<&str>,
-    width: i64,
-    dir: i8,
-    token: u8,
-) {
-    if val == crate::state::STRING_NULL
-        && let Some(cause) = tag
-    {
-        format_tagged_null(s, cause, width, if dir == 2 { -1 } else { dir }, token);
-        return;
-    }
-    format_text(s, val, width, dir, token);
-}
-
-/// The record walker's twin of [`format_float_with_tag`]: a record, collection or enum hole
-/// renders `null` exactly when its value is absent, so a rendered `null` the hole's own
-/// fault produced becomes `null(<cause>)`.
-pub fn tag_rendered_null(rendered: &mut String, tag: Option<&str>) {
-    if rendered == "null"
-        && let Some(cause) = tag
-    {
-        rendered.clear();
-        write!(rendered, "null({cause})").unwrap();
-    }
-}
-
-/// `null(<cause>)` in its field: `null` is a sentinel, not a number, so it takes no zero
-/// pad (`@FR-F-Spec-Zero`).
-fn format_tagged_null(s: &mut String, cause: &str, width: i64, dir: i8, token: u8) {
-    let label = format!("null({cause})");
-    format_text(s, &label, width, dir, null_pad(token));
 }
 
 /// Pad an already-rendered and already-signed number, keeping a zero pad behind its sign.

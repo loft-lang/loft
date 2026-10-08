@@ -331,12 +331,12 @@ fn main() {
     );
 }
 
-// ── Plan-07 phase 4e.3 — distinct null tokens in format-string output ──
+// ── @C142 — a fault inside a format-string hole renders plain `null` ──
 
-/// Format-string interpolation of `1 / z` (z=0) renders `null(/0)`
-/// — distinguishes fault-produced null from bare-value null.
+/// Format-string interpolation of `1 / z` (z=0) renders `null`, exactly as a stored null
+/// does: no hole shows the fault's cause (`@FR-F-FaultSafe`, @C142).
 #[test]
-fn fmt43_div_by_zero_renders_null_div() {
+fn fmt43_div_by_zero_renders_plain_null() {
     let source = "\
 fn main() {
   z = 0;
@@ -346,13 +346,13 @@ fn main() {
     let (stdout, _stderr, code) = run_with_warnings("fmt43_div", source);
     assert_eq!(code, Some(0), "format-string suppression must not halt");
     assert!(
-        stdout.contains("a=null(/0)"),
-        "expected `null(/0)` suffix; got stdout={stdout:?}"
+        stdout.contains("a=null\n") && !stdout.contains("null("),
+        "expected a plain `null`; got stdout={stdout:?}"
     );
 }
 
 #[test]
-fn fmt43_mod_by_zero_renders_null_mod() {
+fn fmt43_mod_by_zero_renders_plain_null() {
     let source = "\
 fn main() {
   z = 0;
@@ -362,13 +362,13 @@ fn main() {
     let (stdout, _stderr, code) = run_with_warnings("fmt43_mod", source);
     assert_eq!(code, Some(0));
     assert!(
-        stdout.contains("a=null(%0)"),
-        "expected `null(%0)` suffix; got stdout={stdout:?}"
+        stdout.contains("a=null\n") && !stdout.contains("null("),
+        "expected a plain `null`; got stdout={stdout:?}"
     );
 }
 
 #[test]
-fn fmt43_vec_oob_renders_null_oob() {
+fn fmt43_vec_oob_renders_plain_null() {
     let source = "\
 fn main() {
   v = [10, 20, 30];
@@ -378,8 +378,8 @@ fn main() {
     let (stdout, _stderr, code) = run_with_warnings("fmt43_vec", source);
     assert_eq!(code, Some(0));
     assert!(
-        stdout.contains("a=null(oob)"),
-        "expected `null(oob)` suffix; got stdout={stdout:?}"
+        stdout.contains("a=null\n") && !stdout.contains("null("),
+        "expected a plain `null`; got stdout={stdout:?}"
     );
 }
 
@@ -780,35 +780,6 @@ fn main() {
     assert!(
         !diag.contains("consider marking it `not null`"),
         "LOFT_NO_HINT_NOT_NULL=1 must silence hint; got diag={diag:?}"
-    );
-}
-
-#[test]
-fn fmt43_loft_format_bare_null_env_silences_suffix() {
-    let source = "\
-fn main() {
-  z = 0;
-  print(\"a={1 / z}\\n\");
-}
-";
-    let script_path = std::env::temp_dir().join("loft_w42_fmt43_env.loft");
-    fa::write(&script_path, source).expect("write temp script");
-    let out = loft::platform::process::harness_command(loft_bin())
-        .arg("--interpret")
-        .arg(&script_path)
-        .current_dir(workspace_root())
-        .env("LOFT_FORMAT_BARE_NULL", "1")
-        .output()
-        .expect("failed to invoke loft binary");
-    let _ = fa::remove_file(&script_path);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("a=null"),
-        "bare null still rendered; got stdout={stdout:?}"
-    );
-    assert!(
-        !stdout.contains("a=null("),
-        "LOFT_FORMAT_BARE_NULL=1 must silence the suffix; got stdout={stdout:?}"
     );
 }
 

@@ -15964,9 +15964,8 @@ mod store_free_sentinel {
         "OpVecGetIntNullable",
         "OpVecSetInt",
         "OpVecEndJump",
-        // Reach a store, a fault slot or another frame through the `const` channel.
+        // Reach a store or another frame through the `const` channel.
         "OpDatabase",
-        "OpTagFault",
         "OpDropFnRef",
         "OpFnRefDetachShared",
         "OpParallelBegin",

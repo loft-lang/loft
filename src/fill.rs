@@ -319,7 +319,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     sizeof_ref::<false>,
     eq_content::<false>,
     ne_content::<false>,
-    tag_fault::<false>,
     size_vector::<false>,
     size_struct::<false>,
     size_scalar::<false>,
@@ -670,7 +669,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     sizeof_ref::<true>,
     eq_content::<true>,
     ne_content::<true>,
-    tag_fault::<true>,
     size_vector::<true>,
     size_struct::<true>,
     size_scalar::<true>,
@@ -1021,7 +1019,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     sizeof_ref_r,
     eq_content_r,
     ne_content_r,
-    tag_fault_r,
     size_vector_r,
     size_struct_r,
     size_scalar_r,
@@ -1372,7 +1369,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpSizeofRef",
     "OpEqContent",
     "OpNeContent",
-    "OpTagFault",
     "OpSizeVector",
     "OpSizeStruct",
     "OpSizeScalar",
@@ -2235,11 +2231,7 @@ fn mul_int_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn div_int_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, i64>();
     let v_v1 = s.get_stack_m::<F, i64>();
-    let new_value = {
-        let r = ops::op_div_int_nullable(v_v1, v_v2);
-        ops::note_format_fault(1, r == i64::MIN && v_v1 != i64::MIN && v_v2 != i64::MIN);
-        r
-    };
+    let new_value = ops::op_div_int_nullable(v_v1, v_v2);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -2253,11 +2245,7 @@ fn div_int_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn rem_int_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, i64>();
     let v_v1 = s.get_stack_m::<F, i64>();
-    let new_value = {
-        let r = ops::op_rem_int_nullable(v_v1, v_v2);
-        ops::note_format_fault(2, r == i64::MIN && v_v1 != i64::MIN && v_v2 != i64::MIN);
-        r
-    };
+    let new_value = ops::op_rem_int_nullable(v_v1, v_v2);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -2686,11 +2674,7 @@ fn rem_single_r(s: &mut State, r: Regs) -> Regs {
 fn div_single_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f32>();
     let v_v1 = s.get_stack_m::<F, f32>();
-    let new_value = {
-        let r = v_v1 / v_v2;
-        ops::note_format_fault(1, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 / v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -2704,11 +2688,7 @@ fn div_single_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn rem_single_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f32>();
     let v_v1 = s.get_stack_m::<F, f32>();
-    let new_value = {
-        let r = v_v1 % v_v2;
-        ops::note_format_fault(2, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 % v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3250,11 +3230,7 @@ fn rem_float_r(s: &mut State, r: Regs) -> Regs {
 fn div_float_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f64>();
     let v_v1 = s.get_stack_m::<F, f64>();
-    let new_value = {
-        let r = v_v1 / v_v2;
-        ops::note_format_fault(1, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 / v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3268,11 +3244,7 @@ fn div_float_nullable_r(s: &mut State, r: Regs) -> Regs {
 fn div_float_nullable_h(s: &mut Hot) {
     let v_v2 = s.get_stack::<f64>();
     let v_v1 = s.get_stack::<f64>();
-    let new_value = {
-        let r = v_v1 / v_v2;
-        ops::note_format_fault(1, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 / v_v2;
     s.put_stack(new_value);
 }
 
@@ -3280,11 +3252,7 @@ fn div_float_nullable_h(s: &mut Hot) {
 fn rem_float_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, f64>();
     let v_v1 = s.get_stack_m::<F, f64>();
-    let new_value = {
-        let r = v_v1 % v_v2;
-        ops::note_format_fault(2, r.is_nan() && !v_v1.is_nan() && !v_v2.is_nan());
-        r
-    };
+    let new_value = v_v1 % v_v2;
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -3563,14 +3531,7 @@ fn text_character_r(s: &mut State, r: Regs) -> Regs {
 fn text_character_nullable<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, i64>();
     let v_v1 = s.string();
-    let new_value = {
-        let ch = ops::text_character(v_v1.str(), v_v2);
-        ops::note_format_fault(
-            3,
-            ch == char::from(0) && v_v2 != i64::MIN && !v_v1.str().is_empty(),
-        );
-        ch
-    };
+    let new_value = ops::text_character(v_v1.str(), v_v2);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -5112,22 +5073,6 @@ fn var_vector_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn tag_fault<const F: bool>(s: &mut State) {
-    let operands = s.operands(1);
-    let v_kind = operands.get::<u8>(0);
-    {
-        let _ = v_kind;
-        ops::arm_format_fault();
-    }
-}
-
-fn tag_fault_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    tag_fault::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn length_vector<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
     let new_value = i64::from(vector::length_vector(&v_r, &s.database.allocations));
@@ -5327,11 +5272,7 @@ fn get_vector_nullable<const F: bool>(s: &mut State) {
     let v_size = operands.get::<u16>(0);
     let v_index = s.get_stack_m::<F, i64>();
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = {
-        let el = vector::get_vector(&v_r, u32::from(v_size), v_index, &s.database.allocations);
-        ops::note_format_fault(3, el.rec == 0 && v_index != i64::MIN && !v_r.is_null());
-        el
-    };
+    let new_value = vector::get_vector(&v_r, u32::from(v_size), v_index, &s.database.allocations);
     s.put_stack_m::<F, _>(new_value);
 }
 
@@ -5347,7 +5288,6 @@ fn vector_ref_nullable<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
     let new_value = {
         let el = vector::get_vector(&v_r, 4, v_index, &s.database.allocations);
-        ops::note_format_fault(3, el.rec == 0 && v_index != i64::MIN && !v_r.is_null());
         s.database.get_ref(&el, 0)
     };
     s.put_stack_m::<F, _>(new_value);
@@ -7130,7 +7070,6 @@ fn vec_get_int_nullable<const F: bool>(s: &mut State) {
         let r = s.get_var_m::<F, DbRef>(v_vec);
         let i = s.get_var_m::<F, i64>(v_idx);
         let db = vector::get_vector(&r, u32::from(v_size), i, &s.database.allocations);
-        ops::note_format_fault(3, db.rec == 0 && i != i64::MIN && !r.is_null());
         if db.rec == 0 {
             i64::MIN
         } else {

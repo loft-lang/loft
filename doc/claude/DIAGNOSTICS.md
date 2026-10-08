@@ -612,8 +612,7 @@ an opt-out for one run; the lint's cure is always an edit at the site it names.
 user renderer — `pretty` (default: `file:line:col` + source line + caret) vs `compact`
 (single line; the test harness pins this). Diagnostic toggles (default-on opt-outs, except
 the last two which are opt-in): `LOFT_NO_WARN_RUNTIME` (undefended-fault-site warning) ·
-`LOFT_NO_HINT_NOT_NULL` (`not null` field hint) · `LOFT_FORMAT_BARE_NULL` (drop the `(reason)`
-suffix on `null`) · `LOFT_NO_DEAD_STORES` (@PLN107 dead-store lint: a copy mutated but never
+`LOFT_NO_HINT_NOT_NULL` (`not null` field hint) · `LOFT_NO_DEAD_STORES` (@PLN107 dead-store lint: a copy mutated but never
 read, e.g. `d = self.data; d[i]=x` where the bind COPIES so the write is lost — a `len(d)`
 BOUND GUARD does not count as reading it, since a length cannot witness an element write;
 that hole made the lint silent on `if i < len(d) { d[i]=x }`, the exact shape the `v[i]`

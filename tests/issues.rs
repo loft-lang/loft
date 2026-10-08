@@ -2217,7 +2217,7 @@ fn test() {
     .result(Value::Null);
 }
 
-// N7: OpFormatFloat must generate ops::format_float_with_tag(...), not OpFormatFloat(stores, ...).
+// N7: OpFormatFloat must generate ops::format_float(...), not OpFormatFloat(stores, ...).
 // OpFormatStackLong must generate ops::format_long(var_, ...) without stores or &mut.
 #[test]
 fn n7_format_ops_generate_correct_rust() {
@@ -2231,10 +2231,9 @@ fn n7_format_ops_generate_correct_rust() {
         !src.contains("OpFormatFloat("),
         "generated code still contains bare OpFormatFloat call"
     );
-    // `_with_tag` since loft#1939: the hole's renderer takes its own fault's cause.
     assert!(
-        src.contains("ops::format_float_with_tag("),
-        "generated code missing ops::format_float_with_tag call"
+        src.contains("ops::format_float("),
+        "generated code missing ops::format_float call"
     );
 }
 

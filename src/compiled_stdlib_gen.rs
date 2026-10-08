@@ -531,11 +531,11 @@ fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> String {
 }
 
 
-// loft:default/01_code.loft:777
+// loft:default/01_code.loft:775
 #[inline]
 fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:778
+  // loft:default/01_code.loft:776
   return if ((((var_self) as i64) <= ((var_b) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -543,11 +543,11 @@ fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:782
+// loft:default/01_code.loft:780
 #[inline]
 fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:783
+  // loft:default/01_code.loft:781
   return if ((((var_b) as i64) <= ((var_self) as i64)) as u8) == 1 { //block_2: integer
     var_self
     } /*block_2: integer*/ else { //block_3: integer
@@ -555,28 +555,28 @@ fn t_7integer_max(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut v
     } /*block_3: integer*/
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:787
+// loft:default/01_code.loft:785
 #[inline]
 fn t_7integer_clamp(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_lo: i64, mut var_hi: i64) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:788
+  // loft:default/01_code.loft:786
   let _pre_0 = t_7integer_max(cell, var_self, var_lo);
   return t_7integer_min(cell, _pre_0, var_hi)
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:932
+// loft:default/01_code.loft:930
 #[inline]
 fn t_4text_len(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:933
+  // loft:default/01_code.loft:931
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.chars().count() as i64 } }}
   } /*block_1: integer*/
 
-// loft:default/01_code.loft:944
+// loft:default/01_code.loft:942
 #[inline]
 fn t_4text_size(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) -> i64 { //block_1: integer
   let stores: &mut Stores = unsafe { &mut *cell.get() };
-  // loft:default/01_code.loft:945
+  // loft:default/01_code.loft:943
   return {{ let __t = (var_self); if __t == loft::state::STRING_NULL { 0 } else { __t.len() as i64 } }}
   } /*block_1: integer*/
 
@@ -647,7 +647,7 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
 'l5: loop { //For loop_5
       let mut var_ch: i32 = { let __tb = (&var__for_text_1).as_bytes(); let __ti = var_ch__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_ch__index = var_ch__next; var_ch__next = var_ch__next + 1; i32::from(__tb[__ti]) } else { //for text next_6: character
         var_ch__index = var_ch__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_ch__next); { let _v_v1 = (&var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((&var__for_text_1), (var_ch__next))) as u32 as i32;
         var_ch__next = ops::op_add_int((var_ch__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_ch__next) as i64) <= ((var_ch__index) as i64)) as u8) == 1 {var_ch__next = ops::op_add_int((var_ch__index), (1_i64))} else {()};
         var__for_result_1
@@ -726,7 +726,7 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
 'l3: loop { //For loop_3
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_4: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -928,9 +928,9 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
   // loft:default/02_files.loft:1350
   { //Formatted string_15: text["__work_2"]
     *var___work_2 = ("").to_string();
-    ops::format_text_with_tag(&mut var___work_2, &var_base, ops::take_format_fault(), 0_i64, 2, 32);
+    ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
     ops::append_text(&mut (*var___work_2), &*("/"));
-    ops::format_text_with_tag(&mut var___work_2, &*var_t, ops::take_format_fault(), 0_i64, 2, 32);
+    ops::format_text(&mut var___work_2, &*var_t, 0_i64, 2, 32);
     ;
     ;
     ;
@@ -979,7 +979,7 @@ fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
 'l6: loop { //For loop_6
       let mut var_cs_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_cs_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_cs_c__index = var_cs_c__next; var_cs_c__next = var_cs_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_7: character
         var_cs_c__index = var_cs_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_cs_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_cs_c__next))) as u32 as i32;
         var_cs_c__next = ops::op_add_int((var_cs_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_cs_c__next) as i64) <= ((var_cs_c__index) as i64)) as u8) == 1 {var_cs_c__next = ops::op_add_int((var_cs_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1024,7 +1024,7 @@ fn t_4text_is_lowercase(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1071,7 +1071,7 @@ fn t_4text_is_uppercase(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1118,7 +1118,7 @@ fn t_4text_is_numeric(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) 
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1165,7 +1165,7 @@ fn t_4text_is_alphanumeric(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1212,7 +1212,7 @@ fn t_4text_is_alphabetic(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &st
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1259,7 +1259,7 @@ fn t_4text_is_whitespace(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &st
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1306,7 +1306,7 @@ fn t_4text_is_control(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str) 
 'l4: loop { //For loop_4
       let mut var_c: i32 = { let __tb = (var__for_text_1).as_bytes(); let __ti = var_c__next as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F { var_c__index = var_c__next; var_c__next = var_c__next + 1; i32::from(__tb[__ti]) } else { //for text next_5: character
         var_c__index = var_c__next;
-        let mut var__for_result_1: i32 = ({ let _v_v2 = (var_c__next); { let _v_v1 = (var__for_text_1); { let ch = ops::text_character(_v_v1, _v_v2); ops::note_format_fault(3, ch == char::from(0) && _v_v2 != i64::MIN && !_v_v1.is_empty()); ch } } }) as u32 as i32;
+        let mut var__for_result_1: i32 = (ops::text_character((var__for_text_1), (var_c__next))) as u32 as i32;
         var_c__next = ops::op_add_int((var_c__next), (OpLengthCharacter(cell, var__for_result_1)));
         if ((((var_c__next) as i64) <= ((var_c__index) as i64)) as u8) == 1 {var_c__next = ops::op_add_int((var_c__index), (1_i64))} else {()};
         var__for_result_1
@@ -1695,4 +1695,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 pub(crate) const PREFIX_TYPES: usize = 96;
 pub(crate) const PREFIX_FINGERPRINT: u64 = 13106178954628645925;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 8442664413099333928;
+pub(crate) const SOURCE_HASH: u64 = 9954916201170384215;

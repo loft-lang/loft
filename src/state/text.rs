@@ -462,19 +462,7 @@ impl State {
         let n = self.stack_step(4) as u16;
         // A null character renders as NOTHING — `@FR-F-Render` states that exception for
         // every position, and states why: iterating text past its end must append no
-        // garbage.  So the fault tag is dropped here rather than rendered.
-        //
-        // This op used to render `null(<tag>)` for a tagged null character, to show what
-        // produced the missing character instead of an empty space.  That is a defensible
-        // thing to want, but it was never true of the language: only the INTERPRETER did
-        // it, so `"hi"[9]` read `null(oob)` here and empty under `--native`, and a
-        // disagreement between the backends is by definition a bug in whichever one
-        // disobeys (`@FR-D-op-1`).  The rule says nothing renders, so this is the side
-        // that moves.  Reversing it — carrying the cause on a character hole, on BOTH
-        // backends — is a change to F-Render and the owner's call, not this op's.
-        //
-        // The tag is still TAKEN, so it cannot leak into a later hole in the same string.
-        let _ = ops::take_format_fault();
+        // garbage.
         if c as u32 == 0 {
             return;
         }
@@ -719,7 +707,7 @@ impl State {
 
     /// `OpTextWalkStep` — one step of a `for c in T` walk: the parser's `for text next` block
     /// (the shape `hoist::char_walks` matches for `--native`'s `(R-CharWalk)`) in one op.
-    /// `index = next`; the character at `next`, with the fault note a NUL read makes; `next`
+    /// `index = next`; the character at `next`; `next`
     /// advanced by the character's UTF-8 width; `next = index + 1` when that did not move it;
     /// `c` bound to the character.  The same functions as the unfused ops, in the same order.
     /// Every operand is a frame position taken at the op's stack height, as `OpVarInt`'s is.
@@ -730,12 +718,10 @@ impl State {
         let src = self.code::<u16>();
         let arg = self.code::<u8>();
         let at = self.get_var::<i64>(next);
-        let (ch, empty) = {
+        let ch = {
             let text = self.local_text(src, arg);
-            let t = text.str();
-            (ops::text_character(t, at), t.is_empty())
+            ops::text_character(text.str(), at)
         };
-        ops::note_format_fault(3, ch == char::from(0) && at != i64::MIN && !empty);
         let width = if ch == char::from(0) {
             0
         } else {
@@ -814,17 +800,10 @@ impl State {
         let dir = self.code::<i8>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<i64>();
-        // Plan-07 phase 4e.3 — consume the fault tag set by the
-        // 4e.1 format-scope swap's preceding `OpTagFault`.  When the
-        // value is the i64 null sentinel AND a tag is set, render
-        // `null(<tag>)` instead of bare `null`.  Take + drop the
-        // tag unconditionally so it can never leak to a downstream
-        // interpolation in the same format string.
-        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 16);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_long_with_tag(s, val, tag, radix, width, token, plus, note, dir)
+            ops::format_long(s, val, radix, width, token, plus, note, dir)
         });
     }
 
@@ -837,11 +816,10 @@ impl State {
         let dir = self.code::<i8>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<i64>();
-        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 16);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_long_with_tag(s, val, tag, radix, width, token, plus, note, dir)
+            ops::format_long(s, val, radix, width, token, plus, note, dir)
         });
     }
 
@@ -853,12 +831,10 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f64>();
-        // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
-        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 24);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_float_with_tag(s, val, tag, width, precision, token, plus, dir)
+            ops::format_float(s, val, width, precision, token, plus, dir)
         });
     }
 
@@ -870,12 +846,10 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f64>();
-        // `@FR-F-FaultSafe` — a hole's renderer takes its own fault's cause (loft#1939).
-        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 24); // f64(8)+i64(8)+i64(8) = 24 bytes popped
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_float_with_tag(s, val, tag, width, precision, token, plus, dir)
+            ops::format_float(s, val, width, precision, token, plus, dir)
         });
     }
 
@@ -887,14 +861,13 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f32>();
-        let tag = ops::take_format_fault();
         // @PLAN53 cluster 2 / S4: N = stepped span of the popped i64+i64+f32
         // (20 off; 24 aligned — the f32 rounds 4->8).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - n);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_single_with_tag(s, val, tag, width, precision, token, plus, dir)
+            ops::format_single(s, val, width, precision, token, plus, dir)
         });
     }
 
@@ -906,13 +879,12 @@ impl State {
         let precision = self.get_stack::<i64>();
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f32>();
-        let tag = ops::take_format_fault();
         // @PLAN53 cluster 2 / S4: stepped span of popped i64+i64+f32 (20/24).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - n);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_single_with_tag(s, val, tag, width, precision, token, plus, dir)
+            ops::format_single(s, val, width, precision, token, plus, dir)
         });
     }
 
@@ -922,11 +894,10 @@ impl State {
         let token = self.code::<u8>();
         let width = self.get_stack::<i64>();
         let val = self.string();
-        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_mut(pos - 8 - size_ptr() as u16);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_text_with_tag(s, val.str(), tag, width, dir, token)
+            ops::format_text(s, val.str(), width, dir, token)
         });
     }
 
@@ -936,11 +907,10 @@ impl State {
         let token = self.code::<u8>();
         let width = self.get_stack::<i64>();
         let val = self.string();
-        let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let s = self.string_ref_mut(pos - 8 - size_ptr() as u16);
         text_tl_fmt(tl_fn, s, |s| {
-            ops::format_text_with_tag(s, val.str(), tag, width, dir, token)
+            ops::format_text(s, val.str(), width, dir, token)
         });
     }
 }

@@ -1916,32 +1916,6 @@ impl Stores {
         }
     }
 
-    /// The format-fault cause lives in [`crate::ops`], per thread, rather than on `Stores` —
-    /// a codegen constraint as much as a design one. The native emitter inlines an op's
-    /// `#rust` body into whatever expression contains it, so a body that writes through
-    /// `stores` lands inside another `stores.` call's arguments and rustc rejects it with
-    /// E0502 (loft#1169). Free functions over thread-local state borrow nothing and compose in
-    /// any position. These are thin delegates so existing call sites read the same.
-    pub fn set_format_fault(&mut self, kind_id: u8) {
-        crate::ops::note_format_fault(kind_id, true);
-    }
-
-    /// See [`crate::ops::note_format_fault`].
-    pub fn note_format_fault(&mut self, kind_id: u8, faulted: bool) {
-        crate::ops::note_format_fault(kind_id, faulted);
-    }
-
-    /// See [`crate::ops::arm_format_fault`].
-    pub fn arm_format_fault(&mut self) {
-        crate::ops::arm_format_fault();
-    }
-
-    /// See [`crate::ops::take_format_fault`].
-    #[must_use]
-    pub fn take_format_fault(&mut self) -> Option<&'static str> {
-        crate::ops::take_format_fault()
-    }
-
     /// Plan-07 phase 4c — Stores-side counterpart of
     /// `State::vec_get_or_raise`.  Same body, calls
     /// `self.raise_runtime(...)` on OOB.  Native template rewriter

@@ -389,19 +389,14 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, false);
             write!(
                 w,
-                "ops::format_text_with_tag({dest}, {val_str}, ops::take_format_fault(), {width_expr}, {dir}, {token})"
+                "ops::format_text({dest}, {val_str}, {width_expr}, {dir}, {token})"
             )?;
             return Ok(());
         }
         panic!("Could not parse {vals:?}");
     }
 
-    /// Use this to emit `OpFormatInt` as a call to
-    /// `ops::format_long_with_tag` — the tag-aware wrapper that
-    /// renders `null(<reason>)` when the preceding `OpTagFault`
-    /// (4e.1 format-scope swap sibling) set a fault kind on
-    /// `stores.format_fault_tag`.  Bare `null` rendering for
-    /// genuine null values stays unchanged.
+    /// Use this to emit `OpFormatInt`/`OpFormatStackInt` as a call to `ops::format_long`.
     pub(super) fn format_long(
         &mut self,
         w: &mut dyn Write,
@@ -424,7 +419,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_long_with_tag({dest}, {val_expr}, ops::take_format_fault(), {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
+                "ops::format_long({dest}, {val_expr}, {radix} as u8, {width_expr}, {token} as u8, {plus}, {note}, {dir} as i8)"
             )?;
             return Ok(());
         }
@@ -454,7 +449,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_float_with_tag({dest}, {val_expr}, ops::take_format_fault(), {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+                "ops::format_float({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
             )?;
             return Ok(());
         }
@@ -485,7 +480,7 @@ impl Output<'_> {
             let dest = self.format_dest(*nr, stack);
             write!(
                 w,
-                "ops::format_single_with_tag({dest}, {val_expr}, ops::take_format_fault(), {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
+                "ops::format_single({dest}, {val_expr}, {width_expr}, {prec_expr}, {token} as u8, {plus}, {dir_expr} as i8)"
             )?;
             return Ok(());
         }
