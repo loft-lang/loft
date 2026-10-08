@@ -221,6 +221,8 @@ formatter rewrites fault-prone operations in interpolation position to their nul
 @P376), so building a diagnostic string can never itself fault.  The null a fault yields is the
 null any other null is: `"{a / b}"`, `"{v[9]}"` and `"{c}"` after `c = a / b` all render `null`,
 whatever type the hole has, so a rendering never depends on where in the expression the fault sat.
+A null whose type has its own `operator to_text` renders `null` too: the hole tests for the null
+first, so the user's function is never called with a null `self`.
 
 ---
 
@@ -250,7 +252,9 @@ the companion [formatting-history.md](formatting-history.md).
   spells out the expected string, not the agreement of two implementations.
 - **Fault-safety (`F-FaultSafe`)** — `a = 5; b = 0; "{a / b}"` is `null` on both backends, and
   the program continues; so are `"{v[9]}"` on `v = [1, 2]` and `"{5.0 % 0.0}"` — no hole kind
-  shows a fault's cause (`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`).
+  shows a fault's cause (`tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft`); a
+  null `T?` whose type has an `operator to_text` renders `null` without calling it
+  (`tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`).
 - **Target (`F-Target`)** — with `lit` + `hole_text` + `hole_int` on `Query`,
   `q: Query = "SELECT * FROM t WHERE name = {name} AND id = {n}"` leaves `len(q.parts) == 2` and
   `q.values == ["ada", "7"]` — identical on both backends; the same template assigned to `text`

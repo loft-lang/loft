@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C142 / `@FR-F-FaultSafe` — a hole whose value is null renders `null`, and a type's own
+// `operator to_text` is never called with a null `self`.  It was: `t: T? = null; "{t}"` ran
+// the user's body with a null `self`, and `"T{self.id}"` printed `Tnull` on both backends.
+//
+// The marker: `to_text` asserts its own `self` is present, so a call with a null `self` fails
+// the cell that made it, whatever the rendering — "never called" is asserted, not inferred
+// from the text.  The present-value control proves the user's `to_text` still runs.
+//
+// Cells: a null local, a null call result and a null parameter as a hole; `:j` on the null;
+// the null as a FIELD of a rendered record (C143: `null`, not the user rendering) and as an
+// ELEMENT of a rendered vector; a null enum beside it; and the present controls.
+//
+// @falsified-at: PENDING
+
+struct T { id: integer? }
+operator to_text(self: T) -> text {
+  assert(self.id != null, "operator to_text ran with a null self (@C142)");
+  "T{self.id}"
+}
+enum Col { Red, Green }
+struct H { t: T?, c: Col? }
+
+fn nt() -> T? { null }
+fn shown(t: T?) -> text { "[{t}]" }
+
+fn test_a_null_value_renders_null_and_never_reaches_to_text() {
+  t: T? = null;
+  assert("[{t}] [{nt()}] [{t:j}]" == "[null] [null] [null]", "local, call, :j: got [{t}] [{nt()}] [{t:j}]");
+  assert(shown(null) == "[null]", "a null parameter: got {shown(null)}");
+}
+
+fn test_a_null_field_and_element_render_null() {
+  h = H { t: null, c: null };
+  assert("{h}" == "{{t:null,c:null}}", "a record with null fields: got {h}");
+  assert("{h:j}" == "{{\"t\":null,\"c\":null}}", "the same under :j: got {h:j}");
+  v: vector<T?> = [T { id: 1 }, null];
+  assert("{v}" == "[{{id:1}},null]", "a vector with a null element: got {v}");
+  assert("[{v[1]}] [{v[9]}]" == "[null] [null]", "a null element and an overrun as holes: got [{v[1]}] [{v[9]}]");
+  c: Col? = null;
+  assert("[{c}]" == "[null]", "a null enum: got [{c}]");
+}
+
+fn test_control_a_present_value_still_reaches_to_text() {
+  t: T? = T { id: 2 };
+  assert("[{t}] [{T { id: 3 }}]" == "[T2] [T3]", "got [{t}] [{T { id: 3 }}]");
+  assert(shown(T { id: 4 }) == "[T4]", "a present parameter: got {shown(T { id: 4 })}");
+}

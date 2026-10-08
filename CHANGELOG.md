@@ -90,6 +90,8 @@ write `"ready: {flag}"` when you want the text either way.
 `"{v[9]}"` past the end and `"{5.0 % 0.0}"` now all print `null` where they printed `null(/0)`,
 `null(oob)` and `null(%0)`; the program still continues.  A test or a parser that matched the
 old suffix matches `null` now.  `LOFT_FORMAT_BARE_NULL` is gone: plain `null` is the only form.
+A null whose type has its own `operator to_text` prints `null` as well, and that function is no
+longer called with a null `self` (it printed things like `Tnull`).
 
 **A record shows its null fields.**  `Point { x: 3, y: null, label: null }` prints
 `{x:3,y:null,label:null}` where it printed `{x:3}`, and `{p:j}` writes
