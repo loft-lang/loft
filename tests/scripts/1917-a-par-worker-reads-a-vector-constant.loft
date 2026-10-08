@@ -12,6 +12,15 @@
 // expected string, so a shared wrong answer cannot pass.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1917-a-par-worker-reads-a-vector-constant.patch — interpret exit 101 -> 0, interpret panicked -> clean; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   CHANNEL: the PANIC, on the interpreter alone — `--native` was right before the fix, so its
+//   row cannot move.
+//   WITNESS: the interpreter control exits `101`, panicked at src/state/mod.rs (an empty
+//   constant table indexed by the worker).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 struct P1917 { x: integer, name: text }
 

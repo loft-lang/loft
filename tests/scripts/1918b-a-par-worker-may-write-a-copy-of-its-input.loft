@@ -8,6 +8,15 @@
 // each worker answers 100 + the copied field, and the parent reads its own values afterwards.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1918b-a-par-worker-may-write-a-copy-of-its-input.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   The patch is a CONSTRUCTED over-reach, not a reverted fix: a refusal that reads a local with
+//   no deps as "provenance unknown, refuse" — the wider rule this control exists to keep out.
+//   CHANNEL: the EXIT — the over-wide control refuses both copies at compile time.
+//   WITNESS: "par() worker whole1918b writes captured `x`" and "… list1918b writes captured
+//   `__vdb_1`" on the control, both backends.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 struct I1918b { k: integer }
 struct E1918b { inner: I1918b, list: vector<I1918b> }

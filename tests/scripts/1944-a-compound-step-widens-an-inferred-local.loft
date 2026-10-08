@@ -11,6 +11,12 @@
 // declared versus inferred.  Values hand-computed: 250 % 7 = 5, 250 & 15 = 10.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1944-a-compound-step-widens-an-inferred-local.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — every compound step on a narrow inferred local takes the range default.
+//   WITNESS: `assertion failed: 0 0 0` where the cell expects `1005 1505 3000`, on the control.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 fn test_an_inferred_local_widens() {
   x: u8 = 250;

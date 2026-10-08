@@ -16,6 +16,13 @@
 // the constant store would break on the second call).  Values are hand-computed.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1936-a-constant-read-borrows-from-no-local.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+//   CHANNEL: the PANIC — an internal compiler error while compiling `elem1936`.
+//   WITNESS: `index out of bounds: the len is 7 but the index is 8` at src/variables/mod.rs, on
+//   the control, both backends.
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 struct P1936 { x: integer, name: text }
 

@@ -17,6 +17,12 @@
 // hand-computed.
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
+//
+// @falsified-by: tests/falsified/1916-a-nested-collection-assigned-onto-itself-keeps-its-elements.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE — a self-assigned place comes back empty on the control.
+//   WITNESS: `exit 1, 1 assertion failure` on both backends (scored at 6598df45d).
+//   HOLDS: leak, panic, free-refusal and the other cells are equal on BOTH trees, and
+//   `falsify` requires HERE to be clean, so all are clean on both.
 
 struct I1916 { sub: vector<integer> }
 struct O1916 { inner: I1916, vv: vector<vector<integer>> }
