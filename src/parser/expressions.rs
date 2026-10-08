@@ -1973,7 +1973,7 @@ use a separate collection or add after the loop"
         // local's uses, never this verdict's; a literal-bodied function stays the road to it.
         let is_bare_var = matches!(code, Value::Var(_))
             || self.reads_a_capture_whole(code)
-            || matches!(code.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef"));
+            || self.is_const_view(code);
         // @FR-O-Proxy asks copy — the verdict is a `VecBind` (`CopyVar` / `CopyOwnedField` /
         // `SelfAssign`), and every arm of it copies or does nothing.  A wrong answer picks the
         // wrong lowering, not a release.
