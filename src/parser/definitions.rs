@@ -83,7 +83,7 @@ impl Parser {
         // @FR-Col-Spatial — an axis is an integer-not-null coordinate.  A float or single axis
         // was accepted and then encoded so that a point lookup missed the collection's own
         // records, and a float box query did not compile on `--native` (loft#1913).
-        if !want_text && !is_text && !matches!(tp, Type::Integer(_)) {
+        if !want_text && !is_text && !matches!(tp.base(), Type::Integer(_)) {
             diagnostic!(
                 self.lexer,
                 Level::Error,
