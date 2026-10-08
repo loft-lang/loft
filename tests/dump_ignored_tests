@@ -71,16 +71,20 @@ fn main() {
   out = Out { rows: [] };
   for p in walk("tests", ".rs") { if p.dir() == "tests" { scan(p, out); } }
   for p in walk("src", ".rs") { scan(p, out); }
-  print("# Baseline of every `#[ignore = \"...\"]` and `#[cfg_attr(<cfg>, ignore = \"...\")]` in\n");
-  print("# tests/*.rs and src/**/*.rs.  One `<file>::<test_name>\\t<reason>` pair per line,\n");
-  print("# sorted; the file is part of the key because two `src/` tests share a bare name.\n");
-  print("# Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on\n");
-  print("# any drift.  A drift typically means one of:\n");
-  print("#   - an ignored test just got its fix landed (un-ignore it + delete its line here)\n");
-  print("#   - a new ignored test landed (add its line here, with the reason it carries)\n");
-  print("#   - the reason message changed (update the line here)\n");
-  print("# `make release-checklist`'s A-ignores reads this file, so a test ignored WITHOUT a\n");
-  print("# reason is a release finding, not just a lint.\n");
-  print("# Regenerate with: `python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline`\n");
+  // The header as the original holds it, one literal (finding 014: `` \` `` is a backtick).
+  header = `
+    # Baseline of every \`#[ignore = "..."]\` and \`#[cfg_attr(<cfg>, ignore = "...")]\` in
+    # tests/*.rs and src/**/*.rs.  One \`<file>::<test_name>\\t<reason>\` pair per line,
+    # sorted; the file is part of the key because two \`src/\` tests share a bare name.
+    # Checked by tests/doc_hygiene.rs::ignored_tests_baseline_is_current, which fails on
+    # any drift.  A drift typically means one of:
+    #   - an ignored test just got its fix landed (un-ignore it + delete its line here)
+    #   - a new ignored test landed (add its line here, with the reason it carries)
+    #   - the reason message changed (update the line here)
+    # \`make release-checklist\`'s A-ignores reads this file, so a test ignored WITHOUT a
+    # reason is a release finding, not just a lint.
+    # Regenerate with: \`python3 tests/dump_ignored_tests.py > tests/ignored_tests.baseline\`
+  `;
+  println(header);
   for e in out.rows { print("{e.key}\n"); }
 }

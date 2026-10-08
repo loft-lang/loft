@@ -6,7 +6,7 @@ fix: let a `??` default be a call that never returns — `exit(code)`, `panic(�
 ref: macos-scripting (2026-10-08) — `build_null_coalesce_default_inner` routes a default that is a call of `exit` or `panic` through `null_coalesce_exit`, the lowering `?? return` / `?? break` take; `panic` is emitted on the first pass too (it left `Null` there, and a coalesce typed from a void default crashed on a `text?` subject).  Guarded by tests/panic_halts_both_backends.rs (`a_halting_call_is_a_coalesce_default`, both backends) and tests/scripts/019-a-halting-call-is-a-coalesce-default.loft
 probe: 019.probe.loft
 expect: refused
-checked: 6a26d8ca9
+checked: 647c14b83
 holds: no
 
 The original says `contract=$(grep …) || exit 1`.  The port wants `contract = version(manifest) ?? exit(1)` and gets `coalesce-default-type-mismatch`: `exit` is a `void` call, and a `??` default must have the left side's type.  `?? return` is special-cased for exactly this shape; `exit(1)`, `panic("…")` and any `fn … -> !` of the program's own are not, so the port spends a sentinel and an `if` where the shell spent two words.  The same shape recurs in every gate script: read a value, or stop with a code.

@@ -227,7 +227,7 @@ are [formal/formatting.md](formal/formatting.md).
 
 ### Double-quoted strings (`"..."`)
 
-Single-line. Supports `\n`, `\t`, `\\`, `\"` escapes.
+Single-line. Supports `\n`, `\t`, `\\`, `\"` and `` \` `` escapes.
 
 ```
 "hello {name}"           // interpolation
@@ -239,7 +239,8 @@ Rules: [formal/formatting.md](formal/formatting.md) `(F-Interp)`, `(F-Escape)`.
 
 ### Backtick strings (`` `...` ``)
 
-**Multi-line.** Bare `"` is literal inside backtick strings (no escaping needed).
+**Multi-line.** Bare `"` is literal inside backtick strings (no escaping needed); a backtick
+itself is written `` \` ``, so a block that quotes code (`` \`make ci\` ``) is one literal.
 Auto-strips leading indentation: the **first content line** sets the base, and that many
 leading spaces come off every line that has them.  A blank line does not set the base,
 a line indented less than the base comes out flush, and a TAB-indented line is left

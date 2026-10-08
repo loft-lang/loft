@@ -1315,7 +1315,9 @@ impl Lexer {
         // EXCEPT the last one (which the caller will skip).
         if let Some(&c) = self.iter.peek() {
             match c {
-                '"' | '\'' | '\\' => res.push(c),
+                // `` \` `` is a backtick: the one way a backtick literal can hold one, so a
+                // block of text that quotes code can be one literal (@PLN179 finding 014).
+                '"' | '\'' | '\\' | '`' => res.push(c),
                 // @PLN109 JSON: `\/` is a JSON escape for `/`; loft rejects it.
                 '/' if self.json_strings => res.push('/'),
                 't' => res.push('\t'),

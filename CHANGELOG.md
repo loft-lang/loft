@@ -104,6 +104,9 @@ the new form back to the same value; a test that pinned the shorter form needs t
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
 1 and a message.  Under `loft test` it fails the test that called it, naming the code.
 
+**A backtick literal can hold a backtick.**  `` \` `` is a backtick in either quote form, so a
+block of text that quotes code is one multi-line literal instead of a print per line.
+
 **A vector answers whether it holds a value.**  `names.contains("x")` reads any vector by
 content, as `==` compares — a text, a number, a record — beside `text`'s own `contains`; it was
 a four-line loop in every script that held a list of names.

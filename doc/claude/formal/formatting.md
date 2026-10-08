@@ -38,7 +38,8 @@ of interleaved literal runs `sᵢ` and interpolations `{eᵢ:fᵢ}`.
               are STATIC errors (`format-unescaped-brace`, `format-unclosed-hole`) — never
               copied, because either reading of the author's intent is a guess; the cure,
               doubling, is what `loft fix --apply` writes.  Both quote forms, `"…"` and
-              `` `…` ``, and every position a text literal can stand in obey it alike.
+              `` `…` ``, and every position a text literal can stand in obey it alike; and
+              in both, `` \` `` is a backtick, as `\"` is a quote.
 ```
 
 **In words.** `"hi {name}, {a + b} left"` renders the literals unchanged and splices each
