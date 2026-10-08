@@ -61,6 +61,13 @@ fn free_footer_enabled() -> bool {
 /// was before @PLN164 (`@FR-H-Wilderness`); the bisect step for a store-layout fault or a
 /// claim that hands out a live block.  Read once; each store copies it at construction, so a
 /// unit test can build one of each in a process.
+/// `LOFT_NO_SCAN_INDEX=1` — every claim the tree cannot serve walks the block chain from
+/// the store's start again (`@FR-H-ScanIndex`, [`Store::indexed_scan`]).
+fn scan_index_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !std::env::var("LOFT_NO_SCAN_INDEX").is_ok_and(|v| v != "0"))
+}
+
 fn wilderness_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
@@ -316,6 +323,20 @@ impl Claims {
 
     fn len(&self) -> usize {
         self.live as usize
+    }
+
+    /// The lowest member at or after `from` — a word of 64 positions per step, so a walk
+    /// over the members skips everything between them.
+    fn next_at_or_after(&self, from: u32) -> Option<u32> {
+        let mut word = (from >> 6) as usize;
+        let mut bits = self.bits.get(word)? & (!0u64 << (from & 63));
+        loop {
+            if bits != 0 {
+                return Some(((word as u32) << 6) | bits.trailing_zeros());
+            }
+            word += 1;
+            bits = *self.bits.get(word)?;
+        }
     }
 
     fn is_empty(&self) -> bool {
@@ -1797,8 +1818,53 @@ impl Store {
 
     /// Linear-scan fallback for `claim()`: walks from PRIMARY until a free block
     /// of the required size is found, growing the store if necessary.
-    fn claim_scan(&mut self, size: u32) -> u32 {
-        let req_size = size as i32;
+    /// `@FR-H-ScanIndex` — [`Self::claim_scan`]'s answer read off the store's own indexes
+    /// instead of its block chain, as `(pos, last, claim)` in the walk's terms: the first free
+    /// block in address order that holds `req` words, or — none holding it — the store's end
+    /// with its tail block.  The walk runs only after the tree and the wilderness hold no fit
+    /// (`claim_best_fit`), and every free block of `MIN_FREE_TREE` words or more is in the
+    /// tree, the wilderness or `lazy_free`, so the first fit is the lowest `lazy_free` member
+    /// that holds `req`; the tail block is free exactly when its footer is negative, and is
+    /// trusted only when an index confirms it (a claimed block's last word is payload and
+    /// can spell any footer).  `None` sends the claim down the walk: a one-word request (a
+    /// one-word free block is in no index), an unconfirmed tail, a `lazy_free` member that
+    /// does not read free, or `LOFT_NO_SCAN_INDEX=1`.  Same block, same layout; what goes is
+    /// a header read per block from the store's start, which a lazy phase paid on every
+    /// claim (half the timeline's store per push in dryopea's `truncate_to`).
+    fn indexed_scan(&self, req: i32) -> Option<(u32, u32, i32)> {
+        if req < MIN_FREE_TREE || self.size <= PRIMARY || !scan_index_enabled() {
+            return None;
+        }
+        let mut at = self.lazy_free.next_at_or_after(PRIMARY);
+        while let Some(p) = at {
+            if p >= self.size {
+                break;
+            }
+            let h = self.read::<i32>(p, 0);
+            if h >= 0 {
+                return None;
+            }
+            if -h >= req {
+                return Some((p, p, h));
+            }
+            at = self.lazy_free.next_at_or_after(p + 1);
+        }
+        let f = self.read::<i32>(self.size - 1, 4);
+        if f >= 0 {
+            // The tail block is claimed: the walk would end on it, and growth appends.
+            return Some((self.size, self.size, 1));
+        }
+        let prev = self.size.checked_sub(f.checked_neg()? as u32)?;
+        (prev >= PRIMARY
+            && self.read::<i32>(prev, 0) == f
+            && (self.lazy_free.contains(prev) || self.fl_tree_contains(prev)))
+        .then_some((self.size, prev, f))
+    }
+
+    /// The first free block in address order that holds `req` words, by walking the block
+    /// chain from the store's start, as `(pos, last, claim)`: the block (or the store's end
+    /// when none holds it), the last block walked, and its header.
+    fn walk_scan(&self, req_size: i32) -> (u32, u32, i32) {
         let mut pos = PRIMARY;
         let mut last = pos;
         let mut claim = self.read::<i32>(pos, 0);
@@ -1833,6 +1899,14 @@ impl Store {
                 break;
             }
         }
+        (pos, last, claim)
+    }
+
+    fn claim_scan(&mut self, size: u32) -> u32 {
+        let req_size = size as i32;
+        let (mut pos, last, claim) = self
+            .indexed_scan(req_size)
+            .unwrap_or_else(|| self.walk_scan(req_size));
         if pos >= self.size {
             // If the last block is free and tracked in the LLRB tree, remove it
             // before claim_grow changes its header in place.  Without this step
@@ -7109,6 +7183,89 @@ mod tests {
             }
             assert!(wild.size > 64, "seed {seed}: the sequence grew the store");
         }
+    }
+
+    /// `@FR-H-ScanIndex` — the indexed scan answers what the block-chain walk answers: on a
+    /// lazy store driven by a seeded sequence of claims, deletes and resizes, at every claim
+    /// the tree and the wilderness cannot serve, the index names the same first fit — or, none
+    /// fitting, the same end with the same free tail — whenever it answers at all.
+    #[test]
+    fn the_indexed_scan_takes_the_block_the_walk_takes() {
+        let (mut found, mut grown_free, mut grown_claimed) = (0usize, 0usize, 0usize);
+        for seed in 1..=24u64 {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut next = move |n: u64| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state % n
+            };
+            let mut store = Store::new(64);
+            store.free = false;
+            let mut live: Vec<u32> = Vec::new();
+            for step in 0..800 {
+                let op = next(10);
+                if op < 5 || live.is_empty() {
+                    let bound = if next(4) == 0 { 60 } else { 12 };
+                    let size = 1 + next(bound) as u32;
+                    let req = size as i32;
+                    let tree_fits = tree_in_order(&store).iter().any(|(w, _)| *w >= req);
+                    let wild_fits = store.wild != 0 && store.fl_size(store.wild) >= req;
+                    if !tree_fits
+                        && !wild_fits
+                        && let Some((pos, last, claim)) = store.indexed_scan(req)
+                    {
+                        let (wpos, wlast, wclaim) = store.walk_scan(req);
+                        let at = format!("seed {seed} step {step}: claim({size})");
+                        if pos < store.size {
+                            assert_eq!(pos, wpos, "{at}: the first fit");
+                            found += 1;
+                        } else {
+                            assert!(wpos >= store.size, "{at}: the walk found {wpos}");
+                            if claim < 0 {
+                                assert_eq!((last, claim), (wlast, wclaim), "{at}: the free tail");
+                                grown_free += 1;
+                            } else {
+                                assert!(wclaim >= 0, "{at}: the walk ends on a free tail");
+                                grown_claimed += 1;
+                            }
+                        }
+                    }
+                    live.push(store.claim(size));
+                } else if op < 8 {
+                    let i = next(live.len() as u64) as usize;
+                    store.delete(live.swap_remove(i));
+                } else {
+                    let i = next(live.len() as u64) as usize;
+                    let rec = live[i];
+                    let grow = store.read::<i32>(rec, 0) as u32 + 1 + next(8) as u32;
+                    live[i] = store.resize(rec, grow);
+                }
+            }
+        }
+        assert!(
+            found > 50 && grown_free > 20,
+            "both answer kinds reached: {found} first fits, {grown_free} free tails"
+        );
+        // A claimed tail — the sequence above always leaves a free remainder — on a store
+        // filled to its last word: nothing is free, and growth appends.
+        let mut full = Store::new(64);
+        full.free = false;
+        let whole = full.claim(full.size - super::PRIMARY);
+        assert_eq!((full.wild, full.free_root), (0, 0), "nothing is free");
+        // The record's last payload word still spells the old free block's footer (a claim
+        // does not have to zero it): unconfirmed by any index, it is not trusted.
+        assert!(
+            full.indexed_scan(5).is_none(),
+            "a payload that spells a footer goes to the walk"
+        );
+        let last_word = (full.size - 1 - whole) * 8 + 4;
+        full.write::<i32>(whole, last_word, 7);
+        let (pos, _, claim) = full.indexed_scan(5).expect("a claimed tail is answered");
+        let (wpos, wlast, wclaim) = full.walk_scan(5);
+        assert_eq!((pos, wpos), (full.size, full.size), "both end at the store's end");
+        assert!(claim >= 0 && wclaim >= 0 && wlast == whole, "on the claimed tail");
+        assert_eq!(grown_claimed, 0);
     }
 
     #[test]
