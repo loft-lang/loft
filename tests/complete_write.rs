@@ -25,8 +25,9 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c1", 2, 0),
     ("n_c2", 1, 0), // omitted fields: the parser writes them explicitly
     ("n_c3", 1, 0), // a variant literal writes its own tag
-    ("n_c4", 2, 0), // the S mint AND the vector store (its group's own OpSetInt4 is
-    // exactly the one-u32 prefill, width-equal) both skip
+    ("n_c4", 1, 0), // the vector store skips (its group's own OpSetInt4 is exactly the
+    // one-u32 prefill, width-equal); the S mint is now a FUSED push (`@FR-R-Mint`'s text
+    // clause), which zeroes its slot instead of minting through the template
     ("n_c5", 1, 0), // the FALLBACK literal skips; the cast path is not an emitter site
     ("n_c6", 1, 1), // the inner N literal skips; O (nested by OpCopyRecord) declines
     ("n_c7", 1, 0), // a conditional part still writes its field
