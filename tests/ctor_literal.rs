@@ -85,11 +85,23 @@ fn a_constructor_call_is_its_literal_where_the_cells_say_and_nowhere_else() {
                     .to_string(),
                 1
             ),
+            // c13: the loop's local is copied out, so it cannot be a loop record.
+            (
+                "ctor-literal: kept a call in n_c13_loop: inside a loop, `ef` would not be a loop record"
+                    .to_string(),
+                1
+            ),
+            // c13's `last`, assigned twice.
+            (
+                "ctor-literal: n_fm_new kept a call in n_c13_loop: the target is assigned more than once"
+                    .to_string(),
+                1
+            ),
             // c1, c2, c3, c5, c8, c9, c11.
             ("ctor-literal: n_fm_new written in place in n_main".to_string(), 7),
             // c12: the profitable case only — a call of scalars stays a value record.
             (
-                "ctor-literal: n_pt_new kept a call in n_pt_loop: no vector-literal argument (a call of scalars travels as a value record)"
+                "ctor-literal: n_pt_new kept a call in n_pt_loop: a record of scalars (its call travels as a value record)"
                     .to_string(),
                 1
             ),

@@ -32,6 +32,15 @@ fn off() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_CTOR_LITERAL").is_ok_and(|v| v != "0"))
 }
 
+/// `@FR-R-LoopRecord` switched off: no local is kept across a loop's passes, so no site
+/// inside a loop is rewritten.
+fn loop_record_off() -> bool {
+    crate::env_once!(
+        std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
+            || std::env::var("LOFT_NO_LOOP_RECORD_REFILL").is_ok_and(|v| v != "0")
+    )
+}
+
 fn trace() -> bool {
     crate::env_once!(std::env::var("LOFT_TRACE_CTOR_LITERAL").is_ok_and(|v| v != "0"))
 }
@@ -47,6 +56,9 @@ struct Ctor {
     params: Vec<u16>,
     /// The literal group after the mint, in order: zeros, scalar sets, vector fills.
     group: Vec<Value>,
+    /// The record holds a vector field: no value record can carry it, so the literal
+    /// replaces a store the call minted anyway.
+    has_vectors: bool,
 }
 
 fn name(data: &Data, d: u32) -> &str {
@@ -275,7 +287,16 @@ fn admit(data: &Data, d: u32) -> Result<Ctor, &'static str> {
     {
         return Err("a local the literal reads");
     }
+    let has_vectors = match def.returned.peel_link() {
+        Type::Reference(r, _) => data
+            .def(*r)
+            .attributes
+            .iter()
+            .any(|a| matches!(a.typedef.base(), Type::Vector(_, _))),
+        _ => false,
+    };
     Ok(Ctor {
+        has_vectors,
         name: def.name().to_string(),
         tp,
         buf,
@@ -556,11 +577,11 @@ fn expand(
             _ => return Err("an argument other than operators, a vector literal or a variable"),
         }
     }
-    // Profitable only where a vector literal would otherwise be built in a buffer of its own
-    // and copied: a call of scalars alone already travels as a value record (`R-ValueRecord`),
-    // no store at all, and the literal would mint one.
-    if literal_args.is_empty() {
-        return Err("no vector-literal argument (a call of scalars travels as a value record)");
+    // Profitable only for a record that holds a vector: a record of scalars travels as a value
+    // record (`R-ValueRecord`, or `R-ValueLocal` natively), no store at all, and the literal
+    // would mint one.
+    if !c.has_vectors {
+        return Err("a record of scalars (its call travels as a value record)");
     }
     let db = data.def_nr("OpDatabase");
     let mut out = vec![
@@ -675,7 +696,7 @@ fn admitted_sites(
 }
 
 /// `@FR-R-CtorLiteral` over the whole program; answers the number of calls rewritten.
-pub fn rewrite_program(data: &mut Data) -> usize {
+pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usize {
     if off() || data.open_world || data.observes_entries {
         return 0;
     }
@@ -715,41 +736,81 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             continue;
         }
         let body = def.code().clone();
-        let ok_sites = admitted_sites(data, caller, &body, &ctors);
-        if ok_sites.is_empty() {
-            continue;
-        }
+        let mut ok_sites = admitted_sites(data, caller, &body, &ctors);
         let _census = crate::rewrite_census::InBody::enter("ir", data.def(caller).name());
-        let mut code = std::mem::replace(&mut data.definitions[caller as usize].code, Value::Null);
-        let mut done = Vec::new();
-        // Only the sites the whole-body checks admitted: a site whose target or buffer did
-        // not pass is filtered by its pair.
         let caller_name = data.def(caller).name().to_string();
-        rewrite_in(
-            data,
-            &caller_name,
-            &mut code,
-            &ctors,
-            &body,
-            &ok_sites,
-            &mut done,
-        );
-        for (target, buf) in &done {
-            retire_buffer(data, &mut code, *target, *buf, free_ref);
-        }
-        data.definitions[caller as usize].code = code;
-        if !done.is_empty() {
-            let vars = &mut data.definitions[caller as usize].variables;
-            for (target, _) in &done {
-                if let Type::Reference(d, _) = vars.tp(*target).clone() {
-                    vars.set_type(*target, Type::Reference(d, Deps::none()));
+        let original_vars = data.definitions[caller as usize].variables.clone();
+        // Inside a loop the literal pays only as a loop record (`@FR-R-LoopRecord`'s refill
+        // clause): otherwise it mints a store every pass where the call reused a pooled one.
+        // That is a whole-function fact of the REWRITTEN body, so the body is rewritten, the
+        // loop records are read off it, and a site whose local is not one keeps its call.
+        let done = loop {
+            if ok_sites.is_empty() {
+                break Vec::new();
+            }
+            let mut code = body.clone();
+            let mut done = Vec::new();
+            rewrite_in(
+                data,
+                &caller_name,
+                &mut code,
+                &ctors,
+                &body,
+                &ok_sites,
+                false,
+                &mut done,
+            );
+            for (target, buf, _, _) in &done {
+                retire_buffer(data, &mut code, *target, *buf, free_ref);
+            }
+            data.definitions[caller as usize].code = code;
+            let kept = if loop_record_off() {
+                HashMap::new()
+            } else {
+                crate::generation::hoist::loop_records(data, stores, caller).recs
+            };
+            let lost: Vec<(u16, u16)> = done
+                .iter()
+                .filter(|(t, _, in_loop, _)| *in_loop && !kept.contains_key(t))
+                .map(|(t, b, _, _)| (*t, *b))
+                .collect();
+            if lost.is_empty() {
+                break done;
+            }
+            if trace() {
+                for (t, _) in &lost {
+                    eprintln!(
+                        "ctor-literal: kept a call in {caller_name}: inside a loop, `{}` would not be a loop record",
+                        data.def(caller).variables.name(*t)
+                    );
                 }
             }
-            vars.reset_intervals();
-            crate::scopes::compute_function_intervals(data, caller);
-            crate::scopes::assign_function_slots(data, caller);
-            total += done.len();
+            ok_sites.retain(|site| !lost.contains(site));
+            data.definitions[caller as usize].code = body.clone();
+        };
+        if done.is_empty() {
+            data.definitions[caller as usize].code = body;
+            data.definitions[caller as usize].variables = original_vars;
+            continue;
         }
+        if trace() {
+            for (_, _, _, ctor) in &done {
+                eprintln!(
+                    "ctor-literal: {} written in place in {caller_name}",
+                    ctors[ctor].name
+                );
+            }
+        }
+        let vars = &mut data.definitions[caller as usize].variables;
+        for (target, _, _, _) in &done {
+            if let Type::Reference(d, _) = vars.tp(*target).clone() {
+                vars.set_type(*target, Type::Reference(d, Deps::none()));
+            }
+        }
+        vars.reset_intervals();
+        crate::scopes::compute_function_intervals(data, caller);
+        crate::scopes::assign_function_slots(data, caller);
+        total += done.len();
     }
     crate::rewrite_census::fired("R-CtorLiteral", total);
     total
@@ -764,9 +825,11 @@ fn rewrite_in(
     ctors: &HashMap<u32, Ctor>,
     whole: &Value,
     ok: &[(u16, u16)],
-    done: &mut Vec<(u16, u16)>,
+    in_loop: bool,
+    done: &mut Vec<(u16, u16, bool, u32)>,
 ) {
-    v.for_each_child_mut(&mut |c| rewrite_in(data, caller, c, ctors, whole, ok, done));
+    let inner = in_loop || matches!(v, Value::Loop(_));
+    v.for_each_child_mut(&mut |c| rewrite_in(data, caller, c, ctors, whole, ok, inner, done));
     let Value::Block(b) = v else {
         return;
     };
@@ -782,12 +845,9 @@ fn rewrite_in(
         let ctor = &ctors[&site.ctor];
         match expand(data, &b.operators[i], ctor, &site, scope, whole) {
             Ok(new) => {
-                if trace() {
-                    eprintln!("ctor-literal: {} written in place in {caller}", ctor.name);
-                }
                 let n = new.len();
                 b.operators.splice(i..=i, new);
-                done.push((site.target, site.buf));
+                done.push((site.target, site.buf, in_loop, site.ctor));
                 i += n;
             }
             Err(why) => {
