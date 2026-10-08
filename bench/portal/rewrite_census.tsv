@@ -1907,9 +1907,9 @@ web	a354cc08e	R-WorkBuffer	1
 web	a354cc08e	R-Wrapper	9
 zttext	11373248d	H-SwapRebind	14
 zttext	11373248d	R-AliasVersion	2
-zttext	11373248d	R-Base	77
+zttext	11373248d	R-Base	78
 zttext	11373248d	R-CharWalk	19
-zttext	11373248d	R-CompleteWrite	189
+zttext	11373248d	R-CompleteWrite	187
 zttext	11373248d	R-Counter	206
 zttext	11373248d	R-DischargeInto	1
 zttext	11373248d	R-ExitVector	24
@@ -1930,8 +1930,9 @@ zttext	11373248d	R-KernelSum	1
 zttext	11373248d	R-Leaf	131
 zttext	11373248d	R-LeafChain	97
 zttext	11373248d	R-LitDiv	23
-zttext	11373248d	R-LoopBuffer	5
+zttext	11373248d	R-LoopBuffer	3
 zttext	11373248d	R-Mint	89
+zttext	11373248d	R-MoveLast/local	2
 zttext	11373248d	R-Push	23
 zttext	11373248d	R-PushFill	4
 zttext	11373248d	R-PushFill/record	24
@@ -1939,7 +1940,7 @@ zttext	11373248d	R-PushRec	31
 zttext	11373248d	R-Range	195
 zttext	11373248d	R-RangedCall	24
 zttext	11373248d	R-Rebind	2
-zttext	11373248d	R-RecPtr	103
+zttext	11373248d	R-RecPtr	104
 zttext	11373248d	R-RefillBuffer	14
 zttext	11373248d	R-RefillText	1
 zttext	11373248d	R-RetAdopt	3
