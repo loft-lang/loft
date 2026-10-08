@@ -9289,72 +9289,7 @@ impl Parser {
             new_returned,
         );
         self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings);
-        // @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
-        // `ref_return` is skipped (the promotion is deferred to instantiation), so the
-        // `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
-        // read as a fresh owner while its body hands the ARGUMENT up.  The caller then bound
-        // the argument's own store and a write through the result wrote the argument, on both
-        // backends (QUALITY-history.md B7t: struct/vector, whole/local/early/arm).  Ask the ONE
-        // derivation the body itself answers to — the oracle's return summary — and let the
-        // instance's declared return say what its twin's says, so the caller copies a
-        // borrowed return exactly as it does for a named function (loft#1346).
-        //
-        // A pure BORROW only.  A `Join` — a mint on one arm and the argument on the other —
-        // is delivered through a return buffer on a named function (`ref_return`'s per-arm
-        // leg), which a monomorph does not have yet; a dep alone would make the caller copy
-        // the mint arm and orphan the minted store.  That shape stays as it is, named in
-        // QUALITY-history.md B7t as the residual with its cure.
-        //
-        // And only where every return LEAF is the parameter itself.  A local bound from it
-        // (`y: T = x; y`) COPIES at codegen for a record (@FR-B-Copy) — a copy the IR does
-        // not show, so the oracle reads the local as a borrow of `x` — and declaring that a
-        // borrow made the caller decline its lift and free nothing: three corpus generics
-        // leaked one record per call under `LOFT_STRICT_STORES`.  What comes back through a
-        // local is owned, and the caller adopts it as before.
-        if new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned) {
-            let attrs_n = self.data.def(d_nr).attributes().len();
-            // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
-            // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
-            // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
-            // The self call still names the TEMPLATE here (`instantiate_nested_generics` runs
-            // below), and handed the same parameter it can only reach this instance.
-            if let crate::use_analysis::Own::Borrowed { base }
-            | crate::use_analysis::Own::Join { base } =
-                crate::use_analysis::return_ownership(&self.data, d_nr)
-                && (base as usize) < attrs_n
-                && !self.data.def(d_nr).attributes()[base as usize].hidden
-                && matches!(&self.data.def(d_nr).code, Value::Block(bl)
-                    if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
-            {
-                // Written directly: `set_returned` refuses a second write on purpose (a return
-                // type must not change), and this does not change it — it adds the deps the
-                // type was declared without.
-                //
-                // ATTR space, not frame: `base` is an attribute index — the guard above tests
-                // it against `attributes().len()` — and `Definition.returned` is a DEF-space
-                // home, so `Deps::attrs` is what states it.  `Type::depending` builds
-                // `Deps::frame1`, which tags the same number as a caller FRAME variable, and
-                // `call_dependencies` reads this list with `as_attr_indices`.
-                let with_dep = self
-                    .data
-                    .def(d_nr)
-                    .returned()
-                    .clone()
-                    .with_deps(&crate::data::Deps::attrs(vec![base]));
-                self.data.definitions[d_nr as usize].returned = with_dep;
-            } else if let Some(params) = self.monomorph_views_of_params(d_nr, g_nr) {
-                // loft#1880 — no ONE parameter, but a SET of them: a recursion that swaps its
-                // arguments (`sw(b, a, i - 1)`, base case `a[0]`) hands back a view of `a` or of
-                // `b`, which its twin declares `-> T["a", "b"]`.
-                let with_dep = self
-                    .data
-                    .def(d_nr)
-                    .returned()
-                    .clone()
-                    .with_deps(&crate::data::Deps::attrs(params));
-                self.data.definitions[d_nr as usize].returned = with_dep;
-            }
-        }
+        self.derive_monomorph_return_deps(d_nr, g_nr);
         // loft#1023 — a template declared BELOW its caller has not had its pass-2 body
         // parsed yet when the call instantiates, so the monomorph above was built from the
         // PASS-1 body.  Record it and re-derive once the whole file is through.
@@ -9362,6 +9297,10 @@ impl Parser {
             self.stale_monomorphs.push((d_nr, g_nr, bindings.clone()));
         }
         self.instantiate_nested_generics(d_nr, &bindings);
+        // loft#1934 — and again once the nested calls name their INSTANCES: a tail that
+        // forwards a nested generic's borrow (`g5<T>(x) -> T { g1(x) }`) read the TEMPLATE's
+        // dep-free `-> T` above.  Only where no dep was derived, so nothing is written twice.
+        self.derive_monomorph_return_deps(d_nr, g_nr);
         // The body's text-return promotion ran while its tail call still named the nested
         // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
         // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
@@ -14481,6 +14420,78 @@ impl Parser {
         }
         ops.push(to.clone());
         v_block(ops, tp.clone(), "displaced_closures")
+    }
+
+    /// The return deps an instance's `-> T` record return was declared without, from its body.
+    ///
+    /// @FR-F-Ret / @FR-O-Oracle — a template's `-> T` record return carries NO deps: its
+    /// `ref_return` is skipped (the promotion is deferred to instantiation), so the
+    /// `MergeAttr` that writes `-> Ctr["x"]` on a concrete twin never ran, and the instance
+    /// read as a fresh owner while its body hands the ARGUMENT up.  The caller then bound
+    /// the argument's own store and a write through the result wrote the argument, on both
+    /// backends (QUALITY-history.md B7t: struct/vector, whole/local/early/arm).  Ask the ONE
+    /// derivation the body itself answers to — the oracle's return summary — and let the
+    /// instance's declared return say what its twin's says, so the caller copies a
+    /// borrowed return exactly as it does for a named function (loft#1346).
+    ///
+    /// A pure BORROW only.  A `Join` — a mint on one arm and the argument on the other —
+    /// is delivered through a return buffer on a named function (`ref_return`'s per-arm
+    /// leg), which a monomorph does not have yet; a dep alone would make the caller copy
+    /// the mint arm and orphan the minted store.  That shape stays as it is, named in
+    /// QUALITY-history.md B7t as the residual with its cure.
+    ///
+    /// And only where every return LEAF is the parameter itself.  A local bound from it
+    /// (`y: T = x; y`) COPIES at codegen for a record (@FR-B-Copy) — a copy the IR does
+    /// not show, so the oracle reads the local as a borrow of `x` — and declaring that a
+    /// borrow made the caller decline its lift and free nothing: three corpus generics
+    /// leaked one record per call under `LOFT_STRICT_STORES`.  What comes back through a
+    /// local is owned, and the caller adopts it as before.
+    fn derive_monomorph_return_deps(&mut self, d_nr: u32, g_nr: u32) {
+        let new_returned = self.data.def(d_nr).returned().clone();
+        if !(new_returned.depend().is_empty() && crate::data::has_lifetime_concern(&new_returned)) {
+            return;
+        }
+        let attrs_n = self.data.def(d_nr).attributes().len();
+        // loft#1880 — the oracle reads a SELF call as a mint, so a recursive instance that
+        // only ever hands its argument's view along (`el(v, i - 1)`, base case `v[0]`)
+        // reads as a `Join`; the leaf walk settles it by the induction the recursion is.
+        // The self call still names the TEMPLATE here (`instantiate_nested_generics` runs
+        // below), and handed the same parameter it can only reach this instance.
+        if let crate::use_analysis::Own::Borrowed { base } | crate::use_analysis::Own::Join { base } =
+            crate::use_analysis::return_ownership(&self.data, d_nr)
+            && (base as usize) < attrs_n
+            && !self.data.def(d_nr).attributes()[base as usize].hidden
+            && matches!(&self.data.def(d_nr).code, Value::Block(bl)
+                if Self::every_return_leaf_views_var(&self.data, &bl.operators, base, g_nr))
+        {
+            // Written directly: `set_returned` refuses a second write on purpose (a return
+            // type must not change), and this does not change it — it adds the deps the
+            // type was declared without.
+            //
+            // ATTR space, not frame: `base` is an attribute index — the guard above tests
+            // it against `attributes().len()` — and `Definition.returned` is a DEF-space
+            // home, so `Deps::attrs` is what states it.  `Type::depending` builds
+            // `Deps::frame1`, which tags the same number as a caller FRAME variable, and
+            // `call_dependencies` reads this list with `as_attr_indices`.
+            let with_dep = self
+                .data
+                .def(d_nr)
+                .returned()
+                .clone()
+                .with_deps(&crate::data::Deps::attrs(vec![base]));
+            self.data.definitions[d_nr as usize].returned = with_dep;
+        } else if let Some(params) = self.monomorph_views_of_params(d_nr, g_nr) {
+            // loft#1880 — no ONE parameter, but a SET of them: a recursion that swaps its
+            // arguments (`sw(b, a, i - 1)`, base case `a[0]`) hands back a view of `a` or of
+            // `b`, which its twin declares `-> T["a", "b"]`.
+            let with_dep = self
+                .data
+                .def(d_nr)
+                .returned()
+                .clone()
+                .with_deps(&crate::data::Deps::attrs(params));
+            self.data.definitions[d_nr as usize].returned = with_dep;
+        }
     }
 
     /// loft#1880 — the visible heap parameters an instance's every return leaf is a VIEW into

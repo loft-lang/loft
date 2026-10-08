@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1949, `@FR-F-Ret` — a generic whose return is a CALL hands back a fresh value when that
+// callee returns a view of its argument, as the concrete twin does.  An instance's `-> T` has no
+// declared deps, so they are derived from its body, and a return leaf that called ANOTHER
+// function was read as owned whatever that callee's return borrows.  The caller then adopted its
+// own argument's record, and a write through the result changed the argument: `gen:99` where the
+// concrete twin answers 7, in the `-> T?` spelling on both backends, and in `-> T` once loft#1934
+// took record returns off the caller's buffer.  The leaf now follows the callee's return deps to
+// the arguments it was handed, and a nested generic is asked again once its call names the
+// instance rather than the template.
+//
+// Axes it MOVES: which argument the callee borrows (the receiver, the second argument), the
+// nesting (a direct call, a generic calling a generic), the spelling (`-> T`, `-> T?`), a callee
+// that MINTS (owned: the control), a view of a LOCAL copy, an arm that mixes a view and a mint,
+// an early `return`, and a loop of calls.  Each cell writes 99 through the result and reads the
+// ARGUMENT back.  Values are hand-computed.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+interface Pk1949 { fn pick(self: Self) -> Self }
+interface Ch1949 { fn choose(self: Self, o: Self) -> Self }
+interface Mk1949 { fn mk(self: Self) -> Self }
+interface Pn1949 { fn pickn(self: Self) -> Self? }
+struct S1949 { a: integer, t: text }
+fn pick(self: S1949) -> S1949 { self }
+fn choose(self: S1949, o: S1949) -> S1949 { o }
+fn mk(self: S1949) -> S1949 { S1949 { a: self.a + 1, t: "m" } }
+fn pickn(self: S1949) -> S1949? { self }
+
+fn g1<T: Pk1949>(x: T) -> T { x.pick() }
+fn g2<T: Ch1949>(x: T, y: T) -> T { x.choose(y) }
+fn g3<T: Mk1949>(x: T) -> T { x.mk() }
+fn g4<T: Pk1949>(x: T) -> T { y: T = x; y.pick() }
+fn g5<T: Pk1949>(x: T) -> T { g1(x) }
+fn g6<T: Pk1949 + Mk1949>(x: T, c: boolean) -> T { if c { x.pick() } else { x.mk() } }
+fn g7<T: Pk1949 + Mk1949>(x: T, c: boolean) -> T { if c { return x.pick(); } x.mk() }
+fn gn<T: Pn1949>(x: T) -> T? { x.pickn() }
+fn concrete1949(x: S1949) -> S1949? { x.pickn() }
+
+fn s1949(a: integer) -> S1949 { S1949 { a: a, t: "x" } }
+
+fn test_the_receiver_view_is_copied() {
+  x = s1949(7);
+  r = g1(x);
+  r.a = 99;
+  assert(x.a == 7 && r.a == 99, "receiver: x {x.a} r {r.a}");
+}
+
+fn test_the_second_argument_view_is_copied() {
+  x = s1949(7);
+  y = s1949(8);
+  r = g2(x, y);
+  r.a = 99;
+  assert(x.a == 7 && y.a == 8 && r.a == 99, "second: x {x.a} y {y.a} r {r.a}");
+}
+
+fn test_a_minting_callee_stays_owned() {
+  x = s1949(7);
+  r = g3(x);
+  assert(x.a == 7 && r.a == 8 && r.t == "m", "mint: x {x.a} r {r.a}");
+}
+
+fn test_a_view_of_a_local_copy() {
+  x = s1949(7);
+  r = g4(x);
+  r.a = 99;
+  assert(x.a == 7 && r.a == 99, "local copy: x {x.a} r {r.a}");
+}
+
+fn test_a_nested_generic_is_copied() {
+  x = s1949(7);
+  r = g5(x);
+  r.a = 99;
+  assert(x.a == 7 && r.a == 99, "nested: x {x.a} r {r.a}");
+}
+
+fn test_mixed_arms_and_an_early_return() {
+  x = s1949(7);
+  r = g6(x, true);
+  r.a = 99;
+  m = g6(x, false);
+  m.a = 98;
+  e = g7(x, true);
+  e.a = 97;
+  f = g7(x, false);
+  assert(x.a == 7 && r.a == 99 && m.a == 98 && e.a == 97 && f.a == 8, "arms: x {x.a} r {r.a} m {m.a} e {e.a} f {f.a}");
+}
+
+fn test_the_nullable_spelling_and_its_concrete_twin() {
+  x = s1949(7);
+  r = gn(x);
+  r.a = 99;
+  y = s1949(7);
+  c = concrete1949(y);
+  c.a = 99;
+  assert(x.a == 7 && y.a == 7, "nullable: generic {x.a} concrete {y.a}");
+}
+
+fn test_a_loop_of_calls_leaves_the_argument_alone() {
+  x = s1949(7);
+  s = 0;
+  for _ in 0..300 { s += g1(x).a + g3(x).a; }
+  assert(s == 4500 && x.a == 7, "loop: {s} x {x.a}");
+}
+
+fn main() {
+  test_the_receiver_view_is_copied();
+  test_the_second_argument_view_is_copied();
+  test_a_minting_callee_stays_owned();
+  test_a_view_of_a_local_copy();
+  test_a_nested_generic_is_copied();
+  test_mixed_arms_and_an_early_return();
+  test_the_nullable_spelling_and_its_concrete_twin();
+  test_a_loop_of_calls_leaves_the_argument_alone();
+}
