@@ -29,7 +29,7 @@ fn take1380b(x: i16) -> integer { x }
 // loft#1793 — the chain joins to `float` and the declared `integer` refuses that store — so it
 // lives in `102b-pass1-expected-errors.loft`; the counts in the receipt above include it.
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(0, 510) to u8
 fn test_an_overflowing_chain_arm_into_a_u8_local() {
   a: u8 = 250; b: u8 = 10; k = 2;
   c: u8 = if k == 1 { a } else if k == 2 { a + b } else { b };
@@ -43,7 +43,7 @@ fn test_a_literal_chain_arm_that_does_not_fit() {
   assert(c == 0, "unreached");
 }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to i16
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(-65536, 65534) to i16
 fn test_an_overflowing_chain_arm_as_an_argument() {
   a: i16 = 32000; b: i16 = 1000; k = 2;
   assert(take1380b(if k == 1 { a } else if k == 2 { a + b } else { b }) == 0, "unreached");
@@ -52,7 +52,7 @@ fn test_an_overflowing_chain_arm_as_an_argument() {
 // @EXPECT_ERROR: cannot implicitly narrow integer to u32
 fn give1380b(u: u32, k: integer) -> u32 { if k == 1 { u } else if k == 2 { u + 10 } else { u } }
 
-// @EXPECT_ERROR: cannot implicitly narrow integer to i8
+// @EXPECT_ERROR: cannot implicitly narrow integer limit(-256, 254) to i8
 fn test_an_inferred_local_from_a_narrow_then_arm() {
   a: i8 = 100; b: i8 = 50; k = 2;
   c = if k == 1 { a } else if k == 2 { a + b } else { b };
