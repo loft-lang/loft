@@ -5,6 +5,8 @@
 // first pass, and the statement after its `}` needs no `;` — on that pass its arms lower to
 // nothing, which must still read as a brace statement.  Block arms, an expression arm and a
 // plain-enum subject.
+// @falsified-at: 7ee8bfeda — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-match-statement-on-an-enum-declared-below-needs-no-semicolon.patch — interpret exit 1 -> 0, native exit 1 -> 0
 fn radius() -> integer {
   match get() { Disc { r } => { return r; }, _ => {} }
   0
