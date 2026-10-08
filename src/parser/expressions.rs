@@ -4329,7 +4329,8 @@ use a separate collection or add after the loop"
             && *v < self.vars.count()
             && self.vars.is_annotated(*v)
             && matches!(self.vars.tp(*v).base(), Type::Integer(_))
-            && matches!(s_type, Type::Enum(_, false, _))
+            && !matches!(s_type, Type::Optional(_))
+            && matches!(s_type.base(), Type::Enum(_, false, _))
         {
             *code = self.cl("OpConvIntFromEnum", &[code.clone()]);
             s_type = crate::data::I64.clone();
