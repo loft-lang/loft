@@ -111,9 +111,9 @@ ORIGINAL through the shim in record mode against a scratch repository, which is 
 
 **4d — the tools, in the order the work list ranks them.**  The first port over `run` is
 `scripts/check_bundle_fresh` (2026-10-08): `git diff --name-only {base}...HEAD` as a
-`Command`, twinned on four recordings, both backends, faster than the bash original.  Until
-`process` is published a port spells `use process::*;` (the trigger surface fires from the
-registry index) and `scripts/loft.toml` names the library by path.  `git` first (`lib/git` rewritten
+`Command`, twinned on four recordings, both backends, faster than the bash original.  `c: Command = "…"` loads the library with nothing in the script naming it (the type
+trigger, finding 018, closed 2026-10-08); until `process` is published,
+`scripts/loft.toml` names the library by path.  `git` first (`lib/git` rewritten
 over `run`, twinned against its natives, which then retire); `gh` and `cargo` as the
 originals call them; `curl` through the `web` library where the script already speaks
 JSON.  Each lands with its first consumer ported and twinned; an interface nobody calls is

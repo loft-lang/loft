@@ -76,6 +76,12 @@ result: `fn view(…) -> const vector<u8>`.
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
 1 and a message.  Under `loft test` it fails the test that called it, naming the code.
 
+**Naming a library's type loads the library.**  `c: Command = "git log -n {n}"` brings in
+`process` the way `line.matches(p)` brings in `regex`: a package that opts into triggers now
+fires on its `pub struct` and `pub enum` names too, wherever the package is declared — a
+sibling, the project's `lib/`, a `path =` dependency.  The type arrives imported by name, and
+its typed-format and `to_text` hooks work on it as they do after `use pkg::*;`.
+
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
 runs the block exactly when the write did not take — an index past the end, a key the
 collection does not hold, a field reached through a null, a narrow slot the value does not fit,

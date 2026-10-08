@@ -12,6 +12,7 @@
 // two calling conventions, and this is what keeps the second one honest.  The composition
 // matrix spawns nothing and runs on every host; the drain gate and `start.loft` spawn `sh`.
 
+use loft::file_access as fa;
 use std::path::PathBuf;
 
 fn root() -> PathBuf {
@@ -106,4 +107,46 @@ mod spawns_sh {
         run_on("--native", "start.loft", "windows");
         run_on("--interpret", "../tests-unix/tree.loft", "windows");
     }
+}
+
+/// A script names `Command` and nothing else: the TYPE trigger loads `process` (@PLN179
+/// strand 4, PROCESS.md § Where it lives).  The package is a path dependency of the
+/// script's own manifest, as `scripts/loft.toml` declares it; the literal goes through the
+/// typed-format hook (a hole with spaces stays one word), which is the second half of the
+/// same fix — a type imported by name kept its `lit` / `hole_*` out of the hook's reach.
+/// Both backends, from a working directory that is not the package's.
+#[test]
+fn a_type_trigger_loads_the_library_with_nothing_naming_it() {
+    let dir = std::env::temp_dir().join(format!("loft_type_trigger_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("mkdir");
+    fa::write(
+        dir.join("loft.toml"),
+        format!(
+            "[package]\nname = \"trig\"\nversion = \"0.1.0\"\n\n[dependencies]\nprocess = {{ path = \"{}\" }}\n",
+            root().join("lib/process").display()
+        ),
+    )
+    .expect("manifest");
+    fa::write(
+        dir.join("p.loft"),
+        "fn main() {\n  w = \"a b\";\n  c: Command = \"printf %s|{w}|\";\n  r = c.run();\n  println(\"{r.ok} {r.stdout}\");\n}\n",
+    )
+    .expect("script");
+    for backend in ["--interpret", "--native"] {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(backend)
+            .arg(dir.join("p.loft"))
+            .env("LOFT_TIMEOUT", "120")
+            .current_dir(std::env::temp_dir())
+            .output()
+            .expect("spawn loft");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.trim_end() == "true |a b|",
+            "[{backend}] the type trigger did not load `process`, or the hook did not fire:\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let _ = fa::remove_dir_all(&dir);
 }

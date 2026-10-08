@@ -26,12 +26,11 @@ loft script, and `WORKLIST.md` it generates); seven ports are twinned green on b
 probes answered (4b, PROCESS.md § Built), and recording + replay inside `run` (4c,
 `LOFT_RUN_RECORD` / `LOFT_RUN_REPLAY`, with `tests/comparisons/scripts/replay_tool.sh` as
 the original's half and `script_twin.sh --replay`).  `scripts/check_bundle_fresh` is the
-first T3 port, twinned offline on four recorded `git` answers.  Two things a port over the
-library spells today that the design says it will not: `use process::*;` (the trigger
-surface fires from the registry index, and `process` is not published), and a path
-dependency in `scripts/loft.toml`, the manifest that makes `scripts/` one package so a bare
-script finds the repo-local library from any working directory.  Both leave when the
-library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day, and
+first T3 port, twinned offline on four recorded `git` answers, and nothing in it names the
+library: the TYPE trigger the design rests on fires now (finding 018 — derived from the
+start, never read).  What a port still carries is the path dependency in `scripts/loft.toml`,
+the manifest that makes `scripts/` one package so a bare script finds the repo-local
+library from any working directory; it leaves when the library is published.  Finding 009 closed with `exit(code)` in the stdlib the same day, and
 016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
 `lib/process/tests/command.loft`).
 Two loft scripts already exist under `scripts/` (`build-gallery-examples.loft`,

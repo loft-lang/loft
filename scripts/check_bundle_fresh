@@ -28,7 +28,6 @@
 // `run`); its twin lives in tests/comparisons/scripts/check_bundle_fresh/.  A repo-root
 // tool: paths resolve against the working directory, not the script.
 #cwd
-use process::*;
 
 /// A committed artefact and the sources it is built from.
 struct Bundle {

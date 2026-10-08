@@ -25,6 +25,13 @@ is the original's shim and `script_twin.sh --replay` arms both.  **`scripts/loft
 `scripts/` one package with `lib/process` as a path dependency, so a bare script runs from
 any working directory.  `scripts/check_bundle_fresh` is the first port over `run`.
 `scripts/script_recheck.sh` writes through a temp file: GNU `sed -i` edited nothing on macOS.
+**The type half of the trigger surface** (`libscan::scan_type_refs`, the parser's
+`auto_use_type_map` + `type_method`): `triggers.rs` derived type triggers and nothing read
+them.  The auto-use scan now collects type positions; a trigger-enabled dependency resolves
+through `lib_path` when it is not a sibling package; a fired type is imported by name on the
+file's second visit (as `use pkg::(T);` is); and the `lit` / `hole_*` / `to_text` hooks look a
+type's methods up in the type's own source, where `def_nr`'s current-source scope lost them.
+Local map only — a type name never reaches the registry catalog.
 **`lines()` / `err_lines()`** (`src/process_run.rs` § cursor): a native-backed cursor over one
 stream of a running program — a reader thread per pipe from the start, a 256-line channel for
 the chosen one, the other collected for `done()`; `stop()` ends the tree.  Its `next` is an

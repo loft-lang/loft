@@ -744,7 +744,7 @@ pub struct Parser {
     /// Auto-`use` per-file scan cache: a file's `(lib:: refs, .method() calls)`
     /// are deterministic, so it is read + scanned at most once (keyed by path)
     /// and reused across the second pass and any `todo_files` re-parse.
-    auto_use_scan_cache: std::collections::HashMap<String, (Vec<String>, Vec<String>)>,
+    auto_use_scan_cache: std::collections::HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>,
     /// Per-directory cache for the dep-shadowing guard in `lib_path`: the
     /// nearest ancestor manifest's package root + its declared dependency
     /// names.  `None` = no manifest above that directory.
@@ -817,6 +817,13 @@ pub struct Parser {
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
     auto_use_trigger_map: Option<std::collections::HashMap<String, String>>,
+    /// The type half of the same surface: `type name -> providing package`, from the
+    /// current package's and its trigger-enabled dependencies' `pub struct` / `pub enum`
+    /// names (`triggers.rs`).  Built with `auto_use_trigger_map`; local only — a type name
+    /// never reaches the registry catalog, so an unknown type loads only a package the
+    /// author declared.  What lets `c: Command = "…"` load `process` with nothing in the
+    /// script naming it (@PLN179 strand 4).
+    auto_use_type_map: std::collections::HashMap<String, String>,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -1953,6 +1960,7 @@ impl Parser {
             program_entry: None,
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
+            auto_use_type_map: std::collections::HashMap::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,
@@ -4980,6 +4988,25 @@ impl Parser {
     /// matters more here than it looks, because taking the branch mints an
     /// accumulator variable, and a mint that fired on only one pass would shift
     /// the name-keyed variable tables underneath every later work variable.
+    /// The method `method` of the type `d_nr` by its mangled name, looked up in the source
+    /// that DEFINES the type: `def_nr` searches the current source and the stdlib, so a
+    /// type imported by name (`use pkg::(T);`, or a type trigger) kept its methods out of
+    /// reach of the hooks that ask for them by name — `lit`, `hole_*`, `to_text` — while a
+    /// call on it dispatched fine through the receiver.  `u32::MAX` when there is none.
+    pub(crate) fn type_method(&self, d_nr: u32, method: &str) -> u32 {
+        let def = self.data.def(d_nr);
+        let nm = def.name();
+        if nm.is_empty() {
+            return u32::MAX;
+        }
+        let mangled = crate::data::Data::mangle_method(nm, method);
+        let found = self.data.def_nr(&mangled);
+        if found != u32::MAX {
+            return found;
+        }
+        self.data.source_nr(def.source, &mangled)
+    }
+
     pub(crate) fn interpolation_target(&self, tp: &Type) -> u32 {
         let Type::Reference(d_nr, _) = tp else {
             return u32::MAX;
@@ -4987,13 +5014,7 @@ impl Parser {
         if self.data.def_type(*d_nr) != DefType::Struct {
             return u32::MAX;
         }
-        let nm = self.data.def(*d_nr).name();
-        if nm.is_empty()
-            || self
-                .data
-                .def_nr(&crate::data::Data::mangle_method(nm, "lit"))
-                == u32::MAX
-        {
+        if self.type_method(*d_nr, "lit") == u32::MAX {
             return u32::MAX;
         }
         *d_nr
@@ -19167,7 +19188,7 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls) =
+            let (refs, calls, type_refs) =
                 if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file.as_str()) {
                     c.clone()
                 } else {
@@ -19181,6 +19202,7 @@ impl Parser {
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
                         crate::libscan::scan_method_calls(&src),
+                        crate::libscan::scan_type_refs(&src),
                     );
                     self.auto_use_scan_cache
                         .insert(auto_use_scan_file.to_string(), pair.clone());
@@ -19217,6 +19239,43 @@ impl Parser {
                         && !self.data.use_exists(&pkg)
                         && !to_load.contains(&pkg)
                     {
+                        to_load.push(pkg);
+                    }
+                }
+            }
+            // Tier-1, the type half: `c: Command = …` names a type a trigger-enabled
+            // dependency declares.  Local map only (no catalog): a type the file does not
+            // define and no declared package provides stays the ordinary "Undefined type".
+            // A loaded package binds only its `pkg::` qualifier (@C98), so each type that
+            // fired is also imported by name, as `use pkg::(Type);` would — a name the file
+            // reached for, never the whole library.
+            // The import is queued once the package IS loaded: this file resumes from its
+            // start after the dependency has been parsed (`todo_files`), the scan runs
+            // again, and the name then resolves — the same two visits an explicit
+            // `use pkg::(Type);` makes.
+            if !type_refs.is_empty() {
+                let _ = self.trigger_map(auto_use_scan_file.as_str());
+                for t in type_refs {
+                    let Some(pkg) = self.auto_use_type_map.get(&t).cloned() else {
+                        continue;
+                    };
+                    if self.data.use_exists(&pkg) {
+                        let lib_source = self.data.get_source(&pkg);
+                        let cur = self.data.source;
+                        if !self.data.import_name(lib_source, cur, &t, &t, false)
+                            && !self.pending_imports.iter().any(|pi| {
+                                pi.for_source == cur
+                                    && matches!(&pi.spec, ImportSpec::Names(n) if n.iter().any(|(a, _)| *a == t))
+                            })
+                        {
+                            self.pending_imports.push(PendingImport {
+                                for_source: cur,
+                                lib_source,
+                                spec: ImportSpec::Names(vec![(t.clone(), t)]),
+                                public: false,
+                            });
+                        }
+                    } else if !to_load.contains(&pkg) {
                         to_load.push(pkg);
                     }
                 }
@@ -19464,21 +19523,36 @@ impl Parser {
             return m.clone();
         }
         let mut map = std::collections::HashMap::new();
+        let mut types = std::collections::HashMap::new();
         let mut dir = std::path::Path::new(from_file)
             .parent()
             .map(std::path::Path::to_path_buf);
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
             if crate::file_access::exists(&toml) {
-                Self::add_pkg_triggers(&toml, &d, &mut map);
+                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
                     for (dep, _ver) in &man.dependencies {
-                        if let Some(entry) = self.lib_path_manifest(&d.to_string_lossy(), dep)
+                        // A sibling package first; else the way a `use` line finds it —
+                        // the project's `lib/<dep>`, a `path =` dependency, `--lib` — so a
+                        // dependency's triggers fire however it is declared (@PLN179).
+                        let entry =
+                            self.lib_path_manifest(&d.to_string_lossy(), dep)
+                                .or_else(|| {
+                                    let f = self.lib_path(dep);
+                                    file_exists(&f).then_some(f)
+                                });
+                        if let Some(entry) = entry
                             && let Some(root) = std::path::Path::new(&entry)
                                 .parent()
                                 .and_then(|p| p.parent())
                         {
-                            Self::add_pkg_triggers(&root.join("loft.toml"), root, &mut map);
+                            Self::add_pkg_triggers(
+                                &root.join("loft.toml"),
+                                root,
+                                &mut map,
+                                &mut types,
+                            );
                         }
                     }
                 }
@@ -19487,6 +19561,7 @@ impl Parser {
             dir = d.parent().map(std::path::Path::to_path_buf);
         }
         self.auto_use_trigger_map = Some(map.clone());
+        self.auto_use_type_map = types;
         map
     }
 
@@ -19496,6 +19571,7 @@ impl Parser {
         toml: &std::path::Path,
         pkg_root: &std::path::Path,
         map: &mut std::collections::HashMap<String, String>,
+        types: &mut std::collections::HashMap<String, String>,
     ) {
         let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
             return;
@@ -19506,8 +19582,12 @@ impl Parser {
         let Some(name) = man.name else { return };
         let entry = man.entry.unwrap_or_else(|| format!("src/{name}.loft"));
         let src = crate::file_access::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
-        for mt in crate::triggers::derive_triggers(&src).methods {
+        let derived = crate::triggers::derive_triggers(&src);
+        for mt in derived.methods {
             map.entry(mt.name).or_insert_with(|| name.clone());
+        }
+        for t in derived.types {
+            types.entry(t).or_insert_with(|| name.clone());
         }
     }
 

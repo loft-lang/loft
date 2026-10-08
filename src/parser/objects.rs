@@ -3241,10 +3241,7 @@ impl Parser {
             // both take this branch.
             let custom_fmt = if let Type::Reference(fd, _) = &tp {
                 self.data.def_type(*fd) == DefType::Struct && {
-                    let nm = self.data.def(*fd).name().to_string();
-                    let m = self
-                        .data
-                        .def_nr(&crate::data::Data::mangle_method(&nm, "to_text"));
+                    let m = self.type_method(*fd, "to_text");
                     // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
                     m != u32::MAX && self.data.def(m).operator_form()
                 }
@@ -3554,10 +3551,7 @@ impl Parser {
         if text.is_empty() {
             return;
         }
-        let nm = self.data.def(target).name();
-        let d_nr = self
-            .data
-            .def_nr(&crate::data::Data::mangle_method(nm, "lit"));
+        let d_nr = self.type_method(target, "lit");
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             return;
         }
@@ -3633,10 +3627,7 @@ impl Parser {
             );
         }
         let nm = self.data.def(target).name().to_string();
-        let d_nr = self.data.def_nr(&crate::data::Data::mangle_method(
-            &nm,
-            &format!("hole_{kind}"),
-        ));
+        let d_nr = self.type_method(target, &format!("hole_{kind}"));
         if d_nr == u32::MAX || self.data.attributes(d_nr) != 2 {
             if !self.first_pass {
                 diagnostic!(
