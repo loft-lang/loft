@@ -114,6 +114,11 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_FRESH_TEXT_SET=1`** (`@FR-R-Mint`'s text clause, default-ON, generation time) makes
+the first text written into a just-minted element, and the address of a text local, block a
+loop's header hold again — with it off, a loop that appends records with text fields while
+reading another vector keeps that vector's header.  First bisect step for a wrong element read
+in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
 ## Text walks
 

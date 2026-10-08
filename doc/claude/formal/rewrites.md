@@ -1442,6 +1442,13 @@ Applied by: native generator.  Its clause on the parser's `OpPreAllocVector` is 
                  on such a b (a fresh store, a length reset of its own, or nothing
                  at all) and the § V-z paired copy into the element's field slot
                  (emitted as nothing) as statements that move no held record.
+                 THE TEXT CLAUSE: the first text written into the fresh e
+                 (OpSetText(e, …) inside the group) is a claim in the store the mint
+                 itself claims in, so it moves nothing the admitted mint cannot, and
+                 the mint's aliasing decision covers it; a text written into any other
+                 record stays blocking.  The address of a TEXT local (OpCreateStack(t),
+                 a `&text` hand-off) writes nothing either: on `--native` a text local
+                 is a Rust String outside every store.
 ```
 
 **In words.** @PLN157 § V-s.  Before it, `OpNewRecord`/`OpFinishRecord` were
@@ -1455,6 +1462,12 @@ the sabotage turns the write-through-parameter and write-through-alias cells red
 `LOFT_HOIST_VERIFY=1` panics naming the stale scalar.  Switch `LOFT_NO_MINT_HOIST`;
 falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `hoist::mint_path`,
 `hoist::blocks_header_hoist`, `hoist::body_writes`, the mint arm in `hoist::hoistable`.
+*The text clause:* a loop building a vector of records with text fields while reading another
+vector (`toks += [Pos { word: arg }]` in arguments' `classify`) declined on the element's text
+write.  Switch `LOFT_NO_FRESH_TEXT_SET` (both halves); falsifiers `LOFT_HOIST_VERIFY=1` and
+`LOFT_POISON=1`.  Sites `hoist::fresh_text_set`, `hoist::text_stack_ref`; cells
+`tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold.loft`, pins
+`tests/fresh_text_hold.rs`.
 *The rebound clause:* the drawing library's `fronds` declares its point and width
 vectors per pass of the side loop, and every rebound mover declined the WHOLE loop — so
 neither the side loop nor the `for i` around it hoisted anything (the `for i` was declined a

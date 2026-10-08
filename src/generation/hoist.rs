@@ -224,7 +224,12 @@ fn scalar_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Fu
 fn text_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
     op == "OpCreateStack"
         && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
-            if vars.is_some_and(|v| matches!(v.tp(*t).base(), Type::Text(_))))
+            if vars.is_some_and(|v| is_text_shape(v.tp(*t))))
+}
+
+/// A text, seen through `τ?` and any `&` link.
+fn is_text_shape(tp: &Type) -> bool {
+    matches!(tp.peel_link(), Type::Text(_))
 }
 
 /// `@FR-R-InPlace`'s link clause — the address of a local naming a record that owns NO heap
@@ -7042,6 +7047,18 @@ fn fresh_text_set_enabled() -> bool {
     *ON.get_or_init(|| !std::env::var("LOFT_NO_FRESH_TEXT_SET").is_ok_and(|v| v != "0"))
 }
 
+/// A write into the fresh element that moves nothing a held header describes: § V-d's delivery
+/// copy (under the in-place tier) or its first text (`@FR-R-Mint`'s text clause, the mint tier).
+fn fresh_write(name: &str, args: &[Value], fresh: &HashSet<u16>, tiers: HoistTiers) -> bool {
+    (tiers.in_place && fresh_copy(name, args, fresh))
+        || (tiers.mint && fresh_text_set(name, args, fresh))
+}
+
+/// The address of a scalar local, or (`@FR-R-Mint`'s text clause) of a text local.
+fn local_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    scalar_stack_ref(op, args, vars) || (fresh_text_set_enabled() && text_stack_ref(op, args, vars))
+}
+
 /// Does running `node` invalidate a hoisted header?  [`writes_store`] with one
 /// extra allowance: under `allow_in_place`, a direct [`IN_PLACE_SET_OPS`] call is
 /// not blocking (its target and value subtrees still walk, so a growing op INSIDE
@@ -7090,8 +7107,7 @@ fn blocks_header_hoist(
                 && tiers.in_place
                 && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
-                    || scalar_stack_ref(data.def(*d).name(), args, vars)
-                    || (fresh_text_set_enabled() && text_stack_ref(data.def(*d).name(), args, vars))
+                    || local_stack_ref(data.def(*d).name(), args, vars)
                     || record_stack_ref(stores, data, data.def(*d).name(), args, vars));
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
@@ -7168,8 +7184,7 @@ fn blocks_header_hoist(
             let record_copy = known
                 && tiers.in_place
                 && in_place_copy(stores, data.def(*d).name(), args).is_some();
-            let fresh_copy = known && tiers.in_place && fresh_copy(data.def(*d).name(), args, fresh);
-            let fresh_text = known && tiers.mint && fresh_text_set(data.def(*d).name(), args, fresh);
+            let fresh_copy = known && fresh_write(data.def(*d).name(), args, fresh, tiers);
             if record_mint
                 && data.def(*d).name() == "OpFinishRecord"
                 && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
@@ -7185,7 +7200,6 @@ fn blocks_header_hoist(
                 || fresh_delivery
                 || record_copy
                 || fresh_copy
-                || fresh_text
             {
                 false
             } else if call_writes_store(*d, data, cache, active, owned) {
