@@ -321,7 +321,9 @@ pub fn scan_type_refs(content: &str) -> Vec<String> {
             i += 2;
             continue;
         }
-        prev = &content[i..=i];
+        // Only ASCII punctuation can be a "previous token"; a byte of a wider character is
+        // skipped as one byte, never sliced — a slice inside `ä` or `→` is a panic.
+        prev = if ch.is_ascii() { &content[i..=i] } else { "" };
         i += 1;
     }
     types
@@ -432,6 +434,15 @@ mod tests {
         assert_eq!(
             scan_type_refs(src),
             vec!["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"]
+        );
+    }
+
+    #[test]
+    fn a_wide_character_outside_a_literal_is_skipped_not_sliced() {
+        // `ä` and `→` outside strings and comments: the scanner steps over their bytes.
+        assert_eq!(
+            scan_type_refs("fn f(a: Alpha) { ä = 1; x → Beta; c: Gamma = 1 }"),
+            vec!["Alpha", "Gamma"]
         );
     }
 
