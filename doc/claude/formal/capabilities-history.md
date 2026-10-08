@@ -51,6 +51,28 @@ granted.
   the non-vacuous RED/GREEN twin `lambda body reaches host cap (D-cap-2)` in
   `access_corpus_red_green`.
 
+### D-cap-5 — host data was written through a view of a parameter — CLOSED (2026-10-07, loft#1930)
+
+`(Cap-Own)` is a provenance fact, and the write check judged a struct local by its TYPE's
+library: a `for` variable over a parameter's collection, an element bound to a local and a `&`
+to one were script-owned whenever the type was the program's own, so writes through them
+mutated the caller.  A bare `v += […]` on a parameter, or on a `&` alias of one of its fields,
+reached no check at all.  `+=` on a scalar was taken as an append under an `#append` grant.
+The struct arm now follows the dep chain to a parameter as the vector arm does, a bare append
+to parameter data is a raw write, a scalar `+=` is an update, and an `#append` link on a scalar
+field is refused at the declaration.  Cells in `admission_escape_suite_rejects_every_breakout`
+and `a_scalar_field_has_no_append_right`.  Recorded on the issue for the owner: a library
+mutator (`m.items.clear()`) admitted by `(Cap-Call)` on a host field with no field grant.
+
+### D-cap-4 — a `#read` field leaked through a whole-value read, and a built value's read was refused — CLOSED (2026-10-07, loft#1929)
+
+`(Cap-Read)` was recorded at the `.field` site only, so rendering the struct (`"{p}"`, `:j`) and
+a `match` binding the field revealed a field `p.hidden` was refused for.  Every whole-value
+render and every pattern field now records its reads.  The opposite face: a `#read` field of a
+value the function BUILT was refused, against `(Cap-Own)`; a local every assignment of which is
+a struct literal is the script's own, while a copy of a parameter is not.  Cells in
+`admission_escape_suite_rejects_every_breakout`.
+
 ### D-cap-3 — script-owned vector-element writes were rejected — CLOSED (2026-07-04)
 - **Violates:** Cap-Own (completeness — a script-owned mutation should be admitted, not rejected)
 - **What it WAS.** `src/parser/expressions.rs::raw_write_is_host_owned` gates a raw field/index

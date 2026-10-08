@@ -96,7 +96,7 @@ their order.
 
 ## Deviations
 
-OPEN: **0** (a *rules* doc — it shrinks operational.md's D-op-1, adds no code deviation).
+OPEN: **0**.  The register is [concurrency-history.md](concurrency-history.md); conformance is shared with operational.md's D-op-1.
 
 - **Conformance is differential** — `par` is enforced across the two backends by the @PLN89
   differential oracle (D-op-1), which carries a parallel-reduction program

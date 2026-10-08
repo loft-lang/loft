@@ -694,7 +694,14 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+- **D-types-32 (OPEN, loft#1934)** — violates `(N-Road)`: τ and τ? take the same lowering.  Five
+  pairs of `doc/claude/plans/160-nullable-road/pairs` still differ in their ownership machinery
+  (`scripts/nullable_road.py`): `ret-view-of-param` gives the dense half a hidden `__retbuf` and a
+  work-ref the nullable half does not, and so do `captured-local-rebind`, `element-over-param`,
+  `local-rebound-by-mint` and `ret-view-of-param-vector`.  The values agree and both halves are
+  leak-clean under `LOFT_STRICT_STORES=1`; the cost is the extra machinery on one spelling.
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,

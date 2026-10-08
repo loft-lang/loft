@@ -135,5 +135,8 @@ above, its GREEN twin proving the rejection is the rule firing, not an incidenta
 The area is **formal — OPEN 0**: every host-touching
 operation in a restricted context is decided by exactly one of the six rules — the call gate
 (incl. closures), field read/update/append, the parameter `#default` lock, and script-owned
-mutation — so an admitted script provably performs no host effect outside its profile, by
-construction. The falsifying escape suite + the RED/GREEN access corpus are the standing evidence.
+mutation.  The claim that an admitted script performs no host effect outside its profile is
+only as strong as the construct list the judgment covers, and two walks found constructs it did
+not (a view of a parameter, a whole-value read — capabilities-history.md D-cap-4/5).  The
+falsifying escape suite + the RED/GREEN access corpus are the standing evidence; a new construct
+that reaches host data owes a cell in the escape suite.
