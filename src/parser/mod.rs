@@ -26085,6 +26085,18 @@ mod plan86_admission_tests {
                 ),
             ),
             (
+                // loft#1930 — a compiler operator with no capability gate is the language core:
+                // a vector constant, `reverse()` and a fn-ref call were "library `files`"
+                // (where the stdlib declares them) and needed every file operation allowed.
+                "core: a vector constant, reverse() and a fn-ref under `code` only (loft#1930)",
+                adm(
+                    &["fn:ok"],
+                    &["code"],
+                    &[],
+                    "NUMS = [3, 4, 5];\nfn ok() -> integer { s = 0; for n in NUMS { s += n; } v = [3, 1, 2]; v.reverse(); s + v[0] }\n",
+                ),
+            ),
+            (
                 "write: a local vector appended to (loft#1930's control)",
                 adm(
                     &["fn:ok"],
