@@ -14,7 +14,9 @@ The `dep` field on `Type` controls ownership and freeing.  See `src/data.rs`
 ## Scope exit — `get_free_vars`
 
 When a scope ends (block exit, function return, loop iteration boundary), the scope
-analysis emits free operations for variables registered in that scope.
+analysis emits free operations for variables registered in that scope.  Which variable gets a
+free is decided from its deps; emitting more frees and relying on a free being idempotent is
+declined (@C88).
 
 ### Step 1: Collect variables — `variables(to_scope)` — `src/scopes.rs:503-533`
 

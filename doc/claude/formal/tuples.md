@@ -82,8 +82,8 @@ out-of-range `.i` is a compile error, never a runtime null. (Verified: `(3,7).0`
 tuple-returning call: `(x, y) = pair()` unpacks the returned tuple directly (verified: `2 3`).
 The members may be fields or elements as well as names: `(w.sq, w.sr) = hex(w)` writes two
 fields, and because the right-hand side is evaluated first, `(p.x, p.y) = (p.y, p.x)` swaps.
-Each member is an ordinary store, so `(s.f, b) = (300, 1)` into a `u8` field is refused exactly
-as `s.f = 300` is, and into a `u8?` field holds null.
+Each member is an ordinary store (@C64, @C65), so `(s.f, b) = (300, 1)` into a `u8` field is
+refused exactly as `s.f = 300` is, and into a `u8?` field holds null.
 
 ### Tuples as call arguments and returns
 
@@ -151,7 +151,7 @@ the same two cures. The gap between the rule and the model is
               slot with a non-null member keeps N-Store's report, per member.
 
               ⚠ The in-flight tuple carries NO TAG (the layout a stack `(τ, τ)?` would need is
-              declined in DESIGN_DECISIONS C119), so an element that EXISTS holding all-null
+              declined in DESIGN_DECISIONS @C119), so an element that EXISTS holding all-null
               members is indistinguishable from a miss — `v[i] == null` is true for both.  That
               is a consequence of the representation, not a defect, and `1477b` pins it.
 

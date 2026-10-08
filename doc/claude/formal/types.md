@@ -153,7 +153,7 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                EXCEPT an index trusted BY CONTRACT — a constant, an active `for` variable, a
                read guarded by `i < len(v)`, integer arithmetic over those (@PLN102 D1,
                `index_provably_fit`) — which reads τ NON-NULL; a genuine overrun there
-               faults to null at run time (C80) and no rule above the runtime sees it.  So a
+               faults to null at run time (@C80) and no rule above the runtime sees it.  So a
                nullability cell built on `v[9]` measures nothing: it must index by a plain
                variable.
   (N-Div)      Γ ⊢ a,b ⇒ Integer                     ⟹   Γ ⊢ a/b, a%b ⇒ Integer?  (÷0 undefined)
@@ -435,14 +435,14 @@ old auto-`τ?` reading. Design record:
             asin·acos(∉[-1,1]), pow(neg ^ frac) (Float / Single); v[i] / s[i] OOB (ANY element
             τ).  Non-null when the input is PROVABLY in-domain (constant / range / guard) — the
             same "provably-fits" elision as (N-Arith) / (N-Cast).  Generalises (N-Div) /
-            (N-Index) to every type + partial op.  Runtime = null + continue (C80); the reserved
+            (N-Index) to every type + partial op.  Runtime = null + continue (@C80); the reserved
             null is the VALUE, NEVER a runtime error.
 
 (N-Prop)    an operation with a NULLABLE operand whose runtime carries the null through types
             its result nullable:  a:τ? op b  ⟹  τ?  (either operand).  Arithmetic on
             Integer / Float / Single (the sentinel / NaN propagates), text `?`-concat, etc.
             The type tracks the propagation the runtime ALREADY performs (verified: `n+5`,
-            `5-n`, `abs(n)` on a null n stay null).  C85 is the COMPLEMENT — non-null operands
+            `5-n`, `abs(n)` on a null n stay null).  @C85 is the COMPLEMENT — non-null operands
             stay non-null; a sentinel PRODUCED by overflow is a result, not a propagated INPUT.
 
 (N-Chain)   a PROJECTION CHAIN carries absence to its END and discharges ONCE there.  If any
@@ -478,7 +478,7 @@ old auto-`τ?` reading. Design record:
             whether it reaches a store, what it borrows, which channel carries it — answers
             IDENTICALLY for τ and for τ?.  Only a NULLABILITY question may tell them apart, and
             it is spelled by READING the marker, never by the absence of a match arm.  Follows
-            from C90: `Optional(τ)` shares τ's storage and the `?` is a compile-time marker.
+            from @C90: `Optional(τ)` shares τ's storage and the `?` is a compile-time marker.
             Home: `Type::peel_optional` / `Type::base` (and `Type::data_shape`, which peels a
             `&` as well).  The compile-error guarantee the `Optional` VARIANT was added for
             covers an EXHAUSTIVE `match Type` and nothing else, so `matches!`, `if let` and a
@@ -487,7 +487,7 @@ old auto-`τ?` reading. Design record:
 (N-Road)    a question about the LOWERING of a value — which delivery it takes, which ops are
             emitted, which mechanism tracks its ownership, whether a temporary stands between it
             and its destination — answers IDENTICALLY for τ and for τ?.  The LOWERING twin of
-            (N-Shape), which rules the TYPE side, and it follows from C90 for the same reason:
+            (N-Shape), which rules the TYPE side, and it follows from @C90 for the same reason:
             the `?` is a compile-time marker over τ's own storage, so it cannot be the thing
             that selects a road.  A divergence between the two spellings' emitted IR is
             therefore an ACCIDENT of the site that introduced it, never a consequence of the
@@ -507,7 +507,7 @@ old auto-`τ?` reading. Design record:
             dense/nullable PAIRS, normalised for the `?` and diffed per MACHINERY CHANNEL,
             discounting `ncc(??)`.
             Measured 2026-09-09 over six pairs: FIVE diverge, and every one is an accident of
-            its site — none required by C90.  Two of the five were defects in the DENSE
+            its site — none required by @C90.  Two of the five were defects in the DENSE
             spelling that the nullable road was masking (loft#1482, loft#1483).
 
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
@@ -549,12 +549,12 @@ old auto-`τ?` reading. Design record:
             room its declared range leaves inside the width.  `limit(-100, 100) size(1)` is
             201 values in 256 and the 55 codes left over are NOT a place to keep a null:
             a value that does not fit takes the type's DEFAULT, by `(E-Uncomp-NN)`
-            ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
+            ([@C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
             Spareness is arithmetic the author did not do, so it cannot decide semantics.
             The plain `integer` and `i32` TEMPLATES keep their sentinel, and that is an
             EXEMPTION rather than a distinction the rule draws: it costs one value in 2^32
             and buys the only narrow type whose overflow is detectable, which is the whole
-            reason it stands (C127 § Decision).  `u32` reserves a code at the top of its
+            reason it stands (@C127 § Decision).  `u32` reserves a code at the top of its
             range and takes the DEFAULT, so the table below records where the split falls
             and not a principle that puts it there.
 ```

@@ -51,7 +51,7 @@ hold is refused everywhere; a path loft hands out is in that same form.
   (Path-Refuse) A refused path is the operation's own failure answer — `exists` false,
                 `list_dir` / `content` / `read_bytes` null, `write` / `delete` / `move` /
                 `mkdir` FileResult.Other — and one log line naming the path and the rule.
-                Never a runtime error (C80).
+                Never a runtime error (@C80).
 ```
 
 **In words.**  loft programs are meant to run unchanged wherever loft runs.  A path is the one

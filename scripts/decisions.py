@@ -21,7 +21,9 @@
 #   show C<n>      one entry: its line, every site citing it, and the bare `C<n>` mentions in
 #                  code that do not count as a citation (the `cite` work, usually)
 #   sync           add a `?` line for every entry the worklist lacks
-#   check          the worklist against the register and the tree; exit 1 on any finding
+#   check          the worklist against the register and the tree, and every entry stated by
+#                  at least one working doc (not the register, a history, a changelog, a plan
+#                  or a release record); exit 1 on any finding
 #
 # Reads index/tags.json (`make index` first — a stale index answers for the tree it was
 # built from) and index/library_guards.json (`make guards-fetch`).
@@ -88,6 +90,15 @@ def kind_of(path):
     if path.endswith(".md"):
         return "docs"
     return "code"
+
+
+def states_it(path):
+    """A WORKING doc — one that states a rule as it holds now.  The register itself, a
+    `-history.md` companion, a changelog, a plan and a release record are not: a citation
+    there records the decision, it does not state it to the reader of the subject."""
+    return (path.endswith(".md") and not os.path.basename(path).startswith("DESIGN_DECISIONS")
+            and not path.endswith("-history.md") and "CHANGELOG" not in path
+            and "/plans/" not in path and "/releases/" not in path)
 
 
 def counts(reg, index, lib):
@@ -179,6 +190,8 @@ def check(reg, index, lib):
             continue
         if n["guards"] == 0:
             say("no guard cites it (tests/ here or the library it is about)")
+        if not any(states_it(r["file"]) for r in index.get("@" + cid, [])):
+            say("no working doc states it: cite @" + cid + " where the subject's doc states the rule")
         if row["guard"] == "weak" and not w & {"guard", "build"}:
             say("its guard is `weak` but the work lists no `guard`")
         if row["kind"] == "pending" and "build" not in w:
@@ -299,7 +312,10 @@ def main(argv):
             print("  (no worklist line — `sync`)")
         print("  cited at:")
         for r in index.get("@" + cid, []):
-            print(f"    {kind_of(r['file']):<6} {r['file']}:{r['line']}")
+            k = kind_of(r["file"])
+            if k == "docs" and not states_it(r["file"]):
+                k = "record"
+            print(f"    {k:<6} {r['file']}:{r['line']}")
         for t in lib:
             if t == "@" + cid:
                 print("    guards (a library's tests/, index/library_guards.json)")

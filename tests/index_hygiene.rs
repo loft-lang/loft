@@ -237,9 +237,9 @@ fn check_new_decisions_are_guarded(index: &str) {
 /// what keeps it and what it still owes, and `scripts/decisions.py check` holds that to the
 /// tree: every entry has a classified line, every named site still exists and contains its
 /// text, and a site that does not cite `@C<n>` is listed as `cite` work — while a `cite` the
-/// tree has since done is a failure too, so the list cannot rot in either direction.  The
-/// same command a person runs, so the gate and the tool cannot drift; skipped (not failed)
-/// where `python3` is unavailable.
+/// tree has since done is a failure too, so the list cannot rot in either direction; and every
+/// entry is cited by a working doc that states it.  The same command a person runs, so the
+/// gate and the tool cannot drift; skipped (not failed) where `python3` is unavailable.
 fn check_decision_worklist() {
     let out = match loft::platform::process::harness_command("python3")
         .arg("scripts/decisions.py")

@@ -154,7 +154,7 @@ comparison, `??`) evaluates both operands under E-Left.
                 value, so a NON-optional one is unconditionally true and its condition cannot
                 fail.  That last case is `constant-condition`; the `!` spelling of the same
                 question is `redundant-null-negation`.
-  (E-Eq)        `==` compares CONTENT for every type (DESIGN_DECISIONS C91): a scalar
+  (E-Eq)        `==` compares CONTENT for every type (DESIGN_DECISIONS @C91): a scalar
                 by its value (`0.0 == -0.0`; null equals null), a `text` by its
                 characters, a `struct` or `value struct` field by field in declaration
                 order with each field's own `==`, a struct-enum by its variant and then

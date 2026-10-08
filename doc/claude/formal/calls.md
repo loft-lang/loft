@@ -314,7 +314,7 @@ cannot see.
               declared second, in either order, within one source: `x.m(…)` would reach one
               body and `m(x, …)` the other.  The one definition that answers both spellings
               is the `self` method, `fn m(self: τ, …)`, in the stdlib, a library and a
-              program alike; `both` is a deprecated spelling of `self` (C123).  A plain
+              program alike; `both` is a deprecated spelling of `self` (@C123).  A plain
               function whose first parameter has ANOTHER type (`m(q: Qt)` beside
               `m(self: Pt)`) is an overload, kept live by its argument type.
 ```
@@ -349,12 +349,12 @@ DESIGN_DECISIONS.md @C123.
               with `pub use`.  A program reaches L's surface by `use L::*` / `use L::(…)` or
               by the qualifier `L::name`, and NEITHER spelling reaches anything else:
                 - an item L declares without `pub` is refused — "`name` is not `pub` in `L`";
-                - a name L only imports for its own use (a plain `use`, C98) is refused,
+                - a name L only imports for its own use (a plain `use`, @C98) is refused,
                   naming the qualifier of the library that owns it.
               L's own code reaches all of its items.  A package qualifying its OWN name
               (`L::name` inside L) means "in this file" and is not an outside reach.
 
-  (F-Visible) everything a file F declares is private to F; `pub` gives consent (C140).
+  (F-Visible) everything a file F declares is private to F; `pub` gives consent (@C140).
               A TYPE T of F, outside F, is
                 - INVISIBLE when T is not `pub` and no `pub` item of F names it: not named;
                 - NAME ONLY when T is not `pub` but a `pub` fn's signature of F, or a `pub`

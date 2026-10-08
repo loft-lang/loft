@@ -265,7 +265,7 @@ A qualified `lib::fn()` auto-loads the library, so an explicit `use` is optional
 qualified access.
 
 **Multiple names from one library must be parenthesised.** `use lib::a, b;` (a flat
-comma list) is a compile error; write `use lib::(a, b);`.
+comma list) is a compile error; write `use lib::(a, b);` (@C76).
 
 #### What an import brings in, and what it passes on (@C98)
 

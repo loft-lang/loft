@@ -219,7 +219,7 @@ backtracking safe.
                  is a static error at the arm (M-Unit) rather than an arm that never fires.
                • SCALAR subject (integer / character — an unbounded domain) — coverage is NOT decidable
                  and NOT required.  With no total final arm the match MAY select no arm at runtime; by
-                 the C80 spreadsheet model ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md)) it then
+                 the @C80 spreadsheet model ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md)) it then
                  yields **null**, so the match's result type is **nullable** (`τ?`) — no error, the null
                  surfaces at the use site (the null-flow discipline).  This is the one place a `match`
                  "falls through", and it falls through to null, never to a fault.

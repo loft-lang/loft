@@ -97,7 +97,7 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  handed to code outside it — keeps the representation the API
                  promises, and the boundary materialises whatever an internal rewrite
                  made of it; one that does not escape may be rewritten in any way its
-                 conditions allow.  (C122.)
+                 conditions allow.  (@C122.)
 ```
 
 **`(R-Escape)` in words.** Every rule below asks for permission from nobody: it states
@@ -350,7 +350,7 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  R-BoundedNest) asks for the plain `[iterator, body]` shape
                  itself.  The
                  INTEGER CLOSURE — the result of `+`/`-`/`*` over non-sentinel
-                 operands counted non-sentinel — is deliberately NOT taken: C85 makes
+                 operands counted non-sentinel — is deliberately NOT taken: @C85 makes
                  an overflow's sentinel propagate onward as null on both backends,
                  and a native closure would answer a number there, a divergence after
                  a reported fault.  Its price is measured (§ V-aj), and it is the
@@ -1621,7 +1621,7 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  operation can fault, so the plain answer IS the checked template's.
                  A range implies non-sentinel: the sentinel is never inside one, and
                  a parameter or a record/element read is never ranged BY SHAPE
-                 (C80).  THE TYPE CLAUSE: a value whose STATIC TYPE is a fact carries
+                 (@C80).  THE TYPE CLAUSE: a value whose STATIC TYPE is a fact carries
                  that type's range as a leaf — a non-nullable `Integer[lo, hi]` whose
                  range fills its width (`u8`, `i8`, `u16`, `i16`, every user-written
                  `limit(lo, hi)`), whether it is a parameter, a local the compiler
@@ -4388,7 +4388,7 @@ rewritten, read off the trace; the cells with the rewrite off).
                  alone: an in-range element of a vector of records is a record, so the read
                  never answers null and the fallback is never minted.  Not for a scalar
                  element: a scalar's `?` also discharges an element whose VALUE is null
-                 (C80), which no loop bound rules out.
+                 (@C80), which no loop bound rules out.
 ```
 
 **In words.** Applied by: `in_range::rewrite_program`, in the IR phase (both backends).  Both
@@ -4839,7 +4839,7 @@ Native only; the interpreter moves as before and is the reference.
                  is a function whose RECORD matches the signature's, not only its
                  Rust ABI: the type checker refuses any other in that slot.  The
                  interpreter is untouched: the tuple is native's representation of
-                 the same record (C122), so the IR pass leaves every arm's signature.
+                 the same record (@C122), so the IR pass leaves every arm's signature.
 ```
 
 **In words.** `resolve(r.style)` minted a store, wrote four fields, adopted and freed it per
@@ -4918,7 +4918,7 @@ compiler's wherever the program's results are kept.  Switch `LOFT_NO_VIEW_RETURN
                  (3) no holder lets R cross a boundary: a return out of the frame that
                      owns B, a store into a collection or field that outlives B, a
                      native or bridge call, a `par` worker, a placed library, a yield,
-                     a closure capture, a persisted or file-backed store (C135);
+                     a closure capture, a persisted or file-backed store (@C135);
                  (4) f is read only as a VALUE: an equality or ordering test, a
                      prefix or search test, a length, a per-character or per-byte
                      read or walk, a format, a copy into an owned slot (which builds

@@ -38,7 +38,9 @@ to what they say.
   with its sites and its bare `C<n>` mentions, and `python3 scripts/decisions.py sync` adds
   a line for a new entry.  Gate (`make decisions-check`, run by `tests/index_hygiene.rs`):
   every entry has a classified line, every named site still contains its text, a site
-  without `@C<n>` is listed as `cite` work, and a `cite` the tree has done fails too.
+  without `@C<n>` is listed as `cite` work, a `cite` the tree has done fails too, and every
+  entry is cited by a working doc that states it (not the register, a `-history.md`, a changelog,
+  a plan or a release record).
 - **A decision about a library is guarded in that library** — a test under its `tests/` citing
   `@C<n>`, run by its own CI where the library is edited.  `make guards-fetch` reads every
   `loft-libs-*` repo at `origin/main` into `index/library_guards.json` (committed), which

@@ -172,7 +172,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 an object with an identity or a release of its own.  The admission test is
                 reuse: a variant that every existing read routine serves unchanged is a
                 store; one that needs its own reads, or its own handle, is a second kind
-                (C125).
+                (@C125).
 ```
 
 **`(O-ViewField)` in words** (@PLN164 C5, written before the phase is cut).  The natural

@@ -104,7 +104,7 @@ the definition is reached by syntax, and nothing is spelled `Op`.
   (Op-Result)  the form's type is the method's return type, its value the method's value: a
                method answering `V?` makes the form `V?`.  An operand of nullable type is
                discharged exactly as the receiver or argument of the same call would be.
-               The language adds no fault (C80).
+               The language adds no fault (@C80).
 
   (Op-Eq)      `==` / `!=` are (E-Eq), structural, on every type at every depth; no type defines
                them, and `operator equals` is refused naming a named method as the cure (@C134,
@@ -152,7 +152,7 @@ the definition is reached by syntax, and nothing is spelled `Op`.
                by every type (G-Sat-Eq), structurally.
 
   (Op-Std)     a type declared in `default/` keeps the stdlib's operator definitions; a user
-               `fn Op…` is an ordinary function (C132, phase P5).
+               `fn Op…` is an ordinary function (@C132, phase P5).
 ```
 
 ## Every form, one rule

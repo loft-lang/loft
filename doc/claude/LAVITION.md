@@ -162,7 +162,7 @@ too.  Editing flips a **single function** between tiers:
 ```
  baseline (always):  [ compiled libraries ]  +  [ compiled game functions ]   ← native / wasm
                                    ▲  ▲
-                      shared-store │  │ dispatch (N9 / C71)
+                      shared-store │  │ dispatch (N9 / @C71)
                                    │  ▼
  editing fn F:    F interpreted now ─▶ calls compiled libs over the store ─▶ near-native
                      └─▶ server recompiles F → wasm ─▶ F swaps back to compiled ─▶ full speed

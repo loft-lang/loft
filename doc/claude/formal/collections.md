@@ -108,7 +108,7 @@ owns their *operations + order*).
   (Col-Cons)    c: <kind><…> = []             empty-literal construction (all kinds).
   (Col-Insert)  c += [ rec, … ]               append/insert a record; keyed kinds place it by key.
                 A record whose key is already present REPLACES the one there at `hash`, `sorted`,
-                `index` and `trie` (C68), so a key names at most one record.  `spatial` keeps both:
+                `index` and `trie` (@C68), so a key names at most one record.  `spatial` keeps both:
                 two records may share a point, a point lookup answers one of them and a box
                 answers every one.
   (Col-Insert-Absent)  c: <kind><…>?  holding null,  c += [ rec, … ]
@@ -119,7 +119,7 @@ owns their *operations + order*).
                 that applies types.md (N-Default) implicitly (owner ruling 2026-09-07, loft#1434).
   (Col-Len)     c.len()                        element count; O(1) (verified O(1) for spatial).
                 An ABSENT collection counts 0 at every kind — a `<kind>?` handed to `len` is
-                `(N-Store)`'s store (a warning), and 0 is the one value C80 leaves it.
+                `(N-Store)`'s store (a warning), and 0 is the one value @C80 leaves it.
 ```
 *Anchor:* tests/scripts/48-spatial-construct-free.loft (construct/append/len).
 

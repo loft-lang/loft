@@ -319,7 +319,7 @@ A destructuring LHS is a **binding position**, so its names follow the same rule
 (a, chr) = pair()       // so is `chr` — and `chr(65)` still calls the function
 ```
 
-Both forms answer identically, which is the rule to keep: a binding position mints a
+Both forms answer identically, which is the rule to keep (@C112): a binding position mints a
 local whatever else carries that name, and the function stays reachable as a call —
 values and functions are separate namespaces (loft#852, [LOFT_DECLARATIONS.md § Shadowing and
 qualified names](LOFT_DECLARATIONS.md)). Before loft#756 only `name = …` was recognised as a

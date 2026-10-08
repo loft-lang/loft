@@ -51,7 +51,7 @@ pair `⟨code, env⟩`: the lambda body plus a captured environment (the outer v
   (L-FnAbsent)  a fn-ref read where nothing is — an element of a `vector<fn(…)>` out of range —
              is the ABSENT function.  A function type has no null (types.md `(N-Opt)`), so the
              absence is not a value a program can test: `f != null` and `f ?? g` are both
-             refused, alike.  Calling the absent function is a fault in the sense of C80: the
+             refused, alike.  Calling the absent function is a fault in the sense of @C80: the
              call answers its return type's null (nothing for `void`) and the program goes on.
              Its arguments are evaluated first, exactly as for a call that dispatches.  To fall
              back to another function, check the index, or keep the function in a struct field
@@ -131,7 +131,7 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  from inside the closure all reach the caller — and a `&integer` / `&text` is
                  COPIED at creation by (L-CapScalar).  The `&` itself does NOT survive into
                  the closure, so a write that would replace what it points AT is REFUSED
-                 (a decided edge, DESIGN_DECISIONS C115 — not a deviation: the copy is what
+                 (a decided edge, DESIGN_DECISIONS @C115 — not a deviation: the copy is what
                  (L-CapScalar) requires, so no code change closes it).
   (L-CapRebind)  a WHOLE-VALUE rebind of a captured heap local is not a mutation-through: a
                  record built before it keeps the store it was built with and answers the

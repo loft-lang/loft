@@ -15,7 +15,8 @@ it exists and when it goes.
 ## The rule
 
 **Kernels have their place, but each is a stop-gap, and none may dominate loft** (the owner's
-rule).  A library function with a clear goal and a fast loft implementation is almost
+rule; @C78 at the scale of one routine — Rust carries mechanism, and loft code that needs Rust
+to be fast is a defect to fix in loft).  A library function with a clear goal and a fast loft implementation is almost
 always preferred, and optimisation work slightly favours the loft version over a new kernel.
 The reason is reach: a kernel fixes one NAME, while making the loft code fast fixes the
 PATTERN everywhere it is written, in users' own programs too.  A slow `split` body was the

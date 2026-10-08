@@ -100,14 +100,14 @@ store written by one build readable by another *of the same layout*.
               element, a parameter and a return of a DECLARED narrow range without `?` all give
               the type's DEFAULT for a value that does not fit — zero where the range holds it,
               the bound nearest zero otherwise — never a null, because such a type has no null to
-              hold (`DESIGN_DECISIONS.md` C127, `(N-Reserve)`, `(E-Uncomp-NN)`).  A code left
+              hold (`DESIGN_DECISIONS.md` @C127, `(N-Reserve)`, `(E-Uncomp-NN)`).  A code left
               spare inside the storage width is not a place to put one: whether a declared range
               leaves one is arithmetic the author did not do, and two ranges one value apart
               would otherwise answer differently.  The plain `integer` and `i32` TEMPLATES are
-              EXEMPT and keep C85's sentinel — a pragmatic exemption and not a principled one:
+              EXEMPT and keep @C85's sentinel — a pragmatic exemption and not a principled one:
               the rule reaches them, and reserving `i32::MIN` is allowed because it costs one
               value in 2^32 and buys the only narrow type whose overflow is detectable
-              ([C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
+              ([@C127](../DESIGN_DECISIONS_VALUES.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
               § Decision).  `u32` reserves a code too and takes the DEFAULT, so the exemption
               is not a line to extend.  Where the language can
               demand the author say what an unfitting value becomes it refuses instead; where it

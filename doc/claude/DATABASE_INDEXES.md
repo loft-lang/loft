@@ -76,6 +76,9 @@ byte 32: BUCKET0    — slots, 4 bytes each (0 = empty)
 
 `elms = (room - RESERVED_WORDS) * 2`, with `RESERVED_WORDS = 4`.
 
+A slot holds the entry's arena index and nothing else — no cached hash, no entry in the table —
+so a lookup is two random reads, the slot and then the entry (@C105).
+
 ### An insert is one hash and one probe walk
 
 `Stores::insert_record` asks `hash::probe_for_insert` two things at once: is the record's

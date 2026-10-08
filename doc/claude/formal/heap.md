@@ -178,7 +178,7 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                  the END (H-Index), and the write LANDS there.
   (H-WriteLocked)  a write to a read_only store is a STATIC reject where provable; else a
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
-                   write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
+                   write and DISCARDS it — the store keeps its bytes (@C80).  Never a silent
                    successful write.
   (H-Write-Else)  an assignment STATEMENT may end in `else { B }`: `place = v else { B }`
                    (and `place op= v else { B }`).  The place and `v` are each evaluated
@@ -245,9 +245,9 @@ only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](
   (H-Copy)   ⟨x = r, ⟨ρ, H⟩⟩ → ⟨r', ⟨ρ[x ↦ r'], H'⟩⟩            when x = r is a PLAIN bind of a
                WHOLE VALUE — a local variable, or a VECTOR-typed projection (`fv = e.items`) —
                where r' = (fresh(H),0,0) and H'[store(r')] := deep-copy of the record graph at r.
-               x and the source are then INDEPENDENT (C86, #415).
+               x and the source are then INDEPENDENT (@C86, #415).
   (H-Ref)    ⟨x = &r, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ[x ↦ r], H⟩⟩              an EXPLICIT `&`-bind aliases: x
-               shares r's backing (NO fresh store), so `x[0] = 99` mutates r (C77).  This is the
+               shares r's backing (NO fresh store), so `x[0] = 99` mutates r (@C77).  This is the
                vector twin of a parameter — both reach the source; only a plain bind copies.
   (H-View)   ⟨x = r, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ[x ↦ r], H⟩⟩               when r is a STRUCT-TYPED PROJECTION
                — a struct FIELD (`c = o.i`) or a struct ELEMENT of a vector (`s = v[0]`).  x is a
@@ -728,7 +728,7 @@ installed, which the frame does own.
                  place, a call result, a rebind to null — after the new value has been
                  computed and before anything after the statement runs (loft#1362);
                - a CONTAINER's death for what it holds, its own hook first and then its
-                 members, through the synthesized cascade (C111).
+                 members, through the synthesized cascade (@C111).
              ⚠ **A DROP HAS NO SAFE DIRECTION, and a cure discussion that assumes one is
              already wrong.**  For a FREE there is one: never free what might still be held,
              because a leak costs memory and a double free corrupts.  A drop's two failures
@@ -808,7 +808,7 @@ installed, which the frame does own.
              disturbance and naming the view — (B-Ref-Reshape), for a view the author did
              not spell with `&`.
   (H-Elide)  the compiler may elide a copy of a type with `OpCopy` together with the drop
-             of the structure the copy would have made, where C86's transparent-link
+             of the structure the copy would have made, where @C86's transparent-link
              conditions hold.  Neither hook may rely on running for an elided copy.
   (H-Drop-Not) the OLD value of an overwritten FIELD or ELEMENT (`o.s = other`,
              `v[i] = other`), an element taken OUT (`v.remove(i)`), and a keyed
