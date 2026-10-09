@@ -713,6 +713,9 @@ pub struct Parser {
     /// not the author's mistake.  `parse_function` rewinds to it once the body is read, so the
     /// def carries the one refusal.
     pub(crate) depth_trip_mark: Option<(usize, Level)>,
+    /// How many right-associative operators (`**`, `??`) the operator parser is inside: each
+    /// parses its right operand in a nested frame (loft#1961).
+    pub(crate) right_assoc_depth: usize,
     /// The current file number that is being parsed
     file: u32,
     pub diagnostics: Diagnostics,
@@ -1922,6 +1925,7 @@ impl Parser {
             parse_depth: 0,
             depth_overflowed: false,
             depth_trip_mark: None,
+            right_assoc_depth: 0,
             file: 1,
             diagnostics: Diagnostics::new(),
             default: false,

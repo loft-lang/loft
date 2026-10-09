@@ -2008,6 +2008,8 @@ impl Parser {
         operand_pos: Position,
     ) -> Type {
         let mut ls = Vec::new();
+        // loft#1961 — the left spine this run builds, one tree level pair per operator.
+        let mut run_length = 0usize;
         // @PLN102 pre-freeze — comparison operators are NON-ASSOCIATIVE.  A chain like
         // `a == b == c` (or `a < b < c`) parses as `(a == b) == c`, silently comparing a
         // BOOLEAN to the third operand — a classic footgun.  Reject the second comparison at
@@ -2309,6 +2311,35 @@ impl Parser {
                 let right_fact = std::mem::take(&mut self.operand_fact);
                 self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
             } else {
+                run_length += 1;
+                if run_length > super::expressions::MAX_OPERATOR_RUN {
+                    self.refuse_depth(&format!(
+                        "an expression chains more than {} operators — split it with locals \
+                         (`a = x1 + … + x200; b = …; x = a + b`)",
+                        super::expressions::MAX_OPERATOR_RUN
+                    ));
+                    *code = Value::Null;
+                    return Type::Unknown(0);
+                }
+                // A right-associative operator (`**`, `??`) parses its right operand at its own
+                // level, inside this call, so a chain of them nests one parser frame per
+                // operator without passing through `expression`.  Each adds at least one tree
+                // level, so more than `MAX_TREE_DEPTH` of them nested can never compile: refused
+                // here, before the recursion outgrows the stack.
+                let nests = matches!(operator, "**" | "??");
+                if nests {
+                    self.right_assoc_depth += 1;
+                    if self.right_assoc_depth > super::expressions::MAX_TREE_DEPTH {
+                        self.refuse_depth(&format!(
+                            "an expression chains more than {} `{operator}` operators — split it \
+                             with locals",
+                            super::expressions::MAX_TREE_DEPTH
+                        ));
+                        self.right_assoc_depth -= 1;
+                        *code = Value::Null;
+                        return Type::Unknown(0);
+                    }
+                }
                 let handled = self.handle_operator(
                     var_tp,
                     code,
@@ -2318,6 +2349,9 @@ impl Parser {
                     operator,
                     &op_pos,
                 );
+                if nests {
+                    self.right_assoc_depth -= 1;
+                }
                 let right_fact = std::mem::take(&mut self.operand_fact);
                 self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
                 if let Some(value) = handled {

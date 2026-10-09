@@ -33,6 +33,21 @@ pub(crate) const SANDBOX_MAX_PARSE_DEPTH: u32 = 128;
 /// is 100.
 pub(crate) const MAX_PARSE_DEPTH: u32 = 256;
 
+/// loft#1961 — the deepest expression tree a def's body may hold, `Span` wrappers counted.
+/// Every pass after the parser walks the tree recursively, and the first to fail on a deeper
+/// one is the scope pass (`scopes/scan.rs`, which refuses a scan depth past 1000 and recurses
+/// once per node, `Span` included, from one level above the body).  Measured on both
+/// backends across nesting forms — a flat `+` chain, `**` and `??` chains, nested sums,
+/// calls, blocks, `if`/`else` chains: every body at depth 999 or less compiles, every one at
+/// 1000 or more fails.  So this is the edge itself: it refuses exactly what failed.
+pub(crate) const MAX_TREE_DEPTH: usize = 999;
+
+/// The longest left-associative run of operators one expression may hold: each applied
+/// operator adds a `Span` and a `Call` to the tree, so a longer run cannot fit under
+/// [`MAX_TREE_DEPTH`] whatever stands around it.  Refused while the run is being read, before
+/// any recursive walker (`const_eval` folding an all-literal chain) meets the tree.
+pub(crate) const MAX_OPERATOR_RUN: usize = MAX_TREE_DEPTH / 2;
+
 /// @PLN86 2.4 — the leftmost base variable of a field/index LHS: `s.heading` /
 /// `v[i]` / `a.b.c` all descend through the `OpGet*` chain (the base is arg 0) to
 /// the root `s` / `v` / `a`.  `None` when the base is not rooted in a variable.
@@ -756,6 +771,7 @@ impl Parser {
             self.data.def(self.context).returned().clone()
         };
         self.parse_block("return from block", &mut v, &result);
+        self.refuse_too_deep_tree(&mut v);
         self.check_result(&v);
         self.finish_body(v, result)
     }
@@ -1230,41 +1246,76 @@ impl Parser {
     /// one chokepoint bounds every nesting form.
     pub(crate) fn expression(&mut self, val: &mut Value) -> Type {
         self.parse_depth += 1;
-        let limit = if self.in_sandbox {
-            SANDBOX_MAX_PARSE_DEPTH
-        } else {
-            MAX_PARSE_DEPTH
-        };
-        if self.parse_depth > limit {
-            // Refuse this expression and read past the group it stands in, so the frames
-            // above it unwind over balanced tokens and parse what follows as written.  The
-            // latch (reset per def in `parse_function`) keeps it to one error per def.
-            if !self.depth_overflowed {
-                self.depth_overflowed = true;
-                if self.in_sandbox {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "expression nesting too deep in sandboxed code (limit {})",
-                        SANDBOX_MAX_PARSE_DEPTH
-                    );
-                } else {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "expression nested more than {MAX_PARSE_DEPTH} levels deep — \
-                         bind an inner part to a local, or split it into a function"
-                    );
-                }
-                self.depth_trip_mark = Some(self.lexer.diagnostics().mark());
-            }
-            self.skip_rest_of_group();
+        if self.parse_depth > self.parse_depth_limit() {
+            self.refuse_depth_nesting();
             self.parse_depth -= 1;
             return Type::Unknown(0);
         }
         let result = self.expression_inner(val);
         self.parse_depth -= 1;
         result
+    }
+
+    /// The nesting bound that applies here: [`SANDBOX_MAX_PARSE_DEPTH`] inside a sandboxed def,
+    /// where the input is hostile, and [`MAX_PARSE_DEPTH`] elsewhere.
+    pub(crate) fn parse_depth_limit(&self) -> u32 {
+        if self.in_sandbox {
+            SANDBOX_MAX_PARSE_DEPTH
+        } else {
+            MAX_PARSE_DEPTH
+        }
+    }
+
+    /// The nesting bound tripped: refuse, naming the bound that applies here.
+    pub(crate) fn refuse_depth_nesting(&mut self) {
+        let message = if self.in_sandbox {
+            format!(
+                "expression nesting too deep in sandboxed code (limit {SANDBOX_MAX_PARSE_DEPTH})"
+            )
+        } else {
+            format!(
+                "expression nested more than {MAX_PARSE_DEPTH} levels deep — bind an inner part \
+                 to a local, or split it into a function"
+            )
+        };
+        self.refuse_depth(&message);
+    }
+
+    /// Refuse an expression too deep for the passes that follow the parser, and read past the
+    /// group it stands in, so the frames above it unwind over balanced tokens and parse what
+    /// follows as written.  One report per def (the latch, reset in `parse_function`), and the
+    /// mark `parse_function` rewinds to once the body is read, dropping what the unwinding
+    /// frames report after it.
+    pub(crate) fn refuse_depth(&mut self, message: &str) {
+        if !self.depth_overflowed {
+            self.depth_overflowed = true;
+            diagnostic!(self.lexer, Level::Error, "{message}");
+            self.depth_trip_mark = Some(self.lexer.diagnostics().mark());
+        }
+        self.skip_rest_of_group();
+    }
+
+    /// loft#1961 — refuse a body whose expression tree is deeper than [`MAX_TREE_DEPTH`],
+    /// which the recursive passes after the parser cannot hold, and drop it so they never see
+    /// it.  `parse_depth` bounds only what nests through `expression`: a long operator chain
+    /// builds a tree as deep as itself without nesting, and a nested vector literal never
+    /// enters `expression`.  So every body is measured, once, by an explicit-stack walk.
+    fn refuse_too_deep_tree(&mut self, body: &mut Value) {
+        if self.depth_overflowed {
+            return;
+        }
+        let depth = body.tree_depth();
+        if depth <= MAX_TREE_DEPTH {
+            return;
+        }
+        let name = self.data.def(self.context).display_name().to_string();
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{name}` holds an expression {depth} levels deep, more than {MAX_TREE_DEPTH} — split \
+             a long chain or a deep nesting with locals (`a = x1 + … + x200; b = …; x = a + b`)"
+        );
+        *body = Value::Null;
     }
 
     /// After the nesting bound trips: read past the rest of the bracket group the refused

@@ -1471,6 +1471,21 @@ impl Value {
         self.for_each_child_mut(&mut |c| c.map_nodes(f));
     }
 
+    /// How deep this expression tree is, every node counted — `Span` wrappers too, because the
+    /// recursive passes after the parser descend through them one call each.  Counted with an
+    /// explicit stack, so a tree too deep for those passes can still be measured (the parser
+    /// asks this to refuse such a tree, loft#1961).
+    #[must_use]
+    pub fn tree_depth(&self) -> usize {
+        let mut deepest = 0;
+        let mut stack = vec![(self, 0usize)];
+        while let Some((node, depth)) = stack.pop() {
+            deepest = deepest.max(depth);
+            node.for_each_child(&mut |c| stack.push((c, depth + 1)));
+        }
+        deepest
+    }
+
     /// Pre-order visitor: calls `f` on this node and every descendant.
     /// `Span` wrappers are transparent, matching [`Value::any_node`].
     pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a Value)) {
