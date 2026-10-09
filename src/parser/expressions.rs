@@ -4023,8 +4023,14 @@ use a separate collection or add after the loop"
         // …except where the identity is a COPY that takes a lease: `p = p` of a PARAMETER whose
         // type declares `OpCopy` makes a structure of the callee's own (`(H-Copy-Lease)`), so it is
         // parsed as the rebind it spells and the hook runs on the new structure.
+        // Not where this statement STARTS the binding: there `x` holds nothing to keep, and
+        // the read is refused like any other (`read-in-own-binding`).
         if op == "="
             && let Value::Var(lhs) = to
+            && !self
+                .binding_starts
+                .iter()
+                .any(|(c, v, _)| (*c, *v) == (self.context, *lhs))
             && self.lexer.peek().has
                 == crate::lexer::LexItem::Identifier(self.vars.name(*lhs).to_string())
             && !(self.vars.is_argument(*lhs)
@@ -8521,15 +8527,31 @@ use a separate collection or add after the loop"
         let mut f_type = self.parse_operators(&Type::Unknown(0), code, &mut parent_tp, 0);
         // A left-hand side that CREATED its variable in pass 1 is that variable's first
         // binding — recorded for both passes to read (`first_bind_at`).
-        if self.first_pass
-            && let Value::Var(v) = code.unspan()
-            && *v >= vars_before_lhs
-        {
-            self.first_bind_at.insert(
-                (self.context, *v),
-                (stmt_start_pos.line, stmt_start_pos.pos),
-            );
+        // A `( … ) =` destructure creates each of its names the same way.
+        if self.first_pass {
+            let created: Vec<u16> = match code.unspan() {
+                Value::Var(v) => vec![*v],
+                Value::Tuple(vs) => vs
+                    .iter()
+                    .filter_map(|v| match v.unspan() {
+                        Value::Var(v) => Some(*v),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            for v in created.into_iter().filter(|v| *v >= vars_before_lhs) {
+                self.first_bind_at
+                    .insert((self.context, v), (stmt_start_pos.line, stmt_start_pos.pos));
+            }
         }
+        // `@FR-B-Scope` — a bind after the name's block ended starts a new binding here too;
+        // noted now, before the right-hand side's own binds overwrite the note.
+        let lhs_after_end = match code.unspan() {
+            Value::Var(v) => self.bind_after_end.filter(|(b, _)| b == v).map(|(b, _)| b),
+            _ => None,
+        };
+        let mut lhs_rebound: Option<u16> = None;
         self.amp_head = AmpHead::No;
         self.in_tuple_lhs = saved_tuple_lhs;
         if let (Type::RefVar(_), Value::Var(v_nr)) = (&f_type, &code) {
@@ -8614,6 +8636,7 @@ use a separate collection or add after the loop"
                 {
                     self.bind_after_end = None;
                     v_nr = self.rebind_after_block(v_nr, &tp);
+                    lhs_rebound = Some(v_nr);
                     *code = Value::Var(v_nr);
                 }
                 // `@FR-B-Ref-Lvalue` — pass 1 made a link to a heap PLACE the place's record
@@ -8738,7 +8761,19 @@ use a separate collection or add after the loop"
             }
             let mut rhs = Value::Null;
             let destr_rhs_pos = *self.lexer.pos();
+            // `@FR-B-Scope` — the names this destructure binds first hold nothing yet.
+            let starts: Vec<(u32, u16, bool)> = var_nrs
+                .iter()
+                .filter(|v| {
+                    self.first_bind_at.get(&(self.context, **v))
+                        == Some(&(stmt_start_pos.line, stmt_start_pos.pos))
+                })
+                .map(|v| (self.context, *v, false))
+                .collect();
+            let outer_starts = self.binding_starts.len();
+            self.binding_starts.extend(starts);
             let mut rhs_type = self.expression(&mut rhs);
+            self.binding_starts.truncate(outer_starts);
             let rhs_fact = std::mem::take(&mut self.operand_fact);
             self.bind_unpacked(&rhs_fact, &var_nrs); // @PLN187
             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
@@ -9515,11 +9550,26 @@ use a separate collection or add after the loop"
                 if let Some(name) = &first_bind {
                     self.first_bind_targets.push(name.clone());
                 }
+                let starts = if op == "="
+                    && let Value::Var(v) = to.unspan()
+                    && (first_bind.is_some()
+                        || lhs_after_end == Some(*v)
+                        || lhs_rebound == Some(*v))
+                {
+                    self.binding_starts
+                        .push((self.context, *v, first_bind.is_none()));
+                    true
+                } else {
+                    false
+                };
                 let result =
                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
                 self.declaring_const = u16::MAX;
                 if first_bind.is_some() {
                     self.first_bind_targets.pop();
+                }
+                if starts {
+                    self.binding_starts.pop();
                 }
                 if op == "="
                     && let Value::Var(v) = to.unspan()

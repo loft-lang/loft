@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Scope` (loft#1955): a binding starts when the statement that binds it completes, so
+// the variable holds nothing on that statement's right-hand side and a read of it there is
+// refused.  On a first binding the refusal is `read-in-own-binding`; on a bind after the
+// name's block ended, the value it would read is the ended binding's, so it is
+// `local-out-of-scope`.  Each refused cell uses its own name, so each `@EXPECT_ERROR` pins one
+// cell: a field of a struct literal, typed (`r1p`), inferred (`r2p`) and nullable (`r3p`); a
+// nested literal (`r4p`); an integer (`r5x`); a vector (`r6v`); a text interpolation (`r7s`);
+// a first binding in a loop body (`r8p`); a tuple destructure (`r9a`); the bare name, which
+// is otherwise the identity `x = x` (`r10x`); an `if` value (`r11x`); a call argument
+// (`r12x`); a bind after an `if` arm's binding ended (`e1y`); and one after an earlier
+// loop's (`e2y`).
+//
+// The neighbours that must keep running are
+// `1955b-a-rebind-reading-its-old-value-keeps-it.loft`.
+//
+// @EXPECT_ERROR: `r1p` is read in the statement that binds it
+// @EXPECT_ERROR: `r2p` is read in the statement that binds it
+// @EXPECT_ERROR: `r3p` is read in the statement that binds it
+// @EXPECT_ERROR: `r4p` is read in the statement that binds it
+// @EXPECT_ERROR: `r5x` is read in the statement that binds it
+// @EXPECT_ERROR: `r6v` is read in the statement that binds it
+// @EXPECT_ERROR: `r7s` is read in the statement that binds it
+// @EXPECT_ERROR: `r8p` is read in the statement that binds it
+// @EXPECT_ERROR: `r9a` is read in the statement that binds it
+// @EXPECT_ERROR: `r10x` is read in the statement that binds it
+// @EXPECT_ERROR: `r11x` is read in the statement that binds it
+// @EXPECT_ERROR: `r12x` is read in the statement that binds it
+// @EXPECT_ERROR: `e1y` was bound inside a block that has ended
+// @EXPECT_ERROR: `e2y` was bound inside a block that has ended
+// @falsified-at: 3de09bdee — interpret exit 1 -> 0, interpret expectations FAIL/14 -> 0/14 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/14 -> 0/14 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1955-a-read-in-its-own-binding-is-refused.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — the control compiles every refused cell, so none of the
+//   fourteen refusals fires and the suite scores the file FAIL.
+//   WITNESS: on 3de09bdee the refused cells compile and read an unbound slot (`r5x` reads 0,
+//   `r1p.z` reads null; `e1y` reads the ended arm's 1).
+//   HOLDS: leak and panic are equal on both trees.
+struct P { a: integer, z: integer }
+struct Q { b: integer }
+struct N { a: integer, q: Q }
+fn yes() -> boolean { true }
+fn id(n: integer) -> integer { n }
+
+fn r1() { k = 3; r1p: P = P { a: k, z: r1p.a + 5 }; println("r1"); }
+fn r2() { k = 3; r2p = P { a: k, z: r2p.a + 5 }; println("r2"); }
+fn r3() { k = 3; r3p: P? = P { a: k, z: r3p.a + 5 }; println("r3"); }
+fn r4() { r4p = N { a: 1, q: Q { b: r4p.a } }; println("r4"); }
+fn r5() { r5x: integer = r5x + 1; println("r5"); }
+fn r6() { r6v: vector<integer> = [len(r6v)]; println("r6"); }
+fn r7() { r7s: text = "a{r7s}"; println("r7"); }
+fn r8() { for k in 0..2 { r8p: P = P { a: k, z: r8p.a }; println("r8"); } }
+fn r9() { (r9a, r9b) = (1, r9a); println("r9"); }
+fn r10() { r10x: integer = r10x; println("r10"); }
+fn r11() { r11x = if yes() { r11x } else { 1 }; println("r11"); }
+fn r12() { r12x = id(r12x); println("r12"); }
+fn e1() { if yes() { e1y = 1; println("e1a"); } e1y = e1y + 1; println("e1"); }
+fn e2() {
+  for i in 0..2 { e2y = i; println("e2a"); }
+  for i in 0..2 { e2y = e2y + i; println("e2"); }
+}
+
+fn main() {
+  r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); e1(); e2();
+}

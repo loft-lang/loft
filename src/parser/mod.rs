@@ -569,6 +569,12 @@ pub struct Parser {
     /// position of the statement whose left-hand side CREATED the variable, and both passes
     /// read it back to tell a first binding from a rebinding.
     pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
+    /// `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the
+    /// statement being parsed STARTS: its first binding, or (`after_end`) a bind after the
+    /// name's block ended.  Innermost last.  The variable holds nothing until that statement
+    /// completes, so a read of it on the right-hand side is refused — `read-in-own-binding`,
+    /// or `local-out-of-scope` when the value it would read is the ended binding's.
+    pub(crate) binding_starts: Vec<(u32, u16, bool)>,
     /// loft#1382 — the statement about to be parsed BEGINS with `if` or `match`, so whatever
     /// that construct yields is discarded (`@FR-F-Block`: a `;`-terminated block's value is
     /// dropped, and `@FR-F-Drop` still runs the work).
@@ -1889,6 +1895,7 @@ impl Parser {
             amp_pending: false,
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
+            binding_starts: Vec::new(),
             stmt_if_pending: false,
             fit_candidate: None,
             fit_armed: None,
