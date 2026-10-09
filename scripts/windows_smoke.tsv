@@ -32,6 +32,7 @@ scripts/release-liveness.py	--help
 scripts/skills-review.py	--help
 scripts/steering_rate.py	--help
 scripts/test_speed.py	--help
+scripts/timing_compare.py	--help
 scripts/unreleased-work.py	--help
 scripts/validator-dryrun.py	--help
 scripts/windows_parity.py	--help

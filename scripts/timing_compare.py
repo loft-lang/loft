@@ -119,6 +119,9 @@ def test_total(cats):
 
 
 def main(argv):
+    if "--help" in argv or "-h" in argv:
+        print(__doc__)
+        return 0
     args = [a for a in argv if not a.startswith("--")]
     opts = dict(a[2:].split("=", 1) for a in argv if a.startswith("--") and "=" in a)
     if len(args) != 2:

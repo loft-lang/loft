@@ -51,6 +51,23 @@ pub struct BuildStep {
 
 static TIMING: OnceLock<Option<Timing>> = OnceLock::new();
 
+/// Append one row to this process's timing ledger (`LOFT_TIMING_LEDGER=<dir>`), with the test
+/// that started it as the last column.  No-op when the ledger is off or cannot be written.
+fn ledger_row(row: &str) {
+    if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
+        && crate::file_access::create_dir_all(&dir).is_ok()
+    {
+        use std::io::Write;
+        let path = std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
+        if let Ok(mut f) = crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().create(true).append(true),
+        ) {
+            let _ = writeln!(f, "{row}\t{}", timing_test());
+        }
+    }
+}
+
 /// The test a ledger row belongs to: `LOFT_TIMING_TEST`, which a test harness sets on the loft
 /// it starts ([`crate::platform::process::harness_command`]), or `-` outside a test.  The
 /// LAST column of every row, so a reader of the earlier columns is unchanged.
@@ -101,20 +118,8 @@ impl Timing {
             Some(s) => eprintln!("[loft-timing] {kind} {name} cache={cache} secs={s:.2}"),
             None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
         }
-        if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && crate::file_access::create_dir_all(&dir).is_ok()
-        {
-            use std::io::Write;
-            let path =
-                std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
-            if let Ok(mut f) = crate::file_access::open_with(
-                path,
-                std::fs::OpenOptions::new().create(true).append(true),
-            ) {
-                let _ = writeln!(f, "{kind}\t{name}\t{cache}\t{secs_s}\t{}", timing_test());
-            }
-        }
+        let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
+        ledger_row(&format!("{kind}\t{name}\t{cache}\t{secs_s}"));
         if let Ok(mut e) = self.events.lock() {
             e.push((kind, name.to_string(), hit, secs));
         }
@@ -126,23 +131,7 @@ impl Timing {
     /// accumulation for [`Timing::report`].
     pub fn record_exec(&self, tool: &'static str, subject: &str, reason: &str, secs: f64) {
         eprintln!("[loft-build] {tool} {subject} secs={secs:.2} reason={reason}");
-        if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && crate::file_access::create_dir_all(&dir).is_ok()
-        {
-            use std::io::Write;
-            let path =
-                std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            if let Ok(mut f) = crate::file_access::open_with(
-                path,
-                std::fs::OpenOptions::new().create(true).append(true),
-            ) {
-                let _ = writeln!(
-                    f,
-                    "exec\t{tool}\t{subject}\t{reason}\t{secs:.2}\t{}",
-                    timing_test()
-                );
-            }
-        }
+        ledger_row(&format!("exec\t{tool}\t{subject}\t{reason}\t{secs:.2}"));
         if let Ok(mut st) = self.steps.lock() {
             st.push(BuildStep {
                 tool,
@@ -159,19 +148,7 @@ impl Timing {
     /// (`scripts/timing_compare.py`) instead of by bisecting commits.  Ledger only: the
     /// phases already print under `LOFT_TIMING`.
     pub fn phase(&self, name: &'static str, secs: f64) {
-        if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && crate::file_access::create_dir_all(&dir).is_ok()
-        {
-            use std::io::Write;
-            let path =
-                std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            if let Ok(mut f) = crate::file_access::open_with(
-                path,
-                std::fs::OpenOptions::new().create(true).append(true),
-            ) {
-                let _ = writeln!(f, "phase\t{name}\t{secs:.4}\t{}", timing_test());
-            }
-        }
+        ledger_row(&format!("phase\t{name}\t{secs:.4}"));
     }
 
     /// Print the per-invocation breakdown, slowest first.
