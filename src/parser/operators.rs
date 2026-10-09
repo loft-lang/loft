@@ -1775,8 +1775,29 @@ impl Parser {
             || self.lexer.peek().has == crate::lexer::LexItem::None
     }
 
-    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`: one
+    /// lookup where each level of the ladder scanned its own list.  Matches exactly what
+    /// `has_token` matches (a `LexItem::Token`, keywords included), so it answers the same
+    /// operator the scans found.
+    pub(crate) fn peek_binary_operator(&self) -> Option<(usize, &'static str)> {
+        let crate::lexer::LexItem::Token(t) = &self.lexer.peek().has else {
+            return None;
+        };
+        OPERATORS.iter().enumerate().find_map(|(level, ops)| {
+            ops.iter()
+                .find(|op| **op == t.as_str())
+                .map(|op| (level, *op))
+        })
+    }
+
+    /// The binary operators of one expression (`formal/grammar.md` `(G-Prec)` / `(G-Assoc)`),
+    /// starting at level `precedence`: everything looser than that is left to the caller.
+    ///
+    /// Two drivers build the same IR.  The LADDER descends one frame per level before every
+    /// operand — twelve frames for a bare `x`.  @PLN188's CLIMBING driver reads the operand
+    /// first and enters only the levels an operator actually stands at, through the same
+    /// per-level body ([`Self::level_run`]); `LOFT_PARSE_CLIMB=1` selects it while the two are
+    /// compared.
     pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
@@ -1784,146 +1805,22 @@ impl Parser {
         parent_tp: &mut Type,
         precedence: usize,
     ) -> Type {
-        let mut ls = Vec::new();
+        if parse_climb_enabled() {
+            self.parse_operators_climb(var_tp, code, parent_tp, precedence)
+        } else {
+            self.parse_operators_ladder(var_tp, code, parent_tp, precedence)
+        }
+    }
+
+    fn parse_operators_ladder(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        precedence: usize,
+    ) -> Type {
         if precedence >= OPERATORS.len() {
-            // @PLN87 B-Ref-AnnotationOnly — the FIRST primary of a binding RHS (or of a
-            // statement) consumes the head marker; every operand after it sees `false`.
-            // Taken before the `&` test so a non-`&` head (`1` in `1 + &a`, the `(` in
-            // `(&a)`, a call receiver) consumes it too — that is what makes the `&`
-            // arriving later a sub-expression use rather than the whole RHS.
-            let at_head = std::mem::take(&mut self.amp_head);
-            // @PLN87 — a PREFIX `&<lvalue>` is a reference-to, distinct from the binary
-            // `&` (bitwise-and "Land"). The binary form only ever sits BETWEEN operands,
-            // so a `&` seen here at an operand START is the prefix: it flags the `&`-ness
-            // via `amp_pending` so `parse_assign_op` can lower a scalar reference to
-            // `OpCreateStack`. (`&&` is its own token, so this never mis-fires on
-            // logical-and.)
-            let amp_start = {
-                let p = self.lexer.peek_pos();
-                (p.line, p.pos)
-            };
-            if self.lexer.has_token("&") {
-                self.amp_pending = true;
-                let t = self.parse_part(var_tp, code, parent_tp);
-                // `@FR-E-Eq`, @C91 — `&a == &b` asks whether two names are ONE record.  A `&`
-                // just before a `==` / `!=`, or opening the right operand of one, is recorded
-                // rather than refused; the comparison claims it only when it is that whole
-                // operand, and refuses it otherwise (`handle_operator`).
-                if self.lexer.peek_token("==")
-                    || self.lexer.peek_token("!=")
-                    || self.eq_rhs_at == Some(amp_start)
-                {
-                    self.amp_pending = false;
-                    let end = {
-                        let p = self.lexer.peek_pos();
-                        (p.line, p.pos)
-                    };
-                    self.amp_identity = Some(super::AmpIdentity {
-                        start: amp_start,
-                        end,
-                        place: Self::is_amp_place(code, &self.data),
-                    });
-                    return t;
-                }
-                // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
-                // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
-                // since loft statements are `;`-terminated — is always followed by `;`
-                // (a block-final reference `{ … &x }` by `}`).  `parse_part` has consumed
-                // the whole lvalue, so the NEXT token classifies the use:
-                //   `=`/`+=`/…  → `&` on the assignment TARGET (`&var = …`)   [error]
-                //   not `;`/`}` → `&` as a sub-expression / argument          [error]
-                //   `;`/`}`     → a valid binding RHS → check the operand is a PLACE (#1)
-                // (Local peek; avoids the global `amp_pending` flag which leaks.)
-                if !self.first_pass {
-                    let next_assign = self.lexer.peek_token("=")
-                        || self.lexer.peek_token("+=")
-                        || self.lexer.peek_token("-=")
-                        || self.lexer.peek_token("*=")
-                        || self.lexer.peek_token("%=")
-                        || self.lexer.peek_token("/=");
-                    // What ENDS the operand depends on the position the head opened in.
-                    // A statement ends at `;` (a block-final one at `}`); a struct-literal
-                    // field value ends at the `,` before the next field just as well.
-                    // `@FR-B-Ref-StoredRef` admits the `&` on the strength of the FIELD'S
-                    // TYPE and conditions it on nothing else, so a `reference<τ>` field
-                    // that is not the LAST field in the literal is the same legal position
-                    // — `TrailNN { l: &pool[0], n: 4 }`.  Reading only `;`/`}` refused it,
-                    // which made the rule's one admitted position depend on field order.
-                    let next_terminates = self.lexer.peek_token(";")
-                        || self.lexer.peek_token("}")
-                        || (at_head == AmpHead::StoredRefField && self.lexer.peek_token(","));
-                    // An invalid `&` must not stay "pending": clear the flag in each
-                    // error branch so it cannot leak into `parse_assign_op`'s
-                    // reference-lowering (1160) or the D-bind-7 bare-statement guard
-                    // in `parse_assign` (which would then double-report).  Only the
-                    // accepted case (terminates AND is a place) keeps `amp_pending`
-                    // true, to be consumed by the binding that follows.
-                    if next_assign {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` cannot appear on the left of an assignment — it marks a \
-                             binding as a link to its source at the binding site (`x = &src`), \
-                             not an assignment target; drop the `&` (the binding is already linked)"
-                        );
-                        self.amp_pending = false;
-                    } else if !next_terminates || at_head == AmpHead::No {
-                        // `next_terminates` alone accepts the LAST operand of any
-                        // expression (`b = 1 + &a;`, `b += &a;`, `S { x: &a }`, a
-                        // block-final `{ 1 + &a }`) — it only proves nothing FOLLOWS
-                        // the `&`, not that nothing PRECEDED it.  `at_head` supplies
-                        // the other half, so the pair is total.
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` is not a general operator — it binds a reference only as the \
-                             whole right-hand side of an assignment (`a = &b`). Pass a `&` \
-                             parameter WITHOUT `&` (`f(x)`, the reference comes from the \
-                             parameter type); do not use `&` in an argument or sub-expression"
-                        );
-                        self.amp_pending = false;
-                    } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
-                        // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
-                        // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
-                        // ONE τ and has no conversion for a different one.  Unenforced, the link
-                        // read and wrote the target's slot at the ANNOTATION's width and bias and
-                        // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
-                        // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
-                        // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
-                        //
-                        // `u8` was the one shape that read correctly, because its bias is zero and
-                        // its encoding is the identity — the covered spelling is the one that
-                        // cannot fail, which is why this survived.
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "a `&` link takes its target's type, so the annotation `&{want}` cannot \
-                             re-type a link to a `{got}` — they are different ranges, and the link \
-                             would read the stored bytes at the wrong width. Drop the annotation \
-                             (`p = &x` takes the target's type), or write `&{got}`"
-                        );
-                        self.amp_pending = false;
-                    } else if !Self::is_amp_place(code, &self.data)
-                        && matches!(t.base(), Type::Tuple(_))
-                    {
-                        self.refuse_tuple_value_link();
-                        self.amp_pending = false;
-                    } else if !Self::is_amp_place(code, &self.data) {
-                        // #1 — a valid binding RHS still needs a PLACE operand.
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` requires an addressable operand — a variable, struct field, \
-                             or vector element — not a temporary (a literal, computed value, \
-                             or call result)"
-                        );
-                        self.amp_pending = false;
-                    }
-                }
-                return t;
-            }
-            let t = self.parse_part(var_tp, code, parent_tp);
-            return t;
+            return self.parse_primary(var_tp, code, parent_tp);
         }
         let orig_var = if let Value::Var(nr) = code {
             *nr
@@ -1934,7 +1831,237 @@ impl Parser {
         // "Unknown variable" caret here, not at the cursor that has drifted to
         // the operator / statement terminator while the operand was parsed.
         let operand_pos = *self.lexer.peek_pos();
-        let mut current_type = self.parse_operators(var_tp, code, parent_tp, precedence + 1);
+        let current_type = self.parse_operators(var_tp, code, parent_tp, precedence + 1);
+        self.level_run(
+            var_tp,
+            code,
+            parent_tp,
+            precedence,
+            current_type,
+            orig_var,
+            operand_pos,
+        )
+    }
+
+    /// @PLN188 — precedence climbing.  The operand first, then a RUN per level an operator
+    /// stands at: [`Self::level_run`] consumes every consecutive operator of its level (each
+    /// right operand parsed one level tighter, or at its own level for the right-associative
+    /// `**` and `??`), so when it returns the next operator is LOOSER — a tighter one went to
+    /// a right operand.  The levels therefore strictly descend, exactly the order in which the
+    /// ladder's frames return: a run is entered only below the last one, and never below
+    /// `precedence`.  Every run reads the expression's entry `orig_var` and `operand_pos`,
+    /// which every ladder frame captured before any token was read.
+    fn parse_operators_climb(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        precedence: usize,
+    ) -> Type {
+        if precedence >= OPERATORS.len() {
+            return self.parse_primary(var_tp, code, parent_tp);
+        }
+        let orig_var = if let Value::Var(nr) = code {
+            *nr
+        } else {
+            u16::MAX
+        };
+        let operand_pos = *self.lexer.peek_pos();
+        let mut current_type = self.parse_primary(var_tp, code, parent_tp);
+        let mut ceiling = OPERATORS.len();
+        loop {
+            // `is` stands at the comparison level; the ladder reads it there when no
+            // comparison operator follows.
+            let next = self
+                .peek_binary_operator()
+                .or_else(|| self.lexer.peek_token("is").then_some((3, "is")));
+            let Some((level, op)) = next else {
+                return current_type;
+            };
+            if level < precedence || level >= ceiling {
+                return current_type;
+            }
+            // A void left operand takes only an operator that cannot begin the next
+            // statement; before any other, every ladder frame returned.
+            if matches!(current_type, Type::Void) && !VOID_LEFT_OPERATORS.contains(&op) {
+                return current_type;
+            }
+            current_type = self.level_run(
+                var_tp,
+                code,
+                parent_tp,
+                level,
+                current_type,
+                orig_var,
+                operand_pos,
+            );
+            ceiling = level;
+        }
+    }
+
+    /// The operand of an expression: a prefix `&<place>` or whatever [`Self::parse_part`]
+    /// reads.  The bottom of the operator ladder.
+    fn parse_primary(&mut self, var_tp: &Type, code: &mut Value, parent_tp: &mut Type) -> Type {
+        // @PLN87 B-Ref-AnnotationOnly — the FIRST primary of a binding RHS (or of a
+        // statement) consumes the head marker; every operand after it sees `false`.
+        // Taken before the `&` test so a non-`&` head (`1` in `1 + &a`, the `(` in
+        // `(&a)`, a call receiver) consumes it too — that is what makes the `&`
+        // arriving later a sub-expression use rather than the whole RHS.
+        let at_head = std::mem::take(&mut self.amp_head);
+        // @PLN87 — a PREFIX `&<lvalue>` is a reference-to, distinct from the binary
+        // `&` (bitwise-and "Land"). The binary form only ever sits BETWEEN operands,
+        // so a `&` seen here at an operand START is the prefix: it flags the `&`-ness
+        // via `amp_pending` so `parse_assign_op` can lower a scalar reference to
+        // `OpCreateStack`. (`&&` is its own token, so this never mis-fires on
+        // logical-and.)
+        let amp_start = {
+            let p = self.lexer.peek_pos();
+            (p.line, p.pos)
+        };
+        if self.lexer.has_token("&") {
+            self.amp_pending = true;
+            let t = self.parse_part(var_tp, code, parent_tp);
+            // `@FR-E-Eq`, @C91 — `&a == &b` asks whether two names are ONE record.  A `&`
+            // just before a `==` / `!=`, or opening the right operand of one, is recorded
+            // rather than refused; the comparison claims it only when it is that whole
+            // operand, and refuses it otherwise (`handle_operator`).
+            if self.lexer.peek_token("==")
+                || self.lexer.peek_token("!=")
+                || self.eq_rhs_at == Some(amp_start)
+            {
+                self.amp_pending = false;
+                let end = {
+                    let p = self.lexer.peek_pos();
+                    (p.line, p.pos)
+                };
+                self.amp_identity = Some(super::AmpIdentity {
+                    start: amp_start,
+                    end,
+                    place: Self::is_amp_place(code, &self.data),
+                });
+                return t;
+            }
+            // @PLN87 — `&` is a binding marker, NOT a general operator.  It is valid
+            // ONLY as the WHOLE right-hand side of an assignment (`a = &b`), which —
+            // since loft statements are `;`-terminated — is always followed by `;`
+            // (a block-final reference `{ … &x }` by `}`).  `parse_part` has consumed
+            // the whole lvalue, so the NEXT token classifies the use:
+            //   `=`/`+=`/…  → `&` on the assignment TARGET (`&var = …`)   [error]
+            //   not `;`/`}` → `&` as a sub-expression / argument          [error]
+            //   `;`/`}`     → a valid binding RHS → check the operand is a PLACE (#1)
+            // (Local peek; avoids the global `amp_pending` flag which leaks.)
+            if !self.first_pass {
+                let next_assign = self.lexer.peek_token("=")
+                    || self.lexer.peek_token("+=")
+                    || self.lexer.peek_token("-=")
+                    || self.lexer.peek_token("*=")
+                    || self.lexer.peek_token("%=")
+                    || self.lexer.peek_token("/=");
+                // What ENDS the operand depends on the position the head opened in.
+                // A statement ends at `;` (a block-final one at `}`); a struct-literal
+                // field value ends at the `,` before the next field just as well.
+                // `@FR-B-Ref-StoredRef` admits the `&` on the strength of the FIELD'S
+                // TYPE and conditions it on nothing else, so a `reference<τ>` field
+                // that is not the LAST field in the literal is the same legal position
+                // — `TrailNN { l: &pool[0], n: 4 }`.  Reading only `;`/`}` refused it,
+                // which made the rule's one admitted position depend on field order.
+                let next_terminates = self.lexer.peek_token(";")
+                    || self.lexer.peek_token("}")
+                    || (at_head == AmpHead::StoredRefField && self.lexer.peek_token(","));
+                // An invalid `&` must not stay "pending": clear the flag in each
+                // error branch so it cannot leak into `parse_assign_op`'s
+                // reference-lowering (1160) or the D-bind-7 bare-statement guard
+                // in `parse_assign` (which would then double-report).  Only the
+                // accepted case (terminates AND is a place) keeps `amp_pending`
+                // true, to be consumed by the binding that follows.
+                if next_assign {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` cannot appear on the left of an assignment — it marks a \
+                             binding as a link to its source at the binding site (`x = &src`), \
+                             not an assignment target; drop the `&` (the binding is already linked)"
+                    );
+                    self.amp_pending = false;
+                } else if !next_terminates || at_head == AmpHead::No {
+                    // `next_terminates` alone accepts the LAST operand of any
+                    // expression (`b = 1 + &a;`, `b += &a;`, `S { x: &a }`, a
+                    // block-final `{ 1 + &a }`) — it only proves nothing FOLLOWS
+                    // the `&`, not that nothing PRECEDED it.  `at_head` supplies
+                    // the other half, so the pair is total.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` is not a general operator — it binds a reference only as the \
+                             whole right-hand side of an assignment (`a = &b`). Pass a `&` \
+                             parameter WITHOUT `&` (`f(x)`, the reference comes from the \
+                             parameter type); do not use `&` in an argument or sub-expression"
+                    );
+                    self.amp_pending = false;
+                } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
+                    // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
+                    // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
+                    // ONE τ and has no conversion for a different one.  Unenforced, the link
+                    // read and wrote the target's slot at the ANNOTATION's width and bias and
+                    // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
+                    // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
+                    // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
+                    //
+                    // `u8` was the one shape that read correctly, because its bias is zero and
+                    // its encoding is the identity — the covered spelling is the one that
+                    // cannot fail, which is why this survived.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a `&` link takes its target's type, so the annotation `&{want}` cannot \
+                             re-type a link to a `{got}` — they are different ranges, and the link \
+                             would read the stored bytes at the wrong width. Drop the annotation \
+                             (`p = &x` takes the target's type), or write `&{got}`"
+                    );
+                    self.amp_pending = false;
+                } else if !Self::is_amp_place(code, &self.data)
+                    && matches!(t.base(), Type::Tuple(_))
+                {
+                    self.refuse_tuple_value_link();
+                    self.amp_pending = false;
+                } else if !Self::is_amp_place(code, &self.data) {
+                    // #1 — a valid binding RHS still needs a PLACE operand.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`&` requires an addressable operand — a variable, struct field, \
+                             or vector element — not a temporary (a literal, computed value, \
+                             or call result)"
+                    );
+                    self.amp_pending = false;
+                }
+            }
+            return t;
+        }
+        self.parse_part(var_tp, code, parent_tp)
+    }
+
+    /// One level's operators of an expression whose left operand is already in `code`: every
+    /// consecutive operator of level `precedence`, with the state that lives for one such run —
+    /// the `+` chain of text / vector operands lowered once, the comparison that may not chain,
+    /// `is` at the comparison level.  Returns when the next token is no operator of this level.
+    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the ladder frame's state, passed whole"
+    )]
+    fn level_run(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        precedence: usize,
+        mut current_type: Type,
+        orig_var: u16,
+        operand_pos: Position,
+    ) -> Type {
+        let mut ls = Vec::new();
         // @PLN102 pre-freeze — comparison operators are NON-ASSOCIATIVE.  A chain like
         // `a == b == c` (or `a < b < c`) parses as `(a == b) == c`, silently comparing a
         // BOOLEAN to the third operand — a classic footgun.  Reject the second comparison at
@@ -1955,10 +2082,10 @@ impl Parser {
             // read the right-hand side so the parse stays aligned.
             if matches!(current_type, Type::Void) {
                 let at = *self.lexer.peek_pos();
-                let Some(op) = OPERATORS[precedence]
-                    .iter()
-                    .copied()
-                    .find(|op| VOID_LEFT_OPERATORS.contains(op) && self.lexer.peek_token(op))
+                let Some(op) = self
+                    .peek_binary_operator()
+                    .filter(|(level, op)| *level == precedence && VOID_LEFT_OPERATORS.contains(op))
+                    .map(|(_, op)| op)
                 else {
                     return current_type;
                 };
@@ -1993,11 +2120,11 @@ impl Parser {
                 (p.line, p.pos)
             };
             let mut operator = "";
-            for op in OPERATORS[precedence] {
-                if self.lexer.has_token(op) {
-                    operator = op;
-                    break;
-                }
+            if let Some((level, op)) = self.peek_binary_operator()
+                && level == precedence
+            {
+                self.lexer.has_token(op);
+                operator = op;
             }
             // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
             // the right operand is missing; left to run on, the operator's call was built with
@@ -7319,4 +7446,11 @@ mod fault_warning_tests {
             }
         }
     }
+}
+
+/// @PLN188 — `LOFT_PARSE_CLIMB=1` parses binary operators by precedence climbing
+/// ([`Parser::parse_operators`]) while the two drivers are compared; read once per process.
+fn parse_climb_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_PARSE_CLIMB").is_some_and(|v| v == "1"))
 }
