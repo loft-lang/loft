@@ -44,7 +44,7 @@ before="$(readlink -f "$before")"; after="$(readlink -f "$after")"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 one() {
   local f="$1" bin="$2" out="$3"
-  ( cd "$(dirname "$f")" && env LOFT_NO_CACHE=1 "${envs[@]}" LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$(basename "$f")" >"$out" 2>"$out.err" )
+  ( cd "$(dirname "$f")" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$(basename "$f")" >"$out" 2>"$out.err" )
 }
 export -f one; export root; export envs
 find "$root/tests/scripts" "$root/tests/docs" "$root/examples" -type f -name '*.loft' | LC_ALL=C sort > "$work/files"
