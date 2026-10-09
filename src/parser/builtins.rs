@@ -689,7 +689,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "parallel_for requires at least 3 arguments: fn worker, input_vector, threads"
+                "parallel_for requires at least 3 arguments: worker, input_vector, threads"
             );
             return Type::Unknown(0);
         }
@@ -699,7 +699,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "parallel_for: first argument must be a function reference (use fn <name>)"
+                "parallel_for: first argument must be a function — pass its name"
             );
             return Type::Unknown(0);
         };
@@ -829,7 +829,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "par_fold requires exactly 4 arguments: items, init, fn fold, threads"
+                "par_fold requires exactly 4 arguments: items, init, fold, threads"
             );
             return Type::Unknown(0);
         }
@@ -870,7 +870,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "par_fold: third argument must be a function reference (use `fn <name>`)"
+                "par_fold: third argument must be a function — pass its name, or a lambda with typed parameters `fn(acc: integer, x: integer) -> integer {{ … }}`"
             );
             return Type::Unknown(0);
         };

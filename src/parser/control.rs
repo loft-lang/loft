@@ -21259,7 +21259,7 @@ impl Parser {
     //
     // The parser intercepts calls by name "parallel_for" before normal overload
     // resolution.  Compile-time checks performed here:
-    // - First arg must be `Type::Function(args, ret)` (produced by `fn <name>` expression).
+    // - First arg must be `Type::Function(args, ret)` (a function's bare name or a lambda).
     // - Second arg must be `Type::Vector(T, _)`.
     // - Worker's first parameter must be a reference to T (type checked by name).
     // - Return type must be a primitive: integer, long, float, or boolean.
@@ -21299,7 +21299,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "reduce requires 3 arguments: reduce(vector, init, fn f)"
+                "reduce requires 3 arguments: reduce(vector, init, f)"
             );
             return Type::Unknown(0);
         }
@@ -21319,7 +21319,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "reduce: third argument must be a function reference (use fn <name>)"
+                "reduce: third argument must be a function — pass its name, or a lambda `|acc, x| {{ … }}`"
             );
             return Type::Unknown(0);
         };
@@ -21416,7 +21416,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "reduce: function must be a compile-time constant (use fn <name>)"
+                "reduce: the function must be known when the program is compiled — pass its name, or a lambda `|acc, x| {{ … }}`"
             );
             return Type::Unknown(0);
         };

@@ -628,8 +628,10 @@ The key implementation detail: a `&vector<T>` parameter is passed via `OpCreateS
 
 ### Function references — `parse_fn_ref`
 
-The `fn <name>` atom expression (parsed by `parse_fn_ref`) produces a compile-time
-integer containing the definition number of the named function:
+A function's bare name in value position produces a compile-time integer containing the
+definition number of the named function.  `fn <name>` there is refused (*"Use the function
+name directly, without 'fn' prefix"*); `parse_fn_ref` resolves the name after that error so
+the parse continues:
 
 ```loft
 fn double_score(r: const Score) -> integer { r.value * 2 }

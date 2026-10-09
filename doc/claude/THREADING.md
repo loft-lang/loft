@@ -3,7 +3,7 @@
 
 ## Contents
 - [Current State](#current-state)
-- [`fn` Expression](#fn-expression)
+- [Function References](#function-references)
 - [`parallel_for` Call Rewriting](#parallel_for-call-rewriting)
 - [Runtime](#runtime)
 - [Compiler Validation Summary](#compiler-validation-summary)
@@ -15,7 +15,7 @@
 
 The public API for parallel execution is the `par(...)` for-loop clause.  The internal functions `parallel_for_int`, `parallel_for`, and `parallel_get_*` are declared without `pub` in `default/01_code.loft` and must not be called directly from user code.
 
-Function references (`fn <name>`) are now fully first-class (T1-1 complete): they can be stored in variables of type `fn(T) -> R`, passed as parameters, and called directly via `f(args)`. See the [`fn` Expression](#fn-expression) section for details.
+A function is passed as a value by its bare name (`double_score`), or written in place as a lambda (`|x| { … }`, or `fn(x: T) -> R { … }` where the parameter types cannot be inferred). Such a value can be stored in a variable of type `fn(T) -> R`, passed as a parameter, and called directly via `f(args)`. See [Function References](#function-references).
 
 ### `par(...)` Parallel For-Loop (public API)
 
@@ -45,12 +45,12 @@ Worker rules: see `par(...)` Parallel For-Loop Syntax below.
 
 ---
 
-## `fn` Expression
+## Function References
 
-A `fn <name>` expression in value position produces a `Type::Function(args, ret)` value.  The runtime representation is the definition number (`d_nr`) stored as an `i32`.
+A function's bare name in value position produces a `Type::Function(args, ret)` value. Writing `fn <name>` there is refused (*"Use the function name directly, without 'fn' prefix"*).  The runtime representation is the definition number (`d_nr`) stored as an `i32`.
 
 ```loft
-f = fn double_score;   // type: fn(const Score) -> integer
+f = double_score;      // type: fn(const Score) -> integer
                        // runtime value: d_nr of double_score
 ```
 
@@ -79,7 +79,7 @@ fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
 
 The parser special-cases calls to `parallel_for` in `parse_call` (similar to `assert`).  After collecting the argument list, it calls `parse_parallel_for` which:
 
-1. Verifies `types[0]` is `Type::Function(args, ret)` (produced by `fn <name>`).
+1. Verifies `types[0]` is `Type::Function(args, ret)` (a function's bare name).
 2. Verifies `types[1]` is `Type::Vector(T, _)`.
 3. Checks worker return type is a supported primitive.
 4. Validates extra arg count == worker's extra param count.
@@ -241,9 +241,9 @@ the threads would still have to come from the host — which is what @PLN117 alr
 
 | Check | Location | Error |
 |---|---|---|
-| `fn <name>` names an existing function | `parse_fn_ref` | `"Unknown function '{name}'"` |
-| `fn <name>` resolves to a `DefType::Function` | `parse_fn_ref` | `"'{name}' is not a function"` |
-| First `parallel_for` arg is `Type::Function` | `parse_parallel_for` | `"first argument must be a function reference (use fn <name>)"` |
+| A function reference names an existing function | `parse_fn_ref` | `"Unknown function '{name}'"` |
+| A function reference resolves to a `DefType::Function` | `parse_fn_ref` | `"'{name}' is not a function"` |
+| First `parallel_for` arg is `Type::Function` | `parse_parallel_for` | `"first argument must be a function — pass its name"` |
 | Second arg is `Type::Vector` | `parse_parallel_for` | `"second argument must be a vector"` |
 | Extra arg count matches worker | `parse_parallel_for` | `"wrong number of extra arguments"` |
 | Every captured argument but the element is a scalar | `parse_parallel_worker_fn` | `"captured argument '<c>' is a reference (<T>)…"` |
