@@ -1796,8 +1796,8 @@ impl Parser {
     /// Two drivers build the same IR.  The LADDER descends one frame per level before every
     /// operand — twelve frames for a bare `x`.  @PLN188's CLIMBING driver reads the operand
     /// first and enters only the levels an operator actually stands at, through the same
-    /// per-level body ([`Self::level_run`]); `LOFT_PARSE_CLIMB=1` selects it while the two are
-    /// compared.
+    /// per-level body ([`Self::level_run`]), and is the default; `LOFT_PARSE_LADDER=1` selects
+    /// the ladder while the two are compared.
     pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
@@ -7448,9 +7448,10 @@ mod fault_warning_tests {
     }
 }
 
-/// @PLN188 — `LOFT_PARSE_CLIMB=1` parses binary operators by precedence climbing
-/// ([`Parser::parse_operators`]) while the two drivers are compared; read once per process.
+/// @PLN188 — binary operators are parsed by precedence climbing ([`Parser::parse_operators`]);
+/// `LOFT_PARSE_LADDER=1` selects the ladder it replaced, while the two are still compared.
+/// Read once per process.
 fn parse_climb_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("LOFT_PARSE_CLIMB").is_some_and(|v| v == "1"))
+    *ON.get_or_init(|| std::env::var_os("LOFT_PARSE_LADDER").is_none_or(|v| v != "1"))
 }
