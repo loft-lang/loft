@@ -348,24 +348,14 @@ When `use foo;` is encountered, the parser looks for `foo.loft` in the following
 
 ### Operator precedence
 
-Binary operators are parsed using a recursive-descent precedence climber. `OPERATORS` lists levels from lowest to highest precedence:
-
-```rust
-static OPERATORS: &[&[&str]] = &[
-    &["||", "or"],                           // 0 — lowest
-    &["&&", "and"],
-    &["==", "!=", "<", "<=", ">", ">="],
-    &["|"],
-    &["^"],
-    &["&"],
-    &["<<", ">>"],
-    &["-", "+"],
-    &["*", "/", "%"],
-    &["as"],                                 // 9 — highest
-];
-```
-
-`parse_operators(precedence)` handles one level; it calls `parse_operators(precedence+1)` for the right operand. At the top of the recursion, `parse_part` handles postfix `.field` and `[index]` access, and `parse_single` handles atoms.
+Binary operators are parsed by precedence climbing over `OPERATORS` (`src/parser/mod.rs`),
+whose levels — loosest first — and associativity are the grammar's:
+[formal/grammar.md](formal/grammar.md) `(G-Prec)` / `(G-Assoc)`.  `parse_operators(p)` reads
+the operand (`parse_primary`), then runs each level an operator stands at (`level_run`), as
+long as that level is at least `p`: every consecutive operator of the level, each right
+operand parsed one level tighter (at its own level for the right-associative `**` and
+`??`).  The levels strictly descend, so an operand costs one call, not one per level.
+`parse_part` handles postfix `.field` and `[index]` access, and `parse_single` handles atoms.
 
 The postfix chain does not open on a `Void` subject. `if` is an expression, so a bare
 `if c { … }` STATEMENT reaches the chain like any value, and without that guard it consumed

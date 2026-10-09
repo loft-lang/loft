@@ -10,6 +10,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Binary operators parsed by precedence climbing (@PLN188, 2026-10-09)
+
+`parse_operators` (`src/parser/operators.rs`) reads the operand first (`parse_primary`) and
+then runs each level an operator actually stands at (`level_run`, the per-level body
+unchanged), levels strictly descending, where it used to descend one frame per level of
+`OPERATORS` before every operand.  The emitted IR, bytecode, native Rust and every
+diagnostic are byte-identical over the corpus (`scripts/introspect_diff.sh`, 2406 files),
+pinned by `tests/scripts/operator-levels-group-as-the-grammar-says.loft`.  Stack per nesting
+level in the parser 17.2 KB → 11.6 KB; front-end time 3–5 % lower on the measured scripts.
+The nesting bound stays 256: the scope pass (`scopes/scan.rs`, scan depth 1000) is now the
+first to fail on deeper input.  `introspect_diff.sh` refuses a run in which no file produced
+any introspection (a `--root` without `default/` read as IDENTICAL).
+
 ### `exit(code)`, a subprocess run answered from a recording, and the first script over `run` (2026-10-08)
 
 **`exit(code)`** (`default/01_code.loft`): the program ends with `code` as its status, in

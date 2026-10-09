@@ -1775,10 +1775,9 @@ impl Parser {
             || self.lexer.peek().has == crate::lexer::LexItem::None
     }
 
-    /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`: one
-    /// lookup where each level of the ladder scanned its own list.  Matches exactly what
-    /// `has_token` matches (a `LexItem::Token`, keywords included), so it answers the same
-    /// operator the scans found.
+    /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`, by one
+    /// lookup on the token's text.  Matches exactly what `has_token` matches (a
+    /// `LexItem::Token`, keywords included).
     pub(crate) fn peek_binary_operator(&self) -> Option<(usize, &'static str)> {
         let crate::lexer::LexItem::Token(t) = &self.lexer.peek().has else {
             return None;
@@ -1793,65 +1792,14 @@ impl Parser {
     /// The binary operators of one expression (`formal/grammar.md` `(G-Prec)` / `(G-Assoc)`),
     /// starting at level `precedence`: everything looser than that is left to the caller.
     ///
-    /// Two drivers build the same IR.  The LADDER descends one frame per level before every
-    /// operand — twelve frames for a bare `x`.  @PLN188's CLIMBING driver reads the operand
-    /// first and enters only the levels an operator actually stands at, through the same
-    /// per-level body ([`Self::level_run`]), and is the default; `LOFT_PARSE_LADDER=1` selects
-    /// the ladder while the two are compared.
-    pub(crate) fn parse_operators(
-        &mut self,
-        var_tp: &Type,
-        code: &mut Value,
-        parent_tp: &mut Type,
-        precedence: usize,
-    ) -> Type {
-        if parse_climb_enabled() {
-            self.parse_operators_climb(var_tp, code, parent_tp, precedence)
-        } else {
-            self.parse_operators_ladder(var_tp, code, parent_tp, precedence)
-        }
-    }
-
-    fn parse_operators_ladder(
-        &mut self,
-        var_tp: &Type,
-        code: &mut Value,
-        parent_tp: &mut Type,
-        precedence: usize,
-    ) -> Type {
-        if precedence >= OPERATORS.len() {
-            return self.parse_primary(var_tp, code, parent_tp);
-        }
-        let orig_var = if let Value::Var(nr) = code {
-            *nr
-        } else {
-            u16::MAX
-        };
-        // Start of the left operand — `known_var_or_type` below must point an
-        // "Unknown variable" caret here, not at the cursor that has drifted to
-        // the operator / statement terminator while the operand was parsed.
-        let operand_pos = *self.lexer.peek_pos();
-        let current_type = self.parse_operators(var_tp, code, parent_tp, precedence + 1);
-        self.level_run(
-            var_tp,
-            code,
-            parent_tp,
-            precedence,
-            current_type,
-            orig_var,
-            operand_pos,
-        )
-    }
-
-    /// @PLN188 — precedence climbing.  The operand first, then a RUN per level an operator
-    /// stands at: [`Self::level_run`] consumes every consecutive operator of its level (each
+    /// Precedence climbing (@PLN188): the operand first, then a RUN per level an operator
+    /// stands at — [`Self::level_run`] consumes every consecutive operator of its level (each
     /// right operand parsed one level tighter, or at its own level for the right-associative
-    /// `**` and `??`), so when it returns the next operator is LOOSER — a tighter one went to
-    /// a right operand.  The levels therefore strictly descend, exactly the order in which the
-    /// ladder's frames return: a run is entered only below the last one, and never below
-    /// `precedence`.  Every run reads the expression's entry `orig_var` and `operand_pos`,
-    /// which every ladder frame captured before any token was read.
-    fn parse_operators_climb(
+    /// `**` and `??`), so when it returns the next operator is LOOSER, a tighter one having gone
+    /// to a right operand.  The levels therefore strictly descend: a run is entered only below
+    /// the last one, and never below `precedence`.  Every run reads the expression's entry
+    /// `orig_var` and `operand_pos`.  An operand costs one call here, not one per level.
+    pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
         code: &mut Value,
@@ -1870,20 +1818,18 @@ impl Parser {
         let mut current_type = self.parse_primary(var_tp, code, parent_tp);
         let mut ceiling = OPERATORS.len();
         loop {
-            // `is` stands at the comparison level; the ladder reads it there when no
+            // `is` stands at the comparison level: `level_run` reads it there when no
             // comparison operator follows.
             let next = self
                 .peek_binary_operator()
                 .or_else(|| self.lexer.peek_token("is").then_some((3, "is")));
-            let Some((level, op)) = next else {
+            let Some((level, _)) = next else {
                 return current_type;
             };
+            // A void left operand followed by an operator that can begin the next statement
+            // needs no case here: its run returns without reading it, and the same level is
+            // then not entered again, so the operator is left for what follows.
             if level < precedence || level >= ceiling {
-                return current_type;
-            }
-            // A void left operand takes only an operator that cannot begin the next
-            // statement; before any other, every ladder frame returned.
-            if matches!(current_type, Type::Void) && !VOID_LEFT_OPERATORS.contains(&op) {
                 return current_type;
             }
             current_type = self.level_run(
@@ -1900,7 +1846,7 @@ impl Parser {
     }
 
     /// The operand of an expression: a prefix `&<place>` or whatever [`Self::parse_part`]
-    /// reads.  The bottom of the operator ladder.
+    /// reads: what every binary operator stands between.
     fn parse_primary(&mut self, var_tp: &Type, code: &mut Value, parent_tp: &mut Type) -> Type {
         // @PLN87 B-Ref-AnnotationOnly — the FIRST primary of a binding RHS (or of a
         // statement) consumes the head marker; every operand after it sees `false`.
@@ -2049,7 +1995,7 @@ impl Parser {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     #[expect(
         clippy::too_many_arguments,
-        reason = "the ladder frame's state, passed whole"
+        reason = "one level's run state, passed whole"
     )]
     fn level_run(
         &mut self,
@@ -7446,12 +7392,4 @@ mod fault_warning_tests {
             }
         }
     }
-}
-
-/// @PLN188 — binary operators are parsed by precedence climbing ([`Parser::parse_operators`]);
-/// `LOFT_PARSE_LADDER=1` selects the ladder it replaced, while the two are still compared.
-/// Read once per process.
-fn parse_climb_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("LOFT_PARSE_LADDER").is_none_or(|v| v != "1"))
 }
