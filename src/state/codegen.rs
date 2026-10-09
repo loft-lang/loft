@@ -1480,7 +1480,7 @@ impl State {
                     // The false arm is taller; the cursor is at its end, so shrink
                     // it inline, then aim the true arm's goto at the join below.
                     stack.add_op("OpFreeStack", self);
-                    self.code_add(ret_size as u8);
+                    self.code_add(ret_size);
                     self.code_add((false_stack - target) + keep);
                     stack.position = target;
                     self.code_put(end, (self.code_pos - false_pos) as i32);
@@ -1496,7 +1496,7 @@ impl State {
                     let skip_base = self.code_pos;
                     self.code_put(end, (skip_base - false_pos) as i32); // true arm → trampoline
                     stack.add_op("OpFreeStack", self);
-                    self.code_add(ret_size as u8);
+                    self.code_add(ret_size);
                     self.code_add((true_stack - target) + keep);
                     self.code_put(skip, (self.code_pos - skip_base) as i32); // false arm → join
                 }
@@ -1670,7 +1670,9 @@ impl State {
             }
             stack.add_op("OpReturn", self);
             self.code_add(self.arguments);
-            self.code_add(size(return_type, &Context::Argument) as u8);
+            // The returned value's size in bytes, a `u16` like the frame operands: a returned
+            // value lives in the callee's frame, which `u16` positions bound.
+            self.code_add(size(return_type, &Context::Argument));
             self.code_add(stack.position);
         }
         Type::Void
@@ -1684,7 +1686,7 @@ impl State {
         let size = stack.step(stack.size_code(node));
         if size > 0 {
             stack.add_op("OpFreeStack", self);
-            self.code_add(0u8);
+            self.code_add(0u16);
             self.code_add(size);
         }
         stack.position -= size;
@@ -1734,7 +1736,7 @@ impl State {
             // OpReturn — arm is a void "function"
             stack.add_op("OpReturn", self);
             self.code_add(0u16); // arguments = 0
-            self.code_add(0u8); // return_size = 0
+            self.code_add(0u16); // return_size = 0
             self.code_add(stack.position);
         }
         // Patch skip goto
@@ -4462,7 +4464,7 @@ impl State {
         let loop_pos = stack.loop_position(loop_nr);
         if stack.position > loop_pos {
             stack.add_op("OpFreeStack", self);
-            self.code_add(0u8);
+            self.code_add(0u16);
             self.code_add(stack.position - loop_pos);
             stack.position = loop_pos;
         }
@@ -5572,7 +5574,7 @@ impl State {
             stack.position = args_top;
             if total_arg_size > 0 {
                 stack.add_op("OpFreeStack", self);
-                self.code_add(0u8);
+                self.code_add(0u16);
                 self.code_add(total_arg_size);
                 stack.position -= total_arg_size;
             }
@@ -5898,7 +5900,7 @@ impl State {
             }
             if stack.position > after {
                 stack.add_op("OpFreeStack", self);
-                self.code_add(size as u8);
+                self.code_add(size);
                 self.code_add(stack.position - to);
             } else if matches!(&result, Type::Function(..)) && stack.position < after {
                 // a fn-ref block result is 16 bytes ([d_nr 4B][closure DbRef 12B]).
@@ -5939,7 +5941,9 @@ impl State {
         } else {
             stack.add_op("OpReturn", self);
             self.code_add(self.arguments);
-            self.code_add(size(return_type, &Context::Argument) as u8);
+            // The returned value's size in bytes, a `u16` like the frame operands: a returned
+            // value lives in the callee's frame, which `u16` positions bound.
+            self.code_add(size(return_type, &Context::Argument));
             self.code_add(stack.position);
             if return_type != &Type::Void {
                 self.types.insert(code, self.known_type(return_type, stack));
