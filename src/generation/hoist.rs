@@ -11345,11 +11345,89 @@ fn fnref_value_on() -> bool {
 /// The register layout of one record type: what a tuple of it carries, in field order.
 #[derive(Clone, Debug, Default)]
 pub struct ValueTuple {
-    /// The Rust tuple type — `(f64, f64, f64)`, or `(i64,)` for a one-field record.
+    /// The Rust tuple type — `(f64, f64, f64)`, or `(i64,)` for a one-field record; a
+    /// NULLABLE layout ([`nullable_layout`]) ends in the presence word, `(i64, bool)`.
     pub tuple: String,
     /// The fields in ORDER: `(byte offset, Rust type)` — what the tuple carries, and what
     /// the live-reload arm must read back out of the record the interpreter answers with.
+    /// The presence word of a nullable layout is no field: it follows them.
     pub fields: Vec<(i64, &'static str)>,
+    /// `@FR-R-ValueRecord`'s nullable clause — the tuple of a `τ?` record: one more
+    /// element, the PRESENCE word, after the fields ([`ValueTuple::presence`]).
+    pub nullable: bool,
+}
+
+impl ValueTuple {
+    /// The tuple index of the presence word, for a nullable layout: the element after the
+    /// fields.  `None` for a dense layout, whose tuple cannot be absent.
+    #[must_use]
+    pub fn presence(&self) -> Option<usize> {
+        self.nullable.then_some(self.fields.len())
+    }
+
+    /// @C144 — the ABSENT tuple of a nullable layout — every field its null, as a field read off the
+    /// null record answers ([`tuple_reads`]), and the presence word `false` — or a dense
+    /// layout's tuple of field nulls.  ONE spelling for the `null` exit, a nullable value
+    /// local's declaration and the bridge's null destination.
+    #[must_use]
+    pub fn absent(&self) -> String {
+        let mut parts: Vec<&str> = self
+            .fields
+            .iter()
+            .map(|(_, rt)| match *rt {
+                "f64" => "f64::NAN",
+                "f32" => "f32::NAN",
+                "bool" => "false",
+                VIEW_LEAF_PART => "DbRef::NULL",
+                _ => "i64::MIN",
+            })
+            .collect();
+        if self.nullable {
+            parts.push("false");
+        }
+        let tail = if parts.len() == 1 { "," } else { "" };
+        format!("({}{tail})", parts.join(", "))
+    }
+}
+
+/// `@FR-R-ValueRecord`'s nullable clause (@C144) — the bit that turns a record type into the KEY of
+/// its nullable layout.  The tables of [`ValueRecords`] key a tuple by LAYOUT, and a `τ?`
+/// tuple carries one element more than a `τ` tuple, so the two need two keys: the record
+/// type for the dense layout and the record type with this bit for the nullable one.  Two
+/// keys keep the two apart everywhere a key is compared — a site, a leaf, a local and a
+/// parameter all agree on a key or decline — so a dense consumer can never be handed the
+/// longer tuple.  A record type at or above the bit has no nullable layout (no schema is
+/// that large; such a function keeps its buffer).
+pub const NULLABLE_LAYOUT: u16 = 0x8000;
+
+/// The key of record type `tp`'s nullable layout, or `None` when the type number already
+/// uses the bit.
+#[must_use]
+pub fn nullable_layout(tp: u16) -> Option<u16> {
+    (tp & NULLABLE_LAYOUT == 0).then_some(tp | NULLABLE_LAYOUT)
+}
+
+/// The RECORD TYPE a layout key carries: the key itself for a dense layout, the key with
+/// [`NULLABLE_LAYOUT`] cleared for a nullable one.  Every place that asks the schema about a
+/// key asks it of this.
+#[must_use]
+pub fn layout_record(key: u16) -> u16 {
+    key & !NULLABLE_LAYOUT
+}
+
+/// Is `key` a nullable layout's key?
+#[must_use]
+pub fn is_nullable_layout(key: u16) -> bool {
+    key & NULLABLE_LAYOUT != 0
+}
+
+/// `LOFT_NO_NULLABLE_VALUE_RECORD=1` keeps every `-> S?` function on its return buffer and
+/// every `S?` local a `DbRef` (`@FR-R-ValueRecord`'s nullable clause off, the dense spelling
+/// untouched): the first bisect step for a wrong field, or a wrong presence test, out of a
+/// nullable record-returning call on `--native`.
+fn nullable_value_record_disabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| std::env::var("LOFT_NO_NULLABLE_VALUE_RECORD").is_ok_and(|v| v != "0"))
 }
 
 /// `(R-ValueLocal)` — per function, the by-value parameters carried as tuples, keyed by
@@ -11389,6 +11467,21 @@ pub fn tuple_reads(fields: &[(i64, &'static str)], db: &str, stores: &str) -> St
     // The 1-tuple's trailing comma: `(x)` is a parenthesised scalar, not a tuple.
     let tail = if reads.len() == 1 { "," } else { "" };
     format!("({}{tail})", reads.join(", "))
+}
+
+/// The tuple of `layout` read out of the record `db` names — [`tuple_reads`], and for a
+/// nullable layout the presence word after the fields: the record is present exactly when
+/// it names one (`rec != 0`, the test `OpConvBoolFromRef` makes), and an absent record's
+/// fields already read as their nulls.
+#[must_use]
+pub fn layout_reads(layout: &ValueTuple, db: &str, stores: &str) -> String {
+    let reads = tuple_reads(&layout.fields, db, stores);
+    if !layout.nullable {
+        return reads;
+    }
+    // `(a,)` or `(a, b)` → `(a, present)` / `(a, b, present)`.
+    let inner = reads[1..reads.len() - 1].trim_end_matches(',');
+    format!("({inner}, {db}.rec != 0)")
 }
 
 /// The setter call that writes tuple element `value` (a Rust expression) into field
@@ -11553,7 +11646,35 @@ fn type_layout(
     Some(ValueTuple {
         tuple,
         fields: order,
+        nullable: false,
     })
+}
+
+/// `@FR-R-ValueRecord`'s nullable clause — the layout of `τ?` beside the dense `layout` of
+/// `τ`, registered under key `nkey` ([`nullable_layout`]): the same fields at the same
+/// tuple indices, then the presence word.  The index entries are copied from the dense
+/// key's, so a field read off a nullable tuple is the same `.k` as off a dense one — and an
+/// ABSENT tuple holds every field's null ([`ValueTuple::absent`]), so that read answers
+/// exactly what a field read off the null record answers, with no test of its own.
+fn nullable_layout_of(
+    layout: &ValueTuple,
+    tp: u16,
+    nkey: u16,
+    index: &mut HashMap<(u16, i64), usize>,
+) -> ValueTuple {
+    let copied: Vec<((u16, i64), usize)> = index
+        .iter()
+        .filter(|((t, _), _)| *t == tp)
+        .map(|((_, off), i)| ((nkey, *off), *i))
+        .collect();
+    index.extend(copied);
+    let mut parts: Vec<&str> = layout.fields.iter().map(|(_, rt)| *rt).collect();
+    parts.push("bool");
+    ValueTuple {
+        tuple: format!("({})", parts.join(", ")),
+        fields: layout.fields.clone(),
+        nullable: true,
+    }
 }
 
 /// One level of [`type_layout`]: the fields of `tp` (declared by `rd`) laid `base` bytes
@@ -12098,7 +12219,14 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         if trace {
             eprintln!("[valuerec] candidate {} returns ref({rd})", def.name());
         }
-        let Some(tp) = plain_record_type(data, def.returned()) else {
+        // `@FR-R-ValueRecord`'s nullable clause (`@FR-N-Road`) — a `-> S?` is a candidate
+        // exactly as `-> S` is, carried by the nullable layout: the `?` must not be what
+        // selects the road.
+        let (ret, nullable) = def.returned().peel_optional();
+        if nullable && nullable_value_record_disabled() {
+            continue;
+        }
+        let Some(tp) = plain_record_type(data, ret) else {
             if trace {
                 eprintln!("[valuerec] {}: not a plain record", def.name());
             }
@@ -12112,13 +12240,36 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
         if stores.owns_heap(tp) && !views_ok {
             continue;
         }
+        // A nullable record that owns heap keeps its buffer: its heap fields would be view
+        // leaves, and a view leaf's absence is a REPORTED null where a `null` exit's is not
+        // ([`ValueTuple::absent`] spells only the unreported one), so the two could not
+        // share one presence word.
+        if nullable && stores.owns_heap(tp) {
+            if trace {
+                eprintln!(
+                    "[valuerec] {}: a nullable record that owns heap",
+                    def.name()
+                );
+            }
+            continue;
+        }
         let Some(layout) = type_layout(data, stores, *rd, tp, views_ok, &mut out.index) else {
             continue;
         };
         // The BODY gate — every result position a value leaf — runs in the fixpoint
         // below, because what counts as a leaf depends on what else is admitted.
+        let key = if nullable {
+            let Some(nkey) = nullable_layout(tp) else {
+                continue;
+            };
+            let nlayout = nullable_layout_of(&layout, tp, nkey, &mut out.index);
+            out.types.entry(nkey).or_insert(nlayout);
+            nkey
+        } else {
+            tp
+        };
         out.types.entry(tp).or_insert(layout);
-        cand.insert(d_nr, tp);
+        cand.insert(d_nr, key);
     }
     // `(R-ValueLocal)` — the by-value parameters that may be received as tuples, by the
     // facts that never change: the parameter's type and shape, and what the body writes.
@@ -14480,9 +14631,33 @@ pub fn mv_return_source<'a>(bl: &'a Block, data: &Data) -> Option<&'a Value> {
     })
 }
 
-/// The record type an admitted body's own leaves must carry.
+/// Is `v` the bare `null` record sentinel, `OpNullRefSentinel()` ([`is_null_record`])?
+#[must_use]
+pub fn is_null_sentinel(data: &Data, v: &Value) -> bool {
+    matches!(v.unspan(), Value::Call(d, args) if args.is_empty() && is_null_record(data, *d))
+}
+
+/// Is `d` the op a `null` record exit lowers to — `OpNullRefSentinel`, the bare sentinel
+/// that names no store?  (`OpConvRefFromNull` is not this: it claims a store.)
+fn is_null_record(data: &Data, d: u32) -> bool {
+    (d as usize) < data.definitions.len() && data.def(d).name() == "OpNullRefSentinel"
+}
+
+/// The LAYOUT KEY an admitted body's own leaves must carry: its record type, or that type's
+/// nullable key for a `-> S?` ([`nullable_layout`]) — which is also what `admitted` holds
+/// for it.
 fn own_record(c: &ShapeCtx) -> Option<u16> {
-    plain_record_type(c.data, c.data.def(c.own?).returned())
+    let own = c.own?;
+    if let Some(key) = c.admitted.get(&own) {
+        return Some(*key);
+    }
+    let (ret, nullable) = c.data.def(own).returned().peel_optional();
+    let tp = plain_record_type(c.data, ret)?;
+    if nullable {
+        nullable_layout(tp)
+    } else {
+        Some(tp)
+    }
 }
 
 /// Is `v` a VALUE SHAPE — every result position a value LEAF — and if so, which record
@@ -14500,16 +14675,25 @@ fn own_record(c: &ShapeCtx) -> Option<u16> {
 /// off a record cannot compile.
 fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
     match node.unspan() {
+        // `@FR-R-ValueRecord`'s nullable clause — a `null` exit of an admitted `-> S?` body
+        // is the ABSENT tuple ([`ValueTuple::absent`]).  Only there: a null anywhere else has
+        // no layout to be absent in.
+        Value::Call(callee, args) if args.is_empty() && is_null_record(ctx.data, *callee) => {
+            ctx.own?;
+            own_record(ctx).filter(|k| is_nullable_layout(*k))
+        }
         Value::Call(callee, _) => ctx.admitted.get(callee).copied(),
         // The second spelling of a call: through a fn-ref, whose dispatch answers the tuple
         // when every arm is admitted (`(R-FnRefValue)`).
         Value::CallRef(v, _) => fnref_value(ctx.fnref, ctx.admitted, ctx.def_nr, *v),
+        // The build of the body's own record — present, under a nullable key.
         Value::Block(bl) if bl.name == "Object" => {
             ctx.own?;
             let rec = own_record(ctx)?;
-            (plain_record_type(ctx.data, &bl.result) == Some(rec)).then_some(rec)
+            (plain_record_type(ctx.data, &bl.result) == Some(layout_record(rec))).then_some(rec)
         }
-        // A discharged view returned through the buffer: the leaf is the copy's source.
+        // A discharged view returned through the buffer: the leaf is the copy's source.  A
+        // nullable layout has no view leaf, so this is a dense body's only.
         Value::Block(bl) if mv_return_source(bl, ctx.data).is_some() => {
             ctx.own?;
             let src = mv_return_source(bl, ctx.data)?;
@@ -14522,9 +14706,11 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             }
             value_shape(bl.operators.last()?, ctx)
         }
+        // Both arms carry ONE layout: a dense arm beside a nullable one would hand the join
+        // two tuple types.
         Value::If(_, then_v, else_v) => {
             let callee = value_shape(then_v, ctx)?;
-            value_shape(else_v, ctx).map(|_| callee)
+            (value_shape(else_v, ctx)? == callee).then_some(callee)
         }
         Value::Insert(ops) => value_shape(ops.last()?, ctx),
         Value::Return(x) => value_shape(x, ctx),
@@ -14563,6 +14749,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             {
                 return None;
             }
+            // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
+            // leaf (its absence would be a reported null, [`ValueTuple::absent`]).
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
             // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
             // minted default on the other (`Own::Join`), and reading it as then_v tuple would
@@ -14597,6 +14785,13 @@ pub struct ValueLeaves {
     /// `materialized_view_return` blocks at a value position, by the `Block`'s address: the
     /// emitter returns the copy source's tuple and drops the mint, the copy and the buffer.
     pub mv_returns: HashSet<usize>,
+    /// `@FR-R-ValueRecord`'s nullable clause — the `null` exits at a value position of a
+    /// `-> S?` body, by both addresses: each emits the ABSENT tuple
+    /// ([`ValueTuple::absent`]).
+    pub nulls: HashSet<usize>,
+    /// The dense leaves at a result position of a `-> S?` body ([`widened_leaves`]), by
+    /// both addresses: each emits its tuple with the presence word `true` appended.
+    pub widen: HashSet<usize>,
 }
 
 fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool, data: &Data) -> ValueLeaves {
@@ -14613,6 +14808,10 @@ fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool, data: &Da
             }
             Value::Block(bl) if bl.name == "Object" => {
                 out.objects.insert(std::ptr::from_ref(&**bl) as usize);
+            }
+            Value::Call(d, args) if args.is_empty() && is_null_record(data, *d) => {
+                out.nulls.insert(std::ptr::from_ref(v) as usize);
+                out.nulls.insert(std::ptr::from_ref(v.unspan()) as usize);
             }
             Value::Block(bl) if mv_return_source(bl, data).is_some() => {
                 out.mv_returns.insert(std::ptr::from_ref(&**bl) as usize);
@@ -14696,7 +14895,11 @@ fn value_body(
         fnref,
     };
     let body = def.code();
-    if value_shape(body, &c).is_none() {
+    // Every result position carries THIS function's layout, or WIDENS to it
+    // ([`result_fit`]): a dense leaf anywhere else in a `-> S?` body is the shorter tuple,
+    // which the signature does not promise.
+    let key = admitted.get(&d_nr).copied();
+    if result_fit(body, &c, key).is_none() {
         return Some("the tail is not a value leaf");
     }
     // An `Object` that returns the record it builds is the leaf; its own `return`, the
@@ -14707,7 +14910,7 @@ fn value_body(
         if let Value::Block(bl) = n
             && (object_own_return(bl).is_some() || mv_return_source(bl, data).is_some())
         {
-            if value_shape(n, &c).is_none() {
+            if value_shape(n, &c).is_none_or(|k| Some(k) != key) {
                 ok = false;
                 return true;
             }
@@ -14723,7 +14926,7 @@ fn value_body(
     body.any_node(&mut |n| {
         if let Value::Return(x) = n
             && !own_returns.contains(&(std::ptr::from_ref(n) as usize))
-            && value_shape(x, &c).is_none()
+            && result_fit(x, &c, key).is_none()
         {
             ok = false;
             return true;
@@ -14742,6 +14945,83 @@ fn value_body(
     }
     let leaves = collect_leaves(body, &locals, true, data);
     (!retbuf_uses_ok(body, rb, &c, &leaves.objects)).then_some("the return buffer is used")
+}
+
+/// Does RESULT position `node` of an admitted body whose layout is `key` carry that layout?
+/// `Some(false)`: exactly.  `Some(true)`: WIDENED — `@FR-R-ValueRecord`'s nullable clause,
+/// `@FR-N-Road`: a `-> S?` body may answer a DENSE tuple of `S` (a `-> S` call forwarded, a
+/// tuple parameter returned whole), which is the present `S?` tuple once the presence word
+/// is appended; the emitter appends it at the leaf ([`result_leaf`], `ValueLeaves::widen`).
+/// Only a leaf that is one NODE widens — a `Var` or a call; a dense `if` arm beside a
+/// nullable one is declined by [`value_shape`]'s one-layout join, not widened.  `None`: the
+/// position carries no value leaf, or another layout.
+fn result_fit(node: &Value, c: &ShapeCtx, key: Option<u16>) -> Option<bool> {
+    let k = value_shape(node, c)?;
+    if Some(k) == key {
+        return Some(false);
+    }
+    let key = key?;
+    (is_nullable_layout(key)
+        && layout_record(key) == k
+        && matches!(
+            result_leaf(node).unspan(),
+            Value::Var(_) | Value::Call(..) | Value::CallRef(..)
+        ))
+    .then_some(true)
+}
+
+/// The one NODE a result position delivers: through a value block's last statement, an
+/// `Insert`'s last and a `return`'s operand.  An `Object` block is a leaf of its own.
+fn result_leaf(v: &Value) -> &Value {
+    match v.unspan() {
+        Value::Block(bl) if bl.name != "Object" && !matches!(bl.result.base(), Type::Void) => {
+            bl.operators.last().map_or(v, result_leaf)
+        }
+        Value::Insert(ops) => ops.last().map_or(v, result_leaf),
+        Value::Return(x) => result_leaf(x),
+        _ => v,
+    }
+}
+
+/// The WIDENED leaves of admitted body `d_nr` ([`result_fit`]), by both addresses: the
+/// tail and every `return` operand whose dense tuple the emitter extends with the presence
+/// word.  Empty for a dense body.
+fn widened_leaves(
+    data: &Data,
+    d_nr: u32,
+    vr: &ValueRecords,
+    locals: &HashMap<u16, u16>,
+) -> HashSet<usize> {
+    let mut out = HashSet::new();
+    let key = vr.fns.get(&d_nr).copied();
+    if !key.is_some_and(is_nullable_layout) {
+        return out;
+    }
+    let c = ShapeCtx {
+        data,
+        def_nr: d_nr,
+        admitted: &vr.fns,
+        params: &vr.params,
+        locals,
+        own: Some(d_nr),
+        fnref: &vr.fnref_sites,
+    };
+    let mut add = |node: &Value| {
+        if result_fit(node, &c, key) == Some(true) {
+            let leaf = result_leaf(node);
+            out.insert(std::ptr::from_ref(leaf) as usize);
+            out.insert(std::ptr::from_ref(leaf.unspan()) as usize);
+        }
+    };
+    let body = data.def(d_nr).code();
+    add(body);
+    body.any_node(&mut |n| {
+        if let Value::Return(x) = n {
+            add(x);
+        }
+        false
+    });
+    out
 }
 
 /// Every mention of the return buffer `rb` in `v` is one the value form drops: inside a
@@ -14810,6 +15090,50 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
     }
 }
 
+/// Per local of `body`, the layout key its binds carry under `c`'s value locals — or `None`
+/// once ANY bind is not a value shape or carries another layout (the declaration's `null`
+/// aside).  Every assignment carries ONE layout: a local bound from a `-> S` call and from a
+/// `-> S?` call has no single tuple type.
+///
+/// `@FR-R-ValueRecord`'s nullable clause (@C144) — a bind of the bare `null` sentinel
+/// (`w: S? = null`) is the ABSENT tuple of whatever layout the local's other binds carry, so
+/// it casts no vote; it is asked afterwards that the layout be nullable.  A dense tuple has no
+/// absent spelling, so such a local keeps the record.  A local bound ONLY from `null` takes
+/// the layout of the `-> S?` body it stands in (the parser's `__ret_N = null; return __ret_N`
+/// exit) and has none anywhere else.
+fn bind_shapes(body: &Value, c: &ShapeCtx) -> HashMap<u16, Option<u16>> {
+    let mut shapes: HashMap<u16, Option<u16>> = HashMap::new();
+    let mut null_bound: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, rhs) = n
+            && is_null_sentinel(c.data, rhs)
+        {
+            null_bound.insert(*v);
+        } else if let Value::Set(v, rhs) = n
+            && !matches!(rhs.unspan(), Value::Null)
+        {
+            let s = value_shape(rhs, c);
+            shapes
+                .entry(*v)
+                .and_modify(|e| {
+                    if *e != s {
+                        *e = None;
+                    }
+                })
+                .or_insert(s);
+        }
+        false
+    });
+    let own_null = own_record(c).filter(|k| is_nullable_layout(*k));
+    for v in null_bound {
+        let e = shapes.entry(v).or_insert(own_null);
+        if e.is_some_and(|k| !is_nullable_layout(k)) {
+            *e = None;
+        }
+    }
+    shapes
+}
+
 /// Which locals of `def_nr` hold a value-returned record — every non-null assignment a
 /// value shape, every use one the tuple serves ([`local_uses_ok`]), never a parameter
 /// (except the PHANTOM return buffer of an admitted body, [`own_retbuf`], and the TUPLE
@@ -14863,27 +15187,7 @@ pub fn value_locals_in(
         own,
         fnref,
     };
-    let shapes_given = |locals: &HashMap<u16, u16>| -> HashMap<u16, Option<u16>> {
-        let c = base.with_locals(locals);
-        let mut shapes: HashMap<u16, Option<u16>> = HashMap::new();
-        body.any_node(&mut |n| {
-            if let Value::Set(v, rhs) = n
-                && !matches!(rhs.unspan(), Value::Null)
-            {
-                let s = value_shape(rhs, &c);
-                shapes
-                    .entry(*v)
-                    .and_modify(|e| {
-                        if s.is_none() {
-                            *e = None;
-                        }
-                    })
-                    .or_insert(s);
-            }
-            false
-        });
-        shapes
-    };
+    let shapes_given = |locals: &HashMap<u16, u16>| bind_shapes(body, &base.with_locals(locals));
     let joined = |locals: &HashMap<u16, u16>, cands: &HashMap<u16, u16>| -> HashMap<u16, u16> {
         let mut with = locals.clone();
         with.extend(cands.iter().map(|(v, d)| (*v, *d)));
@@ -15034,6 +15338,11 @@ fn local_uses_ok(
     phantom: Option<&HashSet<usize>>,
 ) -> bool {
     let (data, admitted, params) = (c.data, c.admitted, c.params);
+    // The layout this local carries, when the walk already holds it as a candidate: a
+    // nullable one serves its presence tests and declines every hand-off a DENSE tuple
+    // would be expected at (a tuple parameter, a copy into a record).
+    let key = c.locals.get(&v).copied();
+    let nullable = key.is_some_and(is_nullable_layout);
     let no_objects = HashSet::new();
     let objects = phantom.unwrap_or(&no_objects);
     // @PLN164 C5 — the view-field reads this local's uses may be accounted against, read
@@ -15068,7 +15377,9 @@ fn local_uses_ok(
             Value::Call(..) if inside => {}
             // `(R-FnRefValue)` — handed whole to a parameter every arm of the dispatch
             // receives as a tuple: the same hand-off as a direct call's.
-            Value::CallRef(f, args) if !inside => accounted += fnref_handoffs(c, v, *f, args),
+            Value::CallRef(f, args) if !inside && !nullable => {
+                accounted += fnref_handoffs(c, v, *f, args);
+            }
             Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
                 let name = data.def(*d).name();
                 let arg_is_v = |i: usize| {
@@ -15080,17 +15391,9 @@ fn local_uses_ok(
                 {
                     accounted += 1;
                 }
-                // `(R-ValueLocal)` — handed to a TUPLE PARAMETER: the fields cross the call
-                // as the scalars they are, which is the hand-off the tuple serves.
-                // — or a SUB-RECORD of the local handed to a tuple parameter of the
-                // sub-record's type: a range of the tuple crosses the call.
-                if let Some(ps) = params.get(d) {
-                    for (i, ptp) in ps {
-                        if arg_is_v(*i) || sub_record_of(data, args.get(*i), v) == Some(*ptp) {
-                            accounted += 1;
-                        }
-                    }
-                }
+                // `(R-ValueLocal)` — a hand-off to a TUPLE PARAMETER, and a nullable tuple's
+                // presence test.
+                accounted += handoffs_and_presence(data, params, *d, name, args, v, nullable);
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
                 // into a tuple index.  (`OpGetField` is the COLLECTION-field spelling; a
                 // record's scalar field reads through its typed getter.)
@@ -15118,7 +15421,9 @@ fn local_uses_ok(
                 // is a reference, and materialising it would be a vector copy the value
                 // path does not emit.  So a view-leaf record declines a copy site
                 // (@PLN164 C5); the record form stands there.
-                let copies = name == "OpCopyRecord" && !view_offs.is_empty();
+                // A nullable tuple declines it too: an absent one would have to leave the
+                // destination as a null copy does, which no write per field spells.
+                let copies = name == "OpCopyRecord" && (!view_offs.is_empty() || nullable);
                 // The copy inside a discharged-view return is dropped with the block and
                 // its source stands as a LEAF read, accounted above as served — so that
                 // one mention is not counted here a second time (a bare mint beside it
@@ -15164,6 +15469,38 @@ fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// The uses of local `v` one call accounts that turn on the local's LAYOUT: a hand-off to a
+/// `(R-ValueLocal)` TUPLE PARAMETER of callee `d` — the fields cross the call as the scalars
+/// they are, whole or as a SUB-RECORD of the local handed to a tuple parameter of the
+/// sub-record's type — which a NULLABLE tuple never serves (the parameter takes the dense
+/// layout); and, for a nullable one only, a PRESENCE test (`if x`, `x == null`), which reads
+/// the presence word (`@FR-R-ValueRecord`'s nullable clause, @C144).
+fn handoffs_and_presence(
+    data: &Data,
+    params: &TupleParams,
+    d: u32,
+    name: &str,
+    args: &[Value],
+    v: u16,
+    nullable: bool,
+) -> u32 {
+    let arg_is_v =
+        |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
+    if nullable {
+        let presence =
+            arg_is_v(0) && args.len() == 1 && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull");
+        return u32::from(presence);
+    }
+    let Some(ps) = params.get(&d) else {
+        return 0;
+    };
+    let hands = ps
+        .iter()
+        .filter(|(i, ptp)| arg_is_v(**i) || sub_record_of(data, args.get(**i), v) == Some(**ptp))
+        .count();
+    u32::try_from(hands).unwrap_or(u32::MAX)
 }
 
 /// `(R-FnRefValue)` — how many of a fn-ref call's arguments hand local `v` whole to a
@@ -15358,14 +15695,19 @@ fn collect_lists<'a>(v: &'a Value, out: &mut Vec<&'a Vec<Value>>) {
 /// (`Output::emit_call_arg`).  ONE home: the site gate and the emitter ask this together,
 /// so what the gate serves as a tuple is exactly what the emitter passes as one.
 #[must_use]
+///
+/// `tp` is the layout the parameter takes: a tuple of ANOTHER layout — a nullable one
+/// handed to a dense parameter — is not ready, and is read field by field as a record
+/// would be, which a tuple cannot be; the site gate therefore declines the callee there.
 pub fn tuple_arg_ready(
     arg: &Value,
+    tp: u16,
     admitted: &HashMap<u32, u16>,
     locals: &HashMap<u16, u16>,
 ) -> bool {
     match arg.unspan() {
-        Value::Var(v) => locals.contains_key(v),
-        Value::Call(g, _) => admitted.contains_key(g),
+        Value::Var(v) => locals.get(v) == Some(&tp),
+        Value::Call(g, _) => admitted.get(g) == Some(&tp),
         _ => false,
     }
 }
@@ -15405,8 +15747,9 @@ fn site_walk(node: &Value, pos: Pos, ctx: &ShapeCtx, declined: &mut HashSet<u32>
                 // `(R-ValueLocal)` — an admitted call handed straight to a TUPLE PARAMETER
                 // is consumed as a tuple ([`tuple_arg_ready`]); any other argument
                 // expression at that position is a record the site reads the fields off.
-                let pos_here = if ctx.params.get(callee).is_some_and(|ps| ps.contains_key(&i))
-                    && tuple_arg_ready(arg, ctx.admitted, ctx.locals)
+                let pos_here = if let Some(ptp) =
+                    ctx.params.get(callee).and_then(|ps| ps.get(&i).copied())
+                    && tuple_arg_ready(arg, ptp, ctx.admitted, ctx.locals)
                 {
                     Pos::Bound
                 } else {
@@ -15520,8 +15863,8 @@ fn site_walk_callref(
         }
     }
     for (i, arg) in args.iter().enumerate() {
-        let pos_here = if fnref_param(ctx.fnref, ctx.params, ctx.def_nr, v, i).is_some()
-            && tuple_arg_ready(arg, ctx.admitted, ctx.locals)
+        let pos_here = if let Some(ptp) = fnref_param(ctx.fnref, ctx.params, ctx.def_nr, v, i)
+            && tuple_arg_ready(arg, ptp, ctx.admitted, ctx.locals)
         {
             Pos::Bound
         } else {
@@ -15668,7 +16011,9 @@ pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves 
         &vr.view_offs,
         &vr.fnref_sites,
     );
-    collect_leaves(data.def(def_nr).code(), &locals, true, data)
+    let mut leaves = collect_leaves(data.def(def_nr).code(), &locals, true, data);
+    leaves.widen = widened_leaves(data, def_nr, vr, &locals);
+    leaves
 }
 
 /// @PLN164 C5 — per record type carried as a tuple, the byte offsets of its VIEW-LEAF

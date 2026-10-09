@@ -521,6 +521,7 @@ impl Output<'_> {
             if matches!(v.unspan(), Value::RawExpr(_))
                 || super::hoist::tuple_arg_ready(
                     v,
+                    tp,
                     &self.value_records.fns,
                     &self.value_record_locals,
                 )

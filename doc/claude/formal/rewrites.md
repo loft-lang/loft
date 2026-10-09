@@ -2966,6 +2966,30 @@ line in `Output::output_function`'s prelude.
                  are this rule's admissions, and native finds only what the IR
                  declined.  Switch `LOFT_NO_IR_VALUE_RECORD=1`; guard
                  `a-small-record-returned-to-a-reader-is-a-tuple.loft`.
+                 NULLABLE CLAUSE (`--native`, `(N-Road)`, C144): a `-> S?` of a record
+                 this rule admits returns the tuple of `S`'s fields followed by a
+                 PRESENCE word, `(f₁, …, fₙ, bool)`.  An ABSENT tuple holds every
+                 field's null and `false`, so a field read is the same tuple index as
+                 on the dense tuple and answers what a read off the null record
+                 answers; `if x` and `x == null` read the presence word; a field write
+                 through an absent tuple is dropped and reported (`@FR-E-Report`), as
+                 the setter's `rec == 0` arm does.  The two layouts are two KEYS
+                 (the record type, and the record type with `NULLABLE_LAYOUT`), so a
+                 site, a leaf, a local and a parameter agree on a key or decline: a
+                 nullable tuple is never handed where a dense one is expected (a tuple
+                 parameter, a fn-ref hand-off, a copy into a record).  Leaves of a
+                 `-> S?` body: its own `Object` build (present), the bare `null`
+                 sentinel (absent), and a DENSE leaf of `S` — a `-> S` call or a tuple
+                 parameter returned whole — WIDENED by appending `true`; both arms of
+                 a value branch carry one key.  A `τ?` value local is declared absent
+                 and a bind of `null` makes it absent again.  Declined, costing the
+                 rewrite only: a nullable record that owns heap (a view leaf's null is
+                 a REPORTED one, which the absent tuple does not spell), a `??` with a
+                 record default, and the IR pass above (the interpreter keeps the
+                 record).  A cdylib bridge writes a present tuple into its destination
+                 and answers the null record for an absent one.  Switch
+                 `LOFT_NO_NULLABLE_VALUE_RECORD=1`; guard
+                 `a-nullable-record-returns-its-fields-in-registers.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

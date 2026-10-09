@@ -1,0 +1,165 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULLABLE RECORD RETURNS ITS FIELDS IN REGISTERS (`@FR-R-ValueRecord`'s nullable clause,
+// `@FR-N-Road`, @C144, loft#1952).  On `--native` a `-> S?` of a flat record returns the tuple of
+// its fields followed by a PRESENCE word, as `-> S` returns the tuple alone; an ABSENT tuple
+// holds every field's null, so a field read off it answers what a read off the null record
+// answers.  The interpreter keeps the record and is the VALUES oracle: every cell asserts a
+// hand-computed value, so a native answer that differs fails here on native alone.
+// tests/value_record.rs pins which of these functions the emission admits;
+// `LOFT_NO_NULLABLE_VALUE_RECORD=1` restores the buffer and must answer identically.
+//
+// One maker per cell family on purpose: a single site that consumes a record declines its
+// maker for the whole program, so a cell that must DECLINE owns its maker.
+//
+// @falsified-by: tests/falsified/a-nullable-record-returns-its-fields-in-registers.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — the patch fills an ABSENT tuple with zeros instead of each
+//   field's null, the obvious wrong spelling of "absent".
+// WITNESS: on the patched tree `--native` stops at the first absent field read (`n4 absent`,
+//   `u.a ?? -2` answers 0); the interpreter, which keeps the record, prints every line.
+// HOLDS: the interpreter's output, and every cell whose tuple is present.
+
+struct S { a: integer }
+struct T { a: integer, b: integer? }
+struct In { x: integer, y: float }
+struct O { i: In, k: integer }
+struct F { x: float, ok: boolean }
+
+// n1 — always present, a field read and a discharge per call (the issue's loop).
+fn n1(n: integer) -> S? { S { a: n } }
+// n2 — an early `return null`, then the build.
+fn n2(n: integer) -> S? {
+  if n % 3 == 0 { return null; }
+  S { a: n * 10 }
+}
+// n3 — a tail that joins `null` with a build.
+fn n3(n: integer) -> S? { if n % 2 == 0 { null } else { S { a: n + 100 } } }
+// n4 — a present record whose second field is null.
+fn n4(n: integer) -> T? { if n < 0 { null } else { T { a: n, b: null } } }
+// n5 — a nested inline record.
+fn n5(n: integer) -> O? {
+  if n == 0 { return null; }
+  O { i: In { x: n, y: (n as float) * 0.5 }, k: n * 3 }
+}
+// n6 — float and boolean fields.
+fn n6(n: integer) -> F? { if n > 2 { null } else { F { x: (n as float) + 0.25, ok: n == 1 } } }
+// n7 — a method.
+fn bump(self: S, d: integer) -> S? { if d < 0 { null } else { S { a: self.a + d } } }
+// n8 — recursion threading its own nullable result.
+fn n8(n: integer) -> S? {
+  if n == 0 { return null; }
+  p = n8(n - 1);
+  S { a: (p.a ?? 0) + n }
+}
+// n9 — a forwarding tail and a forwarding `return`.
+fn n9(n: integer) -> S? { if n > 4 { null } else { S { a: n * n } } }
+fn n9f(n: integer) -> S? { n9(n) }
+fn n9r(n: integer) -> S? { return n9(n + 1); }
+// n10 — must DECLINE: its result is passed on whole and pushed into a vector.
+fn n10(n: integer) -> S? { if n == 1 { null } else { S { a: n } } }
+fn take(s: S?) -> integer { s.a ?? -7 }
+// n11 — must DECLINE: discharged with a RECORD default (`?? S { … }`).
+fn n11(n: integer) -> S? { if n > 0 { S { a: n } } else { null } }
+// n12 — field writes through a present and an absent tuple.
+fn n12(n: integer) -> S? { if n == 0 { null } else { S { a: n } } }
+// n13 — a DENSE tuple at a nullable result: a parameter returned whole, a `-> S` call
+// forwarded as the tail and through a `return` beside a `return null`.
+fn whole(s: S) -> S? { s }
+fn dense(n: integer) -> S { S { a: n + 1 } }
+fn fwd(n: integer) -> S? { dense(n) }
+fn fwdr(n: integer) -> S? {
+  if n < 0 { return null; }
+  return dense(n * 2);
+}
+
+fn main() {
+  s1 = 0;
+  for i in 0..1000 { s1 += n1(i % 7).a ?? 0; }
+  // 1000 = 142 * 7 + 6: 142 full cycles of 0..6 (sum 21) and 0..5 (sum 15).
+  assert(s1 == 142 * 21 + 15, "n1 {s1}");
+
+  // n2: i in 0..10 — absent at 0, 3, 6, 9; present at 1 2 4 5 7 8 as i * 10.
+  s2 = 0;
+  absent2 = 0;
+  for i in 0..10 {
+    r = n2(i);
+    if r { s2 += r.a; } else { absent2 += 1; }
+  }
+  assert(s2 == 270 && absent2 == 4, "n2 {s2} {absent2}");
+
+  // n3: odd i present as i + 100, even absent — `== null` and `!= null` both read presence.
+  s3 = 0;
+  nulls3 = 0;
+  for i in 0..6 {
+    q = n3(i);
+    if q == null { nulls3 += 1; }
+    if q != null { s3 += q.a; }
+    s3 += (q.a ?? 1000) - (q.a ?? 1000);
+  }
+  assert(s3 == 101 + 103 + 105 && nulls3 == 3, "n3 {s3} {nulls3}");
+
+  // n4: a present record with a null field is PRESENT; its field reads null.
+  t = n4(5);
+  assert(t != null, "n4 present");
+  assert((t.b ?? -1) == -1 && t.a == 5, "n4 fields {t.a ?? -9} {t.b ?? -9}");
+  u = n4(-1);
+  assert(!u && (u.a ?? -2) == -2, "n4 absent");
+
+  // n5: the nested inline record's scalars sit in the one tuple.
+  o = n5(4);
+  assert(o.i.x == 4 && o.i.y == 2.0 && o.k == 12, "n5 {o.i.x ?? -1} {o.i.y ?? -1.0} {o.k ?? -1}");
+  z = n5(0);
+  assert(!z && (z.i.x ?? -5) == -5 && (z.k ?? -6) == -6, "n5 absent");
+
+  // n6: an absent tuple's float is null and its boolean false, as off the null record.
+  f1 = n6(1);
+  f9 = n6(9);
+  assert(f1.ok && f1.x == 1.25, "n6 present {f1.x ?? -1.0}");
+  assert(!f9 && !f9.ok && (f9.x ?? -1.0) == -1.0, "n6 absent");
+
+  // n7: a method.
+  b = S { a: 7 };
+  m = b.bump(2);
+  mn = b.bump(-1);
+  assert((m.a ?? -1) == 9 && !mn && b.a == 7, "n7 {m.a ?? -1}");
+
+  // n8: 1 + 2 + 3 + 4.
+  assert((n8(4).a ?? -1) == 10 && (n8(0).a ?? -1) == -1, "n8");
+
+  // n9: forwarded both ways; 3*3 = 9, 4*4 = 16 through the `return` (n + 1), 5 is absent.
+  assert((n9f(3).a ?? -1) == 9 && (n9r(3).a ?? -1) == 16 && !n9f(5) && !n9r(4), "n9");
+
+  // n10: passed on whole and pushed — the record road, the same values.
+  v: vector<S> = [];
+  for i in 0..3 {
+    e = n10(i);
+    if e { v += [e]; }
+  }
+  assert(take(n10(1)) == -7 && take(n10(4)) == 4 && len(v) == 2 && v[1].a == 2, "n10");
+
+  // n11: a record default.
+  d1 = n11(3) ?? S { a: 99 };
+  d2 = n11(0) ?? S { a: 99 };
+  assert(d1.a == 3 && d2.a == 99, "n11 {d1.a} {d2.a}");
+
+  // n12: a field write through a present tuple lands; the local starts ABSENT and a later
+  // bind makes it present.
+  w: S? = null;
+  assert(!w && (w.a ?? -3) == -3, "n12 declared absent");
+  acc = 0;
+  for i in 0..4 {
+    w = n12(i);
+    if w { w.a += 100; }
+    acc += w.a ?? 0;
+  }
+  // i = 0 absent; 101 + 102 + 103.
+  assert(acc == 306, "n12 {acc}");
+
+  // n13: 7 returned whole; 4 + 1; 3 * 2 + 1; absent below zero; the dense maker's own
+  // callers read 11.
+  h = whole(S { a: 7 });
+  assert((h.a ?? -1) == 7 && (fwd(4).a ?? -1) == 5, "n13 {h.a ?? -1}");
+  assert((fwdr(3).a ?? -1) == 7 && !fwdr(-1) && dense(10).a == 11, "n13 fwdr");
+  println("n1 {s1} n2 {s2}/{absent2} n3 {s3}/{nulls3} n7 {m.a ?? -1} n12 {acc}");
+}

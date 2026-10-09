@@ -512,6 +512,12 @@ view's field tuple and never a view leaf (read as one, it leaks the store its co
 mints, one record per call); the generic instance's statement join binds its join local
 the same way.
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
+**`LOFT_NO_NULLABLE_VALUE_RECORD=1`** (`@FR-R-ValueRecord`'s nullable clause, C144,
+default-ON, generation time, `--native` only) — set, it keeps every `-> S?` on its return buffer and
+every `S?` local a `DbRef`, leaving the dense road untouched — the first bisect step for a
+wrong field or a wrong presence test (`if x`, `x == null`) out of a nullable record-returning
+call.  With it on (the default) such a function returns `(fields…, bool)`, the last element
+the presence word.
 **`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON, generation
 time, `--native` only) keeps every by-value record PARAMETER a `DbRef` again — with it
 off, a parameter of a plain no-heap record of ≤6 scalars is received as the TUPLE of its

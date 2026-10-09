@@ -315,3 +315,23 @@ the rule `(L-Align)` in [formal/layout.md](formal/layout.md); guards `tests/layo
 `validate_all_layouts_reports_a_misaligned_field`.
 **Catalogue:** `formal/layout.md` `(L-Struct)` `(L-Tuple)` `(L-Ref)` `(L-Sound)` · LOFT_DATA.md
 § Sizeof
+
+## C144 — A nullable value record carries a presence word; an absent one holds its fields' nulls
+
+**Decision.** On `--native`, a `-> S?` of a record `(R-ValueRecord)` admits returns the tuple of
+`S`'s fields followed by one `bool`, the PRESENCE word: `(f₁, …, fₙ, present)`.  An absent tuple
+holds every field's null (`i64::MIN`, `NAN`, `false`) and `false`.  A field read is the same tuple
+index as on the dense tuple; a presence test reads the last element.  The dense and the nullable
+layout are two keys, so no site is handed the other's tuple.
+**Why.** `(N-Road)`: the `?` is a marker over τ's storage and must not select the slower road.
+A tuple has no spare bit for absence, and a field's own null cannot stand for it, because a
+present record may hold null fields.  Filling an absent tuple with field nulls makes every field
+read answer exactly what a read off the null record answers, with no test of its own.
+**Revisit when.** A record whose heap field is a view leaf must be nullable too — its absence is
+a REPORTED null, which this tuple does not spell — or the interpreter's IR value record
+(@PLN180) takes the nullable road and needs a presence spelling of its own.  Decided 2026-10-09
+(loft#1952) — [record](DESIGN_DECISIONS-history.md#c144--a-nullable-value-record-carries-a-presence-word-an-absent-one-holds-its-fields-nulls).
+**Holds at:** `@C144` — `hoist::ValueTuple::absent` / `presence` and `hoist::NULLABLE_LAYOUT`
+(`src/generation/hoist.rs`), `ref_ops::PresenceEmitter`, `formal/rewrites.md` `(R-ValueRecord)`
+nullable clause, guard `tests/scripts/a-nullable-record-returns-its-fields-in-registers.loft`.
+**Catalogue:** `formal/types.md` `(N-Road)` · NATIVE_SWITCHES.md `LOFT_NO_NULLABLE_VALUE_RECORD`.

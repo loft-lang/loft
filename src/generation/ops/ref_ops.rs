@@ -721,6 +721,37 @@ impl OpEmitter for OpRefAliasEmitter {
     }
 }
 
+/// `OpConvBoolFromRef` / `OpRefIsNull` — the PRESENCE test of a record, with the
+/// `@FR-R-ValueRecord` nullable clause (@C144): a `τ?` VALUE LOCAL is a tuple whose last element is
+/// the presence word (`hoist::ValueTuple::presence`), so `if x` reads it and `x == null`
+/// negates it.  The gate accounts exactly these two tests against a nullable value local
+/// (`hoist::local_uses_ok`); a dense one never reaches here, its presence tests decline it.
+/// Every other operand takes its template.
+pub struct PresenceEmitter {
+    /// `true` for `OpRefIsNull` (answers ABSENCE), `false` for `OpConvBoolFromRef`.
+    pub absent: bool,
+}
+
+impl OpEmitter for PresenceEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        if let [arg] = args
+            && let Value::Var(v) = arg.unspan()
+            && let Some(key) = ctx.output.value_record_locals.get(v).copied()
+            && let Some(at) = ctx
+                .output
+                .value_records
+                .types
+                .get(&key)
+                .and_then(super::super::hoist::ValueTuple::presence)
+        {
+            let place = ctx.output.var_place(*v);
+            let not = if self.absent { "!" } else { "" };
+            return write!(ctx.w, "({not}{place}.{at})");
+        }
+        super::default::DefaultEmitter.emit(ctx, args)
+    }
+}
+
 /// `OpClear` — the pool's release of a REUSED record buffer (loft#1549), with the @PLN157
 /// § V-ah arm: a DEAD BUFFER (`hoist::dead_buffers`) is never minted, so it holds nothing to
 /// release.  Without it a heap-owning buffer could never be dead — the release was a mention

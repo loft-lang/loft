@@ -238,7 +238,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     // match its own dispatch (`fnref::dispatch_arms` compares result types).
     let arms = vr.fnref_arms();
     for (&d, &tp) in &vr.fns {
-        if arms.contains(&d) {
+        // `@FR-R-ValueRecord`'s nullable clause is `--native`'s alone: a `τ?` tuple carries a
+        // presence word this pass has no spelling for, so the IR keeps the record form there.
+        if arms.contains(&d) || crate::generation::hoist::is_nullable_layout(tp) {
             continue;
         }
         if let Some(c) = callee_shape(data, stores, &w.ops, &mut w.layouts, d, tp) {
