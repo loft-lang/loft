@@ -785,10 +785,7 @@ fn packages_exporting(name: &str, declares: fn(&str, &str) -> bool) -> Vec<Strin
         return Vec::new();
     }
     let (index_path, _, _) = index_paths();
-    let Ok(content) = file_access::read_to_string(index_path) else {
-        return Vec::new();
-    };
-    let Ok(index) = parse_index(&content) else {
+    let Some(index) = cached_index(&index_path) else {
         return Vec::new();
     };
     let mut hits: Vec<String> = index
@@ -813,6 +810,37 @@ fn packages_exporting(name: &str, declares: fn(&str, &str) -> bool) -> Vec<Strin
     hits.sort();
     hits.dedup();
     hits
+}
+
+/// The parsed registry index at `path`, read once per process per version of the file.
+///
+/// Every unresolved function or type name asks [`packages_exporting`] which published package
+/// declares it, so the hint can name one — and reading and parsing the whole index for each
+/// cost about 38 ms a name: a file with 130 calls to undefined functions took five seconds to
+/// parse, where the same file with the functions defined took five milliseconds.  The parsed
+/// index is kept against the file's [`index_stamp`] (length and modification time), so an index
+/// replaced while the process runs (`loft install`, a refresh) is read again.
+fn cached_index(path: &std::path::Path) -> Option<std::sync::Arc<RegistryIndex>> {
+    type Cached = (
+        std::path::PathBuf,
+        (u64, u64),
+        std::sync::Arc<RegistryIndex>,
+    );
+    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
+    let stamp = index_stamp(path)?;
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((p, s, index)) = cache.as_ref()
+        && p == path
+        && *s == stamp
+    {
+        return Some(index.clone());
+    }
+    let content = file_access::read_to_string(path).ok()?;
+    let index = std::sync::Arc::new(parse_index(&content).ok()?);
+    *cache = Some((path.to_path_buf(), stamp, index.clone()));
+    Some(index)
 }
 
 /// Does the API signature `sig` declare a type called `name`?  The name must end there:
@@ -2697,6 +2725,46 @@ mod tests {
         assert_eq!(stem("arguments"), "argument");
         assert_eq!(stem("class"), "class");
         assert_eq!(stem("gls"), "gls");
+    }
+
+    /// The parsed index is read once per version of the file: a second lookup shares the first
+    /// one's parse (an unresolved name asks it, and parsing per name made a file of 130
+    /// undefined calls take five seconds), and a replaced file is read again.
+    #[test]
+    fn the_parsed_index_is_shared_until_the_file_changes() {
+        let dir = std::env::temp_dir().join(format!("loft_cached_index_{}", std::process::id()));
+        let _ = file_access::create_dir_all(&dir);
+        let path = dir.join("index.json");
+        let doc = |api: &str| {
+            format!(
+                r#"{{"schema_version":1,"updated":"","packages":{{"geo":{{"versions":{{"0.1.0":{{
+                "url":"u","sha256":"s","size":1,"loft":">=0.8","published":"p",
+                "api":[{{"sig":"pub fn {api}(d: integer) -> integer","doc":""}}]}}}}}}}}}}"#
+            )
+        };
+        file_access::write(&path, doc("area")).expect("write the index");
+        let first = cached_index(&path).expect("the index parses");
+        let second = cached_index(&path).expect("the index parses");
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "a second lookup must share the first parse"
+        );
+        // A replacement of another length is a new version: read again.
+        file_access::write(&path, doc("perimeter")).expect("rewrite the index");
+        let third = cached_index(&path).expect("the index parses");
+        assert!(
+            !std::sync::Arc::ptr_eq(&first, &third),
+            "a replaced index must be read again"
+        );
+        let declares = |idx: &RegistryIndex, name: &str| {
+            idx.packages.values().any(|p| {
+                p.versions
+                    .values()
+                    .any(|v| v.api.iter().any(|i| exports_free_fn(&i.sig, name)))
+            })
+        };
+        assert!(declares(&third, "perimeter") && !declares(&third, "area"));
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
