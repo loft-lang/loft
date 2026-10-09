@@ -8599,21 +8599,22 @@ use a separate collection or add after the loop"
         // A left-hand side that CREATED its variable in pass 1 is that variable's first
         // binding — recorded for both passes to read (`first_bind_at`).
         // A `( … ) =` destructure creates each of its names the same way.
+        // Read in place, every statement on the first pass: no list of the names is built.
         if self.first_pass {
-            let created: Vec<u16> = match code.unspan() {
-                Value::Var(v) => vec![*v],
-                Value::Tuple(vs) => vs
-                    .iter()
-                    .filter_map(|v| match v.unspan() {
-                        Value::Var(v) => Some(*v),
-                        _ => None,
-                    })
-                    .collect(),
-                _ => Vec::new(),
+            let lhs: &[Value] = match code.unspan() {
+                Value::Tuple(vs) => vs,
+                one @ Value::Var(_) => std::slice::from_ref(one),
+                _ => &[],
             };
-            for v in created.into_iter().filter(|v| *v >= vars_before_lhs) {
-                self.first_bind_at
-                    .insert((self.context, v), (stmt_start_pos.line, stmt_start_pos.pos));
+            for part in lhs {
+                if let Value::Var(v) = part.unspan()
+                    && *v >= vars_before_lhs
+                {
+                    self.first_bind_at.insert(
+                        (self.context, *v),
+                        (stmt_start_pos.line, stmt_start_pos.pos),
+                    );
+                }
             }
         }
         // `@FR-B-Scope` — a bind after the name's block ended starts a new binding here too;
