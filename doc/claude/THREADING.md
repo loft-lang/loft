@@ -426,8 +426,16 @@ element folds into a scalar accumulator with no per-iteration
 state):
 
 ```loft
-total = par_fold(items, 0, |acc, e| acc + e.value, 4)
+fn add(acc: integer, x: integer) -> integer { acc + x }
+total = par_fold(items, 0, add, 4)   // items: vector<integer>
 ```
+
+The items are a `vector<integer>`, the initial value an `integer`, and the fold a
+`fn(integer, integer) -> integer` named at the call: its name, or a lambda that captures
+nothing (`fn(acc: integer, x: integer) -> integer { acc + x }`).  A fold held in a variable,
+parameter or field, or a lambda that captures, is refused at compile time: a parallel worker
+is checked where it is named (C93).  To fold with context, forward it through the fused loop:
+`for x in items par(b = f(x, k), 4) { total += b; }`.
 
 The parser lowers it to the builtin `n_parallel_fold`
 (`Parser::parse_par_fold`, `src/parser/builtins.rs`), which both backends

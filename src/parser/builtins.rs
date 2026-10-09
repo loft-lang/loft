@@ -812,9 +812,28 @@ impl Parser {
     /// types (`vector<T>` + `fn(R, T) -> R`) await a follow-up
     /// when the runtime relaxes its V1 gate.
     ///
-    /// Syntax: `par_fold(items, init, fn worker, threads)` —
-    /// `fn worker` is the fn-reference form (parser converts to
-    /// `Value::Int(d_nr)` with `Type::Function(...)`).
+    /// A parallel worker is a function the compiler sees at the call — C93 checks its safety
+    /// there, and the runtime dispatches it by definition number.  A function VALUE (a local,
+    /// a parameter, a field) is chosen at run time, and a lambda that captures carries a record
+    /// no worker receives; both are refused (loft#1958), as the `par(…)` clause refuses a
+    /// function value.
+    fn par_fold_names_its_fold(&mut self, fold: &Value) -> bool {
+        if matches!(fold.unspan(), Value::Int(_)) {
+            return true;
+        }
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "par_fold: the fold must be a function named at the call — its name, or a lambda \
+             that captures nothing — so it can run as a parallel worker; to fold with context, \
+             write `for x in v par(b = f(x, k), threads) {{ total += b; }}`"
+        );
+        false
+    }
+
+    /// Syntax: `par_fold(items, init, fold, threads)` — `fold` is a function named at the call
+    /// (its name, or a lambda that captures nothing), which the parser lowers to
+    /// `Value::Int(d_nr)` with `Type::Function(...)`.
     pub(crate) fn parse_par_fold(
         &mut self,
         val: &mut Value,
@@ -884,6 +903,9 @@ impl Parser {
                 Level::Error,
                 "par_fold (V1): fold function must have signature `fn(integer, integer) -> integer`"
             );
+            return Type::Unknown(0);
+        }
+        if !self.par_fold_names_its_fold(&list[2]) {
             return Type::Unknown(0);
         }
         // threads must be integer.

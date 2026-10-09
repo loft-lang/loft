@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1958: `par_fold`'s fold runs as a parallel worker, so it is a function named at the call
+// — its name, or a lambda that captures nothing.  A function chosen at run time, or a lambda
+// that captures, is refused at compile time; before, it reached the runtime as a function value
+// where a definition number was read (interpreter panic, rustc E0061 on `--native`).  One
+// refused cell per source of the value: a local holding a function (`r1`), a local holding a
+// lambda (`r2`), a parameter (`r3`), a struct field (`r4`), an inline lambda that captures
+// (`r5`).  The fold shapes that run are
+// `1958b-a-par-fold-worker-named-at-the-call-runs.loft`.
+//
+// @EXPECT_ERROR: par_fold: the fold must be a function named at the call
+// @EXPECT_ERROR: par_fold: the fold must be a function named at the call
+// @EXPECT_ERROR: par_fold: the fold must be a function named at the call
+// @EXPECT_ERROR: par_fold: the fold must be a function named at the call
+// @EXPECT_ERROR: par_fold: the fold must be a function named at the call
+// @falsified-at: 4ede3b207 — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1958-a-par-fold-worker-is-named-at-the-call.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — the control compiles every refused cell, so none of the
+//   five refusals fires and the suite scores the file FAIL.
+//   WITNESS: on 4ede3b207 `r1` panics the interpreter (`data.rs:13555`, index 65535) and
+//   `--native` fails rustc with E0061.
+//   HOLDS: leak and assertion counts are equal on both trees.
+fn add(a: integer, b: integer) -> integer { a + b }
+struct Ops { fold: fn(integer, integer) -> integer }
+
+fn r1() { v = [1, 2, 3]; f = add; r = par_fold(v, 0, f, 2); println("r1 {r}"); }
+fn r2() {
+  v = [1, 2, 3];
+  f = fn(a: integer, b: integer) -> integer { a + b };
+  r = par_fold(v, 0, f, 2);
+  println("r2 {r}");
+}
+fn r3(f: fn(integer, integer) -> integer) { v = [1, 2, 3]; r = par_fold(v, 0, f, 2); println("r3 {r}"); }
+fn r4() { o = Ops { fold: add }; v = [1, 2, 3]; r = par_fold(v, 0, o.fold, 2); println("r4 {r}"); }
+fn r5() {
+  k = 1;
+  v = [1, 2, 3];
+  r = par_fold(v, 0, fn(a: integer, b: integer) -> integer { a + b + k }, 2);
+  println("r5 {r}");
+}
+
+fn main() { r1(); r2(); r3(add); r4(); r5(); }
