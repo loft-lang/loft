@@ -1,8 +1,8 @@
-diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
-index 0f0693495..139f6065a 100644
---- b/src/generation/hoist.rs
-+++ a/src/generation/hoist.rs
-@@ -13084,13 +13084,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 2549d53a..2bec898e 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -14740,13 +14740,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
              // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
              // was freed by nobody, one record per call on `--native` alone, in a concrete
              // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
@@ -17,12 +17,12 @@ index 0f0693495..139f6065a 100644
 +            if !vars.is_argument(*var) && !vars.is_skip_free(*var) {
                  return None;
              }
-             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
-diff --git b/src/lexer.rs a/src/lexer.rs
-index 1a257241d..642679e60 100644
---- b/src/lexer.rs
-+++ a/src/lexer.rs
-@@ -140,12 +140,8 @@ struct Recorded {
+             // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
+diff --git a/src/lexer.rs b/src/lexer.rs
+index fc621186..b6803059 100644
+--- a/src/lexer.rs
++++ b/src/lexer.rs
+@@ -273,12 +273,8 @@ struct Recorded {
      /// Where the consumed source ended when the token became the one held.
      prev_end: (u32, u32),
      /// The string-interpolation state the read left: a literal that opens a hole leaves
@@ -37,7 +37,7 @@ index 1a257241d..642679e60 100644
  }
  
  /// A lexer that can remember a state via a link and then optionally return to that state.
-@@ -1041,7 +1037,7 @@ impl Lexer {
+@@ -1201,7 +1197,7 @@ impl Lexer {
              res: res.clone(),
              cursor: (self.position.line, self.position.pos),
              prev_end: (self.prev_end.line, self.prev_end.pos),
@@ -46,7 +46,7 @@ index 1a257241d..642679e60 100644
          }
      }
  
-@@ -1049,11 +1045,12 @@ impl Lexer {
+@@ -1209,11 +1205,12 @@ impl Lexer {
      /// as it would be read, with the cursor and consumed end the scan leaves.
      fn queue(&mut self, res: LexResult) {
          let at = (self.position.line, self.position.pos);
@@ -60,7 +60,7 @@ index 1a257241d..642679e60 100644
          });
      }
  
-@@ -1071,9 +1068,7 @@ impl Lexer {
+@@ -1231,9 +1228,7 @@ impl Lexer {
          self.position.pos = n.cursor.1;
          self.prev_end.line = n.prev_end.0;
          self.prev_end.pos = n.prev_end.1;
@@ -71,7 +71,7 @@ index 1a257241d..642679e60 100644
          n.res
      }
  
-@@ -1934,15 +1929,7 @@ impl Lexer {
+@@ -2093,15 +2088,7 @@ impl Lexer {
                      self.ret_number(0, pos, false)
                  };
              }
@@ -88,7 +88,7 @@ index 1a257241d..642679e60 100644
                  // P195 + P234: when the previous emitted token was a `.`
                  // (field access), the current number is a tuple/struct
                  // field index — NEVER a float fragment.  This covers two
-@@ -3173,30 +3160,9 @@ mod test {
+@@ -3435,30 +3422,9 @@ mod test {
          );
      }
  
@@ -120,11 +120,11 @@ index 1a257241d..642679e60 100644
          error("12. ", "[\"Error: Problem parsing float at error:1:4\"]");
          error("1.12ea", "[\"Error: Problem parsing float at error:1:6\"]");
          error(
-diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index d1c3f221c..1ac341eab 100644
---- b/src/parser/mod.rs
-+++ a/src/parser/mod.rs
-@@ -9537,90 +9537,6 @@ impl Parser {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 4cffbb0a..4658a855 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -9804,90 +9804,6 @@ impl Parser {
          }
          code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
      }
@@ -215,7 +215,7 @@ index d1c3f221c..1ac341eab 100644
  
      fn fill_monomorph_body(
          &mut self,
-@@ -9736,8 +9652,6 @@ impl Parser {
+@@ -10003,8 +9919,6 @@ impl Parser {
                  }
              }
          }
@@ -224,11 +224,11 @@ index d1c3f221c..1ac341eab 100644
          let vars = std::mem::replace(&mut self.vars, outer_vars);
          self.context = outer_context;
          self.data.definitions[d_nr as usize].code = code;
-diff --git b/src/scopes/free_vars.rs a/src/scopes/free_vars.rs
-index a52f7ff03..9866c87df 100644
---- b/src/scopes/free_vars.rs
-+++ a/src/scopes/free_vars.rs
-@@ -581,19 +581,6 @@ impl Scopes<'_> {
+diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
+index 6adb7665..216dbcc8 100644
+--- a/src/scopes/free_vars.rs
++++ b/src/scopes/free_vars.rs
+@@ -589,19 +589,6 @@ impl Scopes<'_> {
          } else {
              HashSet::default()
          };
@@ -248,7 +248,7 @@ index a52f7ff03..9866c87df 100644
          // Kept for the null-arm join leg below, which releases its sources after this sweep.
          let join_arm_dropped = arm_dropped.clone();
          let mut ls = self.get_free_vars(
-@@ -664,10 +651,7 @@ impl Scopes<'_> {
+@@ -672,10 +659,7 @@ impl Scopes<'_> {
          // otherwise emit `Return(expr)` with the sources leaking on the null
          // path (frees suppressed above), and the legacy path would re-open the
          // eval-stack UAF.
@@ -260,7 +260,7 @@ index a52f7ff03..9866c87df 100644
              self.ret_temp_counter += 1;
              let name = format!("__ret_{}", self.ret_temp_counter);
              let tmp = function.add_temp_var(&name, tp);
-@@ -723,18 +707,6 @@ impl Scopes<'_> {
+@@ -731,18 +715,6 @@ impl Scopes<'_> {
                      _ => free,
                  });
              }
@@ -279,11 +279,11 @@ index a52f7ff03..9866c87df 100644
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
-index 66b26223b..62ab88dd6 100644
---- b/src/scopes/get_free_vars.rs
-+++ a/src/scopes/get_free_vars.rs
-@@ -1127,15 +1127,6 @@ impl Scopes<'_> {
+diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
+index 6429ffc8..2a4def0d 100644
+--- a/src/scopes/get_free_vars.rs
++++ b/src/scopes/get_free_vars.rs
+@@ -1155,15 +1155,6 @@ impl Scopes<'_> {
          if to_scope == 1 {
              let free_distinct = data.def_nr("OpFreeRefIfDistinct");
              for (param, orig) in function.rebind_params() {
@@ -299,11 +299,11 @@ index 66b26223b..62ab88dd6 100644
                  ls.push(Value::Call(
                      free_distinct,
                      vec![Value::Var(param), Value::Var(orig)],
-diff --git b/src/use_analysis.rs a/src/use_analysis.rs
-index 6f7c8e669..8c14c697b 100644
---- b/src/use_analysis.rs
-+++ a/src/use_analysis.rs
-@@ -7771,77 +7771,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
+diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+index d20a2628..b7c3937f 100644
+--- a/src/use_analysis.rs
++++ b/src/use_analysis.rs
+@@ -8056,77 +8056,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
          func.is_argument(v)
              && !matches!(func.tp(v), Type::RefVar(_))
              && !func.name(v).starts_with("__")
@@ -381,11 +381,11 @@ index 6f7c8e669..8c14c697b 100644
  /// Is `arg` a call that hands back a COPY of a place the caller can still reach?
  ///
  /// This is the difference between a write that LOSES data and one that merely writes into
-diff --git b/src/variables/mod.rs a/src/variables/mod.rs
-index 793e26e6c..c5b695698 100644
---- b/src/variables/mod.rs
-+++ a/src/variables/mod.rs
-@@ -4234,12 +4234,6 @@ impl Function {
+diff --git a/src/variables/mod.rs b/src/variables/mod.rs
+index 48f47f93..9a2ed2e7 100644
+--- a/src/variables/mod.rs
++++ b/src/variables/mod.rs
+@@ -4258,12 +4258,6 @@ impl Function {
      /// @PLN87 P2.1 — record that visible heap parameter `param` is
      /// whole-binding-reassigned in the body and `orig` is its caller-store
      /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.
