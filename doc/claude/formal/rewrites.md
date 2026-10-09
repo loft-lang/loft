@@ -2553,7 +2553,11 @@ cells `tests/scripts/a-reduction-loop-is-one-kernel-call.loft`.
                  release it and the next turn would write a record back in the pool.
                  Also required — the buffer is used ONCE and its result local is
                  assigned ONCE, since a second use has one guarded site and one this
-                 did not read, and a reassignment frees the store it displaces.
+                 did not read, and a reassignment frees the store it displaces.  The
+                 count is of the VARIABLE: a sibling scope's split copy of a name is
+                 one of its own and counts its own binds.  A local whose rebind
+                 releases nothing it displaces (O-Buffer's adoption veto) is not
+                 objected to, since the release is the whole objection.
                  A buffer whose callee MINTS the store its result adopts (O-Move at
                  a plain local's first bind, @PLN164 B1) is paired for the guarded
                  free alone and NOT allocated here: handed non-null to a callee that

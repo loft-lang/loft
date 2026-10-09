@@ -174,6 +174,9 @@ impl Scopes<'_> {
             }
         }
         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
+        if v != ov {
+            self.split_binds.entry(v).or_insert((ov, 0)).1 += 1;
+        }
         // A handle view given a member's handle on one arm and one of its own on another
         // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
         let tagged;

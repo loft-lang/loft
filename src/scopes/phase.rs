@@ -176,6 +176,7 @@ pub(super) fn run_scan_phase(
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),
         null_led_first: null_led_first_binds_in(orig_code, data),
+        split_binds: HashMap::default(),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
@@ -541,13 +542,7 @@ pub(super) fn run_scan_phase(
         d_nr,
         &scopes.witness_buffer,
         &scopes.minted_pairs,
-        // A local whose other binds are the nulls in front of it on every pass displaces
-        // nothing (`null_led_first_binds_in`, loft#1643).
-        &scopes
-            .multi_assigned
-            .difference(&scopes.null_led_first)
-            .copied()
-            .collect(),
+        &reassigned_locals(&scopes),
     );
     lazy_buffer_mints(&mut code, &mut function, data);
     function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
@@ -618,6 +613,32 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
     }
     let mut out = HashSet::default();
     collect(node, &mut out);
+    out
+}
+
+/// The locals assigned more than once, as the record-buffer pool asks it (`@FR-O-LazyBuffer`
+/// with `@FR-O-Buffer`): a result local bound again releases the store it displaces, which
+/// under reuse is the pooled buffer.  A local whose other binds are the nulls in front of it
+/// on every pass displaces nothing (`null_led_first_binds_in`, loft#1643).
+///
+/// The body counts are keyed by the ORIGINAL variable and cover every sibling scope at once,
+/// so the original is answered from them (an over-count, in the safe direction).  A SPLIT
+/// COPY is a variable of its own that no body count names, so it is answered from its own
+/// binds: two sibling loops binding `y`, the second twice, left the second loop's copy out of
+/// the set, and its buffer was pooled and freed by its own rebind (loft#1954).  A copy of a
+/// null-led local keeps the exemption, because the one real bind and the nulls leading it sit
+/// in one enclosing block and so in one copy.
+fn reassigned_locals(scopes: &Scopes) -> HashSet<u16> {
+    let mut out: HashSet<u16> = scopes
+        .multi_assigned
+        .difference(&scopes.null_led_first)
+        .copied()
+        .collect();
+    for (&copy, &(orig, binds)) in &scopes.split_binds {
+        if binds >= 2 && !scopes.null_led_first.contains(&orig) {
+            out.insert(copy);
+        }
+    }
     out
 }
 

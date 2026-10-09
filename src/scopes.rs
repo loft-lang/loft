@@ -290,6 +290,11 @@ struct Scopes<'s> {
     /// The locals whose one real bind follows an enclosing null on every path and every pass
     /// ([`null_led_first_binds_in`]): that bind displaces no store.
     null_led_first: HashSet<u16>,
+    /// The scope pass's SPLIT COPIES (`var_mapping`) — each copy to the variable it was split
+    /// from — with how many source binds each copy took.  The whole-body counts above are
+    /// keyed by the ORIGINAL variable, so a copy is never in them; a question about the copy's
+    /// own binds reads it here (loft#1954).
+    split_binds: HashMap<u16, (u16, usize)>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
