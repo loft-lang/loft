@@ -1,5 +1,5 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 51ba7bd9f..939cf8914 100644
+index 51ba7bd9..939cf891 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
 @@ -2520,20 +2520,6 @@ impl Output<'_> {
@@ -121,7 +121,7 @@ index 51ba7bd9f..939cf8914 100644
                          // Close the block opened above; the call is its tail expr.
                          write!(w, " }}")?;
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index e45724064..a515b29d6 100644
+index e4572406..a515b29d 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
 @@ -2468,7 +2468,7 @@ use #count instead"
@@ -155,7 +155,7 @@ index e45724064..a515b29d6 100644
              self.iter_op_count_or_first(code, name, t, false, index_var);
          } else if self.lexer.has_keyword("first") {
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index c5287c7a3..0d5c070c7 100644
+index c5287c7a..0d5c070c 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
 @@ -19460,7 +19460,7 @@ impl Parser {
@@ -168,10 +168,10 @@ index c5287c7a3..0d5c070c7 100644
              // used to report `not null` violations at the tuple literal site.
              let expr_start = self.lexer.peek().clone();
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 770e9249c..d63fe8d98 100644
+index dc1085c3..c3a42931 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -1208,19 +1208,6 @@ impl Parser {
+@@ -1190,19 +1190,6 @@ impl Parser {
          }
      }
  
@@ -189,9 +189,9 @@ index 770e9249c..d63fe8d98 100644
 -    }
 -
      // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
-     /// @PLN86 step 0.1 — depth-guarded entry to expression parsing: it bounds the
-     /// nesting depth so a deep `((((…))))` is a clean parse error, never a native stack
-@@ -1296,7 +1283,10 @@ impl Parser {
+     /// Depth-guarded entry to expression parsing: it bounds the nesting depth at
+     /// [`crate::limits::LIMIT`], in every def, sandboxed or not, so a deep `((((…))))` is a clean
+@@ -1346,7 +1333,10 @@ impl Parser {
              // since loft loops are currently void-typed.  Covers the common
              // find/search pattern where break-with-value exits the function.
              // TODO: implement for...else for the general case.
@@ -204,10 +204,10 @@ index 770e9249c..d63fe8d98 100644
                  let break_tp = self.expression(&mut break_val);
                  let ret_tp = self.data.def(self.context).returned().clone();
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 27cc17504..eae3a3e26 100644
+index b8f15ebd..a5217a33 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -3281,6 +3281,30 @@ impl Parser {
+@@ -3411,6 +3411,30 @@ impl Parser {
              if matches!(self.data.def(*d).returned(), Type::Optional(_)))
      }
  
@@ -238,7 +238,7 @@ index 27cc17504..eae3a3e26 100644
      /// Desugar `lhs ?? ...` — both the plain-default form and the
      /// `?? return ret_expr` early-return form.  Lifted out of
      /// [`Self::handle_operator`] so each shape has its own focused helper.
-@@ -3437,14 +3461,8 @@ impl Parser {
+@@ -3567,14 +3591,8 @@ impl Parser {
          // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
          if self.lexer.has_token("return") {
              self.build_null_coalesce_return(code, ctp, &lhs_type);
@@ -255,7 +255,7 @@ index 27cc17504..eae3a3e26 100644
          } else {
              self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
          }
-@@ -3736,7 +3754,7 @@ impl Parser {
+@@ -3866,7 +3884,7 @@ impl Parser {
          // produces the typed null sentinel.
          let mut ret_val = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
