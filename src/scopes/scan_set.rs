@@ -174,6 +174,9 @@ impl Scopes<'_> {
             }
         }
         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
+        if v != ov {
+            self.split_binds.entry(v).or_insert((ov, 0)).1 += 1;
+        }
         // A handle view given a member's handle on one arm and one of its own on another
         // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
         let tagged;
@@ -336,7 +339,7 @@ impl Scopes<'_> {
         // the whole loop.  A first-iteration free is a no-op — the entry null-init
         // leaves the elements at the sentinel, which `free` ignores.
         if was_in_scope
-            && let Type::Tuple(elems) = function.tp(v)
+            && let Type::Tuple(elems) = function.tp(v).base()
             && !value.reads_var(v)
             && !value.reads_var(ov)
         {
@@ -685,7 +688,7 @@ impl Scopes<'_> {
         }
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
-        if matches!(function.tp(v), Type::Tuple(_)) {
+        if matches!(function.tp(v).base(), Type::Tuple(_)) {
             let joined = if matches!(value.unspan(), Value::If(..)) {
                 branch_tuple_call_mints(value, function, data, data.def_nr("OpNullRefSentinel"))
             } else {

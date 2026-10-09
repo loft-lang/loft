@@ -698,13 +698,15 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 1.**
 
-- **D-types-32 (OPEN, loft#1934)** — violates `(N-Road)`: τ and τ? take the same lowering.  The
+- **D-types-32** (open; the tracking issue is loft#1934) — violates `(N-Road)`: τ and τ? take the same lowering.  The <!-- doc-lint: ok -->
   record return is unified: a `-> S?` takes the caller's buffer as `-> S` does
   (`Type::ret_promo_base` peels `Optional` of a record or record enum as it peeled
   `Optional(Vector)`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller binds
   either spelling through one arm (`use_analysis::first_bind_shape`).  Still open:
-  `captured-local-rebind` and `local-rebound-by-mint` (`scripts/nullable_road.py`), and
-  `--native` value records, which take only the dense flat record (loft#1952).  The `??`
+  `captured-local-rebind` and `local-rebound-by-mint` (`scripts/nullable_road.py`).  `--native`
+  value records take the nullable flat record too (`(R-ValueRecord)`'s nullable clause, C144):
+  the `mint`, `method` and `param` pairs take the tuple in both spellings, and a
+  `??` with a record default is the one value-record shape still on the record road.  The `??` <!-- doc-lint: ok -->
   lowering is the rule's one exception, and pairs such as `ret-view-of-param` now differ in it
   alone.  The values agree and both halves are leak-clean under `LOFT_STRICT_STORES=1`.
 

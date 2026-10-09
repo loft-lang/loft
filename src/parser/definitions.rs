@@ -3067,11 +3067,13 @@ impl Parser {
             // @PLN86 step 0.1 — enter restricted parsing for this def's body: the
             // nesting guard activates and its depth state starts fresh.
             self.in_sandbox = true;
-            self.parse_depth = 0;
-            self.depth_overflowed = false;
         } else {
             self.in_sandbox = false;
         }
+        // Every def's nesting is counted from its own body (`crate::limits::LIMIT`).
+        self.parse_depth = 0;
+        self.depth_overflowed = false;
+        self.depth_trip_mark = None;
         // Plan-17 phase 01 (B) — bound resolution + t-stub creation now
         // happens on BOTH passes.  Before, this block was gated on
         // `!self.first_pass`, leaving `definitions[ctx].bounds` empty
@@ -3503,6 +3505,12 @@ impl Parser {
                 self.vars.seed_incoming_writes(&self.data, self.context);
             }
             self.parse_code();
+            self.refuse_too_many_variables();
+            // A nesting refusal in this body: what the frames above it reported while unwinding
+            // over tokens they were not written for is dropped, leaving the one refusal.
+            if let Some(mark) = self.depth_trip_mark.take() {
+                self.lexer.rewind_diagnostics(mark);
+            }
             self.literal_body_constant();
             self.refuse_unmarked_foreign_return();
             // #314 — pass-1 sibling of the pass-2 flip above: now that
@@ -3968,6 +3976,42 @@ impl Parser {
         }
     }
 
+    /// `crate::limits`: a function binds at most 300 variables of its own — every name the
+    /// author binds in its body, parameters apart (they have their own limit) and the
+    /// compiler's temporaries (`_`-prefixed) not counted.  Reported once, at the 301st.
+    fn refuse_too_many_variables(&mut self) {
+        if !self.first_pass {
+            return;
+        }
+        // A walk that stops at the 301st: run on every function, so it allocates nothing.
+        let Some(extra) = (0..self.vars.count())
+            .filter(|&v| {
+                let name = self.vars.name(v);
+                !self.vars.is_argument(v) && !name.starts_with('_') && !name.contains('#')
+            })
+            .nth(crate::limits::LIMIT as usize)
+        else {
+            return;
+        };
+        let (line, pos) = self.vars.var_source(extra);
+        let at = Position {
+            file: self.lexer.pos().file,
+            line,
+            pos,
+        };
+        let name = self.vars.name(extra).to_string();
+        let fn_name = self.data.def(self.context).display_name().to_string();
+        self.lexer.pos_diagnostic(
+            Level::Error,
+            &at,
+            &format!(
+                "`{fn_name}` binds more than {} variables — `{name}` is one more; move part of \
+                 the work into a function of its own",
+                crate::limits::LIMIT
+            ),
+        );
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_arguments(&mut self, fn_name: &str, arguments: &mut Vec<Argument>) -> bool {
         // @PLN86 §7.2 (F7) — collect this list's `…#default` parameter locks fresh; the
@@ -3985,6 +4029,7 @@ impl Parser {
             // Capture the parameter name's position before it is consumed (only when
             // recording — `Position` holds a `String`, so no clone on a normal compile).
             let attr_pos = self.record_resolutions.then(|| *self.lexer.peek_pos());
+            let name_pos = *self.lexer.peek_pos();
             self.type_fact = AliasFact::Plain;
             let Some(attr_name) = self.lexer.has_identifier() else {
                 diagnostic!(self.lexer, Level::Error, "Expect attribute");
@@ -4263,6 +4308,17 @@ impl Parser {
             }
             self.pending_param_facts
                 .push(std::mem::take(&mut self.type_fact));
+            // `crate::limits`: a function takes at most 300 parameters.
+            if arguments.len() == crate::limits::LIMIT as usize && self.first_pass {
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    &name_pos,
+                    &format!(
+                        "`{fn_name}` takes more than {} parameters — pass a struct instead",
+                        crate::limits::LIMIT
+                    ),
+                );
+            }
             (*arguments).push(Argument {
                 name: attr_name,
                 typedef,
@@ -4889,6 +4945,16 @@ impl Parser {
             // leaving `database.position("v")` as `u16::MAX` when
             // codegen needs the host field offset.  Mirrors the
             // `sub_type` tuple arm below.  Idempotent.
+            // `crate::limits`: a tuple holds at most 300 elements.
+            if types.len() > crate::limits::LIMIT as usize && !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a tuple holds at most {} elements, this type has {} — use a struct",
+                    crate::limits::LIMIT,
+                    types.len()
+                );
+            }
             self.data.tuple_def(&mut self.lexer, &types);
             // A `?` after the closing paren.  `(N-Opt)` licenses `τ?` for every τ, but a tuple
             // is the one type former with NO representation for absence: `(L-Null)`'s sentinel
@@ -5950,6 +6016,18 @@ impl Parser {
             self.lexer.token(":");
             self.init_field_deps.clear();
             field_at.push((a_name.clone(), field_pos));
+            // `crate::limits`: a struct holds at most 300 fields.
+            if field_at.len() == crate::limits::LIMIT as usize + 1 && self.first_pass {
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    &field_pos,
+                    &format!(
+                        "a struct holds at most {} fields — `{a_name}` is one more; group some \
+                         of them into a struct of their own",
+                        crate::limits::LIMIT
+                    ),
+                );
+            }
             self.parse_field(d_nr, &a_name);
             if is_pub {
                 self.mark_pub_field(d_nr, &a_name);

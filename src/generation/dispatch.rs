@@ -2143,7 +2143,9 @@ impl Output<'_> {
         }
         // @PLN157 § V-ah — a value local's DECLARATION (`x = null` in the IR) binds the
         // tuple's zero, not a null `DbRef`: the local never names a store.
-        if matches!(to, Value::Null)
+        // `@FR-R-ValueRecord`'s nullable clause — and a bind of the bare `null` sentinel
+        // (`w: S? = null`) binds the nullable tuple's ABSENT spelling, which is that zero.
+        if (matches!(to, Value::Null) || super::hoist::is_null_sentinel(self.data, to))
             && let Some(d) = self.value_record_locals.get(&var).copied()
         {
             let zero = self.value_tuple_zero(d);

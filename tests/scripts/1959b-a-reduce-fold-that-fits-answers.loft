@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1959: the `reduce` calls whose fold fits `fn(U, T) -> U` keep answering, beside the
+// refusal of those that do not (`1959-a-reduce-fold-that-does-not-fit-is-refused.loft`), each
+// against a hand-computed value on both backends: an integer fold named at the call (f1), a
+// float one with a float initial value (f2), a float one with an INTEGER initial value, which
+// widens into the float accumulator — the accumulator is the fold's parameter, not the initial
+// value's type (f3), a text accumulator (f4), a lambda (f5); and through a function VALUE: a
+// local (v1), a parameter (v2), a field (v3), and a vector accumulator from an empty `[]` (v4).
+// @falsified-at: 7f164b6a0 — interpret exit 1 -> 0, interpret asserts 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1959b-a-reduce-fold-that-fits-answers.patch — the same channels.
+//   CHANNEL: the EXIT channel on both backends, and the assertion channel on the interpreter:
+//   f3 is the one cell the fix moved — the control typed the fold's result by the integer
+//   initial value and read the float accumulator's bits as one.
+//   WITNESS: on 7f164b6a0 the interpreter fails `f3`; `--native` does not compile it.
+//   HOLDS: every other cell answers the same on both trees.
+fn add(a: integer, b: integer) -> integer { a + b }
+fn addf(a: float, b: integer) -> float { a + b as float }
+fn cat(a: text, b: integer) -> text { "{a}{b}" }
+fn addv(a: vector<integer>, b: integer) -> vector<integer> { r = a; r += [b * 10]; r }
+fn go(f: fn(integer, integer) -> integer) -> integer { reduce([1, 2, 3], 0, f) }
+struct Ops { fold: fn(integer, integer) -> integer }
+
+fn main() {
+  assert(reduce([1, 2, 3], 0, add) == 6, "f1");
+  assert(reduce([1, 2], 0.5, addf) == 3.5, "f2");
+  f3 = reduce([1, 2], 1, addf);
+  assert(f3 == 4.0, "f3 {f3}");
+  assert(reduce([1, 2], "x", cat) == "x12", "f4");
+  assert(reduce([1, 2, 3], 10, |acc, x| { acc + x }) == 16, "f5");
+  f = add;
+  assert(reduce([1, 2, 3], 0, f) == 6, "v1");
+  assert(go(add) == 6, "v2");
+  o = Ops { fold: add };
+  assert(reduce([1, 2, 3], 0, o.fold) == 6, "v3");
+  g = addv;
+  v4 = reduce([1, 2], [], g);
+  assert(len(v4) == 2 && v4[0] == 10 && v4[1] == 20, "v4 {v4}");
+  println("ok");
+}

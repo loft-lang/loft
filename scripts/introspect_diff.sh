@@ -44,11 +44,11 @@ before="$(readlink -f "$before")"; after="$(readlink -f "$after")"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 one() {
   local f="$1" bin="$2" out="$3"
-  ( cd "$(dirname "$f")" && env LOFT_NO_CACHE=1 "${envs[@]}" LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$(basename "$f")" >"$out" 2>"$out.err" )
+  ( cd "$(dirname "$f")" && env LOFT_NO_CACHE=1 ${envs[@]+"${envs[@]}"} LOFT_TIMEOUT=120 "$bin" --path "$root" introspect "$(basename "$f")" >"$out" 2>"$out.err" )
 }
 export -f one; export root; export envs
 find "$root/tests/scripts" "$root/tests/docs" "$root/examples" -type f -name '*.loft' | LC_ALL=C sort > "$work/files"
-m=$(wc -l < "$work/files"); n=0; k=0
+m=$(wc -l < "$work/files"); n=0; k=0; e=0
 [ "$m" -gt 0 ] || { echo "introspect_diff: no corpus under '$root' (tests/scripts, tests/docs, examples) — use --root" >&2; exit 2; }
 while IFS= read -r f; do
   key=$(printf '%s' "$f" | md5sum | cut -c1-12)
@@ -56,5 +56,10 @@ while IFS= read -r f; do
   one "$f" "$after" "$work/$key.b"
   wait
   if cmp -s "$work/$key.a" "$work/$key.b" && cmp -s "$work/$key.a.err" "$work/$key.b.err"; then n=$((n+1)); else k=$((k+1)); echo "DIFF $f"; fi
+  [ -s "$work/$key.a" ] || e=$((e+1))
 done < "$work/files"
+# Two binaries that introspect NOTHING agree on every file — a missing stdlib under --root
+# (both fail to load `default/`) read as IDENTICAL.  A refusal file has no stdout either, so
+# only an EMPTY RUN, where no file produced any, is refused.
+if [ "$e" -eq "$m" ]; then echo "introspect_diff: no file produced any introspection — is default/ under '$root'?" >&2; exit 2; fi
 if [ "$k" = 0 ]; then echo "IDENTICAL $n/$m"; exit 0; else echo "DIFFERENT $k of $m"; exit 1; fi

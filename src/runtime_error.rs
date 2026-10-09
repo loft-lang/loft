@@ -216,11 +216,10 @@ pub fn exit_program(code: i64) -> ! {
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "a status is one byte by contract"
-    )]
-    std::process::exit(code as i32)
+    // A status is one byte by contract, as a shell sees `exit 300`: Windows keeps all 32
+    // bits of a process status, so the byte is taken here, where both backends end, rather
+    // than left to the OS (the same program answers the same status everywhere).
+    std::process::exit(i32::from(code.to_le_bytes()[0]))
 }
 
 impl RuntimeError {

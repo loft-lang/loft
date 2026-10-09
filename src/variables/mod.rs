@@ -5211,8 +5211,18 @@ impl Function {
             // proxy answers "owned" for such a local because the adoption leaves its dep list
             // empty, so without this the rebind released the buffer's store out from under it;
             // the buffer's own scope-exit free is what releases it, once.
-            && !(self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled())
+            && !self.rebind_keeps_displaced(v)
             && !crate::data::is_null_sentinel_detach(v, value, data, self)
+    }
+
+    /// Does a rebind of `v` release NOTHING it displaces, whatever the right-hand side?  The
+    /// loft#1522 veto: `v` adopted a construction work-ref's store, and the buffer frees it
+    /// once at function exit.  The one spelling of the veto, read by
+    /// [`Self::owns_displaced_store`] and by the record-buffer pool, whose only objection to a
+    /// local bound twice is the store such a rebind would release (`@FR-O-LazyBuffer`).
+    #[must_use]
+    pub fn rebind_keeps_displaced(&self, v: u16) -> bool {
+        self.is_buffer_witnessed(v) && crate::keys::buffer_veto_enabled()
     }
 
     /// `@FR-O-Buffer` — the compiler-built buffer the CALL in `value` is handed for its result,

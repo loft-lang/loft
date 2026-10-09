@@ -7,20 +7,12 @@ use super::{
 };
 use crate::data::Deps;
 
-/// @PLN86 step 0.1 — maximum expression-nesting depth allowed inside a sandboxed
-/// def's body.  Hostile deep nesting (`((((…))))`) drives the recursive-descent
-/// parser into a native stack overflow (rc=139); past this bound the parser
-/// rejects with a clean diagnostic at LOAD time instead.
-///
-/// Each nesting level costs ≈15 KB of native stack (measured; the
-/// `expression → operators → part → single` chain — #559's null-flow parse logic
-/// grew it from ≈10 KB), so the bound must be REACHABLE without overflowing the
-/// stack the parser runs on: 128 levels ≈ 1.8 MB.  The parser runs on the process
-/// main thread (8 MB default), so that is a ≈4.5× margin, and 128 is still far
-/// deeper than any hand-written script nests.  (Host-configurable later, per the
-/// plan.)  NB the margin against a bare ≥2 MB embedding is now thin — restoring it
-/// would mean shrinking the per-level frame or lowering this bound.
-pub(crate) const SANDBOX_MAX_PARSE_DEPTH: u32 = 128;
+/// loft#1961 — the parser's backstop behind [`crate::limits::LIMIT`]: the deepest expression
+/// tree a body may hold, `Span` wrappers counted, so that the passes after it — which may
+/// double a tree's depth by their rewrites — stay inside [`crate::limits::TREE_DEPTH`].  An
+/// expression within the 300 levels the parser counts stays far inside it; this catches only a
+/// shape the count does not see.
+pub(crate) const SCOPE_TREE_EDGE: usize = crate::limits::TREE_DEPTH / 2;
 
 /// @PLN86 2.4 — the leftmost base variable of a field/index LHS: `s.heading` /
 /// `v[i]` / `a.b.c` all descend through the `OpGet*` chain (the base is arg 0) to
@@ -745,6 +737,7 @@ impl Parser {
             self.data.def(self.context).returned().clone()
         };
         self.parse_block("return from block", &mut v, &result);
+        self.refuse_too_deep_tree(&mut v);
         self.check_result(&v);
         self.finish_body(v, result)
     }
@@ -1211,41 +1204,119 @@ impl Parser {
     }
 
     // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
-    /// @PLN86 step 0.1 — depth-guarded entry to expression parsing.  For trusted
-    /// code (`!in_sandbox`) this is a single bool check then a tail call — zero
-    /// cost.  Inside a sandboxed def it bounds the nesting depth so hostile
-    /// `((((…))))` is a clean LOAD-time parse error, never a native stack
-    /// overflow.  All recursion into nested sub-expressions routes back through
-    /// here (parens, arithmetic, indexing → `parse_single` → `expression`), so
-    /// one chokepoint bounds every nesting form.
+    /// Depth-guarded entry to expression parsing: it bounds the nesting depth at
+    /// [`crate::limits::LIMIT`], in every def, sandboxed or not, so a deep `((((…))))` is a clean
+    /// parse error, never a native stack overflow.  Recursion into nested sub-expressions routes
+    /// back through here (parens, arithmetic, indexing → `parse_single` → `expression`); the
+    /// forms that recurse without it — an operator chain, a postfix chain, a vector or struct
+    /// literal — call [`Self::enter_depth`] themselves.
     pub(crate) fn expression(&mut self, val: &mut Value) -> Type {
-        if !self.in_sandbox {
-            return self.expression_inner(val);
-        }
-        // Once the limit has tripped for this def, every further expression parse
-        // is a no-op: the def is already rejected, so we stop recursing entirely
-        // — this prevents a re-entry from re-walking the unconsumed deep tail and
-        // guarantees the parser unwinds in O(remaining tokens).  Reset per-def in
-        // `parse_function`.
-        if self.depth_overflowed {
-            return Type::Unknown(0);
-        }
-        self.parse_depth += 1;
-        if self.parse_depth > SANDBOX_MAX_PARSE_DEPTH {
-            // Stop recursing — emit once (latched) and unwind cleanly.
-            self.depth_overflowed = true;
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "expression nesting too deep in sandboxed code (limit {})",
-                SANDBOX_MAX_PARSE_DEPTH
-            );
-            self.parse_depth -= 1;
+        if !self.enter_depth() {
             return Type::Unknown(0);
         }
         let result = self.expression_inner(val);
-        self.parse_depth -= 1;
+        self.leave_depth();
         result
+    }
+
+    /// One more level of depth ([`crate::limits::LIMIT`]): `true` when it fits, otherwise the
+    /// expression is refused — once per def — and the rest of its group is read past, and the
+    /// caller returns without parsing deeper.  The caller that entered undoes it with
+    /// [`Self::leave_depth`] (a refused entry has already undone itself).
+    pub(crate) fn enter_depth(&mut self) -> bool {
+        self.parse_depth += 1;
+        // A statement's own expression is level 0 (it enters at 1), so `x = f(f(…))` with 300
+        // nested calls is 300 deep.
+        if self.parse_depth > crate::limits::LIMIT + 1 {
+            self.parse_depth -= 1;
+            self.refuse_depth_nesting();
+            return false;
+        }
+        true
+    }
+
+    pub(crate) fn leave_depth(&mut self) {
+        self.parse_depth -= 1;
+    }
+
+    /// The depth limit tripped: refuse, naming it.
+    pub(crate) fn refuse_depth_nesting(&mut self) {
+        let message = format!(
+            "expression nesting too deep: more than {} levels — split it with locals or a \
+             function (each bracket, call argument, block, branch, element, chained operator \
+             and postfix step is one level)",
+            crate::limits::LIMIT
+        );
+        self.refuse_depth(&message);
+    }
+
+    /// Refuse an expression too deep for the passes that follow the parser, and read past the
+    /// group it stands in, so the frames above it unwind over balanced tokens and parse what
+    /// follows as written.  One report per def (the latch, reset in `parse_function`), and the
+    /// mark `parse_function` rewinds to once the body is read, dropping what the unwinding
+    /// frames report after it.
+    pub(crate) fn refuse_depth(&mut self, message: &str) {
+        if !self.depth_overflowed {
+            self.depth_overflowed = true;
+            diagnostic!(self.lexer, Level::Error, "{message}");
+            self.depth_trip_mark = Some(self.lexer.diagnostics().mark());
+        }
+        self.skip_rest_of_group();
+    }
+
+    /// loft#1961 — refuse a body whose expression tree is deeper than half of
+    /// [`crate::limits::TREE_DEPTH`], which the recursive passes after the parser cannot hold,
+    /// and drop it so they never see it.  A backstop: every form the depth count sees builds a
+    /// tree far below it, so only a shape the count misses reaches this refusal instead of
+    /// crashing a later pass.  Every body is measured, once, by a walk that stops at the bound.
+    fn refuse_too_deep_tree(&mut self, body: &mut Value) {
+        if self.depth_overflowed {
+            return;
+        }
+        if !body.deeper_than(SCOPE_TREE_EDGE) {
+            return;
+        }
+        let name = self.data.def(self.context).display_name().to_string();
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "`{name}` holds an expression deeper than the compiler can follow — split \
+             a long chain or a deep nesting with locals (`a = x1 + … + x200; b = …; x = a + b`)"
+        );
+        *body = Value::Null;
+    }
+
+    /// After the nesting bound trips: read past the rest of the bracket group the refused
+    /// expression stands in, stopping BEFORE the closer that ends it.  Left unread, those
+    /// tokens met every enclosing frame — each expecting its own `)` / `]` / `}` — and one
+    /// refusal became a cascade of syntax errors naming columns the author never wrote a
+    /// mistake at.  With the group consumed, each enclosing frame finds its closer and the def
+    /// carries exactly one error.
+    ///
+    /// A `{` met after the first token is left for the enclosing frame as well: a refused
+    /// `if` condition must not take the body the `if` is about to read, or the frames above
+    /// lose their braces and the next definition with them.  Each call still consumes at least
+    /// one token, unless the next one is a closer, `;` or `,`, which the caller reads.
+    fn skip_rest_of_group(&mut self) {
+        let mut depth = 0usize;
+        let mut first = true;
+        loop {
+            match &self.lexer.peek().has {
+                LexItem::None => return,
+                LexItem::Token(t) if depth == 0 && !first && t == "{" => return,
+                LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => depth += 1,
+                LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                    if depth == 0 {
+                        return;
+                    }
+                    depth -= 1;
+                }
+                LexItem::Token(t) if depth == 0 && matches!(t.as_str(), ";" | ",") => return,
+                _ => {}
+            }
+            first = false;
+            self.lexer.cont();
+        }
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -4023,8 +4094,14 @@ use a separate collection or add after the loop"
         // …except where the identity is a COPY that takes a lease: `p = p` of a PARAMETER whose
         // type declares `OpCopy` makes a structure of the callee's own (`(H-Copy-Lease)`), so it is
         // parsed as the rebind it spells and the hook runs on the new structure.
+        // Not where this statement STARTS the binding: there `x` holds nothing to keep, and
+        // the read is refused like any other (`read-in-own-binding`).
         if op == "="
             && let Value::Var(lhs) = to
+            && !self
+                .binding_starts
+                .iter()
+                .any(|(c, v, _)| (*c, *v) == (self.context, *lhs))
             && self.lexer.peek().has
                 == crate::lexer::LexItem::Identifier(self.vars.name(*lhs).to_string())
             && !(self.vars.is_argument(*lhs)
@@ -8521,15 +8598,32 @@ use a separate collection or add after the loop"
         let mut f_type = self.parse_operators(&Type::Unknown(0), code, &mut parent_tp, 0);
         // A left-hand side that CREATED its variable in pass 1 is that variable's first
         // binding — recorded for both passes to read (`first_bind_at`).
-        if self.first_pass
-            && let Value::Var(v) = code.unspan()
-            && *v >= vars_before_lhs
-        {
-            self.first_bind_at.insert(
-                (self.context, *v),
-                (stmt_start_pos.line, stmt_start_pos.pos),
-            );
+        // A `( … ) =` destructure creates each of its names the same way.
+        // Read in place, every statement on the first pass: no list of the names is built.
+        if self.first_pass {
+            let lhs: &[Value] = match code.unspan() {
+                Value::Tuple(vs) => vs,
+                one @ Value::Var(_) => std::slice::from_ref(one),
+                _ => &[],
+            };
+            for part in lhs {
+                if let Value::Var(v) = part.unspan()
+                    && *v >= vars_before_lhs
+                {
+                    self.first_bind_at.insert(
+                        (self.context, *v),
+                        (stmt_start_pos.line, stmt_start_pos.pos),
+                    );
+                }
+            }
         }
+        // `@FR-B-Scope` — a bind after the name's block ended starts a new binding here too;
+        // noted now, before the right-hand side's own binds overwrite the note.
+        let lhs_after_end = match code.unspan() {
+            Value::Var(v) => self.bind_after_end.filter(|(b, _)| b == v).map(|(b, _)| b),
+            _ => None,
+        };
+        let mut lhs_rebound: Option<u16> = None;
         self.amp_head = AmpHead::No;
         self.in_tuple_lhs = saved_tuple_lhs;
         if let (Type::RefVar(_), Value::Var(v_nr)) = (&f_type, &code) {
@@ -8614,6 +8708,7 @@ use a separate collection or add after the loop"
                 {
                     self.bind_after_end = None;
                     v_nr = self.rebind_after_block(v_nr, &tp);
+                    lhs_rebound = Some(v_nr);
                     *code = Value::Var(v_nr);
                 }
                 // `@FR-B-Ref-Lvalue` — pass 1 made a link to a heap PLACE the place's record
@@ -8738,7 +8833,19 @@ use a separate collection or add after the loop"
             }
             let mut rhs = Value::Null;
             let destr_rhs_pos = *self.lexer.pos();
+            // `@FR-B-Scope` — the names this destructure binds first hold nothing yet.
+            let starts: Vec<(u32, u16, bool)> = var_nrs
+                .iter()
+                .filter(|v| {
+                    self.first_bind_at.get(&(self.context, **v))
+                        == Some(&(stmt_start_pos.line, stmt_start_pos.pos))
+                })
+                .map(|v| (self.context, *v, false))
+                .collect();
+            let outer_starts = self.binding_starts.len();
+            self.binding_starts.extend(starts);
             let mut rhs_type = self.expression(&mut rhs);
+            self.binding_starts.truncate(outer_starts);
             let rhs_fact = std::mem::take(&mut self.operand_fact);
             self.bind_unpacked(&rhs_fact, &var_nrs); // @PLN187
             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
@@ -9515,11 +9622,26 @@ use a separate collection or add after the loop"
                 if let Some(name) = &first_bind {
                     self.first_bind_targets.push(name.clone());
                 }
+                let starts = if op == "="
+                    && let Value::Var(v) = to.unspan()
+                    && (first_bind.is_some()
+                        || lhs_after_end == Some(*v)
+                        || lhs_rebound == Some(*v))
+                {
+                    self.binding_starts
+                        .push((self.context, *v, first_bind.is_none()));
+                    true
+                } else {
+                    false
+                };
                 let result =
                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
                 self.declaring_const = u16::MAX;
                 if first_bind.is_some() {
                     self.first_bind_targets.pop();
+                }
+                if starts {
+                    self.binding_starts.pop();
                 }
                 if op == "="
                     && let Value::Var(v) = to.unspan()

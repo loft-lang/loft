@@ -399,9 +399,10 @@ jobs:
           RUSTFLAGS: '-Zsanitizer=address'
           ASAN_OPTIONS: 'detect_leaks=0'
           # ASan's redzones make every frame several times larger, so the corpus's
-          # 100-deep nested expression overflows the CLI-sized 8 MiB script thread
-          # (tests/wrap.rs reads this floor); release builds keep 8 MiB.
-          RUST_MIN_STACK: '33554432'
+          # deepest expressions (250 levels, just under the parser's 256 bound) overflow
+          # the CLI-sized 8 MiB script thread (tests/wrap.rs reads this floor); release
+          # builds keep 8 MiB.
+          RUST_MIN_STACK: '134217728'
         run: >
           cargo +nightly nextest run --profile sanitizer --release
           --target ${{ matrix.target }}
@@ -537,8 +538,8 @@ jobs:
           ASAN_OPTIONS: 'detect_leaks=1'
           LSAN_OPTIONS: 'suppressions=${{ github.workspace }}/.github/lsan_suppressions.txt'
           # The same floor as the ASan sweep above: redzones overflow the 8 MiB script
-          # thread on the corpus's 100-deep nested expression (loft#1863).
-          RUST_MIN_STACK: '33554432'
+          # thread on the corpus's 250-deep nested expressions (loft#1863, loft#1961).
+          RUST_MIN_STACK: '134217728'
         # The fault-path text class (append_text / format_text / format_long / text_tl_fmt)
         # is suppressed in lsan_suppressions.txt — a faulting program never frees its
         # in-flight text local, an accepted non-cleanup on the terminating abort path (the

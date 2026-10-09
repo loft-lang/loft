@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 403d083dd..bd4cc708e 100644
+index 69d432df4..a8c87398e 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -6319,7 +6319,7 @@ use a separate collection or add after the loop"
+@@ -6362,7 +6362,7 @@ use a separate collection or add after the loop"
          // side that is not text leaves the place a text (loft#1827).
          let text_appends_rendering = op != "="
              && matches!(place_tp.base(), Type::Text(_))
@@ -11,7 +11,7 @@ index 403d083dd..bd4cc708e 100644
          if !compound_keeps_place && !text_appends_rendering {
              self.change_var(to, &s_type);
          }
-@@ -9530,12 +9530,9 @@ use a separate collection or add after the loop"
+@@ -9621,12 +9621,9 @@ use a separate collection or add after the loop"
          f_type
      }
  
@@ -27,7 +27,7 @@ index 403d083dd..bd4cc708e 100644
      pub(crate) fn appends_rendering(rhs: &Type) -> bool {
          let rhs = match rhs.base() {
              Type::RefVar(inner) => inner.as_ref(),
-@@ -9543,7 +9540,7 @@ use a separate collection or add after the loop"
+@@ -9634,7 +9631,7 @@ use a separate collection or add after the loop"
          };
          !matches!(
              rhs.base(),
@@ -36,7 +36,7 @@ index 403d083dd..bd4cc708e 100644
          )
      }
  
-@@ -9557,8 +9554,7 @@ use a separate collection or add after the loop"
+@@ -9648,8 +9645,7 @@ use a separate collection or add after the loop"
              _ => tp.clone(),
          };
          let mut ls = Vec::new();
@@ -47,7 +47,7 @@ index 403d083dd..bd4cc708e 100644
          // it: rendering into the sentinel would make a text of the sentinel and the value.
          let dest_tp = self.vars.tp(var_nr);
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 47b181e8d..c04b5184c 100644
+index 27cc17504..366f299cd 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
 @@ -2052,9 +2052,7 @@ impl Parser {
@@ -62,7 +62,7 @@ index 47b181e8d..c04b5184c 100644
                              // destination.  Prepend it to the parts list and use an empty
                              // text literal as the first operand so parse_append_text
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index b53b88ada..2d1f7d9bb 100644
+index e579c5b5d..b1c937e92 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
 @@ -337,23 +337,80 @@ impl Parser {
@@ -164,7 +164,7 @@ index b53b88ada..2d1f7d9bb 100644
  
 -    /// One operand of a text concatenation (`a + b`, `s += x`), appended to the accumulator
 -    /// `acc` — `@FR-E-NullArg`: an operand that is NULL makes the concatenation null, for
--    /// every operand type (owner ruling 2026-10-08, loft#1945).  A concatenation is not a
+-    /// every operand type.  A concatenation is not a
 -    /// second spelling of interpolation: `"{x}"` renders a null as the word `null`, and
 -    /// `"a" + x` is null.
 -    ///
@@ -222,7 +222,7 @@ index b53b88ada..2d1f7d9bb 100644
 -            };
 -            present.push(self.cl(op, &[Value::Var(acc), subject.clone()]));
 -        } else {
--            // @P274 — a non-text operand is rendered by the hole renderer, `append_data`, the
+-            // A non-text operand is rendered by the hole renderer, `append_data`, the
 -            // dispatch `"…{x}…"` uses for every formattable type.
 -            self.append_data(
 -                dispatch_tp.clone(),

@@ -1615,7 +1615,7 @@ impl State {
     # Panics
     When there are claimed texts that are not freed yet.
     */
-    pub fn fn_return(&mut self, ret: u16, value: u8, discard: u16) {
+    pub fn fn_return(&mut self, ret: u16, value: u16, discard: u16) {
         let pos = self.stack_pos;
         self.stack_pos -= u32::from(discard);
         if cfg!(debug_assertions) {
@@ -1739,7 +1739,7 @@ impl State {
     /// Entries left behind by a frame that unwound some other way (a coroutine truncation)
     /// are DROPPED rather than freed: the value they name is no longer this frame's to
     /// judge, and leaking is the recoverable direction.
-    fn release_fnref_bufs(&mut self, value: u8) {
+    fn release_fnref_bufs(&mut self, value: u16) {
         let depth = u32::try_from(self.call_stack.len())
             .unwrap_or(u32::MAX)
             .saturating_sub(1);
@@ -2790,7 +2790,7 @@ impl State {
     # Panics
     When texts are not freed from the stack beforehand.
     */
-    pub fn free_stack(&mut self, value: u8, discard: u16) {
+    pub fn free_stack(&mut self, value: u16, discard: u16) {
         let pos = self.stack_pos;
         self.stack_pos -= u32::from(discard);
         if cfg!(debug_assertions) {
@@ -2960,7 +2960,7 @@ impl State {
         }
     }
 
-    pub(crate) fn copy_result(&mut self, value: u8, pos: u32, fn_stack: u32) {
+    pub(crate) fn copy_result(&mut self, value: u16, pos: u32, fn_stack: u32) {
         let size = u32::from(value);
         if value > 0 {
             // @PLAN53 cluster 2 / S4: the returned value sits at the LOW end of

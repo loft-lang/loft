@@ -1471,6 +1471,24 @@ impl Value {
         self.for_each_child_mut(&mut |c| c.map_nodes(f));
     }
 
+    /// Is this expression tree deeper than `limit`, every node counted — `Span` wrappers too,
+    /// because the recursive passes after the parser descend through them one call each?  The
+    /// descent stops at `limit`, so a tree too deep for those passes is answered with at most
+    /// `limit` small frames and no allocation (the parser asks this of every body, loft#1961).
+    #[must_use]
+    pub fn deeper_than(&self, limit: usize) -> bool {
+        if limit == 0 {
+            return true;
+        }
+        let mut deeper = false;
+        self.for_each_child(&mut |c| {
+            if !deeper && c.deeper_than(limit - 1) {
+                deeper = true;
+            }
+        });
+        deeper
+    }
+
     /// Pre-order visitor: calls `f` on this node and every descendant.
     /// `Span` wrappers are transparent, matching [`Value::any_node`].
     pub fn walk<'a>(&'a self, f: &mut impl FnMut(&'a Value)) {

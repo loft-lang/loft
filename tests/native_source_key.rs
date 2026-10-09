@@ -383,7 +383,9 @@ fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
     assert_eq!(warm.source_key(), "hit", "{}", warm.stderr);
     let strip = |s: &str| -> String {
         s.lines()
-            .filter(|l| !l.starts_with("LOFT_TIMING"))
+            // Timing lines, both spellings: a cold run reports its binary compile (a miss)
+            // that a warm hit never does.
+            .filter(|l| !l.starts_with("LOFT_TIMING") && !l.starts_with("[loft-timing]"))
             .map(|l| format!("{l}\n"))
             .collect()
     };

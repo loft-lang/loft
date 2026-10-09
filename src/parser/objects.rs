@@ -358,40 +358,92 @@ impl Parser {
             return;
         }
         if !visible && !self.first_pass {
-            diagnostic_at!(
-                self.lexer,
-                name_pos,
-                Level::Error,
-                code = "local-out-of-scope",
-                "`{name}` was bound inside a block that has ended, so it does not exist here — \
-                 bind it before the block, or give the block a value: \
-                 `{name} = if … {{ … }} else {{ … }}`"
-            );
-            self.lexer.fix_last(crate::diagnostics::Fix {
-                kind: crate::diagnostics::FixKind::Conditional,
-                title: format!("bind `{name}` before the block and assign it inside"),
-                condition: Some(
-                    "if every path should leave a value behind; the binding before the block \
-                     is the value on a path that assigns nothing"
-                        .to_string(),
-                ),
-                edit: None,
-                concept: "`if` as an expression",
-                concept_ref: "@F27",
-            });
-            self.lexer.fix_last(crate::diagnostics::Fix {
-                kind: crate::diagnostics::FixKind::Conditional,
-                title: format!(
-                    "make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"
-                ),
-                condition: Some(
-                    "if each arm computes the value, so the `if` itself can answer it".to_string(),
-                ),
-                edit: None,
-                concept: "`if` as an expression",
-                concept_ref: "@F27",
-            });
+            self.report_out_of_scope(name, name_pos);
         }
+    }
+
+    /// `local-out-of-scope` — `name` is read where the binding it names has ended.
+    fn report_out_of_scope(&mut self, name: &str, name_pos: &Position) {
+        diagnostic_at!(
+            self.lexer,
+            name_pos,
+            Level::Error,
+            code = "local-out-of-scope",
+            "`{name}` was bound inside a block that has ended, so it does not exist here — \
+             bind it before the block, or give the block a value: \
+             `{name} = if … {{ … }} else {{ … }}`"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind `{name}` before the block and assign it inside"),
+            condition: Some(
+                "if every path should leave a value behind; the binding before the block \
+                 is the value on a path that assigns nothing"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "`if` as an expression",
+            concept_ref: "@F27",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"),
+            condition: Some(
+                "if each arm computes the value, so the `if` itself can answer it".to_string(),
+            ),
+            edit: None,
+            concept: "`if` as an expression",
+            concept_ref: "@F27",
+        });
+    }
+
+    /// `@FR-B-Scope` — a binding starts when the statement that binds it COMPLETES, so a
+    /// read of the variable on that statement's right-hand side reads nothing: on its first
+    /// binding no value was ever written, and after its block ended the old one is gone.
+    /// `p = P { a: 1, z: p.a }` is refused; `p = P { a: 2, z: p.a }` over an existing `p`
+    /// reads the old value and stays legal.
+    fn check_read_in_own_binding(&mut self, var: u16, name: &str, name_pos: &Position) {
+        if self.first_pass || self.at_binding_name() {
+            return;
+        }
+        let Some(&(_, _, after_end)) = self
+            .binding_starts
+            .iter()
+            .find(|(c, v, _)| (*c, *v) == (self.context, var))
+        else {
+            return;
+        };
+        if after_end {
+            self.report_out_of_scope(name, name_pos);
+            return;
+        }
+        diagnostic_at!(
+            self.lexer,
+            name_pos,
+            Level::Error,
+            code = "read-in-own-binding",
+            "`{name}` is read in the statement that binds it, before it holds a value — \
+             compute the value from other variables, or bind `{name}` first and change it after"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("compute the value without reading `{name}`"),
+            condition: Some(
+                "if the part that reads it can be written from the values it was built from"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "declarations",
+            concept_ref: "@F16",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("bind `{name}` first, then assign the part that reads it"),
+            condition: Some("if the value refers to another part of itself".to_string()),
+            edit: None,
+            concept: "declarations",
+            concept_ref: "@F16",
+        });
     }
 
     /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
@@ -805,6 +857,7 @@ impl Parser {
             self.bind_after_end = (self.at_binding_name() && self.binding_ended(index_var))
                 .then(|| (index_var, self.binding_loop(index_var)));
             self.check_block_scope(index_var, name, name_pos);
+            self.check_read_in_own_binding(index_var, name, name_pos);
             // on pass 2, if a variable has Unknown type, it may be a pass-1
             // placeholder for a forward-declared function. Try fn-ref resolution.
             //
@@ -5692,8 +5745,20 @@ impl Parser {
             && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// A struct or variant literal: one level of depth (`crate::limits`), since its field
+    /// values are parsed without passing through `expression`, so a literal nested in a field
+    /// counts here.
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        if !self.enter_depth() {
+            return Type::Unknown(0);
+        }
+        let t = self.parse_object_inner(td_nr, code);
+        self.leave_depth();
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_object_inner(&mut self, td_nr: u32, code: &mut Value) -> Type {
         let built = if self.data.def_type(td_nr) == DefType::EnumValue {
             "variant"
         } else {

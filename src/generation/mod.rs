@@ -1128,6 +1128,9 @@ pub struct Output<'a> {
     /// release all take the value form.  Local → the record type its tuple carries; a
     /// tuple PARAMETER (`(R-ValueLocal)`) is here too, seeded by `hoist::value_locals_in`.
     pub value_record_locals: HashMap<u16, u16>,
+    /// The widened leaf (`hoist::ValueLeaves::widen`) being emitted right now, by address:
+    /// its own emission inside the widening must not widen it again.
+    pub widening: Option<usize>,
     /// @PLN157 § V-ah — the value LEAVES of the current (admitted) function, by node
     /// address (`hoist::value_leaves`): a view `Var` emits as the tuple of its getters, an
     /// `Object` block as the tuple of its writes, and nothing else converts.
@@ -2494,6 +2497,7 @@ impl<'a> Output<'a> {
             value_records: hoist::ValueRecords::default(),
             value_records_done: false,
             value_record_locals: HashMap::new(),
+            widening: None,
             value_leaves: hoist::ValueLeaves::default(),
             value_phantom: None,
             dead_buffers: HashSet::new(),
@@ -5798,6 +5802,13 @@ impl Output<'_> {
     /// because a `DbRef`'s null is a sentinel store number rather than a zero.
     #[must_use]
     pub fn value_tuple_zero(&self, tp: u16) -> String {
+        // `@FR-R-ValueRecord`'s nullable clause — a `τ?` value local starts ABSENT, as the
+        // null `DbRef` it replaces does: its presence word false, every field its null.
+        if let Some(layout) = self.value_records.types.get(&tp)
+            && layout.nullable
+        {
+            return layout.absent();
+        }
         let Some(fields) = self.value_records.types.get(&tp).map(|t| &t.fields) else {
             return "Default::default()".to_string();
         };
@@ -6837,10 +6848,11 @@ impl Output<'_> {
                 def, dt, idx, thunk, &pre, &pushes, &post,
             ));
         }
-        if let Some(fields) = self.value_records.fn_fields(self.def_nr) {
+        if let Some(layout) = self.value_records.fn_layout(self.def_nr) {
             // The tuple read back out of the record: ONE spelling (`hoist::tuple_reads`),
-            // shared with the cdylib bridge, the trailing comma of a 1-tuple included.
-            let reads = hoist::tuple_reads(fields, "__lv", "__s");
+            // shared with the cdylib bridge, the trailing comma of a 1-tuple included — and
+            // for a `-> S?` the presence word, read off the same record.
+            let reads = hoist::layout_reads(layout, "__lv", "__s");
             return Some(format!(
                 "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &Stores = unsafe {{ &*cell.get() }}; return {reads}; }}\n"
             ));

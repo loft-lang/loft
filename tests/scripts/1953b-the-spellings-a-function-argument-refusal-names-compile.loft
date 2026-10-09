@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1953: every spelling the function-argument refusals name
+// (`1953-a-function-argument-refusal-names-a-working-spelling.loft`) compiles and answers,
+// each against a hand-computed value: the bare name and the lambda for `map` (m1, m2),
+// `filter` (f1, f2), `count_if` (c1, c2) and `reduce` (r1, r2), and the bare name and the
+// lambda with typed parameters for `par_fold` (p1, p2).
+// @falsified-at: none — it guards that the named spellings keep compiling; every build before
+//   the message fix compiled them with these values.
+fn double(x: integer) -> integer { x * 2 }
+fn big(x: integer) -> boolean { x > 1 }
+fn add(a: integer, b: integer) -> integer { a + b }
+
+fn main() {
+  v = [1, 2, 3];
+  m1 = map(v, double);
+  assert(len(m1) == 3 && m1[0] == 2 && m1[2] == 6, "m1 {m1}");
+  m2 = map(v, |x| { x * 2 });
+  assert(len(m2) == 3 && m2[0] == 2 && m2[2] == 6, "m2 {m2}");
+  f1 = filter(v, big);
+  assert(len(f1) == 2 && f1[0] == 2, "f1 {f1}");
+  f2 = filter(v, |x| { x > 1 });
+  assert(len(f2) == 2 && f2[0] == 2, "f2 {f2}");
+  assert(count_if(v, big) == 2, "c1");
+  assert(count_if(v, |x| { x > 1 }) == 2, "c2");
+  assert(reduce(v, 0, add) == 6, "r1");
+  assert(reduce(v, 0, |acc, x| { acc + x }) == 6, "r2");
+  assert(par_fold(v, 0, add, 2) == 6, "p1");
+  assert(par_fold(v, 0, fn(acc: integer, x: integer) -> integer { acc + x }, 2) == 6, "p2");
+  println("ok");
+}

@@ -491,6 +491,24 @@ impl OpEmitter for FusedElementWriteEmitter {
         {
             let name =
                 super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
+            // `@FR-R-ValueRecord`'s nullable clause — a write through an ABSENT `τ?` tuple
+            // lands nowhere and is REPORTED, exactly as the setter's `rec == 0` arm does for the
+            // null record (`@FR-E-Report`): every absence the clause admits is a `null` exit's,
+            // which nothing has reported yet.  The value is evaluated first, as there.
+            if let Some(at) = ctx
+                .output
+                .value_records
+                .types
+                .get(&tp)
+                .and_then(super::super::hoist::ValueTuple::presence)
+            {
+                write!(ctx.w, "{{ let __vw = (")?;
+                ctx.emit(val)?;
+                return write!(
+                    ctx.w,
+                    "); if var_{name}.{at} {{ var_{name}.{idx} = __vw; }} else {{ stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }} }}"
+                );
+            }
             write!(ctx.w, "{{ var_{name}.{idx} = (")?;
             ctx.emit(val)?;
             return write!(ctx.w, "); }}");

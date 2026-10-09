@@ -1,8 +1,8 @@
 diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
-index 0f06934..828d853 100644
+index 2549d53a..163bb7b9 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -13076,21 +13076,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
+@@ -14732,21 +14732,8 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
                  return None;
              }
              let tp = vars.tp(*var);
@@ -25,4 +25,4 @@ index 0f06934..828d853 100644
 +            if vars.rebind_orig(*var).is_some() {
                  return None;
              }
-             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
+             // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view

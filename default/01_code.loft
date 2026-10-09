@@ -147,9 +147,9 @@ fn OpGotoFalseWord(step: const i32, if_false: boolean);
 #rust"if @if_false != 1 {{s.code_pos = (i64::from(s.code_pos) + i64::from(@step)) as u32;}}"
 fn OpCall(d_nr: const integer, args_size: const u16, to: const integer);
 #rust"s.fn_call(@d_nr as u32, @args_size, @to);"
-fn OpReturn(ret: const u16, value: const u8, discard: const u16);
+fn OpReturn(ret: const u16, value: const u16, discard: const u16);
 #rust"s.fn_return(@ret, @value, @discard);"
-fn OpFreeStack(value: const u8, discard: const u16);
+fn OpFreeStack(value: const u16, discard: const u16);
 #rust"s.free_stack(@value, @discard);"
 fn OpReserveFrame(size: const u16);
 #rust"s.reserve_frame(@size);"

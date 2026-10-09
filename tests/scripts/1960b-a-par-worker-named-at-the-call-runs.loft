@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1960: the cures the `par(…)` worker refusals name
+// (`1960-a-par-worker-refusal-names-the-rule.loft`) compile and answer on both backends,
+// against hand-computed values: the function called by its own name (c1); a lambda declared
+// as a named `fn` instead (c2); context passed after the element (c3); the expression around
+// the call computed from `b` in the loop body (c4); and a local that shares a function's name,
+// which leaves the worker the function (c5).
+// @falsified-at: none — it guards what must keep running beside the reworded refusals; every
+//   build before them ran it with these values.
+fn dbl(x: integer) -> integer { x * 2 }
+fn twice_plus(x: integer, k: integer) -> integer { x * 2 + k }
+
+fn main() {
+  v = [1, 2, 3];
+  c1 = 0;
+  for a in v par(b = dbl(a), 2) { c1 += b; }
+  assert(c1 == 12, "c1 {c1}");
+  c2 = 0;
+  for a in v par(b = twice_plus(a, 0), 2) { c2 += b; }
+  assert(c2 == 12, "c2 {c2}");
+  k = 10;
+  c3 = 0;
+  for a in v par(b = twice_plus(a, k), 2) { c3 += b; }
+  assert(c3 == 42, "c3 {c3}");
+  c4 = 0;
+  for a in v par(b = dbl(a), 2) { c4 += b + 1; }
+  assert(c4 == 15, "c4 {c4}");
+  dbl = 3;
+  c5 = 0;
+  for a in v par(b = dbl(a), 2) { c5 += b; }
+  assert(c5 == 12 && dbl == 3, "c5 {c5}");
+  println("ok");
+}

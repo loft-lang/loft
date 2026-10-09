@@ -278,7 +278,7 @@ first bisect step for a wrong value, order or count out of a loop over a literal
 
 ## Lowering: adopting and minting call buffers
 
-**`LOFT_NO_NULLABLE_RETBUF=1`** (`@FR-N-Road`, loft#938 and loft#1934, default-ON, parse time,
+**`LOFT_NO_NULLABLE_RETBUF=1`** (`@FR-N-Road`, default-ON, parse time,
 BOTH backends) takes the caller-allocated `__retbuf` away from a `-> τ?` return again — with
 it on, a nullable collection, record or record enum takes the buffer its dense twin takes, and
 its caller binds the result through the dense arm (`use_analysis::first_bind_shape`).  It is the

@@ -259,7 +259,23 @@ impl Parser {
         }
         if d_nr == u32::MAX {
             if !self.first_pass {
-                diagnostic!(self.lexer, Level::Error, "Unknown function '{first_id}'");
+                if self.vars.name_exists(first_id)
+                    && matches!(
+                        self.vars.tp(self.vars.var(first_id)).base(),
+                        Type::Function(..)
+                    )
+                {
+                    self.refuse_par_worker_value(&format!("`{first_id}` holds a function value"));
+                } else if self.vars.name_exists(first_id) {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`{first_id}` is a variable, not a function — a parallel worker is a \
+                         function named at the call: `par(b = f(a), threads)`"
+                    );
+                } else {
+                    diagnostic!(self.lexer, Level::Error, "Unknown function '{first_id}'");
+                }
             }
             return (u32::MAX, Type::Unknown(0), extra_vals, extra_types);
         }
@@ -631,6 +647,100 @@ impl Parser {
         elem_var_nr: u16,
         elem_tp: &Type,
     ) -> (u32, Type, Vec<Value>, Vec<Type>) {
+        let lnk = self.lexer.link();
+        let headed = self.lexer.has_identifier().is_some()
+            && (self.lexer.peek_token("(") || self.lexer.peek_token("."));
+        self.lexer.revert(lnk);
+        let mark = self.lexer.diagnostics().mark();
+        let worker = if headed {
+            self.parse_parallel_worker_call(elem_var, elem_var_nr, elem_tp)
+        } else {
+            (u32::MAX, Type::Unknown(0), Vec::new(), Vec::new())
+        };
+        // A worker is ONE call of a function named at the call.  Anything else in the worker
+        // position — a lambda, a call through an element or a call's result, an expression
+        // around the call — left tokens the clause could not read, and each was reported as
+        // a missing `,` / `)` / `{` (eight errors for `b = f(a) + 1`).  One refusal, then the
+        // clause resumes at the `,` before the thread count.  Reported on pass 2, beside the
+        // worker refusals that need resolved names; pass 1 only steps over the tokens.
+        if !headed || (!self.lexer.peek_token(",") && !self.lexer.peek_token(")")) {
+            // What the worker's own parse said about a call that is not the whole worker
+            // (`mk()(a)` — "mk declares no parameters") is beside the point; the shape is.
+            self.lexer.rewind_diagnostics(mark);
+            if !self.first_pass {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a parallel worker is one call of a function named at the call — \
+                     `par(b = f({elem_var}, k), threads)` or `par(b = {elem_var}.method(), \
+                     threads)`; compute the rest from `b` in the loop body"
+                );
+            }
+            self.skip_to_par_threads();
+            return (u32::MAX, Type::Unknown(0), Vec::new(), Vec::new());
+        }
+        worker
+    }
+
+    /// Step over the rest of a worker the clause cannot read, to the `,` before the thread
+    /// count (or the clause's `)`), at the clause's own nesting depth.
+    fn skip_to_par_threads(&mut self) {
+        let mut depth = 0u32;
+        loop {
+            if self.lexer.peek_token("") {
+                return;
+            }
+            if depth == 0 && (self.lexer.peek_token(",") || self.lexer.peek_token(")")) {
+                return;
+            }
+            if self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+                || self.lexer.peek_token("{")
+            {
+                depth += 1;
+            } else if self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+                || self.lexer.peek_token("}")
+            {
+                depth = depth.saturating_sub(1);
+            }
+            self.lexer.cont();
+        }
+    }
+
+    /// `@FR-L-Escape` lets a function value travel anywhere a value goes, but a parallel
+    /// worker is a function NAMED at the call: its safety (a worker writes no captured
+    /// state, C93) is checked on the function the clause names, and one chosen at run time
+    /// cannot be — the `par_fold` fold follows the same rule (loft#1958, loft#1960).
+    fn refuse_par_worker_value(&mut self, what: &str) {
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "{what}, and a parallel worker is a function named at the call, where its safety \
+             is checked — call the function by its own name, `par(b = f(a), threads)`, and \
+             declare a lambda as a named `fn` to do so"
+        );
+    }
+
+    /// Is `var.field` a field of function type on a local's struct?
+    fn var_field_holds_function(&self, var: &str, field: &str) -> bool {
+        if !self.vars.name_exists(var) {
+            return false;
+        }
+        let v = self.vars.var(var);
+        let Some(d) = self.vars.tp(v).base().heap_def_nr() else {
+            return false;
+        };
+        let a = self.data.attr(d, field);
+        a != usize::MAX && matches!(self.data.attr_type(d, a).base(), Type::Function(..))
+    }
+
+    fn parse_parallel_worker_call(
+        &mut self,
+        elem_var: &str,
+        elem_var_nr: u16,
+        elem_tp: &Type,
+    ) -> (u32, Type, Vec<Value>, Vec<Type>) {
         let Some(first_id) = self.lexer.has_identifier() else {
             if !self.first_pass {
                 diagnostic!(
@@ -657,7 +767,11 @@ impl Parser {
             // A worker runs on an isolated store clone, so a context argument is a SCALAR: the
             // receiver itself cannot be passed (a captured reference is refused), and the cure
             // names the scalar route rather than one that is refused in turn.
-            if !self.first_pass {
+            if !self.first_pass && self.var_field_holds_function(&first_id, &method) {
+                self.refuse_par_worker_value(&format!(
+                    "`{first_id}.{method}` is a function held in a field"
+                ));
+            } else if !self.first_pass {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -689,7 +803,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "parallel_for requires at least 3 arguments: fn worker, input_vector, threads"
+                "parallel_for requires at least 3 arguments: worker, input_vector, threads"
             );
             return Type::Unknown(0);
         }
@@ -699,7 +813,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "parallel_for: first argument must be a function reference (use fn <name>)"
+                "parallel_for: first argument must be a function — pass its name"
             );
             return Type::Unknown(0);
         };
@@ -812,9 +926,28 @@ impl Parser {
     /// types (`vector<T>` + `fn(R, T) -> R`) await a follow-up
     /// when the runtime relaxes its V1 gate.
     ///
-    /// Syntax: `par_fold(items, init, fn worker, threads)` —
-    /// `fn worker` is the fn-reference form (parser converts to
-    /// `Value::Int(d_nr)` with `Type::Function(...)`).
+    /// A parallel worker is a function the compiler sees at the call — C93 checks its safety
+    /// there, and the runtime dispatches it by definition number.  A function VALUE (a local,
+    /// a parameter, a field) is chosen at run time, and a lambda that captures carries a record
+    /// no worker receives; both are refused (loft#1958), as the `par(…)` clause refuses a
+    /// function value.
+    fn par_fold_names_its_fold(&mut self, fold: &Value) -> bool {
+        if matches!(fold.unspan(), Value::Int(_)) {
+            return true;
+        }
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "par_fold: the fold must be a function named at the call — its name, or a lambda \
+             that captures nothing — so it can run as a parallel worker; to fold with context, \
+             write `for x in v par(b = f(x, k), threads) {{ total += b; }}`"
+        );
+        false
+    }
+
+    /// Syntax: `par_fold(items, init, fold, threads)` — `fold` is a function named at the call
+    /// (its name, or a lambda that captures nothing), which the parser lowers to
+    /// `Value::Int(d_nr)` with `Type::Function(...)`.
     pub(crate) fn parse_par_fold(
         &mut self,
         val: &mut Value,
@@ -829,7 +962,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "par_fold requires exactly 4 arguments: items, init, fn fold, threads"
+                "par_fold requires exactly 4 arguments: items, init, fold, threads"
             );
             return Type::Unknown(0);
         }
@@ -870,7 +1003,7 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "par_fold: third argument must be a function reference (use `fn <name>`)"
+                "par_fold: third argument must be a function — pass its name, or a lambda with typed parameters `fn(acc: integer, x: integer) -> integer {{ … }}`"
             );
             return Type::Unknown(0);
         };
@@ -884,6 +1017,9 @@ impl Parser {
                 Level::Error,
                 "par_fold (V1): fold function must have signature `fn(integer, integer) -> integer`"
             );
+            return Type::Unknown(0);
+        }
+        if !self.par_fold_names_its_fold(&list[2]) {
             return Type::Unknown(0);
         }
         // threads must be integer.

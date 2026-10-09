@@ -1,8 +1,8 @@
 diff --git a/src/parser/fields.rs b/src/parser/fields.rs
-index 4782bc699..c1b976035 100644
+index 21cccfb36..51c3966b0 100644
 --- a/src/parser/fields.rs
 +++ b/src/parser/fields.rs
-@@ -387,20 +387,6 @@ impl Parser {
+@@ -390,20 +390,6 @@ impl Parser {
              self.first_pass,
          );
          if fnr == usize::MAX {
@@ -24,13 +24,13 @@ index 4782bc699..c1b976035 100644
              // on BOTH passes so the call's return type propagates into
              // first-pass type inference of the enclosing variable.
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9144ff330..18fb4265a 100644
+index f6639c3d5..84f041db5 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -7477,34 +7477,6 @@ impl Parser {
-     /// Search for definitions with the given name and call that with the given parameters.
-     #[allow(clippy::too_many_arguments)]
-     #[expect(clippy::too_many_lines, reason = "inherited")]
+@@ -7544,34 +7544,6 @@ impl Parser {
+         false
+     }
+ 
 -    /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex` with
 -    /// the per-record link offset (`database.fields`), a constant only the parser knows once the
 -    /// type is registered — which is why no stdlib `len(self: index)` can carry it (@FR-Col-Len).
@@ -59,10 +59,10 @@ index 9144ff330..18fb4265a 100644
 -        Some(crate::data::I64.clone())
 -    }
 -
-     fn call(
-         &mut self,
-         code: &mut Value,
-@@ -7782,8 +7754,19 @@ impl Parser {
+     /// Search for definitions with the given name and call that with the given parameters.
+     #[allow(clippy::too_many_arguments)]
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+@@ -7852,8 +7824,19 @@ impl Parser {
              // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
              // "Unknown function len".  This route bypasses `convert`, so it asks
              // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).

@@ -334,6 +334,9 @@ pub struct Manifest {
     pub fonts: Vec<FontDecl>,
     /// @PLN146 F4 — the `[[embed]]` declarations, in file order.
     pub embeds: Vec<EmbedDecl>,
+    /// What the lexer could not read, each a value this manifest does not hold.  Also
+    /// handed to [`take_manifest_errors`] by [`read_manifest`].
+    pub errors: Vec<ManifestError>,
 }
 
 impl Manifest {
@@ -360,6 +363,16 @@ impl Manifest {
 pub fn read_manifest(path: &str) -> Option<Manifest> {
     let content = crate::file_access::read_to_string(path).ok()?;
     let mut m = parse_manifest(&content, path);
+    if !m.errors.is_empty() {
+        MANIFEST_ERRORS.with(|sink| {
+            let mut sink = sink.borrow_mut();
+            for e in &m.errors {
+                if !sink.contains(e) {
+                    sink.push(e.clone());
+                }
+            }
+        });
+    }
     // @PLN146 F4 — an `[[embed]] source` is relative to the file that declares it,
     // and only the reader knows which file that was.  Recording it here rather than
     // at each call site keeps that fact in one home: a library's declaration and an
@@ -372,6 +385,32 @@ pub fn read_manifest(path: &str) -> Option<Manifest> {
         e.root.clone_from(&root);
     }
     Some(m)
+}
+
+thread_local! {
+    /// The errors of every manifest [`read_manifest`] read on this thread since the last
+    /// [`take_manifest_errors`], each once.  A manifest is read from some seventy places, most
+    /// of which can only skip what they cannot use; the parser drains this into its
+    /// diagnostics once the dependencies are resolved, so a malformed `loft.toml` is reported
+    /// as itself rather than as whatever it failed to declare (a type of the dependency whose
+    /// path it garbled reading as "Undefined type").
+    static MANIFEST_ERRORS: std::cell::RefCell<Vec<ManifestError>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The manifest errors read on this thread since the last call, oldest first.
+#[must_use]
+pub fn take_manifest_errors() -> Vec<ManifestError> {
+    MANIFEST_ERRORS.with(|sink| std::mem::take(&mut *sink.borrow_mut()))
+}
+
+/// One error in a `loft.toml`, at the position the lexer reported it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManifestError {
+    pub file: String,
+    pub line: u32,
+    pub col: u32,
+    pub message: String,
 }
 
 /// A parsed manifest value: a `Scalar` (string / bool / bareword) or an array
@@ -429,6 +468,34 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
             // guaranteeing forward progress.
             _ => lex.cont(),
         }
+    }
+    // A string the lexer could not read is a value the manifest does not hold: kept, it is
+    // a path with `?` where the author's characters were.
+    for e in lex.diagnostics().entries() {
+        if e.level < crate::diagnostics::Level::Error {
+            continue;
+        }
+        let message = if e.message.starts_with("Unknown escape sequence") {
+            "a backslash in a loft.toml string starts an escape, and this one is not an \
+             escape; write a path with `/` (Windows accepts it), or double the backslash"
+                .to_string()
+        } else {
+            e.message.clone()
+        };
+        // One per line and message: a Windows path holds a backslash per directory, and the
+        // author fixes the string once.
+        if m.errors
+            .iter()
+            .any(|o| o.line == e.line && o.message == message)
+        {
+            continue;
+        }
+        m.errors.push(ManifestError {
+            file: e.file.clone(),
+            line: e.line,
+            col: e.col,
+            message,
+        });
     }
     m
 }
@@ -1339,6 +1406,25 @@ mod tests {
         let p2 = write_temp("nodeps", "[native]\ncrate = \"loft-random\"\n");
         let m2 = read_manifest(p2.to_str().unwrap()).unwrap();
         assert!(m2.runtime_libs.is_empty() && m2.build_deps.is_empty());
+    }
+
+    /// A Windows path in a TOML string: doubled backslashes are one each and no error; an
+    /// undoubled one is an escape that is not one, recorded once per line (not once per
+    /// backslash) and handed to the parser's sink.
+    #[test]
+    fn a_backslash_in_a_string_is_an_escape() {
+        let _ = take_manifest_errors();
+        let p = write_temp(
+            "bslash",
+            "[dependencies]\nok = { path = \"D:\\\\a\\\\lib\" }\nbad = { path = \"D:\\a\\lib\" }\n",
+        );
+        let m = read_manifest(p.to_str().unwrap()).unwrap();
+        assert_eq!(extract_path_dep(&m.dependencies[0].1), Some("D:\\a\\lib"));
+        assert_eq!(m.errors.len(), 1, "{:?}", m.errors);
+        assert_eq!(m.errors[0].line, 3);
+        assert!(m.errors[0].message.contains("backslash"));
+        assert_eq!(take_manifest_errors(), m.errors);
+        assert_eq!(take_manifest_errors(), Vec::<ManifestError>::new());
     }
 
     #[test]

@@ -322,6 +322,7 @@ pub fn stdlib_cache_key(default_dir: &str, stdlib_sources: &[(String, String)]) 
 pub const INERT_ENV: &[&str] = &[
     "LOFT_TIMING",
     "LOFT_TIMING_LEDGER",
+    "LOFT_TIMING_TEST",
     "LOFT_TIMEOUT",
     "LOFT_TIMEOUT_GRACE",
     "LOFT_MEMORY_LIMIT",

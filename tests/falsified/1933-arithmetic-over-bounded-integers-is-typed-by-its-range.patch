@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index ad563b3f1..b0191336b 100644
+index 6f0a3ba8a..155d96bb3 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -5685,7 +5685,7 @@ impl Parser {
+@@ -5718,7 +5718,7 @@ impl Parser {
                  let chain_expected = if matches!(true_type, Type::Void) {
                      Type::Unknown(0)
                  } else {
@@ -11,7 +11,7 @@ index ad563b3f1..b0191336b 100644
                  };
                  let chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
                  false_fact = std::mem::take(&mut self.operand_fact);
-@@ -5729,8 +5729,7 @@ impl Parser {
+@@ -5762,8 +5762,7 @@ impl Parser {
                  // type that serves both: it is what the arms actually join to, and it still
                  // carries the context those spellings need.
                  let variant_enum = self.variant_parent_enum(&true_type);
@@ -21,7 +21,7 @@ index ad563b3f1..b0191336b 100644
                  false_fact = std::mem::take(&mut self.operand_fact);
                  false_is_null_literal = self.block_tail_null_literal;
                  // loft#1540 — two functions join to the parameters BOTH declare `const`: the
-@@ -5855,13 +5854,6 @@ impl Parser {
+@@ -5888,13 +5887,6 @@ impl Parser {
          // the caller to declare `τ?` or discharge. Only fires when exactly one branch yields null
          // and the other is a non-null scalar (heap types stay nullable; both-null stays as-is).
          let mut result_tp = merge_dependencies(&true_type, &false_type);
@@ -35,7 +35,7 @@ index ad563b3f1..b0191336b 100644
          if let Some(chain) = &chain_borrow {
              result_tp = result_tp.joined_deps(chain);
          }
-@@ -7162,7 +7154,7 @@ impl Parser {
+@@ -7248,7 +7240,7 @@ impl Parser {
          {
              Type::Unknown(0)
          } else {
@@ -44,7 +44,7 @@ index ad563b3f1..b0191336b 100644
          }
      }
  
-@@ -15471,78 +15463,6 @@ impl Parser {
+@@ -15560,91 +15552,6 @@ impl Parser {
          )
      }
  
@@ -72,29 +72,40 @@ index ad563b3f1..b0191336b 100644
 -    /// The range an integer arm CONTRIBUTES to a join: a constant tail is the one value it is
 -    /// (`else { 7 }` is `[7, 7]`, not the full `integer` a literal is typed), any other arm its
 -    /// own type.
--    pub(super) fn arm_contribution(&self, arm: &Value, tp: &Type) -> Type {
+-    pub(super) fn arm_contribution<'t>(
+-        &self,
+-        arm: &Value,
+-        tp: &'t Type,
+-    ) -> std::borrow::Cow<'t, Type> {
+-        use std::borrow::Cow;
 -        // Only a literal's own, unbounded `integer`: an arm already held to a declared width
 -        // (`u8`) contributes that width, and was refused there if it did not fit.
 -        // An optional arm keeps its type: the `?` it carries is what the join must keep.
+-        // Borrowed wherever the arm's own type is the answer: this runs for every `if` arm of
+-        // every type, and a cloned record or vector type allocates its dep list (+1 200
+-        // allocations on the front-end pin's medium corpus).
 -        if matches!(tp, Type::Optional(_)) {
--            return tp.clone();
+-            return Cow::Borrowed(tp);
 -        }
 -        match tp.base() {
 -            Type::Integer(sp) if sp.min <= i32::MIN + 1 && sp.max >= i64::from(i32::MAX) => {}
--            _ => return tp.clone(),
+-            _ => return Cow::Borrowed(tp),
 -        }
 -        let tail = match arm.unspan() {
 -            Value::Block(bl) => bl.operators.last(),
 -            other => Some(other),
 -        };
--        match tail.and_then(|t| self.const_int(t)).and_then(|k| i32::try_from(k).ok()) {
--            Some(k) if k > i32::MIN + 1 => Type::Integer(crate::data::IntegerSpec {
+-        match tail
+-            .and_then(|t| self.const_int(t))
+-            .and_then(|k| i32::try_from(k).ok())
+-        {
+-            Some(k) if k > i32::MIN + 1 => Cow::Owned(Type::Integer(crate::data::IntegerSpec {
 -                min: k,
 -                max: i64::from(k),
 -                forced_size: None,
 -                ..crate::data::IntegerSpec::wide()
--            }),
--            _ => tp.clone(),
+-            })),
+-            _ => Cow::Borrowed(tp),
 -        }
 -    }
 -
@@ -113,17 +124,19 @@ index ad563b3f1..b0191336b 100644
 -            forced_size: None,
 -            ..*x
 -        });
--        Some(if matches!(a, Type::Optional(_)) || matches!(b, Type::Optional(_)) {
--            Type::optional(base)
--        } else {
--            base
--        })
+-        Some(
+-            if matches!(a, Type::Optional(_)) || matches!(b, Type::Optional(_)) {
+-                Type::optional(base)
+-            } else {
+-                base
+-            },
+-        )
 -    }
 -
      /// Do a then-arm and an else-arm join to `enum_tp` rather than to the then-arm's own
      /// variant?
      ///
-@@ -15845,10 +15765,6 @@ impl Parser {
+@@ -15947,10 +15854,6 @@ impl Parser {
  
      fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
          let joined = so_far.joined_deps(&self.arm_join_type(arm, tp));
@@ -135,10 +148,10 @@ index ad563b3f1..b0191336b 100644
          let joined = match (joined.function_consts(), tp.function_consts()) {
              (Some(jc), Some(ac)) if jc.common(ac) != jc => {
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index 787e86f94..c34b4e9c6 100644
+index 27cc17504..19cd99e0f 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -6067,30 +6067,6 @@ impl Parser {
+@@ -5975,30 +5975,6 @@ impl Parser {
              // call_op consumes them, so the result range of `&`/`%` can be narrowed
              // (a masked/modded value becomes provably-fit for a later narrowing
              // cast, removing DN4's `(x & 255) as u8` friction).
@@ -148,7 +161,7 @@ index 787e86f94..c34b4e9c6 100644
 -            let arith_ranges = if matches!(operator, "+" | "-" | "*") {
 -                let range = |p: &Self, tp: &Type, c: &Value| -> Option<(i64, i64)> {
 -                    if let Some(k) = p.const_int(c) {
--                        return Some((i64::from(k), i64::from(k)));
+-                        return Some((k, k));
 -                    }
 -                    // A plain `integer` is unbounded whichever template spells it — the
 -                    // 32-bit one (`i32::MIN + 1 ..= i32::MAX`) or the wide one — so only a
@@ -169,7 +182,7 @@ index 787e86f94..c34b4e9c6 100644
              let (and_bound, mod_const, lhs_nonneg) = if matches!(operator, "&" | "%") {
                  let and_bound = [
                      self.nonneg_bound(ctp, code),
-@@ -6151,42 +6127,7 @@ impl Parser {
+@@ -6059,42 +6035,7 @@ impl Parser {
              // the operation guarantees), and only ever a tightening of call_op's
              // range. `a & c` (c ≥ 0) ∈ [0, c]; `a % c` ∈ [-(|c|-1), |c|-1], or
              // [0, |c|-1] when `a` is non-negative.
@@ -195,7 +208,7 @@ index 787e86f94..c34b4e9c6 100644
 -                    };
 -                    let both_constant = al == ah && bl == bh;
 -                    if !both_constant
--                        && lo >= i64::from(i32::MIN) + 1
+-                        && lo > i64::from(i32::MIN)
 -                        // `u32::MAX` is the wide template's marker for "wider than 32 bits"
 -                        // (`IntegerSpec::wide`), so a range must stay strictly below it.
 -                        && hi < i64::from(u32::MAX)

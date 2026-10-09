@@ -215,7 +215,7 @@ as a crash much later in an unrelated function that touched the same value.
 it (`for e in sp { e.f(21) }` answers), and it refuses a capturing one with the same message
 every other collection gives.
 
-See [THREADING.md](THREADING.md) § fn Expression for how function references are used with `par(...)`.
+See [THREADING.md § Function References](THREADING.md#function-references) for how function references are used with `par(...)`.
 
 ---
 

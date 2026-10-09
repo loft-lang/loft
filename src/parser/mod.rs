@@ -569,6 +569,12 @@ pub struct Parser {
     /// position of the statement whose left-hand side CREATED the variable, and both passes
     /// read it back to tell a first binding from a rebinding.
     pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
+    /// `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the
+    /// statement being parsed STARTS: its first binding, or (`after_end`) a bind after the
+    /// name's block ended.  Innermost last.  The variable holds nothing until that statement
+    /// completes, so a read of it on the right-hand side is refused — `read-in-own-binding`,
+    /// or `local-out-of-scope` when the value it would read is the ended binding's.
+    pub(crate) binding_starts: Vec<(u32, u16, bool)>,
     /// loft#1382 — the statement about to be parsed BEGINS with `if` or `match`, so whatever
     /// that construct yields is discarded (`@FR-F-Block`: a `;`-terminated block's value is
     /// dropped, and `@FR-F-Drop` still runs the work).
@@ -694,15 +700,19 @@ pub struct Parser {
     /// the parser nesting guard so it never touches trusted code (zero cost
     /// there); set per-def in `parse_function`, cleared at its end.
     pub(crate) in_sandbox: bool,
-    /// @PLN86 step 0.1 — current expression-nesting depth, counted ONLY while
-    /// `in_sandbox`.  Recursive-descent over hostile deep nesting (`((((…))))`)
-    /// overflows the native stack (rc=139); past `SANDBOX_MAX_PARSE_DEPTH` the
-    /// parser rejects with a clean diagnostic instead — a LOAD-time rejection,
-    /// never a runtime abort.  Reset to 0 at each sandboxed def's body.
+    /// @PLN86 step 0.1 — current expression-nesting depth.  Recursive descent over
+    /// deep nesting (`((((…))))`) overflows the native stack (rc=139); past
+    /// `crate::limits::LIMIT` the parser rejects
+    /// with a clean diagnostic instead.  Reset to 0 at each def's body.
     pub(crate) parse_depth: u32,
     /// @PLN86 step 0.1 — latched once the depth limit trips, so the diagnostic
     /// is emitted once per def rather than at every frame as the parser unwinds.
     pub(crate) depth_overflowed: bool,
+    /// Where the diagnostics stood just after the nesting refusal: the frames above the refused
+    /// expression unwind over tokens they were not written for, and what they report there is
+    /// not the author's mistake.  `parse_function` rewinds to it once the body is read, so the
+    /// def carries the one refusal.
+    pub(crate) depth_trip_mark: Option<(usize, Level)>,
     /// The current file number that is being parsed
     file: u32,
     pub diagnostics: Diagnostics,
@@ -830,6 +840,9 @@ pub struct Parser {
     /// author declared.  What lets `c: Command = "…"` load `process` with nothing in the
     /// script naming it (@PLN179 strand 4).
     auto_use_type_map: std::collections::HashMap<String, String>,
+    /// The manifest errors already reported by [`report_manifest_errors`]: each file's parse
+    /// reads the manifests again, and an error is the author's to fix once.
+    reported_manifest_errors: Vec<crate::manifest::ManifestError>,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -1886,6 +1899,7 @@ impl Parser {
             amp_pending: false,
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
+            binding_starts: Vec::new(),
             stmt_if_pending: false,
             fit_candidate: None,
             fit_armed: None,
@@ -1907,6 +1921,7 @@ impl Parser {
             in_sandbox: false,
             parse_depth: 0,
             depth_overflowed: false,
+            depth_trip_mark: None,
             file: 1,
             diagnostics: Diagnostics::new(),
             default: false,
@@ -1981,6 +1996,7 @@ impl Parser {
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_type_map: std::collections::HashMap::new(),
+            reported_manifest_errors: Vec::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,
@@ -6109,7 +6125,7 @@ impl Parser {
     /// caller owns the diagnostic.
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+    pub(crate) fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
         // @FR-N-Reserve (loft#1796) — a CONSTANT stored into a NULLABLE narrow slot must lie in
         // its usable range: one code at the edge is the slot's null, so `255` into a `u8?`, or
         // `300`, could only ever be stored as null.  Asked at the top because a literal that
@@ -7213,7 +7229,7 @@ impl Parser {
     }
 
     /// Validate that two types are equal
-    fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
+    pub(crate) fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
         if *test_type != *should && !test_type.is_unknown() {
             // `(Slice-Value)` — a vector slice is a value wherever a vector is expected
             // (`Parser::convert` materialises it); a keyed slice is refused at its own site.
@@ -19230,6 +19246,8 @@ impl Parser {
                         drop(spec);
                         self.switch_to_dep(&f);
                     } else {
+                        // A manifest the lexer could not read is the likelier cause: say so first.
+                        self.report_manifest_errors();
                         if !refused {
                             if let Some(unmet) = self.cache_unmet.get(&id).cloned() {
                                 diagnostic!(
@@ -19454,6 +19472,9 @@ impl Parser {
                 self.switch_to_dep(&f);
             }
         }
+        // The dependencies are resolved: a manifest read on the way is reported as itself
+        // before what it failed to declare is reported as undefined.
+        self.report_manifest_errors();
         // Apply wildcard/selective imports queued for this source now that the while-use loop
         // has resolved all libraries.  Must run before the definitions loop so that imported
         // names are visible when function bodies and type annotations are parsed.
@@ -19719,6 +19740,25 @@ impl Parser {
         let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
         let entry = root.join(entry);
         crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
+    }
+
+    /// Report the manifests read since the last call that the lexer could not read
+    /// ([`crate::manifest::take_manifest_errors`]), each once per parse, at the manifest's own
+    /// line.  Kept, such a string is a value with `?` where the author's characters were — a
+    /// Windows path's `\a` — and the run then fails on what it should have declared.
+    fn report_manifest_errors(&mut self) {
+        for e in crate::manifest::take_manifest_errors() {
+            if self.reported_manifest_errors.contains(&e) {
+                continue;
+            }
+            let at = Position {
+                file: crate::lexer::FileName::from(e.file.as_str()),
+                line: e.line,
+                pos: e.col,
+            };
+            self.lexer.pos_diagnostic(Level::Error, &at, &e.message);
+            self.reported_manifest_errors.push(e);
+        }
     }
 
     /// Add a package's derived text-method triggers (`method -> package`) to
@@ -24682,7 +24722,7 @@ mod plan86_nesting_guard_tests {
         let (has_error, has_msg) = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let depth = 2000; // >> SANDBOX_MAX_PARSE_DEPTH and into the overflow zone
+                let depth = 2000; // >> crate::limits::LIMIT and into the overflow zone
                 let src = format!(
                     "fn scripted() {{ x = {}1{}; }}\n",
                     "(".repeat(depth),

@@ -2553,7 +2553,11 @@ cells `tests/scripts/a-reduction-loop-is-one-kernel-call.loft`.
                  release it and the next turn would write a record back in the pool.
                  Also required — the buffer is used ONCE and its result local is
                  assigned ONCE, since a second use has one guarded site and one this
-                 did not read, and a reassignment frees the store it displaces.
+                 did not read, and a reassignment frees the store it displaces.  The
+                 count is of the VARIABLE: a sibling scope's split copy of a name is
+                 one of its own and counts its own binds.  A local whose rebind
+                 releases nothing it displaces (O-Buffer's adoption veto) is not
+                 objected to, since the release is the whole objection.
                  A buffer whose callee MINTS the store its result adopts (O-Move at
                  a plain local's first bind, @PLN164 B1) is paired for the guarded
                  free alone and NOT allocated here: handed non-null to a callee that
@@ -2962,6 +2966,30 @@ line in `Output::output_function`'s prelude.
                  are this rule's admissions, and native finds only what the IR
                  declined.  Switch `LOFT_NO_IR_VALUE_RECORD=1`; guard
                  `a-small-record-returned-to-a-reader-is-a-tuple.loft`.
+                 NULLABLE CLAUSE (`--native`, `(N-Road)`, C144): a `-> S?` of a record
+                 this rule admits returns the tuple of `S`'s fields followed by a
+                 PRESENCE word, `(f₁, …, fₙ, bool)`.  An ABSENT tuple holds every
+                 field's null and `false`, so a field read is the same tuple index as
+                 on the dense tuple and answers what a read off the null record
+                 answers; `if x` and `x == null` read the presence word; a field write
+                 through an absent tuple is dropped and reported (`@FR-E-Report`), as
+                 the setter's `rec == 0` arm does.  The two layouts are two KEYS
+                 (the record type, and the record type with `NULLABLE_LAYOUT`), so a
+                 site, a leaf, a local and a parameter agree on a key or decline: a
+                 nullable tuple is never handed where a dense one is expected (a tuple
+                 parameter, a fn-ref hand-off, a copy into a record).  Leaves of a
+                 `-> S?` body: its own `Object` build (present), the bare `null`
+                 sentinel (absent), and a DENSE leaf of `S` — a `-> S` call or a tuple
+                 parameter returned whole — WIDENED by appending `true`; both arms of
+                 a value branch carry one key.  A `τ?` value local is declared absent
+                 and a bind of `null` makes it absent again.  Declined, costing the
+                 rewrite only: a nullable record that owns heap (a view leaf's null is
+                 a REPORTED one, which the absent tuple does not spell), a `??` with a
+                 record default, and the IR pass above (the interpreter keeps the
+                 record).  A cdylib bridge writes a present tuple into its destination
+                 and answers the null record for an absent one.  Switch
+                 `LOFT_NO_NULLABLE_VALUE_RECORD=1`; guard
+                 `a-nullable-record-returns-its-fields-in-registers.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

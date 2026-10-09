@@ -103,6 +103,11 @@ const CODES: &[(&str, &str)] = &[
         "local-out-of-scope",
         "fn main() { if true { w = 5; } print(\"{w}\"); }",
     ),
+    // loft#1955 — a local read on the right-hand side of its own first binding (`(B-Scope)`).
+    (
+        "read-in-own-binding",
+        "fn main() { x: integer = x + 1; print(\"{x}\"); }",
+    ),
     // loft#1619 — the body writes the variable the range end read; the loop took it once.
     (
         "loop-source-written",

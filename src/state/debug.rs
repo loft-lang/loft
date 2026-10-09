@@ -1685,7 +1685,7 @@ impl State {
         let cur_st = self.stack_pos;
         let ret = u32::from(self.code::<u16>());
         let cur_code = self.code_pos;
-        self.code::<u8>();
+        self.code::<u16>();
         let discard = self.code::<u16>();
         self.stack_pos -= u32::from(discard);
         self.stack_pos += ret;

@@ -197,8 +197,10 @@ jobs:
             # The limit is not the lever (the owner, 2026-09-24: never raise it); the legs are.
             # Each leg pays the ~17 min build, and the tests divide.  Branch protection's
             # `Test (windows-latest)` is the PR-path placeholder job, unaffected by the names
-            # these legs carry.
-            echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            # these legs carry.  Ubuntu is sharded the same way: unsharded, the whole suite on
+            # one runner filled its disk (`No space left on device`, the runner lost mid-Test,
+            # on every push to main from 2026-10-07).
+            echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           fi
       - id: diff
         shell: bash
@@ -790,17 +792,10 @@ jobs:
           # the `heavy-serial` membership straight out of .config/nextest.toml
           # rather than restating it.
           FILTER="$(python3 scripts/ci_test_filter.py "${{ github.event_name }}" ${{ matrix.shard }})"
-          # A PR run is FEEDBACK — stop at the first failure, the author fixes it
-          # and pushes again, and the runner minutes go to the next PR.  The
-          # nightly and push-to-main runs are REPORTS: they are nobody's inner
-          # loop, and fail-fast makes them surface at most ONE break per run.
-          # Windows pays for that worst of all — it runs on these events only, so
-          # every Windows bug costs a whole night, and the 2026-07-21 nightly
-          # stopped with 875 of 3029 tests unrun.  Drain the whole set instead.
-          FAILFAST=""
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            FAILFAST="--no-fail-fast"
-          fi
+          # Every run drains the whole set, a PR's included: fail-fast surfaces at
+          # most ONE break per shard per run, so a PR with several breaks is fixed
+          # one push at a time while the rest sit unrun behind the first.
+          FAILFAST="--no-fail-fast"
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}"
           # `rest-a/b/c` are one filterset split by nextest's own partitioner: the shard
           # letter picks the slice.  Partitioning is over TESTS, so a single long binary
@@ -874,6 +869,17 @@ jobs:
         with:
           name: nextest-junit-${{ matrix.os }}-${{ matrix.shard || 'full' }}
           path: target/nextest/ci/junit.xml
+          retention-days: 14
+          if-no-files-found: ignore
+      # The timing ledger every loft process the tests started wrote: phases, the program's own
+      # compile, build steps, each row naming its test — what `scripts/timing_compare.py
+      # run:<id>` compares between two runs (PERFORMANCE.md § Front-end speed).
+      - name: Keep the timing ledger
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-ledger-${{ matrix.os }}-${{ matrix.shard || 'full' }}
+          path: ${{ env.LOFT_TIMING_LEDGER }}
           retention-days: 14
           if-no-files-found: ignore
       # The GL gold's own screenshot, when the test step went red: the gold is compared on the
@@ -1645,9 +1651,10 @@ jobs:
           RUSTFLAGS: '-Zsanitizer=address'
           ASAN_OPTIONS: 'detect_leaks=0'
           # ASan's redzones make every frame several times larger, so the corpus's
-          # 100-deep nested expression overflows the CLI-sized 8 MiB script thread
-          # (tests/wrap.rs reads this floor); release builds keep 8 MiB.
-          RUST_MIN_STACK: '33554432'
+          # deepest expressions (250 levels, just under the parser's 256 bound) overflow
+          # the CLI-sized 8 MiB script thread (tests/wrap.rs reads this floor); release
+          # builds keep 8 MiB.
+          RUST_MIN_STACK: '134217728'
         run: >
           cargo +nightly-2026-05-28 nextest run --profile sanitizer --release
           --target x86_64-unknown-linux-gnu

@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Every binary level groups as `formal/grammar.md` `(G-Prec)` / `(G-Assoc)` says — the oracle
+// @PLN188 replaces the operator parser against.  Each cell is chosen so the WRONG grouping
+// answers something else; the expected values are computed by hand from the rules, with the
+// wrong grouping's answer beside each, so a parser that swaps two levels or flips an
+// associativity fails a cell rather than agreeing with itself.
+//
+// Levels (loosest first): 0 `??` · 1 `||` · 2 `&&` · 3 comparisons · 4 `|` · 5 `^` · 6 `&` ·
+// 7 `<<` `>>` · 8 `+` `-` · 9 `*` `/` `%` · 10 `**` · 11 `as`.
+//
+// @falsified-at: none — it pins the grammar the current parser already obeys; falsified
+//   instead by planted defects (PLN188 phase 1): `-` made right-associative, and levels 4 and
+//   5 swapped in `OPERATORS`.
+
+enum Shape {
+  Circle { r: integer },
+  Square { s: integer }
+}
+
+fn adjacent_levels() {
+  // 8 / 9
+  assert(2 + 3 * 4 == 14, "+ under *: wrong grouping gives 20");
+  assert(2 * 3 + 4 == 10, "* under +: wrong grouping gives 14");
+  // 9 / 10
+  assert(2 * 3 ** 2 == 18, "* under **: wrong grouping gives 36");
+  assert(2 ** 3 * 2 == 16, "** under *: wrong grouping gives 64");
+  // 7 / 8
+  assert(1 << 2 + 1 == 8, "<< under +: wrong grouping gives 5");
+  assert(1 + 2 << 1 == 6, "+ under <<: wrong grouping gives 5");
+  // 6 / 7
+  assert(12 & 3 << 2 == 12, "& under <<: wrong grouping gives 0");
+  assert(6 >> 1 & 1 == 1, ">> under &: 3 & 1 = 1; wrong grouping 6 >> 1 = 3");
+  // 5 / 6
+  assert((5 ^ 6 & 3) == 7, "^ under &: wrong grouping gives 3");
+  assert((1 & 3 ^ 4) == 5, "& under ^: wrong grouping gives 1");
+  // 4 / 5
+  assert((1 | 2 ^ 3) == 1, "| under ^: wrong grouping gives 0");
+  assert((3 ^ 1 | 2) == 2, "^ under |: wrong grouping gives 0");
+  // 3 / 4
+  assert(1 | 2 == 3, "== under |: (1 | 2) == 3");
+  // 2 / 3
+  assert(!(1 < 2 && 3 > 4), "&& under comparisons");
+  // 1 / 2
+  assert(true || false && false, "|| under &&: wrong grouping gives false");
+  assert(false && false || true, "&& under ||: wrong grouping gives false");
+}
+
+fn associativity() {
+  assert(10 - 3 - 2 == 5, "- is left-associative: right gives 9");
+  assert(100 / 10 / 5 == 2, "/ is left-associative: right gives 50");
+  assert(100 % 7 % 3 == 2, "% is left-associative: right gives 0");
+  assert(1 << 2 << 3 == 32, "<< is left-associative: right gives 1 << 16 = 65536");
+  assert(256 >> 2 >> 1 == 32, ">> is left-associative: right gives 256 >> 1 = 128");
+  assert(2 ** 3 ** 2 == 512, "** is right-associative: left gives 64");
+  assert(3.7 as integer as float == 3.0, "as is left-associative");
+}
+
+fn runs_after_tighter_runs() {
+  // a looser run that starts after a tighter one, several times in one expression
+  assert(2 * 3 + 4 * 5 - 6 / 2 == 23, "6 + 20 - 3");
+  assert(1 + 2 * 3 ** 2 - 4 == 15, "1 + 18 - 4");
+  assert(1 + 2 == 3 && 4 * 5 > 19 || false, "true && true || false");
+  assert((1 | 2 + 3 * 4 * 4) == 51, "1 | (2 + 48) = 1 | 50 = 51");
+  assert(100 - 2 ** 3 * 4 + 1 == 69, "100 - 32 + 1");
+}
+
+fn coalesce_level() {
+  n: integer? = null;
+  m: integer? = 4;
+  // `==` binds tighter than `??`, so each comparison is parenthesised.
+  assert((m ?? 2 + 3) == 4, "?? is loosest: m ?? (2 + 3) is 4; (m ?? 2) + 3 is 7");
+  assert((n ?? 2 + 3) == 5, "a null left takes the whole right: 5");
+  assert((n ?? n ?? 9) == 9, "?? chain answers the first present operand");
+  assert((n ?? m ?? 9) == 4, "?? chain answers the first present operand");
+  f: boolean? = false;
+  assert(!(f ?? false || true), "f ?? (false || true) is f = false; (f ?? false) || true is true");
+}
+
+fn concatenation() {
+  a = "x";
+  assert(a + "y" + "z" == "xyz", "a text + chain");
+  assert("n" + "{2 * 3}" + "!" == "n6!", "a text chain holding a formatted product");
+  v = [1];
+  w = v + [2] + [3];
+  assert(len(w) == 3 && w[2] == 3, "a vector + chain");
+  c = 'c';
+  assert(c + "d" == "cd", "a character first in a text chain");
+  t: text? = null;
+  assert(t + "x" == null, "a null text left operand propagates through the chain");
+  u: text? = "u";
+  assert(u + "x" + "y" == "uxy", "a present text? left operand");
+}
+
+fn variant_tests() {
+  s = Circle { r: 2 };
+  assert(s is Circle && true, "is sits at the comparison level, under &&");
+  assert(!(s is Square) || false, "is under ||");
+}
+
+struct P { a: integer, b: integer, f: float, n: u8 }
+
+fn three() -> integer { 3 }
+
+fn tail(x: integer) -> integer { return x + 2 * 3; }
+
+fn contexts() {
+  p = P { a: 2 + 3 * 4, b: 10 - 3 - 2, f: 2.0 ** 3.0 * 2.0, n: 1 + 2 * 3 };
+  assert(p.a == 14 && p.b == 5, "struct field values: 14 and 5");
+  assert(p.f == 16.0, "a float ** under *: (2 ** 3) * 2 = 16; 2 ** 6 = 64");
+  assert(p.n == 7, "a narrow integer field: 1 + 6");
+  v = [1 + 2 * 3, 10 - 3 - 2, p.a - p.b * 2];
+  assert(v[0] == 7 && v[1] == 5 && v[2] == 4, "vector items, field operands: 14 - 10 = 4");
+  // operands that are an element, a call result and a chain of fields
+  assert(v[0] + v[1] * three() == 22, "7 + 15");
+  assert(three() * three() - p.b == 4, "9 - 5");
+  if v[1] * 2 == 10 && v[0] - 1 == 6 {
+    assert(true, "an if condition");
+  } else {
+    assert(false, "the condition groups as (v[1] * 2 == 10) && (v[0] - 1 == 6)");
+  }
+  x = if 1 + 1 == 2 { 3 * 3 + 1 } else { 0 };
+  assert(x == 10, "an if arm: 9 + 1");
+  y = { 20 - 4 - 3 };
+  assert(y == 13, "a block value: (20 - 4) - 3");
+  total = 0;
+  for i in 0..4 {
+    total += i * 2 + 1;
+  }
+  assert(total == 16, "a loop body: 1 + 3 + 5 + 7");
+  assert("{1 + 2 * 3}|{10 - 3 - 2}" == "7|5", "interpolation");
+  n: integer? = null;
+  assert((n ?? 2 * 3 + 1) == 7, "a ?? right-hand side groups its own operators");
+  assert(tail(1) == 7, "a return value: 1 + 6");
+}
+
+fn main() {
+  contexts();
+  adjacent_levels();
+  associativity();
+  runs_after_tighter_runs();
+  coalesce_level();
+  concatenation();
+  variant_tests();
+  println("ok");
+}

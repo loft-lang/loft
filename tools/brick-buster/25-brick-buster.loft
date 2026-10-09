@@ -298,6 +298,95 @@ fn pickup_sprite(sp_type: integer) -> integer {
 
 // ── Main ─────────────────────────────────────────────────────────────
 
+// `dg_value`'s decimal digits (at most six) right to left from digit textures, the leftmost at
+// `dg_x`, each `dg_w` wide; nothing for 0.
+fn draw_digits(dg_painter: const graphics::Painter2D, dg_dig: vector<integer>, dg_value: integer,
+               dg_x: float, dg_y: float, dg_w: float, dg_h: float) {
+  dg_count = 0;
+  dg_rest = dg_value;
+  for _dg_n in 0..6 {
+    if dg_rest > 0 { dg_count += 1; dg_rest = dg_rest / 10; }
+  }
+  if dg_count > 0 {
+    dg_at = dg_x + (dg_count - 1) as float * dg_w;
+    dg_rest = dg_value;
+    for _dg_i in 0..dg_count {
+      graphics::draw_texture_at(dg_painter, dg_dig[dg_rest % 10] ?? 0, dg_at, dg_y, dg_w, dg_h);
+      dg_at -= dg_w;
+      dg_rest = dg_rest / 10;
+    }
+  }
+}
+
+// The in-game HUD, drawn in screen space: lives as hearts (top right), the score (top left),
+// the high score under it in smaller grey digits (hidden at 0), the combo bar under the
+// score, and the level's Roman numeral (top middle) from the compact numeral textures —
+// the full "LEVEL <n>" texture belongs to the level-pause fade.
+fn draw_hud(hd_painter: const graphics::Painter2D, hd_sheet: const graphics::SpriteSheet,
+            hd_dig: vector<integer>, hd_lives: integer, hd_score_label: integer, hd_score: integer,
+            hd_hi_label: integer, hd_highscore: integer, hd_combo: integer, hd_level: integer,
+            hd_lvl_num: vector<integer>) {
+  for hd_l in 0..hd_lives {
+    graphics::draw_sprite_at(hd_sheet, hd_painter,
+      SCREEN_W - 24.0 - (hd_l as float) * 22.0, 6.0, 20.0, 20.0, S_HEART);
+  }
+  graphics::draw_texture_at(hd_painter, hd_score_label, 10.0, 4.0, 60.0, 14.0);
+  if hd_score == 0 {
+    graphics::draw_texture_at(hd_painter, hd_dig[0] ?? 0, 72.0, 2.0, 14.0, 20.0);
+  }
+  draw_digits(hd_painter, hd_dig, hd_score, 72.0, 2.0, 14.0, 20.0);
+  if hd_highscore > 0 {
+    graphics::draw_texture_at(hd_painter, hd_hi_label, 10.0, 26.0, 20.0, 10.0);
+    draw_digits(hd_painter, hd_dig, hd_highscore, 34.0, 26.0, 9.0, 12.0);
+  }
+  if hd_combo > 1 {
+    graphics::draw_rect_at(hd_painter, 10.0, 24.0, clamp((hd_combo as float) * 15.0, 0.0, 200.0),
+      3.0, 1.0, clamp(1.0 - (hd_combo as float) * 0.08, 0.0, 1.0), 0.0, 1.0);
+  }
+  hd_lvl = hd_level - 1;
+  if hd_lvl >= 0 && hd_lvl < 20 && hd_lvl_num[hd_lvl] != 0 {
+    graphics::draw_texture_at(hd_painter, hd_lvl_num[hd_lvl] ?? 0, SCREEN_W / 2.0 - 36.0, 4.0, 72.0, 28.0);
+  }
+}
+
+// One hint per active pickup TYPE, stacked upward from the bottom right.
+fn draw_pickup_hints(ph_painter: const graphics::Painter2D, ph_on: vector<integer>,
+                     ph_type: vector<integer>, ph_tex: vector<integer>) {
+  ph_shown = 0;
+  ph_y = SCREEN_H - 18.0;
+  for ph_i in 0..8 {
+    if ph_on[ph_i] == 1 {
+      ph_t = ph_type[ph_i];
+      ph_bit = 1 << ph_t;
+      if ph_t >= 1 && ph_t <= 7 && ph_tex[ph_t] != 0 && (ph_shown & ph_bit) == 0 {
+        ph_shown = ph_shown | ph_bit;
+        graphics::draw_texture_at(ph_painter, ph_tex[ph_t] ?? 0, SCREEN_W - 85.0, ph_y, 80.0, 14.0);
+        ph_y -= 16.0;
+      }
+    }
+  }
+}
+
+// The atlas diagnostic overlay (the I cheat key): all 20 sprite indices on a 4x5 grid, each
+// with its two-digit index beside it, so a mis-mapped sprite is visible at a glance.
+fn draw_atlas_diag(dd_painter: const graphics::Painter2D, dd_sheet: const graphics::SpriteSheet,
+                   dd_dig: vector<integer>) {
+  // Translucent backdrop so gameplay stays partially visible.
+  graphics::draw_rect_at(dd_painter, 0.0, 0.0, SCREEN_W, SCREEN_H, 0.0, 0.0, 0.0, 0.6);
+  for dd_i in 0..20 {
+    dd_x = 80.0 + ((dd_i % 4) as float) * 160.0;
+    dd_y = 60.0 + ((dd_i / 4) as float) * 100.0;
+    // Thin outline so the cell's extent is visible.
+    graphics::draw_rect_at(dd_painter, dd_x - 2.0, dd_y - 2.0, 68.0, 68.0, 0.2, 0.2, 0.3, 0.9);
+    // The sprite itself at 64x64, bigger than in game so its pixels read.
+    graphics::draw_sprite_at(dd_sheet, dd_painter, dd_x, dd_y, 64.0, 64.0, dd_i);
+    if dd_i / 10 > 0 {
+      graphics::draw_texture_at(dd_painter, dd_dig[dd_i / 10] ?? 0, dd_x + 68.0, dd_y, 12.0, 18.0);
+    }
+    graphics::draw_texture_at(dd_painter, dd_dig[dd_i % 10] ?? 0, dd_x + 82.0, dd_y, 12.0, 18.0);
+  }
+}
+
 fn main() {
   if !graphics::gl_create_window(800, 600, "Brick Buster") {
     println("Failed to create window");
@@ -1635,79 +1724,17 @@ fn main() {
     br_painter.p2_proj[12] = -1.0;
     br_painter.p2_proj[13] =  1.0;
 
-    // HUD: lives (cel-shaded hearts, top-right).
-    for br_lh in 0..br_lives {
-      graphics::draw_sprite_at(br_sheet, br_painter,
-        SCREEN_W - 24.0 - (br_lh as float) * 22.0, 6.0,
-        20.0, 20.0, S_HEART);
-    }
+    draw_hud(br_painter, br_sheet, br_dig_tex, br_lives, br_score_label_tex, br_score,
+             br_hi_label_tex, br_highscore, br_combo, br_level, br_lvl_num_tex);
 
-    // HUD: numeric score (top-left, digit textures)
-    graphics::draw_texture_at(br_painter, br_score_label_tex, 10.0, 4.0, 60.0, 14.0);
-    br_sc = br_score;
-    br_sx = 72.0;
-    if br_sc == 0 {
-      graphics::draw_texture_at(br_painter, br_dig_tex[0], br_sx, 2.0, 14.0, 20.0);
-    }
-    // Extract digits right-to-left, draw left-to-right
-    br_sc_digits = 0;
-    br_sc_tmp = br_sc;
-    for _br_sd in 0..6 {
-      if br_sc_tmp > 0 { br_sc_digits += 1; br_sc_tmp = br_sc_tmp / 10; }
-    }
-    if br_sc_digits > 0 {
-      br_sx = 72.0 + (br_sc_digits - 1) as float * 14.0;
-      br_sc_tmp = br_sc;
-      for _br_sd2 in 0..br_sc_digits {
-        br_sd_d = br_sc_tmp % 10;
-        graphics::draw_texture_at(br_painter, br_dig_tex[br_sd_d], br_sx, 2.0, 14.0, 20.0);
-        br_sx -= 14.0;
-        br_sc_tmp = br_sc_tmp / 10;
-      }
-    }
-
-    // HUD: high score (below current score, slightly smaller digits
-    // in grey so it reads as "previous best" rather than the live
-    // total).  Hidden when 0 so a fresh install stays clean.
-    if br_highscore > 0 {
-      graphics::draw_texture_at(br_painter, br_hi_label_tex, 10.0, 26.0, 20.0, 10.0);
-      br_hsc = br_highscore;
-      br_hx = 34.0;
-      br_hs_digits = 0;
-      br_hsc_tmp = br_hsc;
-      for _br_hsd in 0..6 {
-        if br_hsc_tmp > 0 { br_hs_digits += 1; br_hsc_tmp = br_hsc_tmp / 10; }
-      }
-      if br_hs_digits > 0 {
-        br_hx = 34.0 + (br_hs_digits - 1) as float * 9.0;
-        br_hsc_tmp = br_hsc;
-        for _br_hsd2 in 0..br_hs_digits {
-          br_hsd_d = br_hsc_tmp % 10;
-          graphics::draw_texture_at(br_painter, br_dig_tex[br_hsd_d], br_hx, 26.0, 9.0, 12.0);
-          br_hx -= 9.0;
-          br_hsc_tmp = br_hsc_tmp / 10;
-        }
-      }
-    }
-
-    // HUD: combo bar (under score)
-    if br_combo > 1 {
-      br_cbar = clamp((br_combo as float) * 15.0, 0.0, 200.0);
-      br_cg_val = clamp(1.0 - (br_combo as float) * 0.08, 0.0, 1.0);
-      graphics::draw_rect_at(br_painter, 10.0, 24.0, br_cbar, 3.0, 1.0, br_cg_val, 0.0, 1.0);
-    }
-
-    // HUD: level — Roman numeral in the top middle.  The full
-    // pre-baked "LEVEL <n>" texture is used during the level-pause
-    // fade below; here we use a separate tighter texture that holds
-    // just the numeral so the centred HUD element stays compact.
-    // Drawn at 28 px to match the baked font size so single-character
-    // numerals ("I", "V", "X") have readable width; wider numerals
-    // like "VIII" still fit inside the 72-px-wide box.
-    br_lvli = br_level - 1;
-    if br_lvli >= 0 && br_lvli < 20 && br_lvl_num_tex[br_lvli] != 0 {
-      graphics::draw_texture_at(br_painter, br_lvl_num_tex[br_lvli],
-        SCREEN_W / 2.0 - 36.0, 4.0, 72.0, 28.0);
+    // Atlas diagnostic overlay (toggled by the I cheat key).  Draws
+    // all 20 sprite indices on a 4x5 grid at fixed screen positions
+    // with a visible two-digit index label beside each cell.  A
+    // mis-mapped sprite (e.g. S_BALL_NORMAL drawing the S_IC_EXTEND
+    // art) is immediately visible because the art at label "16"
+    // would clearly not be the ball.
+    if br_diag_on {
+      draw_atlas_diag(br_painter, br_sheet, br_dig_tex);
     }
 
     // Atlas diagnostic overlay (toggled by the I cheat key).  Draws
@@ -1717,84 +1744,10 @@ fn main() {
     // art) is immediately visible because the art at label "16"
     // would clearly not be the ball.
     if br_diag_on {
-      // Translucent backdrop so gameplay stays partially visible.
-      graphics::draw_rect_at(br_painter, 0.0, 0.0, SCREEN_W, SCREEN_H,
-        0.0, 0.0, 0.0, 0.6);
-      for br_diag_i in 0..20 {
-        br_dg_col = br_diag_i % 4;
-        br_dg_row = br_diag_i / 4;
-        // Spread the grid across the centre of the screen.
-        br_dg_x = 80.0 + (br_dg_col as float) * 160.0;
-        br_dg_y = 60.0  + (br_dg_row as float) * 100.0;
-        // Thin outline so the cell's extent is visible.
-        graphics::draw_rect_at(br_painter, br_dg_x - 2.0, br_dg_y - 2.0,
-          68.0, 68.0, 0.2, 0.2, 0.3, 0.9);
-        // The sprite itself at 64x64 (bigger than in-game so pixels
-        // read).
-        graphics::draw_sprite_at(br_sheet, br_painter, br_dg_x, br_dg_y,
-          64.0, 64.0, br_diag_i);
-        // Two-digit label.
-        br_dg_t = br_diag_i / 10;
-        br_dg_u = br_diag_i % 10;
-        if br_dg_t > 0 {
-          graphics::draw_texture_at(br_painter, br_dig_tex[br_dg_t],
-            br_dg_x + 68.0, br_dg_y, 12.0, 18.0);
-        }
-        graphics::draw_texture_at(br_painter, br_dig_tex[br_dg_u],
-          br_dg_x + 82.0, br_dg_y, 12.0, 18.0);
-      }
+      draw_atlas_diag(br_painter, br_sheet, br_dig_tex);
     }
 
-    // Atlas diagnostic overlay (toggled by the I cheat key).  Draws
-    // all 20 sprite indices on a 4x5 grid at fixed screen positions
-    // with a visible two-digit index label beside each cell.  A
-    // mis-mapped sprite (e.g. S_BALL_NORMAL drawing the S_IC_EXTEND
-    // art) is immediately visible because the art at label "16"
-    // would clearly not be the ball.
-    if br_diag_on {
-      // Translucent backdrop so gameplay stays partially visible.
-      graphics::draw_rect_at(br_painter, 0.0, 0.0, SCREEN_W, SCREEN_H,
-        0.0, 0.0, 0.0, 0.6);
-      for br_diag_i in 0..20 {
-        br_dg_col = br_diag_i % 4;
-        br_dg_row = br_diag_i / 4;
-        // Spread the grid across the centre of the screen.
-        br_dg_x = 80.0 + (br_dg_col as float) * 160.0;
-        br_dg_y = 60.0  + (br_dg_row as float) * 100.0;
-        // Thin outline so the cell's extent is visible.
-        graphics::draw_rect_at(br_painter, br_dg_x - 2.0, br_dg_y - 2.0,
-          68.0, 68.0, 0.2, 0.2, 0.3, 0.9);
-        // The sprite itself at 64x64 (bigger than in-game so pixels
-        // read).
-        graphics::draw_sprite_at(br_sheet, br_painter, br_dg_x, br_dg_y,
-          64.0, 64.0, br_diag_i);
-        // Two-digit label.
-        br_dg_t = br_diag_i / 10;
-        br_dg_u = br_diag_i % 10;
-        if br_dg_t > 0 {
-          graphics::draw_texture_at(br_painter, br_dig_tex[br_dg_t],
-            br_dg_x + 68.0, br_dg_y, 12.0, 18.0);
-        }
-        graphics::draw_texture_at(br_painter, br_dig_tex[br_dg_u],
-          br_dg_x + 82.0, br_dg_y, 12.0, 18.0);
-      }
-    }
-
-    // HUD: pickup hints (bottom-right, one per active type)
-    br_shown_mask = 0;
-    br_hint_y = SCREEN_H - 18.0;
-    for br_pl in 0..8 {
-      if br_pk_on[br_pl] == 1 {
-        br_plt = br_pk_type[br_pl];
-        br_plt_bit = 1 << br_plt;
-        if br_plt >= 1 && br_plt <= 7 && br_pk_tex[br_plt] != 0 && (br_shown_mask & br_plt_bit) == 0 {
-          br_shown_mask = br_shown_mask | br_plt_bit;
-          graphics::draw_texture_at(br_painter, br_pk_tex[br_plt],
-            SCREEN_W - 85.0, br_hint_y, 80.0, 14.0);
-          br_hint_y -= 16.0;
-        }
-      }
-    }
+    draw_pickup_hints(br_painter, br_pk_on, br_pk_type, br_pk_tex);
 
     // Level transition text — big "LEVEL N" centered
     if br_level_timer > 0.0 {

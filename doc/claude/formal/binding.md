@@ -438,6 +438,10 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
                  it.  A `match` arm's PATTERN binds its names into that arm — its guard and
                  its body — and they end with it, whatever a later arm or `match` binds
                  under the same name.  Parameters are bound for the whole function.
+                 A binding starts when its statement COMPLETES: a read of the name on that
+                 statement's right-hand side is refused — `read-in-own-binding` on a first
+                 binding, `local-out-of-scope` on a bind after the block ended — while a
+                 rebind of a live binding reads the value it holds (loft#1955).
 ```
 
 **In words.** loft follows rustc here: a local lives in the block that binds it.

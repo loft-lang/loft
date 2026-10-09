@@ -27,7 +27,7 @@
 2 src/paged_reader.rs
 1 src/parser/control.rs
 4 src/parser/mod.rs
-8 src/platform.rs
+7 src/platform.rs
 1 src/png_store.rs
 1 src/registry.rs
 2 src/registry_index.rs

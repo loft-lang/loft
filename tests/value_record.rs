@@ -52,10 +52,11 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
     ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
     ("n_pt10", false),      // t10: a discharge arm joined with a variable
-    ("n_maybe", false),     // t10: a nullable result has no tuple
-    ("n_ping", true),       // t11: a branch of two admitted calls, mutually recursive
-    ("n_pong", true),       // t11: the forwarding half of the pair
-    ("n_pt12", true),       // t12: delivered into a field / element through a `__lift_`
+    ("n_maybe", false),     // t10: its `??` takes a RECORD default, a site that consumes the
+    // record (a nullable result is a tuple everywhere else, C144)
+    ("n_ping", true), // t11: a branch of two admitted calls, mutually recursive
+    ("n_pong", true), // t11: the forwarding half of the pair
+    ("n_pt12", true), // t12: delivered into a field / element through a `__lift_`
     // temp — a value local since `(R-ValueLocal)` made call-bound lifts eligible
     // (2026-09-25); the copy FROM it materialises the tuple into the destination
     ("n_pt13", false), // t13: its result is passed as an argument (`disc(given)`)
@@ -108,7 +109,8 @@ fn emit(src: &Path, out: &Path, env: &[(&str, &str)]) -> String {
         // The default build: § V-aa is default-on since its call-site gate reads the fn-ref
         // arm scan from the emitter's own home (@PLN157 § V-ah stage 1).  A test that wants
         // the return buffer back passes the switch through `env`.
-        .env_remove("LOFT_NO_VALUE_RECORD");
+        .env_remove("LOFT_NO_VALUE_RECORD")
+        .env_remove("LOFT_NO_NULLABLE_VALUE_RECORD");
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -338,4 +340,65 @@ fn the_switch_restores_every_return_buffer() {
         );
     }
     let _ = fa::remove_file(&out);
+}
+
+/// `(R-ValueRecord)`'s nullable clause (C144, loft#1952): a `-> S?` returns `(fields…, bool)`,
+/// the presence word last, exactly where its dense twin would return the tuple — and a maker
+/// whose record a site consumes keeps its buffer, as a dense one does.
+const NULLABLE_CELLS: &str = "tests/scripts/a-nullable-record-returns-its-fields-in-registers.loft";
+const NULLABLE_EXPECTED: &[(&str, Option<&str>)] = &[
+    ("n_n1", Some("(i64, bool)")), // always present, read and discharged
+    ("n_n2", Some("(i64, bool)")), // an early `return null`
+    ("n_n3", Some("(i64, bool)")), // a tail joining `null` with a build
+    ("n_n4", Some("(i64, i64, bool)")), // a present record with a null field
+    ("n_n5", Some("(i64, f64, i64, bool)")), // a nested inline record
+    ("n_n6", Some("(f64, bool, bool)")), // float and boolean fields
+    ("t_1S_bump", Some("(i64, bool)")), // a method
+    ("n_n8", Some("(i64, bool)")), // recursion through its own result
+    ("n_n9f", Some("(i64, bool)")), // a forwarding tail
+    ("n_n9r", Some("(i64, bool)")), // a forwarding `return`
+    ("n_n12", Some("(i64, bool)")), // bound into a local declared `null`
+    ("n_whole", Some("(i64, bool)")), // a dense tuple parameter, WIDENED
+    ("n_fwdr", Some("(i64, bool)")), // a dense call forwarded beside `return null`
+    ("n_n10", None),               // passed on whole and pushed: the record road
+    ("n_n11", None),               // a `??` with a record default
+];
+
+/// The return type `rust` declares for `name`, when it is a tuple.
+fn tuple_type(rust: &str, name: &str) -> Option<String> {
+    let line = rust
+        .lines()
+        .find(|l| l.starts_with(&format!("fn {name}(")))
+        .unwrap_or_else(|| panic!("{name} was not emitted"));
+    let ret = line.split("->").nth(1)?.trim_start();
+    ret.starts_with('(')
+        .then(|| ret.split(" {").next().unwrap_or(ret).trim().to_string())
+}
+
+#[test]
+fn a_nullable_record_returns_its_tuple_and_presence_word_where_predicted() {
+    let out = std::env::temp_dir().join("loft_value_record_nullable.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(NULLABLE_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in NULLABLE_EXPECTED {
+        assert_eq!(
+            tuple_type(&rust, name).as_deref(),
+            *want,
+            "{name}: the tuple it returns"
+        );
+    }
+    // The switch puts every nullable maker back on its buffer.  (`dense` follows them: its
+    // callers `fwd`/`fwdr` then keep a buffer and consume its record, as on the build
+    // before the clause.)
+    let off = std::env::temp_dir().join("loft_value_record_nullable_off.rs");
+    let rust = emit(&src, &off, &[("LOFT_NO_NULLABLE_VALUE_RECORD", "1")]);
+    for (name, _) in NULLABLE_EXPECTED {
+        assert_eq!(
+            tuple_type(&rust, name),
+            None,
+            "{name}: LOFT_NO_NULLABLE_VALUE_RECORD=1 must restore its return buffer"
+        );
+    }
+    let _ = fa::remove_file(&out);
+    let _ = fa::remove_file(&off);
 }

@@ -290,6 +290,11 @@ struct Scopes<'s> {
     /// The locals whose one real bind follows an enclosing null on every path and every pass
     /// ([`null_led_first_binds_in`]): that bind displaces no store.
     null_led_first: HashSet<u16>,
+    /// The scope pass's SPLIT COPIES (`var_mapping`) — each copy to the variable it was split
+    /// from — with how many source binds each copy took.  The whole-body counts above are
+    /// keyed by the ORIGINAL variable, so a copy is never in them; a question about the copy's
+    /// own binds reads it here (loft#1954).
+    split_binds: HashMap<u16, (u16, usize)>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -933,13 +938,15 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
     // keeps the frame base (args_base) 8-aligned.  Identity when off.
     let local_start: u16 = {
         let vars = &data.definitions[d_nr as usize].variables;
-        let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s)) as u16;
-        let arg_size: u16 = vars
+        let step = |s: u16| crate::variables::aligned_stack_step(u32::from(s));
+        let arg_size: u32 = vars
             .arguments()
             .iter()
             .map(|&a| step(size(vars.var_type(a), &Context::Argument)))
             .sum();
-        arg_size + step(4) // return-address slot
+        // return-address slot
+        u16::try_from(arg_size + step(4))
+            .unwrap_or_else(|_| crate::limits::frame_too_large(data, d_nr))
     };
     // @PLAN53 — the aligned V2 allocator is the ONLY allocator.  Compute the
     // V2 layout from the (immutable) function intervals, reset stale local
@@ -951,6 +958,9 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
         let d = &data.definitions[d_nr as usize];
         crate::variables::assign_slots_v2(&d.variables, local_start, &aliases)
     };
+    if result.frame_end > u32::from(u16::MAX) {
+        crate::limits::frame_too_large(data, d_nr);
+    }
     {
         let d = &mut data.definitions[d_nr as usize];
         d.variables.reset_local_slots();

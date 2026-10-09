@@ -369,7 +369,7 @@ impl Parser {
 
     /// One operand of a text concatenation (`a + b`, `s += x`), appended to the accumulator
     /// `acc` — `@FR-E-NullArg`: an operand that is NULL makes the concatenation null, for
-    /// every operand type (owner ruling 2026-10-08, loft#1945).  A concatenation is not a
+    /// every operand type.  A concatenation is not a
     /// second spelling of interpolation: `"{x}"` renders a null as the word `null`, and
     /// `"a" + x` is null.
     ///
@@ -427,7 +427,7 @@ impl Parser {
             };
             present.push(self.cl(op, &[Value::Var(acc), subject.clone()]));
         } else {
-            // @P274 — a non-text operand is rendered by the hole renderer, `append_data`, the
+            // A non-text operand is rendered by the hole renderer, `append_data`, the
             // dispatch `"…{x}…"` uses for every formattable type.
             self.append_data(
                 dispatch_tp.clone(),
@@ -913,6 +913,15 @@ impl Parser {
                         self.lexer,
                         Level::Error,
                         "Tuple literals require at least 2 elements"
+                    );
+                } else if types.len() > crate::limits::LIMIT as usize && self.first_pass {
+                    // `crate::limits`: a tuple holds at most 300 elements.
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "a tuple holds at most {} elements, this literal has {} — use a struct",
+                        crate::limits::LIMIT,
+                        types.len()
                     );
                 }
                 // loft#1102 — a heap member is COPIED into the tuple, like the two sibling
@@ -4327,16 +4336,30 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     - On a field inside a structure, this fills any data structure with more elements.
     */
     // <vector> ::= '[' <expr> [ ';' <size-expr>]{ ',' <expr> [ ';' <size-expr> } ']'
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the literal's every shape (empty, keyed, comprehension, repeat, the walk offer) meets here"
-    )]
     pub(crate) fn parse_vector(
         &mut self,
         var_tp: &Type,
         val: &mut Value,
         parent_tp: &Type,
     ) -> Type {
+        // A vector literal is one level of depth (`crate::limits`): its elements are parsed
+        // without passing through `expression`, so a literal nested in a literal counts here
+        // (loft#1962 — 1000 nested levels overflowed the parser's stack).
+        if !self.enter_depth() {
+            // The caller read the `[`; the refusal read up to the `]`, which this literal owns.
+            self.lexer.has_token("]");
+            return Type::Unknown(0);
+        }
+        let t = self.parse_vector_inner(var_tp, val, parent_tp);
+        self.leave_depth();
+        t
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the literal's every shape (empty, keyed, comprehension, repeat, the walk offer) meets here"
+    )]
+    fn parse_vector_inner(&mut self, var_tp: &Type, val: &mut Value, parent_tp: &Type) -> Type {
         if self.lexer.peek_token("]") {
             self.settle_vector_literal(&[]); // @PLN187 — `[]` fits a `vector<Handle>`
         }

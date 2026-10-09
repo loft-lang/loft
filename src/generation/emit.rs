@@ -46,6 +46,40 @@ impl Output<'_> {
         {
             return self.emit_invariant_use(w, &memo);
         }
+        // `@FR-R-ValueRecord`'s nullable clause — a DENSE leaf at a result position of a
+        // `-> S?` body (`hoist::widened_leaves`) is the present tuple: its own tuple, then
+        // the presence word.  The leaf is emitted once, as itself, inside the widening.
+        if !self.value_leaves.widen.is_empty() {
+            let at = std::ptr::from_ref(code) as usize;
+            if self.value_leaves.widen.contains(&at)
+                && self.widening != Some(at)
+                && let Some(layout) = self.value_records.fn_layout(self.def_nr)
+            {
+                let n = layout.fields.len();
+                let saved = self.widening.replace(at);
+                write!(w, "{{ let __wd = ")?;
+                let r = self.output_code_inner(w, code);
+                self.widening = saved;
+                r?;
+                write!(w, "; (")?;
+                for i in 0..n {
+                    write!(w, "__wd.{i}, ")?;
+                }
+                return write!(w, "true) }}");
+            }
+        }
+        // `@FR-R-ValueRecord`'s nullable clause — a `null` exit of a `-> S?` body admitted to
+        // return its tuple is the ABSENT tuple (`hoist::ValueTuple::absent`).
+        if !self.value_leaves.nulls.is_empty()
+            && self
+                .value_leaves
+                .nulls
+                .contains(&(std::ptr::from_ref(code) as usize))
+            && let Some(layout) = self.value_records.fn_layout(self.def_nr)
+        {
+            let absent = layout.absent();
+            return write!(w, "{absent}");
+        }
         // @PLN167 decision 2 — a store-kind text link IS the slot's `DbRef`, so the link a
         // mention of it names (`OpGetText(OpVarRef(t), 0)`) is the variable itself.
         if let Some(v) = self.store_text_link_ref(code) {
@@ -3056,7 +3090,7 @@ impl Output<'_> {
     }
 
     /// `@FR-R-InPlaceLiteral`'s keyed clause: the literal's values staged in program order,
-    /// the record under the key removed and a fresh one claimed, the values written into it,
+    /// the record under the key taken out and a fresh one claimed, the values written into it,
     /// then its key written and the record linked.
     fn output_keyed_place(
         &mut self,
@@ -3533,10 +3567,16 @@ impl Output<'_> {
                     self.output_tuple_part(w, val, kinds.get(i) == Some(&"bool"))?;
                 }
             }
+            // `@FR-R-ValueRecord`'s nullable clause — a `-> S?` body's build is PRESENT: the
+            // presence word follows the fields.
+            let nullable = super::hoist::is_nullable_layout(tp);
+            if nullable {
+                write!(w, ", true")?;
+            }
             // The 1-tuple's trailing comma, matching the signature built in
             // `hoist::value_records` — without it a single-field record returns a bare
             // scalar and the call site's `.0` does not compile.
-            if parts.len() == 1 {
+            if parts.len() == 1 && !nullable {
                 write!(w, ",")?;
             }
             write!(w, ")")?;

@@ -1,8 +1,8 @@
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 99b00ef69..1eca00b8e 100644
+index 69d432df4..367722392 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -6761,28 +6761,13 @@ use a separate collection or add after the loop"
+@@ -6765,29 +6765,13 @@ use a separate collection or add after the loop"
                      // `LOFT_POISON` gate makes the loop shape a SIGSEGV instead,
                      // because `b.items = add(b.items, k)` then reads a record
                      // overwritten with 0xDEADBEEF.
@@ -13,7 +13,8 @@ index 99b00ef69..1eca00b8e 100644
 -                    // the clear below before the append reads it (loft#1916).  A projection
 -                    // is COPIED into a fresh temp first, as the borrowed-Var arm above does;
 -                    // the temp then owns its copy and frees it.
--                    let projection = !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
+-                    let projection =
+-                        !s_type.depend().is_empty() || !s_type.base().depend().is_empty();
 -                    let fill_tmp = if projection {
 -                        vec![
 -                            v_set(tmp, Value::Null),

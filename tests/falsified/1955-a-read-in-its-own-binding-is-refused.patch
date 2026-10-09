@@ -1,0 +1,279 @@
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index 92ae18f9d..5312be394 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -4094,14 +4094,8 @@ use a separate collection or add after the loop"
+         // …except where the identity is a COPY that takes a lease: `p = p` of a PARAMETER whose
+         // type declares `OpCopy` makes a structure of the callee's own (`(H-Copy-Lease)`), so it is
+         // parsed as the rebind it spells and the hook runs on the new structure.
+-        // Not where this statement STARTS the binding: there `x` holds nothing to keep, and
+-        // the read is refused like any other (`read-in-own-binding`).
+         if op == "="
+             && let Value::Var(lhs) = to
+-            && !self
+-                .binding_starts
+-                .iter()
+-                .any(|(c, v, _)| (*c, *v) == (self.context, *lhs))
+             && self.lexer.peek().has
+                 == crate::lexer::LexItem::Identifier(self.vars.name(*lhs).to_string())
+             && !(self.vars.is_argument(*lhs)
+@@ -8598,32 +8592,15 @@ use a separate collection or add after the loop"
+         let mut f_type = self.parse_operators(&Type::Unknown(0), code, &mut parent_tp, 0);
+         // A left-hand side that CREATED its variable in pass 1 is that variable's first
+         // binding — recorded for both passes to read (`first_bind_at`).
+-        // A `( … ) =` destructure creates each of its names the same way.
+-        // Read in place, every statement on the first pass: no list of the names is built.
+-        if self.first_pass {
+-            let lhs: &[Value] = match code.unspan() {
+-                Value::Tuple(vs) => vs,
+-                one @ Value::Var(_) => std::slice::from_ref(one),
+-                _ => &[],
+-            };
+-            for part in lhs {
+-                if let Value::Var(v) = part.unspan()
+-                    && *v >= vars_before_lhs
+-                {
+-                    self.first_bind_at.insert(
+-                        (self.context, *v),
+-                        (stmt_start_pos.line, stmt_start_pos.pos),
+-                    );
+-                }
+-            }
++        if self.first_pass
++            && let Value::Var(v) = code.unspan()
++            && *v >= vars_before_lhs
++        {
++            self.first_bind_at.insert(
++                (self.context, *v),
++                (stmt_start_pos.line, stmt_start_pos.pos),
++            );
+         }
+-        // `@FR-B-Scope` — a bind after the name's block ended starts a new binding here too;
+-        // noted now, before the right-hand side's own binds overwrite the note.
+-        let lhs_after_end = match code.unspan() {
+-            Value::Var(v) => self.bind_after_end.filter(|(b, _)| b == v).map(|(b, _)| b),
+-            _ => None,
+-        };
+-        let mut lhs_rebound: Option<u16> = None;
+         self.amp_head = AmpHead::No;
+         self.in_tuple_lhs = saved_tuple_lhs;
+         if let (Type::RefVar(_), Value::Var(v_nr)) = (&f_type, &code) {
+@@ -8708,7 +8685,6 @@ use a separate collection or add after the loop"
+                 {
+                     self.bind_after_end = None;
+                     v_nr = self.rebind_after_block(v_nr, &tp);
+-                    lhs_rebound = Some(v_nr);
+                     *code = Value::Var(v_nr);
+                 }
+                 // `@FR-B-Ref-Lvalue` — pass 1 made a link to a heap PLACE the place's record
+@@ -8833,19 +8809,7 @@ use a separate collection or add after the loop"
+             }
+             let mut rhs = Value::Null;
+             let destr_rhs_pos = *self.lexer.pos();
+-            // `@FR-B-Scope` — the names this destructure binds first hold nothing yet.
+-            let starts: Vec<(u32, u16, bool)> = var_nrs
+-                .iter()
+-                .filter(|v| {
+-                    self.first_bind_at.get(&(self.context, **v))
+-                        == Some(&(stmt_start_pos.line, stmt_start_pos.pos))
+-                })
+-                .map(|v| (self.context, *v, false))
+-                .collect();
+-            let outer_starts = self.binding_starts.len();
+-            self.binding_starts.extend(starts);
+             let mut rhs_type = self.expression(&mut rhs);
+-            self.binding_starts.truncate(outer_starts);
+             let rhs_fact = std::mem::take(&mut self.operand_fact);
+             self.bind_unpacked(&rhs_fact, &var_nrs); // @PLN187
+             // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
+@@ -9622,27 +9586,12 @@ use a separate collection or add after the loop"
+                 if let Some(name) = &first_bind {
+                     self.first_bind_targets.push(name.clone());
+                 }
+-                let starts = if op == "="
+-                    && let Value::Var(v) = to.unspan()
+-                    && (first_bind.is_some()
+-                        || lhs_after_end == Some(*v)
+-                        || lhs_rebound == Some(*v))
+-                {
+-                    self.binding_starts
+-                        .push((self.context, *v, first_bind.is_none()));
+-                    true
+-                } else {
+-                    false
+-                };
+                 let result =
+                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
+                 self.declaring_const = u16::MAX;
+                 if first_bind.is_some() {
+                     self.first_bind_targets.pop();
+                 }
+-                if starts {
+-                    self.binding_starts.pop();
+-                }
+                 if op == "="
+                     && let Value::Var(v) = to.unspan()
+                 {
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index be434ff9d..e0ddeda40 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -569,12 +569,6 @@ pub struct Parser {
+     /// position of the statement whose left-hand side CREATED the variable, and both passes
+     /// read it back to tell a first binding from a rebinding.
+     pub(crate) first_bind_at: HashMap<(u32, u16), (u32, u32)>,
+-    /// `@FR-B-Scope` — the `(function, variable, after_end)` triples whose binding the
+-    /// statement being parsed STARTS: its first binding, or (`after_end`) a bind after the
+-    /// name's block ended.  Innermost last.  The variable holds nothing until that statement
+-    /// completes, so a read of it on the right-hand side is refused — `read-in-own-binding`,
+-    /// or `local-out-of-scope` when the value it would read is the ended binding's.
+-    pub(crate) binding_starts: Vec<(u32, u16, bool)>,
+     /// loft#1382 — the statement about to be parsed BEGINS with `if` or `match`, so whatever
+     /// that construct yields is discarded (`@FR-F-Block`: a `;`-terminated block's value is
+     /// dropped, and `@FR-F-Drop` still runs the work).
+@@ -1899,7 +1893,6 @@ impl Parser {
+             amp_pending: false,
+             first_bind_targets: Vec::new(),
+             first_bind_at: HashMap::new(),
+-            binding_starts: Vec::new(),
+             stmt_if_pending: false,
+             fit_candidate: None,
+             fit_armed: None,
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 592fe3d09..c1b9e689a 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -358,92 +358,40 @@ impl Parser {
+             return;
+         }
+         if !visible && !self.first_pass {
+-            self.report_out_of_scope(name, name_pos);
+-        }
+-    }
+-
+-    /// `local-out-of-scope` — `name` is read where the binding it names has ended.
+-    fn report_out_of_scope(&mut self, name: &str, name_pos: &Position) {
+-        diagnostic_at!(
+-            self.lexer,
+-            name_pos,
+-            Level::Error,
+-            code = "local-out-of-scope",
+-            "`{name}` was bound inside a block that has ended, so it does not exist here — \
+-             bind it before the block, or give the block a value: \
+-             `{name} = if … {{ … }} else {{ … }}`"
+-        );
+-        self.lexer.fix_last(crate::diagnostics::Fix {
+-            kind: crate::diagnostics::FixKind::Conditional,
+-            title: format!("bind `{name}` before the block and assign it inside"),
+-            condition: Some(
+-                "if every path should leave a value behind; the binding before the block \
+-                 is the value on a path that assigns nothing"
+-                    .to_string(),
+-            ),
+-            edit: None,
+-            concept: "`if` as an expression",
+-            concept_ref: "@F27",
+-        });
+-        self.lexer.fix_last(crate::diagnostics::Fix {
+-            kind: crate::diagnostics::FixKind::Conditional,
+-            title: format!("make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"),
+-            condition: Some(
+-                "if each arm computes the value, so the `if` itself can answer it".to_string(),
+-            ),
+-            edit: None,
+-            concept: "`if` as an expression",
+-            concept_ref: "@F27",
+-        });
+-    }
+-
+-    /// `@FR-B-Scope` — a binding starts when the statement that binds it COMPLETES, so a
+-    /// read of the variable on that statement's right-hand side reads nothing: on its first
+-    /// binding no value was ever written, and after its block ended the old one is gone.
+-    /// `p = P { a: 1, z: p.a }` is refused; `p = P { a: 2, z: p.a }` over an existing `p`
+-    /// reads the old value and stays legal.
+-    fn check_read_in_own_binding(&mut self, var: u16, name: &str, name_pos: &Position) {
+-        if self.first_pass || self.at_binding_name() {
+-            return;
+-        }
+-        let Some(&(_, _, after_end)) = self
+-            .binding_starts
+-            .iter()
+-            .find(|(c, v, _)| (*c, *v) == (self.context, var))
+-        else {
+-            return;
+-        };
+-        if after_end {
+-            self.report_out_of_scope(name, name_pos);
+-            return;
++            diagnostic_at!(
++                self.lexer,
++                name_pos,
++                Level::Error,
++                code = "local-out-of-scope",
++                "`{name}` was bound inside a block that has ended, so it does not exist here — \
++                 bind it before the block, or give the block a value: \
++                 `{name} = if … {{ … }} else {{ … }}`"
++            );
++            self.lexer.fix_last(crate::diagnostics::Fix {
++                kind: crate::diagnostics::FixKind::Conditional,
++                title: format!("bind `{name}` before the block and assign it inside"),
++                condition: Some(
++                    "if every path should leave a value behind; the binding before the block \
++                     is the value on a path that assigns nothing"
++                        .to_string(),
++                ),
++                edit: None,
++                concept: "`if` as an expression",
++                concept_ref: "@F27",
++            });
++            self.lexer.fix_last(crate::diagnostics::Fix {
++                kind: crate::diagnostics::FixKind::Conditional,
++                title: format!(
++                    "make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"
++                ),
++                condition: Some(
++                    "if each arm computes the value, so the `if` itself can answer it".to_string(),
++                ),
++                edit: None,
++                concept: "`if` as an expression",
++                concept_ref: "@F27",
++            });
+         }
+-        diagnostic_at!(
+-            self.lexer,
+-            name_pos,
+-            Level::Error,
+-            code = "read-in-own-binding",
+-            "`{name}` is read in the statement that binds it, before it holds a value — \
+-             compute the value from other variables, or bind `{name}` first and change it after"
+-        );
+-        self.lexer.fix_last(crate::diagnostics::Fix {
+-            kind: crate::diagnostics::FixKind::Conditional,
+-            title: format!("compute the value without reading `{name}`"),
+-            condition: Some(
+-                "if the part that reads it can be written from the values it was built from"
+-                    .to_string(),
+-            ),
+-            edit: None,
+-            concept: "declarations",
+-            concept_ref: "@F16",
+-        });
+-        self.lexer.fix_last(crate::diagnostics::Fix {
+-            kind: crate::diagnostics::FixKind::Conditional,
+-            title: format!("bind `{name}` first, then assign the part that reads it"),
+-            condition: Some("if the value refers to another part of itself".to_string()),
+-            edit: None,
+-            concept: "declarations",
+-            concept_ref: "@F16",
+-        });
+     }
+ 
+     /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
+@@ -857,7 +805,6 @@ impl Parser {
+             self.bind_after_end = (self.at_binding_name() && self.binding_ended(index_var))
+                 .then(|| (index_var, self.binding_loop(index_var)));
+             self.check_block_scope(index_var, name, name_pos);
+-            self.check_read_in_own_binding(index_var, name, name_pos);
+             // on pass 2, if a variable has Unknown type, it may be a pass-1
+             // placeholder for a forward-declared function. Try fn-ref resolution.
+             //

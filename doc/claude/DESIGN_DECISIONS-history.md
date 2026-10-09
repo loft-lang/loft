@@ -4769,3 +4769,14 @@ made one reader defect reachable from loft's own output: a JSON `null` for a nul
 field wrote its absent marker on the record's first field (loft#1947), fixed with it.  The
 walker also printed a plain enum's `0xFF` null as `?`; it renders `null` now, as the cast to
 text does.
+
+## C144 — A nullable value record carries a presence word; an absent one holds its fields' nulls
+
+Decided 2026-10-09 while closing loft#1952, the last `--native`-only divergence in loft#1934's
+road pairs.  Two spellings were weighed: a presence word, and a sentinel in one field.  The
+sentinel was ruled out because a present record may hold null fields, so no field's null can
+mean "absent".  Placing the word LAST keeps every field at its dense tuple index, so the field
+reads, the field index map and the live-reload arm are shared with the dense layout.  Measured on
+the issue's 10M-call loop, lean tier (`--native-release`, median of five, the base build
+alongside): the nullable spelling went from 0.482 s (a buffer and a heap store per result) to
+0.065 s, beside 0.069 s for the dense one on both builds.

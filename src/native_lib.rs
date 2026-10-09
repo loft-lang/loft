@@ -726,6 +726,12 @@ fn shared_bridge_wrapper(
     let value_fields = value_rec
         .fn_fields(d_nr)
         .map(<[(i64, &'static str)]>::to_vec);
+    // `@FR-R-ValueRecord`'s nullable clause — a `-> S?` tuple ends in its presence word: an
+    // ABSENT one writes nothing and answers the null record, which leaves the fresh dest to
+    // the orphan free below like any record the callee did not return.
+    let value_presence = value_rec
+        .fn_layout(d_nr)
+        .and_then(crate::generation::hoist::ValueTuple::presence);
     use std::fmt::Write as _;
     let def = data.def(d_nr);
     // Same identifier the emitted program uses for this fn (#305).
@@ -859,7 +865,11 @@ fn shared_bridge_wrapper(
     let call = format!("{inner}(cell{fwd})");
     let ret_stmt = if let (Some(fields), Some(dest)) = (&value_fields, &value_dest) {
         let mut w = format!("    let __vt = {call};\n    let __vd = {dest};\n");
-        let _ = writeln!(w, "    unsafe {{ let __s = &mut *cell.get();");
+        let present = value_presence.map_or_else(|| "true".to_string(), |at| format!("__vt.{at}"));
+        let _ = writeln!(
+            w,
+            "    if {present} {{ unsafe {{ let __s = &mut *cell.get();"
+        );
         for (i, (off, rt)) in fields.iter().enumerate() {
             let setter = match *rt {
                 "f64" => format!("set_float(__vd.rec, __vd.pos + {off}u32, __vt.{i})"),
@@ -875,7 +885,10 @@ fn shared_bridge_wrapper(
             };
             let _ = writeln!(w, "        __s.store_mut(&__vd).{setter};");
         }
-        let _ = write!(w, "    }}\n    unsafe {{ (*ret).dbref = __vd; }}");
+        let _ = write!(
+            w,
+            "    }} }}\n    unsafe {{ (*ret).dbref = if {present} {{ __vd }} else {{ DbRef::NULL }}; }}"
+        );
         w
     } else {
         bridge_write_ret(def.returned(), &call, returns_owned_string(def))

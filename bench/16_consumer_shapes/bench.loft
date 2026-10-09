@@ -349,61 +349,6 @@ fn c_catalog(salt: integer) -> integer {
   acc
 }
 
-// ── tuple links (loft#1883): members read and written through a `&` to a stored tuple ────
-fn link_step(p: &(integer, integer), k: integer) { p.0 += k; p.1 += p.0 % 7; }
-
-fn c_tuple_link_small(salt: integer) -> integer {
-  rows: vector<(integer, integer)> = [for i in 0..1024 { (i, salt) }];
-  for pass in 0..8 {
-    for i in 0..1024 {
-      q = &rows[i];
-      q.0 += pass;
-      q.1 += q.0 % 5;
-      link_step(rows[i], 1);
-    }
-  }
-  acc = 0;
-  for i in 0..1024 { acc += rows[i].0 * 3 + rows[i].1; }
-  acc
-}
-
-fn big_step(p: &(integer, float, u8, boolean, text, integer, u16, character, integer), k: integer) {
-  p.0 += k;
-  p.1 += 0.5;
-  p.2 = ((p.2 + 1) % 200) & 255;
-  p.3 = !p.3;
-  p.5 += len(p.4);
-  p.7 = if p.3 { 'y' } else { 'n' };
-  p.8 += p.5 % 3;
-}
-
-fn c_tuple_link_big(salt: integer) -> integer {
-  rows: vector<(integer, float, u8, boolean, text, integer, u16, character, integer)> =
-    [for i in 0..256 { (i + salt, i as float, (i % 200) & 255, false, "t{i % 10}", salt, 7, 'a', 0) }];
-  for pass in 0..8 {
-    for i in 0..256 { big_step(rows[i], pass); }
-  }
-  acc = 0;
-  for i in 0..256 {
-    acc += rows[i].0 + rows[i].1 as integer + rows[i].2 + rows[i].5 + rows[i].8;
-    if rows[i].3 { acc += 1; }
-    if rows[i].7 == 'y' { acc += 2; }
-  }
-  acc
-}
-
-fn c_tuple_link_grows(salt: integer) -> integer {
-  rows: vector<(integer, integer)> = [(salt, 0)];
-  for i in 0..1024 {
-    q = &rows[0];
-    q.0 += i;
-    q.1 += 1;
-    v = q.0 % 1000;
-    rows += [(i, v)];
-  }
-  rows[0].0 + rows[0].1 + rows[1023].1 + len(rows)
-}
-
 fn arg_n(dflt: integer) -> integer {
   an_args = arguments();
   an_n = dflt;
@@ -478,18 +423,6 @@ fn main() {
   t0 = ticks();
   for r in 0..n { sink += c_catalog(r & 1); }
   row("catalog_churn", n, ticks() - t0, 64, c_catalog(0));
-
-  t0 = ticks();
-  for r in 0..n { sink += c_tuple_link_small(r & 1); }
-  row("tuple_link_small", n, ticks() - t0, 1024 * 8, c_tuple_link_small(0));
-
-  t0 = ticks();
-  for r in 0..n { sink += c_tuple_link_big(r & 1); }
-  row("tuple_link_big", n, ticks() - t0, 256 * 8, c_tuple_link_big(0));
-
-  t0 = ticks();
-  for r in 0..n { sink += c_tuple_link_grows(r & 1); }
-  row("tuple_link_grows", n, ticks() - t0, 1024, c_tuple_link_grows(0));
 
   println("time: 0ms sink={sink}");
 }

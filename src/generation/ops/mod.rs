@@ -341,6 +341,14 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     r.insert("OpPutRef", Box::new(ref_ops::OpPutRefEmitter));
     r.insert("OpCopyRecord", Box::new(ref_ops::OpCopyRecordEmitter));
     r.insert("OpDistinctStore", Box::new(ref_ops::OpDistinctStoreEmitter));
+    r.insert(
+        "OpConvBoolFromRef",
+        Box::new(ref_ops::PresenceEmitter { absent: false }),
+    );
+    r.insert(
+        "OpRefIsNull",
+        Box::new(ref_ops::PresenceEmitter { absent: true }),
+    );
     r.insert("OpRefAlias", Box::new(ref_ops::OpRefAliasEmitter));
     r.insert("OpClear", Box::new(ref_ops::OpClearEmitter));
     r.insert("OpSizeofRef", Box::new(ref_ops::OpSizeofRefEmitter));
@@ -615,9 +623,12 @@ mod tests {
         // `OpReadFileInt::<W, SIGNED>`; every other read falls through to the template.
         // `@FR-R-FoldCompare` adds four, `FoldCompareEmitter` for `starts_with`, `ends_with`,
         // `OpEqText` and `OpNeText`: a predicate over a case fold compares without building
-        // it; every other one falls through to its template.
+        // it; every other one falls through to its template.  `@FR-R-ValueRecord`'s nullable
+        // clause adds two, `PresenceEmitter` for `OpConvBoolFromRef` and `OpRefIsNull`: the
+        // presence test of a `τ?` value local reads its tuple's presence word; every other
+        // operand falls through to the template.
         assert!(
-            count <= 138,
+            count <= 140,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

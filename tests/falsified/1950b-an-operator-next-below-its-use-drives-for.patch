@@ -1,58 +1,48 @@
-diff --git b/src/generation/ops/parallel.rs a/src/generation/ops/parallel.rs
-index 28281c61c..f5b2c508c 100644
---- b/src/generation/ops/parallel.rs
-+++ a/src/generation/ops/parallel.rs
-@@ -98,7 +98,7 @@ fn closure_shape(ret: &Type) -> ClosureShape {
- /// — a worker returning one still fails to compile loudly rather than copying at
- /// the wrong stride.  Extending `heap_ref_kt` to them is the follow-up.
- fn is_ref_return(ret: &Type) -> bool {
--    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _) | Type::Hash(..))
-+    ret.heap_def_nr().is_some() || matches!(ret, Type::Vector(_, _))
- }
- 
- /// The `(struct_size, known_type)` a `HeapRef` worker return is copied as by
-@@ -125,15 +125,6 @@ fn heap_ref_kt(ctx: &EmitCtx<'_, '_>, ret: &Type) -> (i32, i32) {
-             return (0, 0);
-         }
-         data.def(wrapper).known_type()
--    } else if let Type::Hash(tp, key, _) = ret {
--        // EXPERIMENT loft#1951
--        let mut name = "hash<".to_string() + data.def(*tp).name() + "[";
--        ctx.output.stores.field_name(data.def(*tp).known_type(), key, &mut name);
--        let k = ctx.output.stores.name(&name);
--        if k == u16::MAX {
--            return (0, 0);
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index 574bc4b3f..6f173f96b 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3528,35 +3528,6 @@ use #count instead"
+     /// program wrote.  They differ only from the second loop over a name onward, and the
+     /// two are read for different questions: companions and the binding itself are keyed
+     /// off `id`, while the shadow guards ask what `src_id` denotes right now.
+-    /// The loop variable of a `for` over a struct VALUE that has no visible `operator next`.
+-    /// `for_type` answers the iterable's own type there, which is right for an iterator
+-    /// expression (a keyed slice `s[lo..hi]` is already typed by its element) and wrong for a
+-    /// struct value: on the first pass its `operator next` may be declared further down, and
+-    /// otherwise the iteration refuses the loop naming the cause (`@FR-Op-Mark`).  Typed as
+-    /// the struct, the body reported a type error against it first — refusing a valid program
+-    /// and hiding the real diagnostic (loft#1950).  A plain `fn next`'s item is what the author
+-    /// meant the loop to bind, so it types the body and the refusal stays the one diagnostic;
+-    /// with no `next` at all the variable has no type yet.
+-    fn struct_value_loop_type(&self, in_type: &Type, expr: &Value, var_tp: Type) -> Type {
+-        if matches!(expr, Value::Iter(..)) || var_tp != *in_type {
+-            return var_tp;
 -        }
--        k
-     } else {
-         return (0, 0);
-     };
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index acb2ee0df..b4fc4d225 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -13495,24 +13495,6 @@ impl Parser {
-                     other => other,
-                 };
-             }
--            // A struct with no visible `operator next` gives its loop variable no type yet: on
--            // the first pass the `operator` may be declared further down, and otherwise the
--            // iteration refuses the loop naming the cause (`@FR-Op-Mark`, "cannot iterate").
--            // Typing the variable as the struct itself made the body report a type error
--            // against it first — refusing a valid program whose `operator next` comes after
--            // its use, and hiding the real diagnostic (loft#1950).
--            if matches!(in_type, Type::Reference(_, _)) {
--                // A plain `fn next` is refused by the iteration, but its item is still what
--                // the author meant the loop to bind: typing the body with it leaves that
--                // refusal as the one diagnostic.
--                if next_d_nr != u32::MAX {
--                    return match self.data.def(next_d_nr).returned().clone() {
--                        Type::Optional(inner) => *inner,
--                        other => other,
--                    };
--                }
--                return Type::Unknown(0);
--            }
-             in_type.clone()
-         } else if !self.first_pass {
-             diagnostic!(
+-        let Type::Reference(..) = in_type.base() else {
+-            return var_tp;
+-        };
+-        let next_d_nr = self.data.find_fn(u16::MAX, "next", in_type);
+-        if next_d_nr == u32::MAX {
+-            return Type::Unknown(0);
+-        }
+-        if self.data.def(next_d_nr).operator_form() {
+-            return var_tp;
+-        }
+-        match self.data.def(next_d_nr).returned().clone() {
+-            Type::Optional(inner) => *inner,
+-            other => other,
+-        }
+-    }
+-
+     #[allow(clippy::type_complexity)]
+     pub(crate) fn parse_for_iter_setup(
+         &mut self,
+@@ -3567,7 +3538,6 @@ use #count instead"
+         destructure_names: Option<&[String]>,
+     ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
+         let var_tp = self.for_type(in_type);
+-        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
+         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+         let (iter_var, pre_var) = if walks_text(in_type) {
+             let pos_var = self.create_var(&format!("{id}#next"), &I32);

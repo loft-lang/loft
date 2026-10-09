@@ -1525,10 +1525,10 @@ fn call_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn op_return<const F: bool>(s: &mut State) {
-    let operands = s.operands(5);
+    let operands = s.operands(6);
     let v_ret = operands.get::<u16>(0);
-    let v_value = operands.get::<u8>(2);
-    let v_discard = operands.get::<u16>(3);
+    let v_value = operands.get::<u16>(2);
+    let v_discard = operands.get::<u16>(4);
     s.fn_return(v_ret, v_value, v_discard);
 }
 
@@ -1540,9 +1540,9 @@ fn op_return_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn free_stack<const F: bool>(s: &mut State) {
-    let operands = s.operands(3);
-    let v_value = operands.get::<u8>(0);
-    let v_discard = operands.get::<u16>(1);
+    let operands = s.operands(4);
+    let v_value = operands.get::<u16>(0);
+    let v_discard = operands.get::<u16>(2);
     s.free_stack(v_value, v_discard);
 }
 

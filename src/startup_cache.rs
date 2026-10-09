@@ -581,7 +581,23 @@ pub fn save_program(
     // registry packages it resolved (`key_dirs`, captured by the caller; loft#1684).
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, key_dirs);
 
-    let mut paths: Vec<&String> = p.parsed_sources.iter().collect();
+    // The manifests decided which sources those were: a `[dependencies]` line removed or
+    // repointed at a path that no longer resolves leaves every parsed source unchanged, and a
+    // warm load would answer for a program that no longer compiles.  Each source's nearest
+    // `loft.toml` is hashed beside it, so editing one is a miss.
+    let manifests: Vec<String> = p
+        .parsed_sources
+        .iter()
+        .filter_map(|src| {
+            std::path::Path::new(src)
+                .ancestors()
+                .skip(1)
+                .map(|d| d.join("loft.toml"))
+                .find(|m| crate::file_access::is_file(m))
+                .map(|m| m.to_string_lossy().into_owned())
+        })
+        .collect();
+    let mut paths: Vec<&String> = p.parsed_sources.iter().chain(&manifests).collect();
     paths.sort_unstable();
     paths.dedup();
     let mut lines = String::new();

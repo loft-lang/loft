@@ -185,7 +185,17 @@ impl<'a> Stack<'a> {
             self.data.def(d_nr).name
         );
         self.position -= parameters;
-        self.position += ret;
+        self.grow(ret);
+    }
+
+    /// Push `bytes` onto the evaluation position.  Positions are 16-bit, so a frame whose
+    /// pending values pass 64 KiB is refused here (`crate::limits::frame_too_large`) rather
+    /// than wrapped into a position that reads another value's bytes.
+    pub fn grow(&mut self, bytes: u16) {
+        self.position = self
+            .position
+            .checked_add(bytes)
+            .unwrap_or_else(|| crate::limits::frame_too_large(self.data, self.def_nr));
     }
 
     pub fn add_op(&mut self, name: &str, state: &mut State) {

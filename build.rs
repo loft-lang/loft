@@ -31,6 +31,13 @@ fn main() {
     } else if target.contains("windows-gnu") {
         println!("cargo:rustc-link-arg-bins=-Wl,--stack,{}", 8 << 20);
     }
+    // A sanitizer build's frames are several times larger (ASan's redzones), and the parse runs
+    // on the main thread, which `RUST_MIN_STACK` does not reach: a 100-deep expression in the
+    // corpus overflowed 8 MiB under ASan on macOS, where the linker sets that thread's stack.
+    // The 256-level nesting bound (`MAX_PARSE_DEPTH`) measured within 64 MiB there.
+    if std::env::var_os("CARGO_CFG_SANITIZE").is_some() && target.contains("apple") {
+        println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,{:#x}", 64 << 20);
+    }
     let id = std::env::var("LOFT_BUILD_ID")
         .ok()
         .map(|v| v.trim().to_string())

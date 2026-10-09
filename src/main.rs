@@ -4467,10 +4467,12 @@ fn exec_native_binary(
         );
         std::process::exit(0);
     }
+    let t_run = std::time::Instant::now();
     let run_status = cmd.status().unwrap_or_else(|e| {
         eprintln!("loft: failed to run native binary: {e}");
         std::process::exit(1);
     });
+    loft::platform::phase("run", t_run.elapsed().as_secs_f64());
     // Clean up temp binary (not the cached copy).
     //
     // ⚠ And its DEBUG-SYMBOL companion.  The MSVC linker writes `<binary>.pdb` beside the
@@ -9351,6 +9353,7 @@ fn main() {
     // `definitions()` would put `start_def` PAST the user fns and the no-`main`
     // test-fn fallback would silently execute nothing; use the persisted boundary.
     let start_def = warm_user_start.unwrap_or_else(|| p.data.definitions());
+    loft::platform::phase("parse_default", t_parse_default.elapsed().as_secs_f64());
     if std::env::var("LOFT_TIMING").is_ok() {
         eprintln!(
             "LOFT_TIMING parse_default={:.2}ms ({start_def} defs)",
@@ -9431,6 +9434,9 @@ fn main() {
     // The front end by phase.  `front_end` is measured on its own clock from the start of
     // `parse_default`, so the four phases summing to it is the check that none is missed or
     // counted twice; the remainder is the `#c` gate between the parse and the scope pass.
+    loft::platform::phase("parse_user", parse_user_ms / 1000.0);
+    loft::platform::phase("scopes", scopes_ms / 1000.0);
+    loft::platform::phase("lints", lints_ms / 1000.0);
     if std::env::var("LOFT_TIMING").is_ok() {
         eprintln!(
             "LOFT_TIMING parse_user={parse_user_ms:.2}ms scopes={scopes_ms:.2}ms \
@@ -9860,7 +9866,9 @@ fn main() {
     if ships_live_tier {
         p.data.open_world = true;
     }
+    let t_byte_code = std::time::Instant::now();
     compile::byte_code_with_store(&mut state, &mut p.data, warm_store.as_ref());
+    loft::platform::phase("byte_code", t_byte_code.elapsed().as_secs_f64());
     // @PLN119 arc A — a platform without the placement transport runs a placed
     // library in-process. By the plan's invariant that is the same PROGRAM, so
     // it is silent by default; but it is not the same ISOLATION, and a
@@ -11361,6 +11369,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // MEASUREMENT build, never one that ships: the attribute costs the inlining
             // it names.  PERFORMANCE.md § Attributing a row.
             out.keep_fn_names = html_names;
+            let t_emit = std::time::Instant::now();
             let result = if native_release {
                 let main_nr = p.data.def_nr("n_main");
                 let entry_defs: Vec<u32> = if main_nr < end_def {
@@ -11372,6 +11381,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             } else {
                 out.output_native(&mut f, 0, end_def)
             };
+            loft::platform::phase("native_emit", t_emit.elapsed().as_secs_f64());
             if let Err(e) = result {
                 eprintln!("loft: native code generation failed: {e}");
                 std::process::exit(1);
@@ -11549,6 +11559,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // sites (the up-front version check and the post-compile retry) read it, so a
         // tree the rebuild cannot fix fails once instead of rebuilding per attempt.
         let mut runtime_rebuilt = false;
+        let t_compile = std::time::Instant::now();
         // Use cached binary if it exists AND passes the safety check;
         // otherwise compile and cache.
         let binary = if cache_usable {
@@ -12005,6 +12016,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             }
             binary
         };
+        // The program's own compile — rustc and its heals — or the cache that spared it: the
+        // `binary` row says which, and is what tells a slow test from a cold cache.
+        loft::platform::timing_record(
+            "binary",
+            &source_stem,
+            cache_usable,
+            Some(t_compile.elapsed().as_secs_f64()),
+        );
         // NDB.0 — preserve the generated .rs on disk when
         // --native-debug is set so DWARF's `.debug_line` table points
         // at a real file the debugger can show.  Without this, GDB /
@@ -12253,12 +12272,16 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             // `db.database(1000)` would panic with `allocations[max]` OOB.
             let clean_data = p.data.clone();
             let clean_db = state.database.clone();
+            let mut byte_code_secs = 0.0;
+            let mut run_secs = 0.0;
             for name in &test_names {
                 let mut data_iter = clean_data.clone();
                 let mut db_iter = clean_db.clone();
                 db_iter.max = 0;
                 let mut state_iter = State::new(db_iter);
+                let t_byte_code = std::time::Instant::now();
                 compile::byte_code(&mut state_iter, &mut data_iter);
+                byte_code_secs += t_byte_code.elapsed().as_secs_f64();
                 // Preserve native-extension wiring across test iterations.
                 extensions::load_all(&mut state_iter, all_native_libs.clone());
                 extensions::wire_native_fns(&mut state_iter, &data_iter);
@@ -12267,8 +12290,12 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 // this wire every such call hits the panicking stub.
                 extensions::wire_shared_native_fns(&mut state_iter, &data_iter);
                 // The run co-owns this iteration's table; no further copy.
+                let t_run = std::time::Instant::now();
                 state_iter.execute_argv(name, std::sync::Arc::new(data_iter), &[]);
+                run_secs += t_run.elapsed().as_secs_f64();
             }
+            loft::platform::phase("byte_code", byte_code_secs);
+            loft::platform::phase("run", run_secs);
         }
     } else if dump_only {
         // --dump: compile to bytecode, dump to stderr, exit (no execution).
@@ -12298,12 +12325,14 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // @PLN140 arc B/C — arm the loft-level sampler before the program starts, so
         // the interval the first sample credits is the program's, not start-up's.
         state.arm_profiler();
+        let t_run = std::time::Instant::now();
         state.execute_argv("main", &p.data, &user_args);
         // FY.3: native desktop frame loop — gl_swap_buffers sets frame_yield,
         // causing execute_argv to return. Resume until the program finishes.
         while state.database.frame_yield {
             state.resume();
         }
+        loft::platform::phase("run", t_run.elapsed().as_secs_f64());
         // The program is over HERE in the frame-yield case — unwire the
         // parallel ctx at its program-scope owner (`resume` deliberately
         // does not: it also serves per-call re-entry, where the standing

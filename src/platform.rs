@@ -51,6 +51,38 @@ pub struct BuildStep {
 
 static TIMING: OnceLock<Option<Timing>> = OnceLock::new();
 
+/// Append one row to this process's timing ledger (`LOFT_TIMING_LEDGER=<dir>`), with the test
+/// that started it as the last column.  No-op when the ledger is off or cannot be written.
+fn ledger_row(row: &str) {
+    if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
+        && crate::file_access::create_dir_all(&dir).is_ok()
+    {
+        use std::io::Write;
+        let path = std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
+        if let Ok(mut f) = crate::file_access::open_with(
+            path,
+            std::fs::OpenOptions::new().create(true).append(true),
+        ) {
+            let _ = writeln!(f, "{row}\t{}", timing_test());
+        }
+    }
+}
+
+/// The test a ledger row belongs to: `LOFT_TIMING_TEST`, which a test harness sets on the loft
+/// it starts ([`crate::platform::process::harness_command`]), or `-` outside a test.  The
+/// LAST column of every row, so a reader of the earlier columns is unchanged.
+fn timing_test() -> String {
+    std::env::var("LOFT_TIMING_TEST").unwrap_or_else(|_| "-".to_string())
+}
+
+/// Record one phase of this process into the timing ledger ([`Timing::phase`]); nothing when
+/// neither `LOFT_TIMING` nor `LOFT_TIMING_LEDGER` is set.
+pub fn phase(name: &'static str, secs: f64) {
+    if let Some(t) = Timing::global() {
+        t.phase(name, secs);
+    }
+}
+
 impl Timing {
     /// The process singleton, or `None` when `LOFT_TIMING` is unset.
     #[must_use]
@@ -82,24 +114,17 @@ impl Timing {
     ///   / CI reads it back (the same side-channel shape as the skip ledger).
     pub fn record(&self, kind: &'static str, name: &str, hit: bool, secs: Option<f64>) {
         let cache = if hit { "hit" } else { "miss" };
-        match secs {
-            Some(s) => eprintln!("[loft-timing] {kind} {name} cache={cache} secs={s:.2}"),
-            None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
-        }
-        if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && crate::file_access::create_dir_all(&dir).is_ok()
-        {
-            use std::io::Write;
-            let path =
-                std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
-            if let Ok(mut f) = crate::file_access::open_with(
-                path,
-                std::fs::OpenOptions::new().create(true).append(true),
-            ) {
-                let _ = writeln!(f, "{kind}\t{name}\t{cache}\t{secs_s}");
+        // The stderr line is `LOFT_TIMING`'s channel.  Under the ledger alone the file is the
+        // channel: CI sets the ledger on every job, and a line on a program's stderr changed
+        // what the program printed (a native run's stderr against the interpreter's).
+        if crate::env_once!(std::env::var_os("LOFT_TIMING").is_some()) {
+            match secs {
+                Some(s) => eprintln!("[loft-timing] {kind} {name} cache={cache} secs={s:.2}"),
+                None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
             }
         }
+        let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
+        ledger_row(&format!("{kind}\t{name}\t{cache}\t{secs_s}"));
         if let Ok(mut e) = self.events.lock() {
             e.push((kind, name.to_string(), hit, secs));
         }
@@ -111,19 +136,7 @@ impl Timing {
     /// accumulation for [`Timing::report`].
     pub fn record_exec(&self, tool: &'static str, subject: &str, reason: &str, secs: f64) {
         eprintln!("[loft-build] {tool} {subject} secs={secs:.2} reason={reason}");
-        if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
-            && crate::file_access::create_dir_all(&dir).is_ok()
-        {
-            use std::io::Write;
-            let path =
-                std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
-            if let Ok(mut f) = crate::file_access::open_with(
-                path,
-                std::fs::OpenOptions::new().create(true).append(true),
-            ) {
-                let _ = writeln!(f, "exec\t{tool}\t{subject}\t{reason}\t{secs:.2}");
-            }
-        }
+        ledger_row(&format!("exec\t{tool}\t{subject}\t{reason}\t{secs:.2}"));
         if let Ok(mut st) = self.steps.lock() {
             st.push(BuildStep {
                 tool,
@@ -132,6 +145,15 @@ impl Timing {
                 secs,
             });
         }
+    }
+
+    /// Record how long one phase of this process took — the front end's parses, the scope
+    /// pass, the bytecode or the native emission, the program's own run — as a `phase` row of
+    /// the ledger, so two runs can be compared phase by phase and test by test
+    /// (`scripts/timing_compare.py`) instead of by bisecting commits.  Ledger only: the
+    /// phases already print under `LOFT_TIMING`.
+    pub fn phase(&self, name: &'static str, secs: f64) {
+        ledger_row(&format!("phase\t{name}\t{secs:.4}"));
     }
 
     /// Print the per-invocation breakdown, slowest first.
