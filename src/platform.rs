@@ -114,9 +114,14 @@ impl Timing {
     ///   / CI reads it back (the same side-channel shape as the skip ledger).
     pub fn record(&self, kind: &'static str, name: &str, hit: bool, secs: Option<f64>) {
         let cache = if hit { "hit" } else { "miss" };
-        match secs {
-            Some(s) => eprintln!("[loft-timing] {kind} {name} cache={cache} secs={s:.2}"),
-            None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
+        // The stderr line is `LOFT_TIMING`'s channel.  Under the ledger alone the file is the
+        // channel: CI sets the ledger on every job, and a line on a program's stderr changed
+        // what the program printed (a native run's stderr against the interpreter's).
+        if crate::env_once!(std::env::var_os("LOFT_TIMING").is_some()) {
+            match secs {
+                Some(s) => eprintln!("[loft-timing] {kind} {name} cache={cache} secs={s:.2}"),
+                None => eprintln!("[loft-timing] {kind} {name} cache={cache}"),
+            }
         }
         let secs_s = secs.map_or_else(String::new, |s| format!("{s:.2}"));
         ledger_row(&format!("{kind}\t{name}\t{cache}\t{secs_s}"));
