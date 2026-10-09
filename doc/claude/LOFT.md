@@ -21,6 +21,7 @@ recorded in [LOFT-history.md](LOFT-history.md), not here.
 - [Control flow and variables](#control-flow-and-variables) → [LOFT_CONTROL.md](LOFT_CONTROL.md)
 - [Collections, structs and calls](#collections-structs-and-calls) → [LOFT_DATA.md](LOFT_DATA.md)
 - [Generics, interfaces, best practices and design decisions](#generics-interfaces-best-practices-and-design-decisions) → [LOFT_DESIGN.md](LOFT_DESIGN.md)
+- [Limits](#limits)
 
 ---
 
@@ -860,6 +861,28 @@ Vectors, key-based collections, structs and record initialization, methods and c
 
 Polymorphism, generic functions and structs, best practices, interfaces and bounded generics, design decisions and constraints: [LOFT_DESIGN.md](LOFT_DESIGN.md).
 
+## Limits
+
+One number bounds a program's structure: **300**.  At 300 everything works, on both backends;
+the 301st is refused at compile time with a message naming the limit.
+
+- an expression nested 300 levels deep — each bracket, call argument, block, branch, vector
+  or struct element, chained operator (`a + b + c` is three levels at `c`) and postfix step
+  (`a.b.c`, `x.f().g()`) is one level;
+- 300 fields in a struct, 300 parameters to a function, 300 variables bound in a function
+  (the compiler's own temporaries are not counted), 300 elements in a tuple.
+
+The limits do not multiply: 300 variables each holding a 300-element tuple is refused by the
+next limit, not guaranteed by these.  Collection sizes, the number of definitions, functions and
+files are not limited.  Two technical caps stand apart:
+
+- an enum holds at most 254 variants, so a variant is stored in one byte;
+- one function's stack frame — its parameters, variables and the values its expressions hold
+  while they run — holds at most 64 KiB.  Only large tuples reach it; a struct or a vector
+  lives in a store and does not count.
+
+Guards: `tests/scripts/a-nesting-within-the-bound-compiles.loft`,
+`the-counts-within-the-limit-compile.loft` and their refused twins, `tests/limits.rs`.
 
 ## See also
 - [STDLIB.md](STDLIB.md) — Standard library API (math, text, collections, file I/O, logging, parallel)

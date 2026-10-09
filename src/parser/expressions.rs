@@ -7,46 +7,12 @@ use super::{
 };
 use crate::data::Deps;
 
-/// @PLN86 step 0.1 — maximum expression-nesting depth allowed inside a sandboxed
-/// def's body.  Hostile deep nesting (`((((…))))`) drives the recursive-descent
-/// parser into a native stack overflow (rc=139); past this bound the parser
-/// rejects with a clean diagnostic at LOAD time instead.
-///
-/// Each nesting level costs ≈15 KB of native stack (measured; the
-/// `expression → operators → part → single` chain — #559's null-flow parse logic
-/// grew it from ≈10 KB), so the bound must be REACHABLE without overflowing the
-/// stack the parser runs on: 128 levels ≈ 1.8 MB.  The parser runs on the process
-/// main thread (8 MB default), so that is a ≈4.5× margin, and 128 is still far
-/// deeper than any hand-written script nests.  (Host-configurable later, per the
-/// plan.)  NB the margin against a bare ≥2 MB embedding is now thin — restoring it
-/// would mean shrinking the per-level frame or lowering this bound.
-pub(crate) const SANDBOX_MAX_PARSE_DEPTH: u32 = 128;
-
-/// The same bound for every other def, where the input is the author's own: past it the
-/// parse refuses instead of overflowing the stack.  The parse is not the only recursion —
-/// every pass after it walks the expression tree — so the bound is set by the whole
-/// pipeline on the 8 MiB main thread every loft binary has (`build.rs` gives Windows the
-/// same): measured on a release build, both backends finish every nesting form at 300
-/// levels, and the costliest forms (an `if`/`else` chain, a call chain, a negation chain)
-/// overflowed between 300 and 350 with a bare SIGSEGV and no message.  256 keeps a margin
-/// below that and is far deeper than a hand-written expression nests; the corpus's deepest
-/// is 100.
-pub(crate) const MAX_PARSE_DEPTH: u32 = 256;
-
-/// loft#1961 — the deepest expression tree a def's body may hold, `Span` wrappers counted.
-/// Every pass after the parser walks the tree recursively, and the first to fail on a deeper
-/// one is the scope pass (`scopes/scan.rs`, which refuses a scan depth past 1000 and recurses
-/// once per node, `Span` included, from one level above the body).  Measured on both
-/// backends across nesting forms — a flat `+` chain, `**` and `??` chains, nested sums,
-/// calls, blocks, `if`/`else` chains: every body at depth 999 or less compiles, every one at
-/// 1000 or more fails.  So this is the edge itself: it refuses exactly what failed.
-pub(crate) const MAX_TREE_DEPTH: usize = 999;
-
-/// The longest left-associative run of operators one expression may hold: each applied
-/// operator adds a `Span` and a `Call` to the tree, so a longer run cannot fit under
-/// [`MAX_TREE_DEPTH`] whatever stands around it.  Refused while the run is being read, before
-/// any recursive walker (`const_eval` folding an all-literal chain) meets the tree.
-pub(crate) const MAX_OPERATOR_RUN: usize = MAX_TREE_DEPTH / 2;
+/// loft#1961 — the parser's backstop behind [`crate::limits::LIMIT`]: the deepest expression
+/// tree a body may hold, `Span` wrappers counted, so that the passes after it — which may
+/// double a tree's depth by their rewrites — stay inside [`crate::limits::TREE_DEPTH`].  An
+/// expression within the 300 levels the parser counts stays far inside it; this catches only a
+/// shape the count does not see.
+pub(crate) const SCOPE_TREE_EDGE: usize = crate::limits::TREE_DEPTH / 2;
 
 /// @PLN86 2.4 — the leftmost base variable of a field/index LHS: `s.heading` /
 /// `v[i]` / `a.b.c` all descend through the `OpGet*` chain (the base is arg 0) to
@@ -1238,46 +1204,49 @@ impl Parser {
     }
 
     // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
-    /// @PLN86 step 0.1 — depth-guarded entry to expression parsing: it bounds the
-    /// nesting depth so a deep `((((…))))` is a clean parse error, never a native stack
-    /// overflow — [`SANDBOX_MAX_PARSE_DEPTH`] inside a sandboxed def, where the input is
-    /// hostile, and [`MAX_PARSE_DEPTH`] elsewhere.  All recursion into nested sub-expressions routes back through
-    /// here (parens, arithmetic, indexing → `parse_single` → `expression`), so
-    /// one chokepoint bounds every nesting form.
+    /// Depth-guarded entry to expression parsing: it bounds the nesting depth at
+    /// [`crate::limits::LIMIT`], in every def, sandboxed or not, so a deep `((((…))))` is a clean
+    /// parse error, never a native stack overflow.  Recursion into nested sub-expressions routes
+    /// back through here (parens, arithmetic, indexing → `parse_single` → `expression`); the
+    /// forms that recurse without it — an operator chain, a postfix chain, a vector or struct
+    /// literal — call [`Self::enter_depth`] themselves.
     pub(crate) fn expression(&mut self, val: &mut Value) -> Type {
-        self.parse_depth += 1;
-        if self.parse_depth > self.parse_depth_limit() {
-            self.refuse_depth_nesting();
-            self.parse_depth -= 1;
+        if !self.enter_depth() {
             return Type::Unknown(0);
         }
         let result = self.expression_inner(val);
-        self.parse_depth -= 1;
+        self.leave_depth();
         result
     }
 
-    /// The nesting bound that applies here: [`SANDBOX_MAX_PARSE_DEPTH`] inside a sandboxed def,
-    /// where the input is hostile, and [`MAX_PARSE_DEPTH`] elsewhere.
-    pub(crate) fn parse_depth_limit(&self) -> u32 {
-        if self.in_sandbox {
-            SANDBOX_MAX_PARSE_DEPTH
-        } else {
-            MAX_PARSE_DEPTH
+    /// One more level of depth ([`crate::limits::LIMIT`]): `true` when it fits, otherwise the
+    /// expression is refused — once per def — and the rest of its group is read past, and the
+    /// caller returns without parsing deeper.  The caller that entered undoes it with
+    /// [`Self::leave_depth`] (a refused entry has already undone itself).
+    pub(crate) fn enter_depth(&mut self) -> bool {
+        self.parse_depth += 1;
+        // A statement's own expression is level 0 (it enters at 1), so `x = f(f(…))` with 300
+        // nested calls is 300 deep.
+        if self.parse_depth > crate::limits::LIMIT + 1 {
+            self.parse_depth -= 1;
+            self.refuse_depth_nesting();
+            return false;
         }
+        true
     }
 
-    /// The nesting bound tripped: refuse, naming the bound that applies here.
+    pub(crate) fn leave_depth(&mut self) {
+        self.parse_depth -= 1;
+    }
+
+    /// The depth limit tripped: refuse, naming it.
     pub(crate) fn refuse_depth_nesting(&mut self) {
-        let message = if self.in_sandbox {
-            format!(
-                "expression nesting too deep in sandboxed code (limit {SANDBOX_MAX_PARSE_DEPTH})"
-            )
-        } else {
-            format!(
-                "expression nested more than {MAX_PARSE_DEPTH} levels deep — bind an inner part \
-                 to a local, or split it into a function"
-            )
-        };
+        let message = format!(
+            "expression nesting too deep: more than {} levels — split it with locals or a \
+             function (each bracket, call argument, block, branch, element, chained operator \
+             and postfix step is one level)",
+            crate::limits::LIMIT
+        );
         self.refuse_depth(&message);
     }
 
@@ -1295,23 +1264,23 @@ impl Parser {
         self.skip_rest_of_group();
     }
 
-    /// loft#1961 — refuse a body whose expression tree is deeper than [`MAX_TREE_DEPTH`],
-    /// which the recursive passes after the parser cannot hold, and drop it so they never see
-    /// it.  `parse_depth` bounds only what nests through `expression`: a long operator chain
-    /// builds a tree as deep as itself without nesting, and a nested vector literal never
-    /// enters `expression`.  So every body is measured, once, by a walk that stops at the bound.
+    /// loft#1961 — refuse a body whose expression tree is deeper than half of
+    /// [`crate::limits::TREE_DEPTH`], which the recursive passes after the parser cannot hold,
+    /// and drop it so they never see it.  A backstop: every form the depth count sees builds a
+    /// tree far below it, so only a shape the count misses reaches this refusal instead of
+    /// crashing a later pass.  Every body is measured, once, by a walk that stops at the bound.
     fn refuse_too_deep_tree(&mut self, body: &mut Value) {
         if self.depth_overflowed {
             return;
         }
-        if !body.deeper_than(MAX_TREE_DEPTH) {
+        if !body.deeper_than(SCOPE_TREE_EDGE) {
             return;
         }
         let name = self.data.def(self.context).display_name().to_string();
         diagnostic!(
             self.lexer,
             Level::Error,
-            "`{name}` holds an expression more than {MAX_TREE_DEPTH} levels deep — split \
+            "`{name}` holds an expression deeper than the compiler can follow — split \
              a long chain or a deep nesting with locals (`a = x1 + … + x200; b = …; x = a + b`)"
         );
         *body = Value::Null;
@@ -1323,11 +1292,18 @@ impl Parser {
     /// refusal became a cascade of syntax errors naming columns the author never wrote a
     /// mistake at.  With the group consumed, each enclosing frame finds its closer and the def
     /// carries exactly one error.
+    ///
+    /// A `{` met after the first token is left for the enclosing frame as well: a refused
+    /// `if` condition must not take the body the `if` is about to read, or the frames above
+    /// lose their braces and the next definition with them.  Each call still consumes at least
+    /// one token, unless the next one is a closer, `;` or `,`, which the caller reads.
     fn skip_rest_of_group(&mut self) {
         let mut depth = 0usize;
+        let mut first = true;
         loop {
             match &self.lexer.peek().has {
                 LexItem::None => return,
+                LexItem::Token(t) if depth == 0 && !first && t == "{" => return,
                 LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => depth += 1,
                 LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
                     if depth == 0 {
@@ -1338,6 +1314,7 @@ impl Parser {
                 LexItem::Token(t) if depth == 0 && matches!(t.as_str(), ";" | ",") => return,
                 _ => {}
             }
+            first = false;
             self.lexer.cont();
         }
     }

@@ -5745,8 +5745,20 @@ impl Parser {
             && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// A struct or variant literal: one level of depth (`crate::limits`), since its field
+    /// values are parsed without passing through `expression`, so a literal nested in a field
+    /// counts here.
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        if !self.enter_depth() {
+            return Type::Unknown(0);
+        }
+        let t = self.parse_object_inner(td_nr, code);
+        self.leave_depth();
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_object_inner(&mut self, td_nr: u32, code: &mut Value) -> Type {
         let built = if self.data.def_type(td_nr) == DefType::EnumValue {
             "variant"
         } else {

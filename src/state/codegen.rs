@@ -298,11 +298,11 @@ impl State {
         for v in &args {
             stack.function.set_stack_pos(*v, stack.position);
             // @PLAN53 cluster 2 / S4: stepped arg span (identity when off).
-            stack.position += stack.step(size(stack.function.tp(*v), &Context::Argument));
+            stack.grow(stack.step(size(stack.function.tp(*v), &Context::Argument)));
         }
         let start = self.code_pos;
         self.arguments = stack.position;
-        stack.position += stack.step(4); // keep space for the code return address
+        stack.grow(stack.step(4)); // keep space for the code return address
         if is_empty_stub {
             // loft#1254 — a stub with an empty body still has to RETURN something, and
             // `add_return` only copies `size(return_type)` bytes off the frame: with
@@ -371,7 +371,7 @@ impl State {
             let reserve = frame_hwm - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(reserve);
-            stack.position += reserve;
+            stack.grow(reserve);
         }
         // #260 Fix B (interpreter twin of the native `__vdb` prologue):
         // sentinel-init every `__vdb` slot at function entry, so an
@@ -984,7 +984,7 @@ impl State {
                     Type::Function(..) => {
                         stack.add_op("OpVarFnRef", self);
                         // @PLAN53 S4: 20B fn-ref push − 16B `text` account.
-                        stack.position += stack.fnref_signature_gap();
+                        stack.grow(stack.fnref_signature_gap());
                     }
                     Type::Boolean => stack.add_op("OpVarBool", self),
                     Type::Float => stack.add_op("OpVarFloat", self),
@@ -1756,7 +1756,7 @@ impl State {
         let step = stack.step(size_of::<crate::keys::DbRef>() as u16);
         stack.add_op("OpReserveFrame", self);
         self.code_add(step);
-        stack.position += step;
+        stack.grow(step);
         stack.add_op("OpInitRefSentinel", self);
         self.code_add(step);
     }
@@ -1770,7 +1770,7 @@ impl State {
         let step = stack.step(size_of::<crate::keys::DbRef>() as u16);
         stack.add_op("OpReserveFrame", self);
         self.code_add(step);
-        stack.position += step;
+        stack.grow(step);
         stack.add_op("OpInitRef", self);
         self.code_add(step);
     }
@@ -1786,7 +1786,7 @@ impl State {
         let step = stack.step(size_of::<crate::keys::DbRef>() as u16);
         stack.add_op("OpReserveFrame", self);
         self.code_add(step);
-        stack.position += step;
+        stack.grow(step);
         stack.add_op("OpInitCreateStack", self);
         self.code_add(step);
         self.code_add(dep_offset + step);
@@ -1806,7 +1806,7 @@ impl State {
             let advance = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(advance);
-            stack.position += advance;
+            stack.grow(advance);
         }
         let slot_offset = stack.position - pos;
         stack.add_op("OpInitText", self);
@@ -1831,7 +1831,7 @@ impl State {
             let advance = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(advance);
-            stack.position += advance;
+            stack.grow(advance);
         }
         let slot_offset = stack.position - pos;
         let dep = match stack.function.tp(v).clone() {
@@ -1961,7 +1961,7 @@ impl State {
                 // +4 stack tracker bump for the signature mismatch.
                 Type::Function(..) => {
                     stack.add_op("OpVarFnRef", self);
-                    stack.position += stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
+                    stack.grow(stack.fnref_signature_gap()); // @PLAN53 S4 fn-ref
                 }
                 Type::Boolean => stack.add_op("OpVarBool", self),
                 Type::Float => stack.add_op("OpVarFloat", self),
@@ -2162,7 +2162,7 @@ impl State {
                 let bump = stack.step(slot_end) - stack.position;
                 stack.add_op("OpReserveFrame", self);
                 self.code_add(bump);
-                stack.position += bump;
+                stack.grow(bump);
             }
             let slot_offset = stack.var_pos(v);
             if stack.function.is_skip_free(v)
@@ -2256,7 +2256,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRefSentinel", self);
@@ -2290,7 +2290,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         // De-conflated no-alloc gate (@PLN85 A.1 companion): gate on
@@ -2951,7 +2951,7 @@ impl State {
                         let bump = stack.step(slot_end) - stack.position;
                         stack.add_op("OpReserveFrame", self);
                         self.code_add(bump);
-                        stack.position += bump;
+                        stack.grow(bump);
                     }
                     self.generate(value, stack, false);
                     let slot_offset = stack.var_pos(v);
@@ -3063,7 +3063,7 @@ impl State {
                         let bump = stack.step(slot_end) - stack.position;
                         stack.add_op("OpReserveFrame", self);
                         self.code_add(bump);
-                        stack.position += bump;
+                        stack.grow(bump);
                     }
                     // #360: when the RHS call READS `v` (stash_old_for_post_free),
                     // the slot re-init is emitted AFTER the call evaluates —
@@ -3311,7 +3311,7 @@ impl State {
                         let bump = stack.step(slot_end) - stack.position;
                         stack.add_op("OpReserveFrame", self);
                         self.code_add(bump);
-                        stack.position += bump;
+                        stack.grow(bump);
                     }
                     let slot_offset = stack.var_pos(v);
                     stack.add_op("OpInitRef", self);
@@ -3981,7 +3981,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRef", self);
@@ -4060,7 +4060,7 @@ impl State {
             let src_pos = stack.var_pos(src);
             stack.add_op("OpVarRef", self);
             self.code_add(src_pos);
-            stack.position += stack.step(size_of::<crate::keys::DbRef>() as u16);
+            stack.grow(stack.step(size_of::<crate::keys::DbRef>() as u16));
             stack.function.set_skip_free(src);
             // Plan-04 Phase B.3.h.4: slot-aware — move the pushed DbRef
             // from TOS to v's slot via OpPutRef.  Under slot-move (still
@@ -4082,7 +4082,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRef", self);
@@ -4146,7 +4146,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRef", self);
@@ -4193,7 +4193,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRef", self);
@@ -4260,7 +4260,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         // The call result (`src`) FIRST, then the witness on top — so the witness's
         // frame-relative `var_pos` accounts for `src` already sitting on the eval stack.
@@ -4302,7 +4302,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         self.generate(value, stack, false);
         let slot_offset = stack.var_pos(v);
@@ -4368,7 +4368,7 @@ impl State {
             let bump = stack.step(slot_end) - stack.position;
             stack.add_op("OpReserveFrame", self);
             self.code_add(bump);
-            stack.position += bump;
+            stack.grow(bump);
         }
         let slot_offset = stack.var_pos(v);
         stack.add_op("OpInitRef", self);
@@ -4852,7 +4852,7 @@ impl State {
             // Stack: -12 (DbRef consumed) + byte_size (yielded value pushed).
             // @PLAN53 S4: both occupy stepped spans.
             stack.position -= stack.step(super::size_ref() as u16);
-            stack.position += stack.step(byte_size);
+            stack.grow(stack.step(byte_size));
             // Return type is the yield type — inferred from value_size for now.
             return match byte_size {
                 1 => Type::Boolean,
@@ -4881,7 +4881,7 @@ impl State {
             // Stack: -12 (DbRef consumed) + 1 (bool pushed).
             // @PLAN53 S4: both occupy stepped spans.
             stack.position -= stack.step(super::size_ref() as u16);
-            stack.position += stack.step(1);
+            stack.grow(stack.step(1));
             return Type::Boolean;
         }
         // resolve library index — prefer #native symbol, fall back to def name.
@@ -5047,7 +5047,7 @@ impl State {
                 }
             }
             // add the result to the stack
-            stack.position += stack.step(size(stack.data.def(op).returned(), &Context::Argument));
+            stack.grow(stack.step(size(stack.data.def(op).returned(), &Context::Argument)));
             stack.data.def(op).returned().clone()
         } else {
             // CO1.3c: emit OpCoroutineCreate for generator function calls.
@@ -5085,7 +5085,7 @@ impl State {
                 stack.position -= stack.step(size(&a.typedef, &Context::Argument));
             }
             // add the result to the stack
-            stack.position += stack.step(size(stack.data.def(op).returned(), &Context::Argument));
+            stack.grow(stack.step(size(stack.data.def(op).returned(), &Context::Argument)));
             stack.data.def(op).returned().clone()
         }
     }
@@ -5563,7 +5563,7 @@ impl State {
         }
         stack.position -= total_arg_size;
         let ret_size = stack.step(size(&ret_type, &Context::Argument));
-        stack.position += ret_size;
+        stack.grow(ret_size);
         if let Some((step, args_top)) = absent_jump {
             let after = stack.position;
             stack.add_op("OpGotoWord", self);
@@ -5636,7 +5636,7 @@ impl State {
                 // Post-2c fn-ref slot is 20 bytes, but OpVarFnRef's stdlib
                 // signature returns `text` (16 B Str).  Add the 4-byte
                 // discrepancy to the compile-time stack tracker.
-                stack.position += stack.fnref_signature_gap(); // @PLAN53 S4 fn-ref
+                stack.grow(stack.fnref_signature_gap()); // @PLAN53 S4 fn-ref
             }
             Type::Character => stack.add_op("OpVarCharacter", self),
             Type::RefVar(_) => stack.add_op("OpVarRef", self),
@@ -5767,7 +5767,7 @@ impl State {
                 // (loft#1455).
                 Type::Function(..) => {
                     stack.add_op("OpGetStackFnRef", self);
-                    stack.position += stack.fnref_signature_gap();
+                    stack.grow(stack.fnref_signature_gap());
                 }
                 // ⚠ The arm below is DERIVED from `vectors::is_collection` rather than
                 // listing the keyed kinds again.  loft#1455 arrived carrying the

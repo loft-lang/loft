@@ -453,6 +453,22 @@ pub fn clear_compile_pos() {
     });
 }
 
+/// The prefix that marks a panic as a program past one of the compiler's hard limits, not as a
+/// compiler fault: the hook renders it as an ordinary error at the definition's position.
+const LIMIT_MARK: &str = "loft limit: ";
+
+/// Stop compiling: the program at `pos` passes a hard limit of the compiler, described by
+/// `message`.  For a limit a pass meets after the parser, where no diagnostics list is in hand
+/// (the 64 KiB stack frame, `crate::limits`).  Under the CLI's panic hook the program sees one
+/// `error:` and exit 1; elsewhere the panic message carries the same text.
+///
+/// # Panics
+/// Always: the panic is how the refusal leaves a pass that has no diagnostics list.
+pub fn limit_exceeded(pos: &crate::lexer::Position, message: &str) -> ! {
+    note_compile_pos(pos);
+    panic!("{LIMIT_MARK}{message}")
+}
+
 #[must_use]
 pub fn compile_pos() -> Option<crate::lexer::Position> {
     COMPILE_POS.with(|p| p.try_borrow().ok().and_then(|b| *b))
@@ -489,16 +505,26 @@ pub fn install_panic_hook() {
                 .map(|s| (*s).to_string())
                 .or_else(|| info.payload().downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "internal error".to_string());
+            let limit = detail.strip_prefix(LIMIT_MARK);
             let at = info
                 .location()
                 .map_or_else(String::new, |l| format!(" [{}:{}]", l.file(), l.line()));
-            let msg = format!(
-                "internal compiler error — please report this program at \
-                 https://github.com/loft-lang/loft/issues\n  {detail}{at}"
+            let msg = limit.map_or_else(
+                || {
+                    format!(
+                        "internal compiler error — please report this program at \
+                         https://github.com/loft-lang/loft/issues\n  {detail}{at}"
+                    )
+                },
+                str::to_string,
             );
             let mut diags = crate::diagnostics::Diagnostics::new();
             diags.add_at(
-                crate::diagnostics::Level::Fatal,
+                if limit.is_some() {
+                    crate::diagnostics::Level::Error
+                } else {
+                    crate::diagnostics::Level::Fatal
+                },
                 &msg,
                 pos.file.as_str(),
                 pos.line,
@@ -519,6 +545,9 @@ pub fn install_panic_hook() {
                 for entry in diags.entries() {
                     eprintln!("{}", entry.to_string_compact());
                 }
+            }
+            if limit.is_some() {
+                std::process::exit(1);
             }
         }
         prev(info);

@@ -1987,12 +1987,7 @@ impl Parser {
         self.parse_part(var_tp, code, parent_tp)
     }
 
-    /// One level's operators of an expression whose left operand is already in `code`: every
-    /// consecutive operator of level `precedence`, with the state that lives for one such run —
-    /// the `+` chain of text / vector operands lowered once, the comparison that may not chain,
-    /// `is` at the comparison level.  Returns when the next token is no operator of this level.
-    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
-    #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// [`Self::level_run_inner`], with the depth its chained operators took given back.
     #[expect(
         clippy::too_many_arguments,
         reason = "one level's run state, passed whole"
@@ -2003,13 +1998,46 @@ impl Parser {
         code: &mut Value,
         parent_tp: &mut Type,
         precedence: usize,
+        current_type: Type,
+        orig_var: u16,
+        operand_pos: Position,
+    ) -> Type {
+        // The levels the run's operators took (`enter_depth`) end with the run.
+        let depth = self.parse_depth;
+        let t = self.level_run_inner(
+            var_tp,
+            code,
+            parent_tp,
+            precedence,
+            current_type,
+            orig_var,
+            operand_pos,
+        );
+        self.parse_depth = depth;
+        t
+    }
+
+    /// One level's operators of an expression whose left operand is already in `code`: every
+    /// consecutive operator of level `precedence`, with the state that lives for one such run —
+    /// the `+` chain of text / vector operands lowered once, the comparison that may not chain,
+    /// `is` at the comparison level.  Returns when the next token is no operator of this level.
+    // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one level's run state, passed whole"
+    )]
+    fn level_run_inner(
+        &mut self,
+        var_tp: &Type,
+        code: &mut Value,
+        parent_tp: &mut Type,
+        precedence: usize,
         mut current_type: Type,
         orig_var: u16,
         operand_pos: Position,
     ) -> Type {
         let mut ls = Vec::new();
-        // loft#1961 — the left spine this run builds, one tree level pair per operator.
-        let mut run_length = 0usize;
         // @PLN102 pre-freeze — comparison operators are NON-ASSOCIATIVE.  A chain like
         // `a == b == c` (or `a < b < c`) parses as `(a == b) == c`, silently comparing a
         // BOOLEAN to the third operand — a classic footgun.  Reject the second comparison at
@@ -2305,40 +2333,25 @@ impl Parser {
                     Type::Text(_) | Type::Character | Type::Vector(_, _)
                 )
             {
+                // Each chained operator is one level of depth for the rest of the run
+                // (`crate::limits`); `level_run` gives the levels back when the run ends.
+                if !self.enter_depth() {
+                    *code = Value::Null;
+                    return Type::Unknown(0);
+                }
                 let mut second_code = Value::Null;
                 let tp = self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
                 ls.push((second_code, tp));
                 let right_fact = std::mem::take(&mut self.operand_fact);
                 self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
             } else {
-                run_length += 1;
-                if run_length > super::expressions::MAX_OPERATOR_RUN {
-                    self.refuse_depth(&format!(
-                        "an expression chains more than {} operators — split it with locals \
-                         (`a = x1 + … + x200; b = …; x = a + b`)",
-                        super::expressions::MAX_OPERATOR_RUN
-                    ));
+                // Each chained operator is one level of depth for the rest of the run
+                // (`crate::limits`); `level_run` gives the levels back when the run ends.  A
+                // right-associative operator (`**`, `??`) parses its right operand at its own
+                // level inside this call, so its chain counts through the nested runs.
+                if !self.enter_depth() {
                     *code = Value::Null;
                     return Type::Unknown(0);
-                }
-                // A right-associative operator (`**`, `??`) parses its right operand at its own
-                // level, inside this call, so a chain of them nests one parser frame per
-                // operator without passing through `expression`.  Each adds at least one tree
-                // level, so more than `MAX_TREE_DEPTH` of them nested can never compile: refused
-                // here, before the recursion outgrows the stack.
-                let nests = matches!(operator, "**" | "??");
-                if nests {
-                    self.right_assoc_depth += 1;
-                    if self.right_assoc_depth > super::expressions::MAX_TREE_DEPTH {
-                        self.refuse_depth(&format!(
-                            "an expression chains more than {} `{operator}` operators — split it \
-                             with locals",
-                            super::expressions::MAX_TREE_DEPTH
-                        ));
-                        self.right_assoc_depth -= 1;
-                        *code = Value::Null;
-                        return Type::Unknown(0);
-                    }
                 }
                 let handled = self.handle_operator(
                     var_tp,
@@ -2349,9 +2362,6 @@ impl Parser {
                     operator,
                     &op_pos,
                 );
-                if nests {
-                    self.right_assoc_depth -= 1;
-                }
                 let right_fact = std::mem::take(&mut self.operand_fact);
                 self.operand_fact = self.check_binary(operator, &left_fact, &right_fact);
                 if let Some(value) = handled {
@@ -2361,13 +2371,22 @@ impl Parser {
         }
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_part(
         &mut self,
         var_tp: &Type,
         code: &mut Value,
         parent_tp: &mut Type,
     ) -> Type {
+        // Each postfix step (`.field`, `.method()`, `[i]`, `?`) is one level of depth
+        // (`crate::limits`) for the rest of the operand; given back when the operand ends.
+        let depth = self.parse_depth;
+        let t = self.parse_part_inner(var_tp, code, parent_tp);
+        self.parse_depth = depth;
+        t
+    }
+
+    #[expect(clippy::too_many_lines, reason = "inherited")]
+    fn parse_part_inner(&mut self, var_tp: &Type, code: &mut Value, parent_tp: &mut Type) -> Type {
         // @PLN187 — the operand's abstract alias, settled after its primary and each postfix
         // step (`parser::abstract_alias`).
         self.operand_fact = crate::data::AliasFact::Plain;
@@ -2393,6 +2412,10 @@ impl Parser {
             || (self.lexer.peek_token("(") && matches!(t, Type::Function(..)))
             || self.lexer.peek_token("?")
         {
+            if !self.enter_depth() {
+                *code = Value::Null;
+                return Type::Unknown(0);
+            }
             let recv = std::mem::take(&mut self.operand_fact);
             self.produced = None;
             self.postfix_member.clear();

@@ -112,7 +112,7 @@ impl Scopes<'_> {
         }
         self.scan_depth += 1;
         assert!(
-            self.scan_depth <= 1000,
+            self.scan_depth <= crate::limits::TREE_DEPTH,
             "expression nesting limit exceeded at depth {}",
             self.scan_depth
         );

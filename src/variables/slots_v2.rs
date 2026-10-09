@@ -54,6 +54,9 @@ pub struct AllocatorResult {
     /// bytecode codegen's per-block `OpReserveFrame(var_size)`
     /// emission unchanged.
     pub per_block_var_size: std::collections::HashMap<u16, u16>,
+    /// The frame's true end in bytes, counted past `u16` so a frame larger than stack
+    /// positions can address is seen, and refused (`crate::limits`), not wrapped.
+    pub frame_end: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -203,24 +206,31 @@ pub fn assign_slots_v2(
         }
         r
     };
-    let mut hwm = local_start;
+    // Offsets are counted in `u32`: a frame past 64 KiB is reported in `frame_end` and refused
+    // by the caller rather than wrapped onto another local's bytes.
+    let mut frame_end = u32::from(local_start);
     for idx in 0..ivs.len() {
         let (sz, al, ls, le, kind) = {
             let i = &ivs[idx];
             (i.size, i.align, i.ls, i.le, i.kind)
         };
-        let mut pos = local_start.next_multiple_of(al);
+        let al32 = u32::from(al);
+        let mut pos = u32::from(local_start).next_multiple_of(al32);
         'search: loop {
-            let end = pos + sz;
+            let end = pos + u32::from(sz);
+            if end > u32::from(u16::MAX) {
+                break;
+            }
             for p in pinned.iter().chain(ivs[..idx].iter()) {
-                let overlap_range = pos < p.slot + p.size && p.slot < end;
+                let p_end = u32::from(p.slot) + u32::from(p.size);
+                let overlap_range = pos < p_end && u32::from(p.slot) < end;
                 if !overlap_range {
                     continue;
                 }
                 // Reuse is only valid as an EXACT slot match (same start+size);
                 // any PARTIAL overlap is always a conflict (it would alias only
                 // part of a live value).
-                let exact = pos == p.slot && sz == p.size;
+                let exact = pos == u32::from(p.slot) && sz == p.size;
                 let life_overlap = ls <= p.le && p.ls <= le;
                 let incompatible = p.kind != kind || p.size != sz;
                 // I6: forbid sharing that straddles any loop scope.
@@ -233,15 +243,19 @@ pub fn assign_slots_v2(
                 });
                 if !exact || life_overlap || incompatible || straddle {
                     // Jump past the blocker, re-align, retry.
-                    pos = (p.slot + p.size).next_multiple_of(al);
+                    pos = p_end.next_multiple_of(al32);
                     continue 'search;
                 }
             }
             break;
         }
-        ivs[idx].slot = pos;
-        hwm = hwm.max(pos + sz);
+        frame_end = frame_end.max(pos + u32::from(sz));
+        if frame_end > u32::from(u16::MAX) {
+            break;
+        }
+        ivs[idx].slot = pos as u16;
     }
+    let hwm = u16::try_from(frame_end).unwrap_or(u16::MAX);
     let mut slots: Vec<SlotAssignment> = ivs
         .iter()
         .map(|i| SlotAssignment {
@@ -266,6 +280,7 @@ pub fn assign_slots_v2(
         slots,
         hwm,
         per_block_var_size: HashMap::new(),
+        frame_end,
     }
 }
 

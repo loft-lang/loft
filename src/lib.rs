@@ -305,6 +305,7 @@ pub mod json;
 pub mod keys;
 pub mod lease;
 mod lexer;
+pub mod limits;
 pub mod lsp;
 pub mod narrow;
 pub mod native;

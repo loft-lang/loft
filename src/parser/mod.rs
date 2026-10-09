@@ -702,7 +702,7 @@ pub struct Parser {
     pub(crate) in_sandbox: bool,
     /// @PLN86 step 0.1 — current expression-nesting depth.  Recursive descent over
     /// deep nesting (`((((…))))`) overflows the native stack (rc=139); past
-    /// `SANDBOX_MAX_PARSE_DEPTH` (sandboxed) or `MAX_PARSE_DEPTH` the parser rejects
+    /// `crate::limits::LIMIT` the parser rejects
     /// with a clean diagnostic instead.  Reset to 0 at each def's body.
     pub(crate) parse_depth: u32,
     /// @PLN86 step 0.1 — latched once the depth limit trips, so the diagnostic
@@ -713,9 +713,6 @@ pub struct Parser {
     /// not the author's mistake.  `parse_function` rewinds to it once the body is read, so the
     /// def carries the one refusal.
     pub(crate) depth_trip_mark: Option<(usize, Level)>,
-    /// How many right-associative operators (`**`, `??`) the operator parser is inside: each
-    /// parses its right operand in a nested frame (loft#1961).
-    pub(crate) right_assoc_depth: usize,
     /// The current file number that is being parsed
     file: u32,
     pub diagnostics: Diagnostics,
@@ -1925,7 +1922,6 @@ impl Parser {
             parse_depth: 0,
             depth_overflowed: false,
             depth_trip_mark: None,
-            right_assoc_depth: 0,
             file: 1,
             diagnostics: Diagnostics::new(),
             default: false,
@@ -24726,7 +24722,7 @@ mod plan86_nesting_guard_tests {
         let (has_error, has_msg) = std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
-                let depth = 2000; // >> SANDBOX_MAX_PARSE_DEPTH and into the overflow zone
+                let depth = 2000; // >> crate::limits::LIMIT and into the overflow zone
                 let src = format!(
                     "fn scripted() {{ x = {}1{}; }}\n",
                     "(".repeat(depth),
