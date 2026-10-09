@@ -151,6 +151,15 @@ four rules below), confirm the hashes agree (`python3 bench/stats.py --only <lan
 give it a line in `routines.tsv`; a routine a lane prints and the registry lacks is reported
 on the page as UNCLASSIFIED.  If it came off the census, delete its census line.
 
+**What a row measures: the structures, not the links between them.**  A row times a data
+structure doing its own work — a vector filled and walked, a hash probed, records built,
+fields read and written in place.  A link between structures (a `&` to a stored tuple or
+record, a reference parameter handed one element at a time) is allowed in the language and
+must stay correct, but it is not a performance target: it always trails what rustc makes of
+a `&mut`, and a program keeps related data together in one structure rather than linking
+separate ones.  So no row is built around such links, and a gap that only a link shows is not
+worked on.
+
 **Lanes.**  `01`–`12` are ENGINE programs (informational).  `13_stdlib_text`,
 `14_stdlib_vector` and `15_stdlib_keyed` are the STANDARD LIBRARY as a program calls it, one
 row per routine.  `16_consumer_shapes` MODELS the hot loops of real loft programs (crawler,

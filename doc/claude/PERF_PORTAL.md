@@ -26,12 +26,12 @@ Commit `a60f4c180`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7
 
 | population | routines | median | within 2× | 2–3× | over 3× |
 |---|---:|---:|---:|---:|---:|
-| every measured routine | 208 | **2.37×** | 84 | 52 | 72 |
+| every measured routine | 205 | **2.35×** | 84 | 51 | 70 |
 | shipped routines — stdlib + libraries (the `(Perf-Weight)` population) | 162 | **2.39×** | 64 | 39 | 59 |
 | stdlib | 36 | **1.57×** | 23 | 9 | 4 |
 | libraries | 126 | **2.63×** | 41 | 30 | 55 |
 | consumer shapes — hot loops of real programs, modelled | 30 | **2.41×** | 11 | 8 | 11 |
-| engine programs (informational) | 16 | **1.73×** | 9 | 5 | 2 |
+| engine programs (informational) | 13 | **1.50×** | 9 | 4 | 0 |
 
 ### By class — which KINDS of routine are slow
 
@@ -42,8 +42,8 @@ class points at one part of the compiler or runtime rather than at one program.
 |---|---|---:|---:|---:|---|---:|---:|
 | **alloc-temp** | short-lived records and vectors handed between helper calls | 11 | **3.86×** | 1.00× | 7.91× `check_request` | 2 | 6 |
 | **vector-build** | making a scalar vector: push, comprehension, copy, a vector of vectors | 13 | **3.53×** | 0.33× | 7.90× `emit_segment` | 5 | 7 |
-| **record-field** | reading and writing fields of records reached through a vector | 19 | **2.98×** | 1.06× | 23.21× `tuple_link_small` | 6 | 9 |
 | **keyed** | hash, sorted and index collections: insert, find, update, remove, ordered walk | 22 | **2.88×** | 1.29× | 6.87× `field_add_cell` | 2 | 10 |
+| **record-field** | reading and writing fields of records reached through a vector | 16 | **2.85×** | 1.06× | 8.22× `mesh_to_floats` | 6 | 7 |
 | **call** | many small calls or recursion: the per-call frame and argument passing | 15 | **2.59×** | 1.74× | 6.86× `clock_pump` | 5 | 6 |
 | **record-build** | appending records to a vector, and returning built records | 16 | **2.38×** | 1.04× | 6.89× `invert` | 4 | 7 |
 | **text-scan** | reading text: byte and character walks, find, contains, a line loop | 11 | **2.31×** | 1.01× | 6.23× `parse` | 4 | 4 |
@@ -96,32 +96,6 @@ Why it is slow, priced, and what to build: [analysis/vector-build.md](../../benc
 | `copy` | 14_stdlib_vector | stdlib | **0.97** | 0.66–1.02 (noisy) †7fec1bfe8 | 2.1 µs | 2.2 µs | ok | `w = v` of 20k integers |
 | `push` | 14_stdlib_vector | stdlib | **0.33** | 0.32–0.35 (noisy) †7fec1bfe8 | 5.7 µs | 16.9 µs | ok | `v += [x]` from empty, 20k |
 
-#### record-field — reading and writing fields of records reached through a vector
-
-Why it is slow, priced, and what to build: [analysis/records.md](../../bench/portal/analysis/records.md)
-
-| routine | lane | population | × Rust | range | native | Rust | | what it stands for |
-|---|---|---|---:|---|---:|---:|---|---|
-| `tuple_link_small` | 16_consumer_shapes | engine | **23.21** | 14.59–33.97 (noisy) †7fec1bfe8 | 191.0 µs | 8.2 µs | **over 3x** | a `&` link to a stored `(integer, integer)` element and a `&(…)` parameter, 8,192 member updates (loft#1883) |
-| `tuple_link_big` | 16_consumer_shapes | engine | **9.23** | 4.72–14.67 (noisy) †7fec1bfe8 | 117.3 µs | 12.7 µs | **over 3x** | a `&(…)` parameter over a nine-member tuple with a text, every member kind written, 2,048 calls |
-| `mesh_to_floats` | mesh3d | library:mesh3d | **8.22** | 8.18–8.30 †7fec1bfe8 | 1.65 ms | 200.9 µs | **over 3x** | per triangle an index, a null test and six fields two structs deep |
-| `locate` | zttext | library:zttext | **6.20** | 6.19–6.21 †7fec1bfe8 | 9.10 ms | 1.47 ms | **over 3x** | a linear scan reading `.count` off a record fetched through a vector, once per insert |
-| `fill_polygon` | graphics | library:graphics | **5.36** | 5.33–5.67 (noisy) †7fec1bfe8 | 1.37 ms | 254.7 µs | **over 3x** | per scanline a walk of `vector<Coord>` reading `.px/.py`, a FRESH crossings vector and an insertion sort |
-| `stencil_rotate` | hex_field | library:hex_field | **5.11** | 5.07–5.12 †7fec1bfe8 | 11.42 ms | 2.24 ms | **over 3x** | two full passes through four accessor families, then a halo pass of three calls per slot |
-| `terrain_relief_pass` | hex_terrain | library:hex_terrain | **4.90** | 4.88–4.91 †7fec1bfe8 | 7.15 ms | 1.46 ms | **over 3x** | the second pass reads a type through a NULLABLE record per cell |
-| `encode` | cbor | library:cbor | **3.94** | 3.92–3.96 †7fec1bfe8 | 7.28 ms | 1.85 ms | **over 3x** | canonical map order: since 0.1.5 each key is encoded ONCE into a flat buffer and ranked by an O(n^2) `key_lt`  |
-| `compose` | stage | library:stage | **3.04** | 2.99–3.07 †7fec1bfe8 | 624.3 µs | 205.6 µs | **over 3x** | per node a cos/sin, an affine compose, and 12+ separate `self.st_nodes[i].field = …` writes |
-| `save_glb` | glb | library:glb | **2.98** | 2.54–3.74 (noisy) †7fec1bfe8 | 1.45 ms | 487.8 µs | over 2x | four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x` |
-| `timer_spend` | fixstep | library:fixstep | **2.73** | 2.70–2.75 †7fec1bfe8 | 7.84 ms | 2.87 ms | over 2x | two fields read and written behind three branches per timer per tick |
-| `tuple_link_grows` | 16_consumer_shapes | engine | **2.49** | 2.38–3.18 (noisy) †7fec1bfe8 | 7.5 µs | 3.0 µs | over 2x | a link to `rows[0]` while `rows` grows: the declined case, each member access resolves the store |
-| `mesh_aabb` | 16_consumer_shapes | consumer:moros | **2.18** | 1.36–2.26 (noisy) †7fec1bfe8 | 18.1 µs | 8.3 µs | over 2x | `mesh_aabb`: a min/max over NESTED fields (`v.pos.x / .y / .z`) of 7,168 vertices |
-| `entity_tick` | 16_consumer_shapes | consumer:crawler | **1.77** | 1.73–2.10 (noisy) †7fec1bfe8 | 87.3 µs | 49.3 µs | ok | `sim_tick`: a record copied out, mutated, written back, with an O(N) scan of the same vector |
-| `chunk_lookup` | 16_consumer_shapes | consumer:moros | **1.74** | 1.59–2.16 (noisy) †7fec1bfe8 | 488.4 µs | 280.3 µs | ok | `map_get_hex` / `map_set_hex`: a linear chunk scan, then a record in a vector in a record |
-| `wide_line` | drawing | library:drawing | **1.57** | 1.54–1.62 †7fec1bfe8 | 5.0 µs | 3.2 µs | ok | wide line through the polygon crossing table |
-| `enum_match` | 16_consumer_shapes | consumer:moros | **1.19** | 0.75–1.43 (noisy) †7fec1bfe8 | 17.6 µs | 14.8 µs | ok | `EditKind`: 3,000 struct-ENUM values built, then matched and destructured |
-| `record_update` | 14_stdlib_vector | stdlib | **1.10** | 0.68–1.39 (noisy) †7fec1bfe8 | 8.9 µs | 8.1 µs | ok | `v[i].x = …` over 20k |
-| `record_walk` | 14_stdlib_vector | stdlib | **1.06** | 0.75–1.21 (noisy) †7fec1bfe8 | 16.8 µs | 15.8 µs | ok | `for p in v` reading three fields |
-
 #### keyed — hash, sorted and index collections: insert, find, update, remove, ordered walk
 
 Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/portal/analysis/keyed.md)
@@ -150,6 +124,29 @@ Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/porta
 | `hash_walk` | 15_stdlib_keyed | stdlib | **2.28** | 2.22–2.77 (noisy) †7fec1bfe8 | 171.5 µs | 75.1 µs | over 2x | `for e in hash`: 5k records walked in key order, the order built per walk |
 | `atlas_cell` | text2d | library:text2d | **1.77** | 1.75–2.57 (noisy) †7fec1bfe8 | 1.33 ms | 747.1 µs | ok | a linear scan of the atlas codes per character |
 | `sorted_fill_walk` | 15_stdlib_keyed | stdlib | **1.29** | 0.99–1.43 (noisy) †7fec1bfe8 | 1.74 ms | 1.35 ms | ok | `sorted<ES[id]>` (inline elements) filled out of order, walked in order |
+
+#### record-field — reading and writing fields of records reached through a vector
+
+Why it is slow, priced, and what to build: [analysis/records.md](../../bench/portal/analysis/records.md)
+
+| routine | lane | population | × Rust | range | native | Rust | | what it stands for |
+|---|---|---|---:|---|---:|---:|---|---|
+| `mesh_to_floats` | mesh3d | library:mesh3d | **8.22** | 8.18–8.30 †7fec1bfe8 | 1.65 ms | 200.9 µs | **over 3x** | per triangle an index, a null test and six fields two structs deep |
+| `locate` | zttext | library:zttext | **6.20** | 6.19–6.21 †7fec1bfe8 | 9.10 ms | 1.47 ms | **over 3x** | a linear scan reading `.count` off a record fetched through a vector, once per insert |
+| `fill_polygon` | graphics | library:graphics | **5.36** | 5.33–5.67 (noisy) †7fec1bfe8 | 1.37 ms | 254.7 µs | **over 3x** | per scanline a walk of `vector<Coord>` reading `.px/.py`, a FRESH crossings vector and an insertion sort |
+| `stencil_rotate` | hex_field | library:hex_field | **5.11** | 5.07–5.12 †7fec1bfe8 | 11.42 ms | 2.24 ms | **over 3x** | two full passes through four accessor families, then a halo pass of three calls per slot |
+| `terrain_relief_pass` | hex_terrain | library:hex_terrain | **4.90** | 4.88–4.91 †7fec1bfe8 | 7.15 ms | 1.46 ms | **over 3x** | the second pass reads a type through a NULLABLE record per cell |
+| `encode` | cbor | library:cbor | **3.94** | 3.92–3.96 †7fec1bfe8 | 7.28 ms | 1.85 ms | **over 3x** | canonical map order: since 0.1.5 each key is encoded ONCE into a flat buffer and ranked by an O(n^2) `key_lt`  |
+| `compose` | stage | library:stage | **3.04** | 2.99–3.07 †7fec1bfe8 | 624.3 µs | 205.6 µs | **over 3x** | per node a cos/sin, an affine compose, and 12+ separate `self.st_nodes[i].field = …` writes |
+| `save_glb` | glb | library:glb | **2.98** | 2.54–3.74 (noisy) †7fec1bfe8 | 1.45 ms | 487.8 µs | over 2x | four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x` |
+| `timer_spend` | fixstep | library:fixstep | **2.73** | 2.70–2.75 †7fec1bfe8 | 7.84 ms | 2.87 ms | over 2x | two fields read and written behind three branches per timer per tick |
+| `mesh_aabb` | 16_consumer_shapes | consumer:moros | **2.18** | 1.36–2.26 (noisy) †7fec1bfe8 | 18.1 µs | 8.3 µs | over 2x | `mesh_aabb`: a min/max over NESTED fields (`v.pos.x / .y / .z`) of 7,168 vertices |
+| `entity_tick` | 16_consumer_shapes | consumer:crawler | **1.77** | 1.73–2.10 (noisy) †7fec1bfe8 | 87.3 µs | 49.3 µs | ok | `sim_tick`: a record copied out, mutated, written back, with an O(N) scan of the same vector |
+| `chunk_lookup` | 16_consumer_shapes | consumer:moros | **1.74** | 1.59–2.16 (noisy) †7fec1bfe8 | 488.4 µs | 280.3 µs | ok | `map_get_hex` / `map_set_hex`: a linear chunk scan, then a record in a vector in a record |
+| `wide_line` | drawing | library:drawing | **1.57** | 1.54–1.62 †7fec1bfe8 | 5.0 µs | 3.2 µs | ok | wide line through the polygon crossing table |
+| `enum_match` | 16_consumer_shapes | consumer:moros | **1.19** | 0.75–1.43 (noisy) †7fec1bfe8 | 17.6 µs | 14.8 µs | ok | `EditKind`: 3,000 struct-ENUM values built, then matched and destructured |
+| `record_update` | 14_stdlib_vector | stdlib | **1.10** | 0.68–1.39 (noisy) †7fec1bfe8 | 8.9 µs | 8.1 µs | ok | `v[i].x = …` over 20k |
+| `record_walk` | 14_stdlib_vector | stdlib | **1.06** | 0.75–1.21 (noisy) †7fec1bfe8 | 16.8 µs | 15.8 µs | ok | `for p in v` reading three fields |
 
 #### call — many small calls or recursion: the per-call frame and argument passing
 
