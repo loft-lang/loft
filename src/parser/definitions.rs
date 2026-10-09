@@ -3983,13 +3983,14 @@ impl Parser {
         if !self.first_pass {
             return;
         }
-        let user: Vec<u16> = (0..self.vars.count())
+        // A walk that stops at the 301st: run on every function, so it allocates nothing.
+        let Some(extra) = (0..self.vars.count())
             .filter(|&v| {
                 let name = self.vars.name(v);
                 !self.vars.is_argument(v) && !name.starts_with('_') && !name.contains('#')
             })
-            .collect();
-        let Some(&extra) = user.get(crate::limits::LIMIT as usize) else {
+            .nth(crate::limits::LIMIT as usize)
+        else {
             return;
         };
         let (line, pos) = self.vars.var_source(extra);
