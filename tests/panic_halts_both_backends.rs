@@ -437,8 +437,9 @@ fn exit_ends_the_program_with_its_code_silently_on_both_backends() {
     } else {
         println!("exit_ends...: --native leg skipped (no rustc)");
     }
-    // (asked, the status a shell sees) — 300 is 44 after the one byte a status holds.
-    for (asked, status) in [("3", 3), ("0", 0), ("300", 44)] {
+    // (asked, the status a shell sees) — 300 is 44 and -1 is 255 after the one byte a status
+    // holds, on Windows too, whose statuses are 32 bits wide.
+    for (asked, status) in [("3", 3), ("0", 0), ("300", 44), ("-1", 255)] {
         for backend in &backends {
             let (code, stdout, stderr) =
                 run_with(backend, asked, &format!("{asked}{}", &backend[2..3]));
