@@ -70,7 +70,7 @@ jobs:
       # omits (same exclusion as the stack_align guard job, same rationale).
       - name: Quick suite (wrap + issues)
         run: >
-          cargo nextest run --profile ci --test wrap --test issues --test doc_hygiene
+          cargo nextest run --profile ci --no-fail-fast --test wrap --test issues --test doc_hygiene
           -E 'not test(library_suite)'
 
       - name: Surface flaky tests (passed only on retry)

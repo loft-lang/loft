@@ -790,17 +790,10 @@ jobs:
           # the `heavy-serial` membership straight out of .config/nextest.toml
           # rather than restating it.
           FILTER="$(python3 scripts/ci_test_filter.py "${{ github.event_name }}" ${{ matrix.shard }})"
-          # A PR run is FEEDBACK — stop at the first failure, the author fixes it
-          # and pushes again, and the runner minutes go to the next PR.  The
-          # nightly and push-to-main runs are REPORTS: they are nobody's inner
-          # loop, and fail-fast makes them surface at most ONE break per run.
-          # Windows pays for that worst of all — it runs on these events only, so
-          # every Windows bug costs a whole night, and the 2026-07-21 nightly
-          # stopped with 875 of 3029 tests unrun.  Drain the whole set instead.
-          FAILFAST=""
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            FAILFAST="--no-fail-fast"
-          fi
+          # Every run drains the whole set, a PR's included: fail-fast surfaces at
+          # most ONE break per shard per run, so a PR with several breaks is fixed
+          # one push at a time while the rest sit unrun behind the first.
+          FAILFAST="--no-fail-fast"
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}"
           # `rest-a/b/c` are one filterset split by nextest's own partitioner: the shard
           # letter picks the slice.  Partitioning is over TESTS, so a single long binary
