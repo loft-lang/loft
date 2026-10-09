@@ -739,6 +739,18 @@ and guarded by a COUNT, never by a time (@PLN166).
 - **By phase.**  `LOFT_TIMING=1` prints `parse_default`, `parse_user`, `scopes`, `lints` and
   `front_end`; the four phases sum to `front_end` (pinned by
   `tests/compile_scaling.rs::loft_timing_phases_sum_to_the_front_end`).
+- **Where a slower test's time went.**  With `LOFT_TIMING_LEDGER=<dir>` every loft process
+  appends rows to `<dir>/timing-<pid>.tsv`: its phases (`parse_default`, `parse_user`,
+  `scopes`, `lints`, `byte_code`, `native_emit`, `run`), the program's own native compile
+  (`binary <program> hit|miss <secs>` — rustc and its heals, or the cache that spared them),
+  each external build step (`exec`) and each library build, every row ending with the test
+  that started that loft (`LOFT_TIMING_TEST`, passed by `platform::process::harness_command`).
+  `python3 scripts/timing_compare.py <before> <after>` compares two ledgers — a directory, or
+  `run:<id>[:<leg>]` for a CI run, which uploads one as `timing-ledger-<os>-<shard>` — by
+  category and by test, largest growth first, so a slower test reads as the phase that grew
+  instead of a commit range to bisect.  Compare builds from comparable target directories:
+  rustc searches loft's `target/release/deps`, and over thousands of stale artefacts an
+  empty program's compile takes a quarter longer.
 - **The bench.**  `python3 bench/frontend/frontend.py` measures the cold, warm and edit-loop
   modes over a generated corpus frozen by `CORPUS_VERSION` (tiny / medium / large), the modes
   INTERLEAVED run by run so load drift hits all of them alike; `--counts` adds instruction

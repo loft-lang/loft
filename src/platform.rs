@@ -51,6 +51,21 @@ pub struct BuildStep {
 
 static TIMING: OnceLock<Option<Timing>> = OnceLock::new();
 
+/// The test a ledger row belongs to: `LOFT_TIMING_TEST`, which a test harness sets on the loft
+/// it starts ([`crate::platform::process::harness_command`]), or `-` outside a test.  The
+/// LAST column of every row, so a reader of the earlier columns is unchanged.
+fn timing_test() -> String {
+    std::env::var("LOFT_TIMING_TEST").unwrap_or_else(|_| "-".to_string())
+}
+
+/// Record one phase of this process into the timing ledger ([`Timing::phase`]); nothing when
+/// neither `LOFT_TIMING` nor `LOFT_TIMING_LEDGER` is set.
+pub fn phase(name: &'static str, secs: f64) {
+    if let Some(t) = Timing::global() {
+        t.phase(name, secs);
+    }
+}
+
 impl Timing {
     /// The process singleton, or `None` when `LOFT_TIMING` is unset.
     #[must_use]
@@ -97,7 +112,7 @@ impl Timing {
                 path,
                 std::fs::OpenOptions::new().create(true).append(true),
             ) {
-                let _ = writeln!(f, "{kind}\t{name}\t{cache}\t{secs_s}");
+                let _ = writeln!(f, "{kind}\t{name}\t{cache}\t{secs_s}\t{}", timing_test());
             }
         }
         if let Ok(mut e) = self.events.lock() {
@@ -121,7 +136,11 @@ impl Timing {
                 path,
                 std::fs::OpenOptions::new().create(true).append(true),
             ) {
-                let _ = writeln!(f, "exec\t{tool}\t{subject}\t{reason}\t{secs:.2}");
+                let _ = writeln!(
+                    f,
+                    "exec\t{tool}\t{subject}\t{reason}\t{secs:.2}\t{}",
+                    timing_test()
+                );
             }
         }
         if let Ok(mut st) = self.steps.lock() {
@@ -131,6 +150,27 @@ impl Timing {
                 reason: reason.to_string(),
                 secs,
             });
+        }
+    }
+
+    /// Record how long one phase of this process took — the front end's parses, the scope
+    /// pass, the bytecode or the native emission, the program's own run — as a `phase` row of
+    /// the ledger, so two runs can be compared phase by phase and test by test
+    /// (`scripts/timing_compare.py`) instead of by bisecting commits.  Ledger only: the
+    /// phases already print under `LOFT_TIMING`.
+    pub fn phase(&self, name: &'static str, secs: f64) {
+        if let Ok(dir) = std::env::var("LOFT_TIMING_LEDGER")
+            && crate::file_access::create_dir_all(&dir).is_ok()
+        {
+            use std::io::Write;
+            let path =
+                std::path::Path::new(&dir).join(format!("timing-{}.tsv", std::process::id()));
+            if let Ok(mut f) = crate::file_access::open_with(
+                path,
+                std::fs::OpenOptions::new().create(true).append(true),
+            ) {
+                let _ = writeln!(f, "phase\t{name}\t{secs:.4}\t{}", timing_test());
+            }
         }
     }
 

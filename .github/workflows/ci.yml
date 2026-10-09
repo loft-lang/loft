@@ -876,6 +876,17 @@ jobs:
           path: target/nextest/ci/junit.xml
           retention-days: 14
           if-no-files-found: ignore
+      # The timing ledger every loft process the tests started wrote: phases, the program's own
+      # compile, build steps, each row naming its test — what `scripts/timing_compare.py
+      # run:<id>` compares between two runs (PERFORMANCE.md § Front-end speed).
+      - name: Keep the timing ledger
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: timing-ledger-${{ matrix.os }}-${{ matrix.shard || 'full' }}
+          path: ${{ env.LOFT_TIMING_LEDGER }}
+          retention-days: 14
+          if-no-files-found: ignore
       # The GL gold's own screenshot, when the test step went red: the gold is compared on the
       # runner's Mesa, and a mismatch reported only as pixel counts cannot be told apart from a
       # rendering regression without the picture.

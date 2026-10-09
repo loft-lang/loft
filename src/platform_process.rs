@@ -653,7 +653,32 @@ pub fn kept_children() -> usize {
     reason = "platform::process is the one home of Command::new (@PLN184 P6)"
 )]
 pub fn harness_command(program: impl AsRef<OsStr>) -> Command {
-    Command::new(program)
+    let mut cmd = Command::new(program);
+    // The timing ledger names the test each row belongs to, and the loft a test starts writes
+    // the rows (`platform::phase`).
+    if std::env::var_os("LOFT_TIMING_LEDGER").is_some()
+        && std::env::var_os("LOFT_TIMING_TEST").is_none()
+        && let Some(name) = current_test_name()
+    {
+        cmd.env("LOFT_TIMING_TEST", name);
+    }
+    cmd
+}
+
+/// The test this process is running, for the timing ledger: the thread's name where the test
+/// harness runs each test on a thread named after it, else the one test an `--exact`
+/// invocation names (how nextest runs a test, one per process, on the main thread).
+fn current_test_name() -> Option<String> {
+    if let Some(name) = std::thread::current().name()
+        && name != "main"
+    {
+        return Some(name.to_string());
+    }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|a| a == "--exact") {
+        return None;
+    }
+    args.into_iter().find(|a| !a.starts_with('-'))
 }
 
 /// The code a loft script reads for `status`: the program's own, or `128 + n` for signal `n`.
