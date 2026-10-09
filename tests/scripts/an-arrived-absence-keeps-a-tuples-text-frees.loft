@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A tuple local whose absence ARRIVED in flight owes the frees its bare twin owes.
+// `@FR-T-Absent` refuses `(τ₁, …, τₙ)?` at a declaration but has the compiler carry an
+// absence that arrives with the `?` on the outside (`data::marks_absence`), so an element read
+// by an index `(N-Index)` does not trust — a plain variable, an out-of-range one — binds a
+// local typed `(integer, text)?`.  It has the bare tuple's slots and its text members are
+// owned `String`s exactly as the bare tuple's are.  The scope pass asked "is this local a
+// tuple?" with a BARE `Type::Tuple` match at scope exit, at the pre-reassignment free and at
+// the per-assignment mint record, so the `?` hid the tuple from all three: every such local
+// orphaned one `String` per text member, per binding — the release valgrind sweep's six red
+// interpreter runs (loft#1907).  `Function::tuple_owns_text` already read through the `?`.
+//
+// Axes this file MOVES:  the index's trust (constant · plain variable in range · out of
+//                        range) · where the binding stands (once · reassigned per loop turn) ·
+//                        the member former (text · a nested tuple carrying text · a record) ·
+//                        a COPY of the `?` tuple into a second local.
+// Axes it HOLDS FIXED:   one vector per cell, `vector<(integer, …)>`; interpreter frees (the
+//                        native backend's members are Rust-owned and drop by scope; its
+//                        VALUES are asserted through `tests/text_buffer_ledger.rs`).
+//
+// The record cell is the control on the other side: a record member read out of a vector
+// is a VIEW of the vector's element, so reading through the `?` must not start freeing it —
+// the vector's own element is read again afterwards.
+//
+// Values are asserted here; the orphan count is asserted by `tests/text_buffer_ledger.rs`,
+// which runs this file under `LOFT_TEXT_TIMELINE=1` and requires "NO text leak".
+// @falsified-at: 1bb0eb682 — INERT on the six channels `make falsify` scores, because every
+// value was always right; measured by hand under LOFT_TEXT_TIMELINE=1 on that tree's build
+// (the falsify cache's): 11 orphaned text buffers -> 0.
+//   ARMED: `LOFT_TEXT_TIMELINE=1`; without it there is nothing to see.
+//   HOLDS: every VALUE is right on both backends, so all six channels falsify scores are
+//   equal and the row is INERT. The measurement is a text-buffer census, not a scored channel.
+struct Rec { n: integer, s: text }
+
+fn main() {
+  ts: vector<(integer, text)> = [(7, "seven"), (8, "eight")];
+
+  // ---- c1 CONTROL: a constant index is trusted, the local is the bare tuple ----
+  c = ts[0];
+  assert(c.0 == 7 && c.1 == "seven", "c1 a constant index reads the element: {c.1}");
+
+  // ---- e1: a plain variable index in range — the `?` arrives, the value is present ----
+  i = 1;
+  tin = ts[i];
+  assert(tin.0 == 8 && tin.1 == "eight", "e1 a variable index in range: {tin.1}");
+
+  // ---- e2: out of range — a present tuple of null members (`(T-Absent)`) ----
+  j = 9;
+  tout = ts[j];
+  assert(tout.0 == null && tout.1 == null, "e2 out of range: null members");
+
+  // ---- e3: a COPY of the `?` tuple owns its own text ----
+  t2 = tin;
+  assert(t2.1 == "eight", "e3 a copy of the arrived-absence tuple: {t2.1}");
+
+  // ---- e4: rebound every loop turn — the pre-reassignment free, once per turn.  The index is
+  //      a plain variable: the `for` variable itself is trusted and would bind the bare tuple ----
+  hits = 0;
+  for k in 0..6 {
+    kk = k;
+    r = ts[kk];
+    if r.1 != null { hits += len(r.1); }
+  }
+  assert(hits == 10, "e4 five + five bytes over the two present turns: {hits}");
+
+  // ---- e5: a nested tuple member carrying text ----
+  ns: vector<(integer, (text, integer))> = [(1, ("one", 11))];
+  z = 0;
+  nin = ns[z];
+  nout = ns[z + 3];
+  assert(nin.1.0 == "one" && nin.1.1 == 11, "e5 nested in range: {nin.1.0}");
+  assert(nout.0 == null, "e5b nested out of range");
+
+  // ---- c2 CONTROL: a record member is a view of the vector's element, never freed ----
+  rs: vector<(integer, Rec)> = [(3, Rec { n: 30, s: "thirty" })];
+  rin = rs[z];
+  rout = rs[j];
+  assert(rin.1.s == "thirty" && rout.0 == null, "c2 a record member read through the `?`");
+  assert(rs[0].1.s == "thirty" && len(rs) == 1, "c2b …and the vector's own element survives");
+
+  println("arrived-absence tuple frees ok");
+}

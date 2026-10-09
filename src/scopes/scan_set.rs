@@ -336,7 +336,7 @@ impl Scopes<'_> {
         // the whole loop.  A first-iteration free is a no-op — the entry null-init
         // leaves the elements at the sentinel, which `free` ignores.
         if was_in_scope
-            && let Type::Tuple(elems) = function.tp(v)
+            && let Type::Tuple(elems) = function.tp(v).base()
             && !value.reads_var(v)
             && !value.reads_var(ov)
         {
@@ -685,7 +685,7 @@ impl Scopes<'_> {
         }
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
-        if matches!(function.tp(v), Type::Tuple(_)) {
+        if matches!(function.tp(v).base(), Type::Tuple(_)) {
             let joined = if matches!(value.unspan(), Value::If(..)) {
                 branch_tuple_call_mints(value, function, data, data.def_nr("OpNullRefSentinel"))
             } else {

@@ -131,3 +131,41 @@ fn a_yielding_main_finishes_under_the_test_runner() {
         "a frame abandoned after its first yield leaves its formatted texts behind\nstderr:\n{stderr}"
     );
 }
+
+fn arrived_absence_script() -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// loft#1907 — a tuple local whose absence arrived in flight, `(integer, text)?`, releases its
+/// text members as its bare twin does: at scope exit, before each rebind, and in a copy.  The
+/// values were always right; the interpreter orphaned one `String` per text member per binding
+/// (the release valgrind sweep's six red interpreter runs).
+#[test]
+fn an_arrived_absence_keeps_a_tuples_text_frees() {
+    let path = arrived_absence_script();
+    let (ok, stdout, stderr) = run(&["--interpret", &path], &[("LOFT_TEXT_TIMELINE", "1")]);
+    assert!(
+        ok && stdout.contains("arrived-absence tuple frees ok"),
+        "the guard must run every cell on --interpret\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("NO text leak"),
+        "a `(…, text)?` tuple local orphaned a text member\nstderr:\n{stderr}"
+    );
+}
+
+/// Its value half, on both backends.
+#[test]
+fn arrived_absence_tuples_answer_alike() {
+    let path = arrived_absence_script();
+    for backend in ["--interpret", "--native"] {
+        let (ok, stdout, stderr) = run(&[backend, &path], &[]);
+        assert!(
+            ok && stdout.contains("arrived-absence tuple frees ok"),
+            "{backend}: every cell must answer its hand-computed value\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}

@@ -368,8 +368,10 @@ impl Scopes<'_> {
                 ls.push(call("OpFreeScratch", v, data));
                 continue;
             }
-            // T1.3: tuple scope exit — free owned elements in reverse index order.
-            if let Type::Tuple(elems) = function.tp(v) {
+            // T1.3: tuple scope exit — free owned elements in reverse index order.  A tuple
+            // whose absence ARRIVED in flight is `(τ…)?` (`@FR-T-Absent`, `marks_absence`) and
+            // has the bare tuple's slots, so it owes the same frees: read through the `?`.
+            if let Type::Tuple(elems) = function.tp(v).base() {
                 let elems = elems.clone();
                 ls.extend(tuple_owned_elem_frees(
                     &elems,
