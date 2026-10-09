@@ -3067,11 +3067,12 @@ impl Parser {
             // @PLN86 step 0.1 — enter restricted parsing for this def's body: the
             // nesting guard activates and its depth state starts fresh.
             self.in_sandbox = true;
-            self.parse_depth = 0;
-            self.depth_overflowed = false;
         } else {
             self.in_sandbox = false;
         }
+        // Every def's nesting is counted from its own body (`MAX_PARSE_DEPTH`).
+        self.parse_depth = 0;
+        self.depth_overflowed = false;
         // Plan-17 phase 01 (B) — bound resolution + t-stub creation now
         // happens on BOTH passes.  Before, this block was gated on
         // `!self.first_pass`, leaving `definitions[ctx].bounds` empty

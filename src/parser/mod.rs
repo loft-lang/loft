@@ -700,11 +700,10 @@ pub struct Parser {
     /// the parser nesting guard so it never touches trusted code (zero cost
     /// there); set per-def in `parse_function`, cleared at its end.
     pub(crate) in_sandbox: bool,
-    /// @PLN86 step 0.1 — current expression-nesting depth, counted ONLY while
-    /// `in_sandbox`.  Recursive-descent over hostile deep nesting (`((((…))))`)
-    /// overflows the native stack (rc=139); past `SANDBOX_MAX_PARSE_DEPTH` the
-    /// parser rejects with a clean diagnostic instead — a LOAD-time rejection,
-    /// never a runtime abort.  Reset to 0 at each sandboxed def's body.
+    /// @PLN86 step 0.1 — current expression-nesting depth.  Recursive descent over
+    /// deep nesting (`((((…))))`) overflows the native stack (rc=139); past
+    /// `SANDBOX_MAX_PARSE_DEPTH` (sandboxed) or `MAX_PARSE_DEPTH` the parser rejects
+    /// with a clean diagnostic instead.  Reset to 0 at each def's body.
     pub(crate) parse_depth: u32,
     /// @PLN86 step 0.1 — latched once the depth limit trips, so the diagnostic
     /// is emitted once per def rather than at every frame as the parser unwinds.
