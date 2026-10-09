@@ -704,8 +704,8 @@ capture typing is a new *source* of the types loft already has; `match` also sta
   `Optional(Vector)`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller binds
   either spelling through one arm (`use_analysis::first_bind_shape`).  Still open:
   `captured-local-rebind` and `local-rebound-by-mint` (`scripts/nullable_road.py`).  `--native`
-  value records take the nullable flat record too (`(R-ValueRecord)`'s nullable clause, C144,
-  loft#1952): the `mint`, `method` and `param` pairs take the tuple in both spellings, and a
+  value records take the nullable flat record too (`(R-ValueRecord)`'s nullable clause, C144):
+  the `mint`, `method` and `param` pairs take the tuple in both spellings, and a
   `??` with a record default is the one value-record shape still on the record road.  The `??` <!-- doc-lint: ok -->
   lowering is the rule's one exception, and pairs such as `ret-view-of-param` now differ in it
   alone.  The values agree and both halves are leak-clean under `LOFT_STRICT_STORES=1`.

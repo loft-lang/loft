@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I58 — Parser (two-pass recursive descent to IR): the structural limits it enforces
 
 //! The one number loft's structural limits share: 300.
 //!
