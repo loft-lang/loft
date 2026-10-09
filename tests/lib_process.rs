@@ -174,7 +174,8 @@ fn a_type_trigger_loads_the_library_with_nothing_naming_it() {
         dir.join("loft.toml"),
         format!(
             "[package]\nname = \"trig\"\nversion = \"0.1.0\"\n\n[dependencies]\nprocess = {{ path = \"{}\" }}\n",
-            root().join("lib/process").display()
+            // A TOML string: a Windows path's backslashes are doubled, as its author writes them.
+            root().join("lib/process").display().to_string().replace('\\', "\\\\")
         ),
     )
     .expect("manifest");

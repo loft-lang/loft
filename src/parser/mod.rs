@@ -830,6 +830,9 @@ pub struct Parser {
     /// author declared.  What lets `c: Command = "…"` load `process` with nothing in the
     /// script naming it (@PLN179 strand 4).
     auto_use_type_map: std::collections::HashMap<String, String>,
+    /// The manifest errors already reported by [`report_manifest_errors`]: each file's parse
+    /// reads the manifests again, and an error is the author's to fix once.
+    reported_manifest_errors: Vec<crate::manifest::ManifestError>,
     /// Tier-1 lazy *catalog* fallback: `method name -> providing package`,
     /// derived once from the cached registry `index.json` (`triggers` field).
     /// Consulted only for methods the local `auto_use_trigger_map` did not
@@ -1981,6 +1984,7 @@ impl Parser {
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_type_map: std::collections::HashMap::new(),
+            reported_manifest_errors: Vec::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
             use_public: false,
@@ -19230,6 +19234,8 @@ impl Parser {
                         drop(spec);
                         self.switch_to_dep(&f);
                     } else {
+                        // A manifest the lexer could not read is the likelier cause: say so first.
+                        self.report_manifest_errors();
                         if !refused {
                             if let Some(unmet) = self.cache_unmet.get(&id).cloned() {
                                 diagnostic!(
@@ -19454,6 +19460,9 @@ impl Parser {
                 self.switch_to_dep(&f);
             }
         }
+        // The dependencies are resolved: a manifest read on the way is reported as itself
+        // before what it failed to declare is reported as undefined.
+        self.report_manifest_errors();
         // Apply wildcard/selective imports queued for this source now that the while-use loop
         // has resolved all libraries.  Must run before the definitions loop so that imported
         // names are visible when function bodies and type annotations are parsed.
@@ -19719,6 +19728,25 @@ impl Parser {
         let entry = man.entry.unwrap_or_else(|| format!("src/{dep}.loft"));
         let entry = root.join(entry);
         crate::file_access::exists(&entry).then(|| entry.to_string_lossy().into_owned())
+    }
+
+    /// Report the manifests read since the last call that the lexer could not read
+    /// ([`crate::manifest::take_manifest_errors`]), each once per parse, at the manifest's own
+    /// line.  Kept, such a string is a value with `?` where the author's characters were — a
+    /// Windows path's `\a` — and the run then fails on what it should have declared.
+    fn report_manifest_errors(&mut self) {
+        for e in crate::manifest::take_manifest_errors() {
+            if self.reported_manifest_errors.contains(&e) {
+                continue;
+            }
+            let at = Position {
+                file: crate::lexer::FileName::from(e.file.as_str()),
+                line: e.line,
+                pos: e.col,
+            };
+            self.lexer.pos_diagnostic(Level::Error, &at, &e.message);
+            self.reported_manifest_errors.push(e);
+        }
     }
 
     /// Add a package's derived text-method triggers (`method -> package`) to

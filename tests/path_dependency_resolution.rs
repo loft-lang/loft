@@ -211,3 +211,52 @@ fn a_registry_dep_still_outranks_a_same_named_local_file() {
          run that resolved nothing\n{all}"
     );
 }
+
+/// A `loft.toml` string is TOML's: a backslash starts an escape.  A Windows path written as
+/// the shell prints it (`lib\mylib`) holds `\m`, which is not one, and the lexer read it as
+/// `lib?ylib` and said nothing — so the run failed on what the dependency should have
+/// declared ("Undefined type", "Unknown function"), naming the script and never the manifest.
+/// It is reported at the manifest's line now, on every OS; the doubled spelling is what a
+/// Windows author writes, and `lib_process`'s type-trigger test writes it that way.
+#[test]
+fn an_undoubled_backslash_in_a_path_dep_is_reported_at_the_manifest() {
+    let root = std::env::temp_dir().join(format!("loft_bslash_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    build_tree(&root, false);
+    let manifest =
+        format!("{CONSUMER_MANIFEST}\n[dependencies]\nmylib = {{ path = \"lib\\mylib\" }}\n");
+    // The dependency is the manifest's last line.
+    let dep_line = format!("loft.toml:{}:", manifest.lines().count());
+    write(&root.join("loft.toml"), &manifest);
+    write(
+        &root.join("run.loft"),
+        "use consumer::*;\nfn main() { print(\"{doubled()}\\n\"); }\n",
+    );
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--interpret")
+        .arg(root.join("run.loft"))
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_ERRORS", "compact")
+        .current_dir(&root)
+        .output()
+        .expect("spawn loft");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fa::remove_dir_all(&root);
+    assert!(
+        !out.status.success(),
+        "a manifest it could not read must fail the run\n{all}"
+    );
+    let at_manifest: Vec<&str> = all
+        .lines()
+        .filter(|l| l.contains("backslash") && l.contains(&dep_line))
+        .collect();
+    assert_eq!(
+        at_manifest.len(),
+        1,
+        "the escape must be reported once, at the manifest's dependency line\n{all}"
+    );
+}
