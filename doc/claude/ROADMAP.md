@@ -118,6 +118,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN185](https://github.com/loft-lang/plans/issues/185) | next | A slow routine is an ordinary bug — the measurement, the 3× bar and the classes before issue-driven performance work |
+| [@PLN188](https://github.com/loft-lang/plans/issues/188) | future | Operator parsing by precedence climbing — one frame per operator instead of twelve per operand; IR and diagnostics byte-identical |
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
