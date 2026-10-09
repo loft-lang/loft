@@ -1158,8 +1158,9 @@ fn native_features() -> std::io::Result<()> {
 /// CHUNKED: `native_scripts_00` … take every [`NATIVE_SCRIPT_CHUNKS`]-th script of the sorted
 /// corpus from their own offset, so each script is in exactly one chunk and each chunk grows
 /// with 1/N of the corpus.  One test over the whole corpus took 1879 s cold on the Windows
-/// runner, where the duration gate allows a test HALF its 600 s limit, and twelve chunks grew
-/// to 304-316 s each there (~1.7 s of rustc per script); each script is its own binary, so no
+/// runner, where the duration gate allows a test HALF its 600 s limit; twelve chunks grew to
+/// 304-316 s each there (~1.7 s of rustc per script), and twenty-four to 313 s for the
+/// heaviest, so the count follows the corpus up.  Each script is its own binary, so no
 /// cross-script coverage is lost by splitting.
 fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let _guard = native_suite_lock()
@@ -1246,7 +1247,7 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
 }
 
 /// How many tests the native script corpus is split across — see [`native_scripts_chunk`].
-const NATIVE_SCRIPT_CHUNKS: usize = 24;
+const NATIVE_SCRIPT_CHUNKS: usize = 32;
 
 macro_rules! native_script_chunks {
     ($($name:ident = $k:expr),* $(,)?) => {
@@ -1284,6 +1285,14 @@ native_script_chunks!(
     native_scripts_21 = 21,
     native_scripts_22 = 22,
     native_scripts_23 = 23,
+    native_scripts_24 = 24,
+    native_scripts_25 = 25,
+    native_scripts_26 = 26,
+    native_scripts_27 = 27,
+    native_scripts_28 = 28,
+    native_scripts_29 = 29,
+    native_scripts_30 = 30,
+    native_scripts_31 = 31,
 );
 
 /// Every chunk index has its test: a chunk count raised without a matching test would drop that
@@ -1315,6 +1324,14 @@ fn native_script_chunks_cover_the_corpus() {
         "native_scripts_21",
         "native_scripts_22",
         "native_scripts_23",
+        "native_scripts_24",
+        "native_scripts_25",
+        "native_scripts_26",
+        "native_scripts_27",
+        "native_scripts_28",
+        "native_scripts_29",
+        "native_scripts_30",
+        "native_scripts_31",
     ];
     assert_eq!(
         names.len(),
