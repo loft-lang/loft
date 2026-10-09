@@ -1424,7 +1424,7 @@ mod tests {
         assert_eq!(m.errors[0].line, 3);
         assert!(m.errors[0].message.contains("backslash"));
         assert_eq!(take_manifest_errors(), m.errors);
-        assert!(take_manifest_errors().is_empty());
+        assert_eq!(take_manifest_errors(), Vec::<ManifestError>::new());
     }
 
     #[test]

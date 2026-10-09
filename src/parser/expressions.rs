@@ -1299,20 +1299,19 @@ impl Parser {
     /// which the recursive passes after the parser cannot hold, and drop it so they never see
     /// it.  `parse_depth` bounds only what nests through `expression`: a long operator chain
     /// builds a tree as deep as itself without nesting, and a nested vector literal never
-    /// enters `expression`.  So every body is measured, once, by an explicit-stack walk.
+    /// enters `expression`.  So every body is measured, once, by a walk that stops at the bound.
     fn refuse_too_deep_tree(&mut self, body: &mut Value) {
         if self.depth_overflowed {
             return;
         }
-        let depth = body.tree_depth();
-        if depth <= MAX_TREE_DEPTH {
+        if !body.deeper_than(MAX_TREE_DEPTH) {
             return;
         }
         let name = self.data.def(self.context).display_name().to_string();
         diagnostic!(
             self.lexer,
             Level::Error,
-            "`{name}` holds an expression {depth} levels deep, more than {MAX_TREE_DEPTH} — split \
+            "`{name}` holds an expression more than {MAX_TREE_DEPTH} levels deep — split \
              a long chain or a deep nesting with locals (`a = x1 + … + x200; b = …; x = a + b`)"
         );
         *body = Value::Null;
