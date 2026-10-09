@@ -6119,7 +6119,7 @@ impl Parser {
     /// caller owns the diagnostic.
     #[track_caller]
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+    pub(crate) fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
         // @FR-N-Reserve (loft#1796) — a CONSTANT stored into a NULLABLE narrow slot must lie in
         // its usable range: one code at the edge is the slot's null, so `255` into a `u8?`, or
         // `300`, could only ever be stored as null.  Asked at the top because a literal that
@@ -7223,7 +7223,7 @@ impl Parser {
     }
 
     /// Validate that two types are equal
-    fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
+    pub(crate) fn can_convert(&mut self, test_type: &Type, should: &Type) -> bool {
         if *test_type != *should && !test_type.is_unknown() {
             // `(Slice-Value)` — a vector slice is a value wherever a vector is expected
             // (`Parser::convert` materialises it); a keyed slice is refused at its own site.

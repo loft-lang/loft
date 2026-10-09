@@ -127,12 +127,3 @@ index 1bd629d99..6f0a3ba8a 100644
              );
              return Type::Unknown(0);
          };
-@@ -21416,7 +21416,7 @@ impl Parser {
-             diagnostic!(
-                 self.lexer,
-                 Level::Error,
--                "reduce: the function must be known when the program is compiled — pass its name, or a lambda `|acc, x| {{ … }}`"
-+                "reduce: function must be a compile-time constant (use fn <name>)"
-             );
-             return Type::Unknown(0);
-         };

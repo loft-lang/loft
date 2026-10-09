@@ -7525,8 +7525,9 @@ use #count instead"
             return true;
         };
         // The special form calls a function it names at compile time (`Value::Int(d)`); a
-        // fn-ref VARIABLE or a capturing lambda is the declaration's to call, through its body —
-        // the special form refused them ("function must be a compile-time constant").
+        // function VALUE — a variable, a parameter, a field, a capturing lambda — is the
+        // declaration's to call, through its body.  One the declaration does not take comes
+        // here so `parse_reduce` can name what does not fit (loft#1959).
         let constant_fn = matches!(list.get(2).map(Value::unspan), Some(Value::Int(_)));
         if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
             return false;

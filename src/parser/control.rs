@@ -21264,6 +21264,58 @@ impl Parser {
     // - Worker's first parameter must be a reference to T (type checked by name).
     // - Return type must be a primitive: integer, long, float, or boolean.
     // - Extra arg count must match the worker's extra parameters (args[1..]).
+    /// loft#1959 — does a named fold's signature fit `fn(U, T) -> U` for this call?  Refuses
+    /// the first part that does not, naming it, and converts `init` into the accumulator
+    /// parameter's type.  A `[]` init carries no type, so it fits only a collection accumulator.
+    fn reduce_signature_fits(
+        &mut self,
+        init: &mut Value,
+        init_tp: &Type,
+        elem_tp: &Type,
+        params: &[Type],
+        ret: &Type,
+    ) -> bool {
+        let (acc, elem_param) = (&params[0], &params[1]);
+        let misfit = if init_tp.is_unknown() {
+            (!acc.is_unknown() && !Self::is_collection_type(acc.base())).then(|| {
+                format!(
+                    "the initial value gives no type, and the fold accumulates `{}`",
+                    acc.source_name(&self.data)
+                )
+            })
+        } else if !acc.is_unknown() && !self.convert(init, init_tp, acc) {
+            Some(format!(
+                "the initial value is `{}`, but the fold's accumulator parameter takes `{}`",
+                init_tp.source_name(&self.data),
+                acc.source_name(&self.data)
+            ))
+        } else if !elem_param.is_unknown() && !self.can_convert(elem_tp, elem_param) {
+            Some(format!(
+                "the elements are `{}`, but the fold's element parameter takes `{}`",
+                elem_tp.source_name(&self.data),
+                elem_param.source_name(&self.data)
+            ))
+        } else if !acc.is_unknown() && !ret.is_unknown() && !self.can_convert(ret, acc) {
+            Some(format!(
+                "the fold answers `{}`, but its accumulator parameter takes `{}` — it answers \
+                 what it accumulates",
+                ret.source_name(&self.data),
+                acc.source_name(&self.data)
+            ))
+        } else {
+            None
+        };
+        let Some(why) = misfit else {
+            return true;
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Error,
+            "reduce: {why}; the fold is `fn(accumulator, element) -> accumulator`"
+        );
+        false
+    }
+
     /// Compiler special-case for `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U`.
     /// Generates inline bytecode equivalent to a left-fold over the vector.
     /// Does a value of this type live in a STORE (or a text buffer) rather than in the
@@ -21289,7 +21341,14 @@ impl Parser {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
         if self.first_pass {
-            // On first pass, return the accumulator type (second arg) if available.
+            // The accumulator is the fold's first parameter (loft#1959); the initial value
+            // answers only when the fold does not say.
+            if let Some(Type::Function(params, ..)) = types.get(2)
+                && let Some(acc) = params.first()
+                && !acc.is_unknown()
+            {
+                return acc.without_deps();
+            }
             if types.len() >= 2 {
                 return types[1].clone();
             }
@@ -21303,7 +21362,7 @@ impl Parser {
             );
             return Type::Unknown(0);
         }
-        let _in_elem_type = if let Type::Vector(elm, _) = &types[0] {
+        let in_elem_type = if let Type::Vector(elm, _) = &types[0] {
             *elm.clone()
         } else {
             diagnostic!(
@@ -21313,7 +21372,7 @@ impl Parser {
             );
             return Type::Unknown(0);
         };
-        let (fn_param_types, _fn_ret_type) = if let Type::Function(params, ret, ..) = &types[2] {
+        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[2] {
             (params.clone(), *ret.clone())
         } else {
             diagnostic!(
@@ -21383,6 +21442,24 @@ impl Parser {
             *val = v_block(list.to_vec(), carried, Self::TV_REDUCE);
             return acc_type;
         }
+        // loft#1959 — the fold's signature must fit `fn(U, T) -> U`: the initial value is the
+        // accumulator parameter's type, the element the element parameter's, and the fold
+        // answers what it accumulates.  The accumulator IS the fold's first parameter, so the
+        // initial value is converted into it rather than the other way round; unchecked, a
+        // float init folded through an integer function read the float's bits as an integer.
+        let mut init_code = list[1].clone();
+        if !self.reduce_signature_fits(
+            &mut init_code,
+            &types[1],
+            &in_elem_type,
+            &fn_param_types,
+            &fn_ret_type,
+        ) {
+            return Type::Unknown(0);
+        }
+        if !fn_param_types[0].is_unknown() {
+            acc_type = fn_param_types[0].without_deps();
+        }
         if Self::is_heap_storage(&acc_type) && !matches!(acc_type.base(), Type::Text(_)) {
             diagnostic!(
                 self.lexer,
@@ -21409,17 +21486,23 @@ impl Parser {
             );
             return Type::Unknown(0);
         }
-        // Extract the compile-time d_nr from the fn-ref value (always Value::Int(d_nr)).
-        let fn_d_nr = if let Value::Int(d) = &list[2] {
-            *d as u32
-        } else {
+        // A function named at the call lowers to its definition number, which the fold calls.
+        // A function VALUE reaches here only when the declaration `reduce<T, U>` did not take
+        // it although its signature fits — an initial value that converts to the accumulator
+        // without being it, which a type variable does not do.
+        let Value::Int(d) = list[2].unspan() else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "reduce: the function must be known when the program is compiled — pass its name, or a lambda `|acc, x| {{ … }}`"
+                "reduce: a function held in a variable takes the initial value as exactly its \
+                 accumulator type `{}`, and this one is `{}` — write `{}`",
+                acc_type.source_name(&self.data),
+                types[1].source_name(&self.data),
+                format_args!("<init> as {}", acc_type.source_name(&self.data))
             );
             return Type::Unknown(0);
         };
+        let fn_d_nr = *d as u32;
 
         // loft#951 — a TEXT accumulator is minted as a WORK BUFFER, which puts it at
         // FUNCTION scope rather than inside the `reduce` block.  The block's tail is the
@@ -21521,7 +21604,7 @@ impl Parser {
 
         *val = v_block(
             vec![
-                v_set(acc_var, list[1].clone()),
+                v_set(acc_var, init_code),
                 v_set(vec_copy_var, list[0].clone()),
                 create_iter_code,
                 v_loop(loop_body, "reduce loop"),
