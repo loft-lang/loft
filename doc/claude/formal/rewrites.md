@@ -4403,6 +4403,31 @@ instructions and −10.6 % cycles interpreted.  Guard cells in the leaf-inline f
 tuple read in both elements and in a loop, and a text-holding tuple that stays a call; the pin
 counts four inlined calls and the decline.
 
+### `(R-InlineLeaf)` takes an appender
+
+```
+  (R-InlineLeaf) + A void leaf whose body is scalar assignments and appends of one scalar
+                 element to a vector field of a record parameter (`r.f += [e]`, the fused
+                 `OpPush…(OpGetField(r, …), …)`), reading each record parameter for nothing
+                 but those appends, is admitted.  At a call whose record arguments are plain
+                 variables holding the record and whose arguments call no user code, it is
+                 replaced by its body with each record read in place; any other call stays.
+```
+
+**In words.** Applied by: `leaf_inline::admit` (the appender branch, `push`, `record_uses`),
+`appender_site` (the call) and `expand` (the record in place, no result).  Why it pays: a call
+per element hides the appends from the caller's loop, so every append resolved the record's
+field and its vector from the store again; inlined, the loop's push windows hold them.  Why the
+call site is restricted: the call read the record variable before its arguments ran, and the
+inlined body reads it after them — the same record only when no argument can rebind the
+variable (no user call) and the variable IS the record (not a `&` link).  A parser temporary
+the fused push leaves unread (`_elm_1`) is not copied into the caller.  Plain `--native`
+ships a live tier and runs no IR rewrite, so its script corpus keeps the call; the release
+build is checked by `tests/leaf_inline.rs`.  Built: gridmesh `emit_segment` 17.5 → 7.2 ms
+(8.25× → 3.40× its Rust twin, native), the probe of four parallel appends 15 → 6 ms.
+`LOFT_NO_INLINE_APPENDER=1` keeps every appender's calls.  Guard:
+`tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft`.
+
 ### A text discharge that assigns a local is read straight into it
 
 ```

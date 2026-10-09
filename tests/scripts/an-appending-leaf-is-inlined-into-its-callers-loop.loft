@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-InlineLeaf`'s appender clause: a void function that appends scalar elements to the
+// vector fields of a record parameter is replaced at a call by its body, the record read in
+// place — and every other call keeps answering exactly what the call did.  Each cell appends
+// 50 elements, `i` in 0..50, and checks what landed, by length and by value; the sums are
+// computed by hand: `(i * 7) & 255` sums to 5247, `i * 0.5` to 612.5, `i` to 1225,
+// `i % 200 - 100` (an `i8`, stored with a bias) to -3775, `'a' + i % 26` to 5451 code points,
+// `i % 3 == 0` holds 17 times, `i * 3 * 2.0` sums to 7350.
+//
+// The cells: the clause's own shape, in a loop (inlined); a record reached through a field and
+// an argument that calls user code (both keep the call); a body that reads its record for
+// more than its appends (not admitted); one record passed for two parameters; a scalar local
+// in the body; a loop variable over a vector of records.  `LOFT_NO_INLINE_APPENDER=1` keeps
+// every call, and the answers are the same.
+//
+// @falsified-at: none — the rewrite is new; falsified instead by a planted defect: an appender
+//   body copied without its statements answers 0 for every length.
+
+struct Seg {
+  kinds: vector<u8>,
+  xs: vector<single>,
+  ix: vector<integer>,
+  sm: vector<i8>,
+  cs: vector<character>,
+  bs: vector<boolean>
+}
+
+struct Holder { tag: integer, seg: Seg }
+
+fn new_seg() -> Seg { Seg { kinds: [], xs: [], ix: [], sm: [], cs: [], bs: [] } }
+
+fn emit(m: Seg, kind: integer, x: float, owner: integer) {
+  m.kinds += [(kind & 255) as u8];
+  m.xs += [x as single];
+  m.ix += [owner];
+}
+
+fn emit_narrow(m: Seg, v: i8, c: character, b: boolean) {
+  m.sm += [v];
+  m.cs += [c];
+  m.bs += [b];
+}
+
+fn emit_scaled(m: Seg, v: integer) {
+  t = (v * 3) as float;
+  m.xs += [(t * 2.0) as single];
+}
+
+fn emit_len(m: Seg, x: float) {
+  m.xs += [x as single];
+  m.ix += [len(m.xs)];
+}
+
+fn emit_twice(a: Seg, b: Seg, v: integer) {
+  a.ix += [v];
+  b.ix += [v];
+}
+
+fn same(v: integer) -> integer {
+  if v < 0 { return 0; }
+  v
+}
+
+fn sum_kinds(m: const Seg) -> integer {
+  s = 0;
+  for k in m.kinds { s += k; }
+  s
+}
+
+fn sum_xs(m: const Seg) -> float {
+  s = 0.0;
+  for x in m.xs { s += x as float; }
+  s
+}
+
+fn sum_ix(m: const Seg) -> integer {
+  s = 0;
+  for x in m.ix { s += x; }
+  s
+}
+
+fn check_emit(m: const Seg, what: text) {
+  assert(len(m.kinds) == 50 && len(m.xs) == 50 && len(m.ix) == 50, "{what}: lengths {len(m.kinds)} {len(m.xs)} {len(m.ix)}");
+  assert(sum_kinds(m) == 5247, "{what}: kinds {sum_kinds(m)}");
+  assert(sum_xs(m) == 612.5, "{what}: xs {sum_xs(m)}");
+  assert(sum_ix(m) == 1225, "{what}: ix {sum_ix(m)}");
+}
+
+fn main() {
+  // The clause's own shape.
+  m = new_seg();
+  for i in 0..50 { emit(m, i * 7, i as float * 0.5, i); }
+  check_emit(m, "inlined");
+
+  // The record reached through a field: the call stays.
+  h = Holder { tag: 1, seg: new_seg() };
+  for i in 0..50 { emit(h.seg, i * 7, i as float * 0.5, i); }
+  check_emit(h.seg, "field");
+
+  // An argument that calls user code: the call stays.
+  u = new_seg();
+  for i in 0..50 { emit(u, same(i) * 7, i as float * 0.5, same(i)); }
+  check_emit(u, "user call");
+
+  // The narrow kinds, one with a bias.
+  n = new_seg();
+  for i in 0..50 {
+    v8 = (i % 200 - 100) as i8 ?? 0;
+    emit_narrow(n, v8, ('a' as integer + i % 26) as character, i % 3 == 0);
+  }
+  sm = 0;
+  for v in n.sm { sm += v; }
+  cs = 0;
+  for c in n.cs { cs += c as integer; }
+  bs = 0;
+  for b in n.bs { if b { bs += 1; } }
+  assert(len(n.sm) == 50 && len(n.cs) == 50 && len(n.bs) == 50, "narrow lengths");
+  assert(sm == -3775 && cs == 5451 && bs == 17, "narrow {sm} {cs} {bs}");
+
+  // A scalar local in the body.
+  sc = new_seg();
+  for i in 0..50 { emit_scaled(sc, i); }
+  assert(len(sc.xs) == 50 && sum_xs(sc) == 7350.0, "scaled {len(sc.xs)} {sum_xs(sc)}");
+
+  // A body reading its record for more than its appends: not admitted, same answer.
+  l = new_seg();
+  for i in 0..50 { emit_len(l, i as float * 0.5); }
+  assert(len(l.ix) == 50 && sum_ix(l) == 1275 && sum_xs(l) == 612.5, "len {sum_ix(l)} {sum_xs(l)}");
+
+  // One record passed for both parameters: both appends land in it.
+  t = new_seg();
+  for i in 0..50 { emit_twice(t, t, i); }
+  assert(len(t.ix) == 100 && sum_ix(t) == 2450, "twice {len(t.ix)} {sum_ix(t)}");
+
+  // A loop variable over a vector of records.
+  segs: vector<Seg> = [new_seg(), new_seg()];
+  for s in segs {
+    for i in 0..50 { emit(s, i * 7, i as float * 0.5, i); }
+  }
+  check_emit(segs[0], "loop variable 0");
+  check_emit(segs[1], "loop variable 1");
+  println("ok");
+}

@@ -40,11 +40,12 @@ const FIRES: &[(&str, usize, usize, usize, usize)] = &[
     ("n_test_a_tuple_result", 4, 0, 0, 0),
 ];
 
-const SWITCHES: [&str; 4] = [
+const SWITCHES: [&str; 5] = [
     "LOFT_NO_INLINE_LEAF",
     "LOFT_NO_MASK_RANGE",
     "LOFT_NO_SINGLE_USE",
     "LOFT_NO_SCALE_FOLD",
+    "LOFT_NO_INLINE_APPENDER",
 ];
 
 fn loft(args: &[&str], file: &Path, env: &[(&str, &str)]) -> (String, String, bool) {
@@ -101,6 +102,52 @@ fn each_rule_fires_where_the_cells_say_and_nowhere_else() {
             .any(|l| l.starts_with("inline-leaf: n_named declined: a non-scalar result")),
         "a tuple holding text is declined:\n{err}"
     );
+}
+
+const APPENDER_CELLS: &str =
+    "tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft";
+
+/// `@FR-R-InlineLeaf`'s appender clause: where it fires, read off the trace, and what the
+/// program answers on the release build with the clause on and off.  Plain `--native` ships a
+/// live tier and runs no IR rewrite, so the script corpus checks the inlined form on the
+/// interpreter only; this is its native check.
+#[test]
+fn the_appender_clause_fires_where_its_cells_say_and_holds_on_the_release_build() {
+    let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join(APPENDER_CELLS);
+    let (_, err, ok) = loft(&["--interpret"], &cells, &[("LOFT_TRACE_INLINE_LEAF", "1")]);
+    assert!(ok, "the appender cells failed:\n{err}");
+    // `emit` at its two plain-variable sites; the field site and the user-call site keep it.
+    for (leaf, sites) in [
+        ("n_emit", 2),
+        ("n_emit_narrow", 1),
+        ("n_emit_scaled", 1),
+        ("n_emit_twice", 1),
+    ] {
+        let fired = err
+            .lines()
+            .filter(|l| l.starts_with(&format!("inline-leaf: {leaf} into ")))
+            .count();
+        assert_eq!(fired, sites, "{leaf} inlined at {fired} sites:\n{err}");
+    }
+    assert!(
+        err.lines()
+            .any(|l| l.starts_with("inline-leaf: n_emit_len declined:")),
+        "a body reading its record beyond its appends is declined:\n{err}"
+    );
+    for off in ["0", "1"] {
+        let (out, err, ok) = loft(
+            &["--native-release"],
+            &cells,
+            &[
+                ("LOFT_NO_INLINE_APPENDER", off),
+                ("LOFT_NATIVE_NO_CACHE", "1"),
+            ],
+        );
+        assert!(
+            ok && out.trim_end().ends_with("ok"),
+            "--native-release, LOFT_NO_INLINE_APPENDER={off}:\n{out}\n{err}"
+        );
+    }
 }
 
 #[test]

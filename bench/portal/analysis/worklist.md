@@ -147,7 +147,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 | record-build (3) | `slope_path_with_undo`, `sphere`, `pluginabi/request` | `slope_path_with_undo` PRICED and BUILT: each copy of the seven-field `Hex` tuple into or out of a store record resolved the store per field (`(R-RecPtr)`'s tuple clause, −32 %), and `s.us_redo = []` searched the record's fields at run time for a no-heap element type (−7 %): 440 → 267 µs, same hash.  What is left: the chunk walks the twin shares (~37 %), `length_vector` / `get_vector` out of line for `k.items[idx]` in a matched chunk (~23 %, both already `#[inline]`), the undo entry's append (~10 %) |
 | vector-write (2) | `canvas`, `fill_rect` | the lock-test fix moved `fill_rect` 9 % |
 | alloc-temp (3) | `draft_fit_p`, `catalog_churn`, `slugify` | `draft_fit_p` hands its temporary to callees in another library (apart.md triage) |
-| vector-build (2) | `emit_segment`, `field_union` | nine parallel narrow appends per segment |
+| vector-build (2) | `emit_segment`, `field_union` | `emit_segment` PRICED and BUILT: its nine appends sat behind a call per segment, and each re-resolved the record's field and its vector; written in the loop they took push windows (probe 15 → 7 ms hand-priced).  Built as `(R-InlineLeaf)`'s appender clause: 17.5 → 7.2 ms, 8.25× → 3.40× on arm64 macOS, rewrites in the lane `R-Push` 6 → 15 and `R-Header` 17 → 26.  What is left on it is unpriced; `field_union` too |
 | vector-read (2) | `draw_quads`, `wall_chain_walk` | — |
 | int-loop (2), parallel (1), native-boundary (1) | `clock_advance`, `fill_triangle`; `par_text`; `rand_indices` | all but `rand_indices` within 4 % of the bar: re-read after M1 |
 

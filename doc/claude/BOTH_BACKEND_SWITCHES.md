@@ -353,7 +353,8 @@ power-of-two scale folds into a literal divisor (`@FR-R-ScaleFold`).  A program 
 again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps every call and
 is the first bisect step for a wrong answer out of a small scalar function on either backend;
 **`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
-reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+reduction each; **`LOFT_NO_INLINE_APPENDER=1`** keeps the calls of a void leaf that appends to a
+record parameter's vector fields (the appender clause); **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 
 **The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
