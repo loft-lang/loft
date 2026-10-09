@@ -25,11 +25,14 @@
 //!   own owned groups, so the guarantee reaches down a tree of loft processes.
 //! - **Windows:** a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (see the Windows
 //!   half below): a stop terminates the job, and loft's end closes it.
-//! - **macOS and the other unixes:** the process group, and the stop through it.  Driver
-//!   death is @PLN184's open question 5: macOS has no `PR_SET_PDEATHSIG`, so an owned tree is
+//! - **macOS:** the process group, and the stop through it.  macOS has no
+//!   `PR_SET_PDEATHSIG` (@PLN184 open question 5), so driver death is one watcher process per
+//!   loft — not per tree — started with the first owned group: it holds the read end of a pipe
+//!   only loft writes, learns each owned group as it starts and ends, and stops the ones left
+//!   when the pipe closes, which the kernel does however loft ends, `SIGKILL` included.
+//! - **The other unixes:** the process group, and the stop through it; an owned tree is
 //!   stopped by loft's own ends that run code (a normal exit, `SIGINT`/`SIGTERM`, which are
-//!   forwarded) but not when loft itself is `SIGKILL`ed.  It stays so until the owner decides
-//!   between a watcher process per tree and an exemption.
+//!   forwarded) but not when loft itself is `SIGKILL`ed.
 //!
 //! **The terminal.**  A child in a group of its own has left the terminal's foreground group,
 //! so a `Ctrl-C` typed at the terminal does not reach it.  loft therefore forwards the terminal's
@@ -993,6 +996,8 @@ mod os {
 
     fn forward_to(group: i32) -> bool {
         install_forwarding();
+        #[cfg(target_os = "macos")]
+        watcher::tell('+', group);
         GROUPS.iter().any(|slot| {
             slot.compare_exchange(0, group, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
@@ -1008,8 +1013,93 @@ mod os {
     }
 
     fn forget(group: i32) {
+        #[cfg(target_os = "macos")]
+        watcher::tell('-', group);
         for slot in &GROUPS {
             let _ = slot.compare_exchange(group, 0, Ordering::SeqCst, Ordering::SeqCst);
+        }
+    }
+
+    /// Driver death on macOS, which has no `PR_SET_PDEATHSIG` (@PLN184 open question 5): one
+    /// watcher per loft process, started with its first owned group, ends every owned group
+    /// still running when loft ends — however loft ends, `SIGKILL` included.  It is a shell
+    /// reading `+<group>` / `-<group>` lines from a pipe only loft holds the write end of
+    /// (Rust opens it close-on-exec, so no child inherits it); the pipe's end of file IS
+    /// loft's end, which the kernel delivers whatever killed it.  Then each group gets
+    /// `SIGTERM`, the same [`GRACE`] a stop gives, and `SIGKILL` — as a stop would.  The
+    /// watcher leads a group of its own and ignores the terminal's signals, so a `Ctrl-C` or a
+    /// harness ending loft's group does not take it first.
+    #[cfg(target_os = "macos")]
+    mod watcher {
+        use std::io::Write as _;
+        use std::sync::Mutex;
+
+        const SCRIPT: &str = "trap '' INT QUIT HUP TERM\n\
+            gs=' '\n\
+            while read -r op g; do\n\
+              case $op in\n\
+                +) gs=\"$gs$g \" ;;\n\
+                -) n=' '; for x in $gs; do [ \"$x\" = \"$g\" ] || n=\"$n$x \"; done; gs=$n ;;\n\
+              esac\n\
+            done\n\
+            for g in $gs; do kill -s TERM -- -$g 2>/dev/null; done\n\
+            i=0\n\
+            while [ $i -lt 40 ]; do\n\
+              alive=\n\
+              for g in $gs; do kill -s 0 -- -$g 2>/dev/null && alive=1; done\n\
+              [ -z \"$alive\" ] && exit 0\n\
+              sleep 0.05; i=$((i+1))\n\
+            done\n\
+            for g in $gs; do kill -s KILL -- -$g 2>/dev/null; done\n";
+
+        /// The watcher's input; `None` until the first owned group, or when it could not start
+        /// (the groups are then stopped by loft's own ends, as before).
+        static PIPE: Mutex<Option<std::process::ChildStdin>> = Mutex::new(None);
+        static STARTED: std::sync::Once = std::sync::Once::new();
+
+        pub(super) fn tell(op: char, group: i32) {
+            if group <= 0 {
+                return;
+            }
+            STARTED.call_once(|| {
+                if let Some(input) = start() {
+                    *PIPE
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(input);
+                }
+            });
+            let mut pipe = PIPE
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(input) = pipe.as_mut()
+                && writeln!(input, "{op} {group}").is_err()
+            {
+                // The watcher is gone (it ends only when its input does, so something killed
+                // it): nothing is left to tell.
+                *pipe = None;
+            }
+        }
+
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "platform::process is the one home of Command::new (@PLN184 P6)"
+        )]
+        fn start() -> Option<std::process::ChildStdin> {
+            use std::os::unix::process::CommandExt as _;
+            use std::process::{Command, Stdio};
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", SCRIPT])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .ok()?;
+            let input = child.stdin.take();
+            // The watcher outlives every use of its handle: it ends after loft does, and is
+            // reaped by whoever inherits it then.
+            std::mem::forget(child);
+            input
         }
     }
 
