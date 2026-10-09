@@ -172,3 +172,49 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
 
     let _ = fa::remove_dir_all(&home);
 }
+
+/// A manifest decides which sources a program is made of, so editing one is a miss even when
+/// every source is unchanged.  The bundle hashed only the parsed sources: dropping
+/// `probepkg`'s `[dependencies]` line left `probedep`'s source in place, and the warm load
+/// still answered `probepkg-0.1.0 45` for a program that no longer compiles.  Each source's
+/// nearest `loft.toml` is hashed beside it now.
+///
+/// @falsified-at: hand-measured (2026-10-09) — `save_program` without the manifests: the
+///   third run names `[warm] hit` and answers `probepkg-0.1.0 45`.  CHANNEL: the cache verdict
+///   and the value together.
+#[test]
+fn an_edited_manifest_is_a_miss_even_when_no_source_changed() {
+    let home = home_with_package("manifest_edit");
+    let lib_manifest = home.join("libs/probepkg/loft.toml");
+    let declared = fa::read_to_string(&lib_manifest).expect("read the manifest");
+
+    let cold = run(&home, &[]);
+    assert!(cold.contains(ANSWER), "cold answer:\n{cold}");
+    let warm = run(&home, &[]);
+    assert!(
+        warm.contains(ANSWER) && warm.contains("[warm] hit"),
+        "warm:\n{warm}"
+    );
+
+    let undeclared = declared
+        .split("[dependencies]")
+        .next()
+        .expect("the manifest's head")
+        .to_string();
+    write(&lib_manifest, &undeclared);
+    let edited = run(&home, &[]);
+    assert!(
+        !edited.contains("[warm] hit") && edited.contains("loft.toml changed"),
+        "an edited manifest must be a named miss:\n{edited}"
+    );
+    assert!(
+        !edited.contains(ANSWER),
+        "without its dependency the program must not answer as before:\n{edited}"
+    );
+
+    write(&lib_manifest, &declared);
+    let restored = run(&home, &[]);
+    assert!(restored.contains(ANSWER), "restored answer:\n{restored}");
+
+    let _ = fa::remove_dir_all(&home);
+}
