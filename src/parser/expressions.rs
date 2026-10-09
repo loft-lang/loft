@@ -1229,14 +1229,6 @@ impl Parser {
     /// here (parens, arithmetic, indexing → `parse_single` → `expression`), so
     /// one chokepoint bounds every nesting form.
     pub(crate) fn expression(&mut self, val: &mut Value) -> Type {
-        // Once the limit has tripped for this def, every further expression parse
-        // is a no-op: the def is already rejected, so we stop recursing entirely
-        // — this prevents a re-entry from re-walking the unconsumed deep tail and
-        // guarantees the parser unwinds in O(remaining tokens).  Reset per-def in
-        // `parse_function`.
-        if self.depth_overflowed {
-            return Type::Unknown(0);
-        }
         self.parse_depth += 1;
         let limit = if self.in_sandbox {
             SANDBOX_MAX_PARSE_DEPTH
@@ -1244,29 +1236,60 @@ impl Parser {
             MAX_PARSE_DEPTH
         };
         if self.parse_depth > limit {
-            // Stop recursing — emit once (latched) and unwind cleanly.
-            self.depth_overflowed = true;
-            if self.in_sandbox {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "expression nesting too deep in sandboxed code (limit {})",
-                    SANDBOX_MAX_PARSE_DEPTH
-                );
-            } else {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "expression nested more than {MAX_PARSE_DEPTH} levels deep — \
-                     bind an inner part to a local, or split it into a function"
-                );
+            // Refuse this expression and read past the group it stands in, so the frames
+            // above it unwind over balanced tokens and parse what follows as written.  The
+            // latch (reset per def in `parse_function`) keeps it to one error per def.
+            if !self.depth_overflowed {
+                self.depth_overflowed = true;
+                if self.in_sandbox {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "expression nesting too deep in sandboxed code (limit {})",
+                        SANDBOX_MAX_PARSE_DEPTH
+                    );
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "expression nested more than {MAX_PARSE_DEPTH} levels deep — \
+                         bind an inner part to a local, or split it into a function"
+                    );
+                }
+                self.depth_trip_mark = Some(self.lexer.diagnostics().mark());
             }
+            self.skip_rest_of_group();
             self.parse_depth -= 1;
             return Type::Unknown(0);
         }
         let result = self.expression_inner(val);
         self.parse_depth -= 1;
         result
+    }
+
+    /// After the nesting bound trips: read past the rest of the bracket group the refused
+    /// expression stands in, stopping BEFORE the closer that ends it.  Left unread, those
+    /// tokens met every enclosing frame — each expecting its own `)` / `]` / `}` — and one
+    /// refusal became a cascade of syntax errors naming columns the author never wrote a
+    /// mistake at.  With the group consumed, each enclosing frame finds its closer and the def
+    /// carries exactly one error.
+    fn skip_rest_of_group(&mut self) {
+        let mut depth = 0usize;
+        loop {
+            match &self.lexer.peek().has {
+                LexItem::None => return,
+                LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => depth += 1,
+                LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                    if depth == 0 {
+                        return;
+                    }
+                    depth -= 1;
+                }
+                LexItem::Token(t) if depth == 0 && matches!(t.as_str(), ";" | ",") => return,
+                _ => {}
+            }
+            self.lexer.cont();
+        }
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]

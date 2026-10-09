@@ -708,6 +708,11 @@ pub struct Parser {
     /// @PLN86 step 0.1 — latched once the depth limit trips, so the diagnostic
     /// is emitted once per def rather than at every frame as the parser unwinds.
     pub(crate) depth_overflowed: bool,
+    /// Where the diagnostics stood just after the nesting refusal: the frames above the refused
+    /// expression unwind over tokens they were not written for, and what they report there is
+    /// not the author's mistake.  `parse_function` rewinds to it once the body is read, so the
+    /// def carries the one refusal.
+    pub(crate) depth_trip_mark: Option<(usize, Level)>,
     /// The current file number that is being parsed
     file: u32,
     pub diagnostics: Diagnostics,
@@ -1916,6 +1921,7 @@ impl Parser {
             in_sandbox: false,
             parse_depth: 0,
             depth_overflowed: false,
+            depth_trip_mark: None,
             file: 1,
             diagnostics: Diagnostics::new(),
             default: false,

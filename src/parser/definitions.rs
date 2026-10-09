@@ -3073,6 +3073,7 @@ impl Parser {
         // Every def's nesting is counted from its own body (`MAX_PARSE_DEPTH`).
         self.parse_depth = 0;
         self.depth_overflowed = false;
+        self.depth_trip_mark = None;
         // Plan-17 phase 01 (B) — bound resolution + t-stub creation now
         // happens on BOTH passes.  Before, this block was gated on
         // `!self.first_pass`, leaving `definitions[ctx].bounds` empty
@@ -3504,6 +3505,11 @@ impl Parser {
                 self.vars.seed_incoming_writes(&self.data, self.context);
             }
             self.parse_code();
+            // A nesting refusal in this body: what the frames above it reported while unwinding
+            // over tokens they were not written for is dropped, leaving the one refusal.
+            if let Some(mark) = self.depth_trip_mark.take() {
+                self.lexer.rewind_diagnostics(mark);
+            }
             self.literal_body_constant();
             self.refuse_unmarked_foreign_return();
             // #314 — pass-1 sibling of the pass-2 flip above: now that
