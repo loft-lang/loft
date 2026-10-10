@@ -900,10 +900,13 @@ the reference's free upper 16 bits, or never reusing such a store) — loft#1973
 `(R-Place)` hands a callee a return buffer claimed in the caller's store S, and a callee that
 appends to it grows S while its parameters and views name into S — `s.floats =
 s.pack_instances()` appends while `self` and the inline view `n` name into `s`'s store, against
-`(H-ShortRef)`.  Every read re-resolves the store, so no answer is wrong; the cost is that
-`(R-RecPtr)` must decline to hold a view's address across the growth ("the remainder may grow a
-store": `mesh_to_floats`, `pack_instances`).  Closes when a result the callee grows takes a store
-of its own, so that a function's return buffer is a store apart from every parameter's.  `tests/ownership_drop_gate.rs` gives every generated cell
+`(H-ShortRef)`.  Every read re-resolves the store, so no answer is wrong.  The compiler copes
+with a run-time test: `(R-Alias)`'s versioned clause runs a copy of the loop that holds the
+parameters' headers and view addresses when the buffer's store is not a parameter's, and the
+plain loop when it is (`mesh_to_floats` and `pack_instances` take the copy).  Closes when a
+result the callee grows takes a store of its own, so that a function's return buffer is a store
+apart from every parameter's — or when `(H-ShortRef)` names the return buffer as the one store a
+parameter may share with something the call grows.  A design call (loft#1968).  `tests/ownership_drop_gate.rs` gives every generated cell
 a lease verdict and ties each cell that must release once, and does not, to exactly one open
 entry.
 

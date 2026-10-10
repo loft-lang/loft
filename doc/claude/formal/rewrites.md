@@ -228,9 +228,10 @@ length, a pop to empty then pushes, two stacks in one body, a pop from both ends
                  apart from every mover's (R-Base's growth clause — a `for` walk's
                  hidden vector over an owned local, a `&` view of one) cannot name a
                  pushed vector either, and is kept.
-                 VERSIONED: a loop whose movers grow the function's return buffer while
-                 it reads a PARAMETER runs a second copy under a run-time test that the
-                 buffer's store is not the parameter's; inside that copy the pair is
+                 VERSIONED: a loop whose movers grow the function's return buffer — or
+                 the result local that adopts it (R-RetAdopt), the buffer under another
+                 name — while it reads a PARAMETER runs a second copy under a run-time
+                 test that the buffer's store is not the parameter's; inside that copy the pair is
                  apart, and so is every view rooted in the parameter (its element views
                  included), so the parameter's headers and those views' record addresses
                  (R-RecPtr) are kept.  The original loop runs when the test fails.  The
@@ -245,10 +246,13 @@ mover left to its template would move a record a kept holder still describes.  T
 push moves; the rule is written for the next mover too.  Sites: `hoist::owned_local`,
 `hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.  The
 versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` decide the copy,
-`StoreFacts::distinct` reads its assumed pairs at the roots of both sides; switch
-`LOFT_NO_DISTINCT_VERSION`; guards
+`StoreFacts::distinct` reads its assumed pairs at the roots of both sides — an adopted local
+and its `__vdb` witness among them, the witness assumed but never tested (the adoption leaves
+it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
 `tests/scripts/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
-(graphics' `polygon_crossings`: 8.1× → 5.4× of its twin).
+(graphics' `polygon_crossings`: 8.1× → 5.4× of its twin) and
+`tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`
+(`mesh_to_floats`'s shape).
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
@@ -1072,7 +1076,8 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  growth clause: r's store is the end of its dep chain, `pr` for
                  `e = pr.items[i]?`), frees no record before a later use of r, never
                  rebinds r — a `Set`, and a NATIVE op taking r as its first
-                 operand that is not a read (`OpGet…`) or an in-place scalar set
+                 operand that is not a read (`OpGet…`), a comparison of the
+                 reference (`r == null`, `r != s`) or an in-place scalar set
                  (R-InPlace; a kind the address does not serve keeps its store
                  write, to the same bytes): a mint into it, a copy into it, a
                  free — and reads, writes or hands r at least once.  A binding to null (a buffer's pre-init,

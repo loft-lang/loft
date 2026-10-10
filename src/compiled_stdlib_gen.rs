@@ -632,7 +632,6 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
   // loft:default/02_files.loft:183
   ();
   let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 50_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
-  {{ let _v_val = (0_i64); {let db = (var___vdb_1); let v = if _v_val == i64::MIN { i32::MIN } else { _v_val as i32 }; if db.rec != 0 { stores.store_mut(&db).set_i32_raw(db.rec, db.pos + (0_i64) as u32, v); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }} }};
   // loft:default/02_files.loft:185
   let mut var_c: String = "".to_string();
   { //ncc_2: void
@@ -724,7 +723,6 @@ fn t_4text_split(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut v
   // loft:default/02_files.loft:207
   ();
   let mut var_result: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 50_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
-  {{ let _v_val = (0_i64); {let db = (var___vdb_1); let v = if _v_val == i64::MIN { i32::MIN } else { _v_val as i32 }; if db.rec != 0 { stores.store_mut(&db).set_i32_raw(db.rec, db.pos + (0_i64) as u32, v); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }} }};
   // loft:default/02_files.loft:208
   let mut var_p: i64 = 0_i64;
   // loft:default/02_files.loft:209
@@ -789,7 +787,6 @@ fn t_4text_split_text(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
   // loft:default/02_files.loft:230
   ();
   let mut var_out: DbRef = { if var___retbuf.store_nr == u16::MAX || var___retbuf.rec == 0 { var___retbuf = OpDatabase(cell, var___retbuf, 50_i32); } else { stores.clear_vector_release(&var___retbuf); } var___retbuf };
-  {{ let _v_val = (0_i64); {let db = (var___vdb_1); let v = if _v_val == i64::MIN { i32::MIN } else { _v_val as i32 }; if db.rec != 0 { stores.store_mut(&db).set_i32_raw(db.rec, db.pos + (0_i64) as u32, v); } else if db.absence_unreported() { stores.raise_recoverable_runtime(loft::runtime_error::RuntimeErrorKind::WriteDropped); }} }};
   // loft:default/02_files.loft:231
   let mut var_n: i64 = t_4text_size(cell, var_self);
   // loft:default/02_files.loft:232

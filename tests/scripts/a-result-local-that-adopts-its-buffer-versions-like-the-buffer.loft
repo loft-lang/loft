@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RESULT LOCAL THAT ADOPTS ITS BUFFER VERSIONS LIKE THE BUFFER (`@FR-R-Alias`'s versioned
+// clause, `@FR-R-RecPtr`, `@FR-R-RetAdopt`).  `flatten` builds its result in a local that
+// adopts the hidden return buffer, so its pushes grow the buffer's store.  The loop reads views
+// of the parameter's elements — the triangle `t`, bound by the `for`, and the vertex `v`,
+// tested against null — so it runs a copy in which both views keep their addresses, under a
+// run-time test that the result's store is not the parameter's.  Both arms must answer what
+// the plain loop answers:
+//
+// - into a local (a fresh buffer: the copy runs);
+// - into a field of the very record it reads (`m.out = flatten(m)`: the buffer can be in the
+//   mesh's own store, the test fails and the plain loop runs) — twice, the second call growing
+//   the result past the first one's capacity;
+// - a triangle naming a vertex that does not exist (`v` null: skipped).
+//
+// Expected values by hand.  Vertices k = 0..3 sit at (k, 10k).  Triangles (0,1,2) and
+// (1,2,3), and (2,3,9) whose vertex 9 is missing: each present vertex appends x then y.
+// Values in order: 0,0 1,10 2,20 | 1,10 2,20 3,30 | 2,20 3,30 → 16 entries, Σ = 33 + 66 + 55
+// = 154.  The second mesh doubles every vertex (k, 10k) → (2k, 20k): Σ = 308.
+//
+// @falsified-at: none — a performance rewrite: the answers are the same with and without it by
+//   design, on both trees.  What moves is which copy runs; the versioned copy's firing is
+//   pinned by the rewrite census (`R-AliasVersion`), and its run-time test by the cell that
+//   reads into the mesh's own record.
+
+struct Vx { x: integer, y: integer }
+struct Tri { a: integer, b: integer, c: integer }
+struct Mesh { vs: vector<Vx>, ts: vector<Tri>, out: vector<integer> }
+
+fn flatten(m: const Mesh) -> vector<integer> {
+  buf: vector<integer> = [];
+  for t in m.ts {
+    for k in [t.a, t.b, t.c] {
+      v = m.vs[k];
+      if v != null {
+        buf += [v.x, v.y];
+      }
+    }
+  }
+  buf
+}
+
+
+fn mesh(scale: integer) -> Mesh {
+  m = Mesh { vs: [], ts: [], out: [] };
+  for k in 0..4 { m.vs += [Vx { x: k * scale, y: 10 * k * scale }]; }
+  m.ts += [Tri { a: 0, b: 1, c: 2 }, Tri { a: 1, b: 2, c: 3 }, Tri { a: 2, b: 3, c: 9 }];
+  m
+}
+
+fn main() {
+  m = mesh(1);
+  local = flatten(m);
+  assert(len(local) == 16 && sum(local) == 154, "into a local: {len(local)} {sum(local)}");
+  assert(local[2] == 1 && local[3] == 10 && local[15] == 30, "into a local: the order");
+  m.out = flatten(m);
+  assert(len(m.out) == 16 && sum(m.out) == 154, "into its own record: {len(m.out)} {sum(m.out)}");
+  m2 = mesh(2);
+  for _ in 0..3 { m2.ts += [Tri { a: 3, b: 2, c: 1 }]; }
+  m2.out = flatten(m2);
+  // 16 entries as before, then three (3,2,1) triangles: (3+30) + (2+20) + (1+10) = 66 each, doubled → 132 each.
+  assert(len(m2.out) == 34 && sum(m2.out) == 308 + 3 * 132, "grown past capacity: {len(m2.out)} {sum(m2.out)}");
+}

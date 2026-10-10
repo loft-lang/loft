@@ -4252,7 +4252,14 @@ impl Output<'_> {
     /// then emitted twice: under the test with those pairs assumed, and as before.  `None`
     /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call),
     /// declares a loop record the copies would have to share, or sits in a generator.
-    pub(super) fn distinct_version(&mut self, lp: &crate::data::Block) -> Option<Vec<(u16, u16)>> {
+    /// Answers the pairs the run-time test compares and the pairs the copy may assume apart:
+    /// the same, except that an adopted result local's `__vdb` witness is assumed and never
+    /// tested (the adoption leaves it unallocated).
+    #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
+    pub(super) fn distinct_version(
+        &mut self,
+        lp: &crate::data::Block,
+    ) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
         if self.distinct_version_disabled
             || self.hoist_disabled
             || self.distinct_growth_disabled
@@ -4271,6 +4278,20 @@ impl Output<'_> {
             return None;
         }
         let rb = hoist::retbuf_var(self.data, self.def_nr)?;
+        // An ADOPTED result local is the buffer under another name (`hoist::RetAdopt`): its
+        // pushes grow the buffer's store, so the loop versions exactly as for a push onto the
+        // buffer itself.  The test reads the local, which names the store actually grown —
+        // the one allocated for a caller that offered no buffer included — and its witness
+        // is the root its dep chain ends at, so the copy assumes that apart too.
+        let adopted = self
+            .ret_adopt
+            .as_ref()
+            .filter(|a| a.buf == rb)
+            .map(|a| (a.v, a.vdb));
+        let bufs: Vec<u16> = std::iter::once(rb)
+            .chain(adopted.into_iter().flat_map(|(v, vdb)| [v, vdb]))
+            .collect();
+        let tested = adopted.map_or(rb, |(v, _)| v);
         let vars = self.data.def(self.def_nr).variables();
         let params: Vec<u16> = (0..vars.count())
             .filter(|&v| vars.is_argument(v) && v != rb && crate::data::is_dbref(vars.tp(v).base()))
@@ -4283,12 +4304,16 @@ impl Output<'_> {
             .pushes
             .iter()
             .chain(plain.mint_pushes.iter())
-            .all(|(p, _)| p.0 != rb)
-            && !plain.movers.contains(&rb)
+            .all(|(p, _)| !bufs.contains(&p.0))
+            && !plain.movers.iter().any(|m| bufs.contains(m))
         {
             return None;
         }
-        self.assumed_distinct = params.iter().map(|&p| (p, rb)).collect();
+        let assumed: Vec<(u16, u16)> = params
+            .iter()
+            .flat_map(|&p| bufs.iter().map(move |&b| (p, b)))
+            .collect();
+        self.assumed_distinct.clone_from(&assumed);
         let versioned = self.compute_loop_hoist(lp);
         self.assumed_distinct.clear();
         // A path counts only when nothing already holds its header: one an enclosing frame
@@ -4309,7 +4334,7 @@ impl Output<'_> {
         // read field by field in the loop, takes its address only when the buffer's growth is
         // proven to leave the parameter's store alone — a gain of its own, which the header
         // count above does not see (graphics' `polygon_crossings`: 18 store reads per edge).
-        for p in self.record_ptr_gains(lp, &params, rb) {
+        for p in self.record_ptr_gains(lp, &params, &assumed) {
             if !gained.contains(&p) {
                 gained.push(p);
             }
@@ -4317,19 +4342,30 @@ impl Output<'_> {
         if gained.is_empty() {
             return None;
         }
+        let mut tests: Vec<(u16, u16)> = Vec::new();
         let mut pairs: Vec<(u16, u16)> = Vec::new();
         for r in gained {
-            if !pairs.contains(&(r, rb)) {
-                pairs.push((r, rb));
+            if !tests.contains(&(r, tested)) {
+                tests.push((r, tested));
+            }
+            for &b in &bufs {
+                if !pairs.contains(&(r, b)) {
+                    pairs.push((r, b));
+                }
             }
         }
-        Some(pairs)
+        Some((tests, pairs))
     }
 
     /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
-    /// declines as things stand and admits once each parameter's store is assumed apart from
-    /// the return buffer `rb`.
-    fn record_ptr_gains(&mut self, lp: &crate::data::Block, params: &[u16], rb: u16) -> Vec<u16> {
+    /// declines as things stand and admits once the `assumed` pairs — each parameter against
+    /// the return buffer and the names it goes by — hold apart.
+    fn record_ptr_gains(
+        &mut self,
+        lp: &crate::data::Block,
+        params: &[u16],
+        assumed: &[(u16, u16)],
+    ) -> Vec<u16> {
         if self.record_ptr_disabled || self.distinct_growth_disabled {
             return Vec::new();
         }
@@ -4348,19 +4384,23 @@ impl Output<'_> {
             }
             None
         };
-        // Every block inside the loop, with each statement that binds a view of a parameter.
+        // Every statement list inside the loop — the loop's own, where a `for` binds its
+        // element, and each block's — with each statement that binds a view of a parameter.
         let mut sites: Vec<(Vec<Value>, usize, u16)> = Vec::new();
+        let mut scan = |ops: &[Value]| {
+            for (i, st) in ops.iter().enumerate() {
+                if let Value::Set(r, _) = st.unspan()
+                    && let Some(p) = root(*r)
+                    && *r != p
+                {
+                    sites.push((ops.to_vec(), i, p));
+                }
+            }
+        };
         let body = Value::Loop(Box::new(lp.clone()));
         body.any_node(&mut |n| {
-            if let Value::Block(bl) = n {
-                for (i, st) in bl.operators.iter().enumerate() {
-                    if let Value::Set(r, _) = st.unspan()
-                        && let Some(p) = root(*r)
-                        && *r != p
-                    {
-                        sites.push((bl.operators.clone(), i, p));
-                    }
-                }
+            if let Value::Block(bl) | Value::Loop(bl) = n {
+                scan(&bl.operators);
             }
             false
         });
@@ -4369,7 +4409,7 @@ impl Output<'_> {
             if out.contains(&p) {
                 continue;
             }
-            let pairs: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
+            let pairs = assumed.to_vec();
             let verdict = |this: &mut Self, assumed: &[(u16, u16)]| {
                 let twin_params = this.twin_params_of(
                     &stmts[at + 1..],

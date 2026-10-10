@@ -12,6 +12,8 @@
 // @falsified-at: 3378f14b8 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/1972-a-collection-refuses-reference-elements.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
 //   CHANNEL: the expectations — the control compiles both spellings without a word.
+//   HOLDS: on both trees nothing else in the file is reported: the element type is the one
+//   diagnostic.
 
 // @EXPECT_ERROR: a vector cannot hold `reference<…>` elements
 struct P { k: integer, v: integer }

@@ -848,11 +848,11 @@ impl Output<'_> {
             }
             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
             Value::Loop(lp) if self.assumed_distinct.is_empty() && !self.in_distinct_copy => {
-                if let Some(pairs) = self.distinct_version(lp) {
+                if let Some((tests, pairs)) = self.distinct_version(lp) {
                     // `@FR-R-Alias`'s versioned clause — the copy that holds the parameters'
                     // headers runs only when their stores are apart from the return buffer's.
                     let vars = self.data.def(self.def_nr).variables();
-                    let test = pairs
+                    let test = tests
                         .iter()
                         .map(|&(p, rb)| {
                             format!(
@@ -3951,6 +3951,18 @@ impl Output<'_> {
                 && self.loop_buffers.contains(vdb)
                 && matches!(a1.unspan(), Value::Int(0))
                 && matches!(a2.unspan(), Value::Int(0))
+            {
+                continue;
+            }
+            // `@FR-R-RetAdopt` — the adopted result local's witness is never allocated
+            // (`OpDatabaseEmitter`), so its literal zero has no record to write: emitted, it
+            // dropped the write and reported `write_dropped` on every call.  The local builds
+            // in the return buffer, whose bind already empties it.
+            if let Some(a) = self.ret_adopt
+                && let Value::Call(d, args) = v.unspan()
+                && (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).name() == "OpSetInt4"
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == a.vdb)
             {
                 continue;
             }
