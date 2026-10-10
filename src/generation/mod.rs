@@ -7782,8 +7782,10 @@ extern crate loft;"
             "    let db: &mut Stores = unsafe {{ &mut *cell.get() }};"
         )?;
         self.output_init(w, from, till)?;
-        writeln!(w, "    db.finish();")?;
+        // The targets first: `finish` links a type a stored `reference<T>` names (`@C145`),
+        // so it lays the type out by reference — as the interpreter's `finish` does.
         self.emit_reference_targets(w)?;
+        writeln!(w, "    db.finish();")?;
         // Mirror `compile::build_const_vectors` so module-scope `const`
         // vectors (`const NUMS = [10, 20, 30]`) populate `db.const_refs`
         // before `n_main` runs.  Without this, `OpConstRef(<d_nr>)`
@@ -7924,8 +7926,10 @@ extern crate loft;"
         )?;
         // Register ALL types (0..till) so runtime type IDs match compile-time IDs.
         self.output_init(w, 0, till)?;
-        writeln!(w, "    db.finish();")?;
+        // The targets first: `finish` links a type a stored `reference<T>` names (`@C145`),
+        // so it lays the type out by reference — as the interpreter's `finish` does.
         self.emit_reference_targets(w)?;
+        writeln!(w, "    db.finish();")?;
         // Initiative 03 Phase 3b: emit code to build CONST_STORE
         // vectors and populate `db.const_refs` — mirrors the
         // interpreter path in `compile::build_const_vectors`.

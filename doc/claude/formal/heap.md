@@ -343,7 +343,39 @@ field keeps its offset, and only content (a string's bytes, a vector's elements,
 record) moves, which no long-term reference names.  `(H-ShortRef)` is what lets a short-term
 reference name content directly, and what a rewrite may rely on: a function's parameters name
 stores that take no string or vector addition during the call.  The compiler's own placement
-does not keep it yet (D-heap-47).
+does not keep it yet (D-heap-47), and a removal ends a record's home while a stored reference
+may still name it (D-heap-48).
+
+**Where `(H-LongRef)` holds in the code.**
+- *The link.* `Stores::finish` links the element type of every keyed collection field (`hash`,
+  `radix`, `trie`, `index`), of every field group, and the target of every stored
+  `reference<T>` (recorded by `typedef::record_reference_targets` / `set_field_target`);
+  `finish_type` lays a linked type's `vector` / `sorted` out as `array` / `ordered`.  The
+  native `init()` replays the reference targets before its own `finish`, so both backends lay
+  the type out alike.
+- *The record id.* `Stores::record_new` claims a record of its own for a linked element;
+  `insert_record`'s array and ordered arms store its id (`array_add`, `vector::ordered_finish`);
+  `remove_vector_at` unlinks an id where an inline element would be shifted.
+- *The stride.* `Parser::element_store_size` and `vector_elem_read` read a linked element as a
+  4-byte id through `OpVectorRef` (H-Stride); `vector_slice` and `vector_keep_range` refuse one.
+- *The field, not the content.* A field value is a `DbRef` to its slot (`get_field`,
+  `Store::collection_rec`); `vector_append` and `vector_reserve` rewrite the owner slot when
+  growth moves the vector's record; `set_text` and `refill_str` replace a text's block and
+  write the slot.
+- *The cross-store pointer.* A stored `reference<T>` is a 12-byte `DbRef` field
+  (`typedef::fill_database`).
+- *The one place records move:* `compact_slot`, on the load path only, where no reference into
+  the store can be live yet.
+
+**Where `(H-ShortRef)` holds in the code.**
+- *User views.* The scope pass finds the views live across a disturbance
+  (`scopes/view_walk.rs` `collect_views_to_materialise`, `scopes/disturbance.rs`) and
+  materialises them or refuses the disturbance (`scopes/reshape_refusals.rs`: B-Ref-Reshape,
+  H-View-Drop).
+- *Compiler-held addresses.* `(R-Base)`, `(R-RecPtr)` and the push windows hold a vector base,
+  a record address or a header only while no store they read from grows
+  (`generation::hoist` `growth_free`, `StoreFacts::distinct`, `view_extent_verdict`);
+  `(R-TextBorrow)`'s borrowed text holds on the same terms (`Store::text_span`).
 
 ### Free — release the store a reference NAMES, once, never the stack
 
@@ -821,8 +853,16 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1**.  The entries the register closed, and how each closed, are in
+OPEN: **2**.  The entries the register closed, and how each closed, are in
 [heap-history.md](heap-history.md).
+
+### D-heap-48 — OPEN (loft#1969): a removal ends a record's home while a stored reference may name it <!-- doc-lint: ok -->
+
+`(H-LongRef)` keeps a referenced record from MOVING; removing it from its collection ends its
+home instead, and with no back references nothing tells the reference.  The freed record is
+reused by the next allocation, so the reference reads a different record — silently, on both
+backends.  Closes with a design for removal under a live long-term reference: refuse it, a
+generation tag the reference checks, or a tombstone.
 
 ### D-heap-47 — OPEN (loft#1968): `(R-Place)` grows a return buffer in a store its callee holds short-term references into <!-- doc-lint: ok -->
 

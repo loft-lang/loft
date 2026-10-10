@@ -7398,7 +7398,8 @@ use #count instead"
         matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
     }
 
-    /// Compute the in-store byte size of a vector element type.
+    /// Compute the in-store byte size of a vector element type.  A linked element is a 4-byte
+    /// record id (`@FR-H-LongRef`: its record has a home of its own; `@FR-H-Stride`).
     pub(crate) fn element_store_size(&mut self, elm: &Type) -> i32 {
         // @FR-H-Stride — a NESTED vector element is the inner vector's handle, the row
         // `vector_element_type` registers the outer storage with (`append_elem_tp` asks it

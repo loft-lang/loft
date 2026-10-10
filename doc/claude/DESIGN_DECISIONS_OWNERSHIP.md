@@ -279,8 +279,12 @@ reference stays a plain position — provided the layout guarantees that a refer
 not move, which is what these two clauses say.
 
 **Revisit when.** Not stated.  Decided 2026-10-10 — [record](DESIGN_DECISIONS-history.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it).
-**Holds at:** `@C145` — `Stores::is_linked` (the by-reference layout a link switches to); the
-rules `(H-LongRef)` and `(H-ShortRef)` in [formal/heap.md](formal/heap.md), with `D-heap-47`
-open (`(R-Place)` grows a return buffer placed in a store its callee holds short-term references
-into); guard `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
+**Holds at:** `@C145` — `Stores::finish` (a keyed collection, a field group and a stored
+`reference<T>` link a type) and `Stores::is_linked`; the rules `(H-LongRef)` and
+`(H-ShortRef)` in [formal/heap.md](formal/heap.md), with the code sites that keep each, and two
+open deviations — `D-heap-47` (`(R-Place)` grows a return buffer placed in a store its callee
+holds short-term references into) and `D-heap-48` (a removal ends a record's home while a
+stored reference may name it); guards
+`tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft` and
+`tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

@@ -2782,6 +2782,8 @@ mod free_order_tests {
 // The eight parameters are the extent, the view, the two things that type it, the
 // function, the memo, the write tier and the twin parameters; a struct would put a name
 // between each and the two call sites without removing anything.
+// `@FR-H-ShortRef` — the held address is valid only while the store it points into grows
+// nowhere in the view's extent; "the remainder may grow a store" is that refusal.
 #[allow(clippy::too_many_arguments)]
 fn view_extent_verdict(
     rest: &[Value],

@@ -5733,6 +5733,9 @@ impl Stores {
     /// at `(slot, PRIMARY, 8)` — so it must not move.  It does not: the root
     /// record is the destination's first claim, and a fresh store hands out
     /// `PRIMARY` first.
+    ///
+    /// `@FR-H-LongRef` — the one place records move: on the load path, where no reference into
+    /// the store can be live yet.
     fn compact_slot(&mut self, slot: u16) -> Result<u32, &'static str> {
         use crate::store::PRIMARY;
         let idx = slot as usize;
