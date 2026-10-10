@@ -25,6 +25,8 @@
 //   WITNESS: `h.r` read 99 after `items.remove(1); items += [P { k: 9, v: 99 }]`: the
 //   appended record took the removed one's position.  Each cell fails alone under
 //   `LOFT_NO_TOMBSTONE=1` (99, 33, 33, 88, 99, and the churn cell's non-null reference).
+//   HOLDS: on both trees, a reference to a record that was not removed reads 11, and a
+//   reference set again after the removal reads its new record (11).
 
 struct P { k: integer, v: integer }
 struct Bag { items: vector<P> }
