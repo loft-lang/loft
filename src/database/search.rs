@@ -1078,11 +1078,16 @@ impl Stores {
     /// `?`-discharged read past the end pads with defaults, which this never does); a call
     /// outside those bounds does nothing, so a wrong guard leaves the vector as it was rather
     /// than a shape the program never had.
+    ///
+    /// `@FR-H-Removed` — keeping `[0, 0)` is also the release a clear of a linked vector owes
+    /// before its length reset (`Parser::linked_clear_release`): each record reaches
+    /// [`Store::delete`], which leaves the mark a stored reference reads as null.
     pub fn keep_vector_range(&mut self, data: &DbRef, elem_tp: u16, lo: i64, hi: i64) {
-        if data.is_null() || lo < 0 || hi < lo {
+        if data.is_null() || data.rec == 0 || lo < 0 || hi < lo {
             return;
         }
-        let vec_rec = self.store(data).get_u32_raw(data.rec, data.pos);
+        // An absent vector (`DbRef::ABSENT_REC` in its slot) holds no elements to keep.
+        let vec_rec = self.store(data).collection_rec(data.rec, data.pos);
         if vec_rec == 0 {
             return;
         }

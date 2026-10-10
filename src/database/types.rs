@@ -1803,10 +1803,18 @@ impl Stores {
     }
 
     pub fn vector(&mut self, content: u16) -> u16 {
+        // The content's CONSTRUCTOR spelling: `finish` renames a linked element's `vector<T>`
+        // to `array<T>` (`promoted_lookup_key`), and a nested vector named after the renamed
+        // content (`vector<array<T>>`) missed the `vector<vector<T>>` registered before it —
+        // a second type for one collection, minted after `finish`, which the runtime table
+        // did not carry: `vv[0] += [x]` on a `vector<vector<T>>` of a linked `T` indexed past
+        // it and panicked, on both backends.
         let name = if content == u16::MAX {
             "vector".to_string()
         } else {
-            format!("vector<{}>", self.types[content as usize].name)
+            let t = &self.types[content as usize];
+            let inner = Self::promoted_lookup_key(t).unwrap_or_else(|| t.name.clone());
+            format!("vector<{inner}>")
         };
         mint_trace(
             "vector",

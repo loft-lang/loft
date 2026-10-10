@@ -20773,6 +20773,14 @@ impl Parser {
             "sort" if self.sort_is_special(source, types) => {
                 return self.parse_sort(val, list, types);
             }
+            "clear"
+                if types.len() == 1
+                    && matches!(types[0].peel_link().base(), Type::Vector(_, _))
+                    && let Some(ops) = self.vector_clear_lowering(&list[0], &types[0]) =>
+            {
+                *val = Value::Insert(ops);
+                return Type::Void;
+            }
             "insert" => return self.parse_insert(val, list, types),
             "reverse" => return self.parse_reverse(val, list, types),
             "reserve" => return self.parse_reserve(val, list, types),

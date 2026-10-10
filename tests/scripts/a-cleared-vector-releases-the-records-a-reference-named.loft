@@ -1,0 +1,122 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@C145`, `@FR-H-Removed` — emptying a vector removes each of its records, so a stored
+// reference to one reads null, whichever spelling empties it.  The element type is linked (a
+// `reference<P>` field names it), so every element is a record of its own.  Each cell sets up a
+// reference, empties the vector, appends new records (the claims that would reuse the space)
+// and reads through the reference:
+//
+// - a field of a one-field struct: `b.items.clear()`, `clear(b.items)`, `b.items = []` and
+//   `b.items = [lit]` — null each time, the new length 2, 1 or 2;
+// - a field beside another field, a field one record down (`w.one.items`), and a vector that is
+//   an element of an outer vector (`w.vv[0].clear()`) — null;
+// - a local: `items.clear()` — null;
+// - a text-owning element: the reference is null and the new elements read their own text;
+// - a field group (`vector<P>` beside `hash<P[k]>`): `g.items.clear()` and `g.items = []` both
+//   empty the keyed member too (`@FR-Col-Group`) — `0 0`, and the reference null;
+// - an absent `vector<P>?` field emptied again stays empty and takes new elements;
+// - a reference to a record of ANOTHER vector, not cleared, keeps reading it.
+//
+// A local REASSIGNED (`items = []`) frees its whole store instead: D-heap-50, loft#1973.
+//
+// @falsified-at: 3378f14b8 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-cleared-vector-releases-the-records-a-reference-named.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the asserts — the first failing cell ends the run, on both backends.
+//   WITNESS: `clear(): the cleared record reads null, got b` — the cleared record kept its
+//   values and its claim.
+//   HOLDS: on both trees, a reference into another vector that was not cleared reads `keep`.
+
+struct P { k: integer, name: text }
+struct Bag { items: vector<P> }
+struct Bag2 { n: integer, items: vector<P> }
+struct World { one: Bag2, vv: vector<vector<P>> }
+struct G { items: vector<P>, by_k: hash<P[k]> }
+struct N { items: vector<P>? }
+struct Holder { r: reference<P>? }
+
+fn one_field() {
+  b = Bag { items: [P { k: 1, name: "a" }, P { k: 2, name: "b" }] };
+  other = Bag { items: [P { k: 5, name: "keep" }] };
+  keep = Holder { r: other.items[0] };
+  h = Holder { r: b.items[1] };
+  b.items.clear();
+  b.items += [P { k: 9, name: "z" }, P { k: 8, name: "y" }];
+  assert(h.r == null, "clear(): the cleared record reads null, got {h.r.name}");
+  assert(len(b.items) == 2 && b.items[1].name == "y", "clear(): the refill");
+  h.r = b.items[1];
+  clear(b.items);
+  b.items += [P { k: 7, name: "x" }];
+  assert(h.r == null, "clear(v): null, got {h.r.name}");
+  assert(len(b.items) == 1 && b.items[0].name == "x", "clear(v): the refill");
+  h.r = b.items[0];
+  b.items = [];
+  b.items += [P { k: 6, name: "w" }, P { k: 5, name: "v" }];
+  assert(h.r == null, "= []: null, got {h.r.name}");
+  h.r = b.items[0];
+  b.items = [P { k: 4, name: "u" }, P { k: 3, name: "t" }];
+  assert(h.r == null, "= [lit]: null, got {h.r.name}");
+  assert(len(b.items) == 2 && b.items[0].name == "u", "= [lit]: the literal");
+  assert(keep.r.name == "keep", "a record of another vector keeps its value, got {keep.r.name}");
+}
+
+fn deeper() {
+  c = Bag2 { n: 1, items: [P { k: 1, name: "a" }, P { k: 2, name: "b" }] };
+  h = Holder { r: c.items[1] };
+  c.items.clear();
+  c.items += [P { k: 9, name: "z" }, P { k: 8, name: "y" }];
+  assert(h.r == null, "beside a field: null, got {h.r.name}");
+  w = World { one: Bag2 { n: 2, items: [P { k: 1, name: "a" }, P { k: 2, name: "b" }] }, vv: [[P { k: 3, name: "c" }, P { k: 4, name: "d" }]] };
+  h.r = w.one.items[1];
+  w.one.items = [];
+  w.one.items += [P { k: 9, name: "z" }, P { k: 8, name: "y" }];
+  assert(h.r == null, "one record down: null, got {h.r.name}");
+  h.r = w.vv[0][1];
+  w.vv[0].clear();
+  w.vv[0] += [P { k: 9, name: "z" }, P { k: 8, name: "y" }];
+  assert(h.r == null, "element of an outer vector: null, got {h.r.name}");
+  assert(len(w.vv[0]) == 2 && w.vv[0][1].name == "y", "element of an outer vector: the refill");
+}
+
+fn local() {
+  items: vector<P> = [P { k: 1, name: "a" }, P { k: 2, name: "b" }];
+  h = Holder { r: items[1] };
+  items.clear();
+  items += [P { k: 9, name: "z" }, P { k: 8, name: "y" }];
+  assert(h.r == null, "local: null, got {h.r.name}");
+  assert("{items[0].name}{items[1].name}" == "zy", "local: the refill");
+}
+
+fn group() {
+  g = G { };
+  g.items += [P { k: 1, name: "a" }, P { k: 2, name: "b" }];
+  h = Holder { r: g.items[1] };
+  g.items.clear();
+  assert(len(g.items) == 0 && len(g.by_k) == 0, "group clear(): {len(g.items)} {len(g.by_k)}");
+  assert(h.r == null, "group clear(): null");
+  g.items += [P { k: 3, name: "c" }];
+  assert(g.by_k[3].name == "c", "group clear(): the keyed member takes the new record");
+  h.r = g.items[0];
+  g.items = [];
+  assert(len(g.items) == 0 && len(g.by_k) == 0, "group = []: {len(g.items)} {len(g.by_k)}");
+  assert(h.r == null, "group = []: null");
+}
+
+fn absent() {
+  n = N { items: [P { k: 1, name: "a" }] };
+  h = Holder { r: n.items[0] };
+  n.items = null;
+  n.items.clear();
+  n.items = [];
+  assert(h.r == null, "absent: null");
+  n.items += [P { k: 2, name: "b" }];
+  assert(n.items?[0].name == "b", "absent: takes a new element");
+}
+
+fn main() {
+  one_field();
+  deeper();
+  local();
+  group();
+  absent();
+}

@@ -1,0 +1,436 @@
+diff --git b/src/database/search.rs a/src/database/search.rs
+index be469fb94..2e382f767 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -1078,16 +1078,11 @@ impl Stores {
+     /// `?`-discharged read past the end pads with defaults, which this never does); a call
+     /// outside those bounds does nothing, so a wrong guard leaves the vector as it was rather
+     /// than a shape the program never had.
+-    ///
+-    /// `@FR-H-Removed` — keeping `[0, 0)` is also the release a clear of a linked vector owes
+-    /// before its length reset (`Parser::linked_clear_release`): each record reaches
+-    /// [`Store::delete`], which leaves the mark a stored reference reads as null.
+     pub fn keep_vector_range(&mut self, data: &DbRef, elem_tp: u16, lo: i64, hi: i64) {
+-        if data.is_null() || data.rec == 0 || lo < 0 || hi < lo {
++        if data.is_null() || lo < 0 || hi < lo {
+             return;
+         }
+-        // An absent vector (`DbRef::ABSENT_REC` in its slot) holds no elements to keep.
+-        let vec_rec = self.store(data).collection_rec(data.rec, data.pos);
++        let vec_rec = self.store(data).get_u32_raw(data.rec, data.pos);
+         if vec_rec == 0 {
+             return;
+         }
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index b02813f43..d2efa4945 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -836,26 +836,6 @@ impl Stores {
+             .map(|i| i as u16)
+     }
+ 
+-    /// `@FR-H-Removed` — the element type whose records a clear of the vector field at
+-    /// `byte_off` of `struct_tp` releases one by one: the field is an `array` (its element
+-    /// type linked, each element a record of its own) and it holds those records itself —
+-    /// it is in no group, or it is the group's holder rather than a view of it.  `None` for
+-    /// every other field: an inline element dies with the length reset, and a view's records
+-    /// belong to the holder.
+-    #[must_use]
+-    pub fn clear_releases_records(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+-        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+-            &self.types.get(struct_tp as usize)?.parts
+-        else {
+-            return None;
+-        };
+-        let f = fields.iter().find(|f| f.position == byte_off)?;
+-        let Parts::Array(elem) = self.types.get(f.content as usize)?.parts else {
+-            return None;
+-        };
+-        (f.other_indexes.first() != Some(&u16::MAX)).then_some(elem)
+-    }
+-
+     /// loft#898 — the members of the linked collection group the keyed field at
+     /// `byte_off` belongs to, as `(byte_off, collection_tp, is_view)` per member,
+     /// INCLUDING the field itself. Empty when the field is not in a group.
+diff --git b/src/database/types.rs a/src/database/types.rs
+index c22152916..1fe03f102 100644
+--- b/src/database/types.rs
++++ a/src/database/types.rs
+@@ -1803,18 +1803,10 @@ impl Stores {
+     }
+ 
+     pub fn vector(&mut self, content: u16) -> u16 {
+-        // The content's CONSTRUCTOR spelling: `finish` renames a linked element's `vector<T>`
+-        // to `array<T>` (`promoted_lookup_key`), and a nested vector named after the renamed
+-        // content (`vector<array<T>>`) missed the `vector<vector<T>>` registered before it —
+-        // a second type for one collection, minted after `finish`, which the runtime table
+-        // did not carry: `vv[0] += [x]` on a `vector<vector<T>>` of a linked `T` indexed past
+-        // it and panicked, on both backends.
+         let name = if content == u16::MAX {
+             "vector".to_string()
+         } else {
+-            let t = &self.types[content as usize];
+-            let inner = Self::promoted_lookup_key(t).unwrap_or_else(|| t.name.clone());
+-            format!("vector<{inner}>")
++            format!("vector<{}>", self.types[content as usize].name)
+         };
+         mint_trace(
+             "vector",
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index cf11a7b1c..51ba7bd9f 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -848,11 +848,11 @@ impl Output<'_> {
+             }
+             Value::Block(bl) => self.output_block(w, IrBlock::Native(bl), false, false)?,
+             Value::Loop(lp) if self.assumed_distinct.is_empty() && !self.in_distinct_copy => {
+-                if let Some((tests, pairs)) = self.distinct_version(lp) {
++                if let Some(pairs) = self.distinct_version(lp) {
+                     // `@FR-R-Alias`'s versioned clause — the copy that holds the parameters'
+                     // headers runs only when their stores are apart from the return buffer's.
+                     let vars = self.data.def(self.def_nr).variables();
+-                    let test = tests
++                    let test = pairs
+                         .iter()
+                         .map(|&(p, rb)| {
+                             format!(
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 6af5a9499..51b8a2b0e 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -4252,14 +4252,7 @@ impl Output<'_> {
+     /// then emitted twice: under the test with those pairs assumed, and as before.  `None`
+     /// for a loop that gains nothing, cannot be copied (a `yield`, a `par`, a fn-ref call),
+     /// declares a loop record the copies would have to share, or sits in a generator.
+-    /// Answers the pairs the run-time test compares and the pairs the copy may assume apart:
+-    /// the same, except that an adopted result local's `__vdb` witness is assumed and never
+-    /// tested (the adoption leaves it unallocated).
+-    #[expect(clippy::type_complexity, reason = "two pair lists, named in the doc")]
+-    pub(super) fn distinct_version(
+-        &mut self,
+-        lp: &crate::data::Block,
+-    ) -> Option<(Vec<(u16, u16)>, Vec<(u16, u16)>)> {
++    pub(super) fn distinct_version(&mut self, lp: &crate::data::Block) -> Option<Vec<(u16, u16)>> {
+         if self.distinct_version_disabled
+             || self.hoist_disabled
+             || self.distinct_growth_disabled
+@@ -4278,16 +4271,6 @@ impl Output<'_> {
+             return None;
+         }
+         let rb = hoist::retbuf_var(self.data, self.def_nr)?;
+-        // An ADOPTED result local is the buffer under another name (`hoist::RetAdopt`): its
+-        // pushes grow the buffer's store, so the loop versions exactly as for a push onto the
+-        // buffer itself.  The test reads the local, which names the store actually grown —
+-        // the one allocated for a caller that offered no buffer included — and its witness
+-        // is the root its dep chain ends at, so the copy assumes that apart too.
+-        let adopted = self.ret_adopt.as_ref().filter(|a| a.buf == rb).map(|a| (a.v, a.vdb));
+-        let bufs: Vec<u16> = std::iter::once(rb)
+-            .chain(adopted.into_iter().flat_map(|(v, vdb)| [v, vdb]))
+-            .collect();
+-        let tested = adopted.map_or(rb, |(v, _)| v);
+         let vars = self.data.def(self.def_nr).variables();
+         let params: Vec<u16> = (0..vars.count())
+             .filter(|&v| vars.is_argument(v) && v != rb && crate::data::is_dbref(vars.tp(v).base()))
+@@ -4300,16 +4283,12 @@ impl Output<'_> {
+             .pushes
+             .iter()
+             .chain(plain.mint_pushes.iter())
+-            .all(|(p, _)| !bufs.contains(&p.0))
+-            && !plain.movers.iter().any(|m| bufs.contains(m))
++            .all(|(p, _)| p.0 != rb)
++            && !plain.movers.contains(&rb)
+         {
+             return None;
+         }
+-        let assumed: Vec<(u16, u16)> = params
+-            .iter()
+-            .flat_map(|&p| bufs.iter().map(move |&b| (p, b)))
+-            .collect();
+-        self.assumed_distinct.clone_from(&assumed);
++        self.assumed_distinct = params.iter().map(|&p| (p, rb)).collect();
+         let versioned = self.compute_loop_hoist(lp);
+         self.assumed_distinct.clear();
+         // A path counts only when nothing already holds its header: one an enclosing frame
+@@ -4330,7 +4309,7 @@ impl Output<'_> {
+         // read field by field in the loop, takes its address only when the buffer's growth is
+         // proven to leave the parameter's store alone — a gain of its own, which the header
+         // count above does not see (graphics' `polygon_crossings`: 18 store reads per edge).
+-        for p in self.record_ptr_gains(lp, &params, &assumed) {
++        for p in self.record_ptr_gains(lp, &params, rb) {
+             if !gained.contains(&p) {
+                 gained.push(p);
+             }
+@@ -4338,30 +4317,19 @@ impl Output<'_> {
+         if gained.is_empty() {
+             return None;
+         }
+-        let mut tests: Vec<(u16, u16)> = Vec::new();
+         let mut pairs: Vec<(u16, u16)> = Vec::new();
+         for r in gained {
+-            if !tests.contains(&(r, tested)) {
+-                tests.push((r, tested));
+-            }
+-            for &b in &bufs {
+-                if !pairs.contains(&(r, b)) {
+-                    pairs.push((r, b));
+-                }
++            if !pairs.contains(&(r, rb)) {
++                pairs.push((r, rb));
+             }
+         }
+-        Some((tests, pairs))
++        Some(pairs)
+     }
+ 
+     /// The parameters of `params` with an element VIEW bound in `lp` that `@FR-R-RecPtr`
+-    /// declines as things stand and admits once the `assumed` pairs — each parameter against
+-    /// the return buffer and the names it goes by — hold apart.
+-    fn record_ptr_gains(
+-        &mut self,
+-        lp: &crate::data::Block,
+-        params: &[u16],
+-        assumed: &[(u16, u16)],
+-    ) -> Vec<u16> {
++    /// declines as things stand and admits once each parameter's store is assumed apart from
++    /// the return buffer `rb`.
++    fn record_ptr_gains(&mut self, lp: &crate::data::Block, params: &[u16], rb: u16) -> Vec<u16> {
+         if self.record_ptr_disabled || self.distinct_growth_disabled {
+             return Vec::new();
+         }
+@@ -4401,7 +4369,7 @@ impl Output<'_> {
+             if out.contains(&p) {
+                 continue;
+             }
+-            let pairs = assumed.to_vec();
++            let pairs: Vec<(u16, u16)> = params.iter().map(|&q| (q, rb)).collect();
+             let verdict = |this: &mut Self, assumed: &[(u16, u16)]| {
+                 let twin_params = this.twin_params_of(
+                     &stmts[at + 1..],
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index de6e31308..a48541bb5 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -1324,7 +1324,7 @@ impl Parser {
+         self.database.keyed_group_members(struct_tp, byte_off).len() >= 2
+     }
+ 
+-    pub(crate) fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
++    fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
+         let Value::Call(gf_nr, gf_args) =
+             crate::use_analysis::through_null_arm(&self.data, coll).unspan()
+         else {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index a670ef8d4..c5287c7a3 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -20773,14 +20773,6 @@ impl Parser {
+             "sort" if self.sort_is_special(source, types) => {
+                 return self.parse_sort(val, list, types);
+             }
+-            "clear"
+-                if types.len() == 1
+-                    && matches!(types[0].peel_link().base(), Type::Vector(_, _))
+-                    && let Some(ops) = self.vector_clear_lowering(&list[0], &types[0]) =>
+-            {
+-                *val = Value::Insert(ops);
+-                return Type::Void;
+-            }
+             "insert" => return self.parse_insert(val, list, types),
+             "reverse" => return self.parse_reverse(val, list, types),
+             "reserve" => return self.parse_reserve(val, list, types),
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index fae28b447..474d6755c 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -5121,24 +5121,6 @@ impl Parser {
+                      elements are always dense (a key / slot denotes presence)"
+                 );
+             }
+-            // `@FR-H-RefElem` — a stored reference is a struct FIELD (`B-Ref-StoredRef`); as
+-            // a collection's element it had no meaning of its own and was read as the record
+-            // type, so the collection held COPIES and a write through either side never
+-            // reached the other — silently, on both backends (loft#1972).
+-            if sub_name == "reference"
+-                && matches!(
+-                    type_name,
+-                    "vector" | "sorted" | "hash" | "index" | "radix" | "spatial" | "trie"
+-                )
+-            {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "a {type_name} cannot hold `reference<…>` elements — it would hold copies \
+-                     of the records; wrap the reference in a struct field instead: \
+-                     `struct Ref {{ r: reference<T> }}` and `{type_name}<Ref>`"
+-                );
+-            }
+             // before trying to resolve the element type, fail fast if the
+             // identifier shadows a non-type definition (constant, function).
+             // parse_type silently returns None in that case; sub_type's later
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 681466985..92ae18f9d 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -2922,16 +2922,7 @@ use a separate collection or add after the loop"
+             Parts::Vector(_) | Parts::Array(_)
+         );
+         if is_plain_vector {
+-            // The primary holds the group's records, so a linked one releases them
+-            // (`@FR-H-Removed`): the views were reset above and name none of them any more.
+-            match self.database.types[coll_tp as usize].parts {
+-                Parts::Array(elem) => {
+-                    let release = self.keep_none(&field, elem);
+-                    let clear = self.cl("OpClearVector", std::slice::from_ref(&field));
+-                    Value::Insert(vec![release, clear])
+-                }
+-                _ => self.cl("OpClearVector", std::slice::from_ref(&field)),
+-            }
++            self.cl("OpClearVector", std::slice::from_ref(&field))
+         } else {
+             self.cl("OpClearKeyed", &[field, Value::Int(i32::from(coll_tp))])
+         }
+@@ -2948,13 +2939,7 @@ use a separate collection or add after the loop"
+     /// documents, and there the record holder is the vector — so it lives here
+     /// rather than in either one's branch.
+     fn keyed_sibling_view_resets(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
+-        let site = self.field_site(to, parent_tp);
+-        self.keyed_sibling_view_resets_at(to, site)
+-    }
+-
+-    /// [`Self::keyed_sibling_view_resets`] for a field site already resolved.
+-    fn keyed_sibling_view_resets_at(&mut self, to: &Value, site: Option<(u16, u16)>) -> Vec<Value> {
+-        let Some((struct_tp, byte_off)) = site else {
++        let Some((struct_tp, byte_off)) = self.field_site(to, parent_tp) else {
+             return Vec::new();
+         };
+         let members = self.database.keyed_group_members(struct_tp, byte_off);
+@@ -3278,78 +3263,11 @@ use a separate collection or add after the loop"
+     }
+ 
+     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
+-        let site = self.field_site(to, parent_tp);
+-        self.clear_vector_at(to, site, None)
+-    }
+-
+-    /// The clear of the vector at `to`, whose struct field site — when it is a field — is
+-    /// `site` and whose type, when the caller has it, is `vec_tp`: the sibling views reset
+-    /// when it holds a group's records, then those records released when its element type is
+-    /// linked (`linked_clear_release`), then the length reset.  `v.clear()`, `clear(v)` and
+-    /// `v = …` empty a vector through here, so the three spellings answer alike
+-    /// (`@FR-Col-Group`, `@FR-H-Removed`).
+-    pub(crate) fn clear_vector_at(
+-        &mut self,
+-        to: &Value,
+-        site: Option<(u16, u16)>,
+-        vec_tp: Option<&Type>,
+-    ) -> Vec<Value> {
+-        let mut ops = self.keyed_sibling_view_resets_at(to, site);
+-        ops.extend(self.linked_clear_release(to, site, vec_tp));
++        let mut ops = self.keyed_sibling_view_resets(to, parent_tp);
+         ops.push(self.cl("OpClearVector", std::slice::from_ref(to)));
+         ops
+     }
+ 
+-    /// `@C145`, `@FR-H-Removed` — the release a clear of the vector at `to` owes when its
+-    /// element type is linked: each element is a record of its own (an `array`), and the
+-    /// length reset `OpClearVector` performs would strand those records in the store — still
+-    /// claimed, and still read through a stored reference that named one.  Keeping the range
+-    /// `[0, 0)` sends every record through `Store::delete`, which leaves the mark the
+-    /// reference reads as null.  A field resolves through its struct (`site`): a group's VIEW
+-    /// holds no records of its own and releases nothing.  Anything else — a local, an element
+-    /// of an outer vector — resolves through its type, `vec_tp` or the local's.  `None` for
+-    /// an inline element type, whose elements die with the length reset.
+-    pub(crate) fn linked_clear_release(
+-        &mut self,
+-        to: &Value,
+-        site: Option<(u16, u16)>,
+-        vec_tp: Option<&Type>,
+-    ) -> Option<Value> {
+-        if self.first_pass {
+-            return None;
+-        }
+-        // A site that names no struct field — an element of an outer vector reads as
+-        // `OpGetField(element, 0)` — resolves through the type like any other place.
+-        let field_site = site.filter(|&(st, off)| self.database.field_index_at(st, off).is_some());
+-        let elem = if let Some((struct_tp, byte_off)) = field_site {
+-            self.database.clear_releases_records(struct_tp, byte_off)?
+-        } else {
+-            let tp = match (vec_tp, to.unspan()) {
+-                (Some(tp), _) => tp.clone(),
+-                (None, Value::Var(v)) => self.vars.tp(*v).clone(),
+-                _ => return None,
+-            };
+-            let Type::Vector(content, _) = tp.peel_link().base() else {
+-                return None;
+-            };
+-            let content = content.as_ref().clone();
+-            let elem = self.data.vector_element_type(&content, &mut self.database)?;
+-            if !self.database.is_linked(elem) {
+-                return None;
+-            }
+-            elem
+-        };
+-        Some(self.keep_none(to, elem))
+-    }
+-
+-    /// `OpKeepVectorRange(to, elem, 0, 0)`: every element released, the length zero.
+-    fn keep_none(&mut self, to: &Value, elem: u16) -> Value {
+-        self.cl(
+-            "OpKeepVectorRange",
+-            &[to.clone(), Value::Int(i32::from(elem)), Value::Int(0), Value::Int(0)],
+-        )
+-    }
+-
+     /// The clear a `= null` performs, plus the mark that says *absent* (loft#917).
+     ///
+     /// Releasing the records is the same work `= []` does and is not in question — the
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 612df0966..21cccfb36 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -321,16 +321,6 @@ impl Parser {
+         // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
+         // `t` for anything a person reads.
+         let mut dnr = self.data.type_def_nr(&t);
+-        if matches!(t, Type::Vector(_, _))
+-            && field == "clear"
+-            && self.lexer.peek_token("(")
+-            && let Some(ops) = self.vector_clear_lowering(code, &t)
+-        {
+-            self.lexer.token("(");
+-            self.lexer.token(")");
+-            *code = Value::Insert(ops);
+-            return Type::Void;
+-        }
+         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
+             return Type::Boolean;
+         }
+@@ -1215,28 +1205,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         None
+     }
+ 
+-    /// `v.clear()` and `clear(v)` where the clear owes more than a length reset: the vector
+-    /// holds a linked group's records, so the sibling views empty with it (`@FR-Col-Group`),
+-    /// or its element type is linked, so each record is released and a stored reference to
+-    /// one reads null (`@FR-H-Removed`).  The ops are `v = []`'s (`Parser::clear_vector_at`),
+-    /// so every spelling of a clear answers alike.  `None` keeps the plain `clear` call.
+-    pub(crate) fn vector_clear_lowering(
+-        &mut self,
+-        place: &Value,
+-        vec_tp: &Type,
+-    ) -> Option<Vec<Value>> {
+-        if self.first_pass {
+-            return None;
+-        }
+-        let site = self.keyed_field_site(place);
+-        let grouped =
+-            site.is_some_and(|(st, off)| !self.database.keyed_group_members(st, off).is_empty());
+-        if !grouped && self.linked_clear_release(place, site, Some(vec_tp)).is_none() {
+-            return None;
+-        }
+-        Some(self.clear_vector_at(place, site, Some(vec_tp)))
+-    }
+-
+     /// `v.remove(i)` — answers whether `i` named an element.  On the vector member of a
+     /// linked group the element leaves every keyed sibling first (`group_elem_write`), so the
+     /// removal means the same thing whichever member it is spelled through.

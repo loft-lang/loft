@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-RefElem` — a reference is a struct field, never a collection's element.  The element
+// was read as the record type, so `vector<reference<P>>` held COPIES: a write through the
+// original was not seen through the vector, and the other way round, silently, on both
+// backends (loft#1972).  It is refused as a struct field's type and as a local's, with the cure
+// named: wrap the reference in a struct (`struct Ref { r: reference<P> }`, `vector<Ref>`),
+// whose field IS a reference — `tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft`
+// exercises that form.
+//
+// @falsified-at: 3378f14b8 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1972-a-collection-refuses-reference-elements.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — the control compiles both spellings without a word.
+
+// @EXPECT_ERROR: a vector cannot hold `reference<…>` elements
+struct P { k: integer, v: integer }
+struct Holder { rs: vector<reference<P>> }
+
+// @EXPECT_ERROR: a vector cannot hold `reference<…>` elements
+fn local_of_references() {
+  local: vector<reference<P>> = [];
+  assert(len(local) == 0, "unreachable: the program is refused");
+}
+
+fn main() {
+  local_of_references();
+}

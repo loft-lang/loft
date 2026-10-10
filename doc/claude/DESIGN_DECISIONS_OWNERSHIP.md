@@ -285,11 +285,12 @@ the removed record leaves its mark instead of a list of referrers; the mark cost
 **Revisit when.** Not stated.  Decided 2026-10-10 — [record](DESIGN_DECISIONS-history.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it).
 **Holds at:** `@C145` — `Stores::finish` (a keyed collection, a field group and a stored
 `reference<T>` link a type), `Stores::is_linked`, and `Store::entomb` (the removal's mark); the
-rules `(H-LongRef)`, `(H-ShortRef)` and `(H-Removed)` in [formal/heap.md](formal/heap.md), with
+rules `(H-LongRef)`, `(H-ShortRef)`, `(H-Removed)` and `(H-RefElem)` in [formal/heap.md](formal/heap.md), with
 the code sites that keep each, and two open deviations — `D-heap-47` (`(R-Place)` grows a
-return buffer placed in a store its callee holds short-term references into) and `D-heap-49`
-(a vector clear strands a referenced type's records without the mark); guards
+return buffer placed in a store its callee holds short-term references into) and `D-heap-50`
+(a store freed under a stored reference hands its number to the next value); guards
 `tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft`,
-`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft` and
+`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft`,
+`tests/scripts/a-cleared-vector-releases-the-records-a-reference-named.loft` and
 `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

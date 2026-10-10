@@ -16,8 +16,8 @@
 // - formatting the holder prints the removed reference as `null`;
 // - churn: 2000 rounds of append, reference the new record, remove it — null at the end.
 //
-// The removed collection's own clear (`v.clear()`, `v = []`) is not here: it strands the
-// records without the mark (D-heap-49, loft#1971).
+// The collection's own clear (`v.clear()`, `v = []`) is
+// `a-cleared-vector-releases-the-records-a-reference-named.loft`.
 //
 // @falsified-at: c58a84103 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-stored-reference-to-a-removed-record-reads-null.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0

@@ -5121,6 +5121,24 @@ impl Parser {
                      elements are always dense (a key / slot denotes presence)"
                 );
             }
+            // `@FR-H-RefElem` — a stored reference is a struct FIELD (`B-Ref-StoredRef`); as
+            // a collection's element it had no meaning of its own and was read as the record
+            // type, so the collection held COPIES and a write through either side never
+            // reached the other — silently, on both backends (loft#1972).
+            if sub_name == "reference"
+                && matches!(
+                    type_name,
+                    "vector" | "sorted" | "hash" | "index" | "radix" | "spatial" | "trie"
+                )
+            {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a {type_name} cannot hold `reference<…>` elements — it would hold copies \
+                     of the records; wrap the reference in a struct field instead: \
+                     `struct Ref {{ r: reference<T> }}` and `{type_name}<Ref>`"
+                );
+            }
             // before trying to resolve the element type, fail fast if the
             // identifier shadows a non-type definition (constant, function).
             // parse_type silently returns None in that case; sub_type's later

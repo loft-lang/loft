@@ -2735,6 +2735,18 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-49 — OPENED AND CLOSED (2026-10-10, loft#1971): a vector clear stranded a referenced type's records
+
+`OpClearVector` reset a linked vector's length and never reached `Store::delete`, so a stored
+reference to a cleared record read its old values (`22 2 false` where `null 2 true` was owed)
+and the records stayed claimed — on both backends, through `v.clear()`, `clear(v)` and
+`v = []`.  The op carries no type; the parser does, so the clear's one home
+(`Parser::clear_vector_at`) puts `OpKeepVectorRange(v, T, 0, 0)` before the reset when `T` is
+linked.  The same home closed a `(Col-Group)` split found on the way: `g.items.clear()` left the
+records in the keyed sibling while `g.items = []` emptied both.  The reassigned local the entry
+also named frees its whole store instead of clearing it — no removal at all — and moved to
+D-heap-50 (loft#1973).  Guard `tests/scripts/a-cleared-vector-releases-the-records-a-reference-named.loft`.
+
 ### D-heap-48 — OPENED AND CLOSED (2026-10-10, loft#1969): a removal ended a record's home while a stored reference named it
 
 `(H-LongRef)` kept a referenced record from moving, but removing it from its collection freed

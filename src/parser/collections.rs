@@ -1324,7 +1324,7 @@ impl Parser {
         self.database.keyed_group_members(struct_tp, byte_off).len() >= 2
     }
 
-    fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
+    pub(crate) fn keyed_field_site(&self, coll: &Value) -> Option<(u16, u16)> {
         let Value::Call(gf_nr, gf_args) =
             crate::use_analysis::through_null_arm(&self.data, coll).unspan()
         else {

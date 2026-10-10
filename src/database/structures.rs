@@ -836,6 +836,26 @@ impl Stores {
             .map(|i| i as u16)
     }
 
+    /// `@FR-H-Removed` — the element type whose records a clear of the vector field at
+    /// `byte_off` of `struct_tp` releases one by one: the field is an `array` (its element
+    /// type linked, each element a record of its own) and it holds those records itself —
+    /// it is in no group, or it is the group's holder rather than a view of it.  `None` for
+    /// every other field: an inline element dies with the length reset, and a view's records
+    /// belong to the holder.
+    #[must_use]
+    pub fn clear_releases_records(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        let Parts::Array(elem) = self.types.get(f.content as usize)?.parts else {
+            return None;
+        };
+        (f.other_indexes.first() != Some(&u16::MAX)).then_some(elem)
+    }
+
     /// loft#898 — the members of the linked collection group the keyed field at
     /// `byte_off` belongs to, as `(byte_off, collection_tp, is_view)` per member,
     /// INCLUDING the field itself. Empty when the field is not in a group.
