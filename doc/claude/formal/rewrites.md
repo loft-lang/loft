@@ -3197,7 +3197,10 @@ on the drawing bench).
                  field of a FRESH record — an appended element or a construction
                  temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
                  that field the same way; nothing can read a fresh record while it
-                 is built, so it needs no staging of its own.  The KEYED clause:
+                 is built, so it needs no staging of its own.  A `reference<T>` field
+                 is not such a place: its read is the record it points at, and an
+                 assignment re-points it (H-RefSet), so a literal assigned to one is
+                 built in a record of its own.  The KEYED clause:
                  `h[k] = R { … }` with a FULL subscript of pure keys is written into
                  the record the collection claims for it — the literal's values and
                  the statements computing them run first, in program order (a value

@@ -18,7 +18,8 @@
 // - an absent `vector<P>?` field emptied again stays empty and takes new elements;
 // - a reference to a record of ANOTHER vector, not cleared, keeps reading it.
 //
-// A local REASSIGNED (`items = []`) frees its whole store instead: D-heap-50, loft#1973.
+// A local REASSIGNED (`items = []`) is emptied in place the same way (`@FR-H-RefHome`):
+// `a-stored-reference-its-record-outlives-reads-it.loft`.
 //
 // @falsified-at: 3378f14b8 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-cleared-vector-releases-the-records-a-reference-named.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0

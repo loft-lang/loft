@@ -3300,6 +3300,20 @@ use a separate collection or add after the loop"
         ops
     }
 
+    /// `@FR-H-RefHome` — the in-place clear a reassignment of a referenced local owes: the
+    /// vector's `clear_vector_at`, or a keyed collection's `OpClearKeyed`; both send each
+    /// record through `Store::delete` (`@FR-H-Removed`).  `None` for any other type.
+    fn referenced_local_clear(&mut self, to: &Value, f_type: &Type) -> Option<Vec<Value>> {
+        if matches!(f_type.base(), Type::Vector(_, _)) {
+            return Some(self.clear_vector_at(to, None, Some(f_type)));
+        }
+        let kt = self.keyed_type_id(f_type)?;
+        Some(vec![self.cl(
+            "OpClearKeyed",
+            &[to.clone(), Value::Int(i32::from(kt))],
+        )])
+    }
+
     /// `@C145`, `@FR-H-Removed` — the release a clear of the vector at `to` owes when its
     /// element type is linked: each element is a record of its own (an `array`), and the
     /// length reset `OpClearVector` performs would strand those records in the store — still
@@ -4122,6 +4136,29 @@ use a separate collection or add after the loop"
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
         self.check_loop_source_write(to, op, f_type);
+        // `@FR-H-RefHome`, `@FR-H-Removed` — a local vector a stored reference names into is
+        // emptied IN PLACE when reassigned, as a field's `v = …` is: its records are removed,
+        // so the reference reads null, where a fresh store would free them under it.
+        if op == "="
+            && !self.first_pass
+            && let Value::Var(v) = to.unspan()
+            && self.referenced_locals.contains(&(self.context, *v))
+            && !self.referenced_assigned.insert((self.context, *v))
+            && let Some(mut ops) = self.referenced_local_clear(to, f_type)
+        {
+            let tp = self.parse_assign_op_inner(
+                code,
+                "+=",
+                f_type,
+                to,
+                parent_tp,
+                var_nr,
+                skip_validate,
+            );
+            ops.push(std::mem::replace(code, Value::Null));
+            *code = Value::Insert(ops);
+            return tp;
+        }
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete

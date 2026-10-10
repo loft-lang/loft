@@ -6017,7 +6017,7 @@ impl Parser {
             }
         } else if !self.first_pass
             && !self.is_field(code)
-            && !self.is_captured_dbref(code)
+            && (!self.is_captured_dbref(code) || self.reads_a_pointer_field(code))
             && !self.builds_into_element(code, td_nr)
         {
             new_object = true;

@@ -2398,6 +2398,15 @@ pub fn callee_disturb_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CALLEE_DISTURB"))
 }
 
+/// `@FR-H-RefHome` — `LOFT_NO_REF_HOME=1` withholds the refusal of a stored reference whose
+/// holder outlives the record it names (`scopes::stored_reference_refusals`): the bisect step
+/// when a program that compiled before is refused now.
+#[must_use]
+pub fn ref_home_disabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_REF_HOME"))
+}
+
 /// @PLN155 phase 2b — which readers DECLINE on `Own::Unknown` instead of keeping the answer
 /// they gave when the fail-open still spelled itself `Owned`?
 ///

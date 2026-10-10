@@ -1,0 +1,121 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-RefHome`, `@C145` — a stored `reference<T>` does not outlive the home of the record it
+// names.  The home is the variable holding the record (a local, or the compiler's temporary for
+// a literal or a call result) and lasts for the block that declares it; a temporary refilled in
+// a loop lasts one pass.  A holder that lives longer is refused where the reference is written,
+// copied, or handed to a callee that stores it.  Before, each of these compiled and read a
+// record of whatever value reused the freed store — `false 4` where null is owed, or every
+// holder of a loop naming the last pass's record (`12 12 12` for `10 11 12`), silently, on both
+// backends (loft#1973).  One function per shape:
+//
+// - the holder is a parameter (`fill(h)` storing a local's element into `h`);
+// - the record's local is declared in a loop body, or in an inner block, the holder outside it;
+// - a literal or a call result stored in a loop into a holder that outlives the pass, built in
+//   (`b.hs += [H { r: P {…} }]`), assigned (`b.hs[i].r = P {…}`) or called (`= mk(i)`);
+// - the record held by a `sorted` or `hash` local of an inner block;
+// - the holder an element of an outer collection;
+// - the holder returned, or copied into a parameter or a returned record;
+// - a callee that stores one argument's record into another (`link(h, b)`), directly and
+//   through a second callee that hands its parameters on.
+//
+// @falsified-at: 081adedbf — interpret exit 1 -> 0, interpret expectations FAIL/14 -> 14/14 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/14 -> 14/14 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — the control compiles all fourteen shapes without a word.
+//   HOLDS: on both trees nothing else in the file is reported.
+
+struct P { k: integer }
+struct H { r: reference<P>? }
+struct K { k: integer, v: integer }
+struct HK { r: reference<K>? }
+struct Bag { items: vector<P>, hs: vector<H> }
+struct Out { h: H }
+fn mk(k: integer) -> P { P { k: k } }
+fn link(h: H, b: Bag) { h.r = b.items[0]; }
+fn relay(h: H, b: Bag) { link(h, b); }
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names
+fn into_parameter(h: H) {
+  items: vector<P> = [P { k: 1 }, P { k: 2 }];
+  h.r = items[1];
+}
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names
+fn local_of_a_loop_pass() {
+  h = H {};
+  for i in 0..2 { items: vector<P> = [P { k: i }]; h.r = items[0]; }
+}
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names
+fn local_of_an_inner_block() {
+  h = H {};
+  if h.r == null { items: vector<P> = [P { k: 1 }]; h.r = items[0]; }
+}
+
+// @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
+fn literal_built_in_a_loop() {
+  b = Bag { items: [], hs: [] };
+  for i in 0..3 { b.hs += [H { r: P { k: 10 + i } }]; }
+}
+
+// @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
+fn literal_assigned_in_a_loop() {
+  b = Bag { items: [], hs: [H {}, H {}] };
+  for i in 0..2 { b.hs[i].r = P { k: 20 + i }; }
+}
+
+// @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
+fn call_result_in_a_loop() {
+  b = Bag { items: [], hs: [H {}, H {}] };
+  for i in 0..2 { b.hs[i].r = mk(30 + i); }
+}
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names
+fn sorted_of_an_inner_block() {
+  h = HK {};
+  if h.r == null { s: sorted<K[k]> = [K { k: 1, v: 10 }]; h.r = s[1]; }
+}
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names
+fn hash_of_an_inner_block() {
+  h = HK {};
+  if h.r == null { s: hash<K[k]> = [K { k: 1, v: 10 }]; h.r = s[1]; }
+}
+
+// @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
+fn element_holder() {
+  b = Bag { items: [], hs: [H {}] };
+  for i in 0..2 { items: vector<P> = [P { k: i }]; b.hs[0].r = items[0]; }
+}
+
+// @EXPECT_ERROR: the `r` field would outlive the record it names
+fn returned_holder() -> H {
+  items: vector<P> = [P { k: 1 }];
+  H { r: items[0] }
+}
+
+// @EXPECT_ERROR: the `r` field inside `o` (copied from `h`) would outlive the record it names
+fn copied_into_a_parameter(o: Bag) {
+  items: vector<P> = [P { k: 1 }];
+  h = H { r: items[0] };
+  o.hs += [h];
+}
+
+// @EXPECT_ERROR: the `r` field (copied from `h`) would outlive the record it names
+fn copied_into_a_returned_record() -> Out {
+  items: vector<P> = [P { k: 1 }];
+  h = H { r: items[0] };
+  Out { h: h }
+}
+
+// @EXPECT_ERROR: `h.r` (`link` stores it there) would outlive the record it names
+fn a_callee_links_two_arguments() {
+  h = H {};
+  for i in 0..2 { b = Bag { items: [P { k: i }], hs: [] }; link(h, b); }
+}
+
+// @EXPECT_ERROR: `h.r` (`relay` stores it there) would outlive the record it names
+fn a_callee_hands_the_link_on() {
+  h = H {};
+  for i in 0..2 { b = Bag { items: [P { k: i }], hs: [] }; relay(h, b); }
+}

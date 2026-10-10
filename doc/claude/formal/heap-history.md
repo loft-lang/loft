@@ -2735,6 +2735,40 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-50 — CLOSED (2026-10-10, loft#1973): a store freed under a stored reference handed its number to the next value
+
+A local's store freed at its scope end, or the old store a reassigned local dropped, went back
+to the pool while a stored reference still named a record in it, so the reference read a
+record of whatever value reused the store number: `false 4` where `true` was owed, silently,
+on both backends.  A per-store generation checked on every read was measured (+7 % on a loop
+of reference reads) and declined by the owner as too costly for a corner case; the static half
+of the borrow rule was taken instead.  `(H-RefHome)` refuses a holder that outlives the record's
+home, read off the variables' deps after pass 2 (`scopes::stored_reference_refusals`), through
+copies of the holder and through calls; a reassigned local a reference names into is emptied in
+place (`(H-Removed)`).  Measuring the same family turned up three more silent answers, closed
+with it: a literal or a call result stored in a loop gave every holder the last pass's record
+(`12 12 12` for `10 11 12`), now refused; a record literal assigned to a reference field wrote
+into the record the field named before instead of re-pointing it (`(H-RefSet)`); and a function
+returning a stored reference let its caller free the store that reference names (loft#1977,
+`(F-Ret)`).  The refusal's reach over the repository, the libraries and the consumer
+applications was one dead function that would have dangled had it been called.  Guards
+`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
+`tests/scripts/a-stored-reference-its-record-outlives-reads-it.loft` and
+`tests/scripts/a-function-returning-a-stored-reference-hands-back-a-copy.loft`.
+
+### D-heap-47 — CLOSED (2026-10-10, loft#1968): `(R-Place)` grew a return buffer in a store its callee held short-term references into
+
+`(R-Place)` hands a callee a return buffer claimed in the caller's store, and a callee that
+appends to it grows that store while its parameters name into it (`s.floats =
+s.pack_instances()`), against `(H-ShortRef)` as written.  No answer was wrong, since every read
+re-resolves the store.  Closed by amending the rule rather than the placement: `(H-ShortRef)`
+names the return buffer as the one addition a parameter's store may take during a call, and
+every rewrite that holds a parameter's address tests that store apart from the buffer's first
+(`(R-Alias)`'s versioned clause, `Output::distinct_version`).  The versioned copy was extended
+to a result local that adopts the buffer, which took `mesh_to_floats` from 8.23× to 5.53× of its
+Rust twin and `pack_instances` from 7.55× to 4.84×.  Guard
+`tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`.
+
 ### D-heap-49 — OPENED AND CLOSED (2026-10-10, loft#1971): a vector clear stranded a referenced type's records
 
 `OpClearVector` reset a linked vector's length and never reached `Store::delete`, so a stored
@@ -2782,3 +2816,17 @@ condition was dropped, and an enclosing call's argument now counts as an in-flig
 only when it can answer a text.  Guards:
 `tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft` and
 `tests/scripts/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.loft`.
+
+## The stride rule's six re-derivations
+
+`(H-Stride)` reads an element's width off its TYPE.  This has been re-derived wrongly **six** times, in five modules, which is why it is a rule and
+not a comment: the vector element WRITE (loft#1378, narrow elements written eight bytes wide
+into a one-byte slot), the dense REMOVAL (loft#1412, the tail slid eight bytes per element on
+both spellings, `len` staying right throughout), a closure's captured cell (loft#1409), and
+three more found together (loft#1420) — the vector STRIDE (`element_store_size`, whose narrow
+branch asked `forced_size(type_elm(elm))`, a test that can never pass because `type_elm` maps
+every `Type::Integer` to the one `integer` def: a dead branch, so `reverse` on a `vector<u8>`
+answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_val` through
+`get_field(_, usize::MAX, _)`, whose `attr_type` answers `def.returned`, so `[a, .., z]`
+answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
+the type the same way and zeroing the successors it wrote over).

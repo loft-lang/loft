@@ -683,6 +683,14 @@ so the reference reads whatever is claimed there next.  It is the bisect step fo
 that reads null where its record should still be there, or for a store that grows under
 removals.
 
+**A stored reference may not outlive its record's home (default-ON, both backends,
+`@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_refusals` refuses a `reference<T>`
+written, copied or linked by a callee into a holder that outlives the variable holding the
+record, and a reassignment of a local vector such a reference names into empties it in place.
+**`LOFT_NO_REF_HOME=1`** withholds the refusal (the in-place reassignment stays).  It is the
+bisect step when a program that compiled before is refused, and the A/B that shows what a
+refused shape reads at run time.
+
 ## Falsifier: the emulated Windows host
 
 **`LOFT_POISON_HOST=windows`** (@PLN184 Track W, runtime, BOTH backends, Linux and macOS)

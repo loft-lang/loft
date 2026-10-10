@@ -1388,6 +1388,14 @@ pub struct Parser {
     /// assignment after one of them is a reassignment.
     pub(crate) capture_records: std::collections::HashMap<(bool, u32, u16), Vec<(u16, u16)>>,
     pub(crate) yield_copied_captures: std::collections::HashMap<(u32, u16), u32>,
+    /// `@FR-H-RefHome` — the local vectors a stored `reference<T>` was set into, as (function,
+    /// local).  Kept across both passes, so a reassignment parsed before the write that names
+    /// it (a later statement of a loop body) still knows: such a local is emptied in place
+    /// when reassigned, and the reference reads null (`@FR-H-Removed`).
+    pub(crate) referenced_locals: crate::fxhash::FxHashSet<(u32, u16)>,
+    /// The `referenced_locals` pass 2 has seen assigned already: the next `=` is a
+    /// reassignment.
+    pub(crate) referenced_assigned: crate::fxhash::FxHashSet<(u32, u16)>,
     /// #314: capturing lambdas synthesized during each function body in
     /// pass 1, keyed by the enclosing context's def_nr.  Consumed by
     /// `reject_shared_mutable_scalar_captures` at the parent's body end
@@ -2050,6 +2058,8 @@ impl Parser {
             closure_capture_builds: std::collections::HashMap::new(),
             capture_records: std::collections::HashMap::new(),
             yield_copied_captures: std::collections::HashMap::new(),
+            referenced_locals: crate::fxhash::FxHashSet::default(),
+            referenced_assigned: crate::fxhash::FxHashSet::default(),
             init_field_tracking: false,
             init_field_deps: Vec::new(),
             init_reads_record: false,
@@ -16099,6 +16109,35 @@ impl Parser {
         set_null
     }
 
+    /// `@FR-H-RefHome` — the local collection whose record a stored reference is set to
+    /// (`h.r = items[1]`, `h.r = by_key[k]`), when there is one.
+    fn referenced_vector_local(&self, val: &Value) -> Option<u16> {
+        let Value::Call(d, args) = val.unspan() else {
+            return None;
+        };
+        if !matches!(
+            self.data.def(*d).name(),
+            "OpVectorRef" | "OpGetVector" | "OpGetRecord"
+        ) {
+            return None;
+        }
+        match args.first()?.unspan() {
+            Value::Var(v)
+                if !self.vars.is_argument(*v)
+                    && matches!(
+                        self.vars.tp(*v).base(),
+                        Type::Vector(_, _)
+                            | Type::Hash(_, _, _)
+                            | Type::Sorted(_, _, _)
+                            | Type::Index(_, _, _)
+                    ) =>
+            {
+                Some(*v)
+            }
+            _ => None,
+        }
+    }
+
     // The field is addressed by `(d_nr, f_nr, d_pos)` and the write by `(ref_code, val_code)`;
     // `emit_check` and `elm_override` are the two independent switches over that. Bundling them
     // would name a struct after this one call site.
@@ -16414,6 +16453,11 @@ impl Parser {
                     };
                     let ops = self.emit_tuple_set_ops(&ref_code, base_pos, &elems, val_code);
                     return v_block(ops, Type::Void, "tuple_elem_set");
+                }
+                // `@FR-H-RefHome` — on both passes and either arm below: pass 1 may take the
+                // copy arm for a write pass 2 lowers as a stored reference.
+                if let Some(v) = self.referenced_vector_local(&val_code) {
+                    self.referenced_locals.insert((self.context, v));
                 }
                 if deps.is_empty() {
                     // The value is a 12-byte DbRef; OpSetInt would only read 4 bytes of it.

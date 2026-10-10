@@ -11455,6 +11455,17 @@ impl Parser {
             };
             diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
         }
+        // `@FR-H-RefHome` — a stored reference whose holder outlives the record it names.
+        // Asked here for the same reason: a callee's half (which arguments it links) is only
+        // complete once every body is parsed.
+        for r in crate::scopes::stored_reference_refusals(&self.data, &self.database) {
+            let pos = crate::lexer::Position {
+                file: crate::lexer::intern_file(&r.file),
+                line: r.line,
+                pos: 1,
+            };
+            diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
+        }
     }
 
     /// The user-facing name of a rule fn (`n_expr` -> `expr`).

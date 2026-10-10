@@ -836,6 +836,37 @@ impl Stores {
             .map(|i| i as u16)
     }
 
+    /// `@FR-H-RefHome` — the record type a vector-like collection type holds, for a place
+    /// that is one of its elements.
+    #[must_use]
+    pub fn collection_content(&self, tp: u16) -> Option<u16> {
+        match &self.types.get(tp as usize)?.parts {
+            Parts::Vector(c) | Parts::Array(c) | Parts::Sorted(c, _) | Parts::Ordered(c, _) => {
+                Some(*c)
+            }
+            _ => None,
+        }
+    }
+
+    /// `@FR-H-RefHome` — the name of the field at byte `byte_off` of record type `struct_tp`
+    /// when it is a user's `reference<T>` (a stored reference with a target type); `None` for
+    /// any other field, a closure's captured reference included.
+    #[must_use]
+    pub fn reference_field_name(&self, struct_tp: u16, byte_off: u16) -> Option<String> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        (f.target != u16::MAX
+            && matches!(
+                self.types.get(f.content as usize).map(|t| &t.parts),
+                Some(Parts::DbRef)
+            ))
+        .then(|| f.name.clone())
+    }
+
     /// `@FR-H-Removed` — the element type whose records a clear of the vector field at
     /// `byte_off` of `struct_tp` releases one by one: the field is an `array` (its element
     /// type linked, each element a record of its own) and it holds those records itself —
