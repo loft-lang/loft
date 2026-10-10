@@ -3184,6 +3184,15 @@ impl Parser {
             // it cannot see that the tail merely projects into `b`.
             return RefDelivery::MaterializeView;
         }
+        if l.last()
+            .is_some_and(|tail| self.return_reads_a_stored_reference(tail))
+        {
+            // loft#1977, `@FR-F-Ret` — the tail reads a stored `reference<T>` (`h.link`): the
+            // record it names lives in a store neither this frame nor any argument owns, so
+            // the caller's argument bracket cannot witness it and a source-free copy released
+            // it.  Copy the record in before it escapes; the caller adopts its own value.
+            return RefDelivery::MaterializeView;
+        }
         if context == "return from block" && self.return_views_a_capture(ls, l) {
             // loft#1485, `@FR-F-Ret` — the tail reads out of the CLOSURE RECORD, so the value
             // belongs to the frame that built the closure.  Asked above the empty-`ls` branch,
@@ -16532,8 +16541,17 @@ impl Parser {
         // `OpCopyRecord` of a null source leaves the destination an allocated EMPTY record —
         // presence standing in for absence.  Copy only where the source is present; the
         // absent arm hands up the sentinel (loft#1337).
+        // A stored `reference<T>?` read (`h.link`, loft#1977) is the same: absent when the
+        // field holds null, so a `-> S?` copies it only where present.  The read is pure, so
+        // the test re-reads it.
         let absent_guard = match orig.unspan() {
-            Value::Var(v) if matches!(self.vars.tp(*v), Type::Optional(_)) => Some(*v),
+            Value::Var(v) if matches!(self.vars.tp(*v), Type::Optional(_)) => Some(Value::Var(*v)),
+            Value::Call(d, _)
+                if *d == self.data.def_nr("OpGetDbRef")
+                    && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+            {
+                Some(orig.clone())
+            }
             _ => None,
         };
         let copy = crate::data::v_block(
@@ -16548,7 +16566,7 @@ impl Parser {
         );
         *tail = match absent_guard {
             Some(v) => crate::data::v_if(
-                self.cl("OpRefIsNull", &[Value::Var(v)]),
+                self.cl("OpRefIsNull", &[v]),
                 self.cl("OpNullRefSentinel", &[]),
                 copy,
             ),
@@ -17397,6 +17415,29 @@ impl Parser {
             Value::Block(bl) => bl.operators.last().is_some_and(Self::return_tail_is_join),
             Value::Insert(ops) => ops.last().is_some_and(Self::return_tail_is_join),
             Value::If(..) => true,
+            _ => false,
+        }
+    }
+
+    /// loft#1977 — does the tail hand up the record a stored `reference<T>` names (an
+    /// `OpGetDbRef` read, on any arm)?  That record's store belongs to whatever holds it, not
+    /// to this frame or an argument, so `@FR-F-Ret`'s fresh value is a copy made here.
+    fn return_reads_a_stored_reference(&self, tail: &Value) -> bool {
+        match tail.unspan() {
+            Value::Return(inner) | Value::Drop(inner) => {
+                self.return_reads_a_stored_reference(inner)
+            }
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|t| self.return_reads_a_stored_reference(t)),
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|t| self.return_reads_a_stored_reference(t)),
+            Value::If(_, t, f) => {
+                self.return_reads_a_stored_reference(t) || self.return_reads_a_stored_reference(f)
+            }
+            Value::Call(d, _) => *d == self.data.def_nr("OpGetDbRef"),
             _ => false,
         }
     }
@@ -19647,9 +19688,12 @@ impl Parser {
                     // loft#1659, `@FR-F-Ret` — a CAPTURE handed back by an explicit `return`
                     // is the closure's, not a fresh value: the tail selector's loft#1485 leg,
                     // which no mid-body exit reached.
+                    //
+                    // loft#1977 — and a stored `reference<T>` read, whose record no frame owns.
                     if self.return_projects_into_local(&v)
                         || self.return_copies_a_leasing_value(&v)
                         || self.return_views_a_capture(ls, std::slice::from_ref(&v))
+                        || self.return_reads_a_stored_reference(&v)
                     {
                         // The returned expression points INTO something this
                         // function frees — a field of an inline call's temporary
