@@ -257,3 +257,30 @@ between two kinds of value — the compiler proves where a view is the same valu
 (the boundary: a decoded value keeps its bytes when its frame is written, grown, cleared or
 gone).
 **Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)
+
+## C145 — No back references inside a store: what a reference points at never moves under it
+
+**Decision.** A store keeps no back references — nothing records who points at a record, a
+string or a vector — so a reference may only point where nothing moves while it lives.
+- A **long-term** reference, held in another store's record, points at a record with a home of
+  its own or at a field of one.  A string or a vector is reached through the field that holds
+  it, never at its content, which the store may move.  A record inline in a `vector` or a
+  `sorted` has no home of its own — growth relocates it, a sorted insert shifts it — so a link
+  over a type (a keyed collection of it, anywhere in the program) lays out every collection of
+  that type by reference (`array` / `ordered`), the records pushed out to homes of their own.
+- A **short-term** reference, a variable or a parameter, may point at string or vector content
+  or at an inline record.  While it lives, the store it points into takes no addition to a
+  string or a vector and the collection no reordering; a user-written view whose container is
+  disturbed materialises or is refused instead (binding.md B-Disturb).
+
+**Why.** Back references make every move a fix-up of every referrer and give every record a
+list of who points at it.  Without them a store may grow, compact and re-sort freely and a
+reference stays a plain position — provided the layout guarantees that a referenced thing does
+not move, which is what these two clauses say.
+
+**Revisit when.** Not stated.  Decided 2026-10-10 — [record](DESIGN_DECISIONS-history.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it).
+**Holds at:** `@C145` — `Stores::is_linked` (the by-reference layout a link switches to); the
+rules `(H-LongRef)` and `(H-ShortRef)` in [formal/heap.md](formal/heap.md), with `D-heap-47`
+open (`(R-Place)` grows a return buffer placed in a store its callee holds short-term references
+into); guard `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
+**Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

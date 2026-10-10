@@ -4,6 +4,8 @@
 // An operation that MOVES elements walks the stride the container actually has.
 //
 // @FR-H-Stride — *"the distance between consecutive elements … is fixed by the declared TYPE"*.
+// @C145 — the by-reference layout a link switches to is what keeps a linked record in place
+// (`@FR-H-LongRef`); a walk at the inline stride breaks that layout.
 // A `vector<T>` holds its elements INLINE until any keyed collection over `T` exists anywhere
 // in the program, at which point every `vector<T>` becomes a vector of 4-byte record ids.  So
 // the distance between consecutive elements is FOUR at that layout, whatever the element's own

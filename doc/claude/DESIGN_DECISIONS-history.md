@@ -4780,3 +4780,24 @@ reads, the field index map and the live-reload arm are shared with the dense lay
 the issue's 10M-call loop, lean tier (`--native-release`, median of five, the base build
 alongside): the nullable spelling went from 0.482 s (a buffer and a heap store per result) to
 0.065 s, beside 0.069 s for the dense one on both builds.
+
+## C145 — No back references inside a store: what a reference points at never moves under it
+
+Stated 2026-10-10 by the owner while the worst native routines were priced: `mesh_to_floats`
+and `pack_instances` both read record views (`mf_v`, `n`) while appending to their return
+buffer, and `(R-RecPtr)` declined to hold the views' addresses because the buffer could live in
+the same store.  The owner, in four steps: *"on long term (from another store) references into a
+store there are limitations: only records and fields in records can be references (strings and
+vectors can get moved inside the store)   short term variable & parameter references can be made
+but the store itself cannot be changed then (no addition to strings & additions to vectors)"*;
+*"this is because I do not want back references inside stores"*; *"a long term string reference
+is possible but it should be to a field holding the string"*; *"records can live inside a vector
+itself and the vector can relocate or move its own content on a sorted vector.  This is fixed in
+known links inside a store to move to the Array structure that pushes out the records."*
+
+The by-reference layout the last remark names was already built (`Stores::is_linked`, loft#903,
+loft#1670); the short-term clause was nowhere written and nothing checked it.  Measured against
+it, `(R-Place)` hands a callee a return buffer claimed in the caller's store and the callee grows
+it while holding short-term references there — recorded as `D-heap-47`, whose closing is what
+would let `(R-RecPtr)` keep those views (−13 % on a `mesh_to_floats` probe).
+

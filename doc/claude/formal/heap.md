@@ -320,6 +320,31 @@ parameter), OR a **struct-typed view** of one — never a plain copy. The capabi
 (D-cap-3) enforces this by **following the vector's dep chain**: a local vector that aliases a
 parameter (via `&`) is host, a genuinely-copied one is script-owned.
 
+### References — what a reference may point at, and what it holds still (C145)
+
+```
+  (H-LongRef)   a reference held in a store's record names a record with a home of its own,
+                or a field of one.  A string or a vector is named by the field that holds it,
+                never by its content.  A record inline in a `vector` or `sorted` has no home of
+                its own; a link over its type (a keyed collection of it, anywhere in the
+                program) lays every collection of that type out by reference — `array` /
+                `ordered`, each element a record id, the records pushed out
+                (`Stores::is_linked`, H-Stride's four-byte layout).
+  (H-ShortRef)  a variable or a parameter may name string or vector content, or a record
+                inline in a collection.  While it lives, the store it names into takes no
+                addition to a string or a vector, and the collection no reordering.  A
+                user-written view whose container is disturbed materialises or the disturbance
+                is refused instead (binding.md B-Disturb, H-Materialise).
+```
+
+**In words.** A store keeps no back references: nothing records who points at what, so the
+layout itself guarantees that a referenced thing does not move — a record keeps its home, a
+field keeps its offset, and only content (a string's bytes, a vector's elements, an inline
+record) moves, which no long-term reference names.  `(H-ShortRef)` is what lets a short-term
+reference name content directly, and what a rewrite may rely on: a function's parameters name
+stores that take no string or vector addition during the call.  The compiler's own placement
+does not keep it yet (D-heap-47).
+
 ### Free — release the store a reference NAMES, once, never the stack
 
 ```
@@ -796,8 +821,18 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **0**.  The entries the register closed, and how each closed, are in
-[heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every generated cell
+OPEN: **1**.  The entries the register closed, and how each closed, are in
+[heap-history.md](heap-history.md).
+
+### D-heap-47 — OPEN (loft#1968): `(R-Place)` grows a return buffer in a store its callee holds short-term references into <!-- doc-lint: ok -->
+
+`(R-Place)` hands a callee a return buffer claimed in the caller's store S, and a callee that
+appends to it grows S while its parameters and views name into S — `s.floats =
+s.pack_instances()` appends while `self` and the inline view `n` name into `s`'s store, against
+`(H-ShortRef)`.  Every read re-resolves the store, so no answer is wrong; the cost is that
+`(R-RecPtr)` must decline to hold a view's address across the growth ("the remainder may grow a
+store": `mesh_to_floats`, `pack_instances`).  Closes when a result the callee grows takes a store
+of its own, so that a function's return buffer is a store apart from every parameter's.  `tests/ownership_drop_gate.rs` gives every generated cell
 a lease verdict and ties each cell that must release once, and does not, to exactly one open
 entry.
 

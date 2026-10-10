@@ -537,6 +537,10 @@ impl Stores {
         )
     }
 
+    /// `@C145`, `@FR-H-LongRef` — a type some link reaches (a keyed collection of it, anywhere
+    /// in the program): every collection of it is laid out by reference, its records pushed out
+    /// to homes of their own, because a record inline in a vector moves when the vector grows
+    /// or re-sorts and nothing in the store could tell its referrers.
     pub fn is_linked(&self, tp: u16) -> bool {
         tp != u16::MAX && self.types[tp as usize].linked
     }
