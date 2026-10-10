@@ -4185,13 +4185,7 @@ fn set_db_ref<const F: bool>(s: &mut State) {
     {
         let db = v_v1;
         let r = v_val;
-        if db.rec != 0 {
-            let off = db.pos + u32::from(v_fld);
-            let store = s.database.store_mut(&db);
-            store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
-            store.set_u32_raw(db.rec, off + 4, r.rec);
-            store.set_u32_raw(db.rec, off + 8, r.pos);
-        } else if db.absence_unreported() {
+        if !s.database.set_db_ref(&db, u32::from(v_fld), r) && db.absence_unreported() {
             s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
         }
     }
@@ -4208,19 +4202,7 @@ fn get_db_ref<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_fld = operands.get::<u16>(0);
     let v_v1 = s.get_stack_m::<F, DbRef>();
-    let new_value = {
-        let db = v_v1;
-        if db.rec == 0 {
-            DbRef::NULL
-        } else {
-            let store = s.database.store(&db);
-            let off = db.pos + u32::from(v_fld);
-            let store_nr = store.get_u32_raw(db.rec, off) as u16;
-            let rec = store.get_u32_raw(db.rec, off + 4);
-            let pos = store.get_u32_raw(db.rec, off + 8);
-            DbRef { store_nr, rec, pos }
-        }
-    };
+    let new_value = s.database.get_db_ref(&v_v1, u32::from(v_fld));
     s.put_stack_m::<F, _>(new_value);
 }
 

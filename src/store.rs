@@ -242,6 +242,13 @@ pub enum StoreChange {
     Free { pos: u32, before: Box<[u8]> },
 }
 
+/// `LOFT_NO_TOMBSTONE=1` frees a removed record a stored reference named like any other —
+/// the bisect step for a wrong value or a leak at a removal (`@FR-H-Removed`).
+fn tombstones_enabled() -> bool {
+    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *F.get_or_init(|| !std::env::var("LOFT_NO_TOMBSTONE").is_ok_and(|v| v != "0"))
+}
+
 /// The live-record set of one store: which word positions START a claimed
 /// record.  It is what [`Store::valid`] asks ("is this a record, not a
 /// position inside one?") and what [`Store::claims_count`] counts.
@@ -331,6 +338,13 @@ pub struct Store {
     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
     pub ptr: *mut u8,
     claims: Claims,
+    /// `@FR-H-Removed` — the records a stored reference has named ([`Store::note_referenced`]).  Only
+    /// ever set: with no back references, nothing can tell when the last reference went.
+    referenced: Claims,
+    /// `@FR-H-Removed` — the positions of removed records a stored reference had named.
+    /// Each keeps its header word as a one-word block that no claim reuses, so a reference
+    /// still naming it reads null ([`Store::is_removed`]) instead of whatever came next.
+    removed: Claims,
     /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
     /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
     /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
@@ -1059,6 +1073,8 @@ impl Store {
             ptr,
             size,
             claims: Claims::default(),
+            referenced: Claims::default(),
+            removed: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             free: true,
@@ -1210,6 +1226,8 @@ impl Store {
             // MY bytes" — see `has_durable_sidecar`.
             ptr,
             claims: Claims::default(),
+            referenced: Claims::default(),
+            removed: Claims::default(),
             size,
             // An opened FILE-BACKED store is in use by definition (it
             // carries real data and `open` itself validates it below,
@@ -1312,6 +1330,8 @@ impl Store {
             ptr,
             size: words,
             claims: Claims::default(),
+            referenced: Claims::default(),
+            removed: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             // A loaded store carries real data (like `open`), so it is in use.
@@ -1422,6 +1442,8 @@ impl Store {
             ptr,
             size: words,
             claims: Claims::default(),
+            referenced: Claims::default(),
+            removed: Claims::default(),
             #[cfg(feature = "mmap")]
             file: None,
             free: false,
@@ -1484,6 +1506,8 @@ impl Store {
         self.free_root = 0;
         self.wild = 0;
         self.claims.clear();
+        self.referenced.clear();
+        self.removed.clear();
         // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
         self.lazy = lazy_free_enabled();
         self.dead_words = 0;
@@ -1987,6 +2011,43 @@ impl Store {
         (self.read::<i32>(prev, 0) == f && self.fl_tree_contains(prev)).then_some((prev, words))
     }
 
+    /// `@FR-H-Removed` — a stored reference now names `rec`, so removing it later keeps its
+    /// header word ([`Store::delete`] entombs it instead of freeing it).
+    #[inline]
+    pub fn note_referenced(&mut self, rec: u32) {
+        if rec >= PRIMARY && rec < self.size {
+            self.referenced.insert(rec);
+        }
+    }
+
+    /// `@FR-H-Removed` — whether `rec` is a removed record a stored reference had named: its
+    /// position is no record any more, and a reference to it reads null.
+    #[inline]
+    #[must_use]
+    pub fn is_removed(&self, rec: u32) -> bool {
+        self.removed.contains(rec)
+    }
+
+    /// `@FR-H-Removed` — remove a record a stored reference may still name.  Its header
+    /// word stays behind as a one-word block outside `claims`: no claim reuses that
+    /// position, so the reference sees that the record is gone.  The rest of the record is
+    /// freed as an ordinary record of its own.  While the debugger's edit journal records,
+    /// the whole record stays, since the journal's undo restores a freed block by its
+    /// position and cannot restore a split one.
+    fn entomb(&mut self, rec: u32) {
+        let words = self.read::<i32>(rec, 0);
+        self.claims.remove(rec);
+        self.removed.insert(rec);
+        // The footer test of a later free behind this word reads its high half.
+        self.write_block_meta::<i32>(rec, 4, 0);
+        if words > 1 && self.recording.is_none() {
+            self.write_block_meta::<i32>(rec, 0, 1);
+            self.write_block_meta::<i32>(rec + 1, 0, words - 1);
+            self.claims.insert(rec + 1);
+            self.delete(rec + 1);
+        }
+    }
+
     pub fn delete(&mut self, rec: u32) {
         crate::store_census::note(crate::store_census::Work::Delete, 1);
         // `read_only` is IMMUTABILITY — CONST_STORE, workers, the user-facing
@@ -2014,6 +2075,12 @@ impl Store {
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
         self.valid(rec, 4);
+        // `@FR-H-Removed` — a record a stored reference named keeps its position: every
+        // removal of one (a vector's, a keyed collection's, its parent's release) ends here.
+        if self.referenced.remove(rec) && tombstones_enabled() {
+            self.entomb(rec);
+            return;
+        }
         // @PLN16.J: snapshot the record *before* delete repurposes its body as a
         // free-tree node (probe 5a), while edit-recording is on.
         if self.recording.is_some() {
@@ -2292,7 +2359,9 @@ impl Store {
                 prev_was_free = true;
             } else {
                 u.claimed_words += sz;
-                u.claimed_count += 1;
+                // A removed record's header word is held space, not a record
+                // (`@FR-H-Removed`).
+                u.claimed_count += u32::from(!self.removed.contains(pos));
                 prev_was_free = false;
             }
             pos += sz;
@@ -2650,6 +2719,8 @@ impl Store {
     pub(crate) fn swap_contents(a: &mut Store, b: &mut Store) {
         std::mem::swap(&mut a.ptr, &mut b.ptr);
         std::mem::swap(&mut a.claims, &mut b.claims);
+        std::mem::swap(&mut a.referenced, &mut b.referenced);
+        std::mem::swap(&mut a.removed, &mut b.removed);
         std::mem::swap(&mut a.size, &mut b.size);
         std::mem::swap(&mut a.released_bytes, &mut b.released_bytes);
         std::mem::swap(&mut a.claimed_end, &mut b.claimed_end);
@@ -2787,6 +2858,8 @@ impl Store {
             ptr,
             size: self.size,
             claims: self.claims.clone(),
+            referenced: self.referenced.clone(),
+            removed: self.removed.clone(),
             #[cfg(feature = "mmap")]
             file: None,
             free: self.free,
@@ -2850,6 +2923,8 @@ impl Store {
             ptr,
             size: self.size,
             claims: self.claims.clone(),
+            referenced: self.referenced.clone(),
+            removed: self.removed.clone(),
             #[cfg(feature = "mmap")]
             file: None,
             free: self.free,
@@ -2898,6 +2973,8 @@ impl Store {
         Store {
             ptr: self.ptr,
             claims: Claims::default(),
+            referenced: Claims::default(),
+            removed: Claims::default(),
             size: self.size,
             #[cfg(feature = "mmap")]
             file: None,
@@ -3417,7 +3494,7 @@ impl Store {
             if block_size <= 0 {
                 break; // a malformed image; `validate_structure` is what refuses it
             }
-            if header > 0 {
+            if header > 0 && !self.removed.contains(pos) {
                 self.claims.insert(pos);
             }
             pos += block_size as u32;

@@ -272,19 +272,24 @@ string or a vector — so a reference may only point where nothing moves while i
   or at an inline record.  While it lives, the store it points into takes no addition to a
   string or a vector and the collection no reordering; a user-written view whose container is
   disturbed materialises or is refused instead (binding.md B-Disturb).
+- **Removing** a record a long-term reference has named does not hand its space straight back:
+  the record's position stays behind as a mark that no claim reuses, so the reference sees the
+  record is gone and reads null.  The rest of the record's space is freed.
 
 **Why.** Back references make every move a fix-up of every referrer and give every record a
 list of who points at it.  Without them a store may grow, compact and re-sort freely and a
 reference stays a plain position — provided the layout guarantees that a referenced thing does
-not move, which is what these two clauses say.
+not move, which is what these clauses say.  Removal is the one event a layout cannot hide, so
+the removed record leaves its mark instead of a list of referrers; the mark costs one word.
 
 **Revisit when.** Not stated.  Decided 2026-10-10 — [record](DESIGN_DECISIONS-history.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it).
 **Holds at:** `@C145` — `Stores::finish` (a keyed collection, a field group and a stored
-`reference<T>` link a type) and `Stores::is_linked`; the rules `(H-LongRef)` and
-`(H-ShortRef)` in [formal/heap.md](formal/heap.md), with the code sites that keep each, and two
-open deviations — `D-heap-47` (`(R-Place)` grows a return buffer placed in a store its callee
-holds short-term references into) and `D-heap-48` (a removal ends a record's home while a
-stored reference may name it); guards
-`tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft` and
+`reference<T>` link a type), `Stores::is_linked`, and `Store::entomb` (the removal's mark); the
+rules `(H-LongRef)`, `(H-ShortRef)` and `(H-Removed)` in [formal/heap.md](formal/heap.md), with
+the code sites that keep each, and two open deviations — `D-heap-47` (`(R-Place)` grows a
+return buffer placed in a store its callee holds short-term references into) and `D-heap-49`
+(a vector clear strands a referenced type's records without the mark); guards
+`tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft`,
+`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft` and
 `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

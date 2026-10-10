@@ -1,0 +1,344 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index c5b18297e..db0dc67b9 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1138,9 +1138,9 @@ fn OpSetRef(v1: reference, fld: const u16, val: reference);
+ // in vector elements / struct fields.  Layout: u32 store_nr | u32 rec |
+ // u32 pos.  Null is encoded as rec == 0 (other words irrelevant).
+ fn OpSetDbRef(v1: reference, fld: const u16, val: reference);
+-#rust"{{let db = @v1; let r = @val; if !stores.set_db_ref(&db, u32::from(@fld), r) && db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
++#rust"{{let db = @v1; let r = @val; if db.rec != 0 {{ let off = db.pos + u32::from(@fld); let store = stores.store_mut(&db); store.set_u32_raw(db.rec, off, u32::from(r.store_nr)); store.set_u32_raw(db.rec, off + 4, r.rec); store.set_u32_raw(db.rec, off + 8, r.pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+ fn OpGetDbRef(v1: reference, fld: const u16) -> reference;
+-#rust"stores.get_db_ref(&@v1, u32::from(@fld))"
++#rust"{{let db = @v1; if db.rec == 0 {{ DbRef::NULL }} else {{ let store = stores.store(&db); let off = db.pos + u32::from(@fld); let store_nr = store.get_u32_raw(db.rec, off) as u16; let rec = store.get_u32_raw(db.rec, off + 4); let pos = store.get_u32_raw(db.rec, off + 8); DbRef {{ store_nr, rec, pos }} }}}}"
+ // Get a direct field reference for a structure: vector, index, hash or spatial
+ // These always point to a field what value can change depending on the content.
+ fn OpGetField(v1: reference, fld: const u16) -> reference[v1];
+diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
+index 3ade936ed..fb7d2daf3 100644
+--- b/src/compiled_stdlib_gen.rs
++++ a/src/compiled_stdlib_gen.rs
+@@ -1705,4 +1705,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
+ pub(crate) const PREFIX_TYPES: usize = 99;
+ pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
+ /// The hash of the `default/*.loft` source these bodies were compiled from.
+-pub(crate) const SOURCE_HASH: u64 = 15297906662788028422;
++pub(crate) const SOURCE_HASH: u64 = 4646938353942750426;
+diff --git b/src/database/format.rs a/src/database/format.rs
+index e91c06d01..d214c7136 100644
+--- b/src/database/format.rs
++++ a/src/database/format.rs
+@@ -1532,10 +1532,7 @@ impl ShowDb<'_> {
+                     let store_nr = store.get_u32_raw(self.rec, self.pos) as u16;
+                     let rec = store.get_u32_raw(self.rec, self.pos + 4);
+                     let pos = store.get_u32_raw(self.rec, self.pos + 8);
+-                    // `@FR-H-Removed` — a reference whose record was removed reads null.
+-                    if (store_nr == u16::MAX && rec == 0)
+-                        || self.stores.reference_removed(store_nr, rec)
+-                    {
++                    if store_nr == u16::MAX && rec == 0 {
+                         s.push_str("null");
+                     } else if is_generator_handle(store_nr) {
+                         s.push_str("iterator");
+@@ -2275,7 +2272,7 @@ impl ShowDb<'_> {
+                 let store_nr = self.store().get_u32_raw(self.rec, self.pos);
+                 let rec = self.store().get_u32_raw(self.rec, self.pos + 4);
+                 let pos = self.store().get_u32_raw(self.rec, self.pos + 8);
+-                if rec == 0 || self.stores.reference_removed(store_nr as u16, rec) {
++                if rec == 0 {
+                     s.push_str("null");
+                 } else if is_generator_handle(store_nr as u16) {
+                     s.push_str("iterator");
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index d2efa4945..eeaedc6f2 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -3170,58 +3170,6 @@ impl Stores {
+         .or_null()
+     }
+ 
+-    /// The 12-byte stored reference at field `fld` of `db` (`OpGetDbRef`): null when the
+-    /// holder has no record, and null when the record it names was removed
+-    /// (`@FR-H-Removed`) — the position is no record any more, whatever claim came after.
+-    #[must_use]
+-    pub fn get_db_ref(&self, db: &DbRef, fld: u32) -> DbRef {
+-        if db.rec == 0 {
+-            return DbRef::NULL;
+-        }
+-        let store = self.store(db);
+-        let off = db.pos + fld;
+-        let store_nr = store.get_u32_raw(db.rec, off) as u16;
+-        let rec = store.get_u32_raw(db.rec, off + 4);
+-        let pos = store.get_u32_raw(db.rec, off + 8);
+-        if self.reference_removed(store_nr, rec) {
+-            return DbRef::NULL;
+-        }
+-        DbRef { store_nr, rec, pos }
+-    }
+-
+-    /// `@FR-H-Removed` — whether a stored reference to record `rec` of store `store_nr` names
+-    /// a removed record, and so reads null.
+-    #[inline]
+-    #[must_use]
+-    pub fn reference_removed(&self, store_nr: u16, rec: u32) -> bool {
+-        rec != 0
+-            && self
+-                .allocations
+-                .get(store_nr as usize)
+-                .is_some_and(|s| s.is_removed(rec))
+-    }
+-
+-    /// Store `r` as the 12-byte reference at field `fld` of `db` (`OpSetDbRef`), and mark the
+-    /// record it names (`@FR-H-Removed`): removing that record later leaves its position
+-    /// behind, so this reference reads null instead of the next record claimed there.
+-    /// `false` when the holder has no record, for the caller to report the dropped write.
+-    pub fn set_db_ref(&mut self, db: &DbRef, fld: u32, r: DbRef) -> bool {
+-        if db.rec == 0 {
+-            return false;
+-        }
+-        let off = db.pos + fld;
+-        let store = self.store_mut(db);
+-        store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
+-        store.set_u32_raw(db.rec, off + 4, r.rec);
+-        store.set_u32_raw(db.rec, off + 8, r.pos);
+-        if r.rec != 0
+-            && let Some(target) = self.allocations.get_mut(r.store_nr as usize)
+-        {
+-            target.note_referenced(r.rec);
+-        }
+-        true
+-    }
+-
+     #[must_use]
+     #[allow(dead_code)]
+     pub fn get_field(db: &DbRef, fld: u32) -> DbRef {
+diff --git b/src/fill.rs a/src/fill.rs
+index 214a591a3..14703088d 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -4185,7 +4185,13 @@ fn set_db_ref<const F: bool>(s: &mut State) {
+     {
+         let db = v_v1;
+         let r = v_val;
+-        if !s.database.set_db_ref(&db, u32::from(v_fld), r) && db.absence_unreported() {
++        if db.rec != 0 {
++            let off = db.pos + u32::from(v_fld);
++            let store = s.database.store_mut(&db);
++            store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
++            store.set_u32_raw(db.rec, off + 4, r.rec);
++            store.set_u32_raw(db.rec, off + 8, r.pos);
++        } else if db.absence_unreported() {
+             s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped);
+         }
+     }
+@@ -4202,7 +4208,19 @@ fn get_db_ref<const F: bool>(s: &mut State) {
+     let operands = s.operands(2);
+     let v_fld = operands.get::<u16>(0);
+     let v_v1 = s.get_stack_m::<F, DbRef>();
+-    let new_value = s.database.get_db_ref(&v_v1, u32::from(v_fld));
++    let new_value = {
++        let db = v_v1;
++        if db.rec == 0 {
++            DbRef::NULL
++        } else {
++            let store = s.database.store(&db);
++            let off = db.pos + u32::from(v_fld);
++            let store_nr = store.get_u32_raw(db.rec, off) as u16;
++            let rec = store.get_u32_raw(db.rec, off + 4);
++            let pos = store.get_u32_raw(db.rec, off + 8);
++            DbRef { store_nr, rec, pos }
++        }
++    };
+     s.put_stack_m::<F, _>(new_value);
+ }
+ 
+diff --git b/src/store.rs a/src/store.rs
+index d8b7bca50..ba102488e 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -242,13 +242,6 @@ pub enum StoreChange {
+     Free { pos: u32, before: Box<[u8]> },
+ }
+ 
+-/// `LOFT_NO_TOMBSTONE=1` frees a removed record a stored reference named like any other —
+-/// the bisect step for a wrong value or a leak at a removal (`@FR-H-Removed`).
+-fn tombstones_enabled() -> bool {
+-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+-    *F.get_or_init(|| !std::env::var("LOFT_NO_TOMBSTONE").is_ok_and(|v| v != "0"))
+-}
+-
+ /// The live-record set of one store: which word positions START a claimed
+ /// record.  It is what [`Store::valid`] asks ("is this a record, not a
+ /// position inside one?") and what [`Store::claims_count`] counts.
+@@ -338,13 +331,6 @@ pub struct Store {
+     // format 0 = SIGNATURE, 4 = free_space_index, 8 = record_size, 12 = content
+     pub ptr: *mut u8,
+     claims: Claims,
+-    /// `@FR-H-Removed` — the records a stored reference has named ([`Store::note_referenced`]).  Only
+-    /// ever set: with no back references, nothing can tell when the last reference went.
+-    referenced: Claims,
+-    /// `@FR-H-Removed` — the positions of removed records a stored reference had named.
+-    /// Each keeps its header word as a one-word block that no claim reuses, so a reference
+-    /// still naming it reads null ([`Store::is_removed`]) instead of whatever came next.
+-    removed: Claims,
+     /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
+     /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
+     /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
+@@ -1073,8 +1059,6 @@ impl Store {
+             ptr,
+             size,
+             claims: Claims::default(),
+-            referenced: Claims::default(),
+-            removed: Claims::default(),
+             #[cfg(feature = "mmap")]
+             file: None,
+             free: true,
+@@ -1226,8 +1210,6 @@ impl Store {
+             // MY bytes" — see `has_durable_sidecar`.
+             ptr,
+             claims: Claims::default(),
+-            referenced: Claims::default(),
+-            removed: Claims::default(),
+             size,
+             // An opened FILE-BACKED store is in use by definition (it
+             // carries real data and `open` itself validates it below,
+@@ -1330,8 +1312,6 @@ impl Store {
+             ptr,
+             size: words,
+             claims: Claims::default(),
+-            referenced: Claims::default(),
+-            removed: Claims::default(),
+             #[cfg(feature = "mmap")]
+             file: None,
+             // A loaded store carries real data (like `open`), so it is in use.
+@@ -1442,8 +1422,6 @@ impl Store {
+             ptr,
+             size: words,
+             claims: Claims::default(),
+-            referenced: Claims::default(),
+-            removed: Claims::default(),
+             #[cfg(feature = "mmap")]
+             file: None,
+             free: false,
+@@ -1506,8 +1484,6 @@ impl Store {
+         self.free_root = 0;
+         self.wild = 0;
+         self.claims.clear();
+-        self.referenced.clear();
+-        self.removed.clear();
+         // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
+         self.lazy = lazy_free_enabled();
+         self.dead_words = 0;
+@@ -2011,43 +1987,6 @@ impl Store {
+         (self.read::<i32>(prev, 0) == f && self.fl_tree_contains(prev)).then_some((prev, words))
+     }
+ 
+-    /// `@FR-H-Removed` — a stored reference now names `rec`, so removing it later keeps its
+-    /// header word ([`Store::delete`] entombs it instead of freeing it).
+-    #[inline]
+-    pub fn note_referenced(&mut self, rec: u32) {
+-        if rec >= PRIMARY && rec < self.size {
+-            self.referenced.insert(rec);
+-        }
+-    }
+-
+-    /// `@FR-H-Removed` — whether `rec` is a removed record a stored reference had named: its
+-    /// position is no record any more, and a reference to it reads null.
+-    #[inline]
+-    #[must_use]
+-    pub fn is_removed(&self, rec: u32) -> bool {
+-        self.removed.contains(rec)
+-    }
+-
+-    /// `@FR-H-Removed` — remove a record a stored reference may still name.  Its header
+-    /// word stays behind as a one-word block outside `claims`: no claim reuses that
+-    /// position, so the reference sees that the record is gone.  The rest of the record is
+-    /// freed as an ordinary record of its own.  While the debugger's edit journal records,
+-    /// the whole record stays, since the journal's undo restores a freed block by its
+-    /// position and cannot restore a split one.
+-    fn entomb(&mut self, rec: u32) {
+-        let words = self.read::<i32>(rec, 0);
+-        self.claims.remove(rec);
+-        self.removed.insert(rec);
+-        // The footer test of a later free behind this word reads its high half.
+-        self.write_block_meta::<i32>(rec, 4, 0);
+-        if words > 1 && self.recording.is_none() {
+-            self.write_block_meta::<i32>(rec, 0, 1);
+-            self.write_block_meta::<i32>(rec + 1, 0, words - 1);
+-            self.claims.insert(rec + 1);
+-            self.delete(rec + 1);
+-        }
+-    }
+-
+     pub fn delete(&mut self, rec: u32) {
+         crate::store_census::note(crate::store_census::Work::Delete, 1);
+         // `read_only` is IMMUTABILITY — CONST_STORE, workers, the user-facing
+@@ -2075,12 +2014,6 @@ impl Store {
+         // may free a record still referenced by a suspended generator.
+         self.generation = self.generation.wrapping_add(1);
+         self.valid(rec, 4);
+-        // `@FR-H-Removed` — a record a stored reference named keeps its position: every
+-        // removal of one (a vector's, a keyed collection's, its parent's release) ends here.
+-        if self.referenced.remove(rec) && tombstones_enabled() {
+-            self.entomb(rec);
+-            return;
+-        }
+         // @PLN16.J: snapshot the record *before* delete repurposes its body as a
+         // free-tree node (probe 5a), while edit-recording is on.
+         if self.recording.is_some() {
+@@ -2359,9 +2292,7 @@ impl Store {
+                 prev_was_free = true;
+             } else {
+                 u.claimed_words += sz;
+-                // A removed record's header word is held space, not a record
+-                // (`@FR-H-Removed`).
+-                u.claimed_count += u32::from(!self.removed.contains(pos));
++                u.claimed_count += 1;
+                 prev_was_free = false;
+             }
+             pos += sz;
+@@ -2719,8 +2650,6 @@ impl Store {
+     pub(crate) fn swap_contents(a: &mut Store, b: &mut Store) {
+         std::mem::swap(&mut a.ptr, &mut b.ptr);
+         std::mem::swap(&mut a.claims, &mut b.claims);
+-        std::mem::swap(&mut a.referenced, &mut b.referenced);
+-        std::mem::swap(&mut a.removed, &mut b.removed);
+         std::mem::swap(&mut a.size, &mut b.size);
+         std::mem::swap(&mut a.released_bytes, &mut b.released_bytes);
+         std::mem::swap(&mut a.claimed_end, &mut b.claimed_end);
+@@ -2858,8 +2787,6 @@ impl Store {
+             ptr,
+             size: self.size,
+             claims: self.claims.clone(),
+-            referenced: self.referenced.clone(),
+-            removed: self.removed.clone(),
+             #[cfg(feature = "mmap")]
+             file: None,
+             free: self.free,
+@@ -2923,8 +2850,6 @@ impl Store {
+             ptr,
+             size: self.size,
+             claims: self.claims.clone(),
+-            referenced: self.referenced.clone(),
+-            removed: self.removed.clone(),
+             #[cfg(feature = "mmap")]
+             file: None,
+             free: self.free,
+@@ -2973,8 +2898,6 @@ impl Store {
+         Store {
+             ptr: self.ptr,
+             claims: Claims::default(),
+-            referenced: Claims::default(),
+-            removed: Claims::default(),
+             size: self.size,
+             #[cfg(feature = "mmap")]
+             file: None,
+@@ -3494,7 +3417,7 @@ impl Store {
+             if block_size <= 0 {
+                 break; // a malformed image; `validate_structure` is what refuses it
+             }
+-            if header > 0 && !self.removed.contains(pos) {
++            if header > 0 {
+                 self.claims.insert(pos);
+             }
+             pos += block_size as u32;

@@ -335,6 +335,10 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                 addition to a string or a vector, and the collection no reordering.  A
                 user-written view whose container is disturbed materialises or the disturbance
                 is refused instead (binding.md B-Disturb, H-Materialise).
+  (H-Removed)   removing a record a stored reference has named ends the record, not its
+                position: the header word stays behind outside every claim, and no claim
+                reuses it.  A stored reference to it reads null; the rest of the record is
+                freed.
 ```
 
 **In words.** A store keeps no back references: nothing records who points at what, so the
@@ -342,9 +346,12 @@ layout itself guarantees that a referenced thing does not move — a record keep
 field keeps its offset, and only content (a string's bytes, a vector's elements, an inline
 record) moves, which no long-term reference names.  `(H-ShortRef)` is what lets a short-term
 reference name content directly, and what a rewrite may rely on: a function's parameters name
-stores that take no string or vector addition during the call.  The compiler's own placement
-does not keep it yet (D-heap-47), and a removal ends a record's home while a stored reference
-may still name it (D-heap-48).
+stores that take no string or vector addition during the call.  `(H-Removed)` is the same
+no-back-references rule applied to removal: nothing can tell a reference that its record is
+gone, so the record leaves a mark where it was, and the reference checks the mark when it is
+read.  The mark costs one word per removed record that a reference named.  The compiler's own
+placement does not keep `(H-ShortRef)` yet (D-heap-47), and a vector clear strands a
+referenced type's records without the mark (D-heap-49).
 
 **Where `(H-LongRef)` holds in the code.**
 - *The link.* `Stores::finish` links the element type of every keyed collection field (`hash`,
@@ -366,6 +373,20 @@ may still name it (D-heap-48).
   (`typedef::fill_database`).
 - *The one place records move:* `compact_slot`, on the load path only, where no reference into
   the store can be live yet.
+
+**Where `(H-Removed)` holds in the code.**
+- *The mark.* `Stores::set_db_ref` (`OpSetDbRef`, both backends) records the record a stored
+  reference names in its store's `referenced` set (`Store::note_referenced`).  The set only
+  grows: with no back references nothing can say when the last reference went.
+- *The removal.* `Store::delete` entombs a record in that set (`Store::entomb`): the header
+  word becomes a one-word block in `removed` and out of `claims`, and the rest of the record is
+  freed as a record of its own.  Every removal reaches it: `remove_vector_at`, the keyed
+  removals, a parent's release (`remove_claims`).  `claims_rebuild` and `Store::usage` skip a
+  removed position.
+- *The read.* `Stores::get_db_ref` (`OpGetDbRef`) and the formatter answer null for a removed
+  record (`Stores::reference_removed`).
+- `LOFT_NO_TOMBSTONE=1` frees such a record like any other: the bisect step
+  ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
 
 **Where `(H-ShortRef)` holds in the code.**
 - *User views.* The scope pass finds the views live across a disturbance
@@ -856,13 +877,14 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 OPEN: **2**.  The entries the register closed, and how each closed, are in
 [heap-history.md](heap-history.md).
 
-### D-heap-48 — OPEN (loft#1969): a removal ends a record's home while a stored reference may name it <!-- doc-lint: ok -->
+### D-heap-49 — OPEN (loft#1971): a vector clear strands a referenced type's records without the `(H-Removed)` mark <!-- doc-lint: ok -->
 
-`(H-LongRef)` keeps a referenced record from MOVING; removing it from its collection ends its
-home instead, and with no back references nothing tells the reference.  The freed record is
-reused by the next allocation, so the reference reads a different record — silently, on both
-backends.  Closes with a design for removal under a live long-term reference: refuse it, a
-generation tag the reference checks, or a tombstone.
+`OpClearVector` resets a vector's length and does not reach `Store::delete` for the records of
+a linked `array`: the op carries no type, so the runtime cannot tell record ids from inline
+elements.  A stored reference to a cleared record reads its old values, silently, on both
+backends, and the records stay claimed inside the store.  `v.clear()`, `v = []` and a
+reassigned local all take that path; removing the elements one by one keeps the rule.  Closes
+when the clear of a linked element type releases its records.
 
 ### D-heap-47 — OPEN (loft#1968): `(R-Place)` grows a return buffer in a store its callee holds short-term references into <!-- doc-lint: ok -->
 

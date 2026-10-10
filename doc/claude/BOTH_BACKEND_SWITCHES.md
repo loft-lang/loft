@@ -674,6 +674,15 @@ live block, or a store that grows instead of reusing a freed block.  The falsifi
 own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
 pin the untracked delete, the growth below the floor and the one sweep at the bound.
 
+**A removed record a stored reference named leaves a tombstone (default-ON, both backends,
+`@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
+keeps such a record's header word as a one-word block that no claim reuses and frees the rest,
+and `OpGetDbRef` reads null there.  It costs one word per such removal, and nothing for a
+program without stored references.  **`LOFT_NO_TOMBSTONE=1`** frees the record like any other,
+so the reference reads whatever is claimed there next.  It is the bisect step for a reference
+that reads null where its record should still be there, or for a store that grows under
+removals.
+
 ## Falsifier: the emulated Windows host
 
 **`LOFT_POISON_HOST=windows`** (@PLN184 Track W, runtime, BOTH backends, Linux and macOS)

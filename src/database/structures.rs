@@ -3170,6 +3170,58 @@ impl Stores {
         .or_null()
     }
 
+    /// The 12-byte stored reference at field `fld` of `db` (`OpGetDbRef`): null when the
+    /// holder has no record, and null when the record it names was removed
+    /// (`@FR-H-Removed`) — the position is no record any more, whatever claim came after.
+    #[must_use]
+    pub fn get_db_ref(&self, db: &DbRef, fld: u32) -> DbRef {
+        if db.rec == 0 {
+            return DbRef::NULL;
+        }
+        let store = self.store(db);
+        let off = db.pos + fld;
+        let store_nr = store.get_u32_raw(db.rec, off) as u16;
+        let rec = store.get_u32_raw(db.rec, off + 4);
+        let pos = store.get_u32_raw(db.rec, off + 8);
+        if self.reference_removed(store_nr, rec) {
+            return DbRef::NULL;
+        }
+        DbRef { store_nr, rec, pos }
+    }
+
+    /// `@FR-H-Removed` — whether a stored reference to record `rec` of store `store_nr` names
+    /// a removed record, and so reads null.
+    #[inline]
+    #[must_use]
+    pub fn reference_removed(&self, store_nr: u16, rec: u32) -> bool {
+        rec != 0
+            && self
+                .allocations
+                .get(store_nr as usize)
+                .is_some_and(|s| s.is_removed(rec))
+    }
+
+    /// Store `r` as the 12-byte reference at field `fld` of `db` (`OpSetDbRef`), and mark the
+    /// record it names (`@FR-H-Removed`): removing that record later leaves its position
+    /// behind, so this reference reads null instead of the next record claimed there.
+    /// `false` when the holder has no record, for the caller to report the dropped write.
+    pub fn set_db_ref(&mut self, db: &DbRef, fld: u32, r: DbRef) -> bool {
+        if db.rec == 0 {
+            return false;
+        }
+        let off = db.pos + fld;
+        let store = self.store_mut(db);
+        store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
+        store.set_u32_raw(db.rec, off + 4, r.rec);
+        store.set_u32_raw(db.rec, off + 8, r.pos);
+        if r.rec != 0
+            && let Some(target) = self.allocations.get_mut(r.store_nr as usize)
+        {
+            target.note_referenced(r.rec);
+        }
+        true
+    }
+
     #[must_use]
     #[allow(dead_code)]
     pub fn get_field(db: &DbRef, fld: u32) -> DbRef {

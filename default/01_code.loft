@@ -1138,9 +1138,9 @@ fn OpSetRef(v1: reference, fld: const u16, val: reference);
 // in vector elements / struct fields.  Layout: u32 store_nr | u32 rec |
 // u32 pos.  Null is encoded as rec == 0 (other words irrelevant).
 fn OpSetDbRef(v1: reference, fld: const u16, val: reference);
-#rust"{{let db = @v1; let r = @val; if db.rec != 0 {{ let off = db.pos + u32::from(@fld); let store = stores.store_mut(&db); store.set_u32_raw(db.rec, off, u32::from(r.store_nr)); store.set_u32_raw(db.rec, off + 4, r.rec); store.set_u32_raw(db.rec, off + 8, r.pos); }} else if db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
+#rust"{{let db = @v1; let r = @val; if !stores.set_db_ref(&db, u32::from(@fld), r) && db.absence_unreported() {{ s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::WriteDropped); }}}}"
 fn OpGetDbRef(v1: reference, fld: const u16) -> reference;
-#rust"{{let db = @v1; if db.rec == 0 {{ DbRef::NULL }} else {{ let store = stores.store(&db); let off = db.pos + u32::from(@fld); let store_nr = store.get_u32_raw(db.rec, off) as u16; let rec = store.get_u32_raw(db.rec, off + 4); let pos = store.get_u32_raw(db.rec, off + 8); DbRef {{ store_nr, rec, pos }} }}}}"
+#rust"stores.get_db_ref(&@v1, u32::from(@fld))"
 // Get a direct field reference for a structure: vector, index, hash or spatial
 // These always point to a field what value can change depending on the content.
 fn OpGetField(v1: reference, fld: const u16) -> reference[v1];

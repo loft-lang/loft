@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@C145`, `@FR-H-Removed` — removing a record a stored reference has named ends the record,
+// not its position: no later claim reuses that position, and the reference reads null.  Each
+// cell sets up a reference, removes its record, appends a new one (the claim that would reuse
+// the space), and reads through the reference:
+//
+// - a vector removal: `items.remove(1)`, then an append of v = 99 — the reference is null and
+//   the remaining element still reads 11;
+// - a sorted and a hash removal by key (`items[2] = null`), then an insert keyed 3 — null;
+// - a removed parent: `gs.remove(1)` drops the group holding the referenced record — null;
+// - the holder in the same store as the record — null;
+// - a reference set again after the removal reads its new record (11), and a reference to a
+//   record that was not removed keeps reading it (11);
+// - formatting the holder prints the removed reference as `null`;
+// - churn: 2000 rounds of append, reference the new record, remove it — null at the end.
+//
+// The removed collection's own clear (`v.clear()`, `v = []`) is not here: it strands the
+// records without the mark (D-heap-49, loft#1971).
+//
+// @falsified-at: c58a84103 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-stored-reference-to-a-removed-record-reads-null.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the asserts — the first failing cell ends the run, on both backends.
+//   WITNESS: `h.r` read 99 after `items.remove(1); items += [P { k: 9, v: 99 }]`: the
+//   appended record took the removed one's position.  Each cell fails alone under
+//   `LOFT_NO_TOMBSTONE=1` (99, 33, 33, 88, 99, and the churn cell's non-null reference).
+
+struct P { k: integer, v: integer }
+struct Bag { items: vector<P> }
+struct Srt { items: sorted<P[k]> }
+struct Hsh { items: hash<P[k]> }
+struct G { ps: vector<P> }
+struct Groups { gs: vector<G> }
+struct Self { items: vector<P>, r: reference<P>? }
+struct Holder { r: reference<P>? }
+
+fn vector_removal() {
+  b = Bag { items: [P { k: 1, v: 11 }, P { k: 2, v: 22 }] };
+  h = Holder { r: b.items[1] };
+  keep = Holder { r: b.items[0] };
+  b.items.remove(1);
+  b.items += [P { k: 9, v: 99 }];
+  assert(h.r == null, "vector: the removed record reads null, got {h.r.v}");
+  assert(keep.r.v == 11, "vector: a record not removed keeps its value, got {keep.r.v}");
+  assert(len(b.items) == 2 && b.items[0].v == 11 && b.items[1].v == 99, "vector: the collection");
+  assert("{h}" == "{{r:null}}", "vector: formatted {h}");
+  h.r = b.items[0];
+  assert(h.r.v == 11, "vector: a reference set again reads its new record, got {h.r.v}");
+}
+
+fn sorted_removal() {
+  b = Srt { items: [P { k: 1, v: 11 }, P { k: 2, v: 22 }] };
+  h = Holder { r: b.items[2] };
+  b.items[2] = null;
+  b.items += [P { k: 3, v: 33 }];
+  assert(h.r == null, "sorted: the removed record reads null, got {h.r.v}");
+  assert(len(b.items) == 2 && b.items[3].v == 33, "sorted: the collection");
+}
+
+fn hash_removal() {
+  b = Hsh { items: [P { k: 1, v: 11 }, P { k: 2, v: 22 }] };
+  h = Holder { r: b.items[2] };
+  b.items[2] = null;
+  b.items += [P { k: 3, v: 33 }];
+  assert(h.r == null, "hash: the removed record reads null, got {h.r.v}");
+  assert(len(b.items) == 2 && b.items[1].v == 11, "hash: the collection");
+}
+
+fn removed_parent() {
+  b = Groups { gs: [G { ps: [P { k: 1, v: 11 }] }, G { ps: [P { k: 2, v: 22 }, P { k: 3, v: 33 }] }] };
+  h = Holder { r: b.gs[1].ps[1] };
+  b.gs.remove(1);
+  b.gs += [G { ps: [P { k: 7, v: 77 }, P { k: 8, v: 88 }] }];
+  assert(h.r == null, "parent: a record removed with its parent reads null, got {h.r.v}");
+  assert(b.gs[1].ps[1].v == 88, "parent: the collection");
+}
+
+fn same_store() {
+  b = Self { items: [P { k: 1, v: 11 }, P { k: 2, v: 22 }] };
+  b.r = b.items[1];
+  b.items.remove(1);
+  b.items += [P { k: 9, v: 99 }];
+  assert(b.r == null, "same store: the removed record reads null, got {b.r.v}");
+}
+
+fn churn() {
+  b = Bag { items: [] };
+  h = Holder { };
+  for i in 0..2000 {
+    b.items += [P { k: i, v: i }];
+    h.r = b.items[len(b.items) - 1];
+    b.items.remove(0);
+  }
+  assert(h.r == null && len(b.items) == 0, "churn: the last removed record reads null");
+}
+
+fn main() {
+  vector_removal();
+  sorted_removal();
+  hash_removal();
+  removed_parent();
+  same_store();
+  churn();
+}

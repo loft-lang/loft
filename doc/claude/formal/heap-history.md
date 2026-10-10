@@ -2735,6 +2735,17 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-48 — OPENED AND CLOSED (2026-10-10, loft#1969): a removal ended a record's home while a stored reference named it
+
+`(H-LongRef)` kept a referenced record from moving, but removing it from its collection freed
+it, and the next claim reused the position: `h.r.v` read 99 from the record appended after the
+removal, on both backends.  The owner's ruling closed it: a removed record's space is not
+reused directly, and a reference can see the space is no record any more.  That is
+`(H-Removed)`: `OpSetDbRef` marks the record it names, `Store::delete` keeps such a record's
+header word as a tombstone, and `OpGetDbRef` reads null there.  Guard
+`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft`.  The vector clear,
+which never reaches `Store::delete`, stayed open as D-heap-49.
+
 ### D-heap-46 — OPENED AND CLOSED (2026-10-07, loft#1916): a collection place assigned from a projection of itself was emptied
 
 `(H-CopySelf)` makes a self-delivery a no-op.  A collection field two or more steps deep

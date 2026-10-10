@@ -4801,3 +4801,10 @@ it, `(R-Place)` hands a callee a return buffer claimed in the caller's store and
 it while holding short-term references there — recorded as `D-heap-47`, whose closing is what
 would let `(R-RecPtr)` keep those views (−13 % on a `mesh_to_floats` probe).
 
+The removal clause was added the same day, as the design call loft#1969 asked for (a removed
+record's position was reused by the next claim, so a stored reference read a different
+record): *"a removed record space cannot directly be reused by a store but a reference can see
+that this space is now not a record anymore"*.  Of the three closings the issue offered —
+refuse the removal, a generation tag, a tombstone — this is the tombstone, kept to the header
+word: the position is never reused, the rest of the record is.  Written as `(H-Removed)`.
+
