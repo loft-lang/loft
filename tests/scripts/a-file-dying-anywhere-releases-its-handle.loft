@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_CLEAR_RELEASE — the switch keeps a cleared collection's `File` records, so five handles stay open at exit, which the leak report names.
 //
 // `@FR-H-Handle` — a `File` record's death releases its lease on the OS handle wherever the
 // record lives, and the handle closes at the last release: a local's store, a field of a

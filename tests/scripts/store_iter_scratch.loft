@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @observes: LOFT_NO_HALF_LOAD — its output measures the hash store's occupancy, which its bucket table's size decides.
+// @observes: LOFT_NO_LAZY_BUFFER — its store census counts the live stores, and the switch mints a file's buffers before their first use.
 //
 // loft#727 — iterating a keyed collection must not leak its key-sorted
 // snapshot into the collection's own store.
