@@ -260,7 +260,9 @@ a symptom, not where loft should end up.
 
 **Revisit when.** Every class median is under 2× on the reference host (tighten the bar), or a
 class is shown to carry a cost the contract requires that Rust does not pay — that class then
-gets its own recorded bar here, with the cost named.  Decided 2026-10-04 —
+gets its own recorded bar here, with the cost named.  And when contract-1 stability is reached:
+optimisation after it needs a way to reduce its risk beyond running the test suite, which is
+not enough then (owner) — not designed yet.  Decided 2026-10-04 —
 [record](DESIGN_DECISIONS-history.md#c136--a-routine-over-3-its-rust-twin-is-a-defect-a-class-whose-median-is-over-3-is-a-systemic-one).
 **Holds at:** `@C136` — the bar in `bench/portal/outliers.py`; guard
 `tests/doc_hygiene.rs::the_outlier_report_reproduces_the_hand_count`; PERFORMANCE.md § What

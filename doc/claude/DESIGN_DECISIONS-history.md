@@ -4663,7 +4663,9 @@ performance of rustc code I am also realistic enough that it will take a long ti
 I am willing to settle for 5x for a stable loft release, because optimizing will continue to
 destabilize the loft code too and I want to reach stability in the next months".  Clarified
 the same day: "It is not that we do only low-risk changes now, but this work is inherently not
-stable, and that is not a problem for now".
+stable, and that is not a problem for now", and "We do have to find a way to reduce risks after
+the contract=1 stability though, just running the tests then will not be enough, but that is for
+when we hit that".
 
 ## C137 — A claim promises no value; a slot is read only after it is written
 
