@@ -12,11 +12,11 @@ Tracker: [@PLN189](https://github.com/loft-lang/plans/issues/189).
 **Needs approval — design ready, nothing built.**  `(H-RefHome)` (formal/heap.md) moves a named
 local's store out to a holder of an enclosing block of the same function.  It refuses nine
 shapes, the ones no variable of the frame can own.  Their guard is
-`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`.  This plan admits all
-nine by lowering them to operators both backends already have, chosen by the analysis that
-refuses them today.  Approval is needed because the rule changes: from *"does not outlive the
-home"* to *"lives as long as the store of its holder"*.  A second decision is needed on phase D:
-whether to reclaim records that are left without an owner.
+`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`.  This plan admits
+them in eleven small steps.  Each step lowers one shape to operators both backends already run,
+and keeps every other shape refused, so the tree is releasable after every step.  Approval is
+needed because the rule changes: from *"does not outlive the home"* to *"lives as long as the
+store of its holder"*.  Step 10 (records left without an owner) needs its own decision.
 
 ## Goal
 
@@ -25,121 +25,74 @@ No program is refused for where it stores a reference, and nothing is added on t
 
 ## Effort + design
 
-- **Effort:** M overall: C small, A and B medium each, D small to medium, E small.
-- **Design:** ✓ for A–C and E; ~ for D, whose semantics are the owner's call.
+- **Effort:** M overall; every step is S.
+- **Design:** ✓ for steps 0–9 and 11; ~ for step 10, whose semantics are the owner's call.
 - **Last touched:** 2026-10-11.
 
-## The shapes, grouped by what is missing
+## The shapes, and what each lowers to today
 
-| Group | Refused shape (guard function) | What is missing |
+| Group | Refused shape (guard function) | Today's IR, with the refusal withheld (`LOFT_NO_REF_HOME=1`) |
 |---|---|---|
-| **A** no owner | `literal_built_in_a_loop`, `literal_assigned_in_a_loop`, `call_result_in_a_loop`; also a literal or call result stored into a parameter or a returned holder | the record exists only for the reference; its temporary is refilled each pass or dies with the frame |
-| **B** owner dies with the frame | `into_parameter`, `returned_holder`, `copied_into_a_parameter`, `copied_into_a_returned_record`, `assigned_to_a_returned_record` | a named local is referenced from a holder the caller owns |
-| **C** refilled own record | `the_record_of_a_loop_pass` (`p = P{…}; h.r = p` in a loop) | the next pass mints the local's store again at the position the reference names (the store root, record 1) |
+| **A** no owner | `literal_built_in_a_loop`, `literal_assigned_in_a_loop`; a literal into a parameter or returned holder | `OpSetDbRef(holder, f, {OpDatabase(__ref_p2_1, P); …fields…; __ref_p2_1})`: a function-level temporary minted again each pass |
+| **A** no owner | `call_result_in_a_loop` | `__lift_1 = n_mk(…, __ref_1); OpSetDbRef(holder, f, __lift_1); OpFreeRef(__lift_1)` |
+| **B** owner dies with the frame | `into_parameter`, `returned_holder`, `copied_into_a_parameter`, `copied_into_a_returned_record`, `assigned_to_a_returned_record` | the local's store (`__vdb_1`) freed at the exit by `OpFreeRef`, or by `OpFreeRecordIn` where `(R-Place)` placed it in the return buffer |
+| **C** refilled own record | `the_record_of_a_loop_pass` | `p = null; OpDatabase(p, P); …; OpSetDbRef(h, f, p); OpFreeRef(p)` each pass |
 
 ## Design
 
-All of it runs where the refusal runs now.  `scopes::stored_reference_homes`
-(`src/scopes/stored_refs.rs`) judges each outlived hold in `Walk::carry`.  Today `Walk::hoist`
-admits group 0 (a named local held from an enclosing block), and every other case is refused.  A
-resolution replaces the refusal for each group.  The parser applies it in
-`Parser::check_reshape_under_reference` before `scopes::check` runs, the way it applies
-`insert_hoists` today.
+Every decision is made where the refusal is made today.  `scopes::stored_reference_homes`
+([stored_refs.rs:63](../../../src/scopes/stored_refs.rs#L63)) judges each outlived hold in
+`Walk::carry` ([stored_refs.rs:520](../../../src/scopes/stored_refs.rs#L520)).  It admits a named
+local held from an enclosing block through `Walk::hoist`
+([stored_refs.rs:636](../../../src/scopes/stored_refs.rs#L636)), and refuses every other case.
+`Parser::check_reshape_under_reference` applies what the walk answers before `scopes::check` runs
+([control.rs:11463](../../../src/parser/control.rs#L11463)).
 
-### C — the refilled local's own record: place it in the holder's store
+- **Placement (A, C).** The record is built in the holder's store:
+  `OpPlaceRecord(host, tp)` ([01_code.loft:1760](../../../default/01_code.loft#L1760),
+  `Stores::place_record_prefilled`, [database/mod.rs:2894](../../../src/database/mod.rs#L2894)).
+  The variable that holds it becomes a borrow of the holder's root through its type's deps.  That
+  is load-bearing: `OpFreeRef` frees a whole store by number (`Stores::free`,
+  [allocation.rs:997](../../../src/database/allocation.rs#L997)).  A free emitted for a placed
+  record would release the holder's store.
+- **Copy out (B).** When the local's store is freed, each holder that outlives it and still names
+  one of its records gets a copy in the holder's own store, and is re-pointed at the copy.  It is
+  one new helper operator, `OpEvacuate` (step 5).  It composes code that exists: the store test of
+  `OpDistinctStore` ([01_code.loft:1314](../../../default/01_code.loft#L1314)),
+  `place_record_prefilled`, the deep copy of `OpCopyRecord`
+  ([01_code.loft:1754](../../../default/01_code.loft#L1754)), and `Stores::set_db_ref`
+  ([structures.rs:3259](../../../src/database/structures.rs#L3259)).  Copying at the end, not at
+  the write, keeps aliasing exact for the rest of the function.
+- **Owner-less records (step 10, optional).** A placed or copied record has no owning field.
+  When its reference is re-pointed, or its holder removed, it stays in the holder's store until
+  that store is freed.  A per-store `placed` bitset, tested on reference writes only, reclaims it.
 
-The local `p` is moved out by the existing hoist.  Its mint then changes:
-- **Today:** `OpDatabase(p, P)` mints the store again at record 1.
-- **Now:** release the previous pass's record, then place a fresh one in the holder's store:
-  `if !OpRefIsNull(p) { OpFreeRecordIn(p, P) }; p = OpPlaceRecord(holder, P)`.
+## Steps
 
-The release goes through `Store::delete`, and the record was referenced, so it leaves a
-tombstone.  A holder kept from an earlier pass therefore reads null, as for a refilled vector
-(`(H-Removed)`).  `p` becomes a borrow of the holder (its type's deps name the holder's root), so
-the scope pass does not free it.  The last pass's record stays in the holder's store, which the
-holder names anyway.
+Every step lands as its own commit with the cells it admits, on both backends, with
+`LOFT_STRICT_STORES=1` clean.  Each falsifies the guard against the commit before it and moves the
+admitted cells from the refusal guard to the admitted guard.  A step that cannot admit a site
+leaves it refused: a refusal is never wrong, only a wrong answer is.
 
-### A — a literal or a call result: build it in the holder's store
-
-- **A literal for the field:** `h.r = P{…}`, or `H { r: P{…} }` built into a holder.  Its
-  temporary's mint becomes `OpPlaceRecord(holder, P)`, and the field writes follow unchanged.
-- **A call result:** the call's `__ref_N` return buffer is minted the same way.  This is
-  `(R-Place)`'s claim with a new kind of destination: the record a pointer field names, rather
-  than a field or element stored inline.  The store into the field stays `OpSetDbRef`, not a
-  relocation.  The callee rules of `(R-Place)` hold unchanged: a callee that may hand back a store
-  it did not mint declines, and stays refused.
-- **The temporary becomes a borrow** of the holder's root (deps), so nothing frees it at the end
-  of the pass.
-
-Each pass's record is then a record of its own in the holder's store: `10 11 12`, not the last
-pass's value three times.
-
-### B — a named local escaping the frame: copy the named record out at the local's end
-
-When the local's store is freed, each holder that outlives it and is known to hold one of its
-records gets:
-
-```
-old = OpGetDbRef(holder, fld)
-if !OpDistinctStore(old, home) {          // the holder still names into the dying store
-  c = OpPlaceRecord(holder, T); OpCopyRecord(old, c, T); OpSetDbRef(holder, fld, c)
-}
-```
-
-`OpCopyRecord` is the deep copy: text and vectors come along into the holder's store.  Copying
-at the local's end, rather than at the write, keeps aliasing exact for the rest of the function
-(`h.r = items[1]; items[1].k = 9` reads 9 through `h.r`).  Nothing names the local after the
-frame, so the copy cannot be observed.
-
-Where it is emitted:
-- **The free is the chokepoint.** The parser marks the home variable with the holder places to
-  copy out.  The scope pass's free emission (`get_free_vars`) puts the sequence in front of that
-  variable's `OpFreeRef`, on every path that frees it.
-- **The holder's place must be a path valid at that point:** a parameter's field, or a field of
-  the return value.  A holder copied into a collection element (`o.hs += [h]`) has no stable
-  place there, so it is copied at that line instead, from the copy's destination element.
-- **Two holders naming one record get one copy:** before copying, compare the old reference with
-  the ones already copied (`OpEqRef`) and re-point to the same copy.
-- **A copied record's own references:** a record whose type holds a reference into the same
-  dying local would need a recursive copy.  It stays refused, by a type test on the record type's
-  reference fields.
-
-### D — records without an owner (optional; the owner decides)
-
-A placed (A, C) or copied (B) record has no field that owns it.  When its reference is re-pointed,
-or its holder is removed from a collection, it stays in the holder's store until that whole store
-is freed.  For a short-lived holder that costs nothing.  A long-lived one leaks a record per
-update, for example `fn update(state: State) { tmp = […]; state.cur = tmp[0] }` called every
-frame.
-
-The minimal fix is a per-store `placed` set (a `Claims` bitset, like `referenced`):
-- `OpPlaceRecord` sets the bit when called for a field.
-- `Stores::set_db_ref` (`OpSetDbRef`, both backends) releases the old target when it is placed
-  and lives in the holder's store.  It was referenced, so it leaves a tombstone.
-- Removing a holder record (`remove_claims`) releases the placed targets of its reference
-  fields.  Only types with reference fields take that walk.
-
-Cost: one bit test per reference write, nothing on a read, nothing for a program without these
-shapes.  The semantic it brings: a record created for a reference ends when that reference
-moves on, and a copy of the holder made before then reads null.  The alternative is no D: accept
-the growth, with an advice-level diagnostic where a loop re-points a holder declared outside it.
-
-### E — the rule and the docs
-
-- **`(H-RefHome)` becomes:** *a record a stored reference names lives as long as the store of its
-  holder.*  The home moves out (group 0), is built in the holder's store (A, C), or is copied
-  there at its end (B).
-- **The refusal guard shrinks** to what stays refused: a callee that answers a store it did not
-  mint, and a copied record holding a reference into the same dying local.
-- **Other pages:** C145's catalogue line (DESIGN_DECISIONS_OWNERSHIP.md), the `reference<T>` row
-  in LOFT.md, and the `LOFT_NO_REF_HOME` entry in BOTH_BACKEND_SWITCHES.md.  The switch then
-  withholds the resolutions as well as the refusal.
+| # | Step | Code it touches | Verify |
+|---|---|---|---|
+| 0 | **Probes.** Write the Stage-A cells below as `/tmp` probes and record today's answers: refused, and with `LOFT_NO_REF_HOME=1`. | none | every cell either refused or reading 777–779 or garbage |
+| 1 | **Resolution, still refusing.** `Walk::hoist` becomes `Walk::resolve`, answering `Hoist`, `Place`, `Evacuate` or `Refuse`; `StoredRefs` ([stored_refs.rs:45](../../../src/scopes/stored_refs.rs#L45)) carries the place and evacuate lists.  The parser applies only `Hoist`, and refuses the others as today. | [stored_refs.rs:520](../../../src/scopes/stored_refs.rs#L520), [:636](../../../src/scopes/stored_refs.rs#L636) | no IR changes anywhere (`LOFT_LOG=static` diff over every file using `reference<`); both guards unchanged |
+| 2 | **Place a literal (A1, A2, A4, A5).** For a site whose value is an object block minting `OpDatabase(t, tp)`: take a fresh copy of `t` (`Function::copy_variable`, [variables/mod.rs:2905](../../../src/variables/mod.rs#L2905)) typed with deps on the holder's root (`set_type`, [:5872](../../../src/variables/mod.rs#L5872)).  Inside that site's value only, replace the mint with `Set(t', OpPlaceRecord(root, tp))`.  The site is found by its ordinal among `OpSetDbRef`s in walk order, the way `insert_hoists` ([stored_refs.rs:101](../../../src/scopes/stored_refs.rs#L101)) finds blocks.  A fresh copy, because `__ref_p2_1` may serve another literal of the function. | [stored_refs.rs:427](../../../src/scopes/stored_refs.rs#L427) `write`, [control.rs:11463](../../../src/parser/control.rs#L11463) | A1 `10 11 12`, A2, A4, A5; `LOFT_POISON=1` clean; no `OpFreeRef` of `t'` in the dump |
+| 3 | **Place a call result (A3).** The site's call takes a fresh copy of its `__ref_N` buffer, set to `OpPlaceRecord(root, tp)` in front of the statement, typed as in step 2.  Admitted only where `(R-Place)`'s callee clause admits the callee: its buffer written on every exit (`callee_writes_buffer_at_every_exit`, [place_result.rs:406](../../../src/place_result.rs#L406), made `pub(crate)`), and minted behind the offered-record test (`OpRefIsNull` / `OpConvBoolFromRef` in front of its `OpDatabase`, as `(R-Place)` emits for `__retbuf`).  Any other callee stays refused (A8): an unguarded `OpDatabase` on a placed record re-initialises the WHOLE holder store, since `Stores::clear` ([allocation.rs:2137](../../../src/database/allocation.rs#L2137)) runs for every type but a vector wrapper (`mint_at_place`, [:1213](../../../src/database/allocation.rs#L1213)). | [stored_refs.rs:303](../../../src/scopes/stored_refs.rs#L303) `home`, [place_result.rs:406](../../../src/place_result.rs#L406) | A3 `30 31`; A8 refused; strict clean |
+| 4 | **Place a refilled local's own record (C1–C3).** `Walk::hoist` declines `refilled && root` today ([stored_refs.rs:636](../../../src/scopes/stored_refs.rs#L636)); resolve it to `Place` instead.  The local's in-loop `OpDatabase(p, tp)` becomes `Set(p, OpPlaceRecord(root, tp))`, and `p` takes deps on the holder's root, so its per-pass `OpFreeRef(p)` is not emitted.  The previous pass's record stays in the holder's store (step 10 reclaims it). | [stored_refs.rs:636](../../../src/scopes/stored_refs.rs#L636) | C1 `1`, C2 `0`, C3 per pass; strict clean |
+| 5 | **The helper, no caller yet.** `fn OpEvacuate(holder: reference, fld: const u16, home: reference, tp: const u16)` in `default/01_code.loft` beside `OpPlaceRecord`, with `#rust"stores.evacuate(…)"`, the interpreter arm in `src/fill.rs`, and `Stores::evacuate` beside `set_db_ref` ([structures.rs:3259](../../../src/database/structures.rs#L3259)).  When the field names a record in `home`'s store: place a `tp` record in the holder's store, deep-copy into it, re-point the field.  Otherwise do nothing.  Run `make surface-gen` (a new operator renumbers the surface). | [01_code.loft:1760](../../../default/01_code.loft#L1760), [structures.rs:3259](../../../src/database/structures.rs#L3259) | a Rust unit test: same store copied and re-pointed, other store untouched, null untouched; `make ops-census` lists it unexercised |
+| 6 | **Copy out at the local's frees (B1, B3, B5, B6, B9–B11).** For a named home held by a holder whose place is a path rooted at a parameter or the return buffer (`__retbuf`), the walk answers `Evacuate { owner, place, fld, tp }`.  The owner is marked (`mark_ref_home`, [variables/mod.rs:4058](../../../src/variables/mod.rs#L4058)), and `(R-Place)` declines to place a marked owner (`place_result::admits`, [place_result.rs:161](../../../src/place_result.rs#L161)).  That keeps the home's store its own, so the store test is exact.  A pass after the scope pass, before `compute_function_intervals` ([scopes.rs:845](../../../src/scopes.rs#L845)), puts `OpEvacuate(place, fld, owner, tp)` in front of every `OpFreeRef(owner)` and `OpFreeRecordIn(owner, _)`, whoever emitted it.  Still refused (B8): a record type holding a reference field whose target type the home holds. | [stored_refs.rs:520](../../../src/scopes/stored_refs.rs#L520), [scopes.rs:845](../../../src/scopes.rs#L845), [place_result.rs:161](../../../src/place_result.rs#L161) | B1 `2`, B2 `9 9`, B3, B5, B6, B9 no copy, B10 null, B11; B8 refused; `LOFT_NO_TOMBSTONE=1` A/B moves nothing |
+| 7 | **Copy out at a copy into an element (B4).** A holder copied into a collection element (`o.hs += [h]`, `Walk::copy`, [stored_refs.rs:566](../../../src/scopes/stored_refs.rs#L566)) has no stable place at the local's end.  The parser puts `OpEvacuate(_elm, fld, owner, tp)` right after that copy, where `_elm` is in scope. | [stored_refs.rs:566](../../../src/scopes/stored_refs.rs#L566), [control.rs:11463](../../../src/parser/control.rs#L11463) | B4; the element names a record in `o`'s store |
+| 8 | **One copy for two holders (B7).** `Stores::evacuate` remembers `(old, copy)` pairs for the store being freed, and answers the same copy for the same old record.  The memory is cleared when that store is freed (`free_named`). | [structures.rs:3259](../../../src/database/structures.rs#L3259), [allocation.rs:997](../../../src/database/allocation.rs#L997) | B7: a write through one holder after return shows through the other |
+| 9 | **Rule and refusal guard.** `(H-RefHome)` becomes *"a record a stored reference names lives as long as the store of its holder"*.  The refusal guard keeps A8 and B8.  Update C145's catalogue line, the `reference<T>` row in LOFT.md, and the `LOFT_NO_REF_HOME` entry (it then withholds the resolutions too). | formal/heap.md, DESIGN_DECISIONS_OWNERSHIP.md, LOFT.md, BOTH_BACKEND_SWITCHES.md | `rule_tags.py check`, `doc_lint.py` |
+| 10 | **Reclaim owner-less records (if approved).** (a) A `placed: Claims` set on `Store` beside `referenced` ([store.rs:352](../../../src/store.rs#L352)).  A new `OpPlaceFor(host, tp)` sets it, and steps 2–4 and `Stores::evacuate` switch to it.  (b) `Stores::set_db_ref` releases the old target when it is placed and lives in the holder's store, through `free_record_in` ([database/mod.rs:2864](../../../src/database/mod.rs#L2864)).  That goes through `Store::delete` ([store.rs:2101](../../../src/store.rs#L2101)), which leaves a tombstone.  (c) `remove_claims` ([allocation.rs:4270](../../../src/database/allocation.rs#L4270)) releases the placed targets of a removed holder's reference fields; only types with reference fields take the walk. | as listed | A6 holder store holds 1 live record after 1000 re-points; A7 null; `make ops-census` shows no op on the read path |
+| 11 | **Graduate.** Guards falsified against the commit before step 2; `python3 scripts/matrix_axes.py file` on the admitted guard; reach survey over every file using `reference<` (today: the stdlib and loft's own tests only). | tests/scripts | both guards green on both backends |
 
 ## Composition matrix — Stage A
 
-The cells below are probes before any phase, `--interpret` first, then both backends.  Every cell
-builds a three-element vector after the holder's write, so a freed store reused would read
-777–779.  Each asserts the value, the length of every collection involved, and a clean
+Every cell builds a three-element vector after the holder's write, so a freed store reused would
+read 777–779.  Each asserts the value, the length of every collection involved, and a clean
 `LOFT_STRICT_STORES=1` run.
 
 | Cell | Shape | Expected |
@@ -149,67 +102,47 @@ builds a three-element vector after the holder's write, so a freed store reused 
 | A3 | `for i in 0..2 { b.hs[i].r = mk(30 + i) }` | `30 31` |
 | A4 | `fn f(h: H) { h.r = P { k: 5 } }`, the caller reads `h.r.k` | `5` |
 | A5 | `fn f() -> H { H { r: P { k: 6 } } }` | `6` |
-| A6 | one holder outside a loop re-pointed to a literal 1000 times | the last value; holder store usage 1 live record with D, 1000 without |
-| A7 | `h2 = h; h.r = P { k: 2 }`, then `h2.r` | the old record without D, null with D |
-| A8 | a callee that may answer a store it did not mint, into a loop holder | still refused |
+| A6 | one holder outside a loop re-pointed to a literal 1000 times | the last value; 1 live record in the holder store with step 10, 1000 without |
+| A7 | `h2 = h; h.r = P { k: 2 }`, then `h2.r` | the old record without step 10, null with it |
+| A8 | a callee without the offered-record guard, into a loop holder | refused |
 | B1 | `fn fill(h: H) { items = [P{k:1}, P{k:2}]; h.r = items[1] }` | `2` |
-| B2 | B1 with `items[1].k = 9` after the write, read through `h.r` in and after the call | `9`, `9` |
+| B2 | B1 with `items[1].k = 9` after the write, read through `h.r` in and after the call | `9 9` |
 | B3 | `fn f() -> H { items = [P{k:1}]; H { r: items[0] } }` | `1` |
 | B4 | `fn f(o: Bag) { items = …; h = H { r: items[0] }; o.hs += [h] }` | the element's value |
 | B5 | `-> Out { …; Out { h: h } }` | the record's value |
 | B6 | `-> H { …; t = H { r: items[0] }; h = t; h }` | the record's value |
 | B7 | two holders naming the same record, a write through one after return | visible through the other |
-| B8 | the copied record holds a reference into the same local | still refused |
-| B9 | the holder re-pointed to a parameter's record before the local ends | no copy; names the parameter's record |
+| B8 | the copied record holds a reference into the same local | refused |
+| B9 | the holder re-pointed to a parameter's record before the local ends | no copy; the parameter's record |
 | B10 | a nullable holder field null at the local's end | no copy, null |
 | B11 | a vector, `sorted`, `hash` and `index` local as the home | each holder's value |
 | C1 | `for i in 0..2 { p = P { k: i }; h.r = p }` | `1` |
-| C2 | C1 with a second holder set in pass 0 | `-1` (null) |
+| C2 | C1 with a second holder set in pass 0 | `0` without step 10, null with it |
 | C3 | the holder declared inside the loop | that pass's value |
 
 Axes the cells move: holder kind (local, element, parameter, returned value), home kind
-(temporary, named struct local, vector, the keyed kinds), loop or not, a copy of the holder, the
-reference's nullability.  Run `python3 scripts/matrix_axes.py file` on the graduated guard before
-calling the matrix done.
-
-## Sub-arcs
-
-| Item | Source | Verify | Status |
-|---|---|---|---|
-| **C** — place a refilled local's record | § C | cells C1–C3, both backends; `LOFT_NO_REF_HOME=1` reads garbage | Open |
-| **A** — place a literal or call result | § A | cells A1–A5 and A8, both backends; `make rewrite-census` drops nothing | Open |
-| **B** — copy the named record out at the local's end | § B | cells B1–B11, both backends; the tombstone A/B (`LOFT_NO_TOMBSTONE=1`) moves nothing | Open |
-| **D** — reclaim placed records (if approved) | § D | A6 store usage bounded, A7 per the decision; no read-path op added (`make ops-census`) | Needs decision |
-| **E** — rule, guards, docs | § E | `rule_tags.py check`, `doc_lint.py`, the refusal guard reduced to A8 and B8 | Open |
-
-## Phase ordering
-
-1. **C first.** It is the smallest and reuses the hoist that is already built.  It proves the
-   `OpPlaceRecord` mint plus borrow deps, which A needs too.
-2. **A.** The literal half, then the call half (`place_result.rs` gains the pointer-field
-   destination).
-3. **B.** It needs the holder places carried from the analysis to the scope pass's free emission.
-4. **D**, only after the decision, as its own commit, so its semantics can be judged alone.
-5. **E** lands with each phase for the cells it admits.  The rule text changes with the first
-   phase that admits a shape.
+(temporary, named struct local, vector, the keyed kinds), loop or not, a copy of the holder, and
+the reference's nullability.
 
 ## Open design questions
 
 1. **The contract:** approve *"lives as long as the store of its holder"* as the new
    `(H-RefHome)`.
-2. **D's semantics:** reclaim on re-point (copies made before read null), or accept the growth with
-   an advice.  Recommended: reclaim, because it bounds memory and never reads freed memory.
-3. **Group A's direction:** should it stay refused anyway, since the message's rewrite (the
-   collection beside the holder) is the clearer program?  If so, only C and B are built, and A
-   keeps its refusal.
+2. **Step 10's semantics:** reclaim on re-point (copies made before then read null), or accept
+   the growth with an advice where a loop re-points a holder declared outside it.  Recommended:
+   reclaim; it bounds memory and never reads freed memory.
+3. **Group A's direction:** keep it refused, since the message's rewrite (the collection beside
+   the holder) is the clearer program?  Then steps 2 and 3 are skipped, and A1–A5 stay in the
+   refusal guard.
 
 ## See also
 
-- [formal/heap.md](../formal/heap.md) — `(H-RefHome)`, `(H-Removed)`, `(H-RefSet)`; the code sites
-  each phase changes.
-- [formal/rewrites.md](../formal/rewrites.md) — `(R-Place)`, whose claim A reuses.
+- [formal/heap.md](../formal/heap.md) — `(H-RefHome)`, `(H-Removed)`, `(H-RefSet)`, and the code
+  sites each step changes.
+- [formal/rewrites.md](../formal/rewrites.md) — `(R-Place)`, whose claim and callee clause steps
+  2–4 reuse.
 - [DESIGN_DECISIONS_OWNERSHIP.md](../DESIGN_DECISIONS_OWNERSHIP.md) — C145, no back references.
 - Guards: `tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft` (the shapes
   this plan admits) and `tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`
-  (group 0, the hoist).
+  (the hoist already built).
 - loft#1973, the issue `(H-RefHome)` closed.
