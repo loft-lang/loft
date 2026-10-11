@@ -28,6 +28,10 @@ use crate::database::Stores;
 use crate::fxhash::FxHashMap as HashMap;
 use crate::variables::Function;
 
+/// Plan 189 step 2: literals are built in their holder's store.  Off while only the
+/// resolution is in place.
+const PLACE_LITERALS: bool = false;
+
 /// A callee stores a reference to a record of argument `home` into argument `holder`; `root`
 /// when it names the argument's own record rather than one inside it.
 #[derive(Clone, PartialEq, Eq)]
@@ -50,11 +54,40 @@ pub struct Hoist {
     pub insert: bool,
 }
 
-/// What the analysis finds: the writes it refuses, and the stores it moves out instead.
+/// A record built where its holder lives: the value of reference write number `site` of
+/// function `d_nr` (the walk's order of `OpSetDbRef`s) mints `home`, the compiler's
+/// temporary for a literal; the mint becomes a claim in the store of `host`, the holder's
+/// root, so the record lasts as long as that store.
+pub struct Place {
+    pub d_nr: u32,
+    pub site: usize,
+    pub home: u16,
+    pub host: u16,
+}
+
+/// What the analysis finds: the writes it refuses, and the stores it moves out or the records
+/// it places instead.
 #[derive(Default)]
 pub struct StoredRefs {
     pub refusals: Vec<ReshapeRefusal>,
     pub hoists: Vec<Hoist>,
+    pub places: Vec<Place>,
+}
+
+/// How a hold whose home ends before its holder is kept: the home's store moved out to the
+/// holder's block, the record built in the holder's store, or not at all.
+enum Resolution {
+    Hoist,
+    Place(Place),
+    Refuse,
+}
+
+/// The reference write a hold reaches its holder by: its number in walk order and the value
+/// written.  A copy or a callee's link has none, and only a write can be lowered in place.
+#[derive(Clone, Copy)]
+struct Site<'v> {
+    ordinal: usize,
+    value: &'v Value,
 }
 
 /// Every stored-reference write, copy or call in the program whose holder outlives the
@@ -143,6 +176,7 @@ fn run(
         last_set: HashMap::default(),
         holds: HashMap::default(),
         found: Vec::new(),
+        writes: 0,
         out,
     };
     walk.node(&def.code, def.position.line);
@@ -189,6 +223,8 @@ struct Walk<'a> {
     holds: HashMap<u16, Vec<Hold>>,
     /// This function's own summary: references it stores between its parameters.
     found: Vec<ParamPair>,
+    /// The reference writes (`OpSetDbRef`) met so far: a [`Place`] names its write by this.
+    writes: usize,
     out: &'a mut StoredRefs,
 }
 
@@ -240,7 +276,12 @@ impl Walk<'_> {
                         }
                     }
                     "OpSetDbRef" if args.len() == 3 => {
-                        self.write(&args[0], &args[1], &args[2], line);
+                        self.writes += 1;
+                        let site = Site {
+                            ordinal: self.writes - 1,
+                            value: &args[2],
+                        };
+                        self.write(&args[0], &args[1], site, line);
                     }
                     "OpCopyRecord" if args.len() == 3 => self.copy(&args[0], &args[1], line),
                     _ if !name.starts_with("Op") => {
@@ -424,7 +465,8 @@ impl Walk<'_> {
         }
     }
 
-    fn write(&mut self, holder: &Value, pos: &Value, value: &Value, line: u32) {
+    fn write(&mut self, holder: &Value, pos: &Value, site: Site, line: u32) {
+        let value = site.value;
         let Some(field) = self.reference_field(holder, pos) else {
             return;
         };
@@ -443,6 +485,7 @@ impl Walk<'_> {
                 holds,
                 "",
                 matches!(holder.unspan(), Value::Var(_)),
+                None,
                 line,
             );
             return;
@@ -455,7 +498,7 @@ impl Walk<'_> {
         };
         hold.root = matches!(value.unspan(), Value::Var(_));
         let direct = matches!(holder.unspan(), Value::Var(_));
-        self.carry(h, &lasts, vec![hold], "", direct, line);
+        self.carry(h, &lasts, vec![hold], "", direct, Some(site), line);
     }
 
     /// What a holder holds when its reference names a record of `home`: the parameter whose
@@ -515,8 +558,13 @@ impl Walk<'_> {
         }
     }
 
-    /// `holds` reach the holder rooted at `h`: refuse one whose home ends first, hand a link
-    /// between two parameters to the caller, and remember the rest for the copies made of it.
+    /// `holds` reach the holder rooted at `h`: keep one whose home ends first where
+    /// [`Self::resolve`] can, refuse it otherwise, hand a link between two parameters to the
+    /// caller, and remember the rest for the copies made of it.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one judgement over one hold's context"
+    )]
     fn carry(
         &mut self,
         h: u16,
@@ -524,6 +572,7 @@ impl Walk<'_> {
         holds: Vec<Hold>,
         via: &str,
         direct: bool,
+        site: Option<Site>,
         line: u32,
     ) {
         let mut kept = Vec::new();
@@ -542,18 +591,22 @@ impl Walk<'_> {
                 (Some(_), Life::Block(_)) => kept.push(hold),
                 (None, _) => {
                     if Self::outlives(lasts, &hold.home_path) {
-                        if let Life::Block(p) = lasts
-                            && self.hoist(p, &hold)
-                        {
-                            kept.push(Hold {
-                                home_path: p.clone(),
-                                ..hold
-                            });
-                            continue;
+                        match self.resolve(h, lasts, &hold, site) {
+                            Resolution::Refuse => {
+                                let msg = self.message(h, &hold, lasts, via, direct);
+                                self.refuse(line, msg);
+                                return;
+                            }
+                            Resolution::Hoist => {}
+                            Resolution::Place(place) => self.out.places.push(place),
                         }
-                        let msg = self.message(h, &hold, lasts, via, direct);
-                        self.refuse(line, msg);
-                        return;
+                        // The record now lasts as long as the holder.
+                        let home_path = match lasts {
+                            Life::Block(p) => p.clone(),
+                            Life::Caller(_) => Vec::new(),
+                        };
+                        kept.push(Hold { home_path, ..hold });
+                        continue;
                     }
                     kept.push(hold);
                 }
@@ -583,6 +636,7 @@ impl Walk<'_> {
             holds,
             &via,
             matches!(dst.unspan(), Value::Var(_)),
+            None,
             line,
         );
     }
@@ -616,6 +670,7 @@ impl Walk<'_> {
                 vec![hold],
                 &via,
                 matches!(ha.unspan(), Value::Var(_)),
+                None,
                 line,
             );
             if self.out.refusals.len() > before {
@@ -627,6 +682,54 @@ impl Walk<'_> {
     fn callee_name(&self, d: u32) -> String {
         let n = self.data.def(d).name();
         n.strip_prefix("n_").unwrap_or(n).to_string()
+    }
+
+    /// How a hold that outlives its home is kept, if it can be: a named local's store moves
+    /// out to an enclosing holder's block ([`Self::hoist`]); a literal written straight into
+    /// the holder is built in the holder's store ([`Self::place`]).  Every other case is
+    /// refused — a refusal is never a wrong answer.
+    fn resolve(&mut self, h: u16, lasts: &Life, hold: &Hold, site: Option<Site>) -> Resolution {
+        if let Life::Block(p) = lasts
+            && self.hoist(p, hold)
+        {
+            return Resolution::Hoist;
+        }
+        if let Some(site) = site
+            && let Some(place) = self.place(h, hold, site)
+        {
+            return Resolution::Place(place);
+        }
+        Resolution::Refuse
+    }
+
+    /// A literal written straight into a holder (`h.r = P {…}`, `H { r: P {…} }`) is built in
+    /// the holder's store: its value is the literal's own block, minting the compiler's
+    /// temporary `hold.home` first.  The holder's root names that store; it is assigned by
+    /// the time the write's value runs, since the write is into it.
+    fn place(&self, h: u16, hold: &Hold, site: Site) -> Option<Place> {
+        if !PLACE_LITERALS || !self.hidden(hold.home) || !self.literal_mint(site.value, hold.home) {
+            return None;
+        }
+        Some(Place {
+            d_nr: self.d_nr,
+            site: site.ordinal,
+            home: hold.home,
+            host: h,
+        })
+    }
+
+    /// Is `value` a literal's block whose first operation mints `home`?
+    fn literal_mint(&self, value: &Value, home: u16) -> bool {
+        let Value::Block(b) = value.unspan() else {
+            return false;
+        };
+        b.operators.iter().map(Value::unspan).find(|o| !matches!(o, Value::Line(_))).is_some_and(
+            |first| {
+                matches!(first, Value::Call(d, args)
+                    if self.data.def(*d).name() == "OpDatabase"
+                        && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == home))
+            },
+        )
     }
 
     /// Move the store of `hold`'s home out to the holder's block `p`, when that keeps every
