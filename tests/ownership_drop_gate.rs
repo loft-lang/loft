@@ -1231,9 +1231,9 @@ fn every_cell_releases_each_resource_once_on_the_interpreter() {
 
 /// The same cells on `--native`, against a baseline of their own: the backends disagree on three
 /// cells today, and each disagreement is a finding rather than noise, so it is printed on every
-/// run.  One `rustc` per cell, so the leg is CHUNKED — `…_on_native_0` … `_3`, each taking every
-/// [`NATIVE_GATE_CHUNKS`]-th cell from its own offset — because the whole family took 386-690 s
-/// on the Windows runner and the duration gate allows a test half its 600 s limit.  Each chunk
+/// run.  One `rustc` per cell, so the leg is CHUNKED — `…_on_native_0` … `_7`, each taking every
+/// [`NATIVE_GATE_CHUNKS`]-th cell from its own offset — because the duration gate allows a test
+/// half its 600 s limit, and a chunk of a quarter of the cells crossed it on the macOS runner.  Each chunk
 /// checks and blesses only its own cells' lines of the one baseline file.
 fn native_gate_chunk(chunk: usize) {
     let cells: Vec<Cell> = all_cells()
@@ -1257,7 +1257,7 @@ fn native_gate_chunk(chunk: usize) {
 }
 
 /// How many tests the native leg is split across — see [`native_gate_chunk`].
-const NATIVE_GATE_CHUNKS: usize = 4;
+const NATIVE_GATE_CHUNKS: usize = 8;
 
 #[test]
 fn every_cell_releases_each_resource_once_on_native_0() {
@@ -1277,6 +1277,26 @@ fn every_cell_releases_each_resource_once_on_native_2() {
 #[test]
 fn every_cell_releases_each_resource_once_on_native_3() {
     native_gate_chunk(3);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_4() {
+    native_gate_chunk(4);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_5() {
+    native_gate_chunk(5);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_6() {
+    native_gate_chunk(6);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_7() {
+    native_gate_chunk(7);
 }
 
 /// [`check_baseline`] for one chunk: only the lines naming `names` are this chunk's to compare —
