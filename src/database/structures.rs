@@ -854,6 +854,22 @@ impl Stores {
         }
     }
 
+    /// `@FR-H-RefHome` — does any record type hold a user's `reference<T>` field?  A program
+    /// without one stores no reference, so the analysis has nothing to judge.
+    #[must_use]
+    pub fn has_reference_fields(&self) -> bool {
+        self.types.iter().any(|t| match &t.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields.iter().any(|f| {
+                f.target != u16::MAX
+                    && matches!(
+                        self.types.get(f.content as usize).map(|t| &t.parts),
+                        Some(Parts::DbRef)
+                    )
+            }),
+            _ => false,
+        })
+    }
+
     /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
     /// record type `struct_tp` names: the type a copy of its record is made as.
     #[must_use]
