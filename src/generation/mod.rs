@@ -3876,25 +3876,24 @@ impl Output<'_> {
         &mut self,
         w: &mut dyn Write,
         lp: &crate::data::Block,
-    ) -> std::io::Result<Option<(String, String, String)>> {
+    ) -> std::io::Result<Vec<(String, String, String)>> {
         if self.push_fill_disabled {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
             if let Some(ps) = hoist::push_loop_paths(lp, self.data) {
-                self.push_reserve_paths(w, &ps)?;
-                return Ok(None);
+                return self.push_reserve_paths(w, lp, &ps);
             }
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
-            return self.mint_reserve(w, lp);
+            return Ok(self.mint_reserve(w, lp)?.into_iter().collect());
         };
         if p.fill.is_some() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let count = self.push_trip_count(&p)?;
         let vec = self.expr_string(p.vector)?;
@@ -3908,7 +3907,7 @@ impl Output<'_> {
             || self.in_coroutine_body
             || self.coroutine_persistent_fields.contains_key(&p.path.0)
         {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         if let Err(why) = hoist::push_window_ok(
             lp,
@@ -3925,7 +3924,7 @@ impl Output<'_> {
                     lp.scope
                 );
             }
-            return Ok(None);
+            return Ok(Vec::new());
         }
         self.hoist_counter += 1;
         let win = format!("__pw_{}", self.hoist_counter);
@@ -3937,7 +3936,7 @@ impl Output<'_> {
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
-        Ok(Some((win, hdr, vec)))
+        Ok(vec![(win, hdr, vec)])
     }
 
     /// `@FR-R-PushFill`'s several-paths clause — reserve every path a counted loop pushes to
@@ -3946,11 +3945,17 @@ impl Output<'_> {
     /// second reserve move the record the first header was just derived from.  A path whose
     /// header the loop does not hold is not reserved (its pushes go through the runtime,
     /// which grows as it needs).
+    ///
+    /// THE WINDOW CLAUSE for several paths — where every path's header is held (so every
+    /// path is reserved) and [`hoist::push_windows_ok`] admits the loop, a window is opened
+    /// on each reserved header, after all of them were re-derived; answered for the caller
+    /// to close after the loop, as [`Self::push_reserve`]'s own window is.
     fn push_reserve_paths(
         &mut self,
         w: &mut dyn Write,
+        lp: &crate::data::Block,
         ps: &[hoist::PushLoop<'_>],
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<Vec<(String, String, String)>> {
         let mut held: Vec<(String, String, u32, u32)> = Vec::new();
         for p in ps {
             if let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) {
@@ -3959,7 +3964,7 @@ impl Output<'_> {
             }
         }
         if held.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let count = self.push_trip_count(&ps[0])?;
         use std::fmt::Write as _;
@@ -3980,7 +3985,47 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(w, "{line}")?;
         crate::rewrite_census::fired("R-PushFill", 1);
-        Ok(())
+        if held.len() < ps.len()
+            || self.push_window_disabled
+            || self.in_coroutine_body
+            || ps
+                .iter()
+                .any(|p| self.coroutine_persistent_fields.contains_key(&p.path.0))
+        {
+            return Ok(Vec::new());
+        }
+        if let Err(why) = hoist::push_windows_ok(
+            lp,
+            ps,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+        ) {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header pushes on {} paths — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope,
+                    ps.len()
+                );
+            }
+            return Ok(Vec::new());
+        }
+        let mut windows = Vec::with_capacity(ps.len());
+        for (p, (hdr, vec, _, size)) in ps.iter().zip(held) {
+            self.hoist_counter += 1;
+            let win = format!("__pw_{}", self.hoist_counter);
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let mut {win} = vector::push_window(&{hdr}, {size}_u32, &stores.allocations); //@FR-R-PushFill push window, several paths"
+            )?;
+            self.push_windows.push((p.path.clone(), win.clone()));
+            windows.push((win, hdr, vec));
+        }
+        crate::rewrite_census::fired("R-PushFill", windows.len());
+        Ok(windows)
     }
 
     /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop

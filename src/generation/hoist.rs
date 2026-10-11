@@ -5775,16 +5775,78 @@ pub fn push_window_ok(
             _ => parts.push(s),
         }
     }
-    window_parts_ok(&parts, root, root_is_retbuf, vars, data, stores, cache)
+    window_parts_ok(&parts, &[root], root_is_retbuf, vars, data, stores, cache)
+}
+
+/// `@FR-R-PushFill`'s several-paths WINDOW clause — [`push_window_ok`] for the paths of
+/// [`push_loop_paths`] TOGETHER: every root exclusive, and the body's parts beside the pushes
+/// (each push of ANY path contributes its value operand alone) name no root and no variable
+/// that may view a root's store, and write no store.  Every path is reserved before any
+/// header is re-derived, and each path's pushes are counted and unconditional, so no push
+/// outgrows its window: no store reallocates while the windows are open, which is what each
+/// window's address stands on — two windows into ONE store included.
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.  The caller
+/// keeps the header pushes, which costs the windows and never a value.
+pub fn push_windows_ok(
+    lp: &Block,
+    ps: &[PushLoop],
+    data: &Data,
+    def_nr: u32,
+    stores: Option<&Stores>,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
+    let vars = data.def(def_nr).variables();
+    let retbuf = retbuf_var(data, def_nr);
+    let roots: Vec<u16> = ps.iter().map(|p| p.path.0).collect();
+    for &root in &roots {
+        if root >= vars.count()
+            || !(owned_local(vars, root)
+                || retbuf == Some(root)
+                || work_buffer_arg(data, def_nr, root))
+        {
+            return Err(format!(
+                "the pushed vector's root `{}` is not exclusive",
+                vars.name(root)
+            ));
+        }
+    }
+    let Some(body) = push_loop_body(lp) else {
+        return Err("not a counted push loop".to_string());
+    };
+    let mut parts: Vec<&Value> = Vec::new();
+    for s in body {
+        match s.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args
+                        .first()
+                        .and_then(|f| vector_path(data, f))
+                        .is_some_and(|fp| ps.iter().any(|p| p.path == fp))
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(n, _, _)| *n == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                parts.extend(args.iter().skip(1));
+            }
+            _ => parts.push(s),
+        }
+    }
+    let any_retbuf = roots.iter().any(|r| retbuf == Some(*r));
+    window_parts_ok(&parts, &roots, any_retbuf, vars, data, stores, cache)
 }
 
 /// The window clause's aliasing test over the `parts` of a loop body that are NOT the
-/// pushes themselves: none names the pushed `root`, none names a variable that may view
-/// the root's store, and none writes a store.  Shared by the scalar window
-/// ([`push_window_ok`]) and the record one ([`mint_window_ok`]).
+/// pushes themselves: none names a pushed root, none names a variable that may view a
+/// root's store, and none writes a store.  Shared by the scalar window
+/// ([`push_window_ok`]), the several-paths one ([`push_windows_ok`]) and the record one
+/// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.
 fn window_parts_ok(
     parts: &[&Value],
-    root: u16,
+    roots: &[u16],
     root_is_retbuf: bool,
     vars: &crate::variables::Function,
     data: &Data,
@@ -5805,7 +5867,7 @@ fn window_parts_ok(
             // that field, and stays a possible viewer.
             let record_view = plain_record_type(data, vars.tp(x))
                 .is_some_and(|tp| stores.is_some_and(|st| !st.owns_heap(tp)));
-            x != root
+            !roots.contains(&x)
                 && !is_scalar(vars.tp(x))
                 && !matches!(vars.tp(x).base(), Type::Text(_))
                 && !owned_local(vars, x)
@@ -5814,7 +5876,7 @@ fn window_parts_ok(
         })
         .collect();
     for part in parts {
-        if part.reads_var(root) {
+        if roots.iter().any(|&r| part.reads_var(r)) {
             return Err("the body names the pushed vector outside its pushes".to_string());
         }
         if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
@@ -6174,7 +6236,7 @@ pub fn mint_window_ok(
     for s in &body.operators {
         collect(s, data, &m.path, &fresh, &mut parts);
     }
-    window_parts_ok(&parts, root, root_is_retbuf, vars, data, stores, cache)
+    window_parts_ok(&parts, &[root], root_is_retbuf, vars, data, stores, cache)
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the

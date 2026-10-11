@@ -1,0 +1,174 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// VECTORS BUILT SIDE BY SIDE EACH PUSH THROUGH A WINDOW (`@FR-R-PushFill`'s several-paths
+// clause, its window).  A counted loop that pushes to two or more vectors reserves every one
+// for its trip count before any header is re-derived; where every root is exclusive and the
+// body names none of them outside its pushes, each vector is pushed through a window of its
+// own — two windows into ONE store included, since after the reservations no push grows a
+// store.  A body that reads a pushed vector's length keeps the plain pushes.
+//
+// Expected values by hand:
+// locals(6)   a = 0,3,…,15 (u8): sum 45; b = 0,7,…,35 (i32): sum 105; 12 elements
+//             → 12*1000000 + 45*1000 + 105 = 12045105.
+// same_store(7) mat = 1..7: sum 28; surf = 2i-5 over i<7 = 42-35 = 7; 14 elements → 14028007.
+// reads_len(5) b holds len(a) after each push: 1+2+3+4+5 = 15.
+// reads_elem  a = 7 then 0..3; b holds a[i] after a's push: 7,0,1,2 → 10.  The body reads the
+//             pushed vector outside its pushes, so it keeps its header pushes: a window
+//             would defer a's length and read a[2], a[3] as absent (→ 7).
+// twice(4)    a = 9,9 then 0,0,1,10,2,20,3,30: len 10, sum 84; b = 0.5 then 0,1,2,3: len 5,
+//             sum 6.5 → 10*1000 + 84 = 10084 and 5, 6.5.
+// empty       0..0 and 5..2 push nothing: one element each stays → 1, 1.
+// inclusive   1..=4: a sum 10, b = squares sum 30, 4 each → 4*10000 + 10*100 + 30 = 41030.
+// three(3)    sums 0+1+2 = 3, 100+101+102 = 303, 0+1000+2000 = 3000, 9 elements
+//             → 9*10000000 + 3*1000000 + 303*10000 + 3000 = 96033000.
+// fields      h.items = 0..3: sum 6, h.other = 1..4: sum 10, 4 each → 4*10000 + 6*100 + 10.
+// retbuf(5)   r = 0,2,4,6,8: sum 20, len 5 → 520.
+// aliased     two vector parameters handed ONE vector: the pushes interleave, 0,10,1,11,2,12
+//             → len 6, sum 36 → 636; handed two: 0,1,2 and 10,11,12 → 3*100+3, 3*100+33.
+//
+// @falsified-by: tests/falsified/vectors-built-side-by-side-each-push-through-a-window.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — with the window test skipped, `reads_elem` reads a[2] and a[3]
+// past the length its window defers and answers 7.
+// HOLDS: the interpreter takes no window and answers the same on both trees.
+struct E2 { w: integer, mat: vector<u8>, surf: vector<i32>, n: integer }
+struct H { x: integer, items: vector<integer>, other: vector<integer> }
+fn locals(n: integer) -> integer {
+  a: vector<u8> = [];
+  b: vector<i32> = [];
+  for i in 0..n { a += [((i * 3) as u8?) ?? 0]; b += [((i * 7) as i32?) ?? 0]; }
+  sa = 0;
+  for x in a { sa += x; }
+  sb = 0;
+  for y in b { sb += y; }
+  (len(a) + len(b)) * 1000000 + sa * 1000 + sb
+}
+fn new2(w: integer) -> E2 {
+  m: vector<u8> = [];
+  sf: vector<i32> = [];
+  for i in 0..w { m += [((i + 1) as u8?) ?? 0]; sf += [((2 * i - 5) as i32?) ?? 0]; }
+  E2 { w: w, mat: m, surf: sf, n: 0 }
+}
+fn same_store(n: integer) -> integer {
+  e = new2(n);
+  sm = 0;
+  for x in e.mat { sm += x; }
+  ss = 0;
+  for y in e.surf { ss += y; }
+  (len(e.mat) + len(e.surf)) * 1000000 + sm * 1000 + ss
+}
+fn reads_len(n: integer) -> integer {
+  a: vector<integer> = [];
+  b: vector<integer> = [];
+  for i in 0..n { a += [i]; b += [len(a)]; }
+  s = 0;
+  for y in b { s += y; }
+  s
+}
+fn reads_elem() -> integer {
+  a: vector<integer> = [7];
+  b: vector<integer> = [];
+  for i in 0..4 { a += [i]; b += [a[i] ?? 0]; }
+  t = 0;
+  for x in b { t += x; }
+  t
+}
+fn twice() -> (integer, integer, float) {
+  a: vector<integer> = [9, 9];
+  b: vector<float> = [0.5];
+  for i in 0..4 { a += [i]; a += [i * 10]; b += [i as float]; }
+  sa = 0;
+  for x in a { sa += x; }
+  sb = 0.0;
+  for y in b { sb += y; }
+  (len(a) * 1000 + sa, len(b), sb)
+}
+fn empty() -> integer {
+  a: vector<integer> = [1];
+  b: vector<i32> = [2];
+  for i in 0..0 { a += [i]; b += [(i as i32?) ?? 0]; }
+  for i in 5..2 { a += [i]; b += [(i as i32?) ?? 0]; }
+  len(a) * 10 + len(b)
+}
+fn inclusive() -> integer {
+  a: vector<integer> = [];
+  b: vector<integer> = [];
+  for i in 1..=4 { a += [i]; b += [i * i]; }
+  sa = 0;
+  for x in a { sa += x; }
+  sb = 0;
+  for y in b { sb += y; }
+  (len(a) + len(b)) * 5000 + sa * 100 + sb
+}
+fn three() -> integer {
+  a: vector<u8> = [];
+  b: vector<i32> = [];
+  c: vector<integer> = [];
+  for i in 0..3 { a += [(i as u8?) ?? 0]; b += [((i + 100) as i32?) ?? 0]; c += [i * 1000]; }
+  sa = 0;
+  for x in a { sa += x; }
+  sb = 0;
+  for y in b { sb += y; }
+  sc = 0;
+  for z in c { sc += z; }
+  (len(a) + len(b) + len(c)) * 10000000 + sa * 1000000 + sb * 10000 + sc
+}
+fn fill_fields(h: H) {
+  for i in 0..4 { h.items += [i]; h.other += [i + 1]; }
+}
+fn fields() -> integer {
+  h = H { x: 1, items: [], other: [] };
+  fill_fields(h);
+  si = 0;
+  for x in h.items { si += x; }
+  so = 0;
+  for y in h.other { so += y; }
+  len(h.items) * 10000 + si * 100 + so + len(h.other) * 10000
+}
+fn build(n: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  s: vector<integer> = [];
+  for i in 0..n { r += [i * 2]; s += [i]; }
+  r
+}
+fn retbuf() -> integer {
+  r = build(5);
+  sr = 0;
+  for x in r { sr += x; }
+  len(r) * 100 + sr
+}
+fn push_both(a: vector<integer>, b: vector<integer>) {
+  for i in 0..3 { a += [i]; b += [i + 10]; }
+}
+fn aliased() -> integer {
+  v: vector<integer> = [];
+  push_both(v, v);
+  sv = 0;
+  for x in v { sv += x; }
+  len(v) * 100 + sv
+}
+fn apart() -> integer {
+  v: vector<integer> = [];
+  w: vector<integer> = [];
+  push_both(v, w);
+  sv = 0;
+  for x in v { sv += x; }
+  sw = 0;
+  for y in w { sw += y; }
+  (len(v) * 100 + sv) * 1000 + len(w) * 100 + sw
+}
+fn main() {
+  assert(locals(6) == 12045105, "two locals of different widths");
+  assert(same_store(7) == 14028007, "two vectors placed in one store");
+  assert(reads_len(5) == 15, "a body that reads a pushed vector's length");
+  assert(reads_elem() == 10, "a body that reads a pushed vector's element");
+  t = twice();
+  assert(t.0 == 10084 && t.1 == 5 && t.2 == 6.5, "two pushes a round to one path, beside a float path");
+  assert(empty() == 11, "an empty and a reversed range");
+  assert(inclusive() == 41030, "an inclusive range");
+  assert(three() == 96033000, "three paths");
+  assert(fields() == 80610, "two vector fields of a record parameter");
+  assert(retbuf() == 520, "a path that becomes the return buffer");
+  assert(aliased() == 636, "two vector parameters handed one vector");
+  assert(apart() == 303333, "two vector parameters handed two");
+}
