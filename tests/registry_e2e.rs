@@ -65,6 +65,11 @@ impl FixtureServer {
             while !shutdown_clone.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        // An accepted socket inherits the listener's O_NONBLOCK on macOS and
+                        // the BSDs (not on Linux): the handler would read `WouldBlock` before a
+                        // slow client's request line arrived, or stop a large `write_all`
+                        // half way, and the client saw "Unexpected EOF" under load.
+                        stream.set_nonblocking(false).ok();
                         let f = Arc::clone(&files_clone);
                         thread::spawn(move || {
                             let map = f.lock().unwrap().clone();
