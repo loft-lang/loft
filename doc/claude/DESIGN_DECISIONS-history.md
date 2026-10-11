@@ -1401,6 +1401,15 @@ intend to alias, and the cost of those bugs exceeds the value-semantics migratio
 value-semantics-by-default; until then the W4 lint + the documented view default are the
 cheaper guard.
 
+> **AMENDED (2026-10-11, owner, closing @PLN189).** `&` was designed for one case: changing
+> the content of a parameter.  The implementation now allows broader use, which is welcome —
+> a stored `reference<T>` reaches a deep record inside another structure without keeping its
+> path keys — but that does not make references a construction every combination of
+> expressions must accept.  Ruled while declining @PLN189's step 10 (freeing a record built in
+> its holder's store when the reference is re-pointed, a test on every reference write for a
+> rare shape) and the alternative of making `q = h.r` a copy.  It replaces the plan issue's
+> "no refusal where the language can give the answer".
+
 ---
 
 ## C78 — The Rust-engine ↔ loft-library boundary: mechanism not genre, and no black boxes above the engine

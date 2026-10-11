@@ -64,11 +64,16 @@ emitted code).
 an addressable source — not a general operator.  A plain binding follows
 [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule): a
 whole-value heap bind COPIES (aliased only when the source is dead), a projection (`a = vv[0]`, `w =
-o.inner`) is a view, and in-place path mutation writes through.  **Why.** One uniform `&` for "I
-want the link", instead of a copy-or-view choice made silently by the binding's form.
+o.inner`) is a view, and in-place path mutation writes through.  `&` exists to write through to
+a parameter's content, and a stored `reference<T>` to reach a deep record inside another structure
+without re-walking its keys.  Neither is a construction every combination of expressions must
+accept: a combination beyond those uses may be refused, with the rewrite in the message, and no
+cost is added to ordinary programs to admit one.  **Why.** One uniform `&` for "I want the link",
+instead of a copy-or-view choice made silently by the binding's form; and a refusal can be
+dropped later, where a cost on every program cannot (C79).
 
 **Revisit when.** Views by projection prove a net footgun for a real consumer — writes
-propagating through an alias it did not intend.  Decided 2026-06-22, plain binds superseded by C86 — [record](DESIGN_DECISIONS-history.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference).
+propagating through an alias it did not intend.  Decided 2026-06-22, plain binds superseded by C86, narrowed 2026-10-11 — [record](DESIGN_DECISIONS-history.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference).
 **Holds at:** [OWNERSHIP_MODEL.md § The law](OWNERSHIP_MODEL.md), @FR-B-Ref-Alias.
 **Catalogue:** @F21 (references `&T`).
 
