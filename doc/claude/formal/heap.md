@@ -407,17 +407,13 @@ through calls: what it cannot see, no `deps` can.
 
 **Where `(H-RefHome)` holds in the code.**
 - *The analysis.* `scopes::stored_reference_homes` (`src/scopes/stored_refs.rs`), run after
-  pass 2 by `Parser::check_reshape_under_reference`, walks each body with its block nesting.
-  At every `OpSetDbRef` into a user's `reference<T>` field (`Stores::reference_field_name`) it
-  compares the holder's life with the record's home (`Walk::holder_life`, `Walk::home_life`).
-  It carries holds through `OpCopyRecord`, a record assigned to a record, and calls, using a
-  per-function summary of the parameters a callee links (`ParamPair`), closed over the
-  functions it calls.  `Walk::resolve` keeps an outlived home (`Walk::hoist`, `Walk::place`,
-  `Walk::place_own`, `Walk::evacuate`) or refuses it.
-- *The placement.* `scopes::apply_places` turns the literal's mint, the call's buffer or the
-  local's every mint into `OpPlaceRecord(holder, tp)`, held by a variable that borrows the
-  holder; `place_result::callee_keeps_an_offered_record` admits a callee, and
-  `scopes::keep_placed_results` drops the scope pass's free of the call's result.
+  pass 2 by `Parser::check_reshape_under_reference`, compares at every `OpSetDbRef` into a
+  user's `reference<T>` field the holder's life with the record's home (`Walk::holder_life`,
+  `Walk::home_life`), through copies of the holder and calls (a per-callee summary, `ParamPair`).
+  `Walk::resolve` keeps an outlived home (`hoist`, `place`, `place_own`, `evacuate`) or refuses it.
+- *The placement.* `scopes::apply_places` claims the record in the holder's store
+  (`OpPlaceRecord`) for a variable borrowing the holder; `scopes::keep_placed_results` drops the
+  free of a placed call result (callee test: `place_result::callee_keeps_an_offered_record`).
 - *The copy-out.* `scopes::insert_evacuations` puts `OpEvacuate` (`Stores::evacuate`) before
   each free of the home's owner; `(R-Place)` and `(R-ExitVector)` leave such an owner unplaced.
 - *The move.* The parser marks each store owner on the home's dep chain (`mark_ref_home`),
