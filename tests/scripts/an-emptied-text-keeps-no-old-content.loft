@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An emptied text (`s = ""`) is EMPTY, whatever it held, on every path that can empty one.
+//
+// `--native` empties a declared text local and a `&text` parameter with `String::clear`,
+// which keeps the buffer's capacity so a work text refilled once per iteration is not
+// claimed and regrown on every pass (zttext `materialise` −59 %).  What must not change is
+// the VALUE: every cell refills a text that held MORE than it is refilled with, so an
+// empty that kept any of the old bytes reads a longer, wrong text.  Each expected value is
+// worked out by hand in the comment beside it; values AND sizes are asserted.
+//
+// The cells: c1 a callee's text result appended per iteration (the `materialise` shape,
+// its result buffer emptied by the callee on every call); c2 a `&text` parameter emptied
+// and refilled, long then short; c3 an accumulator grown and emptied inside its loop;
+// c4 a link to a local that is then emptied; c5 a format rebuilt into one local per
+// iteration; c6 a text local of a generator emptied between yields.
+//
+// @falsified-at: none — a speed change with no earlier defect; scored by hand on the
+// emission instead: `out.clear()` replaced by `()` (the empty dropped) fails c1–c6 on --native
+
+fn piece(src: vector<character>, start: integer, count: integer) -> text {
+  out: text = "";
+  for j in start..(start + count) { ch = src[j]?; out += "{ch}"; }
+  return out;
+}
+
+fn fill(buf: &text, n: integer) {
+  buf = "";
+  for k in 0..n { buf += "{k}"; }
+}
+
+fn countdown(n: integer) -> iterator<text> {
+  g: text = "";
+  for k in 0..n {
+    g = "";
+    for _ in 0..(n - k) { g += "x"; }
+    yield g;
+  }
+}
+
+fn main() {
+  // c1 — "abcdefgh"; pieces (0,5) "abcde", (5,2) "fg", (7,1) "h", (1,3) "bcd":
+  // joined "abcdefghbcd", 11 bytes.
+  src: vector<character> = [];
+  for c in "abcdefgh" { src += [c]; }
+  starts = [0, 5, 7, 1];
+  counts = [5, 2, 1, 3];
+  c1 = "";
+  for i in 0..4 { c1 += piece(src, starts[i], counts[i]); }
+  assert(c1 == "abcdefghbcd", "c1 joined pieces: {c1}");
+  assert(len(c1) == 11, "c1 size {len(c1)}");
+
+  // c2 — fill(t, 12) writes "01234567891011" (14 bytes); fill(t, 3) then "012" (3).
+  t = "";
+  fill(t, 12);
+  assert(t == "01234567891011", "c2 long: {t}");
+  fill(t, 3);
+  assert(t == "012", "c2 short: {t}");
+  assert(len(t) == 3, "c2 size {len(t)}");
+  fill(t, 0);
+  assert(t == "", "c2 emptied: {t}");
+
+  // c3 — each pass empties `acc` and adds (5 - r) letters: the last pass (r = 4) leaves "q".
+  acc = "";
+  sizes = 0;
+  for r in 0..5 {
+    acc = "";
+    for _ in 0..(5 - r) { acc += "q"; }
+    sizes += len(acc);
+  }
+  assert(acc == "q", "c3 last: {acc}");
+  assert(sizes == 15, "c3 sizes 5+4+3+2+1 = {sizes}");
+
+  // c4 — a link sees the source emptied, and a refill after it.
+  s4 = "long text here";
+  l4 = &s4;
+  s4 = "";
+  assert(l4 == "", "c4 through the link: {l4}");
+  s4 += "ab";
+  assert(l4 == "ab", "c4 refilled: {l4}");
+
+  // c5 — "{a}:{b}" rebuilt per pass; a = 100 - i, b = i * i: the last (i = 3) is "97:9".
+  f5 = "";
+  total = 0;
+  for i in 0..4 {
+    f5 = "{100 - i}:{i * i}";
+    total += len(f5);
+  }
+  assert(f5 == "97:9", "c5 last: {f5}");
+  assert(total == 17, "c5 sizes 5+5+5+4 = {total}");
+
+  // c6 — countdown(4) yields "xxxx", "xxx", "xx", "x": 10 letters in all.
+  seen = "";
+  for g in countdown(4) { seen += "{g}|"; }
+  assert(seen == "xxxx|xxx|xx|x|", "c6 yields: {seen}");
+
+  println("ok");
+}

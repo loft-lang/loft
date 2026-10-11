@@ -816,6 +816,11 @@ impl Output<'_> {
                 // CAPTURING lambda already emits the pair and is not a bare `Int`, so it is
                 // untouched — which is why this hid behind the shape people write first.
                 let needs_fn_pair = matches!(inner_slot, Type::Function(..));
+                // A `&text` parameter emptied keeps the caller's buffer, as an emptied text local
+                // does (below): the caller's work text is refilled in place each call.
+                if needs_text_coerce && matches!(to.unspan(), Value::Text(t) if t.is_empty()) {
+                    return write!(w, "var_{name}.clear()");
+                }
                 if amp_owned_writeback {
                     write!(w, "{{ let _old_disp = *var_{name}; *var_{name} = ")?;
                 } else {
@@ -2119,6 +2124,25 @@ impl Output<'_> {
         let discard_loop_var = variables.name(var) == "_"
             && is_scalar(variables.tp(var))
             && matches!(to.unspan(), Value::Block(bl) if is_scalar(&bl.result));
+        // A declared text local emptied (`out = ""`) keeps its buffer: `.clear()` leaves the
+        // same empty `String` that `"".to_string()` builds, but holds the capacity, so a work
+        // text refilled once per iteration — a call's text result buffer, an accumulator —
+        // is not claimed and regrown on every pass (zttext `materialise`: 500 → 206 µs).
+        if needs_to_string
+            && !discard_loop_var
+            && !variables.is_argument(var)
+            && self.declared.contains(&var)
+            && matches!(to.unspan(), Value::Text(t) if t.is_empty())
+            && self.narrow_local_enc(var).0.is_empty()
+            && self.local_rust_type(var, variables.tp(var)) == "String"
+        {
+            self.predeclared.remove(&var);
+            if self.next_format_count > 1 {
+                self.next_format_count = 0;
+            }
+            let place = self.var_place(var);
+            return write!(w, "{place}.clear()");
+        }
         let first_assign = !self.declared.contains(&var) || self.predeclared.remove(&var);
         // @PLN167 decision 1 — a LINKED narrow local takes its value encoded; the suffix
         // closes the call at the end of this arm.
