@@ -397,7 +397,8 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  scalars to ONE pure path at its top level every iteration — or to
                  SEVERAL paths with distinct roots, each judged on its own with the
                  others' pushes read as plain statements, which reserves every path
-                 first and re-derives every header after (no fill, no window) — nothing
+                 first and re-derives every header after (no fill; a window per path
+                 under THE WINDOW CLAUSE's several-paths form) — nothing
                  in the body can leave the loop early or loop again, no push to the
                  path stands under a branch, no other write reaches the path, the
                  range's end is a simple invariant — RESERVES k times its trip count
@@ -445,7 +446,16 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  held address.  The single exit is the counted loop's own
                  (no `break`, `return`, `continue` or inner loop), so the close runs
                  on every path out.  A body that fails any of these keeps the header
-                 push, which costs the window and never a value.  THE RECORD CLAUSE:
+                 push, which costs the window and never a value.  SEVERAL PATHS: a
+                 loop pushing to several paths with distinct roots opens a window on
+                 each when the loop holds every path's header (so every path was
+                 reserved before any header was re-derived) and the conditions above
+                 hold for the paths TOGETHER — every root exclusive, and the body
+                 outside the pushes of ANY path names no root and no variable that
+                 may view a root's store.  Two windows may address ONE store: every
+                 push is counted and unconditional and every path is reserved for its
+                 own count, so no push outgrows its window and no store reallocates
+                 while they are open.  THE RECORD CLAUSE:
                  the pushed values may be RECORD MINT GROUPS — the parser's
                  reservation, mint, field sets on the fresh element and finish —
                  standing at the body's top level or under `if` arms, each over ONE

@@ -74,13 +74,13 @@ format decision (§ 6).
 | `flow_layout_full` | 7.00 | S1c (−8 % alone; S1b is built) and a fused `character` element read | re-price on today's code |
 | `invert` | 5.82 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
 | `sphere` | 5.97 | none named (vector growth, the two `add_triangle` writes) | unpriced |
-| `decode` | 5.61 | C1 D4′, then C2 | 3.8× |
+| `decode` | 5.61 | C1 D4′ RE-PRICED: the resolve clause already serves its byte reads, and a base held from entry (the reads all precede the first growth) is −5.5 % on `read_value__d` and `__rg`, the same with all 12 sites held; the −21 % priced before predates the resolve clause.  And `(R-Base)` never proves a parameter apart from the return buffer, so the held form needs a prefix clause (the base valid up to the first statement that may grow).  Then C2 | ≈ 5.3×, then C2 |
 
 **D. A cause of their own.**
 
 | row | × | known lever | lands at |
 |---|--:|---|---|
-| `doc_read` | 6.54 | C8, a leaner fixed-size read (~−30 %, then −15 %) | ≈ 4.6× |
+| `doc_read` | 6.56 → 5.27 | C8 is BUILT (`OpReadFileInt`: one store resolve, a buffered take, two cursor writes).  Profiled at the current tree: `edgeset_new` 22 % — two vectors built side by side, which `(R-PushFill)`'s several-paths clause reserved but pushed element by element.  BUILT: a window per path (`push_windows_ok`), 2.20 → 1.84 ms, hash unchanged.  Left: `hz_index__inv` 13 %, the u8 and i32 reads 10 % and 9 %, `store_mut` 9 %, `hexset_set__inv` 8 %, the float reads through the generic `OpReadFile` 8 % | ≈ 5.3× |
 | `map_json` | 6.64 | none priced: `Map.parse` is 86 % — the `Parsed` → store walk, the lexer's per-character step | unpriced |
 | `arguments/parse` | 5.69 | none named: the option walk reads its vector out of line (16 %), `len(name) > 0` counts characters (4 %), text copies (~10 %) | unpriced |
 | `fill_rect` | 5.50 | C9, no bounds test where the index is proved in range | the range-facts decision |
@@ -241,6 +241,9 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 - **A move through a by-value parameter**: it changes what a callee may assume of its
   parameter's store after an append.
 - **Relational range facts** (`index < len(v)`) in `generation::range` (C9's second half).
+- **A checked expression computed once where the program spells it twice**: DECIDED (owner,
+  2026-10-11) — an overflow must be reported, not reported as often as it was spelled.
+  `(R-SameRead)`'s guard clause (`locate`) rests on it.
 - **Keyed store format**: the division in `hash::home_bucket`, and `index` as a B-tree of
   inline keys.  `sorted`'s random insert stays as it is (declined).
 

@@ -1041,7 +1041,7 @@ impl Output<'_> {
                 }
                 // The window closes after EVERY copy of the loop: the record's length is
                 // written once, whichever arm ran.
-                if let Some(window) = &window {
+                for window in window.iter().rev() {
                     self.push_window_close(w, window)?;
                 }
                 for &v in &loop_recs {
