@@ -472,6 +472,15 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
   (Col-Store)   a collection is store-backed (Parts::{Vector,Hash,Sorted,Radix,Trie}); index = tree+hash over
                 one record set; addressed by DbRef.  (Layout/format ⟶ layout.md; steps ⟶ heap.md.)
   (Col-Copy)    a keyed whole-value bind COPIES (g = h; g += … leaves len(h)) — heap.md H-Copy for keyed.
+  (Col-Bucket)  (@C146) a hash table's bucket count is a POWER OF TWO: it is created at 16, grows by
+                doubling and is reserved to the next power of two past the load trigger.  A key's home
+                bucket is `digest mod count` on every table — written now, written before, rounded up
+                by the allocator — so placement never depends on the count's shape; for a power of two
+                the remainder is a mask, the one division on a lookup's critical path gone.  A reserve
+                rounds up as growth does, so it is never larger than the grown table and its fill never
+                rebuilds — and can take up to twice the bucket array an exact size would.  The ONE
+                place a digest becomes a bucket is `hash::home_bucket`, for the writer and the paged
+                reader alike.
 ```
 *Anchors:* DATABASE.md:693,:704; VERIFICATION.md heap.md "H-Copy (keyed)" (oracle `16`).
 

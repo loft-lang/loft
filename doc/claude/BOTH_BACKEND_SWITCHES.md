@@ -576,6 +576,11 @@ full again instead of at half — a writer's policy no reader assumes, so stores
 either read under both; with it off a miss walks ~1 bucket where it walked 5 at the old
 threshold (removal −25 %, the vector + hash group −22 %, fill −21 %), for ~3.6 bytes an entry
 more bucket array — and is the bisect step for a `hash` whose table size matters.
+**`LOFT_NO_POW2_BUCKETS=1`** (`@FR-Col-Bucket`, @C146; runtime, BOTH backends) grows and
+reserves a `hash` table to the sizes it had before — a count that is not a power of two — and
+places every key by division.  The placement formula is `digest mod count` either way, so
+stores written under either read under both; it is the A/B for the rule and the way to write a
+table whose count the mask does not serve.
 **`LOFT_NO_TYPED_KEYED=1`** (`@FR-R-TypedKeyed`, generation time, `--native` only) emits a
 lookup in a `hash` with ONE integer key as the general `OpGetRecord` again — with it off it
 is `OpGetHashLong`, the key handed over as the integer it is, with no `Content` built, no

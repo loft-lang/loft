@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @observes: LOFT_NO_HALF_LOAD — its output measures the bucket table's byte size, which the load factor that rebuilds it decides.
+// @observes: LOFT_NO_POW2_BUCKETS — its output measures the bucket table's byte size, which the growth step decides.
 //
 // @PLN110 sub-arc 1c — `size(hash)` = the full bucket table, HOLES INCLUDED.
 // The hash's own allocation is the bucket array: `elms` slots, each a 4-byte
@@ -28,6 +29,12 @@
 // unnoticed; it now samples on both sides of every rung (8|9, 19|20, 41|42), where the
 // old rule answers 64, 64, 152, 152, 328, 328.
 //
+// 2026-10-11 moved the LADDER, deliberately (`@FR-Col-Bucket`, @C146): a table's bucket
+// count is a power of two, so the growth step doubles the count — 16, 32, 64, 128 slots —
+// where `room → room·2−1` gave 16, 38, 82, 170.  Rebuilt at half full as before, the rungs
+// are climbed by the 9th, 17th and 33rd insert; this samples both sides of each (8|9,
+// 16|17, 32|33).  `LOFT_NO_POW2_BUCKETS=1` is the old ladder.
+//
 // Values verified against both backends (interpret + native) during Phase 1.
 
 struct K {
@@ -53,33 +60,32 @@ fn main() {
   // rebuild belongs to the insert that FINDS it half full.
   assert(size(h) == 64, "8 entries still fit the first table: {size(h)}");
   h += K { id: 9, v: 90 };
-  // first rehash: room 12 → 23, elms = 38 slots × 4
-  assert(size(h) == 152, "the 9th insert rebuilds: 38 slots × 4 = 152: {size(h)}");
+  // first rehash: 16 → 32 slots × 4
+  assert(size(h) == 128, "the 9th insert rebuilds: 32 slots × 4 = 128: {size(h)}");
 
-  for i in 10..20 {
+  for i in 10..17 {
     h += K { id: i, v: i * 10 };
   }
-  assert(size(h) == 152, "19 entries = half of 38: not yet: {size(h)}");
-  h += K { id: 20, v: 200 };
-  // second rehash: room 23 → 45, elms = 82 slots × 4
-  assert(size(h) == 328, "the 20th insert rebuilds: 82 slots × 4 = 328: {size(h)}");
+  assert(size(h) == 128, "16 entries = half of 32: not yet: {size(h)}");
+  h += K { id: 17, v: 170 };
+  // second rehash: 32 → 64 slots × 4
+  assert(size(h) == 256, "the 17th insert rebuilds: 64 slots × 4 = 256: {size(h)}");
 
-  for i in 21..40 {
+  for i in 18..32 {
     h += K { id: i, v: i * 10 };
   }
-  // the full table exceeds the live count: 39 live entries in an 82-slot table
+  // the full table exceeds the live count: 31 live entries in a 64-slot table
   assert(
-    len(h) == 39 && size(h) / 4 == 82,
-    "82-slot table holds 39 live: len={len(h)} slots={size(h) / 4}"
+    len(h) == 31 && size(h) / 4 == 64,
+    "64-slot table holds 31 live: len={len(h)} slots={size(h) / 4}"
   );
-  h += K { id: 40, v: 400 };
-  h += K { id: 41, v: 410 };
-  assert(size(h) == 328, "41 entries = half of 82: not yet: {size(h)}");
-  h += K { id: 42, v: 420 };
-  // third rehash: room 45 → 89, elms = 170 slots × 4
-  assert(size(h) == 680, "the 42nd insert rebuilds: 170 slots × 4 = 680: {size(h)}");
+  h += K { id: 32, v: 320 };
+  assert(size(h) == 256, "32 entries = half of 64: not yet: {size(h)}");
+  h += K { id: 33, v: 330 };
+  // third rehash: 64 → 128 slots × 4
+  assert(size(h) == 512, "the 33rd insert rebuilds: 128 slots × 4 = 512: {size(h)}");
   // every key is still found after three rebuilds
   found = 0;
-  for i in 1..43 { if h[i] != null { found += 1; } }
-  assert(found == 42, "all 42 keys answer after three rebuilds: {found}");
+  for i in 1..34 { if h[i] != null { found += 1; } }
+  assert(found == 33, "all 33 keys answer after three rebuilds: {found}");
 }

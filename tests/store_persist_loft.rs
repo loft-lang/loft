@@ -4560,3 +4560,52 @@ fn store_load_keys_text_serves_a_trie() {
         );
     }
 }
+
+/// `@FR-Col-Bucket` (@C146) — a hash table's bucket count is a power of two, and the home
+/// bucket stays `digest mod count` on every table, so a store written under either sizing
+/// reads and grows under both.  Each of the four runs writes 2000 entries, reads them back
+/// and binds the file again to grow it to 4000; `LOFT_NO_POW2_BUCKETS=1` writes (or reads)
+/// with the old sizes, a count that is not a power of two.  A reader that took the mask for
+/// such a table would look in the wrong bucket and find fewer than it wrote.
+#[test]
+fn a_hash_written_under_either_bucket_sizing_reads_under_both() {
+    let script =
+        workspace_root().join("tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft");
+    for (old_write, old_read) in [(false, false), (false, true), (true, false), (true, true)] {
+        let dir = scratch(&format!("pow2_buckets_{old_write}_{old_read}"));
+        let path = dir.join("t.store");
+        let run = |mode: &str, old: bool| -> String {
+            let mut cmd = loft::platform::process::harness_command(loft_bin());
+            cmd.arg("--interpret")
+                .arg(&script)
+                .env("LOFT_PERSIST_TEST_PATH", &path)
+                .env("P_BUCKET_MODE", mode)
+                .env("LOFT_TIMEOUT", "240")
+                .env_remove("LOFT_NO_POW2_BUCKETS")
+                .current_dir(workspace_root());
+            if old {
+                cmd.env("LOFT_NO_POW2_BUCKETS", "1");
+            }
+            let out = cmd.output().expect("failed to invoke loft binary");
+            let all = String::from_utf8_lossy(&out.stdout).into_owned();
+            assert!(
+                out.status.success(),
+                "{mode} old={old}: {all}{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            all.trim().to_string()
+        };
+        let cell = format!("written old={old_write}, read old={old_read}");
+        assert_eq!(run("write", old_write), "wrote=2000", "{cell}");
+        assert_eq!(
+            run("read", old_read),
+            "found=2000 sum=1999000 len=2000",
+            "{cell}"
+        );
+        assert_eq!(
+            run("grow", old_read),
+            "found=4000 sum=7998000 len=4000",
+            "{cell}"
+        );
+    }
+}

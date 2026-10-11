@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A HASH TABLE HAS A POWER-OF-TWO BUCKET COUNT (`@FR-Col-Bucket`, @C146).  Tables start at 16
+// buckets, grow by doubling and reserve to the next power of two, and the home bucket is
+// `digest mod count` on every table — a mask for a power of two, a division for a table
+// whose count is not one (written before the rule, or under `LOFT_NO_POW2_BUCKETS=1`).  So
+// a store written under either sizing reads, and grows, under both.
+//
+// Run plain, the cells check lookups across many growths, after a `reserve`, after
+// removals and with text keys.  Driven by `tests/store_persist_loft.rs` with a scratch path
+// and `P_BUCKET_MODE`, it writes a store, reads it back and grows it — the harness runs
+// each step with and without the switch.
+//
+// Expected values by hand:
+// grown       keys 0, 7, …, 7·2999 (3000 entries, 11 doublings past 16 buckets); every
+//             key found, its value 3k + 1: Σ(3k+1) over k < 3000 = 3·4498500 + 3000
+//             = 13498500; the 3000 keys 7k + 1 are all absent.
+// reserved    5000 reserved, then keys 0..4999 with value k: Σk = 12497500, all found.
+// removed     keys 0..999, the odd ones removed: 500 left, Σ even k = 249500, no odd found.
+// texts       "k0" … "k1499" → value k: Σk = 1500·1499/2 = 1124250, "zz" absent.
+// persisted   the 2000 entries id = 3k, v = k (Σk = 1999000), after the grow mode 4000
+//             (Σk = 7998000), every id found and 3k + 1 absent.
+//
+// @falsified-at: none — the bucket is `digest mod count` under either sizing, so no build
+// answers a lookup differently; the persistence harness's cross-sizing runs are the check
+// that a table of either shape reads and grows under both, and `LOFT_NO_POW2_BUCKETS=1` is
+// the A/B.
+struct E { id: integer, v: integer }
+struct T { name: text, v: integer }
+
+fn grown() -> integer {
+  h: hash<E[id]> = [];
+  for k in 0..3000 { h += [E { id: 7 * k, v: 3 * k + 1 }]; }
+  s = 0;
+  for k in 0..3000 { e = h[7 * k]; if e != null { s += e.v; } }
+  for k in 0..3000 { if h[7 * k + 1] != null { return -1; } }
+  s
+}
+fn reserved() -> integer {
+  h: hash<E[id]> = [];
+  reserve(h, 5000);
+  for k in 0..5000 { h += [E { id: k, v: k }]; }
+  s = 0;
+  for k in 0..5000 { e = h[k]; if e != null { s += e.v; } }
+  s
+}
+fn removed() -> integer {
+  h: hash<E[id]> = [];
+  for k in 0..1000 { h += [E { id: k, v: k }]; }
+  for k in 0..1000 { if k % 2 == 1 { h[k] = null; } }
+  s = 0;
+  for k in 0..1000 {
+    e = h[k];
+    if e != null { if k % 2 == 1 { return -1; } s += e.v; }
+  }
+  len(h) * 1000000 + s
+}
+fn texts() -> integer {
+  h: hash<T[name]> = [];
+  for k in 0..1500 { h += [T { name: "k{k}", v: k }]; }
+  s = 0;
+  for k in 0..1500 { e = h["k{k}"]; if e != null { s += e.v; } }
+  if h["zz"] != null { return -1; }
+  s
+}
+fn check(h: hash<E[id]>, n: integer) -> text {
+  s = 0;
+  found = 0;
+  for k in 0..n { e = h[3 * k]; if e != null { s += e.v; found += 1; } if h[3 * k + 1] != null { return "FAIL absent" } }
+  "found={found} sum={s} len={len(h)}"
+}
+fn main() {
+  path = env_variable("LOFT_PERSIST_TEST_PATH") ?? "";
+  if path == "" {
+    assert(grown() == 13498500, "lookups across many growths");
+    assert(reserved() == 12497500, "lookups after a reserve");
+    assert(removed() == 500249500, "lookups after removals");
+    assert(texts() == 1124250, "text keys");
+    return
+  }
+  mode = env_variable("P_BUCKET_MODE") ?? "";
+  if mode == "write" {
+    w: hash<E[id]> = [];
+    if !store_persist_bind(w, path) { println("FAIL bind"); return }
+    for k in 0..2000 { w += [E { id: 3 * k, v: k }]; }
+    println("wrote={len(w)}");
+    return
+  }
+  if mode == "read" {
+    r: hash<E[id]> = [];
+    if !store_load(r, path) { println("FAIL load"); return }
+    println(check(r, 2000));
+    return
+  }
+  if mode == "grow" {
+    g: hash<E[id]> = [];
+    if !store_persist_bind(g, path) { println("FAIL rebind"); return }
+    for k in 2000..4000 { g += [E { id: 3 * k, v: k }]; }
+    println(check(g, 4000));
+    return
+  }
+}

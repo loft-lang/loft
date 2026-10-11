@@ -88,6 +88,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C114](DESIGN_DECISIONS_COLLECTIONS.md#c114--a-keyed-collection-is-refused-as-a-vector-element-not-given-an-element-form) — a keyed collection is refused as a vector ELEMENT, not given an element form
 - [C117](DESIGN_DECISIONS_COLLECTIONS.md#c117--a-linked-groups-members-must-share-one-element-layout-the-tag-aware-dense-read-is-declined) — a linked group's members must share one element LAYOUT; the tag-aware dense read is declined
 - [C118](DESIGN_DECISIONS_COLLECTIONS.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined) — an append to an ABSENT collection instantiates it empty and fills it; refusing or warning is declined
+- [C146](DESIGN_DECISIONS_COLLECTIONS.md#c146--a-hash-tables-bucket-count-is-a-power-of-two) — A hash table's bucket count is a power of two
 
 ## Failure — [DESIGN_DECISIONS_FAILURE.md](DESIGN_DECISIONS_FAILURE.md)
 
