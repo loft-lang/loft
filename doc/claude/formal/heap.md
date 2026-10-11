@@ -134,16 +134,7 @@ does so consistently enough to look correct: the wide default and every non-inte
 agree with it.
 
 This has been re-derived wrongly **six** times, in five modules, which is why it is a rule and
-not a comment: the vector element WRITE (loft#1378, narrow elements written eight bytes wide
-into a one-byte slot), the dense REMOVAL (loft#1412, the tail slid eight bytes per element on
-both spellings, `len` staying right throughout), a closure's captured cell (loft#1409), and
-three more found together (loft#1420) — the vector STRIDE (`element_store_size`, whose narrow
-branch asked `forced_size(type_elm(elm))`, a test that can never pass because `type_elm` maps
-every `Type::Integer` to the one `integer` def: a dead branch, so `reverse` on a `vector<u8>`
-answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_val` through
-`get_field(_, usize::MAX, _)`, whose `attr_type` answers `def.returned`, so `[a, .., z]`
-answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
-the type the same way and zeroing the successors it wrote over).
+not a comment; the six are in [heap-history.md](heap-history.md#the-stride-rules-six-re-derivations).
 
 The shape is worth naming, because it is what makes this rule so easy to violate: each of these
 sites converts a TYPE to a definition and back — `type_elm`, `type_def_nr`, `attr_type(_,
@@ -210,12 +201,8 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
 (it must never scribble on an arbitrary address — the null discipline extends to the write
 side). Both are the SAME test at the same place: an out-of-range index produces `nullref`, and
 every typed setter refuses to resolve a store for it, so `v[9] = x` on a three-element vector
-and `absent.f = x` through a keyed miss take the identical step (measured on both backends —
-value, length and the neighbouring records all unchanged; the standing guard is
-`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`, which also pins that a
-heap-owning literal written there is released and its source untouched, and that every
-native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
-fill, the record-view address, the guarded index chain — answers the same). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
+and `absent.f = x` through a keyed miss take the identical step
+(`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
 not own (`file_map`) — is refused, never silently applied: a development run halts with the
 report, a production run logs it and discards it, so the program continues on the old bytes.
 Discarding is a property of every write route, not of the op that started it: the value
@@ -319,6 +306,146 @@ write reaches another binding's state only when its root is a **parameter**, an 
 parameter), OR a **struct-typed view** of one — never a plain copy. The capability gate
 (D-cap-3) enforces this by **following the vector's dep chain**: a local vector that aliases a
 parameter (via `&`) is host, a genuinely-copied one is script-owned.
+
+### References — what a reference may point at, and what it holds still (C145)
+
+```
+  (H-LongRef)   a reference held in a store's record names a record with a home of its own,
+                or a field of one.  A string or a vector is named by the field that holds it,
+                never by its content.  A record inline in a `vector` or `sorted` has no home of
+                its own; a link over its type (a keyed collection of it, anywhere in the
+                program) lays every collection of that type out by reference — `array` /
+                `ordered`, each element a record id, the records pushed out
+                (`Stores::is_linked`, H-Stride's four-byte layout).
+  (H-ShortRef)  a variable or a parameter may name string or vector content, or a record
+                inline in a collection.  While it lives, the store it names into takes no
+                addition to a string or a vector, and the collection no reordering.  A
+                user-written view whose container is disturbed materialises or the disturbance
+                is refused instead (binding.md B-Disturb, H-Materialise).  The exception is a
+                call's return buffer, which `(R-Place)` may claim in a store a parameter names
+                into and the callee may grow: a rewrite relies on this rule for a parameter's
+                store only where it tested that store apart from the buffer's at run time
+                (`(R-Alias)`'s versioned clause).
+  (H-Removed)   removing a record a stored reference has named ends the record, not its
+                position: the header word stays behind outside every claim, and no claim reuses
+                it.  A stored reference to it reads null; the rest of the record is freed.
+                Emptying a collection removes each of its records: a clear of a linked vector
+                releases them one by one, and a store minted again in place keeps the marks.
+  (H-RefElem)   a reference is a struct field, never a collection's element: `vector`,
+                `sorted` and the keyed kinds refuse `reference<T>` elements.  Wrapped in a
+                struct (`struct Ref { r: reference<T> }`, `vector<Ref>`) it is a field again.
+  (H-RefHome)   a record a stored reference names lives as long as the store of its holder.
+                Where the record's home — the variable holding it — would end first, a named
+                local held from an enclosing block moves out to that block (a loop pass
+                refilling it removes its records, H-Removed); a literal, a call result whose
+                callee builds into the record it is offered, or a refilled local's own record
+                is built in the holder's store; and a record a parameter or the returned value
+                names is copied into that holder's store just before its home is freed, one
+                copy per record and store.  What none of these keeps is refused where the
+                reference is written, copied, or handed to a callee that links it: an element
+                of a parameter's collection or a copy into one, two parameters naming one
+                record, a record holding a stored reference, a callee answering a local.  A
+                record reached through a parameter has its home in the caller.  A local
+                collection a stored reference names into is emptied in place when reassigned.
+  (H-RefSet)    assigning to a `reference<T>` field re-points it: `h.r = x` makes the field
+                name `x`'s record, whether `x` is a place, a variable, a record literal or a
+                call, and never writes into the record the field named before.
+```
+
+**In words.** A store keeps no back references: nothing records who points at what, so the
+layout itself guarantees that a referenced thing does not move — a record keeps its home, a
+field keeps its offset, and only content (a string's bytes, a vector's elements, an inline
+record) moves, which no long-term reference names.  `(H-ShortRef)` is what lets a short-term
+reference name content directly, and what a rewrite may rely on: a function's parameters name
+stores that take no string or vector addition during the call.  `(H-Removed)` is the same
+no-back-references rule applied to removal: nothing can tell a reference that its record is
+gone, so the record leaves a mark where it was, and the reference checks the mark when it is
+read.  The mark costs one word per removed record that a reference named.  A whole store freed
+under a stored reference is no removal, so it may not happen: `(H-RefHome)` keeps the record
+where its holder lives, or refuses.  It follows the reference through copies of its holder and
+through calls: what it cannot see, no `deps` can.
+
+**Where `(H-LongRef)` holds in the code.**
+- *The link.* `Stores::finish` links the element type of every keyed collection field (`hash`,
+  `radix`, `trie`, `index`), of every field group, and the target of every stored
+  `reference<T>` (recorded by `typedef::record_reference_targets` / `set_field_target`);
+  `finish_type` lays a linked type's `vector` / `sorted` out as `array` / `ordered`.  The
+  native `init()` replays the reference targets before its own `finish`, so both backends lay
+  the type out alike.
+- *The record id.* `Stores::record_new` claims a record of its own for a linked element;
+  `insert_record`'s array and ordered arms store its id (`array_add`, `vector::ordered_finish`);
+  `remove_vector_at` unlinks an id where an inline element would be shifted.
+- *The stride.* `Parser::element_store_size` and `vector_elem_read` read a linked element as a
+  4-byte id through `OpVectorRef` (H-Stride); `vector_slice` and `vector_keep_range` refuse one.
+- *The field, not the content.* A field value is a `DbRef` to its slot (`get_field`,
+  `Store::collection_rec`); `vector_append` and `vector_reserve` rewrite the owner slot when
+  growth moves the vector's record; `set_text` and `refill_str` replace a text's block and
+  write the slot.
+- *The cross-store pointer.* A stored `reference<T>` is a 12-byte `DbRef` field
+  (`typedef::fill_database`).
+- *The one place records move:* `compact_slot`, on the load path only, where no reference into
+  the store can be live yet.
+
+**Where `(H-Removed)` holds in the code.**
+- *The mark.* `Stores::set_db_ref` (`OpSetDbRef`, both backends) records the record a stored
+  reference names in its store's `referenced` set (`Store::note_referenced`).  The set only
+  grows: with no back references nothing can say when the last reference went.
+- *The removal.* `Store::delete` entombs a record in that set (`Store::entomb`): the header
+  word becomes a one-word block in `removed` and out of `claims`, and the rest of the record is
+  freed as a record of its own.  Every removal reaches it: `remove_vector_at`, the keyed
+  removals, a parent's release (`remove_claims`), and a clear of a linked vector:
+  `Parser::clear_vector_at` is the one home of `v.clear()`, `clear(v)` and `v = …`, and
+  `Parser::linked_clear_release` puts `OpKeepVectorRange(v, T, 0, 0)` before the length reset,
+  which sends each record through `Store::delete` (`Stores::keep_vector_range`).  A group's
+  view releases nothing (`Stores::clear_releases_records`).  `OpDatabase` on a live store keeps
+  its marks: `Stores::clear` answers `Store::kept_positions`, which the mint marks removed after
+  the root's claim (`Store::entomb_kept`).  `claims_rebuild` and `Store::usage` skip them.
+- *The read.* `Stores::get_db_ref` (`OpGetDbRef`) and the formatter answer null for a removed
+  record (`Stores::reference_removed`).
+- `LOFT_NO_TOMBSTONE=1` frees such a record like any other: the bisect step
+  ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
+
+**Where `(H-RefHome)` holds in the code.**
+- *The analysis.* `scopes::stored_reference_homes` (`src/scopes/stored_refs.rs`), run after
+  pass 2 by `Parser::check_reshape_under_reference`, walks each body with its block nesting.
+  At every `OpSetDbRef` into a user's `reference<T>` field (`Stores::reference_field_name`) it
+  compares the holder's life with the record's home (`Walk::holder_life`, `Walk::home_life`).
+  It carries holds through `OpCopyRecord`, a record assigned to a record, and calls, using a
+  per-function summary of the parameters a callee links (`ParamPair`), closed over the
+  functions it calls.  `Walk::resolve` keeps an outlived home (`Walk::hoist`, `Walk::place`,
+  `Walk::place_own`, `Walk::evacuate`) or refuses it.
+- *The placement.* `scopes::apply_places` turns the literal's mint, the call's buffer or the
+  local's every mint into `OpPlaceRecord(holder, tp)`, held by a variable that borrows the
+  holder; `place_result::callee_keeps_an_offered_record` admits a callee, and
+  `scopes::keep_placed_results` drops the scope pass's free of the call's result.
+- *The copy-out.* `scopes::insert_evacuations` puts `OpEvacuate` (`Stores::evacuate`) before
+  each free of the home's owner; `(R-Place)` and `(R-ExitVector)` leave such an owner unplaced.
+- *The move.* The parser marks each store owner on the home's dep chain (`mark_ref_home`),
+  which store confinement and last-use reclaim leave in place, and null-inits one assigned
+  deeper in the holder's block (`scopes::insert_hoists`), where the scope pass then scopes it.
+- *The reassignment.* `Parser::referenced_locals` records, on both passes, the local vectors and
+  keyed collections a stored reference was set into; `parse_assign_op_inner` lowers a
+  reassignment of one as its clear (`Parser::referenced_local_clear`: `clear_vector_at`, or
+  `OpClearKeyed`) followed by the `+=` lowering.
+- `LOFT_NO_REF_HOME=1` withholds all four: the bisect step ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
+
+**Where `(H-RefSet)` holds in the code.** `Parser::towards_set` lowers an assignment to a
+pointer field as `OpSetDbRef`.  A record literal reaches it as a record of its own:
+`Parser::reads_a_pointer_field` keeps `(R-InPlaceLiteral)` off a pointer field, whose read is
+the record it points at, not a place of the holder's.
+
+**Where `(H-ShortRef)` holds in the code.**
+- *User views.* The scope pass finds the views live across a disturbance
+  (`scopes/view_walk.rs` `collect_views_to_materialise`, `scopes/disturbance.rs`) and
+  materialises them or refuses the disturbance (`scopes/reshape_refusals.rs`: B-Ref-Reshape,
+  H-View-Drop).
+- *Compiler-held addresses.* `(R-Base)`, `(R-RecPtr)` and the push windows hold a vector base,
+  a record address or a header only while no store they read from grows
+  (`generation::hoist` `growth_free`, `StoreFacts::distinct`, `view_extent_verdict`);
+  `(R-TextBorrow)`'s borrowed text holds on the same terms (`Store::text_span`).
+- *The return buffer.* `Output::distinct_version` tests a loop's parameter stores apart from the
+  return buffer's (and a result local that adopts it, `hoist::RetAdopt`), and passes the
+  pairs it tested to `record_ptr_gains` as assumed distinct inside the versioned copy only.
 
 ### Free — release the store a reference NAMES, once, never the stack
 
@@ -612,12 +739,10 @@ installed, which the frame does own.
              are not ordered that way — a hook that does not run leaves the resource open,
              and a hook that runs twice closes a handle the author already closed, which is
              the author's own use-after-free.  So a change that converts one into the other
-             is not progress and must not be landed as an improvement (measured on
-             loft#1515's shared-destination shape: giving `drop_transferred` a per-path merge
-             turns every lost hook in that family into a doubled one).  The consequence for
-             the cures below is that "err toward the safe side while the real fix is designed"
-             is not available here: a drop's fix has to be RIGHT on every path, which is why
-             `(O-Complete)`'s per-path clause and this rule meet so often.
+             is not progress and must not be landed as an improvement.  The cures below
+             cannot "err toward the safe side while the real fix is designed": a drop's fix
+             has to be RIGHT on every path, which is why `(O-Complete)`'s per-path clause and
+             this rule meet so often.
   (H-Lease)  a structure whose type OWNS a droppable — the type declares `OpDrop`, or holds
              a member that does, at any depth — holds its OWN lease on the resource, and
              two structures are two drops.  A copy makes a second structure, so it takes a
@@ -732,14 +857,11 @@ value where it belongs, pass it, borrow it — so the strict rule costs little. 
 library that holds a connection readable: every use of `self.db` is a borrow in plain sight, and
 the one line that would duplicate it is the line the error names.
 
-**Why a refusal, and not a moved release, a warning or a mark.**  The earlier rule moved the
-release along with a copy and warned where the owner was unclear.  Wherever both structures
-lived on, that left a gotcha: the release went with one of them, and the program closed a
-handle the other was still using, or closed it twice.  A mark inside a structure recording
-which member was moved out, or a static fact deciding which copy owns, would each leave the
-programmer guessing which structure still works.  Refusing the copy leaves no guess, because a
-program that compiles has one structure per lease.  Decided with the owner 2026-09-15 from the
-use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
+**Why a refusal, and not a moved release, a warning or a mark.**  A release moved with a copy
+goes with one structure while the other still uses the handle; a mark recording which member
+moved out, or a static fact deciding which copy owns, leaves the programmer guessing which
+structure still works.  Refusing the copy leaves no guess: a program that compiles has one
+structure per lease (DESIGN_DECISIONS.md C121; the earlier rule is in heap-history.md).
 
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
@@ -751,10 +873,7 @@ copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D
 cell that disagrees to its deviation; `tests/copy_lease.rs` holds the leasing cells.  Sites: the
 deaths are `scopes::displaced_drop` and `scopes::scope_end_drop`; a release moves across a copy
 only where `(H-Move)` moves the value — `scopes::copy_moves_drop_from` and `copy_hands_off` for a
-source the function owns, per path through the hand-off flags.  The reverse hand-off for a copy
-of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed by @PLN163 P5 and
-P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
-result is a view of the call's record.
+source the function owns, per path through the hand-off flags.
 
 **The built-in `File` (`(H-Handle)`).**  A `File` declares no `OpDrop`; the runtime keeps its
 rule.  Sites: a copy leases in `Stores::copy_claims` (`lease_if_file`); a death releases in
@@ -797,7 +916,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 ## Deviations
 
 OPEN: **0**.  The entries the register closed, and how each closed, are in
-[heap-history.md](heap-history.md).  `tests/ownership_drop_gate.rs` gives every generated cell
+[heap-history.md](heap-history.md).
+
+No entry is open.  `tests/ownership_drop_gate.rs` gives every generated cell
 a lease verdict and ties each cell that must release once, and does not, to exactly one open
 entry.
 

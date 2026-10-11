@@ -18,7 +18,9 @@ const CELLS: &str = "tests/scripts/a-discharge-buffers-text-set-keeps-the-caller
 
 /// `(function, push headers, vector headers)` — predictions written beside the cells.
 const EXPECTED: &[(&str, usize, usize)] = &[
-    ("n_c1", 1, 2), // out's push header; st.nodes and st.seqs read through headers
+    // out's push header; st.nodes and st.seqs read through headers — in each of the two copies
+    // `@FR-R-Alias`'s versioned clause emits (`n`'s address held where `out` is apart)
+    ("n_c1", 2, 4),
     ("n_c2", 0, 2), // no push; the two headers, the fallback discharged in the body
     ("n_c3", 0, 0), // rename grows an element's text: the walk reads through the runtime
     ("n_c4", 0, 1), // the callee misses on every call: the loop keeps its one header

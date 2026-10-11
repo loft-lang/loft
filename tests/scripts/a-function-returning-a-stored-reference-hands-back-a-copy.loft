@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-F-Ret`, `@FR-O-Move` — a function that hands up the record a stored `reference<T>`
+// names (`fn rf(h: H) -> S? { h.link }`) returns a FRESH copy, and the record stays where the
+// reference left it.  That record lives in a store neither the callee nor any argument owns,
+// so the caller's argument bracket cannot witness it; the callee copies it into its return
+// buffer before it escapes (loft#1977).  Each cell holds `S { n: 5 }` behind the reference and
+// asserts the holder still reads 5 after the call, and the result reads 5:
+//
+// - the call as an argument (`rdn(rf(f))`), bound to a local, and written through (`b.n = 9`
+//   leaves `f.link.n == 5`: the result is a copy);
+// - a non-nullable `reference<S>` field and `-> S`;
+// - the read spelled through a local, as a mid-body `return`, as an `if` arm, behind `??`, one
+//   field deeper (`w.inner.link`), as a method, and as a field of the record (`h.link.n`);
+// - a null reference hands up null, not an empty record;
+// - 1000 calls in a loop: no store is released or leaked per call.
+//
+// @falsified-at: 7c6e94117 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-function-returning-a-stored-reference-hands-back-a-copy.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the asserts — the first cell ends the run on both backends.
+//   WITNESS: `rdn(rf(f))` answered 5 and then `f.link.n` read 0: the caller's source-free
+//   copy released the store the reference names, and the holder read the freed buffer
+//   (`LOFT_STRICT_STORES=1`: USE AFTER FREE).
+//   HOLDS: the read through a local (`x = h.link; x`), behind `??`, and as a field
+//   (`h.link.n`) were clean on both trees.
+struct S { n: integer }
+struct H { link: reference<S>? }
+struct HR { link: reference<S> }
+struct W { inner: H }
+fn rdn(s: S?) -> integer { if s != null { s.n } else { -1 } }
+fn rdm(s: S) -> integer { s.n }
+fn rf(h: H) -> S? { h.link }
+fn rfr(h: HR) -> S { h.link }
+fn rf_local(h: H) -> S? { x = h.link; x }
+fn rf_ret(h: H, k: integer) -> S? { if k > 0 { return h.link; } null }
+fn rf_if(h: H, k: integer) -> S? { if k > 0 { h.link } else { null } }
+fn rf_or(h: H) -> S { h.link ?? S { n: 0 } }
+fn rf_nest(w: W) -> S? { w.inner.link }
+fn rf_inner(h: H) -> integer { h.link.n ?? -1 }
+fn get(self: H) -> S? { self.link }
+fn c_lift() { f = H { link: S { n: 5 } }; x = rdn(rf(f)); assert(x == 5 && f.link.n == 5, "lift: x={x} {f.link.n}"); f.link.n = 74; assert(f.link.n == 74, "lift write {f.link.n}"); }
+fn c_bind() { f = H { link: S { n: 5 } }; b = rf(f); assert(rdn(b) == 5 && f.link.n == 5, "bind: {f.link.n}"); }
+fn c_fresh() { f = H { link: S { n: 5 } }; b = rf(f); if b != null { b.n = 9; } assert(f.link.n == 5 && b.n == 9, "fresh: f={f.link.n} b={b.n}"); }
+fn c_nn() { f = HR { link: S { n: 5 } }; b = rfr(f); x = rdm(rfr(f)); assert(x == 5 && b.n == 5 && f.link.n == 5, "nn: {f.link.n}"); }
+fn c_local() { f = H { link: S { n: 5 } }; x = rdn(rf_local(f)); assert(x == 5 && f.link.n == 5, "local: {f.link.n}"); }
+fn c_ret() { f = H { link: S { n: 5 } }; x = rdn(rf_ret(f, 1)); y = rdn(rf_ret(f, 0)); assert(x == 5 && y == -1 && f.link.n == 5, "ret: {x} {y} {f.link.n}"); }
+fn c_if() { f = H { link: S { n: 5 } }; x = rdn(rf_if(f, 1)); y = rdn(rf_if(f, 0)); assert(x == 5 && y == -1 && f.link.n == 5, "if: {x} {y} {f.link.n}"); }
+fn c_or() { f = H { link: S { n: 5 } }; g = H { }; x = rdm(rf_or(f)); y = rdm(rf_or(g)); assert(x == 5 && y == 0 && f.link.n == 5, "or: {x} {y} {f.link.n}"); }
+fn c_nest() { w = W { inner: H { link: S { n: 5 } } }; x = rdn(rf_nest(w)); assert(x == 5 && w.inner.link.n == 5, "nest: {w.inner.link.n}"); }
+fn c_inner() { f = H { link: S { n: 5 } }; assert(rf_inner(f) == 5 && f.link.n == 5, "inner {f.link.n}"); }
+fn c_method() { f = H { link: S { n: 5 } }; x = rdn(f.get()); assert(x == 5 && f.link.n == 5, "method: {f.link.n}"); }
+fn c_null() { f = H { }; x = rdn(rf(f)); b = rf(f); assert(x == -1 && b == null, "null: {x}"); }
+fn c_loop() { f = H { link: S { n: 5 } }; t = 0; for _ in 0..1000 { t += rdn(rf(f)); } assert(t == 5000 && f.link.n == 5, "loop: t={t} {f.link.n}"); }
+fn main() {
+  c_lift(); c_bind(); c_fresh(); c_nn(); c_local(); c_ret(); c_if(); c_or(); c_nest(); c_inner(); c_method(); c_null(); c_loop();
+}

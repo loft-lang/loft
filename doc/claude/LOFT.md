@@ -264,7 +264,7 @@ store on its own line.
 | `sorted<T[field]>`                 | Sorted vector on the given fields                     |
 | `spatial<T[x,y]>` / `spatial<T[x,y,z]>` | Spatial keyed collection, 1–3 coordinate axes, Morton/Z-order radix tree |
 | `trie<T[field]>`                   | Text-keyed collection on ONE field — exact lookup, key order, and prefix |
-| `reference<T>`                     | Reference (pointer) to a stored `T` record            |
+| `reference<T>`                     | Reference (pointer) to a stored `T` record; assigning re-points it; the record lives as long as the store of its holder — the compiler keeps it there, and refuses the few shapes it cannot keep (a holder that is an element of a parameter's collection, two parameters naming one record) |
 | `reference<T>?`                    | The same pointer, allowed to be absent — a list terminator |
 | `iterator<T, I>`                   | Iterator yielding `T` using internal state `I`        |
 | `fn(T1, T2) -> R`                  | First-class function type                             |

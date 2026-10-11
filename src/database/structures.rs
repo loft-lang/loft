@@ -251,6 +251,9 @@ impl Stores {
     /// # Panics
     /// Panics on an unsupported `parent_tp`/`field` parts kind (an internal invariant
     /// violation — the parser only emits `OpNewRecord` for collection/struct field types).
+    ///
+    /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
+    /// reference to it keeps its place while the collection around it grows or re-sorts.
     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
         self.records_created += 1;
@@ -831,6 +834,76 @@ impl Stores {
             .iter()
             .position(|f| f.position == byte_off)
             .map(|i| i as u16)
+    }
+
+    /// `@FR-H-RefHome` — the record type a collection type holds, for a place that is one of
+    /// its elements: a vector-like one's, or a keyed one's (`hash`, `index`, `spatial`, a
+    /// trie), whose element a key lookup (`OpGetRecord`) names.
+    #[must_use]
+    pub fn collection_content(&self, tp: u16) -> Option<u16> {
+        match &self.types.get(tp as usize)?.parts {
+            Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Sorted(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _, _)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _) => Some(*c),
+            _ => None,
+        }
+    }
+
+    /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
+    /// record type `struct_tp` names: the type a copy of its record is made as.
+    #[must_use]
+    pub fn reference_field_target(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        (f.target != u16::MAX).then_some(f.target)
+    }
+
+    /// `@FR-H-RefHome` — the name of the field at byte `byte_off` of record type `struct_tp`
+    /// when it is a user's `reference<T>` (a stored reference with a target type); `None` for
+    /// any other field, a closure's captured reference included.
+    #[must_use]
+    pub fn reference_field_name(&self, struct_tp: u16, byte_off: u16) -> Option<String> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        (f.target != u16::MAX
+            && matches!(
+                self.types.get(f.content as usize).map(|t| &t.parts),
+                Some(Parts::DbRef)
+            ))
+        .then(|| f.name.clone())
+    }
+
+    /// `@FR-H-Removed` — the element type whose records a clear of the vector field at
+    /// `byte_off` of `struct_tp` releases one by one: the field is an `array` (its element
+    /// type linked, each element a record of its own) and it holds those records itself —
+    /// it is in no group, or it is the group's holder rather than a view of it.  `None` for
+    /// every other field: an inline element dies with the length reset, and a view's records
+    /// belong to the holder.
+    #[must_use]
+    pub fn clear_releases_records(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        let Parts::Array(elem) = self.types.get(f.content as usize)?.parts else {
+            return None;
+        };
+        (f.other_indexes.first() != Some(&u16::MAX)).then_some(elem)
     }
 
     /// loft#898 — the members of the linked collection group the keyed field at
@@ -3165,6 +3238,94 @@ impl Stores {
             pos: 8,
         }
         .or_null()
+    }
+
+    /// The 12-byte stored reference at field `fld` of `db` (`OpGetDbRef`): null when the
+    /// holder has no record, and null when the record it names was removed
+    /// (`@FR-H-Removed`) — the position is no record any more, whatever claim came after.
+    #[must_use]
+    pub fn get_db_ref(&self, db: &DbRef, fld: u32) -> DbRef {
+        if db.rec == 0 {
+            return DbRef::NULL;
+        }
+        let store = self.store(db);
+        let off = db.pos + fld;
+        let store_nr = store.get_u32_raw(db.rec, off) as u16;
+        let rec = store.get_u32_raw(db.rec, off + 4);
+        let pos = store.get_u32_raw(db.rec, off + 8);
+        if self.reference_removed(store_nr, rec) {
+            return DbRef::NULL;
+        }
+        DbRef { store_nr, rec, pos }
+    }
+
+    /// `@FR-H-Removed` — whether a stored reference to record `rec` of store `store_nr` names
+    /// a removed record, and so reads null.
+    #[inline]
+    #[must_use]
+    pub fn reference_removed(&self, store_nr: u16, rec: u32) -> bool {
+        rec != 0
+            && self
+                .allocations
+                .get(store_nr as usize)
+                .is_some_and(|s| s.is_removed(rec))
+    }
+
+    /// Store `r` as the 12-byte reference at field `fld` of `db` (`OpSetDbRef`), and mark the
+    /// record it names (`@FR-H-Removed`): removing that record later leaves its position
+    /// behind, so this reference reads null instead of the next record claimed there.
+    /// `false` when the holder has no record, for the caller to report the dropped write.
+    /// `@C145` — the record the field named before is left where it is: nothing records who
+    /// else names it.
+    pub fn set_db_ref(&mut self, db: &DbRef, fld: u32, r: DbRef) -> bool {
+        if db.rec == 0 {
+            return false;
+        }
+        let off = db.pos + fld;
+        let store = self.store_mut(db);
+        store.set_u32_raw(db.rec, off, u32::from(r.store_nr));
+        store.set_u32_raw(db.rec, off + 4, r.rec);
+        store.set_u32_raw(db.rec, off + 8, r.pos);
+        if r.rec != 0
+            && let Some(target) = self.allocations.get_mut(r.store_nr as usize)
+        {
+            target.note_referenced(r.rec);
+        }
+        true
+    }
+
+    /// `@FR-H-RefHome` (`OpEvacuate`) — the store `home` names is about to be freed: when the
+    /// stored reference at byte `fld` of `holder` names a record in it, that record is copied
+    /// as a `tp` record into the holder's own store and the reference names the copy.  A null
+    /// or removed reference, one naming another store, and a holder inside the store being
+    /// freed are left as they are.  Two holders in one store that named one record name one
+    /// copy, so a write through either still shows through the other.
+    pub fn evacuate(&mut self, holder: &DbRef, fld: u32, home: &DbRef, tp: u16) {
+        if holder.rec == 0
+            || holder.store_nr == u16::MAX
+            || home.store_nr == u16::MAX
+            || holder.store_nr == home.store_nr
+            || (holder.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        let old = self.get_db_ref(holder, fld);
+        if old.rec == 0 || old.store_nr != home.store_nr {
+            return;
+        }
+        let key = (old, holder.store_nr);
+        let copy = if let Some((_, copy)) = self.evacuated.iter().find(|(k, _)| *k == key) {
+            *copy
+        } else {
+            let copy = self.place_record_prefilled(holder, tp);
+            let size = u32::from(self.size(tp));
+            self.remove_claims(&copy, tp);
+            self.copy_block(&old, &copy, size);
+            self.copy_claims(&old, &copy, tp);
+            self.evacuated.push((key, copy));
+            copy
+        };
+        self.set_db_ref(holder, fld, copy);
     }
 
     #[must_use]

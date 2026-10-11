@@ -1312,7 +1312,7 @@ impl Stores {
     /// declined with it, as is a type the walk does not know — the conservative answer,
     /// because a wrong `true` reads another store's records.  A type already on the walk
     /// (a vector of its own type) adds no new kind of field and answers `true`.
-    fn tree_holds_no_stored_refs(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
+    pub(crate) fn tree_holds_no_stored_refs(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
         use crate::database::Parts;
         if walking.contains(&tp) {
             return true;
@@ -1595,6 +1595,9 @@ impl Stores {
             return;
         }
         let al = db.store_nr;
+        if !self.evacuated.is_empty() {
+            self.evacuated.retain(|((old, _), _)| old.store_nr != al);
+        }
         // `LOFT_TRACE_DB` — the free half of the OpDatabase trace.  `already_free`
         // is the load-bearing column: a free of a slot that is still IN USE means
         // the DbRef reaching this call is not the current owner's, so the slot is
@@ -2130,8 +2133,17 @@ impl Stores {
         }
     }
 
-    pub fn clear(&mut self, db: &DbRef) {
+    /// Reinitialise `db`'s store in place for a new root record.  Answers the positions the
+    /// caller marks removed after that record's claim (`Store::entomb_kept`, `@FR-H-Removed`):
+    /// the records a stored reference named go with the rest, and a reference to one reads
+    /// null rather than whatever the store holds there next.
+    pub fn clear(&mut self, db: &DbRef) -> Vec<u32> {
         let slot = db.store_nr;
+        let kept = if self.allocations[slot as usize].free {
+            Vec::new()
+        } else {
+            self.allocations[slot as usize].kept_positions()
+        };
         // Clear any stale lock before reinitialising — OpDatabase may
         // reinitialise a store that was previously locked by a const
         // parameter in a prior function call within the same loop iteration.
@@ -2170,6 +2182,7 @@ impl Stores {
                 self.peak = self.max;
             }
         }
+        kept
     }
 
     #[must_use]
@@ -3011,6 +3024,7 @@ impl Stores {
             lazy_errors: std::collections::HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            evacuated: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,
@@ -5733,6 +5747,9 @@ impl Stores {
     /// at `(slot, PRIMARY, 8)` — so it must not move.  It does not: the root
     /// record is the destination's first claim, and a fresh store hands out
     /// `PRIMARY` first.
+    ///
+    /// `@FR-H-LongRef` — the one place records move: on the load path, where no reference into
+    /// the store can be live yet.
     fn compact_slot(&mut self, slot: u16) -> Result<u32, &'static str> {
         use crate::store::PRIMARY;
         let idx = slot as usize;

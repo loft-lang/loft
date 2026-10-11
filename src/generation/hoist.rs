@@ -163,6 +163,11 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
     "OpSetEnum",
 ];
 
+/// The operators that only COMPARE a reference — its record number, or the whole `DbRef` —
+/// and read no store: a view tested against null (`v != null`) is still the view it was, so a
+/// held address survives them (`@FR-R-RecPtr`).  An allow-list like the one above.
+pub const REF_COMPARE_OPS: [&str; 3] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef"];
+
 /// `@FR-R-InPlace`'s copy clause — `OpCopyRecord(src, dst, tp)` with no flag set, over a
 /// record type that owns NO heap: `size(tp)` bytes stored at the address of `dst`, which is
 /// what an in-place scalar set is at a larger width.  Nothing is claimed, released or moved
@@ -2782,6 +2787,8 @@ mod free_order_tests {
 // The eight parameters are the extent, the view, the two things that type it, the
 // function, the memo, the write tier and the twin parameters; a struct would put a name
 // between each and the two call sites without removing anything.
+// `@FR-H-ShortRef` — the held address is valid only while the store it points into grows
+// nowhere in the view's extent; "the remainder may grow a store" is that refusal.
 #[allow(clippy::too_many_arguments)]
 fn view_extent_verdict(
     rest: &[Value],
@@ -2875,6 +2882,7 @@ fn view_extent_verdict(
                         && native
                         && !name.starts_with("OpGet")
                         && !IN_PLACE_SET_OPS.contains(&name)
+                        && !REF_COMPARE_OPS.contains(&name)
                         && name != "OpCopyRecord"
                     {
                         rebound = true;

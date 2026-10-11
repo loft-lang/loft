@@ -3184,6 +3184,15 @@ impl Parser {
             // it cannot see that the tail merely projects into `b`.
             return RefDelivery::MaterializeView;
         }
+        if l.last()
+            .is_some_and(|tail| self.return_reads_a_stored_reference(tail))
+        {
+            // loft#1977, `@FR-F-Ret` — the tail reads a stored `reference<T>` (`h.link`): the
+            // record it names lives in a store neither this frame nor any argument owns, so
+            // the caller's argument bracket cannot witness it and a source-free copy released
+            // it.  Copy the record in before it escapes; the caller adopts its own value.
+            return RefDelivery::MaterializeView;
+        }
         if context == "return from block" && self.return_views_a_capture(ls, l) {
             // loft#1485, `@FR-F-Ret` — the tail reads out of the CLOSURE RECORD, so the value
             // belongs to the frame that built the closure.  Asked above the empty-`ls` branch,
@@ -11446,6 +11455,101 @@ impl Parser {
             };
             diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
         }
+        // `@FR-H-RefHome` — a stored reference whose holder outlives the record it names.
+        // Asked here for the same reason: a callee's half (which arguments it links) is only
+        // complete once every body is parsed.  A home that can move out to the holder's block
+        // does, before the scope pass scopes it; a body that pass already scoped was judged
+        // when it was fresh.
+        let found = crate::scopes::stored_reference_homes(&self.data, &self.database);
+        for r in found.refusals {
+            let pos = crate::lexer::Position {
+                file: crate::lexer::intern_file(&r.file),
+                line: r.line,
+                pos: 1,
+            };
+            diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
+        }
+        let ops = crate::scopes::PlaceOps {
+            set_db_ref: self.data.def_nr("OpSetDbRef"),
+            database: self.data.def_nr("OpDatabase"),
+            place_record: self.data.def_nr("OpPlaceRecord"),
+        };
+        let mut placing: Vec<u32> = found
+            .places
+            .iter()
+            .map(|p| p.d_nr)
+            .filter(|&d| !self.data.def(d).variables.done)
+            .collect();
+        placing.sort_unstable();
+        placing.dedup();
+        for d in placing {
+            // `@FR-H-RefHome` — a literal or call result written into a holder that outlives
+            // it is built in the holder's store, by a fresh variable that borrows the holder.
+            let def = &mut self.data.definitions[d as usize];
+            let mut here = Vec::new();
+            for p in found.places.iter().filter(|p| p.d_nr == d) {
+                if here
+                    .iter()
+                    .any(|(o, _, _): &(&crate::scopes::Place, u16, Type)| {
+                        o.site == p.site || (p.own && o.own && o.home == p.home)
+                    })
+                {
+                    continue;
+                }
+                let tp = crate::scopes::borrowing(def.variables.tp(p.home), p.host);
+                if p.own {
+                    // The local itself borrows the holder's store: no free is emitted for it.
+                    def.variables.set_type(p.home, tp.clone());
+                    here.push((p, p.home, tp));
+                    continue;
+                }
+                let fresh = def.variables.copy_variable(p.home);
+                // Its own name: the native backend names a local by it, and a second
+                // `__ref_p2_1` would shadow the temporary the exit frees.
+                def.variables.rename(fresh, &format!("__place_{fresh}"));
+                def.variables.set_type(fresh, tp.clone());
+                here.push((p, fresh, tp));
+            }
+            crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, &ops);
+        }
+        for e in &found.evacuations {
+            if self.data.def(e.d_nr).variables.done {
+                continue;
+            }
+            // `@FR-H-RefHome` — a record a parameter's reference names is copied out of its
+            // home before the home's store is freed; the store stays the home's own.
+            let def = &mut self.data.definitions[e.d_nr as usize];
+            for &owner in &e.owners {
+                def.variables.mark_ref_home(owner);
+                def.variables
+                    .add_ref_evacuation(e.holder, e.fld, owner, e.tp);
+            }
+        }
+        let mut fresh: Vec<u32> = found
+            .hoists
+            .iter()
+            .map(|h| h.d_nr)
+            .filter(|&d| !self.data.def(d).variables.done)
+            .collect();
+        fresh.sort_unstable();
+        fresh.dedup();
+        for d in fresh {
+            // Outermost holder first: an enclosing block's number is below its inner blocks'.
+            let mut here: Vec<&crate::scopes::Hoist> =
+                found.hoists.iter().filter(|h| h.d_nr == d).collect();
+            here.sort_by_key(|h| h.block);
+            let def = &mut self.data.definitions[d as usize];
+            for h in &here {
+                def.variables.mark_ref_home(h.owner);
+            }
+            let mut inserts: Vec<&crate::scopes::Hoist> = Vec::new();
+            for h in here.into_iter().filter(|h| h.insert) {
+                if !inserts.iter().any(|o| o.owner == h.owner) {
+                    inserts.push(h);
+                }
+            }
+            crate::scopes::insert_hoists(&mut def.code, &inserts);
+        }
     }
 
     /// The user-facing name of a rule fn (`n_expr` -> `expr`).
@@ -16532,8 +16636,17 @@ impl Parser {
         // `OpCopyRecord` of a null source leaves the destination an allocated EMPTY record —
         // presence standing in for absence.  Copy only where the source is present; the
         // absent arm hands up the sentinel (loft#1337).
+        // A stored `reference<T>?` read (`h.link`, loft#1977) is the same: absent when the
+        // field holds null, so a `-> S?` copies it only where present.  The read is pure, so
+        // the test re-reads it.
         let absent_guard = match orig.unspan() {
-            Value::Var(v) if matches!(self.vars.tp(*v), Type::Optional(_)) => Some(*v),
+            Value::Var(v) if matches!(self.vars.tp(*v), Type::Optional(_)) => Some(Value::Var(*v)),
+            Value::Call(d, _)
+                if *d == self.data.def_nr("OpGetDbRef")
+                    && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
+            {
+                Some(orig.clone())
+            }
             _ => None,
         };
         let copy = crate::data::v_block(
@@ -16548,7 +16661,7 @@ impl Parser {
         );
         *tail = match absent_guard {
             Some(v) => crate::data::v_if(
-                self.cl("OpRefIsNull", &[Value::Var(v)]),
+                self.cl("OpRefIsNull", &[v]),
                 self.cl("OpNullRefSentinel", &[]),
                 copy,
             ),
@@ -17397,6 +17510,29 @@ impl Parser {
             Value::Block(bl) => bl.operators.last().is_some_and(Self::return_tail_is_join),
             Value::Insert(ops) => ops.last().is_some_and(Self::return_tail_is_join),
             Value::If(..) => true,
+            _ => false,
+        }
+    }
+
+    /// loft#1977 — does the tail hand up the record a stored `reference<T>` names (an
+    /// `OpGetDbRef` read, on any arm)?  That record's store belongs to whatever holds it, not
+    /// to this frame or an argument, so `@FR-F-Ret`'s fresh value is a copy made here.
+    fn return_reads_a_stored_reference(&self, tail: &Value) -> bool {
+        match tail.unspan() {
+            Value::Return(inner) | Value::Drop(inner) => {
+                self.return_reads_a_stored_reference(inner)
+            }
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|t| self.return_reads_a_stored_reference(t)),
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|t| self.return_reads_a_stored_reference(t)),
+            Value::If(_, t, f) => {
+                self.return_reads_a_stored_reference(t) || self.return_reads_a_stored_reference(f)
+            }
+            Value::Call(d, _) => *d == self.data.def_nr("OpGetDbRef"),
             _ => false,
         }
     }
@@ -19647,9 +19783,12 @@ impl Parser {
                     // loft#1659, `@FR-F-Ret` — a CAPTURE handed back by an explicit `return`
                     // is the closure's, not a fresh value: the tail selector's loft#1485 leg,
                     // which no mid-body exit reached.
+                    //
+                    // loft#1977 — and a stored `reference<T>` read, whose record no frame owns.
                     if self.return_projects_into_local(&v)
                         || self.return_copies_a_leasing_value(&v)
                         || self.return_views_a_capture(ls, std::slice::from_ref(&v))
+                        || self.return_reads_a_stored_reference(&v)
                     {
                         // The returned expression points INTO something this
                         // function frees — a field of an inline call's temporary
@@ -20772,6 +20911,14 @@ impl Parser {
             }
             "sort" if self.sort_is_special(source, types) => {
                 return self.parse_sort(val, list, types);
+            }
+            "clear"
+                if types.len() == 1
+                    && matches!(types[0].peel_link().base(), Type::Vector(_, _))
+                    && let Some(ops) = self.vector_clear_lowering(&list[0], &types[0]) =>
+            {
+                *val = Value::Insert(ops);
+                return Type::Void;
             }
             "insert" => return self.parse_insert(val, list, types),
             "reverse" => return self.parse_reverse(val, list, types),

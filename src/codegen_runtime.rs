@@ -414,14 +414,17 @@ fn op_database_inner(
     if stores.mint_at_place(&db, db_tp) {
         return db;
     }
-    if db.store_nr == u16::MAX {
+    let kept = if db.store_nr == u16::MAX {
         // Null sentinel (no real store yet) — allocate a fresh one, which `null` has
         // already initialised.
         db = stores.null();
+        Vec::new()
     } else {
-        stores.clear(&db);
-    }
+        stores.clear(&db)
+    };
     let r = stores.claim(&db, 1 + u32::from(size).div_ceil(8));
+    // `@FR-H-Removed` — the records a stored reference named went with the old content.
+    stores.allocations[r.store_nr as usize].entomb_kept(&kept);
     // P259 commit 3 — record the type allocated into this store so
     // free_named can recognise closure-record stores at free time
     // (cascade-free walks `__closure_*` records' DbRef fields).

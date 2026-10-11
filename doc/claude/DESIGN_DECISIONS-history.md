@@ -1401,6 +1401,15 @@ intend to alias, and the cost of those bugs exceeds the value-semantics migratio
 value-semantics-by-default; until then the W4 lint + the documented view default are the
 cheaper guard.
 
+> **AMENDED (2026-10-11, owner, closing @PLN189).** `&` was designed for one case: changing
+> the content of a parameter.  The implementation now allows broader use, which is welcome —
+> a stored `reference<T>` reaches a deep record inside another structure without keeping its
+> path keys — but that does not make references a construction every combination of
+> expressions must accept.  Ruled while declining @PLN189's step 10 (freeing a record built in
+> its holder's store when the reference is re-pointed, a test on every reference write for a
+> rare shape) and the alternative of making `q = h.r` a copy.  It replaces the plan issue's
+> "no refusal where the language can give the answer".
+
 ---
 
 ## C78 — The Rust-engine ↔ loft-library boundary: mechanism not genre, and no black boxes above the engine
@@ -4780,3 +4789,31 @@ reads, the field index map and the live-reload arm are shared with the dense lay
 the issue's 10M-call loop, lean tier (`--native-release`, median of five, the base build
 alongside): the nullable spelling went from 0.482 s (a buffer and a heap store per result) to
 0.065 s, beside 0.069 s for the dense one on both builds.
+
+## C145 — No back references inside a store: what a reference points at never moves under it
+
+Stated 2026-10-10 by the owner while the worst native routines were priced: `mesh_to_floats`
+and `pack_instances` both read record views (`mf_v`, `n`) while appending to their return
+buffer, and `(R-RecPtr)` declined to hold the views' addresses because the buffer could live in
+the same store.  The owner, in four steps: *"on long term (from another store) references into a
+store there are limitations: only records and fields in records can be references (strings and
+vectors can get moved inside the store)   short term variable & parameter references can be made
+but the store itself cannot be changed then (no addition to strings & additions to vectors)"*;
+*"this is because I do not want back references inside stores"*; *"a long term string reference
+is possible but it should be to a field holding the string"*; *"records can live inside a vector
+itself and the vector can relocate or move its own content on a sorted vector.  This is fixed in
+known links inside a store to move to the Array structure that pushes out the records."*
+
+The by-reference layout the last remark names was already built (`Stores::is_linked`, loft#903,
+loft#1670); the short-term clause was nowhere written and nothing checked it.  Measured against
+it, `(R-Place)` hands a callee a return buffer claimed in the caller's store and the callee grows
+it while holding short-term references there — recorded as `D-heap-47`, whose closing is what
+would let `(R-RecPtr)` keep those views (−13 % on a `mesh_to_floats` probe).
+
+The removal clause was added the same day, as the design call loft#1969 asked for (a removed
+record's position was reused by the next claim, so a stored reference read a different
+record): *"a removed record space cannot directly be reused by a store but a reference can see
+that this space is now not a record anymore"*.  Of the three closings the issue offered —
+refuse the removal, a generation tag, a tombstone — this is the tombstone, kept to the header
+word: the position is never reused, the rest of the record is.  Written as `(H-Removed)`.
+

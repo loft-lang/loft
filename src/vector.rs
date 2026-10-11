@@ -438,6 +438,8 @@ pub fn vector_append(db: &DbRef, size: u32, stores: &mut [Store]) -> DbRef {
         // keeps the ~2x ladder.
         if needed > cur_cap {
             let new_vec = store.resize(vec_rec, checked_vec_cap(needed.saturating_mul(2), size));
+            // `@FR-H-LongRef` — the content moved, the field holding it did not: rewrite the
+            // owner slot, the place every long-term reference to this vector names.
             if new_vec != vec_rec {
                 store.set_u32_raw(db.rec, db.pos, new_vec);
                 vec_rec = new_vec;

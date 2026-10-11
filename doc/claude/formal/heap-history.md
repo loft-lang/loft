@@ -2735,6 +2735,63 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-50 — CLOSED (2026-10-10, loft#1973): a store freed under a stored reference handed its number to the next value
+
+A local's store freed at its scope end, or the old store a reassigned local dropped, went back
+to the pool while a stored reference still named a record in it, so the reference read a
+record of whatever value reused the store number: `false 4` where `true` was owed, silently,
+on both backends.  A per-store generation checked on every read was measured (+7 % on a loop
+of reference reads) and declined by the owner as too costly for a corner case; the static half
+of the borrow rule was taken instead.  `(H-RefHome)` refuses a holder that outlives the record's
+home, read off the variables' deps after pass 2 (`scopes::stored_reference_refusals`), through
+copies of the holder and through calls; a reassigned local a reference names into is emptied in
+place (`(H-Removed)`).  Measuring the same family turned up three more silent answers, closed
+with it: a literal or a call result stored in a loop gave every holder the last pass's record
+(`12 12 12` for `10 11 12`), now refused; a record literal assigned to a reference field wrote
+into the record the field named before instead of re-pointing it (`(H-RefSet)`); and a function
+returning a stored reference let its caller free the store that reference names (loft#1977,
+`(F-Ret)`).  The refusal's reach over the repository, the libraries and the consumer
+applications was one dead function that would have dangled had it been called.  Guards
+`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
+`tests/scripts/a-stored-reference-its-record-outlives-reads-it.loft` and
+`tests/scripts/a-function-returning-a-stored-reference-hands-back-a-copy.loft`.
+
+### D-heap-47 — CLOSED (2026-10-10, loft#1968): `(R-Place)` grew a return buffer in a store its callee held short-term references into
+
+`(R-Place)` hands a callee a return buffer claimed in the caller's store, and a callee that
+appends to it grows that store while its parameters name into it (`s.floats =
+s.pack_instances()`), against `(H-ShortRef)` as written.  No answer was wrong, since every read
+re-resolves the store.  Closed by amending the rule rather than the placement: `(H-ShortRef)`
+names the return buffer as the one addition a parameter's store may take during a call, and
+every rewrite that holds a parameter's address tests that store apart from the buffer's first
+(`(R-Alias)`'s versioned clause, `Output::distinct_version`).  The versioned copy was extended
+to a result local that adopts the buffer, which took `mesh_to_floats` from 8.23× to 5.53× of its
+Rust twin and `pack_instances` from 7.55× to 4.84×.  Guard
+`tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`.
+
+### D-heap-49 — OPENED AND CLOSED (2026-10-10, loft#1971): a vector clear stranded a referenced type's records
+
+`OpClearVector` reset a linked vector's length and never reached `Store::delete`, so a stored
+reference to a cleared record read its old values (`22 2 false` where `null 2 true` was owed)
+and the records stayed claimed — on both backends, through `v.clear()`, `clear(v)` and
+`v = []`.  The op carries no type; the parser does, so the clear's one home
+(`Parser::clear_vector_at`) puts `OpKeepVectorRange(v, T, 0, 0)` before the reset when `T` is
+linked.  The same home closed a `(Col-Group)` split found on the way: `g.items.clear()` left the
+records in the keyed sibling while `g.items = []` emptied both.  The reassigned local the entry
+also named frees its whole store instead of clearing it — no removal at all — and moved to
+D-heap-50 (loft#1973).  Guard `tests/scripts/a-cleared-vector-releases-the-records-a-reference-named.loft`.
+
+### D-heap-48 — OPENED AND CLOSED (2026-10-10, loft#1969): a removal ended a record's home while a stored reference named it
+
+`(H-LongRef)` kept a referenced record from moving, but removing it from its collection freed
+it, and the next claim reused the position: `h.r.v` read 99 from the record appended after the
+removal, on both backends.  The owner's ruling closed it: a removed record's space is not
+reused directly, and a reference can see the space is no record any more.  That is
+`(H-Removed)`: `OpSetDbRef` marks the record it names, `Store::delete` keeps such a record's
+header word as a tombstone, and `OpGetDbRef` reads null there.  Guard
+`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft`.  The vector clear,
+which never reaches `Store::delete`, stayed open as D-heap-49.
+
 ### D-heap-46 — OPENED AND CLOSED (2026-10-07, loft#1916): a collection place assigned from a projection of itself was emptied
 
 `(H-CopySelf)` makes a self-delivery a no-op.  A collection field two or more steps deep
@@ -2759,3 +2816,75 @@ condition was dropped, and an enclosing call's argument now counts as an in-flig
 only when it can answer a text.  Guards:
 `tests/scripts/1873-an-assigned-text-field-releases-the-text-it-replaces.loft` and
 `tests/scripts/1876-a-text-field-written-through-a-parameter-releases-the-text-it-replaces.loft`.
+
+## The stride rule's six re-derivations
+
+`(H-Stride)` reads an element's width off its TYPE.  This has been re-derived wrongly **six** times, in five modules, which is why it is a rule and
+not a comment: the vector element WRITE (loft#1378, narrow elements written eight bytes wide
+into a one-byte slot), the dense REMOVAL (loft#1412, the tail slid eight bytes per element on
+both spellings, `len` staying right throughout), a closure's captured cell (loft#1409), and
+three more found together (loft#1420) — the vector STRIDE (`element_store_size`, whose narrow
+branch asked `forced_size(type_elm(elm))`, a test that can never pass because `type_elm` maps
+every `Type::Integer` to the one `integer` def: a dead branch, so `reverse` on a `vector<u8>`
+answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_val` through
+`get_field(_, usize::MAX, _)`, whose `attr_type` answers `def.returned`, so `[a, .., z]`
+answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
+the type the same way and zeroing the successors it wrote over).
+
+## The drop rule before the copy refusal
+
+The rule before `(H-Copy-Refuse)` moved a droppable's release along with a copy and warned where
+the owner was unclear.  Wherever both structures lived on, that left a gotcha: the release went
+with one of them, and the program closed a handle the other was still using, or closed it twice.
+The refusal was decided with the owner on 2026-09-15 from the use cases in
+`plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).  @PLN163 P5 and P6 then removed the
+reverse hand-off for a copy of what the caller holds and the field hand-off (`OpDropAllExcept`):
+a copy the rules accept either leases or does not exist, and a read through a member of a call
+result is a view of the call's record.
+
+## (H-RefHome): a home moves out instead of being refused (2026-10-11)
+
+As first written, `(H-RefHome)` refused every holder that outlived the variable holding its
+record, fourteen shapes in its guard.  Seven of them were a holder declared in an enclosing
+block of the same function: a local of an inner block, a local of a loop pass, a callee linking
+a loop-local record.  The owner asked for those to use the mechanism that already ties stores to
+variables, so the rule now moves the named local's store out to the holder's block, and the
+refused set is what no variable of this frame can own: a parameter or returned holder, a copy
+into one, a temporary per pass, and a refilled local's own record.  Moving a store out of a loop
+made the next pass's `OpDatabase` reinitialise a store that a reference still names, which wiped
+the marks `(H-Removed)` keeps; the reinitialisation now carries them over, so a holder kept
+from an earlier pass reads null rather than the next pass's record.  The same walk found a
+record assigned to a record (`h = t`) carrying references the analysis did not see: before, it
+compiled and read a freed store.
+
+## Measurements moved out of the working rules (2026-10-11)
+
+- *The write through nullref.* `v[9] = x` on a three-element vector and `absent.f = x` through a
+  keyed miss were measured on both backends: value, length and the neighbouring records all
+  unchanged.  `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft` also pins that a
+  heap-owning literal written there is released and its source untouched, and that every
+  native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
+  fill, the record-view address, the guarded index chain — answers the same.
+- *A drop has no safe direction.* Measured on loft#1515's shared-destination shape: giving
+  `drop_transferred` a per-path merge turned every lost hook in that family into a doubled one.
+
+## (H-RefHome): the holder's store keeps the record (2026-10-11, @PLN189)
+
+The rule moved from *"a stored reference does not outlive the home of its record"* to *"a
+record a stored reference names lives as long as the store of its holder"*.  Of the nine shapes
+the hoist still refused, a literal and a call result per loop pass, a literal into a parameter
+or a returned holder, and a refilled local's own record are built in the holder's store
+(`OpPlaceRecord`); a parameter's or the returned value's record is copied out of its home right
+before the home's store is freed (`OpEvacuate`).  With the analysis withheld those programs read
+the last pass's record, `777`, or a garbage integer.  Building it found a write into a keyed
+collection's element that the walk never judged (loft#1978).  Kept refused: an element of a
+parameter's collection or a copy into one (no fixed place to copy into at the free), two
+parameters naming one record (they may be two stores of the caller, and a copy each would split
+what one write showed through both), a record holding a stored reference, a callee answering a
+local, and a refilled local's record held from two blocks.  Reclaiming a placed record when its
+reference is re-pointed (the plan's step 10) was declined (C145): a variable may still name the
+record (`q = h.r` is a view), so a free would need either a check on every variable read or a
+re-point counted as a disturbance of such views, and in both cases a test on every reference
+write.  Even then each re-point leaves its 8-byte removal mark.  The owner chose not to burden
+every program for the rare shape of a holder re-pointed to fresh records in a loop.
+

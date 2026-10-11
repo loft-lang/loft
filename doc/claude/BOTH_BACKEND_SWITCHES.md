@@ -353,7 +353,8 @@ power-of-two scale folds into a literal divisor (`@FR-R-ScaleFold`).  A program 
 again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps every call and
 is the first bisect step for a wrong answer out of a small scalar function on either backend;
 **`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
-reduction each; **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+reduction each; **`LOFT_NO_INLINE_APPENDER=1`** keeps the calls of a void leaf that appends to a
+record parameter's vector fields (the appender clause); **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 
 **The IR-phase eliminations (default-ON, both backends, at the top of `byte_code_from` after
@@ -672,6 +673,29 @@ construction) and is the first bisect step for a store-layout fault, a claim tha
 live block, or a store that grows instead of reusing a freed block.  The falsifiers are the free tree's
 own — `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` — and the seeded unit tests in `src/store.rs`
 pin the untracked delete, the growth below the floor and the one sweep at the bound.
+
+**A removed record a stored reference named leaves a tombstone (default-ON, both backends,
+`@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
+keeps such a record's header word as a one-word block that no claim reuses and frees the rest,
+and `OpGetDbRef` reads null there.  A store minted again in place by `OpDatabase` keeps the
+marks of the records it held.  It costs one word per such removal, and nothing for a program
+without stored references.  **`LOFT_NO_TOMBSTONE=1`** frees the record like any other,
+so the reference reads whatever is claimed there next.  It is the bisect step for a reference
+that reads null where its record should still be there, or for a store that grows under
+removals.
+
+**A record a stored reference names lives as long as its holder's store (default-ON, both
+backends, `@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_homes` finds each
+`reference<T>` written, copied or linked by a callee into a holder that outlives the variable
+holding the record.  A named local held from an enclosing block has its store moved out to that
+block; a literal, a call result or a refilled local's own record is built in the holder's store
+(`OpPlaceRecord`); a record a parameter or the returned value names is copied into that holder's
+store just before its home is freed (`OpEvacuate`).  What none of those keeps is refused.  A
+reassignment of a local vector such a reference names into empties it in place.
+**`LOFT_NO_REF_HOME=1`** withholds the move, the placement, the copy-out and the refusal (the
+in-place reassignment stays).  It is the bisect step when a program that compiled before is
+refused, or reads a stored reference differently, and the A/B that shows what such a shape
+reads without it.
 
 ## Falsifier: the emulated Windows host
 

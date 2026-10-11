@@ -259,6 +259,15 @@ fn reclaim_safe(code: &Value, vars: &Function, st: u16) -> bool {
     if vars.is_skip_free(st) || vars.is_captured(st) || matches!(vars.tp(st), Type::RefVar(_)) {
         return false;
     }
+    // `@FR-H-RefHome` — a stored reference in an outer holder names a record of this store,
+    // so its data lives as long as the holder, past its last read here.
+    if vars.is_ref_home(st)
+        || transitive_depers(vars, st)
+            .iter()
+            .any(|&v| vars.is_ref_home(v))
+    {
+        return false;
+    }
     if guard_escapes(code, st) {
         return false;
     }

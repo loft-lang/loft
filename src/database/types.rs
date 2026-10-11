@@ -537,6 +537,10 @@ impl Stores {
         )
     }
 
+    /// `@C145`, `@FR-H-LongRef` — a type some link reaches (a keyed collection of it, anywhere
+    /// in the program): every collection of it is laid out by reference, its records pushed out
+    /// to homes of their own, because a record inline in a vector moves when the vector grows
+    /// or re-sorts and nothing in the store could tell its referrers.
     pub fn is_linked(&self, tp: u16) -> bool {
         tp != u16::MAX && self.types[tp as usize].linked
     }
@@ -658,6 +662,7 @@ impl Stores {
         // two or more collections over one element type in one struct, auto-linked
         // by `add_field` into several routes to a SINGLE record set (loft#843).
         let mut grouped = Vec::new();
+        let mut referenced = Vec::new();
         for t_nr in 0..self.types.len() {
             if let Parts::Struct(fields) | Parts::EnumValue(_, fields) = &self.types[t_nr].parts {
                 for f in fields {
@@ -671,6 +676,26 @@ impl Stores {
                     };
                     if !f.other_indexes.is_empty() {
                         grouped.push(f.content);
+                    }
+                    // `@C145`, `@FR-H-LongRef` — a stored `reference<T>` is a long-term link:
+                    // its target needs a home that never moves, which a record inline in a
+                    // `vector<T>` lacks (growth relocates it, so the reference read the old
+                    // place).  Linked, the type's collections are laid out by reference.
+                    // Only a field the program declares, naming a record it declares: a
+                    // closure's capture fields hold a captured value or collection through its
+                    // slot (which `(H-LongRef)` allows) and name `integer`, `text` or a
+                    // `__tuple` there — linking those would lay every vector of them out by
+                    // reference.
+                    if matches!(self.types[f.content as usize].parts, Parts::DbRef)
+                        && f.target != u16::MAX
+                        && matches!(
+                            self.types[f.target as usize].parts,
+                            Parts::Struct(_) | Parts::EnumValue(_, _)
+                        )
+                        && !self.types[t_nr].name.starts_with("__closure_")
+                        && !self.types[f.target as usize].name.starts_with("__")
+                    {
+                        referenced.push(f.target);
                     }
                 }
             }
@@ -704,6 +729,10 @@ impl Stores {
                 linked.insert(elem);
                 self.types[elem as usize].linked = true;
             }
+        }
+        for t in referenced {
+            linked.insert(t);
+            self.types[t as usize].linked = true;
         }
         let mut in_progress = HashSet::new();
         for t_nr in 0..self.types.len() {
@@ -857,6 +886,8 @@ impl Stores {
                     self.finish_type(linked, c_nr, in_progress);
                 }
                 sizes.push((self.types[c_nr].size, self.types[c_nr].align));
+                // `@C145`, `@FR-H-LongRef` — a linked element type is laid out by reference:
+                // `vector` → `array`, `sorted` → `ordered`, its records pushed out.
                 if let Parts::Vector(c) = self.types[c_nr].parts
                     && linked.contains(&c)
                 {
@@ -1772,10 +1803,18 @@ impl Stores {
     }
 
     pub fn vector(&mut self, content: u16) -> u16 {
+        // The content's CONSTRUCTOR spelling: `finish` renames a linked element's `vector<T>`
+        // to `array<T>` (`promoted_lookup_key`), and a nested vector named after the renamed
+        // content (`vector<array<T>>`) missed the `vector<vector<T>>` registered before it —
+        // a second type for one collection, minted after `finish`, which the runtime table
+        // did not carry: `vv[0] += [x]` on a `vector<vector<T>>` of a linked `T` indexed past
+        // it and panicked, on both backends.
         let name = if content == u16::MAX {
             "vector".to_string()
         } else {
-            format!("vector<{}>", self.types[content as usize].name)
+            let t = &self.types[content as usize];
+            let inner = Self::promoted_lookup_key(t).unwrap_or_else(|| t.name.clone());
+            format!("vector<{inner}>")
         };
         mint_trace(
             "vector",

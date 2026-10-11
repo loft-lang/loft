@@ -25,12 +25,6 @@
 
 struct Node { value: integer, next: reference<Node>? }
 
-fn chain() -> Node {
-  c = Node { value: 4, next: null };
-  b = Node { value: 2, next: c };
-  Node { value: 1, next: b }
-}
-
 fn dense_reassign(pick: boolean) -> integer {
   a = Node { value: 1, next: null };
   b = Node { value: 2, next: null };

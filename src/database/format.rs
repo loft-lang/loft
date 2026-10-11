@@ -1532,7 +1532,10 @@ impl ShowDb<'_> {
                     let store_nr = store.get_u32_raw(self.rec, self.pos) as u16;
                     let rec = store.get_u32_raw(self.rec, self.pos + 4);
                     let pos = store.get_u32_raw(self.rec, self.pos + 8);
-                    if store_nr == u16::MAX && rec == 0 {
+                    // `@FR-H-Removed` — a reference whose record was removed reads null.
+                    if (store_nr == u16::MAX && rec == 0)
+                        || self.stores.reference_removed(store_nr, rec)
+                    {
                         s.push_str("null");
                     } else if is_generator_handle(store_nr) {
                         s.push_str("iterator");
@@ -2272,7 +2275,7 @@ impl ShowDb<'_> {
                 let store_nr = self.store().get_u32_raw(self.rec, self.pos);
                 let rec = self.store().get_u32_raw(self.rec, self.pos + 4);
                 let pos = self.store().get_u32_raw(self.rec, self.pos + 8);
-                if rec == 0 {
+                if rec == 0 || self.stores.reference_removed(store_nr as u16, rec) {
                     s.push_str("null");
                 } else if is_generator_handle(store_nr as u16) {
                     s.push_str("iterator");

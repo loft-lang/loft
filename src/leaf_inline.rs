@@ -15,6 +15,14 @@
 //! place instead, and the literal operations that makes adjacent fold.  Arguments keep their order: each non-literal one is bound before the
 //! body runs, as the call bound it.
 //!
+//! The APPENDER clause admits a void leaf whose body appends scalar elements to vector fields
+//! of record parameters (`m.f += [e]`, a fused `OpPush…` over `OpGetField(m, …)`) beside
+//! scalar assignments, and reads each record for nothing else.  At a call whose record
+//! argument is a plain variable holding the record and whose arguments call no user code, the
+//! body replaces the call with the record read in place, so the appends sit in the caller's
+//! loop where its push windows reach them: one call per element otherwise re-resolved every
+//! field's vector from the store on each append.
+//!
 //! Inside an inlined body, and only there — straight-line code over locals no one else
 //! reads — three reductions follow, each answering exactly what it replaces:
 //!
@@ -32,7 +40,8 @@
 //! change after its calls are compiled, nor in one compiled for a run that observes function
 //! entries (`loft test`'s coverage, `Data::observes_entries`), whose report would otherwise
 //! name an inlined function as never called.  Switches: `LOFT_NO_INLINE_LEAF=1` (the whole pass),
-//! `LOFT_NO_MASK_RANGE=1`, `LOFT_NO_SINGLE_USE=1`, `LOFT_NO_SCALE_FOLD=1`;
+//! `LOFT_NO_MASK_RANGE=1`, `LOFT_NO_SINGLE_USE=1`, `LOFT_NO_SCALE_FOLD=1`,
+//! `LOFT_NO_INLINE_APPENDER=1` (the appender clause);
 //! `LOFT_TRACE_INLINE_LEAF=1` names every inlined call and every reduction.
 use crate::data::{Block, Data, DefType, Type, Value};
 use crate::generation::range::{Range, range, range_vars};
@@ -55,6 +64,10 @@ fn off_single() -> bool {
 
 fn off_scale() -> bool {
     crate::env_once!(std::env::var("LOFT_NO_SCALE_FOLD").is_ok_and(|v| v != "0"))
+}
+
+fn off_appender() -> bool {
+    crate::env_once!(std::env::var("LOFT_NO_INLINE_APPENDER").is_ok_and(|v| v != "0"))
 }
 
 /// An instrument that attributes work to FUNCTIONS is armed (`LOFT_PROFILE`,
@@ -124,6 +137,14 @@ struct Leaf {
     /// The body's result, a final `return` unwrapped.
     tail: Value,
     result: Type,
+    /// The appender clause: the record parameters the body appends to, read in place at the
+    /// call; empty for a scalar leaf.
+    records: Vec<u16>,
+    /// The appender clause: a void body of statements with no result to copy.
+    appender: bool,
+    /// The appender clause: variables the body never reads (a push's spent element
+    /// temporary), which get no local in the caller.
+    unused: Vec<u16>,
 }
 
 fn scalar(tp: &Type) -> bool {
@@ -197,6 +218,115 @@ fn statement(data: &Data, v: &Value, assigned: &mut HashSet<u16>, nodes: &mut us
     pure(data, e, assigned, nodes)
 }
 
+/// The scalar appends the appender clause admits: `OpPush…(OpGetField(r, offset, type), …)`.
+const PUSH_OPS: [&str; 7] = [
+    "OpPushInt",
+    "OpPushFloat",
+    "OpPushSingle",
+    "OpPushBoolean",
+    "OpPushEnum",
+    "OpPushCharacter",
+    "OpPushByte",
+];
+
+/// `@FR-R-InlineLeaf`'s appender clause: one element appended to a vector field of a record
+/// parameter, `r.f += [e]` — the push's vector is the field read straight off one of
+/// `records`, and every other operand is pure.  The count of `r`'s uses is checked apart
+/// ([`record_uses`]), so a record read anywhere else in the body still declines.
+fn push(
+    data: &Data,
+    v: &Value,
+    records: &[u16],
+    assigned: &mut HashSet<u16>,
+    nodes: &mut usize,
+) -> bool {
+    *nodes += 1;
+    let Value::Call(op, args) = v.unspan() else {
+        return false;
+    };
+    if !PUSH_OPS.contains(&data.def(*op).name()) {
+        return false;
+    }
+    let Some((target, rest)) = args.split_first() else {
+        return false;
+    };
+    let Value::Call(get, field) = target.unspan() else {
+        return false;
+    };
+    data.def(*get).name() == "OpGetField"
+        && field.len() == 3
+        && matches!(field[0].unspan(), Value::Var(r) if records.contains(r))
+        && literal(&field[1])
+        && literal(&field[2])
+        && rest.iter().all(|a| pure(data, a, assigned, nodes))
+}
+
+/// How often `r` is read in `v`, and how often as a push's record operand: equal when the
+/// body uses the record parameter for nothing but its appends.
+fn record_uses(data: &Data, v: &Value, r: u16) -> (usize, usize) {
+    let (mut all, mut pushed) = (0, 0);
+    v.any_node(&mut |n| {
+        if matches!(n, Value::Var(x) if *x == r) {
+            all += 1;
+        }
+        if let Value::Call(op, args) = n
+            && PUSH_OPS.contains(&data.def(*op).name())
+            && let Some(Value::Call(_, field)) = args.first().map(Value::unspan)
+            && matches!(field.first().map(Value::unspan), Some(Value::Var(x)) if *x == r)
+        {
+            pushed += 1;
+        }
+        false
+    });
+    (all, pushed)
+}
+
+/// `@FR-R-InlineLeaf`'s appender clause: `admit` for a void body — every statement a scalar
+/// assignment or a push onto a record parameter's field, and each record read for nothing else.
+fn admit_appender(
+    data: &Data,
+    def: &crate::data::Definition,
+    params: Vec<u16>,
+    vars: Vec<(String, Type)>,
+    records: Vec<u16>,
+    unused: Vec<u16>,
+    body: &[&Value],
+) -> Result<Leaf, &'static str> {
+    let mut assigned = HashSet::new();
+    let mut nodes = 0usize;
+    for s in body {
+        if !statement(data, s, &mut assigned, &mut nodes)
+            && !push(data, s, &records, &mut assigned, &mut nodes)
+        {
+            return Err("an appender statement other than an assignment or a push");
+        }
+    }
+    for &r in &records {
+        if assigned.contains(&r) {
+            return Err("an appender that rebinds its record");
+        }
+        let (all, pushed) = record_uses(data, def.code(), r);
+        if all != pushed {
+            return Err("an appender that reads its record other than to push");
+        }
+    }
+    if nodes > MAX_NODES {
+        return Err("a body too large to copy into every call site");
+    }
+    Ok(Leaf {
+        name: def.name().to_string(),
+        params,
+        vars,
+        assigned,
+        stmts: body.iter().map(|s| (*s).clone()).collect(),
+        tail: Value::Null,
+        result: Type::Void,
+        records,
+        appender: true,
+        unused,
+    })
+}
+
 /// The leaf a call of `d` may be replaced by, or `None` — and why, for the trace.
 fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     let def = data.def(d);
@@ -214,16 +344,39 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
         Type::Optional(_) => false,
         _ => false,
     };
-    if !scalar(&def.returned) && !tuple_of_scalars {
+    // `@FR-R-InlineLeaf`'s appender clause: a void body appending to record parameters.
+    let appender = matches!(def.returned, Type::Void) && !off_appender();
+    if !scalar(&def.returned) && !tuple_of_scalars && !appender {
         return Err("a non-scalar result");
     }
     let fv = &def.variables;
     let mut vars = Vec::new();
+    let mut records = Vec::new();
+    let mut unused = Vec::new();
     for v in 0..fv.count() {
-        if !scalar(fv.tp(v)) || fv.is_captured(v) {
-            return Err("a non-scalar or captured variable");
+        if fv.is_captured(v) {
+            return Err("a captured variable");
+        }
+        if !scalar(fv.tp(v)) {
+            if appender && fv.is_argument(v) && matches!(fv.tp(v), Type::Reference(..)) {
+                records.push(v);
+            } else if appender
+                && !fv.is_argument(v)
+                && !def
+                    .code()
+                    .any_node(&mut |n| matches!(n, Value::Var(x) if *x == v))
+            {
+                // A temporary the parser declared and the fused push no longer reads
+                // (`_elm_1` of `r.f += [e]`): not copied into the caller.
+                unused.push(v);
+            } else {
+                return Err("a non-scalar variable");
+            }
         }
         vars.push((fv.name(v).to_string(), fv.tp(v).clone()));
+    }
+    if appender && records.is_empty() {
+        return Err("a void body with no record to append to");
     }
     let mut params = Vec::new();
     for a in &def.attributes {
@@ -243,6 +396,9 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
     };
     let mut assigned = HashSet::new();
     let mut nodes = 0usize;
+    if appender {
+        return admit_appender(data, def, params, vars, records, unused, &body);
+    }
     for s in init {
         if !statement(data, s, &mut assigned, &mut nodes) {
             return Err("a statement other than an assignment");
@@ -266,6 +422,9 @@ fn admit(data: &Data, d: u32) -> Result<Leaf, &'static str> {
         stmts: init.iter().map(|s| (*s).clone()).collect(),
         tail,
         result: def.returned.clone(),
+        records: Vec::new(),
+        appender: false,
+        unused: Vec::new(),
     })
 }
 
@@ -326,6 +485,12 @@ fn expand(
         .iter()
         .all(|a| literal(a) || matches!(a.unspan(), Value::Var(_)));
     for (&p, arg) in leaf.params.iter().zip(args) {
+        // A record the appender pushes to is the caller's own variable, read in place: the
+        // call site admitted only a plain variable, and only pure arguments beside it.
+        if leaf.records.contains(&p) {
+            map.insert(p, arg.unspan().clone());
+            continue;
+        }
         let in_place = literal(&arg) || (simple && matches!(arg.unspan(), Value::Var(_)));
         if !leaf.assigned.contains(&p) && in_place {
             map.insert(p, arg.unspan().clone());
@@ -339,6 +504,9 @@ fn expand(
     }
     for (v, (name, tp)) in leaf.vars.iter().enumerate() {
         let v = v as u16;
+        if leaf.unused.contains(&v) {
+            continue;
+        }
         map.entry(v).or_insert_with(|| {
             let t = vars.add_unique(&format!("il_{name}"), tp, scope);
             fresh.insert(t);
@@ -348,7 +516,9 @@ fn expand(
     for s in &leaf.stmts {
         ops.push(remap(s, &map, scope));
     }
-    ops.push(remap(&leaf.tail, &map, scope));
+    if !leaf.appender {
+        ops.push(remap(&leaf.tail, &map, scope));
+    }
     Value::Block(Box::new(Block {
         name: "Inline",
         operators: ops,
@@ -358,13 +528,52 @@ fn expand(
     }))
 }
 
+/// `@FR-R-InlineLeaf`'s appender clause at one call site: each record argument a plain
+/// variable holding the record itself (not a `&` link, whose variable is not the record), and
+/// no argument calling user code — so nothing between the call and its body can rebind the
+/// variable the appends now read in place.  Any other site keeps its call.  A scalar leaf
+/// passes untouched.
+fn appender_site(
+    leaf: &Leaf,
+    args: &[Value],
+    is_op: &[bool],
+    vars: &crate::variables::Function,
+) -> bool {
+    if leaf.records.is_empty() {
+        return true;
+    }
+    let records_plain = leaf.params.iter().zip(args).all(|(p, a)| {
+        !leaf.records.contains(p)
+            || matches!(a.unspan(), Value::Var(v) if matches!(vars.tp(*v), Type::Reference(..)))
+    });
+    let call_free = args.iter().all(|a| {
+        !a.any_node(&mut |n| {
+            matches!(n, Value::Call(d, _) if !is_op.get(*d as usize).copied().unwrap_or(false))
+                || !matches!(
+                    n,
+                    Value::Call(..)
+                        | Value::Var(_)
+                        | Value::Int(_)
+                        | Value::Long(_)
+                        | Value::Float(_)
+                        | Value::Single(_)
+                        | Value::Boolean(_)
+                        | Value::Span(_)
+                )
+        })
+    });
+    records_plain && call_free
+}
+
 /// Replace every call of an admitted leaf in `v`, innermost first (a leaf call in another's
 /// argument is expanded before the outer call is).
+#[allow(clippy::too_many_arguments)]
 fn inline_in(
     v: &mut Value,
     scope: u16,
     caller: u32,
     leaves: &HashMap<u32, Leaf>,
+    is_op: &[bool],
     vars: &mut crate::variables::Function,
     fresh: &mut HashSet<u16>,
     n: &mut usize,
@@ -376,11 +585,12 @@ fn inline_in(
         Value::Span(_) => scope,
         _ => scope,
     };
-    v.for_each_child_mut(&mut |c| inline_in(c, inner, caller, leaves, vars, fresh, n));
+    v.for_each_child_mut(&mut |c| inline_in(c, inner, caller, leaves, is_op, vars, fresh, n));
     if let Value::Call(d, args) = v
         && *d != caller
         && let Some(leaf) = leaves.get(d)
         && args.len() == leaf.params.len()
+        && appender_site(leaf, args, is_op, vars)
     {
         if trace() {
             eprintln!("inline-leaf: {} into fn {caller}", leaf.name);
@@ -785,6 +995,9 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         return 0;
     }
     let ops = Ops::new(data);
+    let is_op: Vec<bool> = (0..data.definitions())
+        .map(|d| data.def(d).name().starts_with("Op"))
+        .collect();
     let (mut calls, mut masks, mut singles, mut scales) = (0, 0, 0, 0);
     for caller in 0..data.definitions() {
         let def = data.def(caller);
@@ -813,6 +1026,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             top,
             caller,
             &leaves,
+            &is_op,
             &mut data.definitions[caller as usize].variables,
             &mut fresh,
             &mut n,

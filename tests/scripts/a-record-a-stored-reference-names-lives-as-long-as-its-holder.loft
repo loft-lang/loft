@@ -1,0 +1,212 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-H-RefHome`, `@FR-H-Removed`, `@C145` — a holder declared in an enclosing block keeps the
+// record its stored reference names: the named local holding the record has its store moved
+// out to the holder's block.  A local refilled by a loop pass removes the records of the pass
+// before, so a reference still naming one reads null and the holder re-pointed that pass reads
+// the new record.  After each cell a three-element vector is built, so a freed store reused
+// for it would show up as 777, 778 or 779.
+//
+// - INNER BLOCK: a `vector` (21), a `sorted` (31), a `hash` (41) and an `index` (45) local of
+//   an `if` block, one two `if`s deep (6), one of a bare block (9), the local's own record (5),
+//   a holder inside the block and one outside it naming the same record (8 8), and a holder of
+//   the block copied out to the outer one (3).
+// - LOOP PASS: the holder re-pointed every pass (11), an element of an outer collection as the
+//   holder (51), a callee linking a loop-local record into it (61) and the same through a
+//   second callee (71); a second holder kept from the first pass reads null (-1 11, -1 61), as
+//   does the reference read before the next pass re-points it (-1 -1 11), and the same for a
+//   `hash` (-1 41), a `sorted` (-1 31) and an `index` local (-1 46), for a `while` loop (-1 3)
+//   and for a local of an `if` inside the loop (-1 2); a holder inside the loop names its own
+//   pass's record (0 1 2).
+//
+// Before, each of these compiled to a reference into a store freed with the block — the
+// INNER BLOCK cells read 778 or a garbage integer — or was refused.
+//
+// @falsified-at: 278247d18 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-record-a-stored-reference-names-lives-as-long-as-its-holder.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — the control refuses the loop and inner-block shapes as outliving their
+//   record, so the program does not compile.
+//   WITNESS: with the analysis withheld on this build (`LOFT_NO_REF_HOME=1`) ten cells fail —
+//   the INNER BLOCK cells read 778 or a garbage integer and the callee cells 777 — and with the
+//   tombstones withheld (`LOFT_NO_TOMBSTONE=1`) the seven cells holding a record of an earlier pass read
+//   the next pass's record (11 for -1).
+//   HOLDS: leak, panic and expectations are equal on both trees; only the exit moves.
+
+struct P { k: integer }
+struct H { r: reference<P>? }
+struct K { k: integer, v: integer }
+struct HK { r: reference<K>? }
+struct Bag { items: vector<P>, hs: vector<H> }
+fn link(h: H, b: Bag) { h.r = b.items[0]; }
+fn relay(h: H, b: Bag) { link(h, b); }
+fn noise() -> integer { t: vector<P> = [P { k: 777 }, P { k: 778 }, P { k: 779 }]; t[0].k + t[1].k }
+fn rk(h: H) -> integer { if h.r == null { -1 } else { h.r.k } }
+fn rv(h: HK) -> integer { if h.r == null { -1 } else { h.r.v } }
+
+fn vector_of_an_inner_block() {
+  h = H {};
+  if h.r == null { items: vector<P> = [P { k: 20 }, P { k: 21 }]; h.r = items[1]; }
+  assert(noise() == 1555 && rk(h) == 21, "vector: {rk(h)}");
+}
+
+fn sorted_of_an_inner_block() {
+  h = HK {};
+  if h.r == null { s: sorted<K[k]> = [K { k: 1, v: 31 }]; h.r = s[1]; }
+  assert(noise() == 1555 && rv(h) == 31, "sorted: {rv(h)}");
+}
+
+fn hash_of_an_inner_block() {
+  h = HK {};
+  if h.r == null { s: hash<K[k]> = [K { k: 1, v: 41 }]; h.r = s[1]; }
+  assert(noise() == 1555 && rv(h) == 41, "hash: {rv(h)}");
+}
+
+fn two_blocks_deep() {
+  h = H {};
+  if h.r == null { if noise() > 0 { items: vector<P> = [P { k: 5 }, P { k: 6 }]; h.r = items[1]; } }
+  assert(noise() == 1555 && rk(h) == 6, "two deep: {rk(h)}");
+}
+
+fn the_locals_own_record() {
+  h = H {};
+  if h.r == null { p = P { k: 5 }; h.r = p; }
+  assert(noise() == 1555 && rk(h) == 5, "own record: {rk(h)}");
+}
+
+fn an_inner_and_an_outer_holder() {
+  ho = H {};
+  r = 0;
+  if ho.r == null {
+    hi = H {};
+    if hi.r == null { items: vector<P> = [P { k: 7 }, P { k: 8 }]; hi.r = items[1]; ho.r = items[1]; }
+    assert(noise() == 1555, "noise");
+    r = rk(hi);
+  }
+  assert(noise() == 1555 && r == 8 && rk(ho) == 8, "inner and outer: {r} {rk(ho)}");
+}
+
+fn a_holder_copied_out() {
+  h = H {};
+  if h.r == null { items: vector<P> = [P { k: 3 }]; t = H { r: items[0] }; h = t; }
+  assert(noise() == 1555 && rk(h) == 3, "copied out: {rk(h)}");
+}
+
+fn re_pointed_every_pass() {
+  h = H {};
+  for i in 0..2 { items: vector<P> = [P { k: 10 + i }]; h.r = items[0]; }
+  assert(noise() == 1555 && rk(h) == 11, "re-pointed: {rk(h)}");
+}
+
+fn an_element_holder() {
+  b = Bag { items: [], hs: [H {}] };
+  for i in 0..2 { items: vector<P> = [P { k: 50 + i }]; b.hs[0].r = items[0]; }
+  assert(noise() == 1555 && rk(b.hs[0]) == 51 && len(b.hs) == 1, "element: {rk(b.hs[0])}");
+}
+
+fn a_callee_links_two_arguments() {
+  h = H {};
+  for i in 0..2 { b = Bag { items: [P { k: 60 + i }], hs: [] }; link(h, b); }
+  assert(noise() == 1555 && rk(h) == 61, "callee: {rk(h)}");
+}
+
+fn a_callee_hands_the_link_on() {
+  h = H {};
+  for i in 0..2 { b = Bag { items: [P { k: 70 + i }], hs: [] }; relay(h, b); }
+  assert(noise() == 1555 && rk(h) == 71, "relay: {rk(h)}");
+}
+
+fn a_holder_kept_from_the_first_pass() {
+  h0 = H {};
+  h1 = H {};
+  for i in 0..2 {
+    items: vector<P> = [P { k: 10 + i }];
+    if i == 0 { h0.r = items[0]; } else { h1.r = items[0]; }
+  }
+  assert(noise() == 1555 && rk(h0) == -1 && rk(h1) == 11, "kept: {rk(h0)} {rk(h1)}");
+}
+
+fn read_before_the_next_pass_re_points() {
+  h = H {};
+  s = "";
+  for i in 0..2 { items: vector<P> = [P { k: 10 + i }, P { k: 90 + i }]; s += "{rk(h)} "; h.r = items[0]; }
+  assert(noise() == 1555 && s == "-1 -1 " && rk(h) == 11, "read before: {s}{rk(h)}");
+}
+
+fn a_callee_holder_kept_from_the_first_pass() {
+  h0 = H {};
+  h1 = H {};
+  for i in 0..2 {
+    b = Bag { items: [P { k: 60 + i }], hs: [] };
+    if i == 0 { link(h0, b); } else { link(h1, b); }
+  }
+  assert(noise() == 1555 && rk(h0) == -1 && rk(h1) == 61, "callee kept: {rk(h0)} {rk(h1)}");
+}
+
+fn a_hash_holder_kept_from_the_first_pass() {
+  h0 = HK {};
+  h1 = HK {};
+  for i in 0..2 {
+    s: hash<K[k]> = [K { k: 1, v: 40 + i }];
+    if i == 0 { h0.r = s[1]; } else { h1.r = s[1]; }
+  }
+  assert(noise() == 1555 && rv(h0) == -1 && rv(h1) == 41, "hash kept: {rv(h0)} {rv(h1)}");
+}
+
+fn an_if_inside_the_loop() {
+  h0 = H {};
+  h = H {};
+  for i in 0..3 {
+    if i % 2 == 0 { items: vector<P> = [P { k: i }]; if i == 0 { h0.r = items[0]; } h.r = items[0]; }
+  }
+  assert(noise() == 1555 && rk(h0) == -1 && rk(h) == 2, "if in loop: {rk(h0)} {rk(h)}");
+}
+
+fn a_holder_inside_the_loop() {
+  s = "";
+  for i in 0..3 {
+    h = H {};
+    if i >= 0 { items: vector<P> = [P { k: i }]; h.r = items[0]; }
+    assert(noise() == 1555, "noise");
+    s += "{rk(h)} ";
+  }
+  assert(s == "0 1 2 ", "holder in loop: {s}");
+}
+
+fn index_of_an_inner_block() {
+  h = HK {};
+  if h.r == null { s: index<K[k]> = [K { k: 1, v: 45 }]; h.r = s[1]; }
+  assert(noise() == 1555 && rv(h) == 45, "index: {rv(h)}");
+}
+
+fn a_bare_block() {
+  h = H {};
+  { items: vector<P> = [P { k: 9 }]; h.r = items[0]; }
+  assert(noise() == 1555 && rk(h) == 9, "bare block: {rk(h)}");
+}
+
+fn keyed_holders_kept_from_the_first_pass() {
+  h0 = HK {};
+  h1 = HK {};
+  g0 = HK {};
+  g1 = HK {};
+  for i in 0..2 {
+    s: sorted<K[k]> = [K { k: 1, v: 30 + i }];
+    x: index<K[k]> = [K { k: 1, v: 45 + i }];
+    if i == 0 { h0.r = s[1]; g0.r = x[1]; } else { h1.r = s[1]; g1.r = x[1]; }
+  }
+  assert(noise() == 1555 && rv(h0) == -1 && rv(h1) == 31, "sorted kept: {rv(h0)} {rv(h1)}");
+  assert(rv(g0) == -1 && rv(g1) == 46, "index kept: {rv(g0)} {rv(g1)}");
+}
+
+fn a_while_loop() {
+  h0 = H {};
+  h1 = H {};
+  i = 0;
+  while i < 2 {
+    items: vector<P> = [P { k: 2 + i }];
+    if i == 0 { h0.r = items[0]; } else { h1.r = items[0]; }
+    i += 1;
+  }
+  assert(noise() == 1555 && rk(h0) == -1 && rk(h1) == 3, "while: {rk(h0)} {rk(h1)}");
+}

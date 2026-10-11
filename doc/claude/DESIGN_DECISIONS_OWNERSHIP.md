@@ -64,11 +64,16 @@ emitted code).
 an addressable source — not a general operator.  A plain binding follows
 [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule): a
 whole-value heap bind COPIES (aliased only when the source is dead), a projection (`a = vv[0]`, `w =
-o.inner`) is a view, and in-place path mutation writes through.  **Why.** One uniform `&` for "I
-want the link", instead of a copy-or-view choice made silently by the binding's form.
+o.inner`) is a view, and in-place path mutation writes through.  `&` exists to write through to
+a parameter's content, and a stored `reference<T>` to reach a deep record inside another structure
+without re-walking its keys.  Neither is a construction every combination of expressions must
+accept: a combination beyond those uses may be refused, with the rewrite in the message, and no
+cost is added to ordinary programs to admit one.  **Why.** One uniform `&` for "I want the link",
+instead of a copy-or-view choice made silently by the binding's form; and a refusal can be
+dropped later, where a cost on every program cannot (C79).
 
 **Revisit when.** Views by projection prove a net footgun for a real consumer — writes
-propagating through an alias it did not intend.  Decided 2026-06-22, plain binds superseded by C86 — [record](DESIGN_DECISIONS-history.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference).
+propagating through an alias it did not intend.  Decided 2026-06-22, plain binds superseded by C86, narrowed 2026-10-11 — [record](DESIGN_DECISIONS-history.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference).
 **Holds at:** [OWNERSHIP_MODEL.md § The law](OWNERSHIP_MODEL.md), @FR-B-Ref-Alias.
 **Catalogue:** @F21 (references `&T`).
 
@@ -257,3 +262,48 @@ between two kinds of value — the compiler proves where a view is the same valu
 (the boundary: a decoded value keeps its bytes when its frame is written, grown, cleared or
 gone).
 **Catalogue:** `bench/portal/analysis/over-9x.md` § pluginabi `check_request` · reads C122, C125 · [APART_VALUES.md](APART_VALUES.md)
+
+## C145 — No back references inside a store: what a reference points at never moves under it
+
+**Decision.** A store keeps no back references — nothing records who points at a record, a
+string or a vector — so a reference may only point where nothing moves while it lives.
+- A **long-term** reference, held in another store's record, points at a record with a home of
+  its own or at a field of one.  A string or a vector is reached through the field that holds
+  it, never at its content, which the store may move.  A record inline in a `vector` or a
+  `sorted` has no home of its own — growth relocates it, a sorted insert shifts it — so a link
+  over a type (a keyed collection of it, anywhere in the program) lays out every collection of
+  that type by reference (`array` / `ordered`), the records pushed out to homes of their own.
+- A **short-term** reference, a variable or a parameter, may point at string or vector content
+  or at an inline record.  While it lives, the store it points into takes no addition to a
+  string or a vector and the collection no reordering; a user-written view whose container is
+  disturbed materialises or is refused instead (binding.md B-Disturb).
+- **Removing** a record a long-term reference has named does not hand its space straight back:
+  the record's position stays behind as a mark that no claim reuses, so the reference sees the
+  record is gone and reads null.  The rest of the record's space is freed.
+- **Re-pointing** a reference releases nothing.  A record the compiler built in its holder's
+  store (`(H-RefHome)`) stays there until that store is freed, even when no holder names it
+  any more: freeing it would need to know that no other holder or variable still names it,
+  which is the bookkeeping this entry declines, paid on every reference write for a rare
+  shape (a holder re-pointed to fresh records in a loop).
+
+**Why.** Back references make every move a fix-up of every referrer and give every record a
+list of who points at it.  Without them a store may grow, compact and re-sort freely and a
+reference stays a plain position — provided the layout guarantees that a referenced thing does
+not move, which is what these clauses say.  Removal is the one event a layout cannot hide, so
+the removed record leaves its mark instead of a list of referrers; the mark costs one word.
+
+**Revisit when.** Not stated.  Decided 2026-10-10 — [record](DESIGN_DECISIONS-history.md#c145--no-back-references-inside-a-store-what-a-reference-points-at-never-moves-under-it).
+**Holds at:** `@C145` — `Stores::finish` (a keyed collection, a field group and a stored
+`reference<T>` link a type), `Stores::is_linked`, and `Store::entomb` (the removal's mark); the
+rules `(H-LongRef)`, `(H-ShortRef)`, `(H-Removed)`, `(H-RefElem)`, `(H-RefHome)` and `(H-RefSet)`
+in [formal/heap.md](formal/heap.md), with the code sites that keep each, and no open
+deviation; guards
+`tests/scripts/a-stored-reference-keeps-its-record-when-the-collection-moves.loft`,
+`tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft`,
+`tests/scripts/a-cleared-vector-releases-the-records-a-reference-named.loft`,
+`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
+`tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`,
+`tests/scripts/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft`,
+`tests/scripts/a-stored-reference-its-record-outlives-reads-it.loft` and
+`tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
+**Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

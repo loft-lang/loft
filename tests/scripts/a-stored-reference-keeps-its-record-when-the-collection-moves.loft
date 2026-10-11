@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@C145`, `@FR-H-LongRef` — a reference held in a store's record names a record with a home of
+// its own.  A record inline in a `vector` or `sorted` has none: growth relocates it and a sorted
+// insert shifts it.  So a stored `reference<T>` links its target type, and every collection of
+// that type is laid out by reference — the records pushed out, each keeping its place while
+// the collection around it moves.  Each cell sets up a reference, moves the collection, and
+// reads through the reference; the values are the ones written to the referenced record:
+//
+// - growth: 1000 appends after the reference, then `items[1].v = 77` — the reference reads 77;
+// - a sorted insert: 300 records keyed below 20 inserted in front of the one keyed 20 (v = 2) —
+//   the reference still reads 2;
+// - a removal in front: `items.remove(0)` — the reference to the third record still reads 3;
+// - two levels deep: 300 appends to `o.bags[0].items`, then `items[0].v = 44` — it reads 44.
+//
+// @falsified-at: 22a588b4f (hand-measured, a release build of that commit) — the growth cell
+//   reads 2, the sorted cell 791, the nested cell 41.
+//   CHANNEL: the asserts — the first failing cell ends the run, on both backends.
+//   WITNESS: `h.r.v` read 2 after `b.items[1].v = 77`: the reference named the place the
+//   element had before the vector grew.
+//   HOLDS: the removal cell reads 3 on both trees, by luck on the old one (the vacated bytes
+//   still held it).
+
+struct P { k: integer, v: integer }
+struct Bag { items: vector<P> }
+struct Srt { items: sorted<P[k]> }
+struct Outer { bags: vector<Bag> }
+struct Holder { r: reference<P> }
+
+fn main() {
+  b = Bag { items: [P { k: 1, v: 1 }, P { k: 2, v: 2 }] };
+  h = Holder { r: b.items[1] };
+  for i in 0..1000 { b.items += [P { k: 3, v: 100 + i }]; }
+  b.items[1].v = 77;
+  assert(h.r.v == 77 && b.items[1].v == 77 && len(b.items) == 1002, "growth {h.r.v} {b.items[1].v}");
+
+  s = Srt { items: [P { k: 10, v: 1 }, P { k: 20, v: 2 }] };
+  h2 = Holder { r: s.items[20]? };
+  for i in 0..300 { s.items += [P { k: i % 10, v: 500 + i }]; }
+  assert(h2.r.v == 2 && h2.r.k == 20, "sorted {h2.r.k} {h2.r.v}");
+
+  r = Bag { items: [P { k: 1, v: 1 }, P { k: 2, v: 2 }, P { k: 3, v: 3 }] };
+  h3 = Holder { r: r.items[2] };
+  r.items.remove(0);
+  assert(h3.r.v == 3 && r.items[1].v == 3 && len(r.items) == 2, "remove in front {h3.r.v}");
+
+  o = Outer { bags: [Bag { items: [P { k: 1, v: 41 }] }] };
+  h4 = Holder { r: o.bags[0].items[0] };
+  for i in 0..300 { o.bags[0].items += [P { k: i, v: i }]; }
+  o.bags[0].items[0].v = 44;
+  assert(h4.r.v == 44, "nested {h4.r.v}");
+  println("ok");
+}

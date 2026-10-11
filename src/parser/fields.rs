@@ -321,6 +321,16 @@ impl Parser {
         // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
         // `t` for anything a person reads.
         let mut dnr = self.data.type_def_nr(&t);
+        if matches!(t, Type::Vector(_, _))
+            && field == "clear"
+            && self.lexer.peek_token("(")
+            && let Some(ops) = self.vector_clear_lowering(code, &t)
+        {
+            self.lexer.token("(");
+            self.lexer.token(")");
+            *code = Value::Insert(ops);
+            return Type::Void;
+        }
         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
             return Type::Boolean;
         }
@@ -1203,6 +1213,32 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             }
         }
         None
+    }
+
+    /// `v.clear()` and `clear(v)` where the clear owes more than a length reset: the vector
+    /// holds a linked group's records, so the sibling views empty with it (`@FR-Col-Group`),
+    /// or its element type is linked, so each record is released and a stored reference to
+    /// one reads null (`@FR-H-Removed`).  The ops are `v = []`'s (`Parser::clear_vector_at`),
+    /// so every spelling of a clear answers alike.  `None` keeps the plain `clear` call.
+    pub(crate) fn vector_clear_lowering(
+        &mut self,
+        place: &Value,
+        vec_tp: &Type,
+    ) -> Option<Vec<Value>> {
+        if self.first_pass {
+            return None;
+        }
+        let site = self.keyed_field_site(place);
+        let grouped =
+            site.is_some_and(|(st, off)| !self.database.keyed_group_members(st, off).is_empty());
+        if !grouped
+            && self
+                .linked_clear_release(place, site, Some(vec_tp))
+                .is_none()
+        {
+            return None;
+        }
+        Some(self.clear_vector_at(place, site, Some(vec_tp)))
     }
 
     /// `v.remove(i)` — answers whether `i` named an element.  On the vector member of a

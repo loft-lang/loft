@@ -231,6 +231,9 @@ fn record_cause(map: &mut HashMap<u16, Disturbance>, view: u16, d: Disturbance) 
 /// other expression is not recognised — [`reshaped_containers`] and [`established_stores`] are
 /// both lower bounds, and a missed case keeps today's behaviour rather than inventing a new
 /// one.
+///
+/// `@FR-H-ShortRef` — a short-term view holds still only while its container takes no growth,
+/// removal or reordering; across one, this is where the view gets its own copy.
 pub(super) fn collect_views_to_materialise(
     code: &Value,
     function: &Function,

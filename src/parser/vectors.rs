@@ -6263,6 +6263,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         matches!(val.unspan(), Value::Call(o, _) if *o == self.data.def_nr("OpGetDbRef"))
     }
 
+    /// `@FR-H-RefSet` — is this the read of a `reference<T>` POINTER field (`h.link`): an
+    /// `OpGetDbRef` whose base is not a closure record?  Assigning a record to one re-points
+    /// it, so a record literal is built in a record of its own rather than written into the
+    /// record the field names now (`@FR-R-InPlaceLiteral` writes into a PLACE, and a pointer
+    /// field's read is the record it points at, not a place of the holder's).
+    pub(crate) fn reads_a_pointer_field(&self, val: &Value) -> bool {
+        let Value::Call(o, args) = val.unspan() else {
+            return false;
+        };
+        *o == self.data.def_nr("OpGetDbRef")
+            && !matches!(
+                args.first().map(Value::unspan),
+                Some(Value::Var(v)) if *v == self.closure_param
+                    || (*v < self.vars.count() && self.vars.name(*v) == "__closure")
+            )
+    }
+
     /// Is this expression a WHOLE-VALUE read of a CAPTURED variable — an `OpGetDbRef` whose
     /// BASE is the closure record itself?
     ///

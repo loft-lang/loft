@@ -460,6 +460,11 @@ pub struct Stores {
     /// the collection as it is at that step (`@FR-I-For`), as a `vector` or `sorted` walk
     /// already did.  Runtime-only, like `lazy_sources`: `clone` starts it empty.
     pub(crate) live_scratches: Vec<(DbRef, DbRef)>,
+    /// `@FR-H-RefHome` — the copies [`Stores::evacuate`] made while a store is about to be
+    /// freed: `((the record copied, the store it was copied into), the copy)`, so two holders
+    /// in one store that named one record name one copy.  Forgotten when the copied record's
+    /// store is freed, right after its evacuations.  Runtime-only: `clone` starts it empty.
+    pub(crate) evacuated: Vec<((DbRef, u16), DbRef)>,
     /// @PLN133 S8 — the stores created while a lazy DRIVER is running, or
     /// `None` when none is.
     ///
@@ -761,6 +766,7 @@ impl Clone for Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            evacuated: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: self.max,
@@ -1533,6 +1539,7 @@ impl Stores {
             lazy_errors: HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            evacuated: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: 0,

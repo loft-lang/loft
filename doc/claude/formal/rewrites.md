@@ -228,9 +228,10 @@ length, a pop to empty then pushes, two stacks in one body, a pop from both ends
                  apart from every mover's (R-Base's growth clause — a `for` walk's
                  hidden vector over an owned local, a `&` view of one) cannot name a
                  pushed vector either, and is kept.
-                 VERSIONED: a loop whose movers grow the function's return buffer while
-                 it reads a PARAMETER runs a second copy under a run-time test that the
-                 buffer's store is not the parameter's; inside that copy the pair is
+                 VERSIONED: a loop whose movers grow the function's return buffer — or
+                 the result local that adopts it (R-RetAdopt), the buffer under another
+                 name — while it reads a PARAMETER runs a second copy under a run-time
+                 test that the buffer's store is not the parameter's; inside that copy the pair is
                  apart, and so is every view rooted in the parameter (its element views
                  included), so the parameter's headers and those views' record addresses
                  (R-RecPtr) are kept.  The original loop runs when the test fails.  The
@@ -245,10 +246,13 @@ mover left to its template would move a record a kept holder still describes.  T
 push moves; the rule is written for the next mover too.  Sites: `hoist::owned_local`,
 `hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.  The
 versioned clause: `Output::distinct_version` and `Output::record_ptr_gains` decide the copy,
-`StoreFacts::distinct` reads its assumed pairs at the roots of both sides; switch
-`LOFT_NO_DISTINCT_VERSION`; guards
+`StoreFacts::distinct` reads its assumed pairs at the roots of both sides — an adopted local
+and its `__vdb` witness among them, the witness assumed but never tested (the adoption leaves
+it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
 `tests/scripts/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
-(graphics' `polygon_crossings`: 8.1× → 5.4× of its twin).
+(graphics' `polygon_crossings`: 8.1× → 5.4× of its twin) and
+`tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`
+(`mesh_to_floats`'s shape).
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
@@ -1072,7 +1076,8 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  growth clause: r's store is the end of its dep chain, `pr` for
                  `e = pr.items[i]?`), frees no record before a later use of r, never
                  rebinds r — a `Set`, and a NATIVE op taking r as its first
-                 operand that is not a read (`OpGet…`) or an in-place scalar set
+                 operand that is not a read (`OpGet…`), a comparison of the
+                 reference (`r == null`, `r != s`) or an in-place scalar set
                  (R-InPlace; a kind the address does not serve keeps its store
                  write, to the same bytes): a mint into it, a copy into it, a
                  free — and reads, writes or hands r at least once.  A binding to null (a buffer's pre-init,
@@ -3192,7 +3197,10 @@ on the drawing bench).
                  field of a FRESH record — an appended element or a construction
                  temporary, `sc.ops += [Op { paint: Paint { … } }]` — is written into
                  that field the same way; nothing can read a fresh record while it
-                 is built, so it needs no staging of its own.  The KEYED clause:
+                 is built, so it needs no staging of its own.  A `reference<T>` field
+                 is not such a place: its read is the record it points at, and an
+                 assignment re-points it (H-RefSet), so a literal assigned to one is
+                 built in a record of its own.  The KEYED clause:
                  `h[k] = R { … }` with a FULL subscript of pure keys is written into
                  the record the collection claims for it — the literal's values and
                  the statements computing them run first, in program order (a value
@@ -4402,6 +4410,31 @@ admits any tuple passes.  Built: `bfs_flow`'s `nbr` inlined, −12.8 %
 instructions and −10.6 % cycles interpreted.  Guard cells in the leaf-inline file: an `if`-chain
 tuple read in both elements and in a loop, and a text-holding tuple that stays a call; the pin
 counts four inlined calls and the decline.
+
+### `(R-InlineLeaf)` takes an appender
+
+```
+  (R-InlineLeaf) + A void leaf whose body is scalar assignments and appends of one scalar
+                 element to a vector field of a record parameter (`r.f += [e]`, the fused
+                 `OpPush…(OpGetField(r, …), …)`), reading each record parameter for nothing
+                 but those appends, is admitted.  At a call whose record arguments are plain
+                 variables holding the record and whose arguments call no user code, it is
+                 replaced by its body with each record read in place; any other call stays.
+```
+
+**In words.** Applied by: `leaf_inline::admit` (the appender branch, `push`, `record_uses`),
+`appender_site` (the call) and `expand` (the record in place, no result).  Why it pays: a call
+per element hides the appends from the caller's loop, so every append resolved the record's
+field and its vector from the store again; inlined, the loop's push windows hold them.  Why the
+call site is restricted: the call read the record variable before its arguments ran, and the
+inlined body reads it after them — the same record only when no argument can rebind the
+variable (no user call) and the variable IS the record (not a `&` link).  A parser temporary
+the fused push leaves unread (`_elm_1`) is not copied into the caller.  Plain `--native`
+ships a live tier and runs no IR rewrite, so its script corpus keeps the call; the release
+build is checked by `tests/leaf_inline.rs`.  Built: gridmesh `emit_segment` 17.5 → 7.2 ms
+(8.25× → 3.40× its Rust twin, native), the probe of four parallel appends 15 → 6 ms.
+`LOFT_NO_INLINE_APPENDER=1` keeps every appender's calls.  Guard:
+`tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft`.
 
 ### A text discharge that assigns a local is read straight into it
 

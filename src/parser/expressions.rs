@@ -2922,7 +2922,16 @@ use a separate collection or add after the loop"
             Parts::Vector(_) | Parts::Array(_)
         );
         if is_plain_vector {
-            self.cl("OpClearVector", std::slice::from_ref(&field))
+            // The primary holds the group's records, so a linked one releases them
+            // (`@FR-H-Removed`): the views were reset above and name none of them any more.
+            match self.database.types[coll_tp as usize].parts {
+                Parts::Array(elem) => {
+                    let release = self.keep_none(&field, elem);
+                    let clear = self.cl("OpClearVector", std::slice::from_ref(&field));
+                    Value::Insert(vec![release, clear])
+                }
+                _ => self.cl("OpClearVector", std::slice::from_ref(&field)),
+            }
         } else {
             self.cl("OpClearKeyed", &[field, Value::Int(i32::from(coll_tp))])
         }
@@ -2939,7 +2948,13 @@ use a separate collection or add after the loop"
     /// documents, and there the record holder is the vector — so it lives here
     /// rather than in either one's branch.
     fn keyed_sibling_view_resets(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
-        let Some((struct_tp, byte_off)) = self.field_site(to, parent_tp) else {
+        let site = self.field_site(to, parent_tp);
+        self.keyed_sibling_view_resets_at(to, site)
+    }
+
+    /// [`Self::keyed_sibling_view_resets`] for a field site already resolved.
+    fn keyed_sibling_view_resets_at(&mut self, to: &Value, site: Option<(u16, u16)>) -> Vec<Value> {
+        let Some((struct_tp, byte_off)) = site else {
             return Vec::new();
         };
         let members = self.database.keyed_group_members(struct_tp, byte_off);
@@ -3263,9 +3278,97 @@ use a separate collection or add after the loop"
     }
 
     fn clear_vector_field(&mut self, to: &Value, parent_tp: &Type) -> Vec<Value> {
-        let mut ops = self.keyed_sibling_view_resets(to, parent_tp);
+        let site = self.field_site(to, parent_tp);
+        self.clear_vector_at(to, site, None)
+    }
+
+    /// The clear of the vector at `to`, whose struct field site — when it is a field — is
+    /// `site` and whose type, when the caller has it, is `vec_tp`: the sibling views reset
+    /// when it holds a group's records, then those records released when its element type is
+    /// linked (`linked_clear_release`), then the length reset.  `v.clear()`, `clear(v)` and
+    /// `v = …` empty a vector through here, so the three spellings answer alike
+    /// (`@FR-Col-Group`, `@FR-H-Removed`).
+    pub(crate) fn clear_vector_at(
+        &mut self,
+        to: &Value,
+        site: Option<(u16, u16)>,
+        vec_tp: Option<&Type>,
+    ) -> Vec<Value> {
+        let mut ops = self.keyed_sibling_view_resets_at(to, site);
+        ops.extend(self.linked_clear_release(to, site, vec_tp));
         ops.push(self.cl("OpClearVector", std::slice::from_ref(to)));
         ops
+    }
+
+    /// `@FR-H-RefHome` — the in-place clear a reassignment of a referenced local owes: the
+    /// vector's `clear_vector_at`, or a keyed collection's `OpClearKeyed`; both send each
+    /// record through `Store::delete` (`@FR-H-Removed`).  `None` for any other type.
+    fn referenced_local_clear(&mut self, to: &Value, f_type: &Type) -> Option<Vec<Value>> {
+        if matches!(f_type.base(), Type::Vector(_, _)) {
+            return Some(self.clear_vector_at(to, None, Some(f_type)));
+        }
+        let kt = self.keyed_type_id(f_type)?;
+        Some(vec![self.cl(
+            "OpClearKeyed",
+            &[to.clone(), Value::Int(i32::from(kt))],
+        )])
+    }
+
+    /// `@C145`, `@FR-H-Removed` — the release a clear of the vector at `to` owes when its
+    /// element type is linked: each element is a record of its own (an `array`), and the
+    /// length reset `OpClearVector` performs would strand those records in the store — still
+    /// claimed, and still read through a stored reference that named one.  Keeping the range
+    /// `[0, 0)` sends every record through `Store::delete`, which leaves the mark the
+    /// reference reads as null.  A field resolves through its struct (`site`): a group's VIEW
+    /// holds no records of its own and releases nothing.  Anything else — a local, an element
+    /// of an outer vector — resolves through its type, `vec_tp` or the local's.  `None` for
+    /// an inline element type, whose elements die with the length reset.
+    pub(crate) fn linked_clear_release(
+        &mut self,
+        to: &Value,
+        site: Option<(u16, u16)>,
+        vec_tp: Option<&Type>,
+    ) -> Option<Value> {
+        if self.first_pass {
+            return None;
+        }
+        // A site that names no struct field — an element of an outer vector reads as
+        // `OpGetField(element, 0)` — resolves through the type like any other place.
+        let field_site = site.filter(|&(st, off)| self.database.field_index_at(st, off).is_some());
+        let elem = if let Some((struct_tp, byte_off)) = field_site {
+            self.database.clear_releases_records(struct_tp, byte_off)?
+        } else {
+            let tp = match (vec_tp, to.unspan()) {
+                (Some(tp), _) => tp.clone(),
+                (None, Value::Var(v)) => self.vars.tp(*v).clone(),
+                _ => return None,
+            };
+            let Type::Vector(content, _) = tp.peel_link().base() else {
+                return None;
+            };
+            let content = content.as_ref().clone();
+            let elem = self
+                .data
+                .vector_element_type(&content, &mut self.database)?;
+            if !self.database.is_linked(elem) {
+                return None;
+            }
+            elem
+        };
+        Some(self.keep_none(to, elem))
+    }
+
+    /// `OpKeepVectorRange(to, elem, 0, 0)`: every element released, the length zero.
+    fn keep_none(&mut self, to: &Value, elem: u16) -> Value {
+        self.cl(
+            "OpKeepVectorRange",
+            &[
+                to.clone(),
+                Value::Int(i32::from(elem)),
+                Value::Int(0),
+                Value::Int(0),
+            ],
+        )
     }
 
     /// The clear a `= null` performs, plus the mark that says *absent* (loft#917).
@@ -4033,6 +4136,29 @@ use a separate collection or add after the loop"
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
         self.check_loop_source_write(to, op, f_type);
+        // `@FR-H-RefHome`, `@FR-H-Removed` — a local vector a stored reference names into is
+        // emptied IN PLACE when reassigned, as a field's `v = …` is: its records are removed,
+        // so the reference reads null, where a fresh store would free them under it.
+        if op == "="
+            && !self.first_pass
+            && let Value::Var(v) = to.unspan()
+            && self.referenced_locals.contains(&(self.context, *v))
+            && !self.referenced_assigned.insert((self.context, *v))
+            && let Some(mut ops) = self.referenced_local_clear(to, f_type)
+        {
+            let tp = self.parse_assign_op_inner(
+                code,
+                "+=",
+                f_type,
+                to,
+                parent_tp,
+                var_nr,
+                skip_validate,
+            );
+            ops.push(std::mem::replace(code, Value::Null));
+            *code = Value::Insert(ops);
+            return tp;
+        }
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete
