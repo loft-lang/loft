@@ -73,7 +73,16 @@ fn one_push_of_an_invariant_is_one_fill_with_the_loop_as_its_fallback() {
 #[test]
 fn computed_pushes_reserve_their_trip_count_before_the_loop() {
     let rust = emit("reserve", &[]);
-    for name in ["n_p4", "n_p7", "n_p10"] {
+    // p10's counted loop is NESTED in another that pushes nothing else: the outer loop holds
+    // one deep window, and the inner loop pushes through it — its reservation steps aside, as
+    // it would move the record under the window.
+    let p10 = body(&rust, "n_p10");
+    assert!(
+        p10.contains("//@FR-R-PushFill push window, deep")
+            && !p10.contains("vector::reserve_more(&(var_v)"),
+        "p10: the outer loop's deep window serves the nested counted loop"
+    );
+    for name in ["n_p4", "n_p7"] {
         let b = body(&rust, name);
         assert!(
             b.contains("vector::reserve_more(&(var_v), _pn.saturating_mul("),
