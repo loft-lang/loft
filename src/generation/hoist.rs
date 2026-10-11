@@ -2486,9 +2486,11 @@ pub fn param_view_ptr(
 }
 
 /// How many fusable scalar field reads and writes of record `r` — either spelling of the
-/// field ([`view_field`]) — stand in `stmts`.
+/// field ([`view_field`]) — stand in `stmts`, beside those at an offset in `served`: a
+/// twin's inputs (`@FR-R-Inputs`), which its body reads from a parameter and not the record.
+/// A served field is one the body never writes, so every use at its offset is a read.
 #[must_use]
-pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data) -> usize {
+pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data, served: &[i64]) -> usize {
     let mut n = 0;
     for op in stmts {
         op.walk(&mut |c| {
@@ -2498,7 +2500,8 @@ pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data) -> usize {
             {
                 let name = data.def(*g).name();
                 if (scalar_kind(name).is_some() || setter_kind(name).is_some())
-                    && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == r)
+                    && view_field(data, &args[0], &args[1])
+                        .is_some_and(|(v, off)| v == r && !served.contains(&off))
                 {
                     n += 1;
                 }

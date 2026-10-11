@@ -1090,7 +1090,9 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  plain-record PARAMETER is a view the caller fixed before the first
                  statement, so the whole body is its remainder and takes the same
                  verdict; a generator's parameters, which outlive a resumption, never
-                 do.  THE BASE CLAUSE: where
+                 do.  A TWIN (R-Inputs) runs the clause as its plain function does, over
+                 the accesses its inputs leave: a field read from an input is no use of
+                 the address.  THE BASE CLAUSE: where
                  the binding is the head of `for e in v` — `e = { idx = idx + 1;
                  v[idx] }` — over a path whose header AND element base the loop
                  holds (R-Base), the address is `base + idx * size` when `idx` is
