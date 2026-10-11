@@ -4013,7 +4013,7 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let mut {win} = vector::push_window(&{hdr}, {size}_u32, &stores.allocations); //@FR-R-PushFill deep window"
+            "let mut {win} = vector::push_window(&{hdr}, {size}_u32, &stores.allocations); //@FR-R-PushFill push window, deep"
         )?;
         self.push_windows.push((path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
