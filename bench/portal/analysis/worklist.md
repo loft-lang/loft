@@ -32,67 +32,64 @@ pricing pass (§ 5) is the larger half of the work.
 ## 0. The release cut — every row over 5×
 
 Read off `bench/stats.py` runs of every lane that held a row over 5× (arm64 macOS, commit
-`a391c88fb`, after `(R-TextClear)`, `(R-TextBorrow)`'s format clause and `(R-FlatCopy)`):
-**22 rows over 5×**.  Four more sit at 4.85–4.97× and can cross on noise — `panel_build`,
-`slope_path_with_undo`, `truncate_to`, `emit_to_material` — and count as on the list until a
-run puts them clearly under.  The levers already priced take about five rows under; the
-rest need a lever generalised, a decision (§ 6) or a price.
+`801d0137d`, the library checkouts synced as step 0 below): **21 rows over 5×**, plus
+`panel_build` (5.03×) and `slope_path_with_undo` (5.09×, noisy) on the line; `truncate_to`
+(4.81×) and `emit_to_material` (4.85×) sit just under and stay in view.  The levers already
+priced take about five rows under; the rest need a lever, a decision (§ 6) or a price.
 
-**Step 0 — the bench checkouts first.**  The library checkouts the lanes build from
-(`checkout_libs.sh --status`) lag their bench branch by 5–10 commits.  `surface_fitted_spread`
-(6.62×) is measured against the twin M3 replaced (2.15× on x86-64 with the realigned twin);
-other rows may be too.  Fast-forward and re-measure before building anything on these rows.
+**Step 0 — the bench checkouts, DONE.**  The checkouts were on `main` while four libraries
+keep their benches on `laptop-perf-bench` (`libs.tsv` names the branch per repository); each
+bench branch now has `main` merged in, as M2 asks.  `surface_fitted_spread` left the list
+with its realigned twin (6.62× → 2.18×); `arguments/parse` (5.69×) and `index_fill_find`
+(5.49×) moved with the library.
 
-**A. A record's fields are read through a store lookup** — `(R-RecPtr)` holds no address
-there.  One generalisation, no decision; price `clock_pump` and `locate` first.
+**A. Record-field rows — two prices, two different mechanisms.**
 
-| row | × | what the profile shows |
+| row | × | what the price shows |
 |---|--:|---|
-| `clock_pump` | 6.76 | `clock_advance` calls `clock_scaled`, which writes the same record, so every field access re-resolves the store; the twin keeps the fields in registers |
-| `locate` | 6.19 | the element's address comes from `rec_ptr` per element rather than the held base, behind the `?` default-record path; two checked adds per element |
-| `mesh_to_floats` | 5.51 | re-analyse from the current code (§ 4) |
-| `fill_polygon` | 5.26 | 18 store accesses per edge in `polygon_crossings` |
-| `stencil_rotate` | 5.10 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price |
-
-The lever: keep the record address across a callee that writes only scalar fields in place
-(the `(R-Callee)` admission's question asked for the address), and across a `?` default.
+| `clock_pump` | 6.82 | PRICED: the bench calls the `(R-Inputs)` twins (`n_clock_pump__inv`, `n_clock_advance__inv`, `n_clock_scaled__inv`), and the twin emission drops `(R-RecPtr)` — every field access re-resolves the store, where the plain functions already hold the address across the in-place callee.  The twins with the held address: 48.3–52.7 → 16.7 ms (−67 %, ≈ 2.1×), `clock_advance` 24 → 10.8 ms, hashes unchanged.  The lever is the twin running the record-address pass the plain function runs |
+| `locate` | 6.19 | PRICED: NOT the record address — the held element address alone measured +7 %.  The cost is the checked accumulation `cum += p.count`: with the overflow note's cold call removed from the two checked adds, 8.8 → 5.3 ms (−39 %, ≈ 3.6×); with plain adds, 2.7 ms.  The note call is no general mechanism: removed from every checked operator (a runtime probe) it moved only `locate` across six lanes (`clock_advance` +23 %, `collatz` +7 %), so the lever is this loop's, still unnamed |
+| `mesh_to_floats` | 5.53 | re-analyse from the current code (§ 4) |
+| `fill_polygon` | 5.28 | 18 store accesses per edge in `polygon_crossings` |
+| `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  Check first whether it, too, runs through `__inv` twins that drop `(R-RecPtr)` |
 
 **B. Keyed collections** — the largest bloc; most of it clears 5× only with the keyed store
 format decision (§ 6).
 
 | row | × | known lever | lands at |
 |---|--:|---|---|
-| `field_add_cell` | 7.06 | the library's double bucket lookup (−8 %) | ≈ 5.1× |
-| `build_index` | 6.28 | C7 `mint_target` (−8 %) | ≈ 5.8× |
-| `index_fill_find` | 6.19 | `index` as a B-tree of inline keys (the tree of store records is 45 %) | the format decision |
-| `reload_and_record` | 5.50 | P3 (≤ 12 %), P4 (≤ 15 %, needs a range proof) — keyed.md | ≈ 4.1× if both pay |
-| `mapfile_to_painted` | 5.38 | the same P3 / P4 | under if both pay |
-| `anim_of` | 5.46 | ~45 % is the returned text copied (`malloc`, `memmove`, `free`); the twin returns a borrow: S8 `(R-ViewReturn)` | under, after its decision |
+| `field_add_cell` | 7.09 | the library's double bucket lookup (−8 %) | ≈ 5.1× |
+| `build_index` | 6.35 | C7 `mint_target` (−8 %) | ≈ 5.8× |
+| `index_fill_find` | 5.49 | `index` as a B-tree of inline keys (the tree of store records is 45 %) | the format decision |
+| `reload_and_record` | 5.76 | P3 (≤ 12 %), P4 (≤ 15 %, needs a range proof) — keyed.md | ≈ 4.1× if both pay |
+| `mapfile_to_painted` | 5.44 | the same P3 / P4 | under if both pay |
+| `anim_of` | 5.38 | ~45 % is the returned text copied (`malloc`, `memmove`, `free`); the twin returns a borrow: S8 `(R-ViewReturn)` | under, after its decision |
 
 **C. A temporary built, then copied or moved.**
 
 | row | × | known lever | lands at |
 |---|--:|---|---|
-| `check_request` | 7.91 | `(R-DecodeView)` (decided, C141) | ≈ 5.5× — still over |
-| `flow_layout_full` | 7.01 | S1c (−8 % alone; S1b is built) and a fused `character` element read | re-price on today's code |
-| `invert` | 5.87 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
-| `sphere` | 5.83 | none named (vector growth, the two `add_triangle` writes) | unpriced |
-| `decode` | 5.68 | C1 D4′, then C2 | 3.8× |
+| `check_request` | 7.95 | `(R-DecodeView)` (decided, C141) | ≈ 5.5× — still over |
+| `flow_layout_full` | 7.00 | S1c (−8 % alone; S1b is built) and a fused `character` element read | re-price on today's code |
+| `invert` | 5.82 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
+| `sphere` | 5.97 | none named (vector growth, the two `add_triangle` writes) | unpriced |
+| `decode` | 5.61 | C1 D4′, then C2 | 3.8× |
 
 **D. A cause of their own.**
 
 | row | × | known lever | lands at |
 |---|--:|---|---|
-| `doc_read` | 6.59 | C8, a leaner fixed-size read (~−30 %, then −15 %) | ≈ 4.6× |
-| `map_json` | 6.59 | none priced: `Map.parse` is 86 % — the `Parsed` → store walk, the lexer's per-character step | unpriced |
-| `arguments/parse` | 6.08 | none named: the option walk reads its vector out of line (16 %), `len(name) > 0` counts characters (4 %), text copies (~10 %) | unpriced |
-| `fill_rect` | 5.46 | C9, no bounds test where the index is proved in range | the range-facts decision |
-| `rand_indices` | 5.32 | none — unprofiled: `hand_price.sh` cannot link a package with a cdylib (§ Tooling) | fix the tooling, then price |
+| `doc_read` | 6.54 | C8, a leaner fixed-size read (~−30 %, then −15 %) | ≈ 4.6× |
+| `map_json` | 6.64 | none priced: `Map.parse` is 86 % — the `Parsed` → store walk, the lexer's per-character step | unpriced |
+| `arguments/parse` | 5.69 | none named: the option walk reads its vector out of line (16 %), `len(name) > 0` counts characters (4 %), text copies (~10 %) | unpriced |
+| `fill_rect` | 5.50 | C9, no bounds test where the index is proved in range | the range-facts decision |
+| `rand_indices` | 5.35 | none — unprofiled: `hand_price.sh` cannot link a package with a cdylib (§ Tooling) | fix the tooling, then price |
 
 **Order for the cut.**
-1. Step 0, then re-measure the rows above.
-2. A: price `clock_pump` and `locate`, build the `(R-RecPtr)` generalisation, re-measure
-   all five.
+1. Step 0 (done).
+2. A: build `(R-RecPtr)` in the `(R-Inputs)` twins (`clock_pump`'s price), then re-measure
+   `stencil_rotate`, `fill_polygon` and `mesh_to_floats` for the same drop; name `locate`'s
+   loop lever.
 3. The priced units: C1 + C2 (`decode`), C8 (`doc_read`), `(R-DecodeView)`
    (`check_request`), S1c re-priced (`flow_layout_full`).
 4. The three decisions, the keyed store format first (most of B), then `(R-ViewReturn)`
