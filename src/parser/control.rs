@@ -11469,11 +11469,6 @@ impl Parser {
             };
             diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
         }
-        let ops = crate::scopes::PlaceOps {
-            set_db_ref: self.data.def_nr("OpSetDbRef"),
-            database: self.data.def_nr("OpDatabase"),
-            place_record: self.data.def_nr("OpPlaceRecord"),
-        };
         let mut placing: Vec<u32> = found
             .places
             .iter()
@@ -11482,6 +11477,13 @@ impl Parser {
             .collect();
         placing.sort_unstable();
         placing.dedup();
+        // Looked up only when something is placed: a program without stored references
+        // pays nothing here.
+        let ops = (!placing.is_empty()).then(|| crate::scopes::PlaceOps {
+            set_db_ref: self.data.def_nr("OpSetDbRef"),
+            database: self.data.def_nr("OpDatabase"),
+            place_record: self.data.def_nr("OpPlaceRecord"),
+        });
         for d in placing {
             // `@FR-H-RefHome` — a literal or call result written into a holder that outlives
             // it is built in the holder's store, by a fresh variable that borrows the holder.
@@ -11510,7 +11512,9 @@ impl Parser {
                 def.variables.set_type(fresh, tp.clone());
                 here.push((p, fresh, tp));
             }
-            crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, &ops);
+            if let Some(ops) = &ops {
+                crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, ops);
+            }
         }
         for e in &found.evacuations {
             if self.data.def(e.d_nr).variables.done {
