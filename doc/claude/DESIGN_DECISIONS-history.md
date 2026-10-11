@@ -4826,3 +4826,14 @@ that this space is now not a record anymore"*.  Of the three closings the issue 
 refuse the removal, a generation tag, a tombstone — this is the tombstone, kept to the header
 word: the position is never reused, the rest of the record is.  Written as `(H-Removed)`.
 
+## C146 — A hash table's bucket count is a power of two
+
+Decided 2026-10-11 by the owner while the keyed rows of the release cut were priced.  The
+analysis had declined removing the division in `hash::home_bucket` as a store-format break,
+offering a multiply-shift reduction or a per-table reciprocal; the owner answered: *"But the
+hash bucket size should be a size that is cheap to divide anyway"* and *"So make them a power
+of two again, make that a rule"*.  The counts had drifted: a table started at 16, but grew by
+claiming `2·room − 1` words (38, 78, … slots) and a `reserve` sized it to the load trigger
+exactly.  For a power of two `digest % count` is `digest & (count − 1)`, so the formula and every
+stored entry stay where they are.
+

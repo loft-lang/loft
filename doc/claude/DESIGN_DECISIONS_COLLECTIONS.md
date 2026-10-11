@@ -114,3 +114,23 @@ question is which store the record joins, and an absent collection has one sensi
 `advice` note, not an error.  Decided 2026-09-07 (loft#1434) — [record](DESIGN_DECISIONS-history.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined).
 Holds at `(Col-Insert-Absent)`, [formal/collections.md](formal/collections.md).
 **Catalogue:** @F1 (null model), @F38.
+
+## C146 — A hash table's bucket count is a power of two
+
+**Decision.** Every hash table loft sizes has a power-of-two bucket count: it starts at 16,
+grows by doubling, and a `reserve` rounds up to the next power of two past the load trigger.
+The home bucket stays `digest mod count`, and for a power of two it is computed as a mask.
+**Why.** The count is chosen by loft, so it can be chosen cheap to divide — the division was
+7–10 % of a lookup, on its critical path.  The placement formula does not change, so a store
+written before keeps loading: its non-power-of-two tables take the division, are re-sized to a
+power of two at their next growth, and no `placement::HASH` bump refuses them.  A
+multiply-shift reduction and a per-table reciprocal were the alternatives; both move every
+stored entry.  The price is memory: a reserved table rounds up as a grown one does, so its
+bucket array (4 bytes a slot) can be up to twice what an exact reserve took.
+**Revisit when.** A placement change is made for another reason (`placement::HASH` bumped):
+then the division's fallback for older tables can go with it.  Decided 2026-10-11 (owner) —
+[record](DESIGN_DECISIONS-history.md#c146--a-hash-tables-bucket-count-is-a-power-of-two).
+**Holds at:** `@C146` — `hash::home_bucket` and `hash::room_for_buckets` (`src/hash.rs`), the
+paged reader's two placements (`src/paged_reader.rs`), `formal/collections.md` `(Col-Bucket)`,
+guard `tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft`.
+**Catalogue:** BOTH_BACKEND_SWITCHES.md `LOFT_NO_POW2_BUCKETS`.
