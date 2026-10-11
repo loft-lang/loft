@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record copy answers the source's value, whatever the destination held, and the copy is
+// independent of its source afterwards.
+//
+// `--native` copies a record whose type owns no heap as its bytes alone (`@FR-R-FlatCopy`):
+// the release of the destination and the walk of the source's claims both find nothing for
+// such a type.  The cells copy into a fresh element (k1), over an element that held another
+// value (k2), a struct-enum variant (k3), a nested flat record (k5), into a record field
+// (k7), and change the source after the copy (k6); k4 is a record that DOES own heap (a
+// text field) and must keep taking the full path.  Each expected value is worked out by
+// hand beside it.
+//
+// @falsified-at: none — a speed change with no earlier defect; scored by hand: the fast
+// path's block copy given a size of 8 instead of the type's fails k1, k2, k5, k7 on --native
+
+struct Piece { start: integer, count: integer, style: integer }
+struct Box2 { lo: Piece, hi: Piece }
+struct Named { label: text, n: integer }
+struct Holder { inner: Piece, tag: integer }
+
+enum Shape {
+  Dot { x: integer, y: integer },
+  Bar { w: integer, h: integer, d: integer }
+}
+
+fn area(s: Shape) -> integer {
+  match s {
+    Dot { x, y } => x + y,
+    Bar { w, h, d } => w * h * d
+  }
+}
+
+fn main() {
+  // k1 — three pieces appended: starts 0, 10, 20; counts 1, 2, 3; sum of all fields
+  // (0+10+20) + (1+2+3) + (7+7+7) = 30 + 6 + 21 = 57.
+  ps: vector<Piece> = [];
+  for k in 0..3 {
+    p = Piece { start: k * 10, count: k + 1, style: 7 };
+    ps += [p];
+  }
+  s1 = 0;
+  for e in ps { s1 += e.start + e.count + e.style; }
+  assert(s1 == 57, "k1 sum {s1}");
+  assert(len(ps) == 3, "k1 length {len(ps)}");
+
+  // k2 — element 1 overwritten with (100, 200, 300): fields of ps[1] sum to 600, and the
+  // neighbours keep theirs (ps[0] = 0+1+7 = 8, ps[2] = 20+3+7 = 30).
+  q = Piece { start: 100, count: 200, style: 300 };
+  ps[1] = q;
+  assert(ps[1].start + ps[1].count + ps[1].style == 600, "k2 overwritten");
+  assert(ps[0].start + ps[0].count + ps[0].style == 8, "k2 left neighbour");
+  assert(ps[2].start + ps[2].count + ps[2].style == 30, "k2 right neighbour");
+
+  // k3 — a variant copied into a vector and read back: Bar 2*3*4 = 24, Dot 5+6 = 11.
+  shapes: vector<Shape> = [];
+  b = Bar { w: 2, h: 3, d: 4 };
+  shapes += [b];
+  shapes += [Dot { x: 5, y: 6 }];
+  assert(area(shapes[0]) == 24, "k3 bar {area(shapes[0])}");
+  assert(area(shapes[1]) == 11, "k3 dot {area(shapes[1])}");
+
+  // k4 — a record that owns heap: the label must arrive whole, twice.
+  ns: vector<Named> = [];
+  nm = Named { label: "alpha", n: 1 };
+  ns += [nm];
+  ns += [nm];
+  ns[1] = Named { label: "beta-longer", n: 2 };
+  assert(ns[0].label == "alpha" && ns[1].label == "beta-longer", "k4 {ns[0].label} {ns[1].label}");
+
+  // k5 — a nested flat record: lo (1,2,3), hi (4,5,6) -> 21 in all.
+  boxes: vector<Box2> = [];
+  bx = Box2 { lo: Piece { start: 1, count: 2, style: 3 }, hi: Piece { start: 4, count: 5, style: 6 } };
+  boxes += [bx];
+  c5 = boxes[0];
+  s5 = c5.lo.start + c5.lo.count + c5.lo.style + c5.hi.start + c5.hi.count + c5.hi.style;
+  assert(s5 == 21, "k5 {s5}");
+
+  // k6 — the source changed after the copy: the copy keeps 100.
+  src = Piece { start: 100, count: 1, style: 1 };
+  held: vector<Piece> = [];
+  held += [src];
+  src.start = 999;
+  assert(held[0].start == 100, "k6 copy {held[0].start}");
+  assert(src.start == 999, "k6 source {src.start}");
+
+  // k7 — into a record field: inner (9, 8, 7), tag 5 -> 29.
+  h = Holder { inner: Piece { start: 0, count: 0, style: 0 }, tag: 5 };
+  h.inner = Piece { start: 9, count: 8, style: 7 };
+  s7 = h.inner.start + h.inner.count + h.inner.style + h.tag;
+  assert(s7 == 29, "k7 {s7}");
+
+  println("ok");
+}

@@ -5148,6 +5148,17 @@ impl Stores {
         self.heap_facts(tp).0
     }
 
+    /// `@FR-R-FlatCopy` — a record type whose value is its bytes: a struct or a struct-enum
+    /// variant that owns no heap.  Copying one is the block copy alone — the destination's release and the
+    /// source's claims walk both answer "nothing" for it.
+    #[inline]
+    pub(crate) fn flat_record_type(&self, tp: u16) -> bool {
+        matches!(
+            self.types.get(tp as usize).map(|t| &t.parts),
+            Some(Parts::Struct(_) | Parts::EnumValue(..))
+        ) && !self.type_owns_heap(tp)
+    }
+
     /// `@FR-H-ClearRelease` — [`Self::holds_no_heap`] answered from the type's cached HEAP
     /// SLOTS: `Some(true)` when every slot is empty right now, `None` whenever the full walk
     /// must answer — a slot it cannot read here (past the record's capacity, an enum tag

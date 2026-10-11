@@ -1340,6 +1340,22 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         }
         return;
     }
+    // `@FR-R-FlatCopy` — a record that owns no heap is its bytes: the release of the
+    // destination's claims and the walk of the source's both find nothing, so a copy that
+    // keeps its source is the block copy alone.  The fn-ref hand-off flag is still taken, as
+    // the full path takes it.  A traced or checked copy, and one that gives its source up,
+    // take the full path.
+    if (tp as u16) & crate::keys::COPY_FREE_SOURCE == 0
+        && crate::keys::flat_copy_enabled()
+        && stores.flat_record_type((tp as u16) & crate::keys::COPY_TP_MASK)
+        && !crate::keys::trace_copy()
+        && !stores.copy_check_enabled()
+    {
+        let _ = cr_take_fnref_borrowed(data.store_nr);
+        let size = u32::from(stores.size((tp as u16) & crate::keys::COPY_TP_MASK));
+        stores.copy_block(&data, &to, size);
+        return;
+    }
     // mirror `state/io.rs::copy_record`'s tag handling and
     // cleanup.  The bytecode form masks the high bit of `tp` before
     // indexing into `stores.types` (0x8000 marks "free source after

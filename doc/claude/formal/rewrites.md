@@ -63,9 +63,9 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  condition shows as a DROP, named by rule and bench, in `make
                  rewrite-census` and on the PR — a loss no timing resolves.  A
                  deliberate decline lands with `make rewrite-census-bless` in its
-                 own commit.  Counted: every rewrite but two — (R-Prefill) admits per
-                 TYPE at its first mint and (R-Cold) is the runtime's own shape,
-                 neither an emission-time fact.  A parser or scope-pass rewrite
+                 own commit.  Counted: every rewrite but three — (R-Prefill) admits per
+                 TYPE at its first mint, and (R-Cold) and (R-FlatCopy) are the
+                 runtime's own shape, none an emission-time fact.  A parser or scope-pass rewrite
                  counts at its admission (the standard library's own admissions
                  included, one constant per program); a generator rewrite counts
                  where it emits.
@@ -2102,6 +2102,30 @@ guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and th
 `tests/format_append.rs`).
 The stdlib's own `char_slice` takes it too.
 
+### An emptied text keeps its buffer
+
+```
+  (R-TextClear)  `x = ""` where x is a declared text LOCAL whose native slot is a
+                 `String`, or a `&text` PARAMETER, empties x IN PLACE — the same empty
+                 text, the buffer's capacity kept — rather than binding a fresh empty
+                 `String`.  The value is the empty text either way; only the
+                 capacity differs, which no program can observe (R-Escape).  A first
+                 bind (the declaration), a text PARAMETER passed by value, a generator
+                 field and a narrow-encoded local keep the fresh `String`.
+```
+
+**In words.**  A work text — a call's text result buffer, a format's work text, an
+accumulator — is emptied once per use and refilled.  Bound to a fresh `String` each time,
+it dropped its allocation and claimed and regrew a new one on every pass: zttext's
+`materialise` paid that per piece, its callee emptying the caller's result buffer through
+the `&text` parameter.  Emptied in place the buffer is claimed once per activation.
+`materialise` 500 → 206 µs, `seg` 950 → 665 µs on arm64 macOS, hashes unchanged.
+Switch `LOFT_NO_TEXT_CLEAR`; census `R-TextClear`, one per emission.  Cells
+`tests/scripts/an-emptied-text-keeps-no-old-content.loft` (c1–c6: every cell refills a
+text that held MORE than it is refilled with; with the clear replaced by a no-op, c1
+reads `abcdeabcdefg…`).  Sites: the two `@FR-R-TextClear` arms of
+`Output::output_set_inner`.
+
 ### A text copied byte by byte is one append
 
 ```
@@ -3072,6 +3096,31 @@ and `vector::elem_index`'s own unit tests.  Fold sites: `vector::get_elem_at`,
 (the ASCII byte is answered inline; the multi-byte snap-back and decode are
 `text_character_wide` — a `for c in text` walk paid a call per character, 580 per parse
 on the drawing bench).
+
+### A record that owns no heap is copied as its bytes
+
+```
+  (R-FlatCopy)   a record copy (`OpCopyRecord`) whose type is a struct or a struct-enum
+                 variant that owns no heap, and that keeps its source, is the BLOCK
+                 COPY alone: the release of the destination's claims and the walk of
+                 the source's claims both find nothing for such a type, so neither
+                 runs.  A copy that gives its source up (the exchange and the source
+                 release are its own), a traced copy (`LOFT_TRACE_COPY`) and a
+                 checked one (`LOFT_COPY_CHECK`) take the full path; the fn-ref
+                 hand-off flag the full path consumes is consumed here too.
+                 APPLIED BY the native runtime; the interpreter keeps the full path
+                 and is the oracle.
+```
+
+**In words.**  Copying a three-integer `Piece` into a vector ran ten tests before its 24
+bytes moved — the foreign-vector test, the trace switch, the exchange, the destination's
+release (answered from the type's heap slots), the source's claims walk (absent-collection
+test, then the type's heap facts), the copy-check switch — each one answering "nothing to
+do" for a type that owns no heap.  zttext's `insert_text` makes one such copy per piece per
+insert; the type's heap facts are cached, so the answer is one lookup.  `insert_text` 7.6–8.7
+→ 4.0–5.0 ms (≈ −40 %) and `invert` −20 to −30 % on arm64 macOS, hashes unchanged.  Like
+`(R-Cold)` it is the runtime's own shape and not counted by the census.  Switch
+`LOFT_NO_FLAT_COPY`.  Sites: `OpCopyRecord`, `Stores::flat_record_type`.
 
 ### A result is built where it will live, moved at its last use, and written over a place
 

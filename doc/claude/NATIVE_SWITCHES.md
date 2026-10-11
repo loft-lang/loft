@@ -149,7 +149,19 @@ re-reads the element at the walk's release and panics when the borrow does not n
 (address first, so a dangling borrow is never read); `LOFT_TRACE_TEXT_BORROW=1` names each
 walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
 `&text` parameter, tupled or returned, a store written in the body and a generator keep
-the copy.
+the copy.  Its FORMAT clause is under the same switch: a text local bound to a format
+string (`cs = "{c}"`) whose work text is the format's own reads that work text as a `&str`
+instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads the local,
+and a local copied into another variable, keep the copy.
+**`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
+only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
+local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
+`materialise` −59 %) — and is the first bisect step for a text that reads leftover content
+after it was emptied.
+**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, RUNTIME, `--native` only) copies a
+record that owns no heap through the full release-and-walk path again — with it off, such a
+copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %) — and is
+the first bisect step for a wrong value or a leak right after a record copy.
 **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
 makes `for c in text` take every character through the step as written again — with it
 off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
