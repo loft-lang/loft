@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @observes: LOFT_NO_LITERAL_EXIT_BUFFER — the switch stops a callee building its literal into the record it is offered, so a call result is no longer placed in its holder's store and the call-result cells are refused instead.
 //
 // `@FR-H-RefHome`, `@C145` — a record a stored `reference<T>` names lives as long as the store
 // of its holder (@PLN189).  Where no variable of the frame can own the record, it is built in
