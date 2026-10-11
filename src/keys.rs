@@ -1760,6 +1760,21 @@ pub fn format_append_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
 }
 
+/// `LOFT_NO_TEXT_CLEAR=1` — empty a text with a fresh `String` again (`@FR-R-TextClear` off):
+/// the first bisect step for a text that reads leftover content after `s = ""` on `--native`.
+pub fn text_clear_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_CLEAR"))
+}
+
+/// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk
+/// path again (`@FR-R-FlatCopy` off): the first bisect step for a wrong value or a leak after
+/// a record copy on `--native`.
+pub fn flat_copy_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FLAT_COPY"))
+}
+
 /// `LOFT_TRACE_FORMAT_APPEND=1` — name each format append written into its destination and
 /// each that keeps its buffer, with the reason.
 pub fn trace_format_append() -> bool {
