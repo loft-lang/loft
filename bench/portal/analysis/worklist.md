@@ -51,7 +51,7 @@ with its realigned twin (6.62× → 2.18×); `arguments/parse` (5.69×) and `ind
 | `locate` | 6.19 | PRICED: NOT the record address — the held element address alone measured +7 %.  The cost is the checked accumulation `cum += p.count`: with the overflow note's cold call removed from the two checked adds, 8.8 → 5.3 ms (−39 %, ≈ 3.6×); with plain adds, 2.7 ms.  The note call is no general mechanism: removed from every checked operator (a runtime probe) it moved only `locate` across six lanes (`clock_advance` +23 %, `collatz` +7 %), so the lever is this loop's, still unnamed |
 | `mesh_to_floats` | 5.53 | re-analyse from the current code (§ 4) |
 | `fill_polygon` | 5.28 | 18 store accesses per edge in `polygon_crossings` |
-| `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  Check first whether it, too, runs through `__inv` twins that drop `(R-RecPtr)` |
+| `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  Its helpers run through `__inv` twins that drop `(R-RecPtr)` — 10 of hex_field's 29 twins do (`eg_index`, `hs_index`, `hz_index`, `lb_index`, `ly_slot`, `hexset_set`, …), so `clock_pump`'s lever reaches it |
 
 **B. Keyed collections** — the largest bloc; most of it clears 5× only with the keyed store
 format decision (§ 6).
