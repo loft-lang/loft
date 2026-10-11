@@ -7,7 +7,8 @@ at the analysis file beside it that priced it, and at its rule in
 
 **The release cut.**  The stable release waits only on rows over **5×** (C136's release clause);
 those go first, by whatever cure removes the mechanism (no restriction to low-risk changes),
-and the 3–5× rows follow after stability.
+and the 3–5× rows follow after stability.  § 0 is that cut: the rows over 5×, by mechanism,
+with what takes each under the line.
 
 **Position.**  `python3 bench/portal/outliers.py bench/portal/results/<host>.tsv` reads the
 last full run; it does not start one.  The rows
@@ -27,6 +28,76 @@ unit leaves when it is built, and its record goes to its analysis file's § Buil
 moves sixteen.  Of the five worst rows only `draw_bezier` has a priced form under 3×; the
 other four land at 3.6–5.5× by hand.  Two thirds of the list has never been priced, so the
 pricing pass (§ 5) is the larger half of the work.
+
+## 0. The release cut — every row over 5×
+
+Read off `bench/stats.py` runs of every lane that held a row over 5× (arm64 macOS, commit
+`a391c88fb`, after `(R-TextClear)`, `(R-TextBorrow)`'s format clause and `(R-FlatCopy)`):
+**22 rows over 5×**.  Four more sit at 4.85–4.97× and can cross on noise — `panel_build`,
+`slope_path_with_undo`, `truncate_to`, `emit_to_material` — and count as on the list until a
+run puts them clearly under.  The levers already priced take about five rows under; the
+rest need a lever generalised, a decision (§ 6) or a price.
+
+**Step 0 — the bench checkouts first.**  The library checkouts the lanes build from
+(`checkout_libs.sh --status`) lag their bench branch by 5–10 commits.  `surface_fitted_spread`
+(6.62×) is measured against the twin M3 replaced (2.15× on x86-64 with the realigned twin);
+other rows may be too.  Fast-forward and re-measure before building anything on these rows.
+
+**A. A record's fields are read through a store lookup** — `(R-RecPtr)` holds no address
+there.  One generalisation, no decision; price `clock_pump` and `locate` first.
+
+| row | × | what the profile shows |
+|---|--:|---|
+| `clock_pump` | 6.76 | `clock_advance` calls `clock_scaled`, which writes the same record, so every field access re-resolves the store; the twin keeps the fields in registers |
+| `locate` | 6.19 | the element's address comes from `rec_ptr` per element rather than the held base, behind the `?` default-record path; two checked adds per element |
+| `mesh_to_floats` | 5.51 | re-analyse from the current code (§ 4) |
+| `fill_polygon` | 5.26 | 18 store accesses per edge in `polygon_crossings` |
+| `stencil_rotate` | 5.10 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price |
+
+The lever: keep the record address across a callee that writes only scalar fields in place
+(the `(R-Callee)` admission's question asked for the address), and across a `?` default.
+
+**B. Keyed collections** — the largest bloc; most of it clears 5× only with the keyed store
+format decision (§ 6).
+
+| row | × | known lever | lands at |
+|---|--:|---|---|
+| `field_add_cell` | 7.06 | the library's double bucket lookup (−8 %) | ≈ 5.1× |
+| `build_index` | 6.28 | C7 `mint_target` (−8 %) | ≈ 5.8× |
+| `index_fill_find` | 6.19 | `index` as a B-tree of inline keys (the tree of store records is 45 %) | the format decision |
+| `reload_and_record` | 5.50 | P3 (≤ 12 %), P4 (≤ 15 %, needs a range proof) — keyed.md | ≈ 4.1× if both pay |
+| `mapfile_to_painted` | 5.38 | the same P3 / P4 | under if both pay |
+| `anim_of` | 5.46 | ~45 % is the returned text copied (`malloc`, `memmove`, `free`); the twin returns a borrow: S8 `(R-ViewReturn)` | under, after its decision |
+
+**C. A temporary built, then copied or moved.**
+
+| row | × | known lever | lands at |
+|---|--:|---|---|
+| `check_request` | 7.91 | `(R-DecodeView)` (decided, C141) | ≈ 5.5× — still over |
+| `flow_layout_full` | 7.01 | S1c (−8 % alone; S1b is built) and a fused `character` element read | re-price on today's code |
+| `invert` | 5.87 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
+| `sphere` | 5.83 | none named (vector growth, the two `add_triangle` writes) | unpriced |
+| `decode` | 5.68 | C1 D4′, then C2 | 3.8× |
+
+**D. A cause of their own.**
+
+| row | × | known lever | lands at |
+|---|--:|---|---|
+| `doc_read` | 6.59 | C8, a leaner fixed-size read (~−30 %, then −15 %) | ≈ 4.6× |
+| `map_json` | 6.59 | none priced: `Map.parse` is 86 % — the `Parsed` → store walk, the lexer's per-character step | unpriced |
+| `arguments/parse` | 6.08 | none named: the option walk reads its vector out of line (16 %), `len(name) > 0` counts characters (4 %), text copies (~10 %) | unpriced |
+| `fill_rect` | 5.46 | C9, no bounds test where the index is proved in range | the range-facts decision |
+| `rand_indices` | 5.32 | none — unprofiled: `hand_price.sh` cannot link a package with a cdylib (§ Tooling) | fix the tooling, then price |
+
+**Order for the cut.**
+1. Step 0, then re-measure the rows above.
+2. A: price `clock_pump` and `locate`, build the `(R-RecPtr)` generalisation, re-measure
+   all five.
+3. The priced units: C1 + C2 (`decode`), C8 (`doc_read`), `(R-DecodeView)`
+   (`check_request`), S1c re-priced (`flow_layout_full`).
+4. The three decisions, the keyed store format first (most of B), then `(R-ViewReturn)`
+   (`anim_of`, `check_request`) and relational range facts (`fill_rect`).
+5. Price the rest: `invert`, `sphere`, `map_json`, `arguments/parse`, `rand_indices`.
 
 ## 1. The axis the order follows
 
@@ -178,6 +249,8 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 
 ## 7. Order
 
+The release cut's order (§ 0) comes first; this is the order toward 3× after it.
+
 1. M1–M3 and the regressions that stand: they change which rows are on the list.
 2. S2 and S3, then `(R-RefillText)`'s collection clause: the units that take a row under
    the bar by removing a temporary (S1, the text clause, is built).
@@ -195,5 +268,8 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   a cdylib (`server`, `pluginabi` through crypto, `web`, `ssh`) needs the `-L native=…` and
   rpath lines by hand (over-9x.md § Tooling).
 - No script attributes a profile's samples to one routine of a lane (rules.md § Change 6).
+  On macOS, `sample <pid>` over a `--native-release --names` build gives the call tree;
+  a routine's share is its `n_bench_<row>` (or op helper) subtree.  `--names` disables
+  inlining, so a small helper's share is inflated.
 - `make rewrite-census` read 1–3 low on `R-ExitVector` and `R-Header` on the aarch64 box with
   the libraries at the baseline's commits (records.md); unexplained.
