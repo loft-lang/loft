@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_CALLEE_DISTURB — the switch hides a callee's growth from the disturbance walk, so the views are not copied and every test fails.
 //
 // loft#1759's materialise half — @FR-H-Materialise: a view whose container is DISTURBED
 // (reassigned, grown, shrunk) while it is still used is copied, holding the value AT THE BIND,
