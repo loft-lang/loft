@@ -1964,6 +1964,15 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  place; and no fn-ref call, parallel arm or yield runs.  A writer
                  that names no store, or takes an operand of any other kind,
                  declines.
+                 FORMAT CLAUSE: a text LOCAL whose each binding is a text literal
+                 or a format string `"…{x}…"` whose work text is that format's OWN
+                 — named nowhere else in the body but its declaration and its
+                 release among the function's outermost statements — BORROWS the
+                 work text, provided no such format reads the local it binds and
+                 no other variable is bound from the local; every other mention a
+                 text-value read, as above.  Only another run of the same format
+                 rewrites the work text, and that run rebinds the local.  No store
+                 condition: the work text is the frame's own `String`.
 ```
 
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
@@ -2014,6 +2023,20 @@ reads differently without the store condition); pins `tests/text_borrow.rs`.  Si
 `hoist::borrowed_store_texts`, `hoist::param_rooted`, `hoist::frame_minted_locals`,
 `hoist::mention_scope`, `hoist::foreign_store_writer`, the key arm of
 `hoist::text_escapes_with`, the local bind in `Output::output_set`.
+
+**The format clause.**  `char_str = "{c}"; out += char_str; i += char_str.size()` — the
+markdown inline renderer's per-character path — built the text in the format's work text and
+then copied it into a fresh `String` for the local: a `malloc` and a `free` per character, a
+third of `render_inline`'s time.  The work text is a frame-long `String` the format clears
+and refills, so the local can be a `&str` into it for as long as nothing refills it.  That
+is what the clause's conditions secure: the work text is the format's own, so only the
+format refills it, and each run of the format rebinds the local — the old borrow is dead by
+then, unless the format reads the local itself (refused) or another variable took the
+borrow over (refused).  rustc checks the same borrow, so a wrong admission is a refused
+compile rather than a wrong answer.  Cells
+`tests/scripts/a-format-bound-text-borrows-its-work-text.loft` (f1–f13; f4b fails to
+compile with the copy refusal off).  Sites: `hoist::own_format_work`, the format arm of
+`hoist::borrowed_store_texts`.
 
 ### A character walk steps an ASCII byte in one move
 

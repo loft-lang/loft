@@ -5,6 +5,9 @@ orders the WORK between the tree and that bar.  It holds no price of its own: ea
 at the analysis file beside it that priced it, and at its rule in
 `doc/claude/formal/rewrites.md` (§ Proposed for a rule no site implements).
 
+**The release cut.**  The stable release waits only on rows over **5×** (C136's release clause);
+those go first, each by its lowest-risk lever, and the 3–5× rows follow after stability.
+
 **Position.**  `python3 bench/portal/outliers.py bench/portal/results/<host>.tsv` reads the
 last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
@@ -102,6 +105,8 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | C8 | a fixed-size scalar `f#read` without the runtime crossing; a leaner `OpReadFile` | not sized | `doc_read` ~−30 %, −15 % | under-10x.md |
 | C9 | no bounds test where the index is proved in range (the write's lock test is BUILT) | a design | `10_sort` 2.77× → ~1.3× | vector-write.md |
 
+| S11 | BUILT — an emptied text keeps its buffer: `s = ""` on a declared text local or a `&text` parameter emits `s.clear()`, not a fresh `String` | XS | `materialise` 500 → 206 µs (−59 %), `seg` 950 → 665 µs (−30 %) on arm64 macOS, hashes unchanged | this file |
+| S12 | BUILT — `(R-TextBorrow)`'s format clause: a local bound to a format string borrows the format's own work text | S | `render_inline` 7.5 → 3.7–3.9 ms (7.45× → ≈ 3.8×) on arm64 macOS, hash unchanged | formal/rewrites.md § The format clause |
 | S10 | BUILT — `(R-ElemFirst)`'s comprehension clause: a row built by a comprehension and appended as a whole element is built in that element | M | `grid` 58.8 → 31.3 µs on one core (−47 %, the price), hash unchanged | this file |
 
 ### Where the priced path stops

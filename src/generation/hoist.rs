@@ -4346,10 +4346,56 @@ pub fn borrowed_store_texts(
         false
     });
     let mut why: HashMap<u16, &'static str> = HashMap::new();
+    // The format clause: a local bound to a format string borrows the format's work text
+    // instead of copying it, when that work text is the format's own — named nowhere else
+    // in the body — so only the bind's next run rewrites it.  The format must not read the
+    // local it binds (its old value would still borrow the text being rewritten) and no
+    // other variable may be bound from the local (the copy would outlive that rewrite).
+    let fmt_own = |to: &Value| own_format_work(body, to, data).is_some();
+    let mut fmt_bound: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n
+            && locals.contains(v)
+            && fmt_own(to)
+        {
+            fmt_bound.insert(*v);
+        }
+        false
+    });
+    let mut fmt_refused: Vec<(u16, &'static str)> = Vec::new();
+    for &v in &fmt_bound {
+        let mut self_read = false;
+        let mut copied = false;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Set(x, to) if *x == v && fmt_own(to) => {
+                    if to.any_node(&mut |m| matches!(m, Value::Var(y) if *y == v)) {
+                        self_read = true;
+                    }
+                }
+                Value::Set(x, to) if *x != v && matches!(to.unspan(), Value::Var(y) if *y == v) => {
+                    copied = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        if self_read {
+            fmt_refused.push((v, "a format binding it reads itself"));
+        } else if copied {
+            fmt_refused.push((v, "bound to a format and copied into another variable"));
+        }
+    }
+    for (v, w) in fmt_refused {
+        fmt_bound.remove(&v);
+        locals.remove(&v);
+        why.insert(v, w);
+    }
     loop {
         let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
+            Value::Block(_) => fmt_own(to),
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4387,6 +4433,14 @@ pub fn borrowed_store_texts(
         .copied()
         .collect::<Vec<_>>()
     {
+        // A borrow of the frame's own work text names no store: no store write can move it.
+        if fmt_bound.contains(&v)
+            && text_bound_only_by(body, v, &|to: &Value| {
+                matches!(to.unspan(), Value::Text(_)) || fmt_own(to)
+            })
+        {
+            continue;
+        }
         let scope = mention_scope(body, v);
         if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
             temps.remove(&v);
@@ -4400,6 +4454,7 @@ pub fn borrowed_store_texts(
         let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
+            Value::Block(_) => fmt_own(to),
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4421,8 +4476,13 @@ pub fn borrowed_store_texts(
     }
     if trace {
         for v in temps.iter().chain(locals.iter()) {
+            let what = if fmt_bound.contains(v) {
+                "a format's work text"
+            } else {
+                "a parameter's text"
+            };
             eprintln!(
-                "[text-borrow] {}: `{}` borrows a parameter's text",
+                "[text-borrow] {}: `{}` borrows {what}",
                 def.name(),
                 vars.name(*v)
             );
@@ -4440,6 +4500,63 @@ pub fn borrowed_store_texts(
     }
     out.locals = locals;
     out
+}
+
+/// `@FR-R-TextBorrow`'s format clause — the work text of the format string `to` when that
+/// text is the format's OWN: `to` is a `Formatted string` block (its work text set first and
+/// answered last), and nothing else in `body` names the work text, so only another run of
+/// this block rewrites it.  The frame's own bookkeeping of the work text is no other use:
+/// its declaration (a text literal) and its `OpFreeText` as statements of the function's
+/// outermost block, which run before the first and after the last statement that could
+/// bind or read a borrow of it.
+fn own_format_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
+    let Value::Block(b) = to.unspan() else {
+        return None;
+    };
+    if b.name != "Formatted string" {
+        return None;
+    }
+    let work = match b.operators.first().map(Value::unspan) {
+        Some(Value::Set(w, _)) => *w,
+        _ => return None,
+    };
+    if !matches!(b.operators.last().map(Value::unspan), Some(Value::Var(w)) if *w == work) {
+        return None;
+    }
+    let mentions = |node: &Value| {
+        let mut c = 0usize;
+        node.any_node(&mut |n| {
+            if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == work) {
+                c += 1;
+            }
+            false
+        });
+        c
+    };
+    let bookkeeping = match body.unspan() {
+        Value::Block(top) => top
+            .operators
+            .iter()
+            .filter(|st| match st.unspan() {
+                Value::Set(w, init) => *w == work && matches!(init.unspan(), Value::Text(_)),
+                Value::Call(d, args) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpFreeText"
+                        && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(w) if *w == work))
+                }
+                _ => false,
+            })
+            .count(),
+        _ => 0,
+    };
+    (mentions(body) == mentions(to) + bookkeeping).then_some(work)
+}
+
+/// Is every binding of `v` in `body` one that `ok` accepts (a null declaration aside)?
+fn text_bound_only_by(body: &Value, v: u16, ok: &dyn Fn(&Value) -> bool) -> bool {
+    !body.any_node(&mut |n| {
+        matches!(n, Value::Set(x, to) if *x == v && !matches!(to.unspan(), Value::Null) && !ok(to))
+    })
 }
 
 /// Is `r` a PARAMETER reached through field and element reads — a place in a store that was
