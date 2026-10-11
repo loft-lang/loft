@@ -348,12 +348,21 @@ fn vs_copy_walk(
                 // The destination's type carries the source's deps only when whoever made the
                 // destination recorded them, and a format hook's subject (`"{v[i]:spec}"`) is a
                 // borrow with none: a temp typed from it read as an OWNER (`@FR-O-Proxy`), and
-                // its free released the whole store the source lives in.  So the temp names the
-                // source's root itself, and is never freed (`@FR-O-Override`): it owns nothing.
+                // its free released the whole store the source lives in.  A PROJECTION (`v[i]`,
+                // `o.f`) names part of a store and owns none, so its temp names the projection's
+                // root and is never freed (`@FR-O-Override`).  A bare variable is the whole
+                // store — a by-value parameter the callee owns is released through this temp —
+                // and a call's result or a `??` may hand the temp a store of its own: those
+                // keep the destination's type.
                 let mut view_type = data.def(d_nr).variables.tp(vv).clone();
+                let root = if matches!(source.unspan(), Value::Var(_)) {
+                    None
+                } else {
+                    vs_view_root(&source, data)
+                };
                 if let Type::Reference(p, deps) = &view_type
                     && deps.is_empty()
-                    && let Some(root) = vs_view_root(&source, data)
+                    && let Some(root) = root
                 {
                     view_type = Type::Reference(*p, Deps::frame1(root));
                 }
@@ -361,9 +370,11 @@ fn vs_copy_walk(
                 let src_tmp = data.definitions[d_nr as usize]
                     .variables
                     .add_temp_var(&src_name, &view_type);
-                data.definitions[d_nr as usize]
-                    .variables
-                    .set_skip_free(src_tmp);
+                if root.is_some() {
+                    data.definitions[d_nr as usize]
+                        .variables
+                        .set_skip_free(src_tmp);
+                }
                 *node = Value::Insert(vec![
                     Value::Set(src_tmp, Box::new(source)),
                     Value::Set(vv, Box::new(Value::Null)),
