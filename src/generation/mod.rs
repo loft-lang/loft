@@ -3887,9 +3887,14 @@ impl Output<'_> {
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
-            return Ok(self.mint_reserve(w, lp)?.into_iter().collect());
+            if let Some(window) = self.mint_reserve(w, lp)? {
+                return Ok(vec![window]);
+            }
+            return self.deep_window(w, lp);
         };
-        if p.fill.is_some() {
+        // A window an enclosing loop holds on the path serves this loop's pushes too; a
+        // reservation would move the record under it.
+        if p.fill.is_some() || self.active_push_window(&p.path).is_some() {
             return Ok(Vec::new());
         }
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
@@ -3939,6 +3944,82 @@ impl Output<'_> {
         Ok(vec![(win, hdr, vec)])
     }
 
+    /// `@FR-R-PushFill`'s DEEP window clause — a loop whose fused pushes, at any depth, reach
+    /// ONE path whose push header is held and no window is open on: where
+    /// [`hoist::deep_window_ok`] admits it, a window is opened on the held header with no
+    /// reservation (its growth arm answers a fresh one) and answered for the caller to close
+    /// after the loop.  A loop nested in a windowed one finds the window open and pushes
+    /// through it.
+    fn deep_window(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<Vec<(String, String, String)>> {
+        if self.push_window_disabled || self.in_coroutine_body {
+            return Ok(Vec::new());
+        }
+        let mut paths: Vec<(hoist::PathKey, &Value, u32)> = Vec::new();
+        for op in &lp.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < self.data.definitions.len()
+                    && let Some(fp) = hoist::fused_push(self.data, self.data.def(*d).name(), args)
+                    && !paths.iter().any(|(p, _, _)| *p == fp.path)
+                {
+                    paths.push((fp.path, fp.vector, fp.size));
+                }
+                false
+            });
+        }
+        let [(path, vector, size)] = paths.as_slice() else {
+            return Ok(Vec::new());
+        };
+        if self.active_push_window(path).is_some()
+            || self.coroutine_persistent_fields.contains_key(&path.0)
+        {
+            return Ok(Vec::new());
+        }
+        let Some(hdr) = self.active_push_header(path).map(str::to_owned) else {
+            return Ok(Vec::new());
+        };
+        let facts = (!self.distinct_growth_disabled).then_some(hoist::StoreFacts {
+            vars: self.data.def(self.def_nr).variables(),
+            placed: &self.placed_locals,
+            adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+            owned: Some(&self.hoist_owned),
+            assumed: &self.assumed_distinct,
+        });
+        if let Err(why) = hoist::deep_window_ok(
+            lp,
+            path,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+            facts.as_ref(),
+        ) {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header pushes (deep) — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(Vec::new());
+        }
+        let vec = self.expr_string(vector)?;
+        self.hoist_counter += 1;
+        let win = format!("__pw_{}", self.hoist_counter);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {win} = vector::push_window(&{hdr}, {size}_u32, &stores.allocations); //@FR-R-PushFill deep window"
+        )?;
+        self.push_windows.push((path.clone(), win.clone()));
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(vec![(win, hdr, vec)])
+    }
+
     /// `@FR-R-PushFill`'s several-paths clause — reserve every path a counted loop pushes to
     /// ([`hoist::push_loop_paths`]), each its own pushes times the trip count, and only then
     /// re-derive each held push header: two vectors in one store would otherwise see the
@@ -3956,6 +4037,12 @@ impl Output<'_> {
         lp: &crate::data::Block,
         ps: &[hoist::PushLoop<'_>],
     ) -> std::io::Result<Vec<(String, String, String)>> {
+        if ps
+            .iter()
+            .any(|p| self.active_push_window(&p.path).is_some())
+        {
+            return Ok(Vec::new());
+        }
         let mut held: Vec<(String, String, u32, u32)> = Vec::new();
         for p in ps {
             if let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) {
@@ -4241,6 +4328,11 @@ impl Output<'_> {
         let Some(val) = p.fill else {
             return Ok(false);
         };
+        // A loop nested in one that holds a window on the path pushes through it: a fill
+        // writes the record's length, which the window defers.
+        if self.active_push_window(&p.path).is_some() {
+            return Ok(false);
+        }
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
             return Ok(false);
         };

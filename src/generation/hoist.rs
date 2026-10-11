@@ -5775,7 +5775,16 @@ pub fn push_window_ok(
             _ => parts.push(s),
         }
     }
-    window_parts_ok(&parts, &[root], root_is_retbuf, vars, data, stores, cache)
+    window_parts_ok(
+        &parts,
+        &[root],
+        root_is_retbuf,
+        vars,
+        data,
+        stores,
+        cache,
+        None,
+    )
 }
 
 /// `@FR-R-PushFill`'s several-paths WINDOW clause — [`push_window_ok`] for the paths of
@@ -5836,14 +5845,118 @@ pub fn push_windows_ok(
         }
     }
     let any_retbuf = roots.iter().any(|r| retbuf == Some(*r));
-    window_parts_ok(&parts, &roots, any_retbuf, vars, data, stores, cache)
+    window_parts_ok(&parts, &roots, any_retbuf, vars, data, stores, cache, None)
+}
+
+/// `@FR-R-PushFill`'s DEEP window clause — a loop whose pushes to `paths` stand at any depth
+/// (under an `if` arm, in an inner loop), with no reservation: a push that fits is the
+/// window's store and bump, one that does not takes the window's growth arm, which appends
+/// through the runtime and answers a fresh window.  So the window needs only what its
+/// address and its deferred length stand on — every root exclusive, the body outside the
+/// pushes of these paths naming no root and no variable that may view a root's store and
+/// writing no store ([`window_parts_ok`]) — and that the close after the loop runs on
+/// every way out: no `return` or `yield` in the body, and no `break` or `continue` that
+/// leaves a loop enclosing it.  Without a reservation the growth arm can run, and a growth
+/// moves every address into its store — a second window's too — so the loop pushes to ONE
+/// path: a push to any other is a store write the parts test declines.  The growth arm is
+/// the header push's own growth step, so what else the loop holds is judged as it is for
+/// the header push (`@FR-R-Alias` counts the push a mover either way).
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.  The caller
+/// keeps the header pushes, which costs the window and never a value.
+pub fn deep_window_ok(
+    lp: &Block,
+    path: &PathKey,
+    data: &Data,
+    def_nr: u32,
+    stores: Option<&Stores>,
+    cache: &mut HashMap<u32, bool>,
+    facts: Option<&StoreFacts>,
+) -> Result<(), String> {
+    fn collect<'v>(
+        n: &'v Value,
+        data: &Data,
+        path: &PathKey,
+        depth: u16,
+        parts: &mut Vec<&'v Value>,
+    ) -> Result<(), String> {
+        match n.unspan() {
+            Value::Return(_) | Value::Yield(_) => Err("the body can return".to_string()),
+            Value::Break(k) | Value::Continue(k) if *k > depth => {
+                Err("a jump leaves a loop enclosing the window".to_string())
+            }
+            Value::Break(_) | Value::Continue(_) | Value::Line(_) => Ok(()),
+            Value::If(c, t, e) => {
+                parts.push(c);
+                collect(t, data, path, depth, parts)?;
+                collect(e, data, path, depth, parts)
+            }
+            Value::Block(b) => b
+                .operators
+                .iter()
+                .try_for_each(|o| collect(o, data, path, depth, parts)),
+            Value::Loop(b) => b
+                .operators
+                .iter()
+                .try_for_each(|o| collect(o, data, path, depth + 1, parts)),
+            Value::Insert(ops) => ops
+                .iter()
+                .try_for_each(|o| collect(o, data, path, depth, parts)),
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref() == Some(path)
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(name, _, _)| *name == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                // A push contributes its value operands alone; the window is its vector.
+                parts.extend(args.iter().skip(1));
+                Ok(())
+            }
+            _ => {
+                parts.push(n);
+                Ok(())
+            }
+        }
+    }
+    let vars = data.def(def_nr).variables();
+    let root = path.0;
+    let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
+    if root >= vars.count()
+        || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
+    {
+        return Err("the pushed vector's root is not exclusive".to_string());
+    }
+    let mut parts: Vec<&Value> = Vec::new();
+    for o in &lp.operators {
+        collect(o, data, path, 0, &mut parts)?;
+    }
+    window_parts_ok(
+        &parts,
+        &[root],
+        root_is_retbuf,
+        vars,
+        data,
+        stores,
+        cache,
+        facts,
+    )
 }
 
 /// The window clause's aliasing test over the `parts` of a loop body that are NOT the
 /// pushes themselves: none names a pushed root, none names a variable that may view a
 /// root's store, and none writes a store.  Shared by the scalar window
 /// ([`push_window_ok`]), the several-paths one ([`push_windows_ok`]) and the record one
-/// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.
+/// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.  With
+/// `facts`, a variable whose store they prove apart from every root's (`@FR-R-Base`'s growth
+/// clause, an `@FR-R-Alias` versioned copy's runtime test) cannot view one either.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the window's facts, one per argument"
+)]
 fn window_parts_ok(
     parts: &[&Value],
     roots: &[u16],
@@ -5852,6 +5965,7 @@ fn window_parts_ok(
     data: &Data,
     stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
+    facts: Option<&StoreFacts>,
 ) -> Result<(), String> {
     // The variables that COULD name the root's store: asked per variable through the one
     // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
@@ -5868,6 +5982,7 @@ fn window_parts_ok(
             let record_view = plain_record_type(data, vars.tp(x))
                 .is_some_and(|tp| stores.is_some_and(|st| !st.owns_heap(tp)));
             !roots.contains(&x)
+                && !facts.is_some_and(|f| roots.iter().all(|&r| f.distinct(x, r)))
                 && !is_scalar(vars.tp(x))
                 && !matches!(vars.tp(x).base(), Type::Text(_))
                 && !owned_local(vars, x)
@@ -6126,6 +6241,10 @@ fn copies_heap_into_fresh(
 /// # Errors
 ///
 /// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.
+#[expect(
+    clippy::too_many_lines,
+    reason = "inherited; the window test's store facts wrapped its call"
+)]
 pub fn mint_window_ok(
     lp: &Block,
     m: &MintLoop,
@@ -6236,7 +6355,16 @@ pub fn mint_window_ok(
     for s in &body.operators {
         collect(s, data, &m.path, &fresh, &mut parts);
     }
-    window_parts_ok(&parts, &[root], root_is_retbuf, vars, data, stores, cache)
+    window_parts_ok(
+        &parts,
+        &[root],
+        root_is_retbuf,
+        vars,
+        data,
+        stores,
+        cache,
+        None,
+    )
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the

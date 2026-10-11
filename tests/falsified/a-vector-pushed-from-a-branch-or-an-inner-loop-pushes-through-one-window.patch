@@ -1,0 +1,13 @@
+diff --git a/src/generation/mod.rs b/src/generation/mod.rs
+index 14541d0ae..fd2f7fab7 100644
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -3894,7 +3894,7 @@ impl Output<'_> {
+         };
+         // A window an enclosing loop holds on the path serves this loop's pushes too; a
+         // reservation would move the record under it.
+-        if p.fill.is_some() || self.active_push_window(&p.path).is_some() {
++        if p.fill.is_some() {
+             return Ok(Vec::new());
+         }
+         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
