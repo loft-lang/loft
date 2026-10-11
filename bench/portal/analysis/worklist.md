@@ -132,7 +132,6 @@ time against the row measured at `7df5a4f4b`:
 |---|---|---|
 | x86-64 laptop | `index_write` (+61 % with the lock test gone), `time/parse` +28 %, `keys_near` +16 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
 | arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
-| arm64 macOS, census | `make rewrite-census`: `R-RefillBuffer` 1 → 0 in `web` and in `server` | present at `75d678f8a` before any change of this pass (the net library checkouts moved to server 0.7.5 / web 0.4.5 in step 0); not attributed |
 | x86-64 laptop | `06_newton_sqrt` +14 % (28.2 → 32.8 ms, Rust lane level) | ATTRIBUTED: `(R-RangedCall)`'s twin `n_roots__rg` is lean enough that LLVM inlines the LOOPING callee `n_newton_sqrt` into the caller's loop; out of line (`#[inline(never)]` on the emitted Rust) the row is 28.0 ms, better than before.  The same effect as the blanket `#[inline]` experiment on this row.  A general rule — no inlining of a looping callee into a loop — changes inlining everywhere and is judged on a full run, not this row.  `mesh_emit` is not a regression (native 125.5 → 94.8 µs since 09-29, its Rust lane moved); `byte_walk` swings 3.6–6.0 µs between runs on this box |
 | x86-64 laptop | random `indices` 7.61× | FIXED: the shuffle loop calls `get`, whose one inferred-range local inserts `OpRangeDefault`; its `const` bounds read as a store write, so every loop calling `get` declined the hoist.  Named store-free beside `atan2`'s dispatchers: `indices` 19.0 → 6.6 ms (2.63×), `get` 20.2 → 14.5 ms (2.57×) |
 | x86-64 laptop | `mesh_aabb` +34 % (21.0 → 28.3 µs) | not in its emission or runtime (byte-identical twin since `70079f138`, `rec_get` unchanged), most likely layout — and the row is now 17.0 µs (2.23×) through `(R-RecPtr)`'s non-null address, which also took `entity_tick` −19 % |
@@ -270,4 +269,7 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   a routine's share is its `n_bench_<row>` (or op helper) subtree.  `--names` disables
   inlining, so a small helper's share is inflated.
 - `make rewrite-census` read 1–3 low on `R-ExitVector` and `R-Header` on the aarch64 box with
-  the libraries at the baseline's commits (records.md); unexplained.
+  the libraries at the baseline's commits (records.md); unexplained.  The same box reads
+  `R-RefillBuffer` 1 → 0 in `web` and `server` with the checkout at the baseline's commit — and
+  so does the loft commit that blessed the baseline (`9c69e6d8e`, built here), so it is the
+  box, not a change.  The baseline is one host's; the census has no per-host row.
