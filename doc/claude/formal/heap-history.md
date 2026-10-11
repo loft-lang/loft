@@ -2882,5 +2882,9 @@ parameter's collection or a copy into one (no fixed place to copy into at the fr
 parameters naming one record (they may be two stores of the caller, and a copy each would split
 what one write showed through both), a record holding a stored reference, a callee answering a
 local, and a refilled local's record held from two blocks.  Reclaiming a placed record when its
-reference is re-pointed (the plan's step 10) is not built: a variable may still name it.
+reference is re-pointed (the plan's step 10) was declined (C145): a variable may still name the
+record (`q = h.r` is a view), so a free would need either a check on every variable read or a
+re-point counted as a disturbance of such views, and in both cases a test on every reference
+write.  Even then each re-point leaves its 8-byte removal mark.  The owner chose not to burden
+every program for the rare shape of a holder re-pointed to fresh records in a loop.
 

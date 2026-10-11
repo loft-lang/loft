@@ -275,6 +275,11 @@ string or a vector — so a reference may only point where nothing moves while i
 - **Removing** a record a long-term reference has named does not hand its space straight back:
   the record's position stays behind as a mark that no claim reuses, so the reference sees the
   record is gone and reads null.  The rest of the record's space is freed.
+- **Re-pointing** a reference releases nothing.  A record the compiler built in its holder's
+  store (`(H-RefHome)`) stays there until that store is freed, even when no holder names it
+  any more: freeing it would need to know that no other holder or variable still names it,
+  which is the bookkeeping this entry declines, paid on every reference write for a rare
+  shape (a holder re-pointed to fresh records in a loop).
 
 **Why.** Back references make every move a fix-up of every referrer and give every record a
 list of who points at it.  Without them a store may grow, compact and re-sort freely and a

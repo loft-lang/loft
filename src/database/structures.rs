@@ -3275,6 +3275,8 @@ impl Stores {
     /// record it names (`@FR-H-Removed`): removing that record later leaves its position
     /// behind, so this reference reads null instead of the next record claimed there.
     /// `false` when the holder has no record, for the caller to report the dropped write.
+    /// `@C145` — the record the field named before is left where it is: nothing records who
+    /// else names it.
     pub fn set_db_ref(&mut self, db: &DbRef, fld: u32, r: DbRef) -> bool {
         if db.rec == 0 {
             return false;
