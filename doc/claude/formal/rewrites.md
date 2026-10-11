@@ -455,7 +455,21 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  may view a root's store.  Two windows may address ONE store: every
                  push is counted and unconditional and every path is reserved for its
                  own count, so no push outgrows its window and no store reallocates
-                 while they are open.  THE RECORD CLAUSE:
+                 while they are open.  DEEP: a loop whose fused pushes reach ONE
+                 path at ANY depth — under `if` arms, in loops nested inside — opens a
+                 window on the push header it holds with NO reservation; a push that
+                 does not fit takes the window's growth arm, the header push's own
+                 growth step, which answers a fresh window, so what else the loop holds
+                 is judged as it is for the header push.  The body outside those pushes
+                 meets the window's naming and no-write conditions, with a variable the
+                 store facts (R-Base's growth clause, a versioned copy's runtime test)
+                 prove apart from the root admitted; no `return` or `yield` stands in
+                 it and no `break` or `continue` leaves a loop enclosing it, so the
+                 close after the loop runs on every way out.  ONE path only: an
+                 unreserved growth moves every address into its store, a second
+                 window's too.  A loop nested in a windowed one pushes through the
+                 window — its own reservation or fill would move the record or write
+                 its length under it, and steps aside.  THE RECORD CLAUSE:
                  the pushed values may be RECORD MINT GROUPS — the parser's
                  reservation, mint, field sets on the fresh element and finish —
                  standing at the body's top level or under `if` arms, each over ONE
