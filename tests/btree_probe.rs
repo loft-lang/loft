@@ -137,7 +137,7 @@ impl Probe {
         s.set_int(n, KEY0 + 8 * child_at, sep);
         s.set_i32_raw(n, REF0 + 4 * (child_at + 1), new as i32);
         s.set_i32_raw(n, COUNT, (c + 1) as i32);
-        if c + 1 <= F {
+        if c < F {
             return None;
         }
         // Split the internal node: F + 1 children, the middle separator moves up.
