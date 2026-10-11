@@ -18,6 +18,15 @@
 //! ones it reported.  The pass does not look inside `if` arms or nested statement blocks: a read
 //! one arm makes is not a read the other arm can reuse.
 //!
+//! THE GUARD CLAUSE — `if a < cum + p.count { return … }` followed by `cum += p.count`: the
+//! condition of an `if` whose arm LEAVES (its last statement a `return`, `break` or
+//! `continue`, and no `else`) evaluates a pure expression the very next statement evaluates
+//! again.  On the path that reaches that statement nothing ran in between, so both answer the
+//! same; the expression is bound once before the `if`.  A variable and a literal is not bound:
+//! that is a counter's step, a spelling the counter rewrites read.  Checked arithmetic is admitted: an
+//! overflow is still reported, once where the program spelled it twice (the owner's ruling,
+//! formal/rewrites.md `(R-SameRead)`).
+//!
 //! `LOFT_NO_SAME_READ=1` keeps every read; `LOFT_TRACE_SAME_READ=1` names each statement it binds.
 use crate::data::{Block, Data, DefType, Value};
 
@@ -189,6 +198,159 @@ fn replace(v: &mut Value, block: &Value, t: u16) {
     }
 }
 
+/// Does `v` LEAVE — a `return`, `break` or `continue`, or a block whose last statement does?
+fn leaves(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Return(_) | Value::Break(_) | Value::Continue(_) => true,
+        Value::Block(b) => b
+            .operators
+            .iter()
+            .rev()
+            .find(|o| !matches!(o, Value::Line(_)))
+            .is_some_and(leaves),
+        _ => false,
+    }
+}
+
+/// An arm that runs nothing: absent, or an empty block.
+fn empty_arm(v: &Value) -> bool {
+    match v.unspan() {
+        Value::Null => true,
+        Value::Block(b) => b.operators.iter().all(|o| matches!(o, Value::Line(_))),
+        _ => false,
+    }
+}
+
+/// The pure computations of `v` evaluated on every evaluation of `v` — not inside an `if`
+/// arm or a block, so not under a short-circuit — outermost first: each pure call, before
+/// the calls inside it.
+fn computed<'a>(data: &Data, v: &'a Value, out: &mut Vec<&'a Value>) {
+    if let Value::Call(_, args) = v.unspan() {
+        // A variable and a literal is a counter's step (`i = i - 1`), a spelling the
+        // counter rewrites (R-Counter, R-GuardedChain) and the range proofs recognise; it
+        // costs one operation, and stays.
+        let step = args.len() == 2
+            && args.iter().any(|a| matches!(a.unspan(), Value::Var(_)))
+            && args
+                .iter()
+                .any(|a| matches!(a.unspan(), Value::Int(_) | Value::Long(_)));
+        if pure(data, v) && !step && args.iter().any(|a| !matches!(a.unspan(), Value::Int(_))) {
+            out.push(v);
+        }
+        for a in args {
+            computed(data, a, out);
+        }
+    }
+}
+
+/// Does `v` evaluate `e` on every evaluation (outside `if` arms and blocks)?
+fn evaluates(v: &Value, e: &Value) -> bool {
+    if same_read(v, e) {
+        return true;
+    }
+    match v.unspan() {
+        Value::Call(_, args) => args.iter().any(|a| evaluates(a, e)),
+        _ => false,
+    }
+}
+
+fn replace_expr(v: &mut Value, e: &Value, t: u16) -> usize {
+    if same_read(v, e) {
+        *v = Value::Var(t);
+        return 1;
+    }
+    match v {
+        Value::Call(_, args) => args.iter_mut().map(|a| replace_expr(a, e, t)).sum(),
+        Value::Span(s) => replace_expr(&mut s.1, e, t),
+        _ => 0,
+    }
+}
+
+/// THE GUARD CLAUSE over one block's statements: per `if` whose arm leaves, the pure
+/// computations of its condition the next statement's assigned value repeats, bound once
+/// before the `if`.  A computation with a scalar result only — the local holds a value.
+fn bind_guards(
+    data: &Data,
+    vars: &mut crate::variables::Function,
+    scope: u16,
+    ops: &[Value],
+) -> (Vec<Value>, usize) {
+    let mut out: Vec<Value> = Vec::with_capacity(ops.len());
+    let mut bound = 0;
+    let mut at = 0;
+    while at < ops.len() {
+        let next = (at + 1..ops.len()).find(|&n| !matches!(ops[n], Value::Line(_)));
+        let shared: Vec<Value> = match (ops[at].unspan(), next.map(|n| ops[n].unspan())) {
+            (Value::If(cond, then_arm, else_arm), Some(Value::Set(_, val)))
+                if leaves(then_arm) && empty_arm(else_arm) =>
+            {
+                let mut cands = Vec::new();
+                computed(data, cond, &mut cands);
+                // The largest the next statement repeats: a computation inside one already
+                // kept is bound with it.
+                let mut kept: Vec<&Value> = Vec::new();
+                for cand in cands {
+                    if evaluates(val, cand) && !kept.iter().any(|held| evaluates(held, cand)) {
+                        kept.push(cand);
+                    }
+                }
+                kept.into_iter().cloned().collect()
+            }
+            _ => Vec::new(),
+        };
+        if shared.is_empty() {
+            out.push(ops[at].clone());
+            at += 1;
+            continue;
+        }
+        let nx = next.expect("a next statement");
+        let mut guard = ops[at].clone();
+        let mut after: Vec<Value> = ops[at + 1..=nx].to_vec();
+        for e in shared {
+            let Value::Call(op, _) = e.unspan() else {
+                continue;
+            };
+            let tp = data.def(*op).returned().clone();
+            // The local takes the op's declared type whole, a `τ?` wrapper included; the
+            // scalar test reads through it.
+            if !matches!(
+                tp.base(),
+                crate::data::Type::Integer(..)
+                    | crate::data::Type::Float
+                    | crate::data::Type::Single
+                    | crate::data::Type::Boolean
+            ) {
+                continue;
+            }
+            let t = vars.add_unique("same_read", &tp, scope);
+            let in_guard = match &mut guard {
+                Value::If(c, _, _) => replace_expr(c, &e, t),
+                Value::Span(s) => match &mut s.1 {
+                    Value::If(c, _, _) => replace_expr(c, &e, t),
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            let last = after.last_mut().expect("the next statement");
+            let in_next = match last {
+                Value::Set(_, v) => replace_expr(v, &e, t),
+                Value::Span(s) => match &mut s.1 {
+                    Value::Set(_, v) => replace_expr(v, &e, t),
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            debug_assert!(in_guard > 0 && in_next > 0);
+            out.push(Value::Set(t, Box::new(e)));
+            bound += 1;
+        }
+        out.push(guard);
+        out.extend(after);
+        at = nx + 1;
+    }
+    (out, bound)
+}
+
 /// Bind the repeated reads of every statement of every block in `v`; answers how many.
 fn rewrite_in(
     data: &Data,
@@ -215,8 +377,14 @@ fn rewrite_in(
         out.extend(before);
         out.push(stmt);
     }
+    let (out, g) = bind_guards(data, vars, *scope, &out);
+    if g > 0 && trace() {
+        eprintln!(
+            "same-read: {fname} binds {g} computation(s) a guard shares with its next statement"
+        );
+    }
     *operators = out;
-    n
+    n + g
 }
 
 /// Bind the repeated reads of every statement in the program; answers how many.
@@ -230,14 +398,17 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         if def.def_type != DefType::Function || matches!(def.code(), Value::Null) {
             continue;
         }
+        // Two discharged reads (the statement clause) or an `if` (the guard clause).
         let mut found = 0usize;
+        let mut guard = false;
         def.code().any_node(&mut |n| {
             if discharge(n).is_some() {
                 found += 1;
             }
-            found >= 2
+            guard |= matches!(n, Value::If(..));
+            found >= 2 || guard
         });
-        if found < 2 {
+        if found < 2 && !guard {
             continue;
         }
         let fname = def.name().to_string();

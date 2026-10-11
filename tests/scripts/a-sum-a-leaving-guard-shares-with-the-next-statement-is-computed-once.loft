@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A SUM A LEAVING GUARD SHARES WITH THE NEXT STATEMENT IS COMPUTED ONCE (`@FR-R-SameRead`'s
+// guard clause).  `if a < cum + c { return … }` followed by `cum += c`: on the path that
+// reaches the second statement nothing ran since the condition, so `cum + c` is bound once
+// before the `if`.  Only an arm that leaves (`return`, `break`, `continue`) with no `else`
+// qualifies; an arm that falls through may change what the sum reads.  An overflow is still
+// reported, once.
+//
+// Expected values by hand — counts 3, 5, 2, 7 (prefix sums 3, 8, 10, 17):
+// locate(9)       9 >= 3, 9 >= 8, 9 < 10: piece 2, offset 9 - 8 = 1 → 2*100 + 1 = 201.
+// locate(20)      past the end: 4*100 + 0 = 400.
+// brk(9)          stops at piece 2 with cum 8 → 2*1000 + 8 = 2008.
+// with_else(9)    the else arm adds 100 to cum before `cum += c`: 0+100+3, then
+//                 103 >= 8? 103 < 108 so it stops at piece 1 → 1*1000 + 103 = 1103.
+// stays(9)        the arm resets cum to 0 and falls through: piece 0: 9 < 3? no; cum 3;
+//                 9 < 8? no; cum 8; 9 < 10: cum = 0 then cum += 2 → 2; 9 < 9? no; cum 9
+//                 → 9.
+// gated(9, false) the sum sits behind `ok &&`: never stops, cum 17 → 17.
+// gated(9, true)  as locate: stops at piece 2 → 2*1000 + 8 = 2008.
+// overflow(1000)  cum near the maximum: the sum overflows to null, `null == 5` is false,
+//                 and cum becomes null → 2.  The null test after `cum += c` makes that add
+//                 the DEFENDED, silent operator and the guard's the reporting one: two
+//                 operators, not one computation, so it is not bound.
+// floats(2.5)     0.5, 1.25, 2.0, 0.75: sums 0.5, 1.75, 3.75: stops at piece 2, cum 1.75.
+// skip(9)         `continue` past the pieces with a count over 4: 3 + 2 = 5, stopping never
+//                 (9 >= 3, 9 >= 5) → 5.
+//
+// @falsified-by: tests/falsified/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions on both backends — with the arm conditions dropped, `with_else` binds
+// the sum its else arm makes stale.  LOFT_NO_SAME_READ=1 is the switch A/B.
+fn counts() -> vector<integer> { [3, 5, 2, 7] }
+fn locate(a: integer) -> integer {
+  v = counts();
+  cum = 0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0;
+    if a < cum + c { return i * 100 + a - cum; }
+    cum += c;
+  }
+  len(v) * 100
+}
+fn brk(a: integer) -> integer {
+  v = counts();
+  cum = 0;
+  at = 0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0;
+    at = i;
+    if a < cum + c { break; }
+    cum += c;
+  }
+  at * 1000 + cum
+}
+fn with_else(a: integer) -> integer {
+  v = counts();
+  cum = 0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0;
+    if a < cum + c { return i * 1000 + cum; } else { cum += 100; }
+    cum += c;
+  }
+  cum
+}
+fn stays(a: integer) -> integer {
+  v = counts();
+  cum = 0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0;
+    if a < cum + c { cum = 0; }
+    cum += c;
+  }
+  cum
+}
+fn gated(a: integer, ok: boolean) -> integer {
+  v = counts();
+  cum = 0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0;
+    if ok && a < cum + c { return i * 1000 + cum; }
+    cum += c;
+  }
+  cum
+}
+fn overflow(c: integer) -> integer {
+  cum = 9223372036854775000;
+  if cum + c == 5 { return 1; }
+  cum += c;
+  if !cum { 2 } else { 3 }
+}
+fn floats(a: float) -> float {
+  v = [0.5, 1.25, 2.0, 0.75];
+  cum = 0.0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0.0;
+    if a < cum + c { return cum; }
+    cum += c;
+  }
+  cum
+}
+fn skip(a: integer) -> integer {
+  v = counts();
+  cum = 0;
+  for i in 0..len(v) {
+    c = v[i] ?? 0;
+    if c > 4 { continue; }
+    if a < cum + c { return 1000 + cum; }
+    cum += c;
+  }
+  cum
+}
+fn main() {
+  assert(locate(9) == 201, "the locate shape");
+  assert(locate(20) == 400, "past the end");
+  assert(brk(9) == 2008, "a guard that breaks");
+  assert(with_else(9) == 1103, "an else arm falls through");
+  assert(stays(9) == 9, "an arm that falls through and rewrites the sum's operand");
+  assert(gated(9, false) == 17, "the sum behind a short circuit that is false");
+  assert(gated(9, true) == 2008, "the sum behind a short circuit that is true");
+  assert(overflow(1000) == 2, "an overflowing sum");
+  assert(floats(2.5) == 1.75, "a float sum");
+  assert(skip(9) == 5, "a continue before the guard");
+}

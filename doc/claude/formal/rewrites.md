@@ -4464,7 +4464,19 @@ native: 4 stores, 30 claims and 10 deletes → 3, 17 and 5, and −43 % time.  S
                  (arithmetic, comparison, conversion, a read), so nothing assigns a local or
                  writes a store between the reads; a read inside an `if` arm is not
                  collected.  A discharged read raises no fault, so the faults reported are
-                 the faults reported today.
+                 the faults reported today.  THE GUARD CLAUSE: an `if` whose arm LEAVES
+                 (its last statement a `return`, `break` or `continue`) and that has no
+                 `else`, followed directly by an assignment, shares with it every pure
+                 computation its condition evaluates outside a short circuit and the
+                 assignment's value repeats — `if a < cum + c { return … }; cum += c`.
+                 On the path that reaches the assignment nothing ran since the
+                 condition, so the computation is bound once before the `if`, the
+                 largest the two share; a variable with a literal (a counter's step,
+                 which the counter rewrites read by its spelling) is not.  Checked
+                 arithmetic is admitted: an overflow is still reported, once where the
+                 program spelled it twice — a fault is owed a report, not a count
+                 (owner, 2026-10-11).  A defended site's silent operator is another
+                 operator than the reporting one and is never the same computation.
 ```
 
 **In words.** Applied by: `same_read::rewrite_program`, in the IR phase (both backends; native
@@ -4475,7 +4487,9 @@ taken as pure made `v[0]? + set_first(v) + v[0]?` read 198 for 103.  The first
 version compared reads exactly and bound nothing: the two spellings carry different source
 positions.  Measured on `index_read` by the hand-written form: −31 % interpreted.
 `LOFT_NO_SAME_READ=1`, `LOFT_TRACE_SAME_READ=1`.  Guards
-`tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft` and `tests/same_read.rs`
+`tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft`,
+`tests/scripts/a-sum-a-leaving-guard-shares-with-the-next-statement-is-computed-once.loft`
+(the guard clause; zttext `locate`'s shape) and `tests/same_read.rs`
 (which statements bind; the cells with the rewrite off).
 
 ### `(R-InlineLeaf)` takes a tuple result
