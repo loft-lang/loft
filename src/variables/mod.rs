@@ -225,6 +225,11 @@ pub struct Variable {
     /// last-use reclaim leave it alone.  Set by `Parser::check_reshape_under_reference` from
     /// `scopes::stored_reference_homes`; read by the scope pass only.
     ref_home: bool,
+    /// `@FR-H-RefHome` — a call's return buffer claimed in a stored reference's holder's store
+    /// (`OpPlaceRecord`): the record the call writes into it lives in that store, so a variable
+    /// the scope pass binds the call's result to is not freed.  Set by
+    /// `Parser::check_reshape_under_reference`; read by `scopes::keep_placed_results`.
+    place_buffer: bool,
     /// Mentions counted in `uses` that were the TARGET of an `=` (loft#1816), which the lints
     /// do not count as reads; see [`Function::reads`].
     target_mentions: u16,
@@ -435,6 +440,12 @@ pub struct Function {
     /// too made store confinement free that store at its own block's exit), so a closure
     /// capture of the result learns the other arm here: `scopes::capture_join_candidates`.
     join_owners: HashMap<u16, Vec<u16>>,
+    /// `@FR-H-RefHome` — the stored references to copy out before a local's store is freed:
+    /// `[holder, field offset, owner, record type]`, the holder a parameter whose field may
+    /// name a record of the store `owner` owns.  Set by `Parser::check_reshape_under_reference`
+    /// from `scopes::stored_reference_homes`; read by `scopes::insert_evacuations` after the
+    /// scope pass has placed the frees.
+    ref_evacuations: Vec<[u16; 4]>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -782,6 +793,7 @@ impl Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
+            ref_evacuations: Vec::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -955,6 +967,7 @@ impl Function {
                 uses_at_write: 0,
                 incoming_seed: false,
                 ref_home: false,
+                place_buffer: false,
                 target_mentions: 0,
                 incoming_reported: false,
                 write_source: (0, 0),
@@ -1011,6 +1024,7 @@ impl Function {
         // parsing (loft#1721).
         self.join_owners.clear();
         self.join_owners.clone_from(&other.join_owners);
+        self.ref_evacuations.clone_from(&other.ref_evacuations);
         // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
         // the mark at that local's own declaration (loft#1616).
         self.nullable_text_buffers.clear();
@@ -1093,6 +1107,7 @@ impl Function {
             pass2_rebuilt: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
+            ref_evacuations: other.ref_evacuations.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -2867,6 +2882,7 @@ impl Function {
             uses_at_write: 0,
             incoming_seed: false,
             ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
@@ -2924,6 +2940,7 @@ impl Function {
             uses_at_write: self.variables[var as usize].uses_at_write,
             incoming_seed: false,
             ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: self.variables[var as usize].user_named,
@@ -2977,6 +2994,7 @@ impl Function {
             uses_at_write: 0,
             incoming_seed: false,
             ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
@@ -3026,6 +3044,7 @@ impl Function {
             uses_at_write: 0,
             incoming_seed: false,
             ref_home: false,
+            place_buffer: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
@@ -4052,8 +4071,6 @@ impl Function {
         self.variables[var_nr as usize].view_elided = true;
     }
 
-    /// Mark `var_nr` as a hidden return buffer minted at its first use — see the
-    /// field's own doc (`@FR-O-LazyBuffer`).
     /// `@FR-H-RefHome` — see the field's own doc.
     pub fn mark_ref_home(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].ref_home = true;
@@ -4064,6 +4081,31 @@ impl Function {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].ref_home
     }
 
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn add_ref_evacuation(&mut self, holder: u16, fld: u16, owner: u16, tp: u16) {
+        let e = [holder, fld, owner, tp];
+        if !self.ref_evacuations.contains(&e) {
+            self.ref_evacuations.push(e);
+        }
+    }
+
+    #[must_use]
+    pub fn ref_evacuations(&self) -> &[[u16; 4]] {
+        &self.ref_evacuations
+    }
+
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn mark_place_buffer(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].place_buffer = true;
+    }
+
+    #[must_use]
+    pub fn is_place_buffer(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].place_buffer
+    }
+
+    /// Mark `var_nr` as a hidden return buffer minted at its first use — see the
+    /// field's own doc (`@FR-O-LazyBuffer`).
     pub fn mark_lazy_buffer(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].lazy_buffer = true;
     }
@@ -4420,7 +4462,6 @@ impl Function {
         self.names.insert(name.to_string(), new_var);
     }
 
-    #[allow(dead_code)]
     pub fn rename(&mut self, v: u16, new_name: &str) {
         self.variables[v as usize].name = new_name.to_string();
     }

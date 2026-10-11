@@ -130,6 +130,11 @@ fn admitted(data: &Data, d_nr: u32, ops: &Ops) -> Option<(Vec<Plan>, u16, Value)
     let guard = guard_template(code, rb, ops)?;
     let mut plans = Vec::new();
     for (vdb, v, wtp, mint) in cands {
+        // `@FR-H-RefHome` — a stored reference names a record of this store, and its copy-out
+        // before the free tells the store apart by number: it must stay the local's own.
+        if function.is_ref_home(vdb) || function.is_ref_home(v) {
+            continue;
+        }
         let mut cx = Cx {
             data,
             ops,

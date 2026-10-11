@@ -1312,7 +1312,7 @@ impl Stores {
     /// declined with it, as is a type the walk does not know — the conservative answer,
     /// because a wrong `true` reads another store's records.  A type already on the walk
     /// (a vector of its own type) adds no new kind of field and answers `true`.
-    fn tree_holds_no_stored_refs(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
+    pub(crate) fn tree_holds_no_stored_refs(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
         use crate::database::Parts;
         if walking.contains(&tp) {
             return true;
@@ -1595,6 +1595,9 @@ impl Stores {
             return;
         }
         let al = db.store_nr;
+        if !self.evacuated.is_empty() {
+            self.evacuated.retain(|((old, _), _)| old.store_nr != al);
+        }
         // `LOFT_TRACE_DB` — the free half of the OpDatabase trace.  `already_free`
         // is the load-bearing column: a free of a slot that is still IN USE means
         // the DbRef reaching this call is not the current owner's, so the slot is
@@ -3021,6 +3024,7 @@ impl Stores {
             lazy_errors: std::collections::HashMap::new(),
             paged_refusal: None,
             live_scratches: Vec::new(),
+            evacuated: Vec::new(),
             lazy_driver_allocs: None,
             files: Vec::new(),
             max: (self.allocations.len() + scratch_stores) as u16,

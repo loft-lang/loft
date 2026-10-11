@@ -836,16 +836,35 @@ impl Stores {
             .map(|i| i as u16)
     }
 
-    /// `@FR-H-RefHome` — the record type a vector-like collection type holds, for a place
-    /// that is one of its elements.
+    /// `@FR-H-RefHome` — the record type a collection type holds, for a place that is one of
+    /// its elements: a vector-like one's, or a keyed one's (`hash`, `index`, `spatial`, a
+    /// trie), whose element a key lookup (`OpGetRecord`) names.
     #[must_use]
     pub fn collection_content(&self, tp: u16) -> Option<u16> {
         match &self.types.get(tp as usize)?.parts {
-            Parts::Vector(c) | Parts::Array(c) | Parts::Sorted(c, _) | Parts::Ordered(c, _) => {
-                Some(*c)
-            }
+            Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Sorted(c, _)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Index(c, _, _)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _) => Some(*c),
             _ => None,
         }
+    }
+
+    /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
+    /// record type `struct_tp` names: the type a copy of its record is made as.
+    #[must_use]
+    pub fn reference_field_target(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types.get(struct_tp as usize)?.parts
+        else {
+            return None;
+        };
+        let f = fields.iter().find(|f| f.position == byte_off)?;
+        (f.target != u16::MAX).then_some(f.target)
     }
 
     /// `@FR-H-RefHome` — the name of the field at byte `byte_off` of record type `struct_tp`
@@ -3271,6 +3290,40 @@ impl Stores {
             target.note_referenced(r.rec);
         }
         true
+    }
+
+    /// `@FR-H-RefHome` (`OpEvacuate`) — the store `home` names is about to be freed: when the
+    /// stored reference at byte `fld` of `holder` names a record in it, that record is copied
+    /// as a `tp` record into the holder's own store and the reference names the copy.  A null
+    /// or removed reference, one naming another store, and a holder inside the store being
+    /// freed are left as they are.  Two holders in one store that named one record name one
+    /// copy, so a write through either still shows through the other.
+    pub fn evacuate(&mut self, holder: &DbRef, fld: u32, home: &DbRef, tp: u16) {
+        if holder.rec == 0
+            || holder.store_nr == u16::MAX
+            || home.store_nr == u16::MAX
+            || holder.store_nr == home.store_nr
+            || (holder.store_nr as usize) >= self.allocations.len()
+        {
+            return;
+        }
+        let old = self.get_db_ref(holder, fld);
+        if old.rec == 0 || old.store_nr != home.store_nr {
+            return;
+        }
+        let key = (old, holder.store_nr);
+        let copy = if let Some((_, copy)) = self.evacuated.iter().find(|(k, _)| *k == key) {
+            *copy
+        } else {
+            let copy = self.place_record_prefilled(holder, tp);
+            let size = u32::from(self.size(tp));
+            self.remove_claims(&copy, tp);
+            self.copy_block(&old, &copy, size);
+            self.copy_claims(&old, &copy, tp);
+            self.evacuated.push((key, copy));
+            copy
+        };
+        self.set_db_ref(holder, fld, copy);
     }
 
     #[must_use]

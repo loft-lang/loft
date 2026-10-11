@@ -9,14 +9,39 @@ Tracker: [@PLN189](https://github.com/loft-lang/plans/issues/189).
 
 ## Status
 
-**Needs approval — design ready, nothing built.**  `(H-RefHome)` (formal/heap.md) moves a named
-local's store out to a holder of an enclosing block of the same function.  It refuses nine
-shapes, the ones no variable of the frame can own.  Their guard is
-`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`.  This plan admits
-them in eleven small steps.  Each step lowers one shape to operators both backends already run,
-and keeps every other shape refused, so the tree is releasable after every step.  Approval is
-needed because the rule changes: from *"does not outlive the home"* to *"lives as long as the
-store of its holder"*.  Step 10 (records left without an owner) needs its own decision.
+**Built — steps 0–6, 8, 9 and 11; step 7 kept refused; step 10 not built (needs a decision).**
+`(H-RefHome)` now reads *"a record a stored reference names lives as long as the store of its
+holder"* (formal/heap.md).  Guards:
+`tests/scripts/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft` (29 cells,
+both backends) and the refusal guard
+`tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft` (9 shapes).
+
+Where the build departs from the steps below:
+
+- **Step 3** admits a callee whose every exit is a literal minted behind the offered-record
+  test (`place_result::callee_keeps_an_offered_record`); a callee that rebinds or hands its
+  buffer on is refused with A8.
+- **Step 6** copies out only through a parameter's fixed place: the parameter itself or a
+  constant field of it (`Walk::fixed_place`).  An element of a parameter's collection has no
+  fixed place at the free and stays refused.
+- **Step 7 (B4) stays refused.**  The element `_elm` names may move when its collection grows
+  before the home's free, and a copy right after the append would split the aliasing the
+  language promises for the rest of the function: a write into the local after the append would
+  not show through the element.
+- **Step 8 (B7)** shares one copy only between holders in ONE store (two fields of one
+  parameter).  Two parameters naming one record are refused: they may be two stores of the
+  caller, and a copy each would split what one write showed through both; a single copy in one
+  of them would dangle once that store is freed before the other.
+- **Step 4** also admits a second holder of the same block (C2 reads `1 0`); holders of two
+  blocks are refused.
+- **Step 10 is not built.**  Freeing a placed record when its reference is re-pointed is unsound
+  as specified: a variable can still name the record — `p` in `p = P {…}; h.r = p; h.r = q;
+  p.k`, or a view the copy analyses elided — and a variable read does not check the removal
+  mark, so it would read a freed record.  Without step 10 a holder re-pointed in a loop keeps
+  every earlier record in its store until the store is freed (A6: 1000 records after 1000
+  re-points).  Open question 2 below needs the owner's answer before it is built.
+- Found on the way and fixed: a write into a keyed collection's element was never judged
+  (loft#1978); the guard's `a_keyed_element_holder` cell keeps it.
 
 ## Goal
 
@@ -27,7 +52,7 @@ No program is refused for where it stores a reference, and nothing is added on t
 
 - **Effort:** M overall; every step is S.
 - **Design:** ✓ for steps 0–9 and 11; ~ for step 10, whose semantics are the owner's call.
-- **Last touched:** 2026-10-11.
+- **Last touched:** 2026-10-11 (built, see Status).
 
 ## The shapes, and what each lowers to today
 

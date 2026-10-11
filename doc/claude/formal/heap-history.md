@@ -2856,3 +2856,31 @@ the marks `(H-Removed)` keeps; the reinitialisation now carries them over, so a 
 from an earlier pass reads null rather than the next pass's record.  The same walk found a
 record assigned to a record (`h = t`) carrying references the analysis did not see: before, it
 compiled and read a freed store.
+
+## Measurements moved out of the working rules (2026-10-11)
+
+- *The write through nullref.* `v[9] = x` on a three-element vector and `absent.f = x` through a
+  keyed miss were measured on both backends: value, length and the neighbouring records all
+  unchanged.  `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft` also pins that a
+  heap-owning literal written there is released and its source untouched, and that every
+  native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
+  fill, the record-view address, the guarded index chain — answers the same.
+- *A drop has no safe direction.* Measured on loft#1515's shared-destination shape: giving
+  `drop_transferred` a per-path merge turned every lost hook in that family into a doubled one.
+
+## (H-RefHome): the holder's store keeps the record (2026-10-11, @PLN189)
+
+The rule moved from *"a stored reference does not outlive the home of its record"* to *"a
+record a stored reference names lives as long as the store of its holder"*.  Of the nine shapes
+the hoist still refused, a literal and a call result per loop pass, a literal into a parameter
+or a returned holder, and a refilled local's own record are built in the holder's store
+(`OpPlaceRecord`); a parameter's or the returned value's record is copied out of its home right
+before the home's store is freed (`OpEvacuate`).  With the analysis withheld those programs read
+the last pass's record, `777`, or a garbage integer.  Building it found a write into a keyed
+collection's element that the walk never judged (loft#1978).  Kept refused: an element of a
+parameter's collection or a copy into one (no fixed place to copy into at the free), two
+parameters naming one record (they may be two stores of the caller, and a copy each would split
+what one write showed through both), a record holding a stored reference, a callee answering a
+local, and a refilled local's record held from two blocks.  Reclaiming a placed record when its
+reference is re-pointed (the plan's step 10) is not built: a variable may still name it.
+

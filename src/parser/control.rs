@@ -11469,6 +11469,62 @@ impl Parser {
             };
             diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
         }
+        let ops = crate::scopes::PlaceOps {
+            set_db_ref: self.data.def_nr("OpSetDbRef"),
+            database: self.data.def_nr("OpDatabase"),
+            place_record: self.data.def_nr("OpPlaceRecord"),
+        };
+        let mut placing: Vec<u32> = found
+            .places
+            .iter()
+            .map(|p| p.d_nr)
+            .filter(|&d| !self.data.def(d).variables.done)
+            .collect();
+        placing.sort_unstable();
+        placing.dedup();
+        for d in placing {
+            // `@FR-H-RefHome` — a literal or call result written into a holder that outlives
+            // it is built in the holder's store, by a fresh variable that borrows the holder.
+            let def = &mut self.data.definitions[d as usize];
+            let mut here = Vec::new();
+            for p in found.places.iter().filter(|p| p.d_nr == d) {
+                if here
+                    .iter()
+                    .any(|(o, _, _): &(&crate::scopes::Place, u16, Type)| {
+                        o.site == p.site || (p.own && o.own && o.home == p.home)
+                    })
+                {
+                    continue;
+                }
+                let tp = crate::scopes::borrowing(def.variables.tp(p.home), p.host);
+                if p.own {
+                    // The local itself borrows the holder's store: no free is emitted for it.
+                    def.variables.set_type(p.home, tp.clone());
+                    here.push((p, p.home, tp));
+                    continue;
+                }
+                let fresh = def.variables.copy_variable(p.home);
+                // Its own name: the native backend names a local by it, and a second
+                // `__ref_p2_1` would shadow the temporary the exit frees.
+                def.variables.rename(fresh, &format!("__place_{fresh}"));
+                def.variables.set_type(fresh, tp.clone());
+                here.push((p, fresh, tp));
+            }
+            crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, &ops);
+        }
+        for e in &found.evacuations {
+            if self.data.def(e.d_nr).variables.done {
+                continue;
+            }
+            // `@FR-H-RefHome` — a record a parameter's reference names is copied out of its
+            // home before the home's store is freed; the store stays the home's own.
+            let def = &mut self.data.definitions[e.d_nr as usize];
+            for &owner in &e.owners {
+                def.variables.mark_ref_home(owner);
+                def.variables
+                    .add_ref_evacuation(e.holder, e.fld, owner, e.tp);
+            }
+        }
         let mut fresh: Vec<u32> = found
             .hoists
             .iter()

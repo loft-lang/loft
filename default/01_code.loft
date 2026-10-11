@@ -1760,6 +1760,13 @@ fn OpCopyRecord(data: reference, to: reference, tp: const u16);
 fn OpPlaceRecord(host: reference, tp: const u16) -> reference;
 #rust"stores.place_record_prefilled(&@host, @tp)"
 #impure(parent_write)
+// `@FR-H-RefHome` — the store `home` names is about to be freed: when the stored reference at
+// byte `fld` of `holder` names a record of it, the record is copied as a `tp` record into the
+// holder's own store and the reference names the copy.  Anything else is left as it is.
+fn OpEvacuate(holder: reference, fld: const u16, home: reference, tp: const u16);
+#cold
+#rust"stores.evacuate(&@holder, u32::from(@fld), &@home, @tp);"
+#impure(parent_write)
 // @PLN164 B2 (`@FR-R-MoveLast`) — the last-use store of an owned record local into a
 // field, consuming the source: within one store the bytes relocate (the heap handles keep
 // their claims) and the source's block is released; across stores it is `OpCopyRecord`'s

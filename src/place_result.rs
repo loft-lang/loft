@@ -261,6 +261,11 @@ fn placeable_bind(data: &Data, function: &Function, v: u16, fn_nr: u32) -> bool 
     if function.is_argument(v) || function.is_caller_hidden_buf(v) || function.is_skip_free(v) {
         return false;
     }
+    // `@FR-H-RefHome` — a stored reference names a record of `v`'s store, and its copy-out
+    // before the free tells the store apart by number: it must stay `v`'s own.
+    if function.is_ref_home(v) {
+        return false;
+    }
     // A compiler temporary (`__ret_N`, `__lift_N`, a work-ref) is never the shape.
     !function.name(v).starts_with("__")
 }
@@ -405,6 +410,73 @@ fn own_return_buffer(data: &Data, d_nr: u32) -> Option<u16> {
 /// answers something other than the buffer.
 fn callee_writes_buffer_at_every_exit(data: &Data, fn_nr: u32, buf_idx: usize) -> bool {
     chain_writes_buffer(data, fn_nr, buf_idx, &mut HashSet::new())
+}
+
+/// `@FR-H-RefHome` — may a caller hand callee `fn_nr` a record claimed in another store as its
+/// buffer (argument `buf_idx`)?  Every exit writes that buffer as a literal (the callee
+/// clause, [`callee_writes_buffer_at_every_exit`]), and every mint of it stands in the else
+/// arm of the offered-record test, so an offered record is written where it is.  An
+/// unguarded `OpDatabase` on a placed record would re-initialise the whole store it lives in.
+/// A buffer the callee rebinds or hands on is a chain whose mints this does not follow, so it
+/// answers no; so does any other node naming the buffer outside a read, since a no only keeps
+/// the refusal.
+pub(crate) fn callee_keeps_an_offered_record(data: &Data, fn_nr: u32, buf_idx: usize) -> bool {
+    if !callee_writes_buffer_at_every_exit(data, fn_nr, buf_idx) {
+        return false;
+    }
+    let def = data.def(fn_nr);
+    let Some(attr) = def.attributes().get(buf_idx) else {
+        return false;
+    };
+    let buf = def.variables().var(&attr.name);
+    let database = data.def_nr("OpDatabase");
+    let offered = data.def_nr("OpConvBoolFromRef");
+    mints_behind_offer(data, def.code(), buf, false, database, offered)
+}
+
+fn mints_behind_offer(
+    data: &Data,
+    node: &Value,
+    buf: u16,
+    under_offer: bool,
+    database: u32,
+    offered: u32,
+) -> bool {
+    let on_buf = |args: &[Value]| matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == buf);
+    match node.unspan() {
+        Value::If(cond, then_arm, else_arm) => {
+            let tests_offer = cond.any_node(
+                &mut |n| matches!(n, Value::Call(d, args) if *d == offered && on_buf(args)),
+            );
+            mints_behind_offer(data, cond, buf, under_offer, database, offered)
+                && mints_behind_offer(data, then_arm, buf, under_offer, database, offered)
+                && mints_behind_offer(
+                    data,
+                    else_arm,
+                    buf,
+                    under_offer || tests_offer,
+                    database,
+                    offered,
+                )
+        }
+        Value::Call(d, args) if *d == database && on_buf(args) => under_offer,
+        Value::Call(d, args)
+            if data.def(*d).is_loft_defined()
+                && args
+                    .iter()
+                    .any(|a| matches!(a.unspan(), Value::Var(w) if *w == buf)) =>
+        {
+            false
+        }
+        Value::Set(w, _) if *w == buf => false,
+        other => {
+            let mut ok = true;
+            other.for_each_child(&mut |c| {
+                ok = ok && mints_behind_offer(data, c, buf, under_offer, database, offered);
+            });
+            ok
+        }
+    }
 }
 
 fn chain_writes_buffer(data: &Data, fn_nr: u32, buf_idx: usize, active: &mut HashSet<u32>) -> bool {

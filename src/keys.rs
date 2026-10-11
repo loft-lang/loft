@@ -2399,8 +2399,8 @@ pub fn callee_disturb_enabled() -> bool {
 }
 
 /// `@FR-H-RefHome` — `LOFT_NO_REF_HOME=1` withholds the analysis of a stored reference whose
-/// holder outlives the record it names (`scopes::stored_reference_homes`): neither the refusal
-/// nor the move of the home's store to the holder's block.  The bisect step when a program
+/// holder outlives the record it names (`scopes::stored_reference_homes`): no refusal, no move
+/// of the home's store, no placement in the holder's store, no copy-out.  The bisect step when a program
 /// that compiled before is refused now, or reads a stored reference differently.
 #[must_use]
 pub fn ref_home_disabled() -> bool {

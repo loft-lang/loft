@@ -201,12 +201,8 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
 (it must never scribble on an arbitrary address — the null discipline extends to the write
 side). Both are the SAME test at the same place: an out-of-range index produces `nullref`, and
 every typed setter refuses to resolve a store for it, so `v[9] = x` on a three-element vector
-and `absent.f = x` through a keyed miss take the identical step (measured on both backends —
-value, length and the neighbouring records all unchanged; the standing guard is
-`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`, which also pins that a
-heap-owning literal written there is released and its source untouched, and that every
-native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
-fill, the record-view address, the guarded index chain — answers the same). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
+and `absent.f = x` through a keyed miss take the identical step
+(`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
 not own (`file_map`) — is refused, never silently applied: a development run halts with the
 report, a production run logs it and discards it, so the program continues on the old bytes.
 Discarding is a property of every write route, not of the op that started it: the value
@@ -338,19 +334,19 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
   (H-RefElem)   a reference is a struct field, never a collection's element: `vector`,
                 `sorted` and the keyed kinds refuse `reference<T>` elements.  Wrapped in a
                 struct (`struct Ref { r: reference<T> }`, `vector<Ref>`) it is a field again.
-  (H-RefHome)   a stored reference does not outlive the home of the record it names.  The home
-                is the variable that holds the record: a local, or the compiler's temporary for
-                a literal or a call result.  It lasts for the block that declares it, and a
-                temporary refilled in a loop lasts one pass.  A named local held by a variable
-                of an enclosing block, or a record inside one, moves out to that block and
-                lasts for it; a loop pass refilling it removes its records (H-Removed).  Other
-                holders that live longer — a parameter, a returned value, a copy into either, a
-                holder of a temporary or of a refilled local's own record — are refused where
-                the reference is written, where a holder carrying it is copied, and where a
-                call is handed a holder and a record its callee links.  A record reached through
-                a parameter has its home in the caller, which judges the call.  A local
-                collection a stored reference names into is emptied in place when it is
-                reassigned (H-Removed), so the reference reads null.
+  (H-RefHome)   a record a stored reference names lives as long as the store of its holder.
+                Where the record's home — the variable holding it — would end first, a named
+                local held from an enclosing block moves out to that block (a loop pass
+                refilling it removes its records, H-Removed); a literal, a call result whose
+                callee builds into the record it is offered, or a refilled local's own record
+                is built in the holder's store; and a record a parameter or the returned value
+                names is copied into that holder's store just before its home is freed, one
+                copy per record and store.  What none of these keeps is refused where the
+                reference is written, copied, or handed to a callee that links it: an element
+                of a parameter's collection or a copy into one, two parameters naming one
+                record, a record holding a stored reference, a callee answering a local.  A
+                record reached through a parameter has its home in the caller.  A local
+                collection a stored reference names into is emptied in place when reassigned.
   (H-RefSet)    assigning to a `reference<T>` field re-points it: `h.r = x` makes the field
                 name `x`'s record, whether `x` is a place, a variable, a record literal or a
                 call, and never writes into the record the field named before.
@@ -365,9 +361,9 @@ stores that take no string or vector addition during the call.  `(H-Removed)` is
 no-back-references rule applied to removal: nothing can tell a reference that its record is
 gone, so the record leaves a mark where it was, and the reference checks the mark when it is
 read.  The mark costs one word per removed record that a reference named.  A whole store freed
-under a stored reference is no removal, so it may not happen: `(H-RefHome)` moves the store out
-to the holder's block, or refuses, read off the variables' deps at no run-time cost.  It follows
-the reference through copies of its holder and through calls: what it cannot see, no `deps` can.
+under a stored reference is no removal, so it may not happen: `(H-RefHome)` keeps the record
+where its holder lives, or refuses.  It follows the reference through copies of its holder and
+through calls: what it cannot see, no `deps` can.
 
 **Where `(H-LongRef)` holds in the code.**
 - *The link.* `Stores::finish` links the element type of every keyed collection field (`hash`,
@@ -416,7 +412,14 @@ the reference through copies of its holder and through calls: what it cannot see
   compares the holder's life with the record's home (`Walk::holder_life`, `Walk::home_life`).
   It carries holds through `OpCopyRecord`, a record assigned to a record, and calls, using a
   per-function summary of the parameters a callee links (`ParamPair`), closed over the
-  functions it calls.  An outlived home moves out (`Walk::hoist`) or is refused.
+  functions it calls.  `Walk::resolve` keeps an outlived home (`Walk::hoist`, `Walk::place`,
+  `Walk::place_own`, `Walk::evacuate`) or refuses it.
+- *The placement.* `scopes::apply_places` turns the literal's mint, the call's buffer or the
+  local's every mint into `OpPlaceRecord(holder, tp)`, held by a variable that borrows the
+  holder; `place_result::callee_keeps_an_offered_record` admits a callee, and
+  `scopes::keep_placed_results` drops the scope pass's free of the call's result.
+- *The copy-out.* `scopes::insert_evacuations` puts `OpEvacuate` (`Stores::evacuate`) before
+  each free of the home's owner; `(R-Place)` and `(R-ExitVector)` leave such an owner unplaced.
 - *The move.* The parser marks each store owner on the home's dep chain (`mark_ref_home`),
   which store confinement and last-use reclaim leave in place, and null-inits one assigned
   deeper in the holder's block (`scopes::insert_hoists`), where the scope pass then scopes it.
@@ -424,8 +427,7 @@ the reference through copies of its holder and through calls: what it cannot see
   keyed collections a stored reference was set into; `parse_assign_op_inner` lowers a
   reassignment of one as its clear (`Parser::referenced_local_clear`: `clear_vector_at`, or
   `OpClearKeyed`) followed by the `+=` lowering.
-- `LOFT_NO_REF_HOME=1` withholds the refusal and the move: the bisect step
-  ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
+- `LOFT_NO_REF_HOME=1` withholds all four: the bisect step ([BOTH_BACKEND_SWITCHES.md](../BOTH_BACKEND_SWITCHES.md)).
 
 **Where `(H-RefSet)` holds in the code.** `Parser::towards_set` lowers an assignment to a
 pointer field as `OpSetDbRef`.  A record literal reaches it as a record of its own:
@@ -737,12 +739,10 @@ installed, which the frame does own.
              are not ordered that way — a hook that does not run leaves the resource open,
              and a hook that runs twice closes a handle the author already closed, which is
              the author's own use-after-free.  So a change that converts one into the other
-             is not progress and must not be landed as an improvement (measured on
-             loft#1515's shared-destination shape: giving `drop_transferred` a per-path merge
-             turns every lost hook in that family into a doubled one).  The consequence for
-             the cures below is that "err toward the safe side while the real fix is designed"
-             is not available here: a drop's fix has to be RIGHT on every path, which is why
-             `(O-Complete)`'s per-path clause and this rule meet so often.
+             is not progress and must not be landed as an improvement.  The cures below
+             cannot "err toward the safe side while the real fix is designed": a drop's fix
+             has to be RIGHT on every path, which is why `(O-Complete)`'s per-path clause and
+             this rule meet so often.
   (H-Lease)  a structure whose type OWNS a droppable — the type declares `OpDrop`, or holds
              a member that does, at any depth — holds its OWN lease on the resource, and
              two structures are two drops.  A copy makes a second structure, so it takes a

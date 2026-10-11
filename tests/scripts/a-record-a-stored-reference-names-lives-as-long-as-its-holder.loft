@@ -31,6 +31,7 @@
 //   the INNER BLOCK cells read 778 or a garbage integer and the callee cells 777 — and with the
 //   tombstones withheld (`LOFT_NO_TOMBSTONE=1`) the seven cells holding a record of an earlier pass read
 //   the next pass's record (11 for -1).
+//   HOLDS: leak, panic and expectations are equal on both trees; only the exit moves.
 
 struct P { k: integer }
 struct H { r: reference<P>? }

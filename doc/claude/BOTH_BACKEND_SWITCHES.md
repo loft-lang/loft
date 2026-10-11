@@ -684,15 +684,18 @@ so the reference reads whatever is claimed there next.  It is the bisect step fo
 that reads null where its record should still be there, or for a store that grows under
 removals.
 
-**A stored reference may not outlive its record's home (default-ON, both backends,
-`@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_homes` finds each `reference<T>`
-written, copied or linked by a callee into a holder that outlives the variable holding the
-record.  A named local held from an enclosing block has its store moved out to that block,
-which store confinement and last-use reclaim then leave in place; every other such holder is
-refused.  A reassignment of a local vector such a reference names into empties it in place.
-**`LOFT_NO_REF_HOME=1`** withholds both the move and the refusal (the in-place reassignment
-stays).  It is the bisect step when a program that compiled before is refused, or reads a
-stored reference differently, and the A/B that shows what such a shape reads without it.
+**A record a stored reference names lives as long as its holder's store (default-ON, both
+backends, `@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_homes` finds each
+`reference<T>` written, copied or linked by a callee into a holder that outlives the variable
+holding the record.  A named local held from an enclosing block has its store moved out to that
+block; a literal, a call result or a refilled local's own record is built in the holder's store
+(`OpPlaceRecord`); a record a parameter or the returned value names is copied into that holder's
+store just before its home is freed (`OpEvacuate`).  What none of those keeps is refused.  A
+reassignment of a local vector such a reference names into empties it in place.
+**`LOFT_NO_REF_HOME=1`** withholds the move, the placement, the copy-out and the refusal (the
+in-place reassignment stays).  It is the bisect step when a program that compiled before is
+refused, or reads a stored reference differently, and the A/B that shows what such a shape
+reads without it.
 
 ## Falsifier: the emulated Windows host
 

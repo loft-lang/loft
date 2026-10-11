@@ -339,6 +339,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     remove::<false>,
     clear::<false>,
     copy_record::<false>,
+    evacuate::<false>,
     replace_keyed::<false>,
     clear_keyed::<false>,
     fill_keyed::<false>,
@@ -689,6 +690,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     remove::<true>,
     clear::<true>,
     copy_record::<true>,
+    evacuate::<true>,
     replace_keyed::<true>,
     clear_keyed::<true>,
     fill_keyed::<true>,
@@ -1039,6 +1041,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     remove_r,
     clear_r,
     copy_record_r,
+    evacuate_r,
     replace_keyed_r,
     clear_keyed_r,
     fill_keyed_r,
@@ -1389,6 +1392,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpRemove",
     "OpClear",
     "OpCopyRecord",
+    "OpEvacuate",
     "OpReplaceKeyed",
     "OpClearKeyed",
     "OpFillKeyed",
@@ -5880,6 +5884,23 @@ fn place_record<const F: bool>(s: &mut State) {
 fn place_record_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     place_record::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn evacuate<const F: bool>(s: &mut State) {
+    let operands = s.operands(4);
+    let v_fld = operands.get::<u16>(0);
+    let v_tp = operands.get::<u16>(2);
+    let v_home = s.get_stack_m::<F, DbRef>();
+    let v_holder = s.get_stack_m::<F, DbRef>();
+    s.database
+        .evacuate(&v_holder, u32::from(v_fld), &v_home, v_tp);
+}
+
+fn evacuate_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    evacuate::<true>(s);
     s.regs_out()
 }
 

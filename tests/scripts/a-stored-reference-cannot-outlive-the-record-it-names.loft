@@ -1,68 +1,58 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// `@FR-H-RefHome`, `@C145` — a stored `reference<T>` does not outlive the home of the record it
-// names.  The home is the variable holding the record (a local, or the compiler's temporary for
-// a literal or a call result) and lasts for the block that declares it; a temporary refilled in
-// a loop lasts one pass.  A holder declared in an enclosing block takes a named local's store
-// out to its own block (`a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`);
-// every other holder that lives longer is refused where the reference is written, copied, or
-// handed to a callee that stores it.  Before, each of these compiled and read a record of
-// whatever value reused the freed store — `false 4` where null is owed, or every holder of a
-// loop naming the last pass's record (`12 12 12` for `10 11 12`), silently, on both backends
-// (loft#1973).  One function per shape:
+// `@FR-H-RefHome`, `@C145` — a record a stored `reference<T>` names lives as long as the store
+// of its holder.  The compiler keeps that promise by moving a named local's store out to an
+// enclosing holder's block (`a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`),
+// by building a literal, a call result or a refilled local's own record in the holder's store,
+// or by copying a parameter's record out of its home before the home is freed
+// (`a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft`).  What none of
+// those can keep is refused where the reference is written, copied, or handed to a callee
+// that stores it.  Before, each of these compiled and read a record of whatever value reused
+// the freed store, silently, on both backends (loft#1973).  One function per shape:
 //
-// - the holder is a parameter (`fill(h)` storing a local's element into `h`);
-// - a literal or a call result stored in a loop into a holder that outlives the pass, built in
-//   (`b.hs += [H { r: P {…} }]`), assigned (`b.hs[i].r = P {…}`) or called (`= mk(i)`);
-// - a loop-local record itself (`h.r = p`), whose position the next pass claims again;
-// - the holder returned, or copied into a parameter or a returned record, by a literal or by
-//   assigning one record to another (`h = t`).
+// - a call result in a loop from a callee that returns a local, or hands its buffer on to
+//   another callee: the record cannot be built where the holder lives;
+// - a holder that is an element of a parameter's collection: no fixed place to copy into;
+// - a holder copied into a parameter's collection: the element has no fixed place either, and
+//   a literal's record copied that way the same;
+// - two parameters naming one record: they may live in different stores of the caller, and
+//   one copy each would split what one write showed through both;
+// - a record that holds a stored reference itself: it may name the store being freed;
+// - a refilled local's own record named by holders of two different blocks, or held in a
+//   nullable local.
 //
-// @falsified-at: 081adedbf — interpret exit 1 -> 0, interpret expectations FAIL/9 -> 9/9 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/9 -> 9/9 (the suite's verdict, not a count of matches)
-//   CHANNEL: the expectations — the control compiles all nine shapes without a word.
-//   HOLDS: on both trees nothing else in the file is reported.
+// @falsified-at: 87f132c87 — interpret exit 1 -> 0, interpret expectations FAIL/9 -> 9/9 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/9 -> 9/9 (the suite's verdict, not a count of matches)
+//   CHANNEL: the expectations — the control refuses each shape here too, and also the first of
+//   two parameters naming one record (`a.r`) and the loop's own holder of a record two blocks
+//   hold (`h.r`): it reports two refusals where this tree reports the one that conflicts.
+//   HOLDS: on both trees every function here is refused; nothing compiles.
 
 struct P { k: integer }
 struct H { r: reference<P>? }
 struct Bag { items: vector<P>, hs: vector<H> }
-struct Out { h: H }
+struct R { k: integer, r: reference<P>? }
+struct HR { r: reference<R>? }
 fn mk(k: integer) -> P { P { k: k } }
-
-// @EXPECT_ERROR: `h.r` would outlive the record it names
-fn into_parameter(h: H) {
-  items: vector<P> = [P { k: 1 }, P { k: 2 }];
-  h.r = items[1];
-}
+fn mk_local(k: integer) -> P { p = P { k: k }; p.k += 1; p }
+fn mk_relay(k: integer) -> P { mk(k + 1) }
 
 // @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
-fn literal_built_in_a_loop() {
-  b = Bag { items: [], hs: [] };
-  for i in 0..3 { b.hs += [H { r: P { k: 10 + i } }]; }
-}
-
-// @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
-fn literal_assigned_in_a_loop() {
+fn a_callee_returning_a_local_in_a_loop() {
   b = Bag { items: [], hs: [H {}, H {}] };
-  for i in 0..2 { b.hs[i].r = P { k: 20 + i }; }
+  for i in 0..2 { b.hs[i].r = mk_local(30 + i); }
 }
 
 // @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names
-fn call_result_in_a_loop() {
+fn a_callee_handing_its_buffer_on_in_a_loop() {
   b = Bag { items: [], hs: [H {}, H {}] };
-  for i in 0..2 { b.hs[i].r = mk(30 + i); }
+  for i in 0..2 { b.hs[i].r = mk_relay(30 + i); }
 }
 
-// @EXPECT_ERROR: `h.r` would outlive the record it names: that record lives in `p`
-fn the_record_of_a_loop_pass() {
-  h = H {};
-  for i in 0..2 { p = P { k: i }; h.r = p; }
-}
-
-// @EXPECT_ERROR: the `r` field would outlive the record it names
-fn returned_holder() -> H {
+// @EXPECT_ERROR: the `r` field inside `b` would outlive the record it names: that record lives in `items`
+fn an_element_of_a_parameter(b: Bag) {
   items: vector<P> = [P { k: 1 }];
-  H { r: items[0] }
+  b.hs[0].r = items[0];
 }
 
 // @EXPECT_ERROR: the `r` field inside `o` (copied from `h`) would outlive the record it names
@@ -72,17 +62,37 @@ fn copied_into_a_parameter(o: Bag) {
   o.hs += [h];
 }
 
-// @EXPECT_ERROR: the `r` field (copied from `h`) would outlive the record it names
-fn copied_into_a_returned_record() -> Out {
-  items: vector<P> = [P { k: 1 }];
-  h = H { r: items[0] };
-  Out { h: h }
+// @EXPECT_ERROR: the `r` field inside `o` (copied from `h`) would outlive the record it names: that record lives in a temporary
+fn a_literal_copied_into_a_parameter(o: Bag) {
+  h = H { r: P { k: 1 } };
+  o.hs += [h];
 }
 
-// @EXPECT_ERROR: the `r` field (copied from `h`) would outlive the record it names: that record lives in `items`
-fn assigned_to_a_returned_record() -> H {
-  items: vector<P> = [P { k: 3 }];
-  t = H { r: items[0] };
-  h = t;
-  h
+// @EXPECT_ERROR: `b.r` would outlive the record it names
+fn two_parameters_naming_one_record(a: H, b: H) {
+  items: vector<P> = [P { k: 7 }];
+  a.r = items[0];
+  b.r = items[0];
+}
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names: that record lives in `rs`
+fn a_record_holding_a_reference(h: HR) {
+  items: vector<P> = [P { k: 1 }];
+  rs: vector<R> = [R { k: 2, r: items[0] }];
+  h.r = rs[0];
+}
+
+// @EXPECT_ERROR: `g.r` would outlive the record it names: that record lives in `p`
+fn an_own_record_held_from_two_blocks() {
+  h = H {};
+  if h.r == null {
+    g = H {};
+    for i in 0..2 { p = P { k: i }; h.r = p; g.r = p; }
+  }
+}
+
+// @EXPECT_ERROR: `h.r` would outlive the record it names: that record lives in `p`
+fn a_nullable_own_record_of_a_loop_pass() {
+  h = H {};
+  for i in 0..2 { p: P? = P { k: i }; h.r = p; }
 }
