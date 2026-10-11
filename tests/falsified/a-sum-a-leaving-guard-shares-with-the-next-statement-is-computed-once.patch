@@ -1,0 +1,13 @@
+diff --git a/src/same_read.rs b/src/same_read.rs
+index 1deca56be..0265a3c48 100644
+--- a/src/same_read.rs
++++ b/src/same_read.rs
+@@ -280,7 +280,7 @@ fn bind_guards(
+         let next = (i + 1..ops.len()).find(|&j| !matches!(ops[j], Value::Line(_)));
+         let shared: Vec<Value> = match (ops[i].unspan(), next.map(|j| ops[j].unspan())) {
+             (Value::If(cond, then_arm, else_arm), Some(Value::Set(_, val)))
+-                if leaves(then_arm) && empty_arm(else_arm) =>
++                if true || leaves(then_arm) && empty_arm(else_arm) =>
+             {
+                 let mut cands = Vec::new();
+                 computed(data, cond, &mut cands);

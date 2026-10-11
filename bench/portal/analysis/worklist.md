@@ -34,8 +34,8 @@ pricing pass (§ 5) is the larger half of the work.
 Read off `bench/stats.py` runs of every lane that held a row over 5× (arm64 macOS, commit
 `801d0137d`, the library checkouts synced as step 0 below): **21 rows over 5×**, plus
 `panel_build` (5.03×) and `slope_path_with_undo` (5.09×, noisy) on the line; `truncate_to`
-(4.81×) and `emit_to_material` (4.85×) sit just under and stay in view.  `clock_pump` has
-left since (A below): **20 remain**.  The levers already priced take about four more under;
+(4.81×) and `emit_to_material` (4.85×) sit just under and stay in view.  `clock_pump` and
+`locate` have left since (A below): **19 remain**.  The levers already priced take about four more under;
 the rest need a lever, a decision (§ 6) or a price.
 
 **Step 0 — the bench checkouts, DONE.**  The checkouts were on `main` while four libraries
@@ -49,7 +49,7 @@ with its realigned twin (6.62× → 2.18×); `arguments/parse` (5.69×) and `ind
 | row | × | what the price shows |
 |---|--:|---|
 | `clock_pump` | 6.82 | BUILT: a twin runs `(R-RecPtr)`'s parameter clause over the accesses its inputs leave (`bind_param_record_ptrs`); before, every left-over field access in `n_clock_pump__inv` and its callees re-resolved the store.  `bench/stats.py`: 6.82× → **2.33×** (16.66 ms, the hand price), `clock_advance` 24 → 10.7 ms (1.38×), hashes unchanged.  Leaves the cut |
-| `locate` | 6.19 | PRICED: NOT the record address — the held element address alone measured +7 %.  The cost is the checked sum `cum + p.count` spelled TWICE, in `a < cum + p.count` and in `cum += p.count`: LLVM cannot merge two checked adds whose overflow path is an opaque call that may write memory, so it computes both and re-loads `p.count`.  Bound once before the `if` (the hand-written form of the twin `n_locate__inv`): 8.81 → 6.09 ms (−31 %, ≈ 4.3×), hash unchanged; plain adds 3.44 ms.  The lever is `(R-SameRead)` across statements — a pure expression an `if` condition shares with the statement after it, the arm leaving — and it needs a decision: an overflowing sum is then reported once, not twice |
+| `locate` | 6.19 → 4.29 | BUILT: `(R-SameRead)`'s guard clause — the checked sum `cum + p.count` spelled in `if a < cum + p.count { return … }` and again in `cum += p.count` is bound once before the `if` (LLVM cannot merge two checked adds whose overflow path is an opaque call).  8.8 → 6.11 ms, the hand price, hash unchanged; plain adds would be 3.44 ms.  Leaves the cut |
 | `mesh_to_floats` | 5.53 | re-analyse from the current code (§ 4) |
 | `fill_polygon` | 5.28 | 18 store accesses per edge in `polygon_crossings` |
 | `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  NOT `clock_pump`'s lever: its helper twins (`eg_index__inv`, `hs_index__inv`, `ly_slot__inv`) read every field from their inputs and touch no store, so no address has anything to serve |
@@ -88,8 +88,8 @@ format decision (§ 6).
 
 **Order for the cut.**
 1. Step 0 (done).
-2. A: `(R-RecPtr)` in the `(R-Inputs)` twins is built (`clock_pump`); re-measure
-   `fill_polygon` and `mesh_to_floats`; name `locate`'s loop lever.
+2. A: `(R-RecPtr)` in the `(R-Inputs)` twins (`clock_pump`) and `(R-SameRead)`'s guard
+   clause (`locate`) are built; re-measure `fill_polygon` and `mesh_to_floats`.
 3. The priced units: C1 + C2 (`decode`), C8 (`doc_read`), `(R-DecodeView)`
    (`check_request`), S1c re-priced (`flow_layout_full`).
 4. The three decisions, the keyed store format first (most of B), then `(R-ViewReturn)`
