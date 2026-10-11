@@ -2130,8 +2130,17 @@ impl Stores {
         }
     }
 
-    pub fn clear(&mut self, db: &DbRef) {
+    /// Reinitialise `db`'s store in place for a new root record.  Answers the positions the
+    /// caller marks removed after that record's claim (`Store::entomb_kept`, `@FR-H-Removed`):
+    /// the records a stored reference named go with the rest, and a reference to one reads
+    /// null rather than whatever the store holds there next.
+    pub fn clear(&mut self, db: &DbRef) -> Vec<u32> {
         let slot = db.store_nr;
+        let kept = if self.allocations[slot as usize].free {
+            Vec::new()
+        } else {
+            self.allocations[slot as usize].kept_positions()
+        };
         // Clear any stale lock before reinitialising — OpDatabase may
         // reinitialise a store that was previously locked by a const
         // parameter in a prior function call within the same loop iteration.
@@ -2170,6 +2179,7 @@ impl Stores {
                 self.peak = self.max;
             }
         }
+        kept
     }
 
     #[must_use]

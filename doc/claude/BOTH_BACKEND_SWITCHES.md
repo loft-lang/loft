@@ -677,19 +677,22 @@ pin the untracked delete, the growth below the floor and the one sweep at the bo
 **A removed record a stored reference named leaves a tombstone (default-ON, both backends,
 `@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
 keeps such a record's header word as a one-word block that no claim reuses and frees the rest,
-and `OpGetDbRef` reads null there.  It costs one word per such removal, and nothing for a
-program without stored references.  **`LOFT_NO_TOMBSTONE=1`** frees the record like any other,
+and `OpGetDbRef` reads null there.  A store minted again in place by `OpDatabase` keeps the
+marks of the records it held.  It costs one word per such removal, and nothing for a program
+without stored references.  **`LOFT_NO_TOMBSTONE=1`** frees the record like any other,
 so the reference reads whatever is claimed there next.  It is the bisect step for a reference
 that reads null where its record should still be there, or for a store that grows under
 removals.
 
 **A stored reference may not outlive its record's home (default-ON, both backends,
-`@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_refusals` refuses a `reference<T>`
+`@FR-H-RefHome`):** after pass 2, `scopes::stored_reference_homes` finds each `reference<T>`
 written, copied or linked by a callee into a holder that outlives the variable holding the
-record, and a reassignment of a local vector such a reference names into empties it in place.
-**`LOFT_NO_REF_HOME=1`** withholds the refusal (the in-place reassignment stays).  It is the
-bisect step when a program that compiled before is refused, and the A/B that shows what a
-refused shape reads at run time.
+record.  A named local held from an enclosing block has its store moved out to that block,
+which store confinement and last-use reclaim then leave in place; every other such holder is
+refused.  A reassignment of a local vector such a reference names into empties it in place.
+**`LOFT_NO_REF_HOME=1`** withholds both the move and the refusal (the in-place reassignment
+stays).  It is the bisect step when a program that compiled before is refused, or reads a
+stored reference differently, and the A/B that shows what such a shape reads without it.
 
 ## Falsifier: the emulated Windows host
 

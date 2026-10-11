@@ -5,8 +5,11 @@
 //! `@FR-H-RefHome` — a stored `reference<T>` does not outlive the home of the record it
 //! names.  The home is the variable that holds the record: a local, or the compiler's
 //! temporary for a literal or a call result.  A home lasts for the block that assigned it, so
-//! a temporary assigned in a loop body lasts one pass.  Three routes reach a holder that lives
-//! longer, and each is refused where it is written:
+//! a temporary assigned in a loop body lasts one pass.  Where the holder is a local of an
+//! enclosing block and the home a named local, the home's store moves out to the holder's
+//! block instead ([`Hoist`]): a refill of it in a loop then removes the records it held, so
+//! a reference still naming one reads null.  Three routes reach a holder that lives longer,
+//! and each other case is refused where it is written:
 //!
 //! - the WRITE itself, into a parameter, a variable of an enclosing block, or a record that
 //!   lives in one (`h.r = items[1]` with `h` a parameter);
@@ -25,20 +28,41 @@ use crate::database::Stores;
 use crate::fxhash::FxHashMap as HashMap;
 use crate::variables::Function;
 
-/// A callee stores a reference to a record of argument `home` into argument `holder`.
+/// A callee stores a reference to a record of argument `home` into argument `holder`; `root`
+/// when it names the argument's own record rather than one inside it.
 #[derive(Clone, PartialEq, Eq)]
 struct ParamPair {
     holder: u16,
     home: u16,
     field: String,
+    root: bool,
+}
+
+/// A store that moves out to the block of a holder that outlives it: `owner` (the variable
+/// owning the store) of function `d_nr` lives in block `block`, the walk's block numbering.
+/// `insert` when it is assigned deeper: a null-init goes in front of statement `stmt` of that
+/// block, so the scope pass scopes the store there.
+pub struct Hoist {
+    pub d_nr: u32,
+    pub owner: u16,
+    pub block: u32,
+    pub stmt: usize,
+    pub insert: bool,
+}
+
+/// What the analysis finds: the writes it refuses, and the stores it moves out instead.
+#[derive(Default)]
+pub struct StoredRefs {
+    pub refusals: Vec<ReshapeRefusal>,
+    pub hoists: Vec<Hoist>,
 }
 
 /// Every stored-reference write, copy or call in the program whose holder outlives the
-/// record's home.
+/// record's home: the home moved out to the holder's block, or the write refused.
 #[must_use]
-pub fn stored_reference_refusals(data: &Data, database: &Stores) -> Vec<ReshapeRefusal> {
+pub fn stored_reference_homes(data: &Data, database: &Stores) -> StoredRefs {
     if crate::keys::ref_home_disabled() {
-        return Vec::new();
+        return StoredRefs::default();
     }
     let functions: Vec<u32> = (0..data.definitions())
         .filter(|&d| {
@@ -52,7 +76,7 @@ pub fn stored_reference_refusals(data: &Data, database: &Stores) -> Vec<ReshapeR
     loop {
         let mut changed = false;
         for &d in &functions {
-            let mut scratch = Vec::new();
+            let mut scratch = StoredRefs::default();
             let found = run(data, database, d, &pairs, &mut scratch);
             let entry = pairs.entry(d).or_default();
             for p in found {
@@ -66,11 +90,34 @@ pub fn stored_reference_refusals(data: &Data, database: &Stores) -> Vec<ReshapeR
             break;
         }
     }
-    let mut out = Vec::new();
+    let mut out = StoredRefs::default();
     for &d in &functions {
         run(data, database, d, &pairs, &mut out);
     }
     out
+}
+
+/// Put each hoist's null-init in front of its statement, numbering blocks as [`Walk`] does.
+pub fn insert_hoists(code: &mut Value, hoists: &[&Hoist]) {
+    fn visit(node: &mut Value, next: &mut u32, hoists: &[&Hoist]) {
+        match node {
+            Value::Block(b) | Value::Loop(b) => {
+                let id = *next;
+                *next += 1;
+                for op in &mut b.operators {
+                    visit(op, next, hoists);
+                }
+                let mut here: Vec<&&Hoist> = hoists.iter().filter(|h| h.block == id).collect();
+                here.sort_by_key(|h| std::cmp::Reverse(h.stmt));
+                for h in here {
+                    b.operators
+                        .insert(h.stmt, Value::Set(h.owner, Box::new(Value::Null)));
+                }
+            }
+            other => other.for_each_child_mut(&mut |c| visit(c, next, hoists)),
+        }
+    }
+    visit(code, &mut 0, hoists);
 }
 
 fn run(
@@ -78,16 +125,18 @@ fn run(
     database: &Stores,
     d_nr: u32,
     pairs: &HashMap<u32, Vec<ParamPair>>,
-    out: &mut Vec<ReshapeRefusal>,
+    out: &mut StoredRefs,
 ) -> Vec<ParamPair> {
     let def = data.def(d_nr);
     let mut walk = Walk {
         data,
         database,
+        d_nr,
         function: &def.variables,
         file: def.position.file.to_string(),
         pairs,
         path: Vec::new(),
+        stmt_at: Vec::new(),
         next_block: 0,
         loops: Vec::new(),
         first_set: HashMap::default(),
@@ -101,13 +150,15 @@ fn run(
 }
 
 /// A record a holder's reference names: its home's variable and how long that lasts, or the
-/// parameter whose record it is (`param`), whose home is the caller's.
+/// parameter whose record it is (`param`), whose home is the caller's.  `root` when the
+/// record is the home's own (`h.r = p`) rather than one inside it (`h.r = items[0]`).
 #[derive(Clone)]
 struct Hold {
     home: u16,
     home_path: Vec<u32>,
     param: Option<u16>,
     field: String,
+    root: bool,
 }
 
 /// How long a place lasts: past this frame (a parameter's), or for a block path.
@@ -119,11 +170,14 @@ enum Life {
 struct Walk<'a> {
     data: &'a Data,
     database: &'a Stores,
+    d_nr: u32,
     function: &'a Function,
     file: String,
     pairs: &'a HashMap<u32, Vec<ParamPair>>,
     /// The blocks enclosing the current node, outermost first.
     path: Vec<u32>,
+    /// Per block of `path`, the statement of it the current node is in.
+    stmt_at: Vec<usize>,
     next_block: u32,
     /// The blocks that are loop bodies: a value assigned in one lasts a pass.
     loops: Vec<u32>,
@@ -135,7 +189,7 @@ struct Walk<'a> {
     holds: HashMap<u16, Vec<Hold>>,
     /// This function's own summary: references it stores between its parameters.
     found: Vec<ParamPair>,
-    out: &'a mut Vec<ReshapeRefusal>,
+    out: &'a mut StoredRefs,
 }
 
 impl Walk<'_> {
@@ -146,14 +200,32 @@ impl Walk<'_> {
                     self.loops.push(self.next_block);
                 }
                 self.path.push(self.next_block);
+                self.stmt_at.push(0);
                 self.next_block += 1;
-                self.stmts(&b.operators, line);
+                let mut cur = line;
+                for (i, s) in b.operators.iter().enumerate() {
+                    if let Some(at) = self.stmt_at.last_mut() {
+                        *at = i;
+                    }
+                    if let Value::Line(n) = s.unspan() {
+                        cur = *n;
+                    }
+                    self.node(s, cur);
+                }
+                self.stmt_at.pop();
                 self.path.pop();
             }
             Value::Insert(ops) => self.stmts(ops, line),
             Value::Set(v, rhs) => {
                 self.node(rhs, line);
                 self.assigned(*v);
+                // `h = t` between two records copies `t` into `h`, references and all.
+                if let Value::Var(w) = rhs.unspan()
+                    && matches!(self.function.tp(*v), Type::Reference(_, d) if d.is_empty())
+                    && matches!(self.function.tp(*w), Type::Reference(_, _))
+                {
+                    self.copy(rhs, &Value::Var(*v), line);
+                }
             }
             Value::Call(d, args) => {
                 for a in args {
@@ -378,9 +450,10 @@ impl Walk<'_> {
         let Some(home) = self.home(value) else {
             return;
         };
-        let Some(hold) = self.hold_for(home, field) else {
+        let Some(mut hold) = self.hold_for(home, field) else {
             return;
         };
+        hold.root = matches!(value.unspan(), Value::Var(_));
         let direct = matches!(holder.unspan(), Value::Var(_));
         self.carry(h, &lasts, vec![hold], "", direct, line);
     }
@@ -394,6 +467,7 @@ impl Walk<'_> {
                 home_path: Vec::new(),
                 param: Some(p),
                 field,
+                root: false,
             });
         }
         Some(Hold {
@@ -401,6 +475,7 @@ impl Walk<'_> {
             home_path: self.home_life(home)?,
             param: None,
             field,
+            root: false,
         })
     }
 
@@ -423,6 +498,7 @@ impl Walk<'_> {
                 home_path: Vec::new(),
                 param: Some(p),
                 field: String::new(),
+                root: false,
             }],
             Ok(_) => self.holds.get(&v).cloned().unwrap_or_default(),
         }
@@ -459,12 +535,22 @@ impl Walk<'_> {
                             holder: *holder_param,
                             home: home_param,
                             field: hold.field.clone(),
+                            root: hold.root,
                         });
                     }
                 }
                 (Some(_), Life::Block(_)) => kept.push(hold),
                 (None, _) => {
                     if Self::outlives(lasts, &hold.home_path) {
+                        if let Life::Block(p) = lasts
+                            && self.hoist(p, &hold)
+                        {
+                            kept.push(Hold {
+                                home_path: p.clone(),
+                                ..hold
+                            });
+                            continue;
+                        }
                         let msg = self.message(h, &hold, lasts, via, direct);
                         self.refuse(line, msg);
                         return;
@@ -518,11 +604,12 @@ impl Walk<'_> {
             let Some(lasts) = self.holder_life(h) else {
                 continue;
             };
-            let Some(hold) = self.hold_for(home, link.field.clone()) else {
+            let Some(mut hold) = self.hold_for(home, link.field.clone()) else {
                 continue;
             };
+            hold.root = link.root;
             let via = format!(" (`{}` stores it there)", self.callee_name(callee));
-            let before = self.out.len();
+            let before = self.out.refusals.len();
             self.carry(
                 h,
                 &lasts,
@@ -531,7 +618,7 @@ impl Walk<'_> {
                 matches!(ha.unspan(), Value::Var(_)),
                 line,
             );
-            if self.out.len() > before {
+            if self.out.refusals.len() > before {
                 return;
             }
         }
@@ -542,8 +629,50 @@ impl Walk<'_> {
         n.strip_prefix("n_").unwrap_or(n).to_string()
     }
 
+    /// Move the store of `hold`'s home out to the holder's block `p`, when that keeps every
+    /// record a reference may name: the home is a named local inside `p`, and a refill of it
+    /// in a loop between the two removes records the reference may still name, which reads
+    /// null — except the home's own record, whose position the refill claims again.
+    fn hoist(&mut self, p: &[u32], hold: &Hold) -> bool {
+        if self.hidden(hold.home) || p.is_empty() || !self.path.starts_with(p) {
+            return false;
+        }
+        let refilled = hold
+            .home_path
+            .iter()
+            .any(|b| self.loops.contains(b) && !p.contains(b));
+        if refilled && hold.root {
+            return false;
+        }
+        let Ok(chain) = self.chain(hold.home) else {
+            return false;
+        };
+        let owners: Vec<u16> = chain
+            .into_iter()
+            .filter(|&v| self.function.tp(v).depend().is_empty())
+            .collect();
+        if owners.is_empty() {
+            return false;
+        }
+        let stmt = self.stmt_at[p.len() - 1];
+        for owner in owners {
+            let insert = self
+                .first_set
+                .get(&owner)
+                .is_some_and(|f| f.len() > p.len());
+            self.out.hoists.push(Hoist {
+                d_nr: self.d_nr,
+                owner,
+                block: p[p.len() - 1],
+                stmt,
+                insert,
+            });
+        }
+        true
+    }
+
     fn refuse(&mut self, line: u32, message: String) {
-        self.out.push(ReshapeRefusal {
+        self.out.refusals.push(ReshapeRefusal {
             file: self.file.clone(),
             line,
             message,

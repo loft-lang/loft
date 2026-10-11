@@ -2398,9 +2398,10 @@ pub fn callee_disturb_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CALLEE_DISTURB"))
 }
 
-/// `@FR-H-RefHome` — `LOFT_NO_REF_HOME=1` withholds the refusal of a stored reference whose
-/// holder outlives the record it names (`scopes::stored_reference_refusals`): the bisect step
-/// when a program that compiled before is refused now.
+/// `@FR-H-RefHome` — `LOFT_NO_REF_HOME=1` withholds the analysis of a stored reference whose
+/// holder outlives the record it names (`scopes::stored_reference_homes`): neither the refusal
+/// nor the move of the home's store to the holder's block.  The bisect step when a program
+/// that compiled before is refused now, or reads a stored reference differently.
 #[must_use]
 pub fn ref_home_disabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

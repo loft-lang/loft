@@ -74,11 +74,10 @@ fn literal_or_null(take: boolean) -> Leaf? { if take { Leaf { v: 12 } } else { n
 fn owned_or_null(take: boolean) -> Leaf? { x = Leaf { v: 13 }; if take { x } else { null } }
 fn param_or_null(p: Leaf, take: boolean) -> Leaf? { if take { p } else { null } }
 fn param(p: Leaf) -> Leaf? { p }
-fn walked_dense() -> Pair {
-  c = Pair { v: 4, other: null };
-  b = Pair { v: 2, other: c };
-  a = Pair { v: 1, other: b };
-  x: Pair = a;
+// The walked records are the caller's: a returned copy of a local's record would name the
+// next local in `other`, which ends with this frame (`@FR-H-RefHome`).
+fn walked_dense(ps: vector<Pair>) -> Pair {
+  x: Pair = ps[0];
   x = x.other;
   x
 }
@@ -123,9 +122,14 @@ fn test_the_controls_are_unchanged() {
 }
 
 fn test_the_dense_twins_are_unchanged() {
-  r = walked_dense();
+  ps: vector<Pair> = [Pair { v: 1, other: null }, Pair { v: 2, other: null }, Pair { v: 4, other: null }];
+  ps[0].other = ps[1];
+  ps[1].other = ps[2];
+  r = walked_dense(ps);
   filler = Leaf { v: 112 };
-  assert(r.v == 2 && filler.v == 112, "dense walker: got {r.v}, want 2");
+  assert(r.v == 2 && r.other.v == 4 && filler.v == 112, "dense walker: got {r.v}, want 2");
+  r.v = 20;
+  assert(ps[1].v == 2, "dense walker: the result is a copy, got {ps[1].v}");
   s = arm_dense(true);
   assert(s.v == 9, "dense arm: got {s.v}, want 9");
   z = arm_dense(false);

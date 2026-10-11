@@ -325,6 +325,15 @@ impl Claims {
         self.live as usize
     }
 
+    /// Every marked position, ascending.
+    fn positions(&self) -> impl Iterator<Item = u32> + '_ {
+        self.bits.iter().enumerate().flat_map(|(w, &bits)| {
+            (0..64u32)
+                .filter(move |b| (bits >> b) & 1 == 1)
+                .map(move |b| (w as u32) * 64 + b)
+        })
+    }
+
     fn is_empty(&self) -> bool {
         self.live == 0
     }
@@ -2017,6 +2026,47 @@ impl Store {
     pub fn note_referenced(&mut self, rec: u32) {
         if rec >= PRIMARY && rec < self.size {
             self.referenced.insert(rec);
+        }
+    }
+
+    /// `@FR-H-Removed` — the positions a reinitialisation of this store must keep out of every
+    /// claim: the records a stored reference named, which it removes with the rest, and the
+    /// ones already removed.  Ascending; empty when nothing was named.
+    #[must_use]
+    pub fn kept_positions(&self) -> Vec<u32> {
+        if !tombstones_enabled() || (self.referenced.is_empty() && self.removed.is_empty()) {
+            return Vec::new();
+        }
+        let mut kept: Vec<u32> = self
+            .referenced
+            .positions()
+            .chain(self.removed.positions())
+            .collect();
+        kept.sort_unstable();
+        kept.dedup();
+        kept
+    }
+
+    /// `@FR-H-Removed` — after a reinitialisation and its root record's claim, mark each of
+    /// `kept` ([`Store::kept_positions`]) removed: a one-word block outside `claims`, so no
+    /// later claim takes the position and a stored reference to it reads null.  A position
+    /// the new root record covers is claimed again; only a reference to the root itself names
+    /// one, and `(H-RefHome)` refuses that where the store is refilled.
+    pub fn entomb_kept(&mut self, kept: &[u32]) {
+        let root_end = if self.claims.contains(PRIMARY) {
+            PRIMARY + self.read::<i32>(PRIMARY, 0).unsigned_abs()
+        } else {
+            PRIMARY
+        };
+        for &pos in kept {
+            if pos < root_end || pos >= self.size {
+                continue;
+            }
+            self.claim_at(pos, 1);
+            self.claims.remove(pos);
+            self.removed.insert(pos);
+            // The footer test of a later free behind this word reads its high half.
+            self.write_block_meta::<i32>(pos, 4, 0);
         }
     }
 

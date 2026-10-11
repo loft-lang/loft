@@ -292,6 +292,7 @@ deviation; guards
 `tests/scripts/a-stored-reference-to-a-removed-record-reads-null.loft`,
 `tests/scripts/a-cleared-vector-releases-the-records-a-reference-named.loft`,
 `tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
+`tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`,
 `tests/scripts/a-stored-reference-its-record-outlives-reads-it.loft` and
 `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

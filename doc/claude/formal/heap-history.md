@@ -2830,3 +2830,29 @@ answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_v
 `get_field(_, usize::MAX, _)`, whose `attr_type` answers `def.returned`, so `[a, .., z]`
 answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
 the type the same way and zeroing the successors it wrote over).
+
+## The drop rule before the copy refusal
+
+The rule before `(H-Copy-Refuse)` moved a droppable's release along with a copy and warned where
+the owner was unclear.  Wherever both structures lived on, that left a gotcha: the release went
+with one of them, and the program closed a handle the other was still using, or closed it twice.
+The refusal was decided with the owner on 2026-09-15 from the use cases in
+`plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).  @PLN163 P5 and P6 then removed the
+reverse hand-off for a copy of what the caller holds and the field hand-off (`OpDropAllExcept`):
+a copy the rules accept either leases or does not exist, and a read through a member of a call
+result is a view of the call's record.
+
+## (H-RefHome): a home moves out instead of being refused (2026-10-11)
+
+As first written, `(H-RefHome)` refused every holder that outlived the variable holding its
+record, fourteen shapes in its guard.  Seven of them were a holder declared in an enclosing
+block of the same function: a local of an inner block, a local of a loop pass, a callee linking
+a loop-local record.  The owner asked for those to use the mechanism that already ties stores to
+variables, so the rule now moves the named local's store out to the holder's block, and the
+refused set is what no variable of this frame can own: a parameter or returned holder, a copy
+into one, a temporary per pass, and a refilled local's own record.  Moving a store out of a loop
+made the next pass's `OpDatabase` reinitialise a store that a reference still names, which wiped
+the marks `(H-Removed)` keeps; the reinitialisation now carries them over, so a holder kept
+from an earlier pass reads null rather than the next pass's record.  The same walk found a
+record assigned to a record (`h = t`) carrying references the analysis did not see: before, it
+compiled and read a freed store.

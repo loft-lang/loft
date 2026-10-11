@@ -11457,14 +11457,42 @@ impl Parser {
         }
         // `@FR-H-RefHome` — a stored reference whose holder outlives the record it names.
         // Asked here for the same reason: a callee's half (which arguments it links) is only
-        // complete once every body is parsed.
-        for r in crate::scopes::stored_reference_refusals(&self.data, &self.database) {
+        // complete once every body is parsed.  A home that can move out to the holder's block
+        // does, before the scope pass scopes it; a body that pass already scoped was judged
+        // when it was fresh.
+        let found = crate::scopes::stored_reference_homes(&self.data, &self.database);
+        for r in found.refusals {
             let pos = crate::lexer::Position {
                 file: crate::lexer::intern_file(&r.file),
                 line: r.line,
                 pos: 1,
             };
             diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
+        }
+        let mut fresh: Vec<u32> = found
+            .hoists
+            .iter()
+            .map(|h| h.d_nr)
+            .filter(|&d| !self.data.def(d).variables.done)
+            .collect();
+        fresh.sort_unstable();
+        fresh.dedup();
+        for d in fresh {
+            // Outermost holder first: an enclosing block's number is below its inner blocks'.
+            let mut here: Vec<&crate::scopes::Hoist> =
+                found.hoists.iter().filter(|h| h.d_nr == d).collect();
+            here.sort_by_key(|h| h.block);
+            let def = &mut self.data.definitions[d as usize];
+            for h in &here {
+                def.variables.mark_ref_home(h.owner);
+            }
+            let mut inserts: Vec<&crate::scopes::Hoist> = Vec::new();
+            for h in here.into_iter().filter(|h| h.insert) {
+                if !inserts.iter().any(|o| o.owner == h.owner) {
+                    inserts.push(h);
+                }
+            }
+            crate::scopes::insert_hoists(&mut def.code, &inserts);
         }
     }
 

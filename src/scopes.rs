@@ -33,7 +33,7 @@
 //! - [`disturbance`] — what code grows, removes from or reshapes, directly or through a callee
 //! - [`view_walk`] — which view bindings must be copied out because their container is disturbed
 //! - [`reshape_refusals`] — the shapes refused because a callee reshapes what an argument points into
-//! - [`stored_refs`] — the stored references refused because their holder outlives the record they name
+//! - [`stored_refs`] — the stored references whose holder outlives the record they name: the home moved out, or refused
 //! - [`handoff`] — which side of a copy keeps the drop, and the per-path hand-off flags
 //! - [`handles`] — generator handles: owned, viewed, and retained while shared
 //! - [`backings`] — the hidden store a collection's elements live in
@@ -143,7 +143,7 @@ pub(crate) use places::value_view_places;
 pub use places::{ParamPlace, call_arg_place, compose_param_place, same_place};
 pub use reshape_refusals::{ReshapeRefusal, reshape_refusals};
 pub(crate) use returns::return_has_null_arm;
-pub use stored_refs::stored_reference_refusals;
+pub use stored_refs::{Hoist, insert_hoists, stored_reference_homes};
 use value_struct::value_struct_copy;
 pub(crate) use view_walk::link_set_repoints;
 

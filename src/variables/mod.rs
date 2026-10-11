@@ -220,6 +220,11 @@ pub struct Variable {
     /// assignment in the body (loft#1816): a plain parameter enters already written, so the
     /// first `p = …` before any read of `p` throws the caller's value away unread.
     incoming_seed: bool,
+    /// `@FR-H-RefHome` — a stored reference in a holder declared in an enclosing block names a
+    /// record of this store, so the store lives to the holder's block: store confinement and
+    /// last-use reclaim leave it alone.  Set by `Parser::check_reshape_under_reference` from
+    /// `scopes::stored_reference_homes`; read by the scope pass only.
+    ref_home: bool,
     /// Mentions counted in `uses` that were the TARGET of an `=` (loft#1816), which the lints
     /// do not count as reads; see [`Function::reads`].
     target_mentions: u16,
@@ -949,6 +954,7 @@ impl Function {
                 source: (0, 0),
                 uses_at_write: 0,
                 incoming_seed: false,
+                ref_home: false,
                 target_mentions: 0,
                 incoming_reported: false,
                 write_source: (0, 0),
@@ -2860,6 +2866,7 @@ impl Function {
             uses: 1,
             uses_at_write: 0,
             incoming_seed: false,
+            ref_home: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
@@ -2916,6 +2923,7 @@ impl Function {
             uses: self.variables[var as usize].uses,
             uses_at_write: self.variables[var as usize].uses_at_write,
             incoming_seed: false,
+            ref_home: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: self.variables[var as usize].user_named,
@@ -2968,6 +2976,7 @@ impl Function {
             uses: 1,
             uses_at_write: 0,
             incoming_seed: false,
+            ref_home: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
@@ -3016,6 +3025,7 @@ impl Function {
             uses: 1,
             uses_at_write: 0,
             incoming_seed: false,
+            ref_home: false,
             target_mentions: 0,
             incoming_reported: false,
             user_named: false,
@@ -4044,6 +4054,16 @@ impl Function {
 
     /// Mark `var_nr` as a hidden return buffer minted at its first use — see the
     /// field's own doc (`@FR-O-LazyBuffer`).
+    /// `@FR-H-RefHome` — see the field's own doc.
+    pub fn mark_ref_home(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].ref_home = true;
+    }
+
+    #[must_use]
+    pub fn is_ref_home(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].ref_home
+    }
+
     pub fn mark_lazy_buffer(&mut self, var_nr: u16) {
         self.variables[var_nr as usize].lazy_buffer = true;
     }
