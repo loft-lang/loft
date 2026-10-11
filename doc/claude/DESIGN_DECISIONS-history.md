@@ -4658,6 +4658,11 @@ benefit also".  @PLN157 had worked to 4×.  The class split comes from the 2026-
 run: 85 of 182 routines over 3×, 7 of 15 class medians over it — filing all 85 would have been
 noise, while the 23 outliers in healthy classes are individual bugs.
 
+The release clause was added 2026-10-11 by the owner: "even though I do want to reach 3x
+performance of rustc code I am also realistic enough that it will take a long time to reach so
+I am willing to settle for 5x for a stable loft release, because optimizing will continue to
+destabilize the loft code too and I want to reach stability in the next months".
+
 ## C137 — A claim promises no value; a slot is read only after it is written
 
 Owner, 2026-10-05, while pricing graphics' `filled` as `[value; count]`: *"if a type assumes

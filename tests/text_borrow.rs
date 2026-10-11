@@ -106,8 +106,8 @@ fn a_walk_of_texts_binds_its_element_as_a_borrow_and_reads_it_bare() {
     );
     assert_eq!(
         count(j, ".to_string()"),
-        1,
-        "join converts only its empty-text seed"
+        0,
+        "join converts no text: its empty seed clears the result buffer"
     );
 }
 

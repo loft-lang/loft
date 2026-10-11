@@ -605,7 +605,7 @@ fn t_4File_content(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mu
     return Str::new(loft::state::STRING_NULL)
     } /*block_3: never*/ else {()};
   // loft:default/02_files.loft:164
-  *var_result = ("").to_string();
+  var_result.clear();
   // loft:default/02_files.loft:165
   let mut var_txt: String = "".to_string();
   // loft:default/02_files.loft:166
@@ -636,11 +636,11 @@ fn t_4File_lines(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut 
   let mut var_c: String = "".to_string();
   { //ncc_2: void
     let _pre_3 = { //default ref_3: ref(reference)["__work_c1"]
-      var___work_c1 = "".to_string();
+      var___work_c1.clear();
       &mut var___work_c1
       } /*default ref_3: ref(reference)["__work_c1"]*/;
     let mut var___ncc_1: String = t_4File_content(cell, var_self, _pre_3).to_string();
-    if (((&var___ncc_1) != loft::state::STRING_NULL) as u8) == 1 {var_c = var___ncc_1.clone()} else {var_c = "".to_string()};
+    if (((&var___ncc_1) != loft::state::STRING_NULL) as u8) == 1 {var_c = var___ncc_1.clone()} else {var_c.clear()};
     } /*ncc_2: void*/;
   ;
   // loft:default/02_files.loft:186
@@ -858,7 +858,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var___work_p2_2: String = "".to_string();
   let mut var___work_p2_1: String = "".to_string();
-  *var___work_2 = ("").to_string();
+  var___work_2.clear();
   let mut var___work_1: String = "".to_string();
   // loft:default/02_files.loft:1329
   let mut var_base: String = var_self.to_string();
@@ -914,7 +914,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
         ops::append_text(&mut var___work_1, &*(OpGetTextSub(&var_base, 0_i64, var_cut)));
         var_base = var___work_1.clone();
         } /*block_12: void*/ else { //block_13: void
-        var_base = "".to_string();
+        var_base.clear();
         } /*block_13: void*/;
       // loft:default/02_files.loft:1347
       var___work_p2_2.clear();
@@ -934,7 +934,7 @@ fn t_4text_resolve(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, mut
     } /*block_14: never*/ else {()};
   // loft:default/02_files.loft:1350
   { //Formatted string_15: text["__work_2"]
-    *var___work_2 = ("").to_string();
+    var___work_2.clear();
     ops::format_text(&mut var___work_2, &var_base, 0_i64, 2, 32);
     ops::append_text(&mut (*var___work_2), &*("/"));
     ops::format_text(&mut var___work_2, &*var_t, 0_i64, 2, 32);
@@ -974,7 +974,7 @@ fn t_4text_char_slice(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, 
     return Str::new("")
     } /*block_4: never*/ else {()};
   // loft:default/03_text.loft:53
-  *var_cs_out = ("").to_string();
+  var_cs_out.clear();
   // loft:default/03_text.loft:54
   let mut var_cs_k: i64 = 0_i64;
   // loft:default/03_text.loft:55
@@ -1348,7 +1348,7 @@ fn t_9character_is_control(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i
 fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_sep: &str, mut var_result: &mut String) -> Str { //block_1: text["result"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   // loft:default/03_text.loft:211
-  *var_result = ("").to_string();
+  var_result.clear();
   // loft:default/03_text.loft:212
   { //For block_2: void
     let mut var_p__count: i64 = 0_i64;
@@ -1391,7 +1391,7 @@ fn t_6vector_join(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut
 fn t_6vector_join__inv(cell: &std::cell::UnsafeCell<Stores>, mut var_self: DbRef, mut var_sep: &str, mut var_result: &mut String, __ih_0: vector::VecHeader, __ib_0: *const u8) -> Str { //block_1: text["result"]
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   // loft:default/03_text.loft:211
-  *var_result = ("").to_string();
+  var_result.clear();
   // loft:default/03_text.loft:212
   { //For block_2: void
     let mut var_p__count: i64 = 0_i64;

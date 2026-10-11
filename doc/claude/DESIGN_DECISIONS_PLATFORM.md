@@ -247,7 +247,10 @@ boundary by the store format's guards (`tests/store_durable_format.rs`).
 like-for-like Rust twin is a defect.  When its mechanism class's median is at or under 3×, it is
 an ordinary `performance` issue.  When the class median is over 3×, the class is the defect and
 its plan owns the routine.  `bench/stats.py`'s 2× stays the stricter "ok" line of that report and
-the portal's goal.  **Why.** loft is not inherently slower than rustc: checked arithmetic, null
+the portal's goal.  **The stable release** waits only on routines over **5×**: a routine between
+3× and 5× is still a defect, and is worked after stability, because every optimisation also
+moves code the release must hold still.  Within the 5× work the lowest-risk lever goes first
+(a runtime change, then a clause of an existing rewrite, a new rewrite last).  **Why.** loft is not inherently slower than rustc: checked arithmetic, null
 handling and the store protocol cost something, and known layouts, a static type for every value
 and ordered stores give something back.  Overhead past 3× is therefore a mechanism in loft costing
 more than it should.  Removing that mechanism brings every routine using it closer to rustc, not
