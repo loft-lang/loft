@@ -87,6 +87,53 @@ pub(super) fn value_struct_copy(data: &mut Data) {
     }
 }
 
+/// The temp `vs_copy_walk` binds a value-struct copy's SOURCE to, so it is evaluated once.
+///
+/// The temp is a VIEW — it carries the source's deps, so the ownership scan
+/// classifies it `Borrowed` and emits no free for it; only `vv` owns, exactly as
+/// before.  Named after the destination so the mint is stable and idempotent.
+///
+/// The destination's type carries the source's deps only when whoever made the
+/// destination recorded them, and a format hook's subject (`"{v[i]:spec}"`) is a
+/// borrow with none: a temp typed from it read as an OWNER (`@FR-O-Proxy`), and
+/// its free released the whole store the source lives in.  A PROJECTION (`v[i]`,
+/// `o.f`) names part of a store and owns none, so its temp names the projection's
+/// root and is never freed (`@FR-O-Override`).  A bare variable is the whole
+/// store — a by-value parameter the callee owns is released through this temp —
+/// and a call's result or a `??` may hand the temp a store of its own: those
+/// keep the destination's type.
+fn vs_source_temp(data: &mut Data, d_nr: u32, vv: u16, source: &Value) -> u16 {
+    let mut view_type = data.def(d_nr).variables.tp(vv).clone();
+    let root = if matches!(source.unspan(), Value::Var(_)) {
+        None
+    } else {
+        vs_view_root(source, data)
+    };
+    // A nullable destination (`D?`) wraps the same record type, and its source is the same
+    // view: peel it, name the root, wrap it again.
+    if let Some(root) = root
+        && let Type::Reference(p, deps) = view_type.base()
+        && deps.is_empty()
+    {
+        let rooted = Type::Reference(*p, Deps::frame1(root));
+        view_type = if matches!(view_type, Type::Optional(_)) {
+            Type::Optional(Box::new(rooted))
+        } else {
+            rooted
+        };
+    }
+    let src_name = format!("__vs_src_{vv}");
+    let src_tmp = data.definitions[d_nr as usize]
+        .variables
+        .add_temp_var(&src_name, &view_type);
+    if root.is_some() {
+        data.definitions[d_nr as usize]
+            .variables
+            .set_skip_free(src_tmp);
+    }
+    src_tmp
+}
+
 /// @PLN101 zero-cost — root variable a VIEW projects from: follow the arg-0 spine of read ops
 /// (`OpGet*`) down to a `Var`. Index/offset args are ignored (a mutated loop counter is not a base
 /// mutation). `None` if the spine doesn't bottom out in a plain variable.
@@ -341,40 +388,7 @@ fn vs_copy_walk(
                 // the index inside it can be an arbitrary expression, and splicing it into both
                 // the test and the copy would run `v[f()]`'s `f` twice.
                 //
-                // The temp is a VIEW — it carries the source's deps, so the ownership scan
-                // classifies it `Borrowed` and emits no free for it; only `vv` owns, exactly as
-                // before.  Named after the destination so the mint is stable and idempotent.
-                //
-                // The destination's type carries the source's deps only when whoever made the
-                // destination recorded them, and a format hook's subject (`"{v[i]:spec}"`) is a
-                // borrow with none: a temp typed from it read as an OWNER (`@FR-O-Proxy`), and
-                // its free released the whole store the source lives in.  A PROJECTION (`v[i]`,
-                // `o.f`) names part of a store and owns none, so its temp names the projection's
-                // root and is never freed (`@FR-O-Override`).  A bare variable is the whole
-                // store — a by-value parameter the callee owns is released through this temp —
-                // and a call's result or a `??` may hand the temp a store of its own: those
-                // keep the destination's type.
-                let mut view_type = data.def(d_nr).variables.tp(vv).clone();
-                let root = if matches!(source.unspan(), Value::Var(_)) {
-                    None
-                } else {
-                    vs_view_root(&source, data)
-                };
-                if let Type::Reference(p, deps) = &view_type
-                    && deps.is_empty()
-                    && let Some(root) = root
-                {
-                    view_type = Type::Reference(*p, Deps::frame1(root));
-                }
-                let src_name = format!("__vs_src_{vv}");
-                let src_tmp = data.definitions[d_nr as usize]
-                    .variables
-                    .add_temp_var(&src_name, &view_type);
-                if root.is_some() {
-                    data.definitions[d_nr as usize]
-                        .variables
-                        .set_skip_free(src_tmp);
-                }
+                let src_tmp = vs_source_temp(data, d_nr, vv, &source);
                 *node = Value::Insert(vec![
                     Value::Set(src_tmp, Box::new(source)),
                     Value::Set(vv, Box::new(Value::Null)),
