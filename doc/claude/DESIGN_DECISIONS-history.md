@@ -4661,7 +4661,9 @@ noise, while the 23 outliers in healthy classes are individual bugs.
 The release clause was added 2026-10-11 by the owner: "even though I do want to reach 3x
 performance of rustc code I am also realistic enough that it will take a long time to reach so
 I am willing to settle for 5x for a stable loft release, because optimizing will continue to
-destabilize the loft code too and I want to reach stability in the next months".
+destabilize the loft code too and I want to reach stability in the next months".  Clarified
+the same day: "It is not that we do only low-risk changes now, but this work is inherently not
+stable, and that is not a problem for now".
 
 ## C137 — A claim promises no value; a slot is read only after it is written
 

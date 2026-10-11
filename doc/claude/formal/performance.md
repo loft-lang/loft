@@ -45,9 +45,9 @@ A lane that "wins" by computing less has measured nothing.
                  Drift against a previous loft release satisfies nothing here.
                  RELEASE CLAUSE: the stable release is held to 5× per routine.  A
                  routine between 3× and 5× still fails the bar and stays a defect
-                 (C136), worked after the release; one over 5× blocks it.  Within
-                 the 5× work the lowest-risk cure goes first: a runtime change,
-                 then a clause of an existing rewrite, a new rewrite last.
+                 (C136), worked after the release; one over 5× blocks it.  The
+                 clause sets where the release cuts, not which cure (Perf-Cure)
+                 is admissible.
 ```
 
 **In words.** The comparison target is the INDUSTRY, not the previous release. In-language
@@ -69,7 +69,8 @@ fourteen routines read a median of 2.01×, with six at or over 3×.  A per-routi
 `bench/ratio_oracle.tsv` is a ratchet DOWN toward 3×, recorded where a routine starts above
 it, and never a licence to stay there.  The release clause is the owner's (C136): every optimisation also moves code a
 release has to hold still, so the release takes the cut where the remaining excess is
-large, and the 3× work continues after it.
+large, and the 3× work continues after it.  The work toward the cut is not restricted to
+low-risk changes: optimising is inherently unstable, and that is accepted while it runs.
 
 ### A reference twin is created where it matters, not everywhere
 

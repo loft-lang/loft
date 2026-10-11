@@ -6,7 +6,8 @@ at the analysis file beside it that priced it, and at its rule in
 `doc/claude/formal/rewrites.md` (§ Proposed for a rule no site implements).
 
 **The release cut.**  The stable release waits only on rows over **5×** (C136's release clause);
-those go first, each by its lowest-risk lever, and the 3–5× rows follow after stability.
+those go first, by whatever cure removes the mechanism (no restriction to low-risk changes),
+and the 3–5× rows follow after stability.
 
 **Position.**  `python3 bench/portal/outliers.py bench/portal/results/<host>.tsv` reads the
 last full run; it does not start one.  The rows
