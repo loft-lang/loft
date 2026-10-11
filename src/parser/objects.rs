@@ -3282,8 +3282,11 @@ impl Parser {
             // of the numeric width/radix grammar (which rejects `date`/`dollars`
             // as an "Unknown variable" width expression). Pass-stable: the
             // `t_<len><Type>_to_text` def is collected in both parser passes, so
-            // both take this branch.
-            let custom_fmt = if let Type::Reference(fd, _) = &tp {
+            // both take this branch.  `@FR-N-Shape` — a nullable value (`D?`, a keyed
+            // element's field) owns the same DSL: the shape is asked of the peeled type,
+            // and an absent value renders `null` before the hook would run
+            // (`append_user_text_unless_null`).
+            let custom_fmt = if let Type::Reference(fd, _) = tp.base() {
                 self.data.def_type(*fd) == DefType::Struct && {
                     let m = self.type_method(*fd, "to_text");
                     // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
