@@ -34,8 +34,9 @@ pricing pass (§ 5) is the larger half of the work.
 Read off `bench/stats.py` runs of every lane that held a row over 5× (arm64 macOS, commit
 `801d0137d`, the library checkouts synced as step 0 below): **21 rows over 5×**, plus
 `panel_build` (5.03×) and `slope_path_with_undo` (5.09×, noisy) on the line; `truncate_to`
-(4.81×) and `emit_to_material` (4.85×) sit just under and stay in view.  The levers already
-priced take about five rows under; the rest need a lever, a decision (§ 6) or a price.
+(4.81×) and `emit_to_material` (4.85×) sit just under and stay in view.  `clock_pump` has
+left since (A below): **20 remain**.  The levers already priced take about four more under;
+the rest need a lever, a decision (§ 6) or a price.
 
 **Step 0 — the bench checkouts, DONE.**  The checkouts were on `main` while four libraries
 keep their benches on `laptop-perf-bench` (`libs.tsv` names the branch per repository); each
@@ -47,11 +48,11 @@ with its realigned twin (6.62× → 2.18×); `arguments/parse` (5.69×) and `ind
 
 | row | × | what the price shows |
 |---|--:|---|
-| `clock_pump` | 6.82 | PRICED: the bench calls the `(R-Inputs)` twins (`n_clock_pump__inv`, `n_clock_advance__inv`, `n_clock_scaled__inv`), and the twin emission drops `(R-RecPtr)` — every field access re-resolves the store, where the plain functions already hold the address across the in-place callee.  The twins with the held address: 48.3–52.7 → 16.7 ms (−67 %, ≈ 2.1×), `clock_advance` 24 → 10.8 ms, hashes unchanged.  The lever is the twin running the record-address pass the plain function runs |
-| `locate` | 6.19 | PRICED: NOT the record address — the held element address alone measured +7 %.  The cost is the checked accumulation `cum += p.count`: with the overflow note's cold call removed from the two checked adds, 8.8 → 5.3 ms (−39 %, ≈ 3.6×); with plain adds, 2.7 ms.  The note call is no general mechanism: removed from every checked operator (a runtime probe) it moved only `locate` across six lanes (`clock_advance` +23 %, `collatz` +7 %), so the lever is this loop's, still unnamed |
+| `clock_pump` | 6.82 | BUILT: a twin runs `(R-RecPtr)`'s parameter clause over the accesses its inputs leave (`bind_param_record_ptrs`); before, every left-over field access in `n_clock_pump__inv` and its callees re-resolved the store.  `bench/stats.py`: 6.82× → **2.33×** (16.66 ms, the hand price), `clock_advance` 24 → 10.7 ms (1.38×), hashes unchanged.  Leaves the cut |
+| `locate` | 6.19 | PRICED: NOT the record address — the held element address alone measured +7 %.  The cost is the checked sum `cum + p.count` spelled TWICE, in `a < cum + p.count` and in `cum += p.count`: LLVM cannot merge two checked adds whose overflow path is an opaque call that may write memory, so it computes both and re-loads `p.count`.  Bound once before the `if` (the hand-written form of the twin `n_locate__inv`): 8.81 → 6.09 ms (−31 %, ≈ 4.3×), hash unchanged; plain adds 3.44 ms.  The lever is `(R-SameRead)` across statements — a pure expression an `if` condition shares with the statement after it, the arm leaving — and it needs a decision: an overflowing sum is then reported once, not twice |
 | `mesh_to_floats` | 5.53 | re-analyse from the current code (§ 4) |
 | `fill_polygon` | 5.28 | 18 store accesses per edge in `polygon_crossings` |
-| `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  Its helpers run through `__inv` twins that drop `(R-RecPtr)` — 10 of hex_field's 29 twins do (`eg_index`, `hs_index`, `hz_index`, `lb_index`, `ly_slot`, `hexset_set`, …), so `clock_pump`'s lever reaches it |
+| `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  NOT `clock_pump`'s lever: its helper twins (`eg_index__inv`, `hs_index__inv`, `ly_slot__inv`) read every field from their inputs and touch no store, so no address has anything to serve |
 
 **B. Keyed collections** — the largest bloc; most of it clears 5× only with the keyed store
 format decision (§ 6).
@@ -87,9 +88,8 @@ format decision (§ 6).
 
 **Order for the cut.**
 1. Step 0 (done).
-2. A: build `(R-RecPtr)` in the `(R-Inputs)` twins (`clock_pump`'s price), then re-measure
-   `stencil_rotate`, `fill_polygon` and `mesh_to_floats` for the same drop; name `locate`'s
-   loop lever.
+2. A: `(R-RecPtr)` in the `(R-Inputs)` twins is built (`clock_pump`); re-measure
+   `fill_polygon` and `mesh_to_floats`; name `locate`'s loop lever.
 3. The priced units: C1 + C2 (`decode`), C8 (`doc_read`), `(R-DecodeView)`
    (`check_request`), S1c re-priced (`flow_layout_full`).
 4. The three decisions, the keyed store format first (most of B), then `(R-ViewReturn)`
@@ -132,6 +132,7 @@ time against the row measured at `7df5a4f4b`:
 |---|---|---|
 | x86-64 laptop | `index_write` (+61 % with the lock test gone), `time/parse` +28 %, `keys_near` +16 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
 | arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
+| arm64 macOS, census | `make rewrite-census`: `R-RefillBuffer` 1 → 0 in `web` and in `server` | present at `75d678f8a` before any change of this pass (the net library checkouts moved to server 0.7.5 / web 0.4.5 in step 0); not attributed |
 | x86-64 laptop | `06_newton_sqrt` +14 % (28.2 → 32.8 ms, Rust lane level) | ATTRIBUTED: `(R-RangedCall)`'s twin `n_roots__rg` is lean enough that LLVM inlines the LOOPING callee `n_newton_sqrt` into the caller's loop; out of line (`#[inline(never)]` on the emitted Rust) the row is 28.0 ms, better than before.  The same effect as the blanket `#[inline]` experiment on this row.  A general rule — no inlining of a looping callee into a loop — changes inlining everywhere and is judged on a full run, not this row.  `mesh_emit` is not a regression (native 125.5 → 94.8 µs since 09-29, its Rust lane moved); `byte_walk` swings 3.6–6.0 µs between runs on this box |
 | x86-64 laptop | random `indices` 7.61× | FIXED: the shuffle loop calls `get`, whose one inferred-range local inserts `OpRangeDefault`; its `const` bounds read as a store write, so every loop calling `get` declined the hoist.  Named store-free beside `atan2`'s dispatchers: `indices` 19.0 → 6.6 ms (2.63×), `get` 20.2 → 14.5 ms (2.57×) |
 | x86-64 laptop | `mesh_aabb` +34 % (21.0 → 28.3 µs) | not in its emission or runtime (byte-identical twin since `70079f138`, `rec_get` unchanged), most likely layout — and the row is now 17.0 µs (2.23×) through `(R-RecPtr)`'s non-null address, which also took `entity_tick` −19 % |

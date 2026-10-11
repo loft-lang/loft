@@ -5368,11 +5368,6 @@ impl Output<'_> {
         if !self.coroutine_persistent_fields.is_empty() {
             return Ok(0);
         }
-        // A twin's scalar reads arrive as its inputs (`(R-Inputs)`), so the address would serve
-        // only what is left over — in hex_field's `eg_index__inv`, nothing.
-        if self.twin.is_some() {
-            return Ok(0);
-        }
         let vars = self.data.def(self.def_nr).variables();
         let params: Vec<u16> = (0..vars.count()).filter(|v| vars.is_argument(*v)).collect();
         let mut frames = 0;
@@ -5386,7 +5381,17 @@ impl Output<'_> {
             }
             // The address costs two runtime calls at entry, which one field access does not
             // repay: a parameter read or written once keeps its store access.
-            if hoist::scalar_field_uses(stmts, p, self.data) < 2 {
+            // A twin's scalar reads of `p` arrive as its inputs (`(R-Inputs)`), so the address
+            // serves only what is left over — in hex_field's `eg_index__inv`, nothing; in
+            // `clock_pump__inv`, the fields its in-place callees write.
+            let served: Vec<i64> = self.twin.as_ref().map_or_else(Vec::new, |t| {
+                t.scalars
+                    .iter()
+                    .filter(|(q, _, _)| *q == p)
+                    .map(|(_, f, _)| *f)
+                    .collect()
+            });
+            if hoist::scalar_field_uses(stmts, p, self.data, &served) < 2 {
                 continue;
             }
             // No twin call is served (`param_rec_ptrs`), so none counts as a use.
