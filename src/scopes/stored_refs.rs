@@ -119,7 +119,7 @@ struct Site<'v> {
 /// record's home: the home moved out to the holder's block, or the write refused.
 #[must_use]
 pub fn stored_reference_homes(data: &Data, database: &Stores) -> StoredRefs {
-    if crate::keys::ref_home_disabled() {
+    if crate::keys::ref_home_disabled() || !database.has_reference_fields() {
         return StoredRefs::default();
     }
     let functions: Vec<u32> = (0..data.definitions())
