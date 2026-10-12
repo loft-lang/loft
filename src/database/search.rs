@@ -7,7 +7,7 @@ use crate::database::{Parts, Stores};
 use crate::keys::{Content, DbRef};
 use crate::store::RECORD_PAYLOAD;
 use crate::vector;
-use crate::{hash, keys, tree};
+use crate::{btree, hash, keys};
 use std::cmp::Ordering;
 
 #[allow(dead_code)]
@@ -307,17 +307,13 @@ impl Stores {
     }
 
     pub(super) fn find_index(&self, data: &DbRef, db: u16, key: &[Content]) -> DbRef {
-        // Where the links live is [`Self::fields`]'s question, asked once: a synth
-        // `__nullable<S>` element keeps them in the `Some` record, and recomputing the
-        // offset here from the enum's own (absent) field list read `u16::MAX`.
-        let left = self.fields(db);
         // A FULL key names at most one record, so its descent stops there
-        // (`tree::find_exact`); a partial key keeps the boundary walk below, which
+        // (`btree::find_exact`); a partial key keeps the boundary walk below, which
         // answers the LOWEST of the records it matches.
         if keys::fast_order_enabled() && key.len() == self.keys(db).len() {
-            let rec = tree::find_exact(data, left, &self.allocations, self.keys(db), key);
+            let rec = btree::find_exact(data, &self.allocations, self.keys(db), key);
             if keys::keyed_verify() {
-                let walked = self.find_index_boundary(data, db, key, left).rec;
+                let walked = self.find_index_boundary(data, db, key).rec;
                 assert!(
                     walked == rec,
                     "LOFT_KEYED_VERIFY: the exact descent answers record {rec} where the \
@@ -330,32 +326,26 @@ impl Stores {
                 pos: if rec == 0 { 0 } else { 8 },
             };
         }
-        self.find_index_boundary(data, db, key, left)
+        self.find_index_boundary(data, db, key)
     }
 
-    /// [`Self::find_index`]'s general form: the boundary below `key`, one step forward,
-    /// and one comparison to say whether that record matches.
-    fn find_index_boundary(&self, data: &DbRef, db: u16, key: &[Content], left: u16) -> DbRef {
-        let rec = tree::find(data, true, left, &self.allocations, self.keys(db), key);
-        let mut result = DbRef {
+    /// [`Self::find_index`]'s general form: the first record at or above `key`, and one
+    /// comparison to say whether that record matches.
+    fn find_index_boundary(&self, data: &DbRef, db: u16, key: &[Content]) -> DbRef {
+        let below = btree::find_record(data, true, &self.allocations, self.keys(db), key);
+        let rec = if below == 0 {
+            btree::first_record(data, &self.allocations)
+        } else {
+            btree::next_record(data, &self.allocations, self.keys(db), below)
+        };
+        let result = DbRef {
             store_nr: data.store_nr,
             rec,
             pos: 8,
         };
-        result.rec = if rec == 0 {
-            tree::first(data, left, &self.allocations).rec
-        } else {
-            tree::next(
-                keys::store(&result, &self.allocations),
-                &DbRef {
-                    store_nr: result.store_nr,
-                    rec,
-                    pos: u32::from(left),
-                },
-            )
-        };
-        let cmp = keys::key_compare(key, &result, &self.allocations, self.keys(db));
-        if cmp == Ordering::Equal {
+        if rec != 0
+            && keys::key_compare(key, &result, &self.allocations, self.keys(db)) == Ordering::Equal
+        {
             result
         } else {
             DbRef {
@@ -461,13 +451,8 @@ impl Stores {
             Parts::Hash(_, _) => {
                 hash::validate(data, &self.allocations, &self.types[db as usize].keys);
             }
-            Parts::Index(_, _, fields) => {
-                tree::validate(
-                    data,
-                    fields,
-                    &self.allocations,
-                    &self.types[db as usize].keys,
-                );
+            Parts::Index(_, _, _) => {
+                btree::validate(data, &self.allocations, &self.types[db as usize].keys);
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 for f in fields {
@@ -518,18 +503,12 @@ impl Stores {
                 }
             }
             Parts::Index(_, _, _) => {
-                if *pos == i32::MAX {
-                    let n = tree::first(data, self.fields(db), &self.allocations);
-                    *pos = n.rec as i32;
-                    return n;
-                }
-                let store = keys::store(data, &self.allocations);
-                let mut rec = DbRef {
-                    store_nr: data.store_nr,
-                    rec: *pos as u32,
-                    pos: u32::from(self.fields(db)),
+                // The cursor is the RECORD, never a slot: a walk survives removals by key.
+                let n = if *pos == i32::MAX {
+                    btree::first_record(data, &self.allocations)
+                } else {
+                    btree::next_record(data, &self.allocations, self.keys(db), *pos as u32)
                 };
-                let n = tree::next(store, &rec);
                 if n == 0 {
                     return DbRef {
                         store_nr: data.store_nr,
@@ -538,9 +517,11 @@ impl Stores {
                     };
                 }
                 *pos = n as i32;
-                rec.rec = n;
-                rec.pos = 8;
-                rec
+                DbRef {
+                    store_nr: data.store_nr,
+                    rec: n,
+                    pos: 8,
+                }
             }
             Parts::Base
             | Parts::Struct(_)
@@ -1290,11 +1271,13 @@ impl Stores {
                 );
             }
             RemoveKind::Index => {
-                let left = self.fields(db);
-                tree::remove(
+                debug_assert_eq!(
+                    rec.store_nr, data.store_nr,
+                    "an index's records live in its store"
+                );
+                btree::remove(
                     data,
-                    rec,
-                    left,
+                    rec.rec,
                     &mut self.allocations,
                     &self.types[db as usize].keys,
                 );

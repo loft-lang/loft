@@ -7687,7 +7687,7 @@ extern crate loft;"
         writeln!(w, "use loft::ops;")?;
         writeln!(w, "use loft::vector;")?;
         writeln!(w, "use loft::hash;")?;
-        writeln!(w, "use loft::tree;")?;
+        writeln!(w, "use loft::btree;")?;
         writeln!(w, "use loft::codegen_runtime;")?;
         writeln!(w, "use loft::codegen_runtime::*;")?;
         // A `#rust` template names a loft module as `crate::<m>::…` so the INTERPRETER's

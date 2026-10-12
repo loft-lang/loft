@@ -1778,36 +1778,27 @@ impl Stores {
         finish: u32,
         reverse: bool,
     ) -> Option<u32> {
-        let fields = self.fields(tp);
+        let keys = self.keys(tp).to_vec();
+        let n_after = if reverse {
+            crate::btree::previous_record(data, &self.allocations, &keys, cur)
+        } else {
+            crate::btree::next_record(data, &self.allocations, &keys, cur)
+        };
+        // Read before the removal: `cur` is about to stop being in the tree.
+        let removed_the_last = cur == finish;
         let cur_ref = crate::keys::DbRef {
             store_nr: data.store_nr,
             rec: cur,
-            pos: u32::from(fields),
+            pos: 8,
         };
-        let n_after = {
-            let store = crate::keys::store(data, &self.allocations);
-            if reverse {
-                crate::tree::previous(store, &cur_ref)
-            } else {
-                crate::tree::next(store, &cur_ref)
-            }
-        };
-        // Read before the removal: `cur` is about to stop being a node.
-        let removed_the_last = cur == finish;
         self.remove_owned(data, &cur_ref, tp);
         if n_after == 0 || removed_the_last {
             return None;
         }
-        let n_ref = crate::keys::DbRef {
-            store_nr: data.store_nr,
-            rec: n_after,
-            pos: u32::from(fields),
-        };
-        let store = crate::keys::store(data, &self.allocations);
         Some(if reverse {
-            crate::tree::next(store, &n_ref)
+            crate::btree::next_record(data, &self.allocations, &keys, n_after)
         } else {
-            crate::tree::previous(store, &n_ref)
+            crate::btree::previous_record(data, &self.allocations, &keys, n_after)
         })
     }
 

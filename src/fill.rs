@@ -19,12 +19,12 @@
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
+use crate::btree;
 use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{DbRef, Str};
 use crate::ops;
 use crate::state::{Hot, Regs, State};
-use crate::tree;
 use crate::vector;
 
 pub static OPERATORS: &[fn(&mut State)] = &[
@@ -5732,7 +5732,10 @@ fn length_index<const F: bool>(s: &mut State) {
     let operands = s.operands(2);
     let v_fields = operands.get::<u16>(0);
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = i64::from(tree::count(&v_r, v_fields, &s.database.allocations));
+    let new_value = {
+        let _ = v_fields;
+        i64::from(btree::count(&v_r, &s.database.allocations))
+    };
     s.put_stack_m::<F, _>(new_value);
 }
 

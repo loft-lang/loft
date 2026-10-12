@@ -5,13 +5,13 @@
 
 // @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+use crate::btree;
 use crate::database::types::HeapSlot;
 use crate::database::{Parts, Stores, WorkerStores};
 use crate::hash;
 use crate::keys::DbRef;
 use crate::radix_db;
 use crate::store::Store;
-use crate::tree;
 use crate::vector;
 
 /// `OpClearKeyed`'s `tp` operand sets this bit when the field being cleared is a
@@ -328,11 +328,9 @@ impl Stores {
     /// - `Array`/`Ordered` — the slot-list block.  Its slots are 4-byte record
     ///   numbers naming records the primary holds; dropping the list drops this
     ///   route to them and nothing more.
-    /// - `Index` — nothing to free.  A b-tree's nodes ARE the element records
-    ///   (its links live in extra fields of each), so there is no spine block to
-    ///   release; zeroing the root pointer is the whole teardown.  The stale
-    ///   links left in the surviving records are unreachable once the root is
-    ///   gone, and a later insert rewrites them.
+    /// - `Index` — the arena record its B+tree nodes live in (`btree.rs`).  The nodes
+    ///   hold record numbers and nothing in a record points back, so releasing the
+    ///   arena drops this route to the records and nothing more.
     /// - `Vector`/`Sorted` — contiguous storage holds its elements INLINE, so it
     ///   can share them with nothing and is never marked a view.  Falling back to
     ///   the owning walk keeps a mismarked field a leak rather than a silent
@@ -376,7 +374,13 @@ impl Stores {
                 }
                 empty(Some(cur), Vec::new())
             }
-            Parts::Index(_, _, _) => empty(None, Vec::new()),
+            Parts::Index(_, _, _) => {
+                let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
+                if cur == 0 || Self::owned_edge_absent(cur) || !self.owned_edge_in_store(rec, cur) {
+                    return empty(None, Vec::new());
+                }
+                empty(Some(cur), Vec::new())
+            }
             _ => self.owned_walk(rec, tp, false),
         }
     }
@@ -583,13 +587,12 @@ impl Stores {
             }
             Parts::Index(c, _, _) => {
                 let c = *c;
-                let left = self.fields(tp);
                 let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
                 if cur != 0 && !Self::owned_edge_absent(cur) && !self.owned_edge_in_store(rec, cur)
                 {
                     self.refuse_owned_edge(rec, tp, cur, "index");
                 } else if cur != 0 {
-                    for node in self.collect_index_nodes(rec, left) {
+                    for node in self.collect_index_nodes(rec) {
                         children.push(OwnedChild {
                             child: DbRef {
                                 store_nr: rec.store_nr,
@@ -601,7 +604,8 @@ impl Stores {
                             borrowed: false,
                         });
                     }
-                    // No separate container block: index nodes ARE the records.
+                    // The tree's nodes live in their own arena record: the spine.
+                    container_rec = Some(cur);
                 }
             }
             Parts::ChildRec(ct) => {
@@ -2394,35 +2398,15 @@ impl Stores {
         self.build_rec_scratch(coll, &recs)
     }
 
-    /// @PLN105 Phase 3 — collect an `index<T[key]>` (red-black tree) in ascending key order into an
-    /// iterable scratch rec-nr vector, for the deliver pre-flatten. Mirrors `tree::count`'s in-order
-    /// walk (`first` → `next`), keyed off the node type's left-child BYTE position
-    /// (`Stores::fields`); result iterated via the same Ordered (on=3) path as the hash/radix
-    /// scratches.
-    pub fn build_index_sorted_vec(&mut self, coll: &DbRef, tp: u16) -> DbRef {
+    /// @PLN105 Phase 3 — collect an `index<T[key]>` in ascending key order into an iterable
+    /// scratch rec-nr vector, for the deliver pre-flatten; iterated via the same Ordered (on=3)
+    /// path as the hash/radix scratches.
+    pub fn build_index_sorted_vec(&mut self, coll: &DbRef, _tp: u16) -> DbRef {
         // An absent holder has no scratch — see `build_hash_sorted_vec`.
         if coll.rec == 0 {
             return DbRef::NULL;
         }
-        let left = self.fields(tp);
-        if left == u16::MAX {
-            return self.build_rec_scratch(coll, &[]);
-        }
-        let recs = {
-            let store = crate::keys::store(coll, &self.allocations);
-            let mut recs = Vec::new();
-            let mut cur = tree::first(coll, left, &self.allocations).rec;
-            while cur != 0 {
-                recs.push(cur);
-                let r = DbRef {
-                    store_nr: coll.store_nr,
-                    rec: cur,
-                    pos: u32::from(left),
-                };
-                cur = tree::next(store, &r);
-            }
-            recs
-        };
+        let recs = btree::records(coll, &self.allocations);
         self.build_rec_scratch(coll, &recs)
     }
 
@@ -3750,21 +3734,8 @@ impl Stores {
 
     /// Collect all record numbers in an RB-tree index by in-order traversal.
     /// `rec` points to the i32 tree-root field; `left` is `self.fields(index_tp)`.
-    pub(super) fn collect_index_nodes(&self, rec: &DbRef, left: u16) -> Vec<u32> {
-        let mut nodes = Vec::new();
-        let mut curr = tree::first(rec, left, &self.allocations).rec;
-        while curr != 0 {
-            nodes.push(curr);
-            curr = tree::next(
-                &self.allocations[rec.store_nr as usize],
-                &DbRef {
-                    store_nr: rec.store_nr,
-                    rec: curr,
-                    pos: u32::from(left),
-                },
-            );
-        }
-        nodes
+    pub(super) fn collect_index_nodes(&self, rec: &DbRef) -> Vec<u32> {
+        btree::records(rec, &self.allocations)
     }
 
     /// Deep-copy an `index<T>` field from `rec` into `to`.
@@ -3775,7 +3746,6 @@ impl Stores {
             self.store_mut(to).set_u32_raw(to.rec, to.pos, 0);
             return;
         }
-        let left = self.fields(tp);
         let content_tp = match &self.types[tp as usize].parts {
             Parts::Index(c, _, _) => *c,
             other => {
@@ -3787,10 +3757,10 @@ impl Stores {
         // SOURCE enumeration reads the keystone walk — the single home of the
         // per-`Parts` source layout — exactly as `remove_claims` and
         // `copy_claims_hash_body` do.  The keystone's `Index` arm makes the same
-        // `collect_index_nodes(rec, left)` call and hands each node back as
+        // `collect_index_nodes(rec)` call and hands each node back as
         // `owning_elem`, so this is position-for-position the walk it replaces.
         // The DESTINATION build (claim → back-pointer → `copy_block` → recurse →
-        // `tree::add`) stays per-kind: unifying it is how @P318/@P309 come back.
+        // `btree::add`) stays per-kind: unifying it is how @P318/@P309 come back.
         let nodes: Vec<u32> = self
             .for_each_owned_child(rec, tp)
             .children
@@ -3832,18 +3802,8 @@ impl Stores {
                 },
                 content_tp,
             );
-            // Insert into the destination tree; tree::add initialises nav fields.
-            tree::add(
-                to,
-                &DbRef {
-                    store_nr: to.store_nr,
-                    rec: dst_node,
-                    pos: 8,
-                },
-                left,
-                &mut self.allocations,
-                &keys,
-            );
+            // File it in the destination tree, in key order as the source walk yields it.
+            btree::add(to, dst_node, &mut self.allocations, &keys);
         }
     }
 

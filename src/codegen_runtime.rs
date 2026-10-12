@@ -18,10 +18,10 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
+use crate::btree;
 use crate::database::{ShowDb, Stores};
 use crate::keys::{Content, DbRef, Key};
 use crate::ops;
-use crate::tree;
 
 // ============================================================
 // Plan 09 phase 01 — Cell/Stores ABI consolidation
@@ -1593,15 +1593,6 @@ fn pack_iter(cur: u32, finish: u32) -> i64 {
     ((u64::from(finish) << 32) | u64::from(cur)).cast_signed()
 }
 
-/// Build a minimal `DbRef` pointing at record `rec` with field offset `pos`.
-fn iter_ref(data: &DbRef, rec: u32, pos: u16) -> DbRef {
-    DbRef {
-        store_nr: data.store_nr,
-        rec,
-        pos: u32::from(pos),
-    }
-}
-
 /// Initialize a sorted/index iterator state and return it as a packed `i64`.
 ///
 /// `on` encodes collection type and flags:
@@ -1689,11 +1680,9 @@ pub fn OpIterate(
             }
         }
         1 => {
-            // red-black tree / index: arg = fields offset.  The cursor derivation is
-            // shared with `State::iterate` (loft#691) — the two had their own copies
-            // and drifted apart.
-            let (start, finish) =
-                tree::range_cursors(&data, arg as u16, all, keys, from, till, ex, reverse);
+            // index: arg = the index type.  The cursor derivation is shared with
+            // `State::iterate` (loft#691) — the two had their own copies and drifted apart.
+            let (start, finish) = btree::range_cursors(&data, all, keys, from, till, ex, reverse);
             pack_iter(start, finish)
         }
         3 | 4 => {
@@ -1775,19 +1764,20 @@ pub fn OpStep(
             stores.element_reference(&data, byte_pos)
         }
         1 => {
-            // red-black tree / index: arg = fields offset
-            let fields = arg as u16;
-            let store = crate::keys::store(&data, all);
+            // index: arg = the index type; the cursor is the record last yielded.
             let next_rec = if cur == 0 {
                 if reverse {
-                    tree::last(&data, fields, all).rec
+                    btree::last_record(&data, all)
                 } else {
-                    tree::first(&data, fields, all).rec
+                    btree::first_record(&data, all)
                 }
-            } else if reverse {
-                tree::previous(store, &iter_ref(&data, cur, fields))
             } else {
-                tree::next(store, &iter_ref(&data, cur, fields))
+                let keys = stores.keys(arg as u16);
+                if reverse {
+                    btree::previous_record(&data, all, keys, cur)
+                } else {
+                    btree::next_record(&data, all, keys, cur)
+                }
             };
             if next_rec == finish {
                 finish = u32::MAX;
@@ -3074,7 +3064,7 @@ pub fn OpRemove<S: IterState>(
             state.set_cur_i64_plain(n);
         }
         1 => {
-            // index (red-black tree): arg is the type index; fields offset derived from it
+            // index: arg is the index type
             let cur_u = cur as u32;
             if cur_u == u32::MAX {
                 return;

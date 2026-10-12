@@ -15,7 +15,7 @@ use loft::keys::{DbRef, Str, Key, Content};
 use loft::ops;
 use loft::vector;
 use loft::hash;
-use loft::tree;
+use loft::btree;
 use loft::codegen_runtime;
 use loft::codegen_runtime::*;
 use loft::narrow;
@@ -1702,4 +1702,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 pub(crate) const PREFIX_TYPES: usize = 99;
 pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 11083201608350673150;
+pub(crate) const SOURCE_HASH: u64 = 6217834409831291600;
