@@ -1,9 +1,9 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index 0e8789138..e450e913b 100644
+index 97c97122..643fabb8 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -1852,11 +1852,15 @@
-         // `generate_call_ref` does; the program continues (C80).
+@@ -1926,11 +1926,15 @@ impl Output<'_> {
+         // `generate_call_ref` does; the program continues (@C80).
          write!(w, " _ => ")?;
          if let Some(fields) = &value_fields {
 -            write!(

@@ -1,8 +1,10 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index d6cea232..be15bdf1 100644
 --- a/src/generation/hoist.rs
 +++ b/src/generation/hoist.rs
-@@ -3297,7 +3297,9 @@
-         .collect::<Vec<_>>()
-     {
+@@ -4448,7 +4448,9 @@ pub fn borrowed_store_texts(
+             continue;
+         }
          let scope = mention_scope(body, v);
 -        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
 +        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active)
