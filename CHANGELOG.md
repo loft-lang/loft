@@ -172,6 +172,28 @@ works behind a TLS-inspecting proxy.  Installing a package, fetching a remote st
 web service checks a server against the bundled roots and the machine's own store, as curl and
 git do.
 
+### Bug fixes
+
+**Operands are evaluated left to right, also around a call that answers a vector or a
+record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and
+`c.n + made(c).v` read `c.n` after `made` had changed it, on both backends.  Each operand now
+sees exactly what the operands to its left did.
+
+**A vector parsed from text can be returned, and holds values of its own type.**  A function
+that bound `vector<T>.parse(text)` to a local and returned the local handed back a vector
+whose memory was already released; so did binding it inside an `if` block and reading it
+afterwards.  Compiled programs answered an empty vector, interpreted ones usually the right
+one.  Also, `vector<integer>.parse` and `vector<float>.parse` gave elements no operator
+accepted, and `vector<text>.parse` printed its texts with their quotes.
+
+**A struct-enum parsed from text can be returned from a function.**
+`fn load(t: text) -> Shape { Shape.parse(t) }` compiled, and its result could not be bound,
+stored in a vector or a field, or passed on: "cannot change type from Shape to Shape".
+
+**A null test narrows a nullable struct-enum.**  Inside `if s != null { area(s) }`, and on the
+else side of `if s == null`, a `Shape?` is a `Shape`: the call was reported as storing a
+nullable into a non-null parameter, where the same code over a struct was not.
+
 ---
 
 ## 2026-10

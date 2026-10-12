@@ -217,7 +217,10 @@ impl Scopes<'_> {
                 if *d == create_stack_nr
                     && matches!(cargs.first().map(Value::unspan), Some(Value::Var(_))))
         });
+        // Where each argument's hoisted operations start in `preamble` (`keep_operand_order`).
+        let mut hoisted_from: Vec<usize> = Vec::with_capacity(args.len() + 1);
         for (arg_idx, a) in args.iter().enumerate() {
+            hoisted_from.push(preamble.len());
             // loft#1320 — a branch VALUE consumed by this call (`total(if c { g(a) } else { g(n) })`)
             // never reaches `scan_set`, so its arms get their owners here, homed in this statement's
             // scope: the call reads the temp and the scope's exit frees it by identity.
@@ -577,6 +580,10 @@ impl Scopes<'_> {
                 ls.push(scanned);
             }
         }
+        hoisted_from.push(preamble.len());
+        if ls.len() == args.len() {
+            self.keep_operand_order(&mut preamble, &hoisted_from, &mut ls, function, data);
+        }
         for (i, orig) in amp_foreign.iter().enumerate() {
             preamble.insert(
                 i,
@@ -591,6 +598,143 @@ impl Scopes<'_> {
             ));
         }
         (preamble, ls, postamble)
+    }
+
+    /// `@FR-E-Left`, `@FR-F-Args` — operands are evaluated left to right, and a hoisted
+    /// operation runs before every argument that stays in the call.  So an argument whose evaluation was hoisted — a call
+    /// result lifted into a temp, a `&` argument's materialisation — would run AHEAD of an
+    /// earlier argument, which is wrong wherever the two do not commute: `set(j) +
+    /// len(j.keys())` read the keys before `set` wrote them, and `c.n + made(c).v` read
+    /// `c.n` after `made` changed it (loft#1987).  Each such earlier argument is evaluated
+    /// into a temp of its own, placed before the hoisted operations, so the order of the
+    /// source holds and every argument left in the call is a value that no longer depends
+    /// on when it is read.
+    ///
+    /// `hoisted_from[i]..hoisted_from[i + 1]` is the part of `preamble` argument `i` put
+    /// there.  An earlier argument that already is such a value stays as it is
+    /// ([`Self::reads_no_state`]); one no temp can hold — a heap value, which is passed by
+    /// reference and read by the callee — stays too.
+    fn keep_operand_order(
+        &mut self,
+        preamble: &mut Vec<Value>,
+        hoisted_from: &[usize],
+        ls: &mut [Value],
+        function: &mut Function,
+        data: &Data,
+    ) {
+        let evaluates = |ops: &[Value]| {
+            ops.iter()
+                .any(|op| op.any_node(&mut |n| matches!(n, Value::Call(..) | Value::CallRef(..))))
+        };
+        if !evaluates(preamble) || ls.len() < 2 {
+            return;
+        }
+        let hoisted = std::mem::take(preamble);
+        let mut kept = vec![false; ls.len()];
+        for i in 0..ls.len() {
+            let ops = &hoisted[hoisted_from[i]..hoisted_from[i + 1]];
+            if evaluates(ops) {
+                for j in 0..i {
+                    if kept[j] || Self::reads_no_state(&ls[j], ops, function, data) {
+                        continue;
+                    }
+                    kept[j] = true;
+                    let Some(tp) = Self::operand_value_type(&ls[j], function, data) else {
+                        continue;
+                    };
+                    self.lift_counter += 1;
+                    let name = format!("__lift_{}", self.lift_counter);
+                    let tmp = function.add_temp_var(&name, &tp);
+                    self.var_scope.insert(tmp, self.scope);
+                    self.var_order.push(tmp);
+                    let operand = std::mem::replace(&mut ls[j], Value::Var(tmp));
+                    preamble.push(v_set(tmp, operand));
+                }
+            }
+            preamble.extend(ops.iter().cloned());
+        }
+    }
+
+    /// Does `operand` answer the same whenever it is evaluated relative to `hoisted`: a
+    /// constant, a variable `hoisted` does not write, a `&` reference to one, or an operator
+    /// over such values that takes and answers values only (arithmetic, comparison,
+    /// conversion)?  Anything that reads a record or calls a function may see, or cause, a
+    /// difference, and answers no.
+    fn reads_no_state(
+        operand: &Value,
+        hoisted: &[Value],
+        function: &Function,
+        data: &Data,
+    ) -> bool {
+        let writes = |v: u16| {
+            hoisted.iter().any(|op| {
+                op.any_node(&mut |n| match n {
+                    Value::Set(w, _) => *w == v,
+                    Value::Call(d, a) => {
+                        data.def(*d).name == "OpCreateStack"
+                            && matches!(a.first().map(Value::unspan), Some(Value::Var(w)) if *w == v)
+                    }
+                    _ => false,
+                })
+            })
+        };
+        match operand.unspan() {
+            Value::Null
+            | Value::Int(_)
+            | Value::Long(_)
+            | Value::Float(_)
+            | Value::Single(_)
+            | Value::Boolean(_)
+            | Value::Enum(..)
+            | Value::Text(_) => true,
+            Value::Var(v) => {
+                let value = crate::data::is_scalar(function.tp(*v))
+                    || matches!(function.tp(*v).base(), Type::Text(_));
+                !value || !writes(*v)
+            }
+            Value::Call(d, args) => {
+                let def = data.def(*d);
+                let name = def.name();
+                if name == "OpCreateStack" {
+                    return matches!(args.first().map(Value::unspan), Some(Value::Var(_)));
+                }
+                let value =
+                    |tp: &Type| crate::data::is_scalar(tp) || matches!(tp.base(), Type::Text(_));
+                let value_operator = name.starts_with("Op")
+                    && matches!(def.code(), Value::Null)
+                    && value(def.returned())
+                    && def
+                        .attributes()
+                        .iter()
+                        .all(|a| !a.constant && value(&a.typedef))
+                    && (!def.attributes().is_empty() || name.ends_with("FromNull"));
+                value_operator
+                    && args
+                        .iter()
+                        .all(|a| Self::reads_no_state(a, hoisted, function, data))
+            }
+            _ => false,
+        }
+    }
+
+    /// The type of the temp that holds `operand`'s VALUE: a scalar or a text.  `None` for
+    /// anything else, which is passed by reference and so has no value to take early.
+    fn operand_value_type(operand: &Value, function: &Function, data: &Data) -> Option<Type> {
+        let tp = match operand.unspan() {
+            Value::Call(d, _) => data.def(*d).returned().clone(),
+            Value::Var(v) => function.tp(*v).clone(),
+            Value::Block(b) => b.result.clone(),
+            Value::If(_, then, _) => return Self::operand_value_type(then, function, data),
+            Value::Insert(ops) => return Self::operand_value_type(ops.last()?, function, data),
+            _ => return None,
+        };
+        if crate::data::is_scalar(&tp) {
+            Some(tp.without_deps())
+        } else if matches!(tp.base(), Type::Text(_)) {
+            Some(Type::Text(Deps::none()))
+        } else {
+            None
+        }
     }
 
     /// loft#1105 — the TYPE to bind an argument to when the @P290 bracket cannot NAME the store

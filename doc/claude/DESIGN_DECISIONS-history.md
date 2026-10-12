@@ -4899,7 +4899,7 @@ EMPTY vector no parse built, from a whole parsed one, counts as the copy it is l
 (`t = s` is a fresh store and an append); and a parse that reads no vector at all answers a
 null one, so `v += [x]` on it starts a new vector without the errors.
 
-**Found on the way, each on `main` and filed:** a helper that binds `vector<T>.parse(t)` to a
+**Found on the way, each on `main`, filed and since fixed:** a helper that binds `vector<T>.parse(t)` to a
 local and returns the local hands back a vector whose store it freed (loft#1985);
 `fn mk(t: text) -> E { E.parse(t) }` for a struct-enum `E` cannot be bound (*"cannot change
 type from E to E"*, loft#1986); and a vector-returning call inside an expression is evaluated

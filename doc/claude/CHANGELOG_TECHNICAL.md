@@ -10,6 +10,23 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
+
+- **loft#1987** — `Scopes::scan_args` records where each argument's hoisted operations start
+  and `keep_operand_order` takes every earlier argument that reads state or calls a function
+  into a `__lift_N` scalar or text temp ahead of them (`@FR-E-Left`, `@FR-F-Args`).  A value
+  operand — a constant, a local the hoisted operations do not write, a `&` reference, an
+  operator over such values — stays in the call.
+- **loft#1985** — `Parser::parse_vector_parse` emits the `OpCastVectorFromText` call as the
+  value instead of field 0 of it, so the binder owns the minted store (`@FR-H-View`), and
+  types the elements as the named type's own values.
+- **loft#1986** — `Parser::parse_type_parse` answers `Type::Enum(d, true)` for a struct-enum,
+  and `emit_forward_copy_ref_409` rebuilds the delivered return type on the declared base,
+  keeping the enum kind and the `?`.
+- `heap_null_test` reads a struct-enum handle's null test (`if OpRefIsNull(v) true else <first
+  word is 0>`), and `narrowing_from_condition` asks it before requiring a call node, so the
+  `== null` form narrows on its else side.
+
 ### `record#errors` is a `vector<text>` held by the parsed value's store (C148, 2026-10-12)
 
 The accessor read one register (`Stores::last_parse_errors`) through `i_parse_errors`, as one
