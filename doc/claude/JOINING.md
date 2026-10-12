@@ -29,7 +29,8 @@ place: [DEVELOPMENT.md § Stay close to `main`](DEVELOPMENT.md#stay-close-to-mai
 scripts/join.py survey [SRC …]   # per source, per commit: pick NEW/PARTIAL, skip the rest
 scripts/join.py apply            # cherry-pick source by source, `cargo check` after each
 scripts/join.py rederive         # re-measure every derived artefact on the union (--commit)
-scripts/join.py verify           # the cheap checks a gate stops on: pre-flight, clippy ×2, …
+scripts/join.py verify           # the cheap checks a gate or a PR stops on: pre-flight, clippy ×2,
+                                 #   the hygiene tests, feature coverage, the PR's doc gate
 scripts/join.py guards           # the tests/scripts guards the join brought in, both backends
 scripts/join.py run [SRC …]      # all five, stopping at the first decision; then the gate
 ```

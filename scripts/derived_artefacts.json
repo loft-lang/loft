@@ -275,6 +275,18 @@
     [
       "hygiene",
       "cargo nextest run --release --test doc_hygiene"
+    ],
+    [
+      "index hygiene",
+      "cargo nextest run --release --test index_hygiene"
+    ],
+    [
+      "feature coverage",
+      "scripts/feature_coverage.sh --check"
+    ],
+    [
+      "doc gate",
+      "python3 scripts/doc_lint.py --gate --since \"$(git merge-base origin/main HEAD)\" --changed"
     ]
   ],
   "shrink_files": [
