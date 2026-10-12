@@ -280,8 +280,7 @@ hold on native as well as interp.
 **Where a decision still lives in a backend, it is spelled ONCE.**  The displacement free at
 a heap reassignment is the one store-lifetime decision both code generators still make
 themselves, and its fact-reading half is `Function::owns_displaced_store` (the store-backed
-kinds, the empty-dep proxy or the one-argument borrow `Function::borrows_one_argument`, the
-`O-Override` veto, the capture exclusion, the detach) — read by the interpreter's `owned_ref`,
+kinds, the empty-dep proxy, the `O-Override` veto, the capture exclusion, the detach) — read by the interpreter's `owned_ref`,
 native's `owned_ref_reassign` and the scope-exit sweep alike.  Two lists kept "verbatim" by
 hand drifted four times, each found by a leak or an abort on one backend only (QUALITY-history.md
 B7s); one predicate cannot.  What stays per backend is only what IS per backend — the

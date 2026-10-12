@@ -6956,9 +6956,21 @@ impl Output<'_> {
         let mut post = String::new();
         for (i, a) in def.attributes().iter().enumerate() {
             // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted fn has no return buffer
-            // parameter, so the live-reload arm must not push one either: the
-            // interpreter allocates its own for the parked call.
+            // parameter, and the parked call's body still takes one.  The arm mints a buffer
+            // of the record's type for it and releases that buffer once the tuple is read
+            // out of the answer, which is the buffer or a view of an argument.
             if dropped == Some(i) {
+                if self.dest_twin.is_none()
+                    && let Some(key) = self.value_records.fns.get(&self.def_nr)
+                {
+                    let tp = hoist::layout_record(*key);
+                    let _ = write!(
+                        pre,
+                        " let __lrb: DbRef = OpDatabase(cell, DbRef::NULL, {tp}_i32);"
+                    );
+                    let _ = write!(pushes, " st.put_stack(__lrb);");
+                    let _ = write!(post, " OpFreeRef(cell, __lrb, \"__lrb\");");
+                }
                 continue;
             }
             if let Some(tp) = self.value_records.param_type(self.def_nr, i)
@@ -6967,7 +6979,8 @@ impl Output<'_> {
                 let name = sanitize(&a.name);
                 let _ = write!(
                     pre,
-                    " let __lp_{i}: DbRef = {{ let __d = OpDatabase(cell, DbRef::NULL, {tp}_i32); let __s = unsafe {{ &mut *cell.get() }};"
+                    " let __lp_{i}: DbRef = {{ let __d = OpDatabase(cell, DbRef::NULL, {rec}_i32); let __s = unsafe {{ &mut *cell.get() }};",
+                    rec = hoist::layout_record(tp)
                 );
                 for (k, (off, rt)) in layout.fields.iter().enumerate() {
                     let setter =
@@ -6979,7 +6992,8 @@ impl Output<'_> {
                 let _ = write!(post, " OpFreeRef(cell, __lp_{i}, \"__lp_{i}\");");
                 continue;
             }
-            match &a.typedef {
+            // `@FR-N-Road` — a `τ?` parameter is pushed as its `τ` is: one slot, one layout.
+            match a.typedef.base() {
                 Type::Integer(_)
                 | Type::Float
                 | Type::Boolean
@@ -7003,7 +7017,9 @@ impl Output<'_> {
                 _ => return None,
             }
         }
-        let thunk = match def.returned() {
+        // `@FR-N-Road` — and a `-> τ?` takes the thunk its `-> τ` takes: absence is the
+        // sentinel the same word already carries.
+        let thunk = match def.returned().base() {
             Type::Void => "live_call_void",
             Type::Integer(_) if rust_type(def.returned(), &Context::Result) == "i64" => {
                 "live_call_i64"
@@ -7035,8 +7051,10 @@ impl Output<'_> {
             // shared with the cdylib bridge, the trailing comma of a 1-tuple included — and
             // for a `-> S?` the presence word, read off the same record.
             let reads = hoist::layout_reads(layout, "__lv", "__s");
+            // The tuple is read BEFORE the releases: the answer may be the buffer, or a
+            // record materialised for a tuple parameter that the body handed straight back.
             return Some(format!(
-                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &Stores = unsafe {{ &*cell.get() }}; return {reads}; }}\n"
+                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __t = {{ let __s: &Stores = unsafe {{ &*cell.get() }}; {reads} }};{post} return __t; }}\n"
             ));
         }
         Some(format!(

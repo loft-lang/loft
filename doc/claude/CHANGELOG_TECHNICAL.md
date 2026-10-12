@@ -10,6 +10,35 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `τ` and `τ?` take one lowering at three more sites (loft#1989, `@FR-N-Road`, 2026-10-12)
+
+- **The native live-reload entry check.**  `Generator::live_entry_check` reads each
+  parameter's type and the return type through `base()`, so a `τ?` gets the push and the
+  thunk its `τ` gets and a slot in `LOFT_LIVE_FNS`.  An admitted value-record function is
+  handed a buffer the arm mints (`__lrb`) for the parked call, the tuple is read out of the
+  answer BEFORE the buffer and the materialised tuple parameters are released, and a
+  nullable layout key is mapped to its record type (`hoist::layout_record`) where the
+  schema is asked.
+- **A struct literal bound to a nullable local** is built in the local
+  (`Parser::parse_object` reads the destination's type through `base()`);
+  `LOFT_NO_NULLABLE_INPLACE=1` restores the work reference.
+- **The one-argument borrow clause is gone.**  `Function::borrows_one_argument` read a
+  single-argument dep as ownership for a nullable local only; since a `τ?` record return
+  takes the caller's buffer and a nullable bind takes the dense arm, no nullable local holds
+  such a dep that its dense twin does not.  The displaced free, the return-source free and
+  the scope-exit sweep ask the same question of both spellings
+  (`Function::owns_displaced_store`, `scopes::free_vars`, `scopes::get_free_vars`).
+- **An inferred local widened by `= null` no longer depends on itself.**  The join typed the
+  local from a READ of it, whose dep names the local; nothing released what it held, which
+  the work reference had hidden.
+- `scripts/nullable_road.py --check` is a gate
+  (`tests/nullable_ret_buffer.rs::every_dense_and_nullable_pair_takes_one_road`), and
+  `(N-Road)` names the second place its one exception applies: a delivery that copies a
+  `τ?` value tests for its absence.  The pairs keep `??` on a plain read with a scalar
+  default, so the operator's own lowering stays on the channel that discounts it.
+- Still open, tracked as loft#1990: `(R-ValueRecord)` declines a `-> S?` whose result joins
+  a built record with a dense view.
+
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 
 - **loft#1987** — `Scopes::scan_args` records where each argument's hoisted operations start

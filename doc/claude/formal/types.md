@@ -497,18 +497,24 @@ old auto-`τ?` reading. Design record:
             itself: `@FR-F-Ret` for a return, the store-lifetime rules for a free.  Reading the ordinary
             spelling as correct because it is the ordinary one is how loft#1468 closed on a
             premise that was false (calls-history.md D-call-17/18).
-            ⚠ ONE exception, and only this one: the `??` operator's own lowering.  A nullable
-            twin must handle absence somewhere and there is no way to read a `τ?` without it, so
-            `__ncc_` ops are the OPERATOR's road and not the TYPE's.
+            ⚠ ONE exception, in two places: READING a `τ?` owes a test for its absence, and
+            there is no way to read one without it.  The `??` operator is the first: its
+            `__ncc_` ops are the OPERATOR's road and not the TYPE's.  The second is a delivery
+            that COPIES a `τ?` value into a buffer: it copies only where the value is present
+            and hands the absence up as it is — a `null` arm left `null`, a nullable local
+            copied under a presence test (`Parser::materialize_return_into`).  A dense record
+            local cannot be given an absence — the store is refused at compile time — so its
+            copy has no such test to take.  Nothing else is excepted: which buffer, which owner, which
+            free and which temporary are the same for both spellings.
             Home: none single — a lowering is chosen per site, so the rule is enforced at each
             delivery selector and each ownership mechanism, and the way it is BROKEN is a shape
             test naming `Type::Reference` (or any bare former) where `Optional(Reference)` also
             arrives.  The instrument is `make nullable-road` (@PLN160): hand-written
             dense/nullable PAIRS, normalised for the `?` and diffed per MACHINERY CHANNEL,
             discounting `ncc(??)`.
-            Measured 2026-09-09 over six pairs: FIVE diverge, and every one is an accident of
-            its site — none required by @C90.  Two of the five were defects in the DENSE
-            spelling that the nullable road was masking (loft#1482, loft#1483).
+            `tests/nullable_ret_buffer.rs::every_dense_and_nullable_pair_takes_one_road`
+            gates it: a pair that differs outside those two places fails, unless its nullable
+            half names the absence it handles (`@ABSENCE`) or the issue that tracks it (`@OPEN`).
 
 (N-Cast)    an explicit cast `as τ` is an ASSERTION → non-null τ (compile error if the fit is
             not provable — use `as τ?` / `?? d`).  A text→numeric PARSE is a cast, so it obeys
@@ -698,27 +704,13 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 1.**
 
-- **D-types-32** (open; the tracking issue is loft#1989) — violates `(N-Road)`: τ and τ? take the same lowering.  The <!-- doc-lint: ok -->
-  record return is unified: a `-> S?` takes the caller's buffer as `-> S` does
-  (`Type::ret_promo_base`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller
-  binds either spelling through one arm (`use_analysis::first_bind_shape`).  `make nullable-road`
-  compares fifteen dense/nullable pairs, and four roads still differ, each at one site:
-  1. `--native`'s live-reload entry check (`Generator::live_entry_check`) picks its thunk and
-     its pushes by bare type former, so a function returning or taking a `τ?` gets no entry
-     check and no `LOFT_LIVE_FNS` slot;
-  2. `Function::borrows_one_argument` reads a one-argument borrow as ownership only for the
-     nullable spelling, so a `__ret` temp joining a parameter view with a built record frees
-     its previous occupant in a `-> S?` function and not in its `-> S` twin (`ifmix`);
-  3. a `-> S?` whose tail is a local binds the block's value to a `__ret` temp and frees the
-     local unconditionally, where `-> S` returns the materialised copy directly (`recur`);
-  4. `x: S? = S { … }` builds through a work reference, where `x: S = S { … }` constructs in
-     place (`captured-local-rebind`).
-
-  `--native` value records carry a `τ?` as the flat record with a presence word
-  (`(R-ValueRecord)`'s nullable clause, @C144).  The `??` lowering is the rule's one exception,
-  and the other pairs differ in it alone.  `element-over-param` is not a pair: its halves
-  differ in an arm's value, `S { a: 0 }` against `null`.  The values agree and both halves
-  are leak-clean on `--interpret` under `LOFT_STRICT_STORES=1`.
+- **D-types-32** (open; the tracking issue is loft#1990) — violates `(N-Road)`: τ and τ? take the same lowering.  One <!-- doc-lint: ok -->
+  road still differs, on `--native` alone: the register return (`(R-ValueRecord)`) admits a
+  `-> S?` only where every result position carries the nullable tuple or is one node that
+  widens to it, so a result that JOINS a built record with a dense view
+  (`match p { [a, ..] => a, _ => S { a: 0 } }`) keeps its return buffer while its `-> S` twin
+  returns in registers (`generation/hoist.rs::value_shape`; the pair is `element-over-param`,
+  marked `@OPEN`).  The values agree on both backends.
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,

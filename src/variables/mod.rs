@@ -5225,33 +5225,12 @@ impl Function {
         self.caller_record_vars.contains(&v)
     }
 
-    /// Does `v`, a NULLABLE heap local, borrow exactly ONE argument of this function — the
-    /// D-own-16 residual `d: S? = p`, whose single dep names a parameter and nothing else?
-    ///
-    /// Such a local's dep reads as a permanent borrow though a later minting call may hand it
-    /// a store of its own; the displaced free it licenses is the GUARDED one, decided at run
-    /// time by store identity against the argument the dep names (`free_displaced` declines a
-    /// free-protected store, so the caller's argument survives the first round).  The ONE
-    /// spelling of a test three sites carried by hand — the interpreter's pre-`Set` free
-    /// (`state/codegen.rs`), the native reassignment gate (`generation/dispatch.rs`) and the
-    /// scope-exit sweep's borrow witness (`scopes.rs`) — so the two backends cannot drift on it
-    /// (@FR-O-NoDiverge).
-    #[must_use]
-    pub fn borrows_one_argument(&self, v: u16) -> bool {
-        let d = self.tp(v).depend();
-        d.len() == 1
-            && d[0] != v
-            && matches!(self.tp(v), Type::Optional(_))
-            && self.is_argument(d[0])
-            && !self.is_argument(v)
-    }
-
     /// May the store `v` DISPLACES at `v = value` be freed — the fact-reading half of the
     /// displacement free, asked identically by both backends?
     ///
     /// `v` names a store-backed kind (a record, a record enum, a vector or a keyed collection,
     /// read through `base()` so the nullable spelling is the same binding); its dep list says it
-    /// OWNS — empty (@FR-O-Proxy) or the one-argument borrow above; it is not never-free
+    /// OWNS — empty (@FR-O-Proxy), the same answer for `τ` and `τ?` (@FR-N-Road); it is not never-free
     /// (@FR-O-Override, the veto the proxy needs) and not captured (a closure holds its
     /// capture-time `DbRef`, @FR-L-CapHeap); and the assignment is not a DETACH, which
     /// displaces a store without claiming to have owned it (`is_null_sentinel_detach`).
@@ -5272,7 +5251,7 @@ impl Function {
         ) || crate::parser::vectors::is_keyed(self.tp(v).base()))
             // @FR-O-Proxy asks free — the displacement free follows on this answer, so the
             // @FR-O-Override veto is consulted right after it, as every free on the proxy must.
-            && self.proxy_says_owned_or_arg(v)
+            && self.proxy_says_owned(v)
             && !self.is_captured(v)
             // loft#1522 — and the store is not one a construction work-ref still NAMES.  The
             // proxy answers "owned" for such a local because the adoption leaves its dep list
@@ -5430,23 +5409,6 @@ impl Function {
             // its answer in the same step.
             && matches!(self.tp(v).base(), Type::Vector(_, _))
             && !self.tp(v).depend().is_empty()
-    }
-
-    /// [`Self::proxy_says_owned`] WIDENED: a binding whose dep list names exactly one
-    /// ARGUMENT still counts as owning what it displaces.
-    ///
-    /// The displacement question is not the sweep's.  A local that borrows one argument still
-    /// has a store of its own to release when a reassignment displaces it, and the dep naming
-    /// that argument is what makes the release decidable at runtime — so the proxy is read
-    /// wider here on purpose.  Routed through the pair rather than respelling it, because the
-    /// VETO is the same obligation either way: @FR-O-Override does not soften because the
-    /// proxy did.
-    #[must_use]
-    pub fn proxy_says_owned_or_arg(&self, v: u16) -> bool {
-        // @FR-O-Proxy asks free — the displacement release follows on this answer, and the
-        // @FR-O-Override veto rides on both halves: through the pair on the left, spelled on
-        // the right because the widening does not exempt it.
-        self.proxy_says_owned(v) || (self.borrows_one_argument(v) && !self.is_skip_free(v))
     }
 
     #[must_use]

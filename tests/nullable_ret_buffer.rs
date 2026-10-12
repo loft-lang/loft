@@ -373,3 +373,122 @@ fn dispatch_arm_returning_a_local_delivers_into_the_buffer() {
         "the arm still returns its own store while the caller frees an empty __retbuf\n{all}"
     );
 }
+
+/// `@FR-N-Road` in the live tier: each `τ?` function beside its `τ` twin, every one named in
+/// `LOFT_FLIP_FNS`.  A flipped function runs in the parked interpreter, which prints one
+/// `live-dispatch:` line per call; a function the emitter gave no entry check runs compiled
+/// and prints none.  The record returned in registers (`make`, `make_n`, `echo`) is handed a
+/// buffer of its own for the parked call.
+const FLIPPED: &str = r#"
+struct S { a: integer, b: text }
+struct P { x: integer }
+fn get_rec(p: vector<S>) -> S { p[0] }
+fn get_rec_n(p: vector<S>, i: integer) -> S? { if i < len(p) { p[i] } else { null } }
+fn get_vec(p: vector<vector<S>>) -> vector<S> { p[0] }
+fn get_vec_n(p: vector<vector<S>>, i: integer) -> vector<S>? { if i < len(p) { p[i] } else { null } }
+fn read_par(s: S) -> integer { s.a + 1 }
+fn read_par_n(s: S?) -> integer { (s.a ?? 40) + 1 }
+fn bump(n: integer) -> integer { n + 1 }
+fn bump_n(n: integer?) -> integer? { n + 1 }
+fn make(n: integer) -> P { P { x: n } }
+fn make_n(n: integer) -> P? { if n > 0 { P { x: n } } else { null } }
+fn echo(s: P) -> P { s }
+fn main() {
+  q: vector<S> = [S { a: 7, b: "x" }];
+  qq: vector<vector<S>> = [[S { a: 7, b: "x" }, S { a: 8, b: "y" }]];
+  r = get_rec(q); rn = get_rec_n(q, 0); rz = get_rec_n(q, 5);
+  println("{r.a}{r.b} {rn.a ?? -1} {rz.a ?? -1}");
+  v = get_vec(qq); vn = get_vec_n(qq, 0); vz = get_vec_n(qq, 3);
+  println("{len(v)} {vn[1].a ?? -1} {vz == null}");
+  s = S { a: 7, b: "x" }; sn: S? = S { a: 1, b: "q" }; sz: S? = null;
+  println("{read_par(s)} {read_par_n(sn)} {read_par_n(sz)}");
+  a: integer? = 4; z: integer? = null;
+  println("{bump(4)} {bump_n(a) ?? -9} {bump_n(z) ?? -9}");
+  m = make(7); mn = make_n(3); mz = make_n(0);
+  println("{m.x} {mn.x ?? -1} {mz == null}");
+  p = P { x: 7 }; t = echo(p); t.x = 99;
+  println("{t.x} {p.x}");
+}
+"#;
+
+/// `(function, calls)` — the dispatches each flipped function owes, one per call in `main`.
+const FLIPPED_CALLS: &[(&str, usize)] = &[
+    ("get_rec", 1),
+    ("get_rec_n", 2),
+    ("get_vec", 1),
+    ("get_vec_n", 2),
+    ("read_par", 1),
+    ("read_par_n", 2),
+    ("bump", 1),
+    ("bump_n", 2),
+    ("make", 1),
+    ("make_n", 2),
+    ("echo", 1),
+];
+
+const FLIPPED_OUT: &str = "7x 7 -1\n2 8 true\n8 2 41\n5 5 -9\n7 3 true\n99 7\n";
+
+#[test]
+fn a_nullable_function_is_flipped_to_the_interpreter_as_its_dense_twin_is() {
+    let dir = std::env::temp_dir().join(format!("loft1989_{}", std::process::id()));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let file = dir.join("flipped.loft");
+    fa::write(&file, FLIPPED).expect("write probe");
+    let names: Vec<&str> = FLIPPED_CALLS.iter().map(|(n, _)| *n).collect();
+    let run = |flip: bool| {
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg("--native")
+            .arg(&file)
+            .env("LOFT_TIMEOUT", "300")
+            .env("LOFT_NO_CACHE", "1");
+        if flip {
+            cmd.env("LOFT_LIVE_FLIP", "1")
+                .env("LOFT_FLIP_FNS", names.join(","))
+                .env("LOFT_DISPATCH_DEBUG", "1");
+        }
+        let out = cmd.output().expect("invoke loft");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (plain, plain_err) = run(false);
+    assert_eq!(plain, FLIPPED_OUT, "compiled: {plain_err}");
+    let (flipped, trace) = run(true);
+    assert_eq!(flipped, FLIPPED_OUT, "flipped to the interpreter: {trace}");
+    for (name, calls) in FLIPPED_CALLS {
+        let seen = trace
+            .lines()
+            .filter(|l| l.starts_with(&format!("live-dispatch: n_{name} ")))
+            .count();
+        assert_eq!(
+            seen, *calls,
+            "`{name}` dispatched {seen} of {calls} calls: {trace}"
+        );
+    }
+}
+
+/// `@FR-N-Road`: the dense/nullable PAIRS under `doc/claude/plans/160-nullable-road/pairs/`
+/// take one road each.  `scripts/nullable_road.py --check` emits both halves of every pair
+/// with this build and exits 1 on a pair whose two spellings differ outside the `??`
+/// operator's own lowering, unless the pair states the absence it must handle.
+#[test]
+fn every_dense_and_nullable_pair_takes_one_road() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = loft::platform::process::harness_command("python3")
+        .arg(root.join("scripts/nullable_road.py"))
+        .arg("--check")
+        .env("LOFT_BIN", loft_bin())
+        .output()
+        .expect("python3 runs scripts/nullable_road.py");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{text}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains(" 0 take two ROADS"),
+        "the report did not reach its verdict: {text}"
+    );
+}

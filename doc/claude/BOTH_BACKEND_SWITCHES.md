@@ -287,6 +287,13 @@ spelling of a function.  `LOFT_TRACE_RETPROMO=1` names each return promotion and
 `LOFT_STRICT_STORES=1` is the falsifier, since every value is right whether or not the delivery
 was.  The pairs `scripts/nullable_road.py` measures are the coverage.
 
+**`LOFT_NO_NULLABLE_INPLACE=1`** (`@FR-N-Road`, default-ON, parse time, BOTH backends) builds
+a struct literal bound to a NULLABLE local (`x: S? = S { … }`, or an inferred local a later
+`= null` widened) on a work reference again — with it on, the literal is built in the local
+itself, as its dense twin's is, and the local owns the store.  It is the first bisect step
+for a leak or a wrong value that appears only where a `τ?` local is bound from a literal.
+`LOFT_STRICT_STORES=1` is the falsifier.
+
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
 a plain local first-bound from a callee that returns the local it promoted onto its buffer
 (`fn mk() -> P { o = P { … }; …; o }`) adopts the store the callee minted — one mint and one

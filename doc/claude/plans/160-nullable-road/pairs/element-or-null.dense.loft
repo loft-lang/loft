@@ -1,0 +1,5 @@
+// An element binding over a PARAMETER whose other arm has nothing to hand back.  Dense half:
+// that arm builds a record.
+struct S { a: integer }
+fn head(p: vector<S>) -> S { match p { [a, ..] => a, _ => S { a: 0 } } }
+fn main() { q: vector<S> = [S { a: 7 }]; i = 0; t = 0; while i < 3 { h = head(q); t = t + h.a; i = i + 1; } println("{t}"); }

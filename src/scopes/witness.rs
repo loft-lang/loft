@@ -155,12 +155,9 @@ pub(super) fn mixed_ownership_locals(
 /// read (`d = q.inner`), a vector-element read (`d = vs[i]`), a tuple element — a store the
 /// local only borrows and never owns (@FR-O-Owner)?
 ///
-/// Such a local is marked never-free (@FR-O-Override).  Its single-ARGUMENT dep otherwise
-/// reads as ownership at the D-own-16 `borrows_one_argument` residual (`state/codegen.rs`,
-/// this file's scope-exit `borrow_witness`, `generation/dispatch.rs`), which then frees the
-/// store the local DISPLACES at a reassignment — the caller's nested store, or a local's
-/// field — a store the local only VIEWED.  A view owns nothing, so the proxy that licenses
-/// that free is wrong and @FR-O-Override vetoes it.
+/// Such a local is marked never-free (@FR-O-Override): a view owns nothing, so no free of the
+/// store it DISPLACES at a reassignment — the caller's nested store, or a local's field — is
+/// licensed, whatever its dep list reads as.
 ///
 /// A DIRECT projection — a field read (`OpGetField`), a vector-element read (`OpGetVector`
 /// &c) or a tuple element — ALIASES its base (@FR-B-View / @FR-B-View-Depth): the local

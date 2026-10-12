@@ -922,10 +922,9 @@ pub fn shadowed_by_method_lint_enabled() -> bool {
 /// `materialize_return_into` for a record.  Copying a whole nullable tail into the buffer is the
 /// mistake every site on this path has to avoid: it answers the buffer on the null path too.
 ///
-/// Widening the peel to records (loft#1934) found the sites that had assumed a dense return; the
-/// register entry, `formal/types.md` D-types-32, lists them.  The bind that receives a nullable
-/// record is the dense arm's (`use_analysis::first_bind_shape`), so the loft#1200 `__lbo_` flag
-/// stands down while this is on.
+/// The bind that receives a nullable record is the dense arm's
+/// (`use_analysis::first_bind_shape`), so the loft#1200 `__lbo_` flag stands down while this
+/// is on.
 ///
 /// Reach for [`trace_ret_promotion`] first — it prints an ENTER line per `ref_return` call and
 /// a verdict line per candidate, and the difference between "no verdict" and "no ENTER" tells
@@ -936,6 +935,16 @@ pub fn shadowed_by_method_lint_enabled() -> bool {
 pub fn nullable_ret_buffer() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_NULLABLE_RETBUF"))
+}
+
+/// `LOFT_NO_NULLABLE_INPLACE=1` — `@FR-N-Road`: a struct literal bound to a NULLABLE local
+/// (`x: S? = S { … }`) is built on a work reference again, where the default builds it in
+/// the local as its dense twin does (`Parser::parse_object`).  The bisect step for a
+/// nullable-only wrong answer or leak that involves a literal bind.
+#[must_use]
+pub fn nullable_literal_in_place() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NULLABLE_INPLACE"))
 }
 
 /// `LOFT_OPTIONAL_DEP_PEEL=1` — loft#938, HALF ONE of the `LOFT_NULLABLE_RETBUF` blocker.

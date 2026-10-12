@@ -1,0 +1,4 @@
+// A record PARAMETER read by the callee.  Dense half.
+struct S { a: integer, b: text }
+fn f(s: S) -> integer { s.a + 1 }
+fn main() { s = S { a: 7, b: "x" }; println("{f(s)}"); }

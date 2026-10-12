@@ -469,6 +469,15 @@ witness, the witness's never-free mark dropping the flag's free at codegen on bo
 right by accident, and 172 lines of dead IR in the 1200 guard; the witness now runs first and
 the flag's own never-free exclusion keeps a witnessed local out.
 
+**The residual was removed on 2026-10-12 (loft#1989).**  `Function::borrows_one_argument`
+stood for the nullable record local that borrowed a parameter and later held a store of its
+own.  Once a `τ?` record return took the caller's buffer and a nullable bind took the dense
+arm (loft#1934), that local copies as its dense twin does and carries no argument dep; the
+clause then answered only for compiler temporaries and views, which is how it came to free a
+`__ret` temp's previous occupant in a `-> S?` function and not in its `-> S` twin.  Its
+three readers — the displaced free, the return-source free and the scope-exit sweep — ask
+the proxy alone.
+
 ### D-own-30 — OPENED AND CLOSED (2026-09-05): a nullable local holding a projection VIEW freed the store it displaced
 
 `(O-Owner)` says one thing owns each store and only it frees it; `(O-Latest)` places the free

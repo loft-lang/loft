@@ -190,6 +190,17 @@ accepted, and `vector<text>.parse` printed its texts with their quotes.
 `fn load(t: text) -> Shape { Shape.parse(t) }` compiled, and its result could not be bound,
 stored in a vector or a field, or passed on: "cannot change type from Shape to Shape".
 
+**Live reload reaches a function that returns or takes a nullable value.**  Under
+`loft --native` with live reload, a function such as `fn find(v: vector<S>, i: integer) -> S?`
+or `fn score(s: S?) -> integer` stayed on its compiled body: an edit to it was never picked
+up, and it could not be handed to the debugger.  It is now treated as its non-nullable twin
+is.  A small record returned by value (`fn make(n: integer) -> P`) crashed the program when
+such a function was handed to the interpreter; that is fixed with it.
+
+**A local that was given `null` after a struct literal releases its record.**  This is
+visible only as memory: `p = S { … }; if done { p = null; }` kept the record until the
+function ended on one build path and now releases it on every path.
+
 **A null test narrows a nullable struct-enum.**  Inside `if s != null { area(s) }`, and on the
 else side of `if s == null`, a `Shape?` is a `Shape`: the call was reported as storing a
 nullable into a non-null parameter, where the same code over a struct was not.

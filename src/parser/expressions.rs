@@ -5355,7 +5355,11 @@ use a separate collection or add after the loop"
                 self.convert_store(code, &Type::Null, f_type, &what, None);
                 s_type = f_type.clone();
             } else if !Self::nstore_narrow(f_type, false) {
-                let joined = Type::optional(f_type.clone());
+                // The join is the local's OWN type made nullable.  `f_type` is the type of a
+                // READ of the local, which names the local as the place it reads; carried into
+                // the local's type that dep makes it a borrower of itself, and nothing
+                // releases what such a local holds.
+                let joined = Type::optional(self.vars.tp(var_nr).clone());
                 self.convert_store(code, &Type::Null, &joined, "the assignment target", None);
                 s_type = joined;
             }
