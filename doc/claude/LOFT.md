@@ -835,15 +835,20 @@ scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 shape = Shape.parse(`{{"Circle":{{"radius":3.14}}}}`);   // struct-enum round-trip
 
 if json_errors() != "" { log_warn(json_errors()); }   // the JSON surface: one text
-for e in shape#errors { log_warn(e); }                // the record surface: a vector<text>
+for e in user#errors { log_warn(e); }                 // the record surface: a vector<text>
 ```
 
-`record#errors` is a `vector<text>` with one entry per error, empty after a parse that
-succeeded: test it with `len(r#errors) > 0`.  Each read answers a fresh vector of the same
-entries, so reading does not clear them.  It answers for the LAST `Type.parse(text)` call,
-whichever record it is asked through — in the sample above, `user#errors` would report on
-`shape`.  Guards: `tests/scripts/a-record-errors-read-holds-one-entry-per-error-and-leaves-them.loft`,
-`tests/scripts/a-record-errors-read-is-a-vector-of-text.loft`.
+`x#errors` is a `vector<text>` with one entry per error of the parse that built the value `x`
+holds, empty after a parse that succeeded: test it with `len(x#errors) > 0`.  Reading it
+changes nothing, and each of `user`, `scores` and `shape` above answers for its own parse
+(@C148).  The errors go where the WHOLE value goes — bound, rebound, passed, returned from a
+function, copied to another variable.  A value built any other way has none, and neither has a
+part copied out of a parsed value or a parsed value stored into a field or an element.  Ask a
+variable: `f()#errors` does not parse, and a variable that is neither a record nor a vector is
+refused.  The surface is the one-step `Type.parse(text)` and the `text as T` cast; the staged
+`Type.parse(json_parse(text))` reports through `json_errors()`.  Guards:
+`tests/scripts/a-record-errors-read-answers-for-its-own-parse.loft`,
+`tests/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
 
 ---
 

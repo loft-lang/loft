@@ -10323,10 +10323,11 @@ Two guards were using `#errors` as their side-effecting text producer and lost t
 native still emits through the `_pre_N` hoist the defect lived in, and
 `197-struct-json-parse-errors-dest.loft` keeps its `to_json` cells only.
 
-Left as it was: the walker stops at the first error, so a parse yields at most one entry,
-and `i_parse_error_push`, the only other writer of the register, has no caller.  The
-register is also per PROGRAM, not per record — `a#errors` after a later parse of `b` reports
-on `b`.
+Left as it was: the walker stops at the first error, so a parse yields at most one entry.
+
+**DECIDED the same day (owner): the errors are per record.**  The program-wide register and
+its uncalled second writer `i_parse_error_push` are gone; what replaced them, and the
+programs it was decided from, is [DESIGN_DECISIONS_FAILURE.md § C148](DESIGN_DECISIONS_FAILURE.md).
 
 ### Native runtime cluster
 

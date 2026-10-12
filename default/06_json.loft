@@ -228,6 +228,12 @@ pub fn json_object(fields: const vector<JsonField>) -> JsonValue;
 pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue;
 #impure(host_io)
 
+// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built the
+// record, one element per error, as a vector the caller owns.  A record no parse built, and
+// one a parse built without error, answer an empty vector.
+fn parse_errors_of(r: const reference) -> vector<text>;
+#rust"stores.parse_errors_vector(&(@r))"
+
 /// Serialise any user struct to canonical JSON (RFC 8259) — what `instance.to_json()`
 /// calls.  Text fields are escaped (`"` / `\` / control bytes); nested structs and
 /// vectors recurse; a `JsonValue`-typed field renders its subtree as it is.

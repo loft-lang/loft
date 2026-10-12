@@ -11385,22 +11385,7 @@ extern crate loft;"
                 // Internal i_ functions have implementations in codegen_runtime.rs;
                 // all others get a todo!() stub.
                 writeln!(w, "{{")?;
-                if def.name() == "i_parse_errors" {
-                    writeln!(
-                        w,
-                        "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
-                    )?;
-                    writeln!(w, "  loft::codegen_runtime::i_parse_errors(stores)")?;
-                } else if def.name() == "i_parse_error_push" {
-                    writeln!(
-                        w,
-                        "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
-                    )?;
-                    writeln!(
-                        w,
-                        "  loft::codegen_runtime::i_parse_error_push(stores, var_msg)"
-                    )?;
-                } else if def.name() == "n_json_errors" {
+                if def.name() == "n_json_errors" {
                     writeln!(
                         w,
                         "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"

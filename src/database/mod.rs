@@ -531,9 +531,6 @@ pub struct Stores {
     /// `src/generation/calls.rs`) resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
-    /// Errors from the last `Type.parse()` call, read via `s#errors`; the next parse
-    /// clears them, a read does not.
-    pub last_parse_errors: Vec<String>,
     /// errors from the last `json_parse()` call, read via
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
@@ -778,7 +775,6 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1551,7 +1547,6 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),

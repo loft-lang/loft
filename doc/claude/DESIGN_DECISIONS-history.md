@@ -4863,6 +4863,48 @@ against the red-black tree's 6–9; the verified hint brought it to 9.  Text key
 eight bytes — which is what the node prefix answers.  C113's rationale was restated the same day:
 its storage argument went with the link triple.
 
+## C148 — A parsed value carries its own parse errors, wherever the whole value goes
+
+Decided 2026-10-12 by the owner, in two rulings the same day: *"make it a vector<text> and stop
+clearing on read"*, then *"make it per-record"*.  Until then `record#errors` read one register
+for the whole program (`Stores::last_parse_errors`), joined into one text that the read
+cleared (QUALITY-history.md § JSON cluster holds the first ruling's measurements).
+
+**The question the second ruling left open** was what "per record" means once a record moves.
+A compile-time companion per variable was ruled out first: whether `u` was bound from a parse
+is not visible from the line `len(u#errors)` and its declared types, and a helper that returns
+a parsed record would hand back one that silently reports no errors.  So the errors live with
+the VALUE at run time — a store's content, beside its root type — and the open part was which
+writes carry them.
+
+**Decided from the programs**, one file per shape, each run on both backends: a parse asked
+at once; two and four live parses; a helper returning a parse from its tail, from a local and
+from `if` arms, and two helpers deep; a plain, a `const` and a `&` parameter; a rebind from a
+parse, from a variable and from a constructor; a copy; the same for a vector; a struct-enum, a
+`value struct` and a `text as T` cast; a value built by a constructor after twenty failed
+parses were freed; a part read as a view and a part copied out.  Store identity alone answered
+the parameter and the bind and lost the helper's return, the rebind from a variable and the
+copy — each a copy into another store.  Since whether a delivery moves or copies is the
+compiler's choice, the copy has to carry them: the cells were run again with the store
+exchange switched off (`LOFT_NO_STORE_SWAP`, `LOFT_NO_SWAP_REBIND`, `LOFT_NO_REFILL_BUFFER`,
+`LOFT_NO_NULLABLE_RETBUF`) and answer the same.
+
+**Where the line is.**  A write of a store's whole root takes the incoming value's errors, or
+none; a root is `1@8` of the store's own root type, the test `(H-SwapIn)` already makes, so a
+first field that shares that address is a part.  For a vector the root is the store's one
+vector, by record number, because the interpreter's buffer holds its slot at offset 12 where
+`--native`'s holds it at 8.  Three choices were made at the edges and can move with a use case:
+a view of a part answers for the whole it lies in, since it reads that store; an append into an
+EMPTY vector no parse built, from a whole parsed one, counts as the copy it is lowered from
+(`t = s` is a fresh store and an append); and a parse that reads no vector at all answers a
+null one, so `v += [x]` on it starts a new vector without the errors.
+
+**Found on the way, each on `main` and filed:** a helper that binds `vector<T>.parse(t)` to a
+local and returns the local hands back a vector whose store it freed (loft#1985);
+`fn mk(t: text) -> E { E.parse(t) }` for a struct-enum `E` cannot be bound (*"cannot change
+type from E to E"*, loft#1986); and a vector-returning call inside an expression is evaluated
+ahead of an earlier operand that writes its argument (loft#1987).
+
 ## C149 — one structural limit, 300, for every count a program has — a function's variables included
 
 Decided 2026-10-12 by the owner.  PR #1967 had replaced four separate bounds (256, 128 in a

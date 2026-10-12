@@ -82,7 +82,8 @@ fn default_emits_all_four_sections() {
 
 /// Regression for the default-stdlib leak: the bytecode + slots + types
 /// sections must show ONLY user functions, not the stdlib or the
-/// compiler-synthesized runtime helpers (`i_parse_*`, `__iface_*`).
+/// compiler-synthesized runtime helpers (`__iface_*`).  `t_4text_split` stands for the
+/// stdlib: `all_fns_includes_stdlib` holds that it is there to leak.
 #[test]
 fn default_filters_stdlib_and_internals() {
     let (out, ok) = introspect(&[]);
@@ -90,7 +91,7 @@ fn default_filters_stdlib_and_internals() {
     for name in ["bytecode", "slots", "types"] {
         let sec = section(&out, name);
         assert!(
-            !sec.contains("i_parse_errors") && !sec.contains("__iface_"),
+            !sec.contains("t_4text_split") && !sec.contains("__iface_"),
             "the `{name}` section leaked stdlib/internal fns (default filter broke):\n{sec}"
         );
         assert!(
@@ -120,7 +121,7 @@ fn all_fns_includes_stdlib() {
     let (out, ok) = introspect(&["--all-fns", "--show-bytecode"]);
     assert!(ok);
     assert!(
-        out.contains("__iface_") || out.contains("i_parse"),
+        out.contains("__iface_") && out.contains("t_4text_split"),
         "--all-fns should include stdlib/internal fns\n{}",
         &out[..out.len().min(2000)]
     );

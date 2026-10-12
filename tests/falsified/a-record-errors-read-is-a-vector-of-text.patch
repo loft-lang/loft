@@ -1,15 +1,37 @@
+diff --git b/default/06_json.loft a/default/06_json.loft
+index 60af5d88a..5ded51872 100644
+--- b/default/06_json.loft
++++ a/default/06_json.loft
+@@ -228,12 +228,6 @@ pub fn json_object(fields: const vector<JsonField>) -> JsonValue;
+ pub fn struct_from_jsonvalue(v: const JsonValue, struct_kt: integer) -> JsonValue;
+ #impure(host_io)
+ 
+-// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built the
+-// record, one element per error, as a vector the caller owns.  A record no parse built, and
+-// one a parse built without error, answer an empty vector.
+-fn parse_errors_of(r: const reference) -> vector<text>;
+-#rust"stores.parse_errors_vector(&(@r))"
+-
+ /// Serialise any user struct to canonical JSON (RFC 8259) — what `instance.to_json()`
+ /// calls.  Text fields are escaped (`"` / `\` / control bytes); nested structs and
+ /// vectors recurse; a `JsonValue`-typed field renders its subtree as it is.
 diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index fc451a2c0..c5bf00f84 100644
+index 71ff2f8a6..c5bf00f84 100644
 --- b/src/codegen_runtime.rs
 +++ a/src/codegen_runtime.rs
-@@ -1237,10 +1237,15 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
+@@ -1230,18 +1230,35 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
+         pos: 8,
+     };
+     stores.set_final_default_value(db_tp, &into);
+-    let err = stores.parse(val, db_tp, &into);
+-    stores.set_parse_errors(&into, db_tp, err);
++    stores.last_parse_errors.clear();
++    if let Some(err) = stores.parse(val, db_tp, &into) {
++        stores.last_parse_errors.push(err);
++    }
      into
  }
  
--/// Return the parse errors from the last `Type.parse()` call as a fresh `vector<text>`,
--/// one element per error.  Called by the `#errors` accessor; the register is left alone.
--pub fn i_parse_errors(stores: &mut Stores) -> DbRef {
--    stores.parse_errors_vector()
 +/// Return the parse errors from the last `Type.parse()` call as a single
 +/// newline-separated string.  Called by the `#errors` accessor.
 +// @PLN10 — owned `String` (no scratch).  In lockstep with
@@ -19,10 +41,15 @@ index fc451a2c0..c5bf00f84 100644
 +    let msg = stores.last_parse_errors.join("\n");
 +    stores.last_parse_errors.clear();
 +    msg
- }
- 
- /// Push a constraint-check error to the parse error list.
-@@ -1253,8 +1258,7 @@ pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
++}
++
++/// Push a constraint-check error to the parse error list.
++pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
++    stores.last_parse_errors.push(msg.to_owned());
++}
++
+ /// Return the JSON parse / schema-walk errors from the last `json_parse()`
+ /// or `Struct.parse(JsonValue)` call as a single `|`-separated string.
  /// Mirrors the interpreter's `n_json_errors` (`src/native.rs`) which does
  /// NOT clear the buffer — errors persist across `json_errors()` reads
  /// until the next successful parse implicitly clears them.
@@ -32,23 +59,64 @@ index fc451a2c0..c5bf00f84 100644
  pub fn i_json_errors(stores: &mut Stores) -> String {
      stores.last_json_errors.join("|")
  }
+@@ -1373,8 +1390,6 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
+     if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
+         return;
+     }
+-    // The exchange moved the source's parse errors with its records; a copy brings them.
+-    stores.deliver_parse_errors(&data, &to, tp);
+     if !fresh_dest {
+         stores.remove_claims(&to, tp);
+     }
 diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
-index 3ac46702e..f6f54163b 100644
+index 9d0dea307..f6f54163b 100644
 --- b/src/compiled_stdlib_gen.rs
 +++ a/src/compiled_stdlib_gen.rs
-@@ -535,7 +535,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
+@@ -534,6 +534,13 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
+     db.finish();
  }
  
- #[inline]
--fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
++#[inline]
 +fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> String {
-   let stores: &mut Stores = unsafe { &mut *cell.get() };
-   loft::codegen_runtime::i_parse_errors(stores)
- }
++  let stores: &mut Stores = unsafe { &mut *cell.get() };
++  loft::codegen_runtime::i_parse_errors(stores)
++}
++
++
+ // loft:default/01_code.loft:775
+ #[inline]
+ fn t_7integer_min(cell: &std::cell::UnsafeCell<Stores>, mut var_self: i64, mut var_b: i64) -> i64 { //block_1: integer
+@@ -1695,4 +1702,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
+ pub(crate) const PREFIX_TYPES: usize = 99;
+ pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
+ /// The hash of the `default/*.loft` source these bodies were compiled from.
+-pub(crate) const SOURCE_HASH: u64 = 14195242042689325127;
++pub(crate) const SOURCE_HASH: u64 = 11083201608350673150;
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index 96a7713cd..e8051dead 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
+@@ -3032,6 +3032,7 @@ impl Stores {
+             free_bits,
+             bridge_text_dest: None,
+             const_refs: self.const_refs.clone(),
++            last_parse_errors: Vec::new(),
+             last_json_errors: Vec::new(),
+             // The worker inherits the parent's program context, so a `par`
+             // inside a `par` worker can dispatch in turn.  Without it the
 diff --git b/src/database/format.rs a/src/database/format.rs
-index eafbaaa10..e91c06d01 100644
+index 60a764792..e91c06d01 100644
 --- b/src/database/format.rs
 +++ a/src/database/format.rs
+@@ -440,7 +440,7 @@ impl Stores {
+     /// Parse `text` into `result` AND file the outcome on both error surfaces.
+     ///
+     /// A text parse is the one-stage spelling (`Type.parse(text)`), and it used to file
+-    /// its diagnostics only under `#errors` (`Store::parse_errors`).  `json_errors()` reads
++    /// its diagnostics only under `#errors` (`last_parse_errors`).  `json_errors()` reads
+     /// the OTHER register, so the documented JSON pairing —
+     /// `Cfg.parse(text)` then `json_errors()` — reported nothing at all on malformed input
+     /// and on a schema mismatch: the program read a struct of zeros and was told the parse
 @@ -452,8 +452,8 @@ impl Stores {
      /// data, and a `vector<T>.parse` reported an error naming a different type entirely.
      ///
@@ -60,38 +128,182 @@ index eafbaaa10..e91c06d01 100644
      /// whether the last parse succeeded.
      fn record_text_parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
          self.last_json_errors.clear();
-@@ -511,15 +511,6 @@ impl Stores {
+@@ -511,116 +511,6 @@ impl Stores {
          self.text_vector(&args)
      }
  
--    /// What `record#errors` reads: the last `Type.parse()` call's errors as a fresh
--    /// `vector<text>`, one element per error.  The register is left as it stands, so a second
--    /// read answers the same; the next parse is what clears it.
+-    /// What `record#errors` reads: the errors of the `Type.parse(text)` call that built the
+-    /// store `of` lives in, as a fresh `vector<text>` with one element per error.  Empty for a
+-    /// null reference and for a store no parse built.
 -    #[must_use]
--    pub fn parse_errors_vector(&mut self) -> DbRef {
--        let errors = self.last_parse_errors.clone();
+-    pub fn parse_errors_vector(&mut self, of: &DbRef) -> DbRef {
+-        let errors = self
+-            .allocations
+-            .get(of.store_nr as usize)
+-            .filter(|s| !s.free)
+-            .map(|s| s.parse_errors.clone())
+-            .unwrap_or_default();
 -        self.text_vector(&errors)
+-    }
+-
+-    /// Record what the parse that just filled `into`'s store with a `tp` reported: `err` is
+-    /// its one error, or `None` for a parse that succeeded.
+-    pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, err: Option<String>) {
+-        let store = &mut self.allocations[into.store_nr as usize];
+-        store.parse_errors = err.into_iter().collect();
+-        store.parse_type = tp;
+-    }
+-
+-    /// @C148 — the errors of a parse belong to the VALUE it built, so a write of a whole `tp` record
+-    /// into the root of another store brings the incoming value's errors with it: those of
+-    /// the parse that built `data`, or none when no parse did.  A write into anything but a
+-    /// store's whole root — a field, an element, a first field that only shares the root's
+-    /// address — changes no store's errors.
+-    pub(crate) fn deliver_parse_errors(&mut self, data: &DbRef, to: &DbRef, tp: u16) {
+-        let (ds, ts) = (data.store_nr as usize, to.store_nr as usize);
+-        if ds == ts || ds >= self.allocations.len() || ts >= self.allocations.len() {
+-            return;
+-        }
+-        let dest = &self.allocations[ts];
+-        let dest_root = if dest.known_type == u16::MAX {
+-            dest.parse_type
+-        } else {
+-            dest.known_type
+-        };
+-        if (to.rec, to.pos) != (1, 8) || dest_root != tp {
+-            return;
+-        }
+-        let source = &self.allocations[ds];
+-        let parsed = (data.rec, data.pos) == (1, 8) && source.parse_type == tp;
+-        let errors = if parsed {
+-            source.parse_errors.clone()
+-        } else {
+-            Vec::new()
+-        };
+-        let dest = &mut self.allocations[ts];
+-        dest.parse_errors = errors;
+-        dest.parse_type = if parsed { tp } else { u16::MAX };
+-    }
+-
+-    /// Is `db` the vector a `vector<T>.parse(text)` call built, whole, or a vector variable
+-    /// that was given one?  Either is the root record of a store whose parsed type is a
+-    /// vector: such a store's root holds that one vector and nothing else, so the record
+-    /// number decides — the slot's offset in it is the backend's (`8` in a parse's store
+-    /// and in a `--native` buffer, `12` in the interpreter's).
+-    fn parsed_vector(&self, db: &DbRef) -> Option<u16> {
+-        let tp = self.allocations.get(db.store_nr as usize)?.parse_type;
+-        (db.rec == 1 && matches!(self.types.get(tp as usize)?.parts, Parts::Vector(_)))
+-            .then_some(tp)
+-    }
+-
+-    /// Is `db` the vector a vector VARIABLE owns, whole: the root of a store minted for one
+-    /// vector (`main_vector<T>`), or of one a parse built?
+-    fn vector_variable_root(&self, db: &DbRef) -> bool {
+-        if db.rec != 1 {
+-            return false;
+-        }
+-        let Some(store) = self.allocations.get(db.store_nr as usize) else {
+-            return false;
+-        };
+-        self.parsed_vector(db).is_some()
+-            || self
+-                .types
+-                .get(store.known_type as usize)
+-                .is_some_and(|t| t.name.starts_with("main_vector<"))
+-    }
+-
+-    /// @C148 — [`Self::deliver_parse_errors`] for a vector: `to`, a vector variable's whole value,
+-    /// is being given the content of `data`.  `whole` says the write REPLACES the variable's
+-    /// value (a rebind, a returned vector taken over), so `to` takes the incoming value's
+-    /// errors or none.  An append is that only when it fills an empty vector no parse built
+-    /// from a whole parsed one — which is how a bind of a vector to a new variable copies —
+-    /// and otherwise it grows `to`, whose own errors stand.
+-    pub(crate) fn deliver_vector_parse_errors(&mut self, data: &DbRef, to: &DbRef, whole: bool) {
+-        if data.store_nr == to.store_nr || !self.vector_variable_root(to) {
+-            return;
+-        }
+-        let parsed = self.parsed_vector(data);
+-        let ts = to.store_nr as usize;
+-        if !whole
+-            && (parsed.is_none()
+-                || self.allocations[ts].parse_type != u16::MAX
+-                || vector::length_vector(to, &self.allocations) != 0)
+-        {
+-            return;
+-        }
+-        let errors = match parsed {
+-            Some(_) => self.allocations[data.store_nr as usize]
+-                .parse_errors
+-                .clone(),
+-            None => Vec::new(),
+-        };
+-        let dest = &mut self.allocations[ts];
+-        dest.parse_errors = errors;
+-        dest.parse_type = parsed.unwrap_or(u16::MAX);
 -    }
 -
      /// Build a `vector<text>` from an explicit string slice.
      #[must_use]
      pub fn text_vector(&mut self, args: &[String]) -> DbRef {
 diff --git b/src/database/mod.rs a/src/database/mod.rs
-index b375b5123..06bc5a38d 100644
+index 2214cf646..06bc5a38d 100644
 --- b/src/database/mod.rs
 +++ a/src/database/mod.rs
-@@ -531,8 +531,7 @@ pub struct Stores {
+@@ -531,6 +531,8 @@ pub struct Stores {
      /// `src/generation/calls.rs`) resolves from any function context
      /// that only has `&mut Stores`.
      pub const_refs: Vec<DbRef>,
--    /// Errors from the last `Type.parse()` call, read via `s#errors`; the next parse
--    /// clears them, a read does not.
 +    /// Errors from the last `Type.parse()` call, read via `s#errors`.
-     pub last_parse_errors: Vec<String>,
++    pub last_parse_errors: Vec<String>,
      /// errors from the last `json_parse()` call, read via
      /// `json_errors()`.  Cleared on every successful `json_parse`;
+     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
+@@ -775,6 +777,7 @@ impl Clone for Stores {
+             free_bits: Vec::new(),
+             bridge_text_dest: None,
+             const_refs: Vec::new(),
++            last_parse_errors: Vec::new(),
+             last_json_errors: Vec::new(),
+             parallel_ctx: None,
+             par_buffer_stack: Vec::new(),
+@@ -1547,6 +1550,7 @@ impl Stores {
+             free_bits: Vec::new(),
+             bridge_text_dest: None,
+             const_refs: Vec::new(),
++            last_parse_errors: Vec::new(),
+             last_json_errors: Vec::new(),
+             parallel_ctx: None,
+             par_buffer_stack: Vec::new(),
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index 0ece44b4c..d00c00040 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -1397,7 +1397,6 @@ impl Stores {
+         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
+         // absence are different values, and only the whole-value replace may turn one into
+         // the other — an `a += b` must leave `a` alone.
+-        self.deliver_vector_parse_errors(o_db, db, true);
+         // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
+         // slot, never the value-level null, so its absence is the marker the slot holds.
+         let slot_absent = o_db.store_nr != u16::MAX
+@@ -1816,7 +1815,6 @@ impl Stores {
+     /// meets the read-only refusal instead of the silent drop #410 closed.
+     /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
+     pub fn vector_adopt(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+-        self.deliver_vector_parse_errors(o_db, db, true);
+         let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
+         if view
+             && !db.is_null()
+@@ -1993,7 +1991,6 @@ impl Stores {
+                 self.types.get(known as usize).map(|t| t.parts.clone())
+             );
+         }
+-        self.deliver_vector_parse_errors(o_db, db, false);
+         let o_length = vector::length_vector(o_db, &self.allocations);
+         if o_length == 0 {
+             // The other vector has no data
 diff --git b/src/generation/mod.rs a/src/generation/mod.rs
-index 01e0baff6..6faff109b 100644
+index 285dfc7a7..6faff109b 100644
 --- b/src/generation/mod.rs
 +++ a/src/generation/mod.rs
 @@ -1893,7 +1893,10 @@ fn block_needs_i64_widen(val: &Value, dest: &Type) -> bool {
@@ -106,8 +318,32 @@ index 01e0baff6..6faff109b 100644
  }
  
  /// @PLN10 Phase A — a **USER** text-returning function with **no `RefVar(Text)`
+@@ -11243,7 +11246,22 @@ extern crate loft;"
+                 // Internal i_ functions have implementations in codegen_runtime.rs;
+                 // all others get a todo!() stub.
+                 writeln!(w, "{{")?;
+-                if def.name() == "n_json_errors" {
++                if def.name() == "i_parse_errors" {
++                    writeln!(
++                        w,
++                        "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
++                    )?;
++                    writeln!(w, "  loft::codegen_runtime::i_parse_errors(stores)")?;
++                } else if def.name() == "i_parse_error_push" {
++                    writeln!(
++                        w,
++                        "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
++                    )?;
++                    writeln!(
++                        w,
++                        "  loft::codegen_runtime::i_parse_error_push(stores, var_msg)"
++                    )?;
++                } else if def.name() == "n_json_errors" {
+                     writeln!(
+                         w,
+                         "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
 diff --git b/src/native.rs a/src/native.rs
-index 59d2eb4a6..989b50a7f 100644
+index f557b2514..989b50a7f 100644
 --- b/src/native.rs
 +++ a/src/native.rs
 @@ -148,6 +148,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
@@ -118,23 +354,32 @@ index 59d2eb4a6..989b50a7f 100644
      ("n_struct_to_json_dest", n_struct_to_json_dest),
      ("n_struct_to_json_pretty_dest", n_struct_to_json_pretty_dest),
      ("t_9character_is_lowercase", t_9character_is_lowercase),
-@@ -461,7 +462,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
+@@ -461,7 +462,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
      ("n_reflect_field", n_reflect_field),
      ("n_reflect_field_path", n_reflect_field_path),
      ("n_path_sep", n_path_sep),
--    ("i_parse_errors", i_parse_errors),
-     ("i_parse_error_push", i_parse_error_push),
+-    ("n_parse_errors_of", n_parse_errors_of),
++    ("i_parse_error_push", i_parse_error_push),
      ("n_hash_sorted", n_hash_sorted),
      ("n_vector_sum_int", n_vector_sum_int),
-@@ -3610,11 +3610,17 @@ fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
-     stores.last_parse_errors.push(msg.str().to_owned());
+     ("n_radix_sorted", n_radix_sorted),
+@@ -3602,12 +3603,24 @@ fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
+     stores.put(stack, '/');
  }
  
--/// `record#errors`: the last `Type.parse()` call's errors as a fresh `vector<text>`, empty
--/// when the parse succeeded.  Reading leaves the register alone.
--fn i_parse_errors(stores: &mut Stores, stack: &mut DbRef) {
--    let new_value = stores.parse_errors_vector();
+-/// `record#errors`: the errors of the parse that built the record, as a fresh
+-/// `vector<text>`; mirrors the `#rust` template in `default/06_json.loft`.
+-fn n_parse_errors_of(stores: &mut Stores, stack: &mut DbRef) {
+-    let v_r = stores.get::<DbRef>(stack);
+-    let new_value = stores.parse_errors_vector(&v_r);
 -    stores.put(stack, new_value);
++/// Return the error text from the last `Type.parse()` call.
++/// Empty string means the parse succeeded.
++fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
++    let msg = stores.get::<Str>(stack);
++    stores.last_parse_errors.push(msg.str().to_owned());
++}
++
 +// @PLN10 Phase 1 — destination-passing variant of `i_parse_errors`.
 +// Always-non-null (the joined error text, possibly empty); no stack args.
 +// Routed by `is_text_dest_native`.
@@ -150,34 +395,66 @@ index 59d2eb4a6..989b50a7f 100644
  
  // HTTP client glue removed — n_http_do and n_http_body are now auto-marshalled.
 diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index 761b77cbb..c24912649 100644
+index 2695fc688..c24912649 100644
 --- b/src/parser/mod.rs
 +++ a/src/parser/mod.rs
-@@ -1836,8 +1836,7 @@ impl Parser {
-             pos: 0,
-         };
-         let d = data.add_def("i_parse_errors", &pos, DefType::Function);
--        data.definitions[d as usize].returned =
--            Type::Vector(Box::new(Type::Text(Deps::none())), Deps::none());
+@@ -1826,7 +1826,23 @@ impl Parser {
+         // A new parser is a new compilation: the copy manifest's records are keyed by
+         // definition and variable number, so the previous program's would name this one's.
+         crate::copy_manifest::begin_compilation();
+-        let data = Data::new();
++        let mut data = Data::new();
++        // Register internal-only functions (i_ prefix) that are never visible to user code.
++        // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
++        // Rust implementations in native.rs.
++        let pos = Position {
++            file: crate::lexer::no_file(),
++            line: 0,
++            pos: 0,
++        };
++        let d = data.add_def("i_parse_errors", &pos, DefType::Function);
 +        data.definitions[d as usize].returned = Type::Text(Deps::none());
-         let d = data.add_def("i_parse_error_push", &pos, DefType::Function);
-         data.definitions[d as usize].returned = Type::Void;
-         {
++        let d = data.add_def("i_parse_error_push", &pos, DefType::Function);
++        data.definitions[d as usize].returned = Type::Void;
++        {
++            let mut lexer = Lexer::default();
++            data.add_attribute(&mut lexer, d, "msg", Type::Text(Deps::none()));
++        }
+         Parser {
+             todo_files: Vec::new(),
+             track_sources: false,
 diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index edddf1325..3a65dbb52 100644
+index 32baff57a..3a65dbb52 100644
 --- b/src/parser/objects.rs
 +++ a/src/parser/objects.rs
-@@ -905,12 +905,11 @@ impl Parser {
+@@ -905,27 +905,11 @@ impl Parser {
              if self.lexer.has_token("#") {
                  self.var_usages(index_var, true);
                  if self.lexer.has_keyword("errors") {
--                    // s#errors — the parse errors from the last Type.parse() call, one
--                    // element per error; a fresh vector the caller owns.
+-                    // @C148: s#errors — the errors of the parse that built the value `s` holds,
+-                    // one element per error; a fresh vector the caller owns.  Only a record
+-                    // or a vector comes out of a parse, so nothing else has errors to ask.
+-                    let asked = self.vars.tp(index_var).clone();
+-                    if !self.first_pass
+-                        && !matches!(
+-                            asked.peel_link(),
+-                            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+-                        )
+-                    {
+-                        diagnostic!(
+-                            self.lexer,
+-                            Level::Error,
+-                            "`{name}#errors` asks a parsed record or vector for the errors of its parse, and `{name}` is {}",
+-                            self.data.written_type_name(&asked)
+-                        );
+-                    }
+-                    let fn_nr = self.data.def_nr("n_parse_errors_of");
 +                    // s#errors — return the parse errors from the last Type.parse() call.
-                     let fn_nr = self.data.def_nr("i_parse_errors");
++                    let fn_nr = self.data.def_nr("i_parse_errors");
                      if fn_nr != u32::MAX {
-                         *code = Value::Call(fn_nr, vec![]);
+-                        *code = Value::Call(fn_nr, vec![Value::Var(index_var)]);
 -                        t = self.data.def(fn_nr).returned.clone();
++                        *code = Value::Call(fn_nr, vec![]);
 +                        t = Type::Text(crate::data::Deps::none());
                      }
                      return t;
@@ -194,3 +471,132 @@ index 01904d915..10cbc0207 100644
              | "n_struct_to_json"
              | "n_struct_to_json_pretty"
              // @PLN10 Phase 1 — par-text buffer reader (interp; native is owned
+diff --git b/src/state/io.rs a/src/state/io.rs
+index 8cc9e80bf..6b096670e 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -1723,8 +1723,6 @@ impl State {
+             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
+             return;
+         }
+-        // The exchange moved the source's parse errors with its records; a copy brings them.
+-        self.database.deliver_parse_errors(&data, &to, tp);
+         // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
+         // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
+         // its bytes lie outside the store's own blocks, where the record copy below would
+@@ -2266,8 +2264,10 @@ impl State {
+             pos: 8,
+         };
+         self.database.set_final_default_value(db_tp, &into);
+-        let err = self.database.parse(val, db_tp, &into);
+-        self.database.set_parse_errors(&into, db_tp, err);
++        self.database.last_parse_errors.clear();
++        if let Some(err) = self.database.parse(val, db_tp, &into) {
++            self.database.last_parse_errors.push(err);
++        }
+         into
+     }
+ 
+diff --git b/src/store.rs a/src/store.rs
+index efa92e9aa..3e1e43f8f 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -531,16 +531,6 @@ pub struct Store {
+     /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
+     /// is the one place they have to be right.
+     pub known_type: u16,
+-    /// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built this
+-    /// store's root, one element per error, empty for a store no parse built.  CONTENT, like
+-    /// [`Store::known_type`]: [`Store::init`] empties it, [`Store::swap_contents`] moves it
+-    /// with the records, and a write of the whole root takes the incoming value's
+-    /// (`Stores::deliver_parse_errors`).
+-    pub(crate) parse_errors: Vec<String>,
+-    /// The type a parse built at this store's root, `u16::MAX` for a store no parse built.
+-    /// It is what tells a copy of the WHOLE parsed value, which carries the errors, from a
+-    /// copy of its first field, which shares the root's address and carries none.
+-    pub(crate) parse_type: u16,
+     /// @PLAN38 phase 01 — when `Some(path)`, this store was opened
+     /// via `Store::open_durable` and on clean drop must (1) flush
+     /// the mmap, (2) compute the payload CRC, and (3) rewrite the
+@@ -1123,8 +1113,6 @@ impl Store {
+             pinned: false,
+             lock_origin: std::borrow::Cow::Borrowed(""),
+             known_type: u16::MAX,
+-            parse_errors: Vec::new(),
+-            parse_type: u16::MAX,
+             durable_meta_path: None,
+             file_path: None,
+             durable_tier: 0,
+@@ -1284,8 +1272,6 @@ impl Store {
+             pinned: false,
+             lock_origin: std::borrow::Cow::Borrowed(""),
+             known_type: u16::MAX,
+-            parse_errors: Vec::new(),
+-            parse_type: u16::MAX,
+             durable_meta_path: None,
+             file_path: Some(std::path::PathBuf::from(path)),
+             durable_tier: 0,
+@@ -1387,8 +1373,6 @@ impl Store {
+             pinned: false,
+             lock_origin: std::borrow::Cow::Borrowed(""),
+             known_type: u16::MAX,
+-            parse_errors: Vec::new(),
+-            parse_type: u16::MAX,
+             durable_meta_path: None,
+             file_path: None,
+             durable_tier: 0,
+@@ -1498,8 +1482,6 @@ impl Store {
+             pinned: false,
+             lock_origin: std::borrow::Cow::Borrowed(""),
+             known_type: u16::MAX,
+-            parse_errors: Vec::new(),
+-            parse_type: u16::MAX,
+             durable_meta_path: None,
+             file_path: None,
+             durable_tier: 0,
+@@ -1535,9 +1517,6 @@ impl Store {
+         self.claims.clear();
+         self.referenced.clear();
+         self.removed.clear();
+-        // A reset store holds no parsed root, so it answers no parse errors.
+-        self.parse_errors.clear();
+-        self.parse_type = u16::MAX;
+         // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
+         self.lazy = lazy_free_enabled();
+         self.dead_words = 0;
+@@ -2804,8 +2783,6 @@ impl Store {
+         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
+         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
+         std::mem::swap(&mut a.known_type, &mut b.known_type);
+-        std::mem::swap(&mut a.parse_errors, &mut b.parse_errors);
+-        std::mem::swap(&mut a.parse_type, &mut b.parse_type);
+         std::mem::swap(&mut a.init_shadow, &mut b.init_shadow);
+         let generation = a.generation.max(b.generation).wrapping_add(1);
+         a.generation = generation;
+@@ -2966,8 +2943,6 @@ impl Store {
+             pinned: self.pinned,
+             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
+             known_type: self.known_type,
+-            parse_errors: self.parse_errors.clone(),
+-            parse_type: self.parse_type,
+             durable_meta_path: None,
+             file_path: None,
+             durable_tier: 0,
+@@ -3030,8 +3005,6 @@ impl Store {
+             pinned: self.pinned,
+             lock_origin: std::borrow::Cow::Borrowed(""),
+             known_type: self.known_type,
+-            parse_errors: self.parse_errors.clone(),
+-            parse_type: self.parse_type,
+             durable_meta_path: None,
+             file_path: None,
+             durable_tier: 0,
+@@ -3087,8 +3060,6 @@ impl Store {
+             pinned: self.pinned,
+             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
+             known_type: self.known_type,
+-            parse_errors: self.parse_errors.clone(),
+-            parse_type: self.parse_type,
+             durable_meta_path: None,
+             file_path: None,
+             durable_tier: 0,

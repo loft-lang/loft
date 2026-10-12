@@ -5013,7 +5013,7 @@ Both parse forms report. 'json\_errors()' holds the LAST parse's diagnostics and
 if json_errors() != "" { log_warn(json_errors()); }
 ```
 
-'record\#errors' answers for the last 'Type.parse(text)' as a vector\<text\>, one entry per error, and stays until the next parse:
+'record\#errors' answers for the 'Type.parse(text)' that built that record, as a vector\<text\> with one entry per error. Each parsed record keeps its own:
 
 ```
 for e in user#errors { log_warn(e); }

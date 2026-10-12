@@ -1408,6 +1408,7 @@ impl Stores {
         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
+        self.deliver_vector_parse_errors(o_db, db, true);
         // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
         // slot, never the value-level null, so its absence is the marker the slot holds.
         let slot_absent = o_db.store_nr != u16::MAX
@@ -1826,6 +1827,7 @@ impl Stores {
     /// meets the read-only refusal instead of the silent drop #410 closed.
     /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
     pub fn vector_adopt(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+        self.deliver_vector_parse_errors(o_db, db, true);
         let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
         if view
             && !db.is_null()
@@ -2002,6 +2004,7 @@ impl Stores {
                 self.types.get(known as usize).map(|t| t.parts.clone())
             );
         }
+        self.deliver_vector_parse_errors(o_db, db, false);
         let o_length = vector::length_vector(o_db, &self.allocations);
         if o_length == 0 {
             // The other vector has no data

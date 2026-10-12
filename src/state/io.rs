@@ -1726,6 +1726,8 @@ impl State {
             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
             return;
         }
+        // The exchange moved the source's parse errors with its records; a copy brings them.
+        self.database.deliver_parse_errors(&data, &to, tp);
         // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
         // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
         // its bytes lie outside the store's own blocks, where the record copy below would
@@ -2267,10 +2269,8 @@ impl State {
             pos: 8,
         };
         self.database.set_final_default_value(db_tp, &into);
-        self.database.last_parse_errors.clear();
-        if let Some(err) = self.database.parse(val, db_tp, &into) {
-            self.database.last_parse_errors.push(err);
-        }
+        let err = self.database.parse(val, db_tp, &into);
+        self.database.set_parse_errors(&into, db_tp, err);
         into
     }
 

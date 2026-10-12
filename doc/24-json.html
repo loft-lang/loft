@@ -64,7 +64,7 @@ r = Reading.parse(`{{}}`)     // r.id == 0, r.drift == null
 <p>Both parse forms report. <code>json_errors()</code> holds the LAST parse's diagnostics and is replaced by the next parse, so a successful parse leaves it empty. It is a TEXT, not a collection — several diagnostics are joined with <code>|</code> — so ask <code>json_errors() != ""</code>, not <code>len(...) &gt; 0</code>, and never loop over it.</p>
 <pre><code>if json_errors() != "" { log_warn(json_errors()); }
 </code></pre>
-<p><code>record#errors</code> answers for the last <code>Type.parse(text)</code> as a vector&lt;text&gt;, one entry per error, and stays until the next parse:</p>
+<p><code>record#errors</code> answers for the <code>Type.parse(text)</code> that built that record, as a vector&lt;text&gt; with one entry per error. Each parsed record keeps its own:</p>
 <pre><code>for e in user#errors { log_warn(e); }
 </code></pre>
 <p>The two parse spellings differ in WHICH HALF of the answer they give, and that is the reason to choose between them:</p>
@@ -259,8 +259,8 @@ struct Catalogue { all: vector&lt;Item&gt;, by_key: hash&lt;Item[key]&gt; }
 //
 //   if json_errors() != "" { log_warn(json_errors()); }
 //
-// 'record#errors' answers for the last 'Type.parse(text)' as a vector&lt;text&gt;, one
-// entry per error, and stays until the next parse:
+// 'record#errors' answers for the 'Type.parse(text)' that built that record, as a
+// vector&lt;text&gt; with one entry per error. Each parsed record keeps its own:
 //
 //   for e in user#errors { log_warn(e); }
 //

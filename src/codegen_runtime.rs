@@ -1230,22 +1230,9 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
         pos: 8,
     };
     stores.set_final_default_value(db_tp, &into);
-    stores.last_parse_errors.clear();
-    if let Some(err) = stores.parse(val, db_tp, &into) {
-        stores.last_parse_errors.push(err);
-    }
+    let err = stores.parse(val, db_tp, &into);
+    stores.set_parse_errors(&into, db_tp, err);
     into
-}
-
-/// Return the parse errors from the last `Type.parse()` call as a fresh `vector<text>`,
-/// one element per error.  Called by the `#errors` accessor; the register is left alone.
-pub fn i_parse_errors(stores: &mut Stores) -> DbRef {
-    stores.parse_errors_vector()
-}
-
-/// Push a constraint-check error to the parse error list.
-pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
-    stores.last_parse_errors.push(msg.to_owned());
 }
 
 /// Return the JSON parse / schema-walk errors from the last `json_parse()`
@@ -1402,6 +1389,8 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
         return;
     }
+    // The exchange moved the source's parse errors with its records; a copy brings them.
+    stores.deliver_parse_errors(&data, &to, tp);
     if !fresh_dest {
         stores.remove_claims(&to, tp);
     }

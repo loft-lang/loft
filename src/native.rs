@@ -461,8 +461,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_reflect_field", n_reflect_field),
     ("n_reflect_field_path", n_reflect_field_path),
     ("n_path_sep", n_path_sep),
-    ("i_parse_errors", i_parse_errors),
-    ("i_parse_error_push", i_parse_error_push),
+    ("n_parse_errors_of", n_parse_errors_of),
     ("n_hash_sorted", n_hash_sorted),
     ("n_vector_sum_int", n_vector_sum_int),
     ("n_radix_sorted", n_radix_sorted),
@@ -3603,17 +3602,11 @@ fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
     stores.put(stack, '/');
 }
 
-/// Return the error text from the last `Type.parse()` call.
-/// Empty string means the parse succeeded.
-fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
-    let msg = stores.get::<Str>(stack);
-    stores.last_parse_errors.push(msg.str().to_owned());
-}
-
-/// `record#errors`: the last `Type.parse()` call's errors as a fresh `vector<text>`, empty
-/// when the parse succeeded.  Reading leaves the register alone.
-fn i_parse_errors(stores: &mut Stores, stack: &mut DbRef) {
-    let new_value = stores.parse_errors_vector();
+/// `record#errors`: the errors of the parse that built the record, as a fresh
+/// `vector<text>`; mirrors the `#rust` template in `default/06_json.loft`.
+fn n_parse_errors_of(stores: &mut Stores, stack: &mut DbRef) {
+    let v_r = stores.get::<DbRef>(stack);
+    let new_value = stores.parse_errors_vector(&v_r);
     stores.put(stack, new_value);
 }
 

@@ -382,6 +382,14 @@ fn record_errors_into_a_text_local_is_refused() {
     .error("Variable 'e' cannot change type from text to vector<text>; use a new variable name or cast with 'as' at record_errors_into_a_text_local_is_refused:2:50");
 }
 
+/// @C148 — only a record or a vector comes out of a parse, so only those have errors to ask.
+#[test]
+fn record_errors_of_a_scalar_is_refused() {
+    code!("fn test() { n = 5; t = \"x\"; assert(len(n#errors) + len(t#errors) == 0, \"m\"); }")
+        .error("`n#errors` asks a parsed record or vector for the errors of its parse, and `n` is integer at record_errors_of_a_scalar_is_refused:1:49")
+        .error("`t#errors` asks a parsed record or vector for the errors of its parse, and `t` is text at record_errors_of_a_scalar_is_refused:1:65");
+}
+
 /// The truthiness test that asked "were there errors?" of the text is constant on a vector,
 /// and says so.
 #[test]

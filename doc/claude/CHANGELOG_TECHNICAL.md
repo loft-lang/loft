@@ -10,16 +10,21 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
-### `record#errors` returns a `vector<text>` and leaves the register alone (2026-10-12)
+### `record#errors` is a `vector<text>` held by the parsed value's store (C148, 2026-10-12)
 
-`i_parse_errors` returned the register joined with newlines as one text and cleared it; it
-now returns `Stores::parse_errors_vector()`, a fresh `vector<text>` built by the builder
-`arguments()` uses, and only the next `Type.parse` clears `last_parse_errors`.  The def's
-return type is `Type::Vector(Text)`, which the `#errors` parse site reads back instead of
-naming a type of its own.  The accessor left the two text-producer lists
-(`state::codegen::is_text_dest_native`, `generation::native_returns_owned_string`) and its
-`_dest` native is gone; the interpreter registers `i_parse_errors` as an ordinary native.
-An owner decision (QUALITY-history.md § JSON cluster).
+The accessor read one register (`Stores::last_parse_errors`) through `i_parse_errors`, as one
+newline-joined text the read cleared.  The register is gone.  The errors are CONTENT of the
+store a parse builds — `Store::parse_errors` and `Store::parse_type`, beside `known_type` —
+set by `db_from_text` on both backends, emptied by `Store::init`, exchanged by
+`Store::swap_contents`, and brought along by a write of a store's whole root
+(`Stores::deliver_parse_errors` after a declined `try_swap_in` in both record copies;
+`deliver_vector_parse_errors` in `vector_replace`, `vector_adopt` and `vector_add`).
+`x#errors` lowers to the stdlib's `parse_errors_of(x)` (`default/06_json.loft`, a
+`const reference` like `store_verify`), which answers `Stores::parse_errors_vector(&x)`, a
+fresh `vector<text>` from the builder `arguments()` uses.  `i_parse_errors` and
+`i_parse_error_push`, the two definitions `Parser::new` registered, are removed with their
+natives and generator cases, so no `i_`-prefixed definition remains and every definition
+number is two lower.
 
 ### Binary operators parsed by precedence climbing (@PLN188, 2026-10-09)
 

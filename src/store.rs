@@ -530,6 +530,16 @@ pub struct Store {
     /// [`breakdown`](crate::store_budget::breakdown) a refused growth prints, which
     /// is the one place they have to be right.
     pub known_type: u16,
+    /// @C148 — what `record#errors` reads: the errors of the `Type.parse(text)` call that built this
+    /// store's root, one element per error, empty for a store no parse built.  CONTENT, like
+    /// [`Store::known_type`]: [`Store::init`] empties it, [`Store::swap_contents`] moves it
+    /// with the records, and a write of the whole root takes the incoming value's
+    /// (`Stores::deliver_parse_errors`).
+    pub(crate) parse_errors: Vec<String>,
+    /// The type a parse built at this store's root, `u16::MAX` for a store no parse built.
+    /// It is what tells a copy of the WHOLE parsed value, which carries the errors, from a
+    /// copy of its first field, which shares the root's address and carries none.
+    pub(crate) parse_type: u16,
     /// @PLAN38 phase 01 — when `Some(path)`, this store was opened
     /// via `Store::open_durable` and on clean drop must (1) flush
     /// the mmap, (2) compute the payload CRC, and (3) rewrite the
@@ -1112,6 +1122,8 @@ impl Store {
             pinned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
+            parse_errors: Vec::new(),
+            parse_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
             durable_tier: 0,
@@ -1271,6 +1283,8 @@ impl Store {
             pinned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
+            parse_errors: Vec::new(),
+            parse_type: u16::MAX,
             durable_meta_path: None,
             file_path: Some(std::path::PathBuf::from(path)),
             durable_tier: 0,
@@ -1372,6 +1386,8 @@ impl Store {
             pinned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
+            parse_errors: Vec::new(),
+            parse_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
             durable_tier: 0,
@@ -1481,6 +1497,8 @@ impl Store {
             pinned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
+            parse_errors: Vec::new(),
+            parse_type: u16::MAX,
             durable_meta_path: None,
             file_path: None,
             durable_tier: 0,
@@ -1516,6 +1534,9 @@ impl Store {
         self.claims.clear();
         self.referenced.clear();
         self.removed.clear();
+        // A reset store holds no parsed root, so it answers no parse errors.
+        self.parse_errors.clear();
+        self.parse_type = u16::MAX;
         // `@FR-H-LazyFree` — a reset store has no dead words and starts the phase again.
         self.lazy = lazy_free_enabled();
         self.dead_words = 0;
@@ -2782,6 +2803,8 @@ impl Store {
         std::mem::swap(&mut a.dead_words, &mut b.dead_words);
         std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
         std::mem::swap(&mut a.known_type, &mut b.known_type);
+        std::mem::swap(&mut a.parse_errors, &mut b.parse_errors);
+        std::mem::swap(&mut a.parse_type, &mut b.parse_type);
         std::mem::swap(&mut a.init_shadow, &mut b.init_shadow);
         let generation = a.generation.max(b.generation).wrapping_add(1);
         a.generation = generation;
@@ -2942,6 +2965,8 @@ impl Store {
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
+            parse_errors: self.parse_errors.clone(),
+            parse_type: self.parse_type,
             durable_meta_path: None,
             file_path: None,
             durable_tier: 0,
@@ -3004,6 +3029,8 @@ impl Store {
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
+            parse_errors: self.parse_errors.clone(),
+            parse_type: self.parse_type,
             durable_meta_path: None,
             file_path: None,
             durable_tier: 0,
@@ -3059,6 +3086,8 @@ impl Store {
             pinned: self.pinned,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
+            parse_errors: self.parse_errors.clone(),
+            parse_type: self.parse_type,
             durable_meta_path: None,
             file_path: None,
             durable_tier: 0,

@@ -123,3 +123,30 @@ value is null belongs to the program's own inspection (`??`, a test) or the log.
 `tests/scripts/a-fault-inside-any-hole-renders-plain-null.loft` and
 `tests/scripts/a-null-hole-never-calls-the-users-to-text.loft`.
 **Catalogue:** @F38 (arithmetic safety) · `formal/formatting.md` `(F-FaultSafe)`, `formal/operational.md` `(E-Uncomp)` · reads @C66, @C80.
+
+## C148 — A parsed value carries its own parse errors, wherever the whole value goes
+
+**Decision.** `x#errors` is a `vector<text>` with one entry per error of the `Type.parse(text)`
+call (or the `text as T` cast) that built the value `x` holds — a record, a struct-enum or a
+vector — and reading it changes nothing.  The entries are part of that value: they go with it
+when the WHOLE value is bound, rebound, passed, returned from a function or copied to another
+variable, whichever way the compiler delivers it (a move, an exchange of stores, a copy).  A
+value built any other way has none, and neither has a part copied out of a parsed value or a
+parsed value stored into a field or an element; a VIEW of a part answers for the whole it lies
+in.  A parsed vector that grows keeps its own.  Asking a variable that is neither a record nor
+a vector is refused at compile time.
+**Why.** One register for the whole program answered for the LAST parse, so `a#errors` reported
+on `b` once `b` was parsed, and it was one text the read cleared, so the loop a programmer
+writes walked characters and a second read answered nothing.  And a delivery that copies must
+answer as one that moves does, or the answer would follow an optimisation.
+
+**Revisit when.** The parse collects more than its first error (the shape already holds
+several), or a consumer needs the errors of a value stored inside another.  Decided 2026-10-12
+(owner) — [record](DESIGN_DECISIONS-history.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes).
+**Holds at:** `@C148` — `./scripts/idx tag:@C148`: the store's content (`Store::parse_errors`,
+emptied by `Store::init`, exchanged by `Store::swap_contents`), `Stores::deliver_parse_errors`
+and its vector form at the whole-value writes, the accessor's lowering
+(`src/parser/objects.rs`), guards
+`tests/scripts/a-record-errors-read-answers-for-its-own-parse.loft` and
+`tests/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
+**Catalogue:** reads C80 (a value read never raises: the errors are asked, not thrown).

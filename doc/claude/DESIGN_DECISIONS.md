@@ -101,6 +101,7 @@ a guard that does not exercise it — is its line in
 - [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) — The spreadsheet fault model: nothing stops a running calculation
 - [C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment) — A store carries its own failure arm: else after the assignment
 - [C131](DESIGN_DECISIONS_FAILURE.md#c131--a-cast-to-a-variant-answers-the-variant-a-provable-miss-is-refused-an-unproven-one-defaults-and-warns) — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
+- [C148](DESIGN_DECISIONS_FAILURE.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes) — A parsed value carries its own parse errors, wherever the whole value goes
 - [C142](DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null) — A null inside a `{…}` hole renders plain `null`, never the reason it is null
 
 ## Backends, execution and libraries — [DESIGN_DECISIONS_PLATFORM.md](DESIGN_DECISIONS_PLATFORM.md)

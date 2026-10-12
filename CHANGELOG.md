@@ -98,14 +98,18 @@ longer called with a null `self` (it printed things like `Tnull`).
 `{"x":3,"y":null,"label":null}` — nested records and records in a vector too.  `Type.parse` reads
 the new form back to the same value; a test that pinned the shorter form needs the nulls added.
 
-**`record#errors` is a `vector<text>`, and reading it no longer clears it.**  It holds one
-entry per error of the last `Type.parse(text)` and is empty after a parse that succeeded, so
-`for e in user#errors { log_warn(e); }` now visits each error; before, the accessor was one
-text, the loop walked its characters, and a second read answered nothing.  The entries stay
-until the next parse.  Change `user#errors != ""` to `len(user#errors) > 0` (the old
-comparison is refused, naming the two types); `len(user#errors) > 0` already written keeps
-its meaning.  `"{user#errors}"` prints the vector, `["line 1:1 path:"]`, where it printed the
-bare text: write `"{user#errors[0]}"` for one entry.
+**`record#errors` is a `vector<text>` that belongs to its own record.**  It holds one entry
+per error of the `Type.parse(text)` that built that record and is empty after a parse that
+succeeded, so `for e in user#errors { log_warn(e); }` visits each error.  Reading it changes
+nothing, and a later parse of something else leaves it alone: after `a = A.parse(x)` and
+`b = B.parse(y)`, `a#errors` still answers for `a`.  The errors go with the record when it is
+passed, returned from a function or copied to another variable; a record you build yourself
+has none.  Before, the accessor was one text for the whole program: the loop walked its
+characters, a second read answered nothing, and `a#errors` reported on whichever parse ran
+last.  Change `user#errors != ""` to `len(user#errors) > 0` (the old comparison is refused,
+naming the two types); `len(user#errors) > 0` already written keeps its meaning.
+`"{user#errors}"` prints the vector, `["line 1:1 path:"]`, where it printed the bare text:
+write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is refused.
 
 ### New
 

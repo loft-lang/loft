@@ -1826,24 +1826,7 @@ impl Parser {
         // A new parser is a new compilation: the copy manifest's records are keyed by
         // definition and variable number, so the previous program's would name this one's.
         crate::copy_manifest::begin_compilation();
-        let mut data = Data::new();
-        // Register internal-only functions (i_ prefix) that are never visible to user code.
-        // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
-        // Rust implementations in native.rs.
-        let pos = Position {
-            file: crate::lexer::no_file(),
-            line: 0,
-            pos: 0,
-        };
-        let d = data.add_def("i_parse_errors", &pos, DefType::Function);
-        data.definitions[d as usize].returned =
-            Type::Vector(Box::new(Type::Text(Deps::none())), Deps::none());
-        let d = data.add_def("i_parse_error_push", &pos, DefType::Function);
-        data.definitions[d as usize].returned = Type::Void;
-        {
-            let mut lexer = Lexer::default();
-            data.add_attribute(&mut lexer, d, "msg", Type::Text(Deps::none()));
-        }
+        let data = Data::new();
         Parser {
             todo_files: Vec::new(),
             track_sources: false,

@@ -3016,7 +3016,6 @@ impl Stores {
             free_bits,
             bridge_text_dest: None,
             const_refs: self.const_refs.clone(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             // The worker inherits the parent's program context, so a `par`
             // inside a `par` worker can dispatch in turn.  Without it the

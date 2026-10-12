@@ -1,0 +1,134 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C148 — a `vector<T>.parse(text)` result carries its parse's errors as a record does: they
+// stay with the vector while it is bound, rebound, passed, returned from a function and
+// copied to another variable.  A vector built any other way has none; a parsed vector that
+// GROWS keeps its own, and a built one that grows by a parsed one does not take them.
+//
+// Axes it MOVES: the delivery (a bind, a rebind from a parse, from a built vector, from a
+// parsed variable and from `[]`, an `if`'s arms, a loop's local, a helper's tail, two helpers
+// deep, a nullable return, a `??`, a copy of a local and of a returned vector, a parameter, a
+// `&` parameter written through), the growth (a parsed
+// vector appended to, an empty built vector filled from a good and from a failed parse, a
+// non-empty built vector appended to), and the holder (a variable, a struct's field).  Every
+// value is hand-computed.
+//
+// A parse that reads no vector at all answers a null one; `v += [x]` on it starts a new
+// vector, which is the one growth that leaves the parse's errors behind.
+//
+// @falsified-at: 35adfb656 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-vector-errors-read-answers-for-its-own-parse.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the control compiles this file and answers for the last parse.
+//   WITNESS: the control stops at the first cell, *two live parses: got 000, want 101*.  Run
+//   one shape per program there, a helper's return answers 0 where 1 is due, and a rebind
+//   from a built vector or from `[]`, a built vector grown by a failed parse and a struct
+//   holding a parsed field answer 1 where 0 is due.
+//   HOLDS: a parse asked at once, a rebind from a parse and a copy asked before any other
+//   parse answer the same on both trees; leak, panic and free-refusal are clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct VecItem { v: integer }
+struct VecWrap { items: vector<VecItem>, n: integer }
+
+fn vec_load(t: text) -> vector<VecItem> { vector<VecItem>.parse(t) }
+fn vec_outer(t: text) -> vector<VecItem> { vec_load(t) }
+fn vec_count(v: vector<VecItem>) -> integer { len(v#errors) }
+fn vec_maybe(t: text) -> vector<VecItem>? { if len(t) > 0 { vector<VecItem>.parse(t) } else { null } }
+
+fn vec_fill(v: &vector<VecItem>, t: text) -> integer {
+  v = vector<VecItem>.parse(t);
+  len(v#errors)
+}
+
+fn a_parsed_vector_keeps_its_own_errors() {
+  bad = vector<VecItem>.parse(`[{{"v":"x"}}]`);
+  good = vector<VecItem>.parse(`[{{"v":1}},{{"v":2}}]`);
+  assert_eq("{len(bad#errors)}{len(good#errors)}{len(bad#errors)}", "101", "two live parses");
+  assert_eq(vec_count(bad), 1, "a parameter");
+  copy = bad;
+  assert_eq("{len(copy#errors)}{len(bad#errors)}", "11", "a copy");
+}
+
+fn a_helper_hands_them_back_with_the_vector() {
+  bad = vec_load(`[{{"v":"x"}}]`);
+  good = vec_load(`[{{"v":1}}]`);
+  assert_eq("{len(bad#errors)}{len(good#errors)}{len(bad#errors)}", "101", "a helper's tail");
+  deep = vec_outer(`[{{"v":"x"}}]`);
+  flat = vec_outer(`[{{"v":4}}]`);
+  assert_eq("{len(deep#errors)}{len(flat#errors)}", "10", "two helpers deep");
+  again = bad;
+  assert_eq(len(again#errors), 1, "a copy of a returned vector");
+  some = vec_maybe(`[{{"v":"x"}}]`);
+  seen = if some != null { len(some#errors) } else { -1 };
+  other = vec_maybe(``) ?? [VecItem { v: 1 }];
+  assert_eq("{seen}{len(other#errors)}", "10", "a nullable return, and the default a `??` takes");
+  target = [VecItem { v: 1 }];
+  inside = vec_fill(target, `[{{"v":"x"}}]`);
+  assert_eq("{inside}{len(target#errors)}", "11", "a `&` parameter, inside and at the caller");
+}
+
+fn a_rebind_takes_the_incoming_values_errors() {
+  s = vector<VecItem>.parse(`[{{"v":1}}]`);
+  first = len(s#errors);
+  s = vector<VecItem>.parse(`[{{"v":"x"}}]`);
+  second = len(s#errors);
+  s = vector<VecItem>.parse(`[{{"v":3}}]`);
+  assert_eq("{first}{second}{len(s#errors)}", "010", "rebound from three parses");
+  s = vector<VecItem>.parse(`[{{"v":"x"}}]`);
+  before = len(s#errors);
+  built = [VecItem { v: 1 }, VecItem { v: 2 }];
+  s = built;
+  assert_eq("{before}{len(s#errors)} {len(s)}", "10 2", "rebound from a built vector");
+  bad = vector<VecItem>.parse(`[{{"v":"x"}}]`);
+  s = bad;
+  assert_eq(len(s#errors), 1, "rebound from a parsed variable");
+  s = [];
+  assert_eq(len(s#errors), 0, "rebound from an empty literal");
+  taken = if len("a") == 1 { vector<VecItem>.parse(`[{{"v":"x"}}]`) } else { vector<VecItem>.parse(`[{{"v":1}}]`) };
+  left = if len("a") == 2 { vector<VecItem>.parse(`[{{"v":"x"}}]`) } else { vector<VecItem>.parse(`[{{"v":1}}]`) };
+  assert_eq("{len(taken#errors)}{len(left#errors)}", "10", "bound from an `if`'s arms");
+  out = "";
+  for doc in [`[{{"v":"x"}}]`, `[{{"v":1}}]`, `nope`] {
+    r = vector<VecItem>.parse(doc);
+    out += "{len(r#errors)}";
+  }
+  assert_eq(out, "101", "a loop's local, parsed each round");
+}
+
+fn growing_keeps_the_vectors_own() {
+  more = [VecItem { v: 1 }, VecItem { v: 2 }];
+  junk = vector<VecItem>.parse(`nope`);
+  junk += more;
+  assert_eq("{len(junk#errors)} {len(junk)}", "1 2", "a failed parse grown by a built vector");
+  good = vector<VecItem>.parse(`[{{"v":1}},{{"v":2}}]`);
+  fresh: vector<VecItem> = [];
+  fresh += good;
+  assert_eq("{len(fresh#errors)}{len(good#errors)}", "00", "an empty vector filled from a good parse");
+  bad = vector<VecItem>.parse(`[{{"v":"x"}}]`);
+  some = [VecItem { v: 9 }];
+  some += bad;
+  assert_eq("{len(some#errors)}{len(bad#errors)}", "01", "a built vector that grows by a failed parse");
+}
+
+fn a_field_holds_only_the_elements() {
+  w = VecWrap { items: vector<VecItem>.parse(`[{{"v":"x"}}]`), n: 1 };
+  out = w.items;
+  assert_eq("{len(w#errors)}{len(out#errors)}", "00", "a parse stored into a field, and read back");
+  bad = vector<VecItem>.parse(`[{{"v":"x"}}]`);
+  first = bad[0];
+  assert_eq(len(first#errors), 0, "an element copied out");
+  kept = len(bad#errors);
+  w.items = bad;
+  assert_eq("{len(w#errors)}{kept}", "01", "a parsed variable assigned to the field");
+}
+
+fn main() {
+  a_parsed_vector_keeps_its_own_errors();
+  a_helper_hands_them_back_with_the_vector();
+  a_rebind_takes_the_incoming_values_errors();
+  growing_keeps_the_vectors_own();
+  a_field_holds_only_the_elements();
+  println("vector#errors per vector ok");
+}

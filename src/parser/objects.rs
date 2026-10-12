@@ -970,11 +970,26 @@ impl Parser {
             if self.lexer.has_token("#") {
                 self.var_usages(index_var, true);
                 if self.lexer.has_keyword("errors") {
-                    // s#errors — the parse errors from the last Type.parse() call, one
-                    // element per error; a fresh vector the caller owns.
-                    let fn_nr = self.data.def_nr("i_parse_errors");
+                    // @C148: s#errors — the errors of the parse that built the value `s` holds,
+                    // one element per error; a fresh vector the caller owns.  Only a record
+                    // or a vector comes out of a parse, so nothing else has errors to ask.
+                    let asked = self.vars.tp(index_var).clone();
+                    if !self.first_pass
+                        && !matches!(
+                            asked.peel_link(),
+                            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+                        )
+                    {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{name}#errors` asks a parsed record or vector for the errors of its parse, and `{name}` is {}",
+                            self.data.written_type_name(&asked)
+                        );
+                    }
+                    let fn_nr = self.data.def_nr("n_parse_errors_of");
                     if fn_nr != u32::MAX {
-                        *code = Value::Call(fn_nr, vec![]);
+                        *code = Value::Call(fn_nr, vec![Value::Var(index_var)]);
                         t = self.data.def(fn_nr).returned.clone();
                     }
                     return t;
