@@ -236,10 +236,7 @@ length, a pop to empty then pushes, two stacks in one body, a pop from both ends
                  included), so the parameter's headers and those views' record addresses
                  (R-RecPtr) are kept.  The original loop runs when the test fails.  The
                  copy is emitted only when it gains a header no enclosing frame holds or
-                 a record address the plain loop declines.  A local that ADOPTED the
-                 buffer (the result local IS the caller's buffer) and its witness name
-                 the buffer's store from the adoption on, so a loop growing that local
-                 is versioned on the same test.
+                 a record address the plain loop declines.
 ```
 
 **In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
@@ -255,7 +252,8 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
 `tests/scripts/a-parameter-element-view-keeps-its-address-beside-a-growing-result.loft`
 (graphics' `polygon_crossings`: 8.1× → 5.4× of its twin) and
 `tests/scripts/a-result-local-that-adopts-its-buffer-versions-like-the-buffer.loft`
-(`mesh_to_floats`'s shape).
+(`mesh_to_floats`'s shape) and `tests/scripts/a-versioned-loop-sees-its-adopted-buffer.loft`
+(the caller hands the parameter's own record as the buffer: the test fails, the plain loop runs).
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
@@ -551,6 +549,8 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  it runs (the most inserts a pass can run: an `if` takes its larger
                  arm).  A reservation is capacity only, so no value changes; a pass
                  whose key is present leaves room unused, bounded by the trip count.
+                 `size(h)` reports the representation, so it answers the reserved
+                 table (@C150).
 ```
 
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto

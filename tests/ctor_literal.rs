@@ -9,7 +9,7 @@
 //! It also runs the cells under every switch and the store falsifiers, since the default run
 //! never reaches the paths a switch restores.
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CTOR: &str = "tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft";
 const REFILL: &str = "tests/scripts/157-a-loop-record-keeps-its-vectors.loft";
@@ -22,7 +22,8 @@ const SWITCHES: [&str; 4] = [
 ];
 
 fn loft(args: &[&str], file: &str, env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(file))
         .env("LOFT_TIMEOUT", "300")

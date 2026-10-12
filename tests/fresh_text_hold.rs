@@ -7,12 +7,13 @@
 //! (every growth moves and scribbles) — in both switch states, and pins which loops hold,
 //! read off `LOFT_TRACE_HOIST_DECLINE`.
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
 
 const CELLS: &str = "tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold.loft";
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
-    let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
     cmd.args(args)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))
         .env("LOFT_TIMEOUT", "300")
@@ -63,7 +64,7 @@ fn a_fresh_elements_text_keeps_the_hold_and_a_shared_store_refuses_it() {
     // read vector's store is no fresh mint.  h1's `build` and h3 hold; h2, minting into `d.out`
     // while reading `d.src`, is refused by the mint's own aliasing decision and declines nowhere
     // here.
-    let src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))
+    let src = loft::file_access::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS))
         .expect("read the cells");
     let h4 = src
         .lines()

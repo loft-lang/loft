@@ -2849,6 +2849,11 @@ answered `0,0,0,0,0`), the slice-element READ (`read_slice_elem` reaching `get_v
 answered `0x05_04_03_02_01`) and the element WRITE behind `insert` (`set_field_check`, losing
 the type the same way and zeroing the successors it wrote over).
 
+The LINKED layout was the same trap: loft#903 closed it for the by-index removal; loft#1670
+found `reverse` and `insert` had never been reached, both sliding a span twice as wide, both
+silent on both backends, until `Parser::element_store_size` asked `is_linked` before it
+measured the record.
+
 ## The drop rule before the copy refusal
 
 The rule before `(H-Copy-Refuse)` moved a droppable's release along with a copy and warned where

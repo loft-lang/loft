@@ -79,11 +79,11 @@ fn main() {
 
   // c7 — @C150: `size()` reports the representation — the reserved table holds a counted
   // fill of 64 at once, so it is no smaller than the table the growth ladder ends on (64
-  // entries rebuild at 16 -> 38 -> 82 -> 170 slots: 680 bytes), while len and every entry
-  // are the fill's.
+  // entries rebuild at 16 -> 32 -> 64 -> 128 slots, `@FR-Col-Bucket`: 512 bytes), while len
+  // and every entry are the fill's.
   h7: hash<C[ck]> = [];
   for i in 0..64 { h7 += [C { ck: i, ix: i }]; }
-  assert(len(h7) == 64 && h7[63]?.ix == 63 && size(h7) >= 256, "c7 {size(h7)}");
+  assert(len(h7) == 64 && h7[63]?.ix == 63 && size(h7) >= 512, "c7 {size(h7)}");
 
   // c6 — refilled 40 times: the live record count holds once warm.
   r1 = 0;
