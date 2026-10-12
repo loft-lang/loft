@@ -59,6 +59,7 @@ scripts/release-gate.sh	--help
 scripts/repeat-test.sh	--help
 scripts/repro-verify.sh	--help
 scripts/revalidate_libs_local.sh	--help
+scripts/sweep_ignored.sh	--help
 scripts/sweep_scratch.sh	--help
 scripts/work-issues.sh	--help
 tools/audience-demo/run-demo.sh	--help

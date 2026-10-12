@@ -1,0 +1,43 @@
+# What the disk janitor leaves alone in this checkout (scripts/sweep_ignored.sh reads it).
+#
+# The sweep removes what git IGNORES once nothing wrote it for days; a line here keeps a path
+# regardless of its age.  One pattern per line, a path from the checkout root; `*` matches
+# any run of characters, slashes included.  A pattern keeps the path it matches and everything
+# under it.  Say WHY on the line: the reason is what the next reader checks before removing it.
+#
+# A new ignored artefact needs a line here only when losing it costs more than a rebuild —
+# data nothing regenerates, a rebuild that needs the network, state a tool reads later.
+
+target                               # the main build tree: the janitor's `cargo sweep` step keeps what builds still use
+
+# data nothing regenerates
+fuzz/corpus                          # the fuzzer's accumulated inputs: fuzzing time, not a build
+fuzz/artifacts                       # the crashes it found
+registry-signing-key.*               # a key is never swept
+tests/fixtures/libs/*/native/.cargo  # machine-specific linker configuration, on disk on purpose (.gitignore says why)
+tools/viewer/bin                     # the frozen viewer binary
+tools/viewer/BUILD_NOTES.md
+
+# a rebuild that needs the network
+*Cargo.lock                          # the fixture and fuzz crates' resolved dependencies
+editors/vscode                       # the editor extension's installed packages and its build
+doc/claude/LIBRARIES.md              # `make libcatalogue`: the registry and every library's origin/main
+doc/claude/*-snapshot.json
+
+# state a tool reads later
+.ci-*                                # the last gate's verdict, which `ci-run.sh recheck` builds on
+result.txt
+index                                # `make index`: the tracker index `scripts/idx` queries
+doc/pkg                              # the browser bundle's packaging files beside the tracked ones
+doc/pkg-mt                           # the threaded bundle `make serve` deploys
+tests/wasm/pkg                       # the bundles the wasm tests load
+tests/wasm/pkg-mt
+tools/ir_schema/generated.rs
+tests/fixtures/c_abi                 # the C fixture's built library and self-test
+
+# agent and editor configuration
+.claude/settings*
+.claude/scheduled_tasks.lock
+.idea
+.vscode
+.env*

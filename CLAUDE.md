@@ -170,7 +170,12 @@ make disk-headroom                       # ROOM FOR A GATE: every gate runs this
 make janitor-install                     # once per box: scripts/disk_janitor.sh runs, detached,
                                          #   beside every agent build (a user-level hook) and
                                          #   beside find_problems/stats.py — every checkout's
-                                         #   stale artefacts, under cargo's build lock
+                                         #   stale artefacts, under cargo's build lock, and what
+                                         #   git IGNORES there once nothing wrote it for 3 days
+                                         #   (probe caches, scratch builds, finished agent
+                                         #   worktrees).  Keep an artefact with a line in
+                                         #   scripts/janitor_keep.txt; `scripts/sweep_ignored.sh
+                                         #   --dry-run .` shows what would go — RUN_BOUNDS.md
 make sweep-scratch                       # reclaim loft's temp scratch (dead-process native
                                          #   artefacts, aged test caches, old agent sessions);
                                          #   `df -h /` before a gate — a full disk fails the
