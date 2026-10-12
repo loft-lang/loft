@@ -66,6 +66,37 @@ The twelve rows reduce to a handful of mechanisms.  Ordered by how many rows eac
 6. **One-off architecture (2 rows).** JSON parsing through the general lexer and a `Parsed` tree
    (`map_json`); a fixed-width file read per value (`binary_read`).
 
+## Re-profiled at `f7f23c5b5` — where each row's time goes
+
+The same rows and the others over 5× on the x86-64 laptop, on the tree rebased onto `main`
+(`f0b49ec8f`).  The ratios are `bench/portal/results/laptop.tsv`'s; the shares are user-mode
+self time of the `--native-release` binary (§ Method notes, the last item).  The steps these
+shares lead to are ordered in [worklist.md](worklist.md) § 0, the x86-64 list.
+
+| routine | × | self time by kind | what it says about the step |
+|---|--:|---|---|
+| dryopea `truncate_to` | 8.17 | claim and release 22 %, the ownership walks (`owned_walk`, `holds_no_heap`, `remove_claims_mode`) ~15 %, vector runtime 18 %, copy 10 %, generated 16 % | NOT the move of the dead entry the table above names: worklist.md § 4 hand-priced it at +16 %.  `(H-ScanIndex)` took the chain walk; what is left is a copy and a release through the generic type walk |
+| zttext `flow_layout_full` | 7.92 | generated 35 % (`slice_runs` 17.5 %, `place_line` 7 %, `next_line` 5 %), claim and release 25 %, vector runtime 16 % | three causes of similar size; no one step takes the row |
+| pluginabi `check_request` | 7.85 | not profiled — the binary the bench caches is stripped, and `hand_price.sh` links no native library | fix the tooling before pricing anything on it |
+| gridmesh `field_add_cell` | 7.54 | keyed 44 % (`find_long` 10 %, `keys::hash` 8 %, `probe_for_insert` 8 %), a record claimed per entry 26 % (`record_new`, `arena::alloc`, `record_finish`, `insert_record`), generated 12 % | the double lookup is real and small; the record per entry has no step |
+| moros `map_json` | 7.44 | the lexer and the JSON parser 46 %, `malloc` / `free` 25 %, text 9 % | as above: the parse, and the `Parsed` tree it allocates |
+| dryopea `panel_build` | 7.43 | claim and release 45 % (`remove_claims_mode` 8 %, `delete` 6 %, `claim_block` 5 %, `claim_best_fit` 4 %), the release's type walk 8 %, generated 13 % | as above |
+| arguments `parse` | 7.18 | the library's own code 45 % (`find_long_opt` 17 %, `classify` 15 %, `parse` 10 %), vector runtime 19 % (`length_vector` 11 %, `get_vector` 6.5 %), claim and release 12 %, `char_count` 5 % | the unheld reads are the 19 %; the 45 % has no named step |
+| dryopea `mapfile_to_painted` | 6.93 | keyed 44 % (`keys::hash` 10 %, `find` 5 %, `rehash_into` 4 %), a sort 9 %, generated 18 % (`palette_index_of` 12 %) | as above |
+| crawler `binary_read` | 6.8–7.7 | 99 % in the emitted loop (`read_one_i16` inlined into it) | the per-value file operation is typed and inline now (`(R-TypedRead)`); what repeats per value is the handle and the cursor |
+| cbor `encode` | 6.81 | generated 50 % (`read_value__d` 17 %, `encode` 11 %, `key_lt` 8 %), vector runtime 23 % | the unheld reads are the 23 % |
+| dryopea `reload_and_record` | 6.75 | a sort per ordered walk 23 %, keyed 35 % (`entries`, `find`, `key_compare`, `key_hash`), the ordered step 10 % | as above |
+| zttext `invert` | 6.35 | copy 36 % (`copy_claims` 11.5 %, `memmove` 10.5 %, `copy_block` 7 %, `OpCopyRecord` 6 %), generated 31 %, `get_vector` 9 % | as above |
+| hex_body `rig_world_frame3` | 5.51 | generated 61 %, vector runtime 26 % (`clear_vector_release`, `length_vector`, `get_vector`, `push_header`), `sincos` 9 % | the cleared and refilled work vectors are apart.md's instance 3 |
+| hex_recover `forms_upto` | 5.40 | generated 47 % (`forms_upto` 26 %, `form_closes` 16 %), claim and release 24 %, vector runtime 12 % | `(R-CtorLiteral)` is in; the claims that are left are not attributed |
+| zttext `insert_text` | 5.32 | **copy 60 %** (`OpCopyRecord` 26.5 %, `copy_block` 22 %, `memmove` 11 %), generated 20 % | the largest single share on the list: the document copied per operation |
+| gridmesh `build_index` | 4.21 | keyed 36 % (`probe_for_insert` 14 %), a record claimed per entry 30 % | the reservation halved the row (8.34×); the record per entry is what is left |
+
+**Built steps deliver less than their price on the portal's core.**  `forms_upto` was priced
+−31 % and moved −20 % (6.72× → 5.40×); `(H-ScanIndex)` read −12 % cycles on an efficiency core
+and −4 % on `truncate_to`'s row; the bucket replace bought −27 % of a priced −42 %.  An estimate
+read off a profile and never hand-priced is worth about two thirds of its figure.
+
 ## Small, pure fixes the comparison surfaced
 
 * **A redundant text clone before a store write** — `let s_val = (x).to_string();
@@ -90,6 +121,14 @@ The twelve rows reduce to a handful of mechanisms.  Ordered by how many rows eac
   ~13 GHz): per-op counts here are the difference of two run lengths, which removes setup.
 * Pricing a lever by a hand edit is only faithful within one store; `invert`'s two levers cross
   a store boundary and are estimated from the profile, not priced.
+* **One row's profile out of a lane that runs many.**  A lane runs its routines one after
+  another, so `perf record -F 4000` over the whole binary (no call graph: it unwinds nothing
+  for the thread a loft program runs on) and `perf script -F time,ip,sym,dso` give each
+  sample a time; a routine's samples are those between the first and the last one in a
+  function that carries its name.  Give the routine at least a second of the run.  A library
+  routine a bench calls under another name is windowed by that name (`field_add_cell` runs
+  in `n_paint_field`), and a neighbour that calls the same function is cut by its own
+  (`collect_dirty_inputs` calls `build_index`).
 
 ## Built
 
