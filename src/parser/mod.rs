@@ -8024,33 +8024,6 @@ impl Parser {
         } else if name == "size"
             && types.len() == 1
             && named_args.is_empty()
-            && matches!(
-                *recv,
-                Type::Index(_, _, _) | Type::Radix(_, _, _) | Type::Trie(_, _, _)
-            )
-        {
-            // @PLN110 1d: `size` of an `index` / `spatial` / `trie` reports a SINGLE
-            // element record's size (a compile-time constant), reusing the
-            // struct-record path.  The arg is evaluated; only its element type feeds
-            // the const record size.
-            let elem_kt = match recv {
-                Type::Index(tp, _, _) | Type::Radix(tp, _, _) | Type::Trie(tp, _, _) => {
-                    self.data.def(*tp).known_type()
-                }
-                _ => u16::MAX,
-            };
-            let op_d_nr = self.data.def_nr("OpSizeStruct");
-            if elem_kt != u16::MAX && op_d_nr != u32::MAX {
-                let sz = self.database.size(elem_kt);
-                let mut args = list.to_vec();
-                args.push(Value::Int(i32::from(sz)));
-                *code = Value::Call(op_d_nr, args);
-                return crate::data::I64.clone();
-            }
-            Type::Unknown(0)
-        } else if name == "size"
-            && types.len() == 1
-            && named_args.is_empty()
             && matches!(*recv, Type::Enum(_, _, _))
         {
             // @PLN110 enums: a SIMPLE enum (no data-carrying variant) is a 1-byte

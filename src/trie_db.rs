@@ -159,6 +159,19 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
     rt::rtree_remove(store, tree, rec.rec, &TextOracle { key })
 }
 
+/// The tree's own footprint in bytes (`radix_tree::rtree_bytes`), 0 when none is allocated.
+#[must_use]
+pub fn table_bytes(coll: &DbRef, stores: &[Store]) -> u32 {
+    if coll.is_null() {
+        return 0;
+    }
+    let store = crate::keys::store(coll, stores);
+    match store.collection_rec(coll.rec, coll.pos) {
+        0 => 0,
+        tree => rt::rtree_bytes(store, tree),
+    }
+}
+
 /// Number of element records. Reads the tree's cached length word (O(1)).
 #[must_use]
 pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {

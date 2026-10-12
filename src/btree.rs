@@ -1478,6 +1478,14 @@ pub fn range_cursors(
     }
 }
 
+/// The index's own footprint in bytes: its arena's node room, the header node left out —
+/// what `size` reports, allocation-local as a hash's bucket table is (#1983).  0 when no
+/// arena is allocated.
+#[must_use]
+pub fn table_bytes(data: &DbRef, stores: &[Store]) -> u32 {
+    arena_of(data, stores).map_or(0, |a| (a.hdr(keys::store(data, stores), H_CAP) - 1) * NODE)
+}
+
 /// The number of records — kept in the header, so O(1).
 #[must_use]
 pub fn count(data: &DbRef, stores: &[Store]) -> u32 {

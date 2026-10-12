@@ -1656,6 +1656,17 @@ pub fn size(self: const hash) -> integer {
 fn OpLengthIndex(r: index) -> integer;
 #cold
 #rust"i64::from(btree::count(&@r, &s.database.allocations))"
+fn OpSizeIndex(r: index) -> integer;
+#cold
+#rust"i64::from(btree::table_bytes(&@r, &s.database.allocations))"
+/// The byte footprint of an index: its B+tree's node arena, room included.
+/// Allocation-local, as `size` of a hash: the element records live in separate
+/// allocations and are not counted.  Grows in steps as the arena doubles.  0 for an
+/// empty (unallocated) index.
+pub fn size(self: const index) -> integer {
+  OpSizeIndex(self)
+}
+#pure
 
 fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
 #rust"@v1 == @v2"
@@ -1877,6 +1888,16 @@ pub fn len(self: const spatial) -> integer {
   OpLengthSpatial(self)
 }
 #pure
+fn OpSizeSpatial(r: spatial) -> integer;
+#cold
+#rust"i64::from(codegen_runtime::spatial_bytes(&@r, &s.database.allocations))"
+/// The byte footprint of a spatial index: its tree's node array, room included.
+/// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
+/// an empty (unallocated) one.
+pub fn size(self: const spatial) -> integer {
+  OpSizeSpatial(self)
+}
+#pure
 // Number of elements in a trie.  Same cached length word as `len(spatial)` —
 // the tree is shared, only the key oracle above it differs.
 fn OpLengthTrie(r: trie) -> integer;
@@ -1885,6 +1906,16 @@ fn OpLengthTrie(r: trie) -> integer;
 /// Number of elements in the trie.
 pub fn len(self: const trie) -> integer {
   OpLengthTrie(self)
+}
+#pure
+fn OpSizeTrie(r: trie) -> integer;
+#cold
+#rust"i64::from(codegen_runtime::trie_bytes(&@r, &s.database.allocations))"
+/// The byte footprint of a trie: its tree's node array, room included.
+/// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
+/// an empty (unallocated) one.
+pub fn size(self: const trie) -> integer {
+  OpSizeTrie(self)
 }
 #pure
 // Call a predefined system function (but not an operator).
