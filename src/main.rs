@@ -5531,7 +5531,7 @@ fn run_ship_command(args: &[String]) -> i32 {
         .is_some_and(|p| fa::is_file(&p));
 
     // The script may prompt (a push asking for credentials): it is handed the terminal.
-    let mut cmd = Spawn::new(Program::search("bash")).tree(Tree::Foreground);
+    let mut cmd = Spawn::new(Program::bash()).tree(Tree::Foreground);
     cmd.push_arg(&script);
     let passthrough_yes = args.iter().any(|a| a == "--yes" || a == "--dry-run");
     if key_present {

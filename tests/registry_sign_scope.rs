@@ -202,72 +202,61 @@ fn expect_meta_on_a_version_field_names_the_form_that_works() {
     );
 }
 
-/// The routing cells.  `loft ship` hands its routine to `bash`, and the stub here is a shell
-/// script.
-// approved exemption: needs a Git Bash resolver in platform; future work outside @PLN184
-#[cfg(unix)]
-mod ship_routing {
-    use super::fa;
-    use std::path::PathBuf;
-
-    /// One `loft ship` with `HOME` a private tree that does or does not hold the trust-root key, and
-    /// a stub in place of `registry_maintain.sh` (`LOFT_SHIP_SCRIPT`) that reports what it was handed:
-    /// its arguments and the signer it was told to use.  Nothing is packaged, signed or pushed.
-    fn ship_with_key(tag: &str, key: bool) -> (String, String) {
-        let home =
-            std::env::temp_dir().join(format!("loft-ship-route-{tag}-{}", std::process::id()));
-        let _ = fa::remove_dir_all(&home);
-        fa::create_dir_all(home.join(".loft/trust-root")).expect("mkdir");
-        if key {
-            fa::write(home.join(".loft/trust-root/registry-signing-key.bin"), "k").expect("key");
-        }
-        let stub = home.join("ship-stub.sh");
-        fa::write(
-            &stub,
-            "echo \"ARGS=$*\"\necho \"SIGNER=${LOFT_REGISTRY_SIGNER:-unset}\"\n",
-        )
-        .expect("stub");
-        let out =
-            loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
-                .arg("ship")
-                .env("HOME", &home)
-                .env("LOFT_SHIP_SCRIPT", &stub)
-                .env_remove("LOFT_REGISTRY_SIGNER")
-                .output()
-                .expect("spawn loft ship");
-        let _ = fa::remove_dir_all(&home);
-        (
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-        )
+/// One `loft ship` with `HOME` a private tree that does or does not hold the trust-root key, and
+/// a stub in place of `registry_maintain.sh` (`LOFT_SHIP_SCRIPT`) that reports what it was handed:
+/// its arguments and the signer it was told to use.  Nothing is packaged, signed or pushed.
+fn ship_with_key(tag: &str, key: bool) -> (String, String) {
+    let home = std::env::temp_dir().join(format!("loft-ship-route-{tag}-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&home);
+    fa::create_dir_all(home.join(".loft/trust-root")).expect("mkdir");
+    if key {
+        fa::write(home.join(".loft/trust-root/registry-signing-key.bin"), "k").expect("key");
     }
+    let stub = home.join("ship-stub.sh");
+    fa::write(
+        &stub,
+        "echo \"ARGS=$*\"\necho \"SIGNER=${LOFT_REGISTRY_SIGNER:-unset}\"\n",
+    )
+    .expect("stub");
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+        .arg("ship")
+        .env("HOME", &home)
+        .env("LOFT_SHIP_SCRIPT", &stub)
+        .env_remove("LOFT_REGISTRY_SIGNER")
+        .output()
+        .expect("spawn loft ship");
+    let _ = fa::remove_dir_all(&home);
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
 
-    /// @C96 — a key-present machine ships autonomously: `--yes`, and the local file key as signer.
-    #[test]
-    fn a_key_present_machine_ships_autonomously_with_the_file_signer() {
-        let (out, err) = ship_with_key("present", true);
-        assert!(
-            out.contains("--yes") && !out.contains("--dry-run") && out.contains("SIGNER=file"),
-            "a key-present `loft ship` runs the routine with `--yes` and the file signer:\n{out}{err}"
-        );
-        assert!(
-            !err.contains("cannot sign"),
-            "nothing to defer on a key-present machine:\n{err}"
-        );
-    }
+/// @C96 — a key-present machine ships autonomously: `--yes`, and the local file key as signer.
+#[test]
+fn a_key_present_machine_ships_autonomously_with_the_file_signer() {
+    let (out, err) = ship_with_key("present", true);
+    assert!(
+        out.contains("--yes") && !out.contains("--dry-run") && out.contains("SIGNER=file"),
+        "a key-present `loft ship` runs the routine with `--yes` and the file signer:\n{out}{err}"
+    );
+    assert!(
+        !err.contains("cannot sign"),
+        "nothing to defer on a key-present machine:\n{err}"
+    );
+}
 
-    /// @C96 — a key-absent machine defers: it says it cannot sign, and runs the routine in review
-    /// mode (`--dry-run`) with no signer chosen for it.
-    #[test]
-    fn a_key_absent_machine_says_so_and_runs_in_review_mode() {
-        let (out, err) = ship_with_key("absent", false);
-        assert!(
-            out.contains("--dry-run") && !out.contains("--yes") && out.contains("SIGNER=unset"),
-            "a key-absent `loft ship` runs the routine in review mode, unsigned:\n{out}{err}"
-        );
-        assert!(
-            err.contains("this machine cannot sign"),
-            "a key-absent machine says why it is not shipping:\n{err}"
-        );
-    }
+/// @C96 — a key-absent machine defers: it says it cannot sign, and runs the routine in review
+/// mode (`--dry-run`) with no signer chosen for it.
+#[test]
+fn a_key_absent_machine_says_so_and_runs_in_review_mode() {
+    let (out, err) = ship_with_key("absent", false);
+    assert!(
+        out.contains("--dry-run") && !out.contains("--yes") && out.contains("SIGNER=unset"),
+        "a key-absent `loft ship` runs the routine in review mode, unsigned:\n{out}{err}"
+    );
+    assert!(
+        err.contains("this machine cannot sign"),
+        "a key-absent machine says why it is not shipping:\n{err}"
+    );
 }

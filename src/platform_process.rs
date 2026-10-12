@@ -107,6 +107,13 @@ impl Program {
     pub fn os(path: impl AsRef<OsStr>) -> Program {
         Program(Ok(path.as_ref().to_os_string()))
     }
+
+    /// The program that runs a bash script ([`crate::platform::bash_program`]): on Windows
+    /// the bash of Git for Windows, where a bare `bash` is the WSL launcher.
+    #[must_use]
+    pub fn bash() -> Program {
+        Program(Ok(crate::platform::bash_program()))
+    }
 }
 
 /// What a stop, and loft's own end, do to the processes a child starts.
