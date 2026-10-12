@@ -9,6 +9,7 @@
 //! `bench/15_stdlib_keyed`'s `index_fill_find` (`(i·7919 + salt) mod m`), and every node
 //! access of the probe goes through the `Store` reads and writes loft itself makes.  Each
 //! run checks that both trees find every key and no absent one, so a fast wrong tree fails.
+use loft::btree;
 use loft::database::Stores;
 use loft::keys::{Content, DbRef};
 use loft::store::Store;
@@ -176,9 +177,9 @@ fn key_of(i: i64, salt: i64, m: i64) -> i64 {
     (i * 7919 + salt) % m
 }
 
-/// One run: fill and find `count` keys with both trees; answers ns per key (rb fill, rb find,
-/// probe fill, probe find).
-fn run(count: i64, m: i64) -> (f64, f64, f64, f64) {
+/// One run: fill and find `count` keys with each tree; answers ns per key (rb fill, rb find,
+/// probe fill, probe find, built fill, built find).
+fn run(count: i64, m: i64) -> (f64, f64, f64, f64, f64, f64) {
     let mut stores = Stores::new();
     let s = stores.structure("Elm", 0);
     stores.field(s, "k", stores.name("integer"));
@@ -250,8 +251,44 @@ fn run(count: i64, m: i64) -> (f64, f64, f64, f64) {
             "an absent key"
         );
     }
+    // The built tree, `src/btree.rs`, over the same records from its own slot.
+    let holder = stores.claim(&db, 2).rec;
+    stores.allocations[st].set_u32_raw(holder, 8, 0);
+    let slot = DbRef {
+        store_nr: db.store_nr,
+        rec: holder,
+        pos: 8,
+    };
+    let t = Instant::now();
+    for r in &recs {
+        btree::add(&slot, r.rec, &mut stores.allocations, &keys);
+    }
+    let b_fill = t.elapsed().as_nanos() as f64;
+    let t = Instant::now();
+    let mut bacc = 0i64;
+    for i in 0..count {
+        let found = btree::find_exact(
+            &slot,
+            &stores.allocations,
+            &keys,
+            &[Content::Long(key_of(i, 0, m))],
+        );
+        bacc += stores.allocations[st].get_int(found, 16) & 255;
+    }
+    let b_find = t.elapsed().as_nanos() as f64;
+    assert_eq!(
+        bacc, expect,
+        "the built tree finds every key, with its own record"
+    );
     let n = count as f64;
-    (rb_fill / n, rb_find / n, p_fill / n, p_find / n)
+    (
+        rb_fill / n,
+        rb_find / n,
+        p_fill / n,
+        p_find / n,
+        b_fill / n,
+        b_find / n,
+    )
 }
 
 #[test]
@@ -262,24 +299,23 @@ fn btree_of_key_parts_against_the_red_black_index() {
         (100_000, 10_000_019, 10),
         (1_000_000, 100_000_007, 3),
     ] {
-        let mut best = (f64::MAX, f64::MAX, f64::MAX, f64::MAX);
+        let mut best = [f64::MAX; 6];
         for _ in 0..reps {
             let r = run(count, m);
-            best = (
-                best.0.min(r.0),
-                best.1.min(r.1),
-                best.2.min(r.2),
-                best.3.min(r.3),
-            );
+            for (b, v) in best.iter_mut().zip([r.0, r.1, r.2, r.3, r.4, r.5]) {
+                *b = b.min(v);
+            }
         }
         println!(
-            "{count:>8}  red-black fill {:6.1} find {:6.1}  |  b+tree fill {:6.1} find {:6.1}  ns/key  →  fill {:.1}×  find {:.1}×",
-            best.0,
-            best.1,
-            best.2,
-            best.3,
-            best.0 / best.2,
-            best.1 / best.3
+            "{count:>8}  red-black fill {:6.1} find {:6.1}  |  probe fill {:6.1} find {:6.1}  |  btree.rs fill {:6.1} find {:6.1}  ns/key  →  btree.rs fill {:.1}×  find {:.1}×",
+            best[0],
+            best[1],
+            best[2],
+            best[3],
+            best[4],
+            best[5],
+            best[0] / best[4],
+            best[1] / best[5]
         );
     }
 }

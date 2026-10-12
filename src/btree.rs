@@ -135,9 +135,10 @@ impl Arena {
         self.set_child(store, n, i, v.child);
     }
 
-    /// Move slots `from..from+len` of node `n` to start at `to` (overlap allowed), in every
-    /// array a slot spans.
-    fn shift(self, store: &mut Store, n: u32, from: u32, to: u32, len: u32) {
+    /// Move slots `from..from+len` of node `n` to start at `to` (overlap allowed): parts and
+    /// records, and the children of an internal node (`children`).
+    #[allow(clippy::fn_params_excessive_bools)]
+    fn shift(self, store: &mut Store, n: u32, from: u32, to: u32, len: u32, children: bool) {
         if len == 0 || from == to {
             return;
         }
@@ -157,6 +158,9 @@ impl Arena {
             b + N_REC as isize + 4 * to,
             4 * len,
         );
+        if !children {
+            return;
+        }
         store.copy_block(
             self.0,
             b + N_CHILD as isize + 4 * from,
@@ -275,16 +279,34 @@ impl<'arena> Probe<'arena> {
         }
     }
 
-    /// How the probe orders against the slot `(part, rec)`.
-    #[inline]
-    fn order(&self, part: i64, rec: u32, stores: &[Store], keys: &[Key]) -> Ordering {
+    /// How the probe orders against slot `i` of node `n`.  The slot's record is read only
+    /// where the parts tie: the records sit a cache line away from the parts, and a descent
+    /// that read one per slot touched that line in every node it passed.
+    // Measured: as a hint the search kept a call per slot (`tests/btree_probe.rs`).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    fn order(
+        &self,
+        arena: Arena,
+        store: &Store,
+        n: u32,
+        i: u32,
+        stores: &[Store],
+        keys: &[Key],
+    ) -> Ordering {
         if let Some(p) = self.part {
-            match p.cmp(&part) {
+            match p.cmp(&arena.part(store, n, i)) {
                 Ordering::Equal if self.exact => return Ordering::Equal,
                 Ordering::Equal => {}
                 o => return o,
             }
         }
+        self.full(arena.rec(store, n, i), stores, keys)
+    }
+
+    /// The general comparison against record `rec`, for a tie of parts.
+    #[inline(never)]
+    fn full(&self, rec: u32, stores: &[Store], keys: &[Key]) -> Ordering {
         let other = DbRef {
             store_nr: self.store_nr,
             rec,
@@ -332,25 +354,71 @@ fn descend(
     };
     let mut n = arena.hdr(store, H_ROOT);
     for step in path.steps.iter_mut().take(height) {
-        let c = arena.count(store, n);
-        let mut i = 1;
+        let i = child_index(arena, stores, st, keys, n, probe, ties_right);
+        *step = (n, i);
+        n = arena.child(store, n, i);
+    }
+    path.leaf = n;
+    path
+}
+
+/// [`descend`] for a lookup, which needs no path: the leaf alone.
+fn leaf_of(
+    arena: Arena,
+    stores: &[Store],
+    st: usize,
+    keys: &[Key],
+    probe: &Probe,
+    ties_right: bool,
+) -> u32 {
+    let store = &stores[st];
+    let mut n = arena.hdr(store, H_ROOT);
+    for _ in 0..arena.hdr(store, H_HEIGHT).min(MAX_HEIGHT as u32) {
+        n = arena.child(
+            store,
+            n,
+            child_index(arena, stores, st, keys, n, probe, ties_right),
+        );
+    }
+    n
+}
+
+/// Which child of internal node `n` the probe descends into: past every separator below
+/// it, and past an equal one when `ties_right`.
+// Measured: as a hint the descent kept a call per node (`tests/btree_probe.rs`).
+#[allow(clippy::inline_always)]
+#[inline(always)]
+fn child_index(
+    arena: Arena,
+    stores: &[Store],
+    st: usize,
+    keys: &[Key],
+    n: u32,
+    probe: &Probe,
+    ties_right: bool,
+) -> u32 {
+    let store = &stores[st];
+    let c = arena.count(store, n);
+    let mut i = 1;
+    if let (Some(p), true) = (probe.part, probe.exact) {
+        // An exact part orders alone: the scan is integer compares and nothing else.
         while i < c {
-            let o = probe.order(
-                arena.part(store, n, i),
-                arena.rec(store, n, i),
-                stores,
-                keys,
-            );
-            if o == Ordering::Less || (o == Ordering::Equal && !ties_right) {
+            let sep = arena.part(store, n, i);
+            if p < sep || (p == sep && !ties_right) {
                 break;
             }
             i += 1;
         }
-        *step = (n, i - 1);
-        n = arena.child(store, n, i - 1);
+        return i - 1;
     }
-    path.leaf = n;
-    path
+    while i < c {
+        let o = probe.order(arena, store, n, i, stores, keys);
+        if o == Ordering::Less || (o == Ordering::Equal && !ties_right) {
+            break;
+        }
+        i += 1;
+    }
+    i - 1
 }
 
 /// The first slot of leaf `n` above the probe (`ties_right`) or at-or-above it, and whether
@@ -367,13 +435,18 @@ fn leaf_slot(
     let store = &stores[st];
     let c = arena.count(store, n);
     let mut i = 0;
+    if let (Some(p), true) = (probe.part, probe.exact) {
+        while i < c {
+            let part = arena.part(store, n, i);
+            if p < part || (p == part && !ties_right) {
+                return (i, p == part);
+            }
+            i += 1;
+        }
+        return (c, false);
+    }
     while i < c {
-        let o = probe.order(
-            arena.part(store, n, i),
-            arena.rec(store, n, i),
-            stores,
-            keys,
-        );
+        let o = probe.order(arena, store, n, i, stores, keys);
         if o == Ordering::Less || (o == Ordering::Equal && !ties_right) {
             return (i, o == Ordering::Equal);
         }
@@ -502,7 +575,7 @@ fn insert_leaf(
 ) -> Option<Slot> {
     let c = arena.count(store, n);
     if c < FANOUT {
-        arena.shift(store, n, slot, slot + 1, c - slot);
+        arena.shift(store, n, slot, slot + 1, c - slot, false);
         arena.set_slot(store, n, slot, part, rec);
         arena.set(store, n, N_COUNT, c + 1);
         return None;
@@ -530,7 +603,7 @@ fn insert_leaf(
         (r, slot - half)
     };
     let c = arena.count(store, into);
-    arena.shift(store, into, at, at + 1, c - at);
+    arena.shift(store, into, at, at + 1, c - at, false);
     arena.set_slot(store, into, at, part, rec);
     arena.set(store, into, N_COUNT, c + 1);
     Some(Slot {
@@ -552,7 +625,7 @@ fn insert_internal(
 ) -> Option<Slot> {
     let c = arena.count(store, n);
     if c < FANOUT {
-        arena.shift(store, n, at, at + 1, c - at);
+        arena.shift(store, n, at, at + 1, c - at, true);
         arena.put(store, n, at, sep);
         arena.set(store, n, N_COUNT, c + 1);
         return None;
@@ -619,7 +692,7 @@ pub fn remove(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> boo
             nx => Some((arena.part(store, nx, 0), arena.rec(store, nx, 0))),
         }
     };
-    arena.shift(store, n, slot + 1, slot, c - slot - 1);
+    arena.shift(store, n, slot + 1, slot, c - slot - 1, false);
     arena.set(store, n, N_COUNT, c - 1);
     if let (Some((p, i)), Some((part, r))) = (named, successor) {
         // When the subtree held only `rec` there is no successor INSIDE it; it is a single
@@ -680,7 +753,7 @@ fn rebalance(store: &mut Store, arena: Arena, path: &Path, height: usize) {
             }
             release(store, arena, right);
             let cp = arena.count(store, parent);
-            arena.shift(store, parent, ri + 1, ri, cp - ri - 1);
+            arena.shift(store, parent, ri + 1, ri, cp - ri - 1, true);
             arena.set(store, parent, N_COUNT, cp - 1);
         } else {
             // Even the two out; the parent's separator becomes the right node's new minimum.
@@ -725,9 +798,9 @@ pub fn find_exact(data: &DbRef, stores: &[Store], keys: &[Key], key: &[Content])
     };
     let st = data.store_nr as usize;
     let probe = Probe::of_key(data.store_nr, key, keys);
-    let path = descend(arena, stores, st, keys, &probe, true);
-    match leaf_slot(arena, stores, st, keys, path.leaf, &probe, false) {
-        (slot, true) => arena.rec(&stores[st], path.leaf, slot),
+    let n = leaf_of(arena, stores, st, keys, &probe, true);
+    match leaf_slot(arena, stores, st, keys, n, &probe, false) {
+        (slot, true) => arena.rec(&stores[st], n, slot),
         _ => 0,
     }
 }
