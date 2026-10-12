@@ -26,6 +26,19 @@ shape — a nullable RETURN, a nullable LOCAL and a nullable ELEMENT are three d
 and a generator would silently produce a pair that is not a pair.  Each file says in a comment
 which issue's shape it is.
 
+A nullable half reads its values through `??`, and where that `??` stands decides whether the
+pair can be read at all.  On a PLAIN READ with a SCALAR default (`h.a ?? 0`) the operator's
+lowering is the `__ncc_` channel, counted apart.  Over a lifted call (`head(q).a ?? 0`), or
+with a record or vector default (`v ?? []`), it mints and frees on the channels a road is
+counted on — so bind the call to a local first, and discharge a field.
+
+Two lines a nullable half may carry, each read by `--check`:
+
+    // @ABSENCE: <why>        the pair holds a shape whose copy must test for absence —
+                              `(N-Road)`'s exception beside `??`; reported, never a failure
+    // @OPEN: loft#N — <what> a road that still differs and is tracked; reported and counted,
+                              removed with the fix
+
 ## What the normalisation removes, and what it must not
 
 Removed: the `?` marker on a type, the absolute source path, and the `loft:…:<line>` position
@@ -39,6 +52,8 @@ Usage:
     scripts/nullable_road.py                 # every pair, one verdict each
     scripts/nullable_road.py --diff <name>   # the surviving diff for one pair
     scripts/nullable_road.py --control       # the instrument's own positive control
+    scripts/nullable_road.py --check         # exit 1 when a pair takes two roads (the gate)
+    LOFT_BIN=<path> scripts/nullable_road.py # which build to ask
 """
 import argparse
 import difflib
@@ -84,7 +99,10 @@ WS = re.compile(r"[ \t]+")
 
 
 def loft_bin():
-    """The NEWER of the two builds: the older one is the one a rebuild left behind."""
+    """`LOFT_BIN` when set (the gate hands its own build), else the NEWER of the two
+    builds: the older one is the one a rebuild left behind."""
+    if os.environ.get("LOFT_BIN"):
+        return os.environ["LOFT_BIN"]
     found = [os.path.join(ROOT, p) for p in ("target/debug/loft", "target/release/loft")
              if os.path.exists(os.path.join(ROOT, p))]
     if not found:
@@ -186,6 +204,35 @@ def headline(name):
     return ""
 
 
+def absence_note(name):
+    """The pair's own `// @ABSENCE: <why>` line, or None.
+
+    `(N-Road)` has two exceptions and both are the same necessity: a `τ?` cannot be read
+    without handling its absence.  `??` is one, and its `__ncc_` ops are counted apart.  The
+    other is the presence test a delivery owes a nullable value it COPIES — a `null` arm left
+    as it is, a nullable local copied only where it holds a record — and that one changes the
+    free and buffer counts of its function, so no channel separates it.  A pair written to
+    hold such a shape says so in its nullable half, and is reported as `absence`.
+    """
+    return pair_note(name, "ABSENCE")
+
+
+def open_note(name):
+    """The pair's own `// @OPEN: loft#N — <what>` line, or None: a road that still differs
+    and is tracked.  It is reported, counted, and does not fail `--check`; the register entry
+    (`formal/types.md` D-types-32) names the same issue, and the line goes with the fix."""
+    return pair_note(name, "OPEN")
+
+
+def pair_note(name, tag):
+    p = os.path.join(PAIRS, f"{name}.opt.loft")
+    for line in open(p, encoding="utf-8"):
+        m = re.match(rf"//\s*@{tag}:\s*(\S.*)$", line)
+        if m:
+            return m.group(1)
+    return None
+
+
 def run_pair_half(path, native):
     """Run one half, returning (value, leak_note).  BOTH backends reachable.
 
@@ -262,6 +309,8 @@ def main():
     ap.add_argument("--diff", metavar="NAME", help="print the surviving diff for one pair")
     ap.add_argument("--control", action="store_true",
                     help="the instrument's own control: a pair that is its own twin")
+    ap.add_argument("--check", action="store_true",
+                    help="exit 1 when a pair takes two roads (the gate `tests/doc_hygiene.rs` runs)")
     ap.add_argument("--verify", action="store_true",
                     help="@PLN160's stated verify: both halves, BOTH backends, "
                          "under LOFT_STRICT_STORES=1")
@@ -320,29 +369,46 @@ def main():
     print(f"  {len(names)} pair(s); a SURVIVING diff is a road one spelling takes and the "
           "other does not\n")
     diverge = 0
+    roads = []
+    tracked = []
+    check = a.check
     for n in names:
         d = diff_of(n)
         ch = channels(n)
         # `??` is the confound: a nullable twin MUST handle absence somewhere, so an `ncc`
         # asymmetry is the operator's own lowering and not the nullable type's road.
         road = {k: v for k, v in ch.items() if k != "ncc(??)"}
+        absence = absence_note(n)
         if d:
             diverge += 1
             adds = sum(1 for l in d if l.startswith("+") and not l.startswith("+++"))
             dels = sum(1 for l in d if l.startswith("-") and not l.startswith("---"))
-            mark = "DIVERGES" if road else "  ??-only"
+            still = open_note(n) if road and absence is None else None
+            if road and absence is None:
+                (tracked if still else roads).append(n)
+            mark = ("  ??-only" if not road else " absence" if absence is not None
+                    else "    OPEN" if still else "DIVERGES")
             print(f"  {mark}  {n:<32} +{adds} -{dels}")
             for k, (a, b) in sorted(road.items()):
                 print(f"      {k:<14} dense {a:4d}   nullable {b:4d}   ({b - a:+d})")
             if not road:
                 print("      every asymmetric channel is `??`'s own lowering — no road differs")
+            elif absence is not None:
+                print(f"      the pair's own note — {absence}")
+            elif still:
+                print(f"      tracked — {still}")
         else:
             print(f"  same      {n:<32}")
         print(f"      {headline(n)}")
-    print(f"\n  {diverge} of {len(names)} pairs diverge after the `?` itself is normalised away.")
-    print("  `--diff <name>` for one.  Each divergence is a question: does C90 REQUIRE it —")
+    print(f"\n  {diverge} of {len(names)} pairs differ after the `?` itself is normalised away; "
+          f"{len(roads)} take two ROADS"
+          + (f", and {len(tracked)} more is tracked as open." if tracked else "."))
+    print("  `--diff <name>` for one.  Each road is a question: does C90 REQUIRE it —")
     print("  the `?` is a compile-time marker, so most cannot — or is it an accident of the")
     print("  site that introduced it?  The second kind is the queue.\n")
+    if check and roads:
+        print(f"  FAILED: {', '.join(roads)}\n")
+        return 1
     return 0
 
 

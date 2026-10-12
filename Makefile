@@ -1081,6 +1081,7 @@ free-licences:  ## @PLN155: how many pieces of code decide *is a free needed her
 #   make nullable-road                    # every pair, one verdict each
 #   make nullable-road ARGS="--diff <n>"  # the surviving diff for one pair
 #   make nullable-road ARGS=--control     # the instrument's three controls; run after editing it
+#   make nullable-road ARGS=--check       # exit 1 on a pair that takes two roads (the gate's form)
 #   make nullable-road ARGS=--verify      # the plan's VERIFY: both halves, both backends, strict stores
 nullable-road:  ## @PLN160: where does the nullable lowering leave its dense twin's?
 	@python3 scripts/nullable_road.py $(ARGS)

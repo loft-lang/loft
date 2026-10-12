@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1989, `@FR-N-Road` — a struct literal bound to a NULLABLE local is built in the local,
+// as its dense twin's is, and the local owns the store.  Which road the literal takes is not
+// visible in a value (`make nullable-road` and its gate read the emission); what a program
+// can see is that the local releases what it holds on every path, and that nothing which
+// copied or captured the value moves with a later rebind.
+//
+// Axes it MOVES: how the local came to be nullable (annotated `S?`; inferred, and widened by
+// a later `= null`; null-led, the literal in one arm), what follows the bind (nothing, a
+// second literal, `= null`, a literal that reads the local it replaces), where it stands (a
+// function body, a loop body, a closure's capture, a returned tail, the source of a copy
+// into a vector), and what the literal is (a record, a record holding a record, a variant).
+// Every value is hand-computed.
+//
+// @falsified-at: none — the defect this file catches was never on a commit: it is the leak
+//   the in-place bind has while an inferred local widened by `= null` still depends on
+//   itself, and both landed together.
+// @falsified-by: tests/falsified/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.patch — interpret exit 1 -> 0, interpret leaked kt=100 S×2 -> clean, native exit 1 -> 0, native leaked kt=100 S×2 -> clean
+//   CHANNEL: the LEAK — the control answers every value and leaves stores at exit.
+//   ARMED: LOFT_STRICT_STORES=1
+//   WITNESS: the control leaves `S×2` at exit on both backends — the record `widened` builds,
+//   once per call — while every assertion passes there.
+//   HOLDS: every assertion passes on both trees; panic and free-refusal are clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct S { a: integer, b: text }
+struct O { s: S, k: integer }
+struct W { v: vector<integer>, f: float, ok: boolean }
+enum E { A { n: integer }, B { t: text } }
+
+fn annotated() -> integer {
+  x: S? = S { a: 1, b: "p" };
+  (x.a ?? -1) * 10 + len(x.b ?? "")
+}
+
+fn rebound() -> text {
+  x: S? = S { a: 1, b: "p" };
+  y = x.a ?? 0;
+  x = S { a: 2, b: "qq" };
+  "{y}{x.a ?? -1}{x.b ?? "none"}"
+}
+
+fn annulled() -> integer {
+  x: S? = S { a: 1, b: "p" };
+  y = x.a ?? -1;
+  x = null;
+  y * 10 + (x.a ?? 4)
+}
+
+fn widened(k: integer) -> integer {
+  p = S { a: k, b: "q" };
+  if k > 5 {
+    p = null;
+  }
+  p.a ?? -1
+}
+
+fn null_led(k: integer) -> integer {
+  p = null;
+  if k > 0 {
+    p = S { a: k * 3, b: "p{k}" };
+  }
+  p.a ?? -1
+}
+
+fn in_a_loop() -> integer {
+  t = 0;
+  for i in 0..3 {
+    x: S? = S { a: i, b: "l" };
+    t += x.a ?? 0;
+  }
+  t
+}
+
+fn rebuilt_each_pass() -> integer {
+  x: S? = null;
+  t = 0;
+  for i in 0..4 {
+    x = S { a: i * 2, b: "r{i}" };
+    t += (x.a ?? 0) + len(x.b ?? "");
+  }
+  t
+}
+
+fn captured() -> integer {
+  x: S? = S { a: 1, b: "c" };
+  g = fn() -> integer { x.a ?? -1 };
+  x = S { a: 2, b: "d" };
+  g() * 10 + (x.a ?? -1)
+}
+
+fn nested() -> integer {
+  o: O? = O { s: S { a: 5, b: "n" }, k: 2 };
+  (o.s.a ?? -1) * 10 + (o.k ?? -1)
+}
+
+fn holds_a_vector() -> integer {
+  w: W? = W { v: [4, 5, 6], f: 1.5, ok: true };
+  n = len(w.v ?? []) * 100 + (w.v[2] ?? -1) * 10;
+  w = W { v: [7], f: 2.5, ok: false };
+  n + len(w.v ?? []) + if w.ok ?? true { 50 } else { 0 }
+}
+
+fn variant() -> integer {
+  e: E? = A { n: 3 };
+  match e {
+    A { n } => n,
+    B { t } => len(t),
+    null => -1
+  }
+}
+
+fn reads_itself() -> integer {
+  x: S? = S { a: 1, b: "p" };
+  x = S { a: (x.a ?? 0) + 10, b: "r" };
+  x.a ?? -1
+}
+
+fn handed_back(k: integer) -> S? {
+  x: S? = S { a: k, b: "m" };
+  x
+}
+
+fn copied_out() -> integer {
+  v: vector<S> = [];
+  x: S? = S { a: 9, b: "v" };
+  v += [x ?? S { a: 0, b: "" }];
+  x = S { a: 1, b: "w" };
+  v[0].a * 10 + (x.a ?? -1)
+}
+
+fn main() {
+  assert_eq(annotated(), 11, "an annotated nullable local built from a literal");
+  assert_eq(rebound(), "12qq", "rebound from a second literal");
+  assert_eq(annulled(), 14, "set to null after the literal");
+  assert_eq(widened(3), 3, "an inferred local a later null widens, null not taken");
+  assert_eq(widened(9), -1, "an inferred local a later null widens, null taken");
+  assert_eq(null_led(0), -1, "a null-led local, literal not taken");
+  assert_eq(null_led(2), 6, "a null-led local, literal taken");
+  assert_eq(in_a_loop(), 3, "a literal per pass");
+  assert_eq(rebuilt_each_pass(), 20, "one local rebuilt from a literal each pass");
+  assert_eq(captured(), 12, "a closure answers the value it was built with");
+  assert_eq(nested(), 52, "a literal holding a literal");
+  assert_eq(holds_a_vector(), 361, "a literal holding a vector, rebound");
+  assert_eq(variant(), 3, "a variant literal");
+  assert_eq(reads_itself(), 11, "a literal that reads the local it replaces");
+  h = handed_back(4);
+  assert_eq(h.a ?? -1, 4, "a literal-built local handed back");
+  assert_eq(copied_out(), 91, "a copy taken before the rebind keeps its value");
+}

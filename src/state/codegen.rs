@@ -2715,11 +2715,7 @@ impl State {
             // fact-reading half is `Function::owns_displaced_store`, the ONE spelling both
             // backends read (@FR-O-NoDiverge; its native twin is `generation/dispatch.rs`'s
             // `owned_ref_reassign`).  What this side adds is the interpreter's own: the hidden
-            // buffer ARGUMENT is excluded, because the caller owns that store.  The one-argument
-            // borrow the predicate admits (`d: S? = p`, D-own-16's residual) licenses only the
-            // GUARDED free — `nullable_local` below routes it there — and `free_displaced`
-            // declines a free-protected store, so the caller's argument is never released here;
-            // measured: `LOFT_POISON=1` answers identically to `LOFT_POISON=0`.
+            // buffer ARGUMENT is excluded, because the caller owns that store.
             // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
             // which no free below may release: every one of them is guarded by the entry
             // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).

@@ -1303,6 +1303,46 @@ integer.  The second failure mode again, on the axis the fixes' own guards had h
   `tests/scripts/1380-an-else-if-chain-answers-in-its-first-arms-type.loft` and `1380b-…`,
   falsified at 2b992851 on both backends.
 
+## The `(N-Road)` walk of 2026-10-12 (loft#1989)
+
+The open entry in `types.md` listed two pairs as still differing, and its tracking issue
+(loft#1934) was closed.  A first re-measure read *0 of 15 pairs diverge* and the entry was
+about to be closed on it.  That reading was false: `scripts/nullable_road.py` ran a debug
+binary older than the tree, which refuses the standard library; both halves of every pair
+printed the same refusal, and two equal texts compared `same`.  On a current build nine pairs
+took two roads.  The script now stops when a half emits no IR.
+
+What the nine came to, read per emitted function:
+
+1. **The native live-reload entry check** matched bare type formers, so a function returning
+   or taking a `τ?` had no entry check (`Generator::live_entry_check`).  Fixed.  The matrix
+   beside it (32 shapes, each run interpreted, compiled, and compiled with the function
+   flipped) found a neighbour in the DENSE spelling: a value-record function flipped to the
+   interpreter was pushed no return buffer, and a record materialised for a tuple parameter
+   was released before the answer that viewed it was read.  Fixed with it.
+2. **The displaced free.**  `Function::borrows_one_argument` was the residual
+   `ownership-history.md` records for the nullable record local.  With the `τ?` record
+   return on the caller's buffer, the shape it was written for (`d: S? = p; d = mint()`)
+   lowers exactly as its dense twin does, and the clause fired only on compiler temporaries
+   and views.  Removed: 17 corpus files change emission, none changes its answer or leaves a
+   store.
+3. **A tail that is a nullable local** is copied into the buffer under a presence test.
+   That is not an accident of a site: a dense record local cannot be given an absence, so
+   its copy has no test to take.  `(N-Road)`'s exception clause names it beside `??`.
+4. **A struct literal bound to a nullable local** was built on a work reference
+   (`Parser::parse_object`).  The peel had been tried before and held back for loft#1483,
+   closed since.  Applying it showed one more nullable-only defect: an inferred local widened
+   by `= null` was typed from a read of itself and so depended on itself, and nothing
+   released it once the work reference no longer did.
+
+A fifth road came out of a pair that had not been a pair (`element-over-param`, whose halves
+differed in an arm's value): the native register return declines a `-> S?` that joins a built
+record with a dense view.  It is the entry `types.md` carries now, tracked as loft#1990.
+
+Three pairs were rewritten so that `??` stands on a plain read with a scalar default: a
+`??` over a lifted call, or with a record or vector default, mints and frees on channels the
+report cannot tell from a road.
+
 ## Deviations carried by types.md until 2026-10-06
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.

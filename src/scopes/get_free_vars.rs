@@ -528,37 +528,6 @@ impl Scopes<'_> {
                 // so the store is freed at scope exit.  Mirrors the fn-ref
                 // ownership rule below.  Keyed-only + exact self-dep; `leaves_frame`
                 // still suppresses returned keyed locals.
-                // D-own-16 residual — a nullable heap local BOUND FROM A PARAMETER and later
-                // reassigned from a minting call owns its store on some paths and borrows on
-                // others (`d: S? = p; if c { d = mint(d) }`), and the dep list is
-                // flow-INsensitive so it reports the borrow forever: the scope-exit free is
-                // suppressed and every mint leaks.  @FR-O-Latest is a per-RUN fact, and here it
-                // is decidable at runtime WITHOUT a witness slot, because the dep NAMES the
-                // variable this local might still be aliasing — distinct stores mean the local
-                // minted its own.  A static strip cannot do this: on the not-taken branch the
-                // local still holds the caller's store and freeing it is a use-after-free two
-                // frames up, which is why `displaced_owned_slots` excludes arguments.
-                //
-                // Restricted to an ARGUMENT dep on purpose.  A parameter's slot is stable for
-                // the frame (or has an entry stash, below); an arbitrary local dep can itself be
-                // freed or reassigned before this scope ends, and then the comparison names a
-                // store that is already gone.
-                // The one-argument borrow is `Function::borrows_one_argument`, the spelling both
-                // backends' displacement frees read (@FR-O-NoDiverge); this sweep asks it of a
-                // RECORD local only, and never of a never-free one (@FR-O-Override).
-                let borrow_witness = if function.borrows_one_argument(v)
-                    && matches!(
-                        function.tp(v).base(),
-                        Type::Reference(_, _) | Type::Enum(_, true, _)
-                    )
-                    && !function.is_skip_free(v)
-                {
-                    // A REBINDABLE parameter's slot stops naming the caller's store once it is
-                    // rebound, so compare against the @PLN87 entry stash that still does.
-                    Some(function.rebind_orig(dep[0]).unwrap_or(dep[0]))
-                } else {
-                    None
-                };
                 // @FR-O-Proxy asks free — this is the scope-exit sweep's own licence, and it
                 // frees more bindings than every other site in the compiler together.  The
                 // @FR-O-Override veto is consulted in `emit` below, which is the same
@@ -570,7 +539,6 @@ impl Scopes<'_> {
                 // licence for the null-arm / keyed leg; THIS is the licence for the sweep.
                 let owns = (function.proxy_says_owned(v)
                     || self.lift_join_witness.contains_key(&v)
-                    || borrow_witness.is_some()
                     || (dep.len() == 1
                         && dep[0] == v
                         && crate::parser::vectors::is_keyed(function.tp(v))))
@@ -869,15 +837,6 @@ impl Scopes<'_> {
                             }
                             ls.push(free);
                         }
-                    } else if let Some(w) = borrow_witness {
-                        // Free ONLY when the local no longer names what its dep names.
-                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped)) {
-                            ls.push(hook);
-                        }
-                        ls.push(Value::Call(
-                            data.def_nr("OpFreeRefIfDistinct"),
-                            vec![Value::Var(v), Value::Var(w)],
-                        ));
                     } else if inject_drop_free() == Some(function.name(v)) {
                         // @PLN94 TEST-ONLY positive control (never set in production; one cached env
                         // read/process): drop the scope-exit free for the NAMED owned var, injecting

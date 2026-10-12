@@ -307,24 +307,20 @@ impl Scopes<'_> {
                 // just generated (E0425, loft#1415).  The interpreter never saw it: frame
                 // slots have no block scope.
                 //
-                // `borrows_one_argument` is the exception the rule needs.  A nullable local
-                // BOUND from a parameter and later reassigned from a minting call owns a
-                // store on some paths and borrows on others (@FR-O-Latest, the D-own-16
-                // shape), and this free is its ONLY one — `get_free_vars` skips every return
-                // source.  So that one stays in, and the runtime comparison decides.
+                // The answer is the same for `τ` and `τ?` (@FR-N-Road): a nullable local bound
+                // from a parameter copies as its dense twin does, so it carries no argument dep.
                 // The PROMOTED return buffer is the one argument that is a local this frame
                 // mints into (loft#1078): a `-> S?` local renamed onto it (loft#1934) keeps its
                 // conditional free, and the entry witness below stops it releasing the store the
                 // caller handed in.
                 let d_nr = self.d_nr;
                 let store_is_the_callers = |function: &Function, v: u16| {
-                    ((function.is_argument(v) && !promoted_ret_buffer(data, d_nr, function, v))
+                    (function.is_argument(v) && !promoted_ret_buffer(data, d_nr, function, v))
                         || function
                             .tp(v)
                             .depend()
                             .iter()
-                            .any(|&d| function.is_argument(d)))
-                        && !function.borrows_one_argument(v)
+                            .any(|&d| function.is_argument(d))
                 };
                 // Through `base()`: `@FR-L-Null` gives `t?` the same storage as `t`, so it is
                 // the same binding and owns its store the same way.  Asked BARE, the one
