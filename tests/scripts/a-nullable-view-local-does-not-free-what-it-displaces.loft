@@ -5,19 +5,16 @@
 // A nullable heap-record local that holds a PROJECTION VIEW owns no store, so a reassignment
 // must not free the store it displaces (@FR-O-Owner, @FR-O-Override).
 //
-// The D-own-16 `borrows_one_argument` residual reads a nullable local's single-ARGUMENT dep
-// as ownership and frees the store it displaces at a reassignment — sound when the local
-// WHOLE-VALUE-borrowed the argument (its store is the free-protected argument), but wrong
-// when the local only VIEWED a projection of it: `d: In? = q.inner` aliases q's NESTED
-// store, which is not free-protected, so freeing it releases the CALLER'S record.  The same
-// residual fires for a view of a LOCAL'S field (`d: In? = o.inner`) and a vector element
-// (`d: In? = vs[i]`), because the projection's dep still names its base.
+// `d: In? = q.inner` aliases q's NESTED store, which is not free-protected, so a free of what
+// the local displaces at a reassignment releases the CALLER'S record.  A view of a LOCAL'S
+// field (`d: In? = o.inner`) and of a vector element (`d: In? = vs[i]`) are the same shape:
+// the projection's dep names its base, and a dep must never read as ownership of it.
 //
 // `scopes::nullable_view_locals` names these before the scan and marks them never-free.  The
 // two mixed-ownership shapes that DO own a store keep their machinery and are excluded: a
 // solely-owned minting call by the loft#1200 runtime flag, a view+mint mix by the owner
 // witness (loft#1336).  A whole-value bind of a heap variable COPIES (@FR-B-Copy — see
-// `test_a_whole_value_parameter_bind_still_frees`), so it keeps the residual.
+// `test_a_whole_value_parameter_bind_still_frees`), so it frees the copy it displaces.
 //
 // @falsified-at: 51646648 — the FIRST cell below reads 777 (the filler that reused the freed
 // slot) instead of 71 on BOTH backends, on a plain dev build, and pinpoints a SILENT-WRONG:
@@ -56,7 +53,7 @@ fn test_a_view_of_an_argument_field_is_not_freed_at_a_reassignment() {
 }
 
 // A view of a LOCAL's field, then a view of an argument's field (the dep ends on the
-// argument, firing the residual), then fillers.  o.inner must survive.
+// argument), then fillers.  o.inner must survive.
 fn view_local_field_then_view_arg(q: Out) -> integer {
   o = Out { inner: In { v: 41 }, w: 1 };
   d: In? = o.inner;
@@ -90,8 +87,8 @@ fn test_a_view_of_a_vector_element_is_not_freed_at_a_reassignment() {
   assert(got == 16, "the vector element vs[1] survived: got {got}, want 16");
 }
 
-// The loop shape: the residual keys on loop depth, so the reassignment inside a loop is the
-// position the filed shapes usually take.
+// The loop shape: the reassignment inside a loop is the position the filed shapes usually
+// take.
 fn view_arg_field_reassigned_in_a_loop(q: Out) -> integer {
   d: In? = q.inner;
   for i in 0..5 { d = In { v: i }; }
@@ -105,7 +102,7 @@ fn test_a_view_reassigned_in_a_loop_is_not_freed() {
 }
 
 // CONTROL — a whole-value bind of a heap PARAMETER COPIES (@FR-B-Copy): the local owns its
-// copy, the residual correctly frees the copy it displaces, and the caller is untouched.
+// copy, the reassignment frees the copy it displaces, and the caller is untouched.
 // This is the shape `nullable_view_locals` must NOT mark (a bare `Var` source is not a view).
 fn whole_value_param_bind(p: In) -> integer {
   d: In? = p;
