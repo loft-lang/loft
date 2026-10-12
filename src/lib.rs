@@ -381,6 +381,7 @@ pub mod vector;
 
 pub mod trace;
 
+pub mod btree;
 pub mod codegen_runtime;
 pub mod generation;
 pub mod ops;
