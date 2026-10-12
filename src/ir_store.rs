@@ -272,11 +272,10 @@ pub fn materialize_attributes(stores: &mut Stores, parent: &Record, off: u32, at
 }
 
 /// Write one native `LinkedFieldGroup` into the already-allocated record `r`.
-/// `kind` stores the native `LinkedFieldKind` discriminant (`Tuple` 0/`Index` 1).
+/// `kind` stores the native `LinkedFieldKind` discriminant (`Tuple` 0).
 fn write_field_group(stores: &mut Stores, r: &Record, g: &LinkedFieldGroup) {
     let kind = match g.kind {
         LinkedFieldKind::Tuple => 0,
-        LinkedFieldKind::Index => 1,
     };
     r.set_field_int(stores, ds::LFG_KIND, kind);
     r.set_field_int(stores, ds::LFG_INSTANCE, i64::from(g.instance));
@@ -630,11 +629,10 @@ fn write_db_parts(stores: &mut Stores, r: &Record, parts: &Parts) {
             r.set_field_int(stores, ds::PTCONTENT, i64::from(*c));
             dep_list(stores, r, ds::PTFIELDS, fields);
         }
-        Parts::Index(c, keys, left) => {
+        Parts::Index(c, keys) => {
             r.set_discriminant(stores, ds::PT_INDEX);
             r.set_field_int(stores, ds::PTCONTENT, i64::from(*c));
             write_key_fields(stores, r, ds::PTKEYS, keys);
-            r.set_field_int(stores, ds::PTINDEX_LEFT, i64::from(*left));
         }
         // The IR codec needs its own `PT_TRIE` discriminant — a SCHEMA change
         // (`data_store.rs` pins each id and `ir_schema_roundtrip` guards the drift).
@@ -1632,7 +1630,7 @@ mod tests {
 
         let groups = vec![
             LinkedFieldGroup {
-                kind: LinkedFieldKind::Index,
+                kind: LinkedFieldKind::Tuple,
                 instance: 2,
                 field_indices: vec![5, 6, 7],
                 alignment: 4,
@@ -1654,7 +1652,7 @@ mod tests {
         assert_eq!(v.len(&stores), 2);
 
         let g0 = v.get(0, &stores);
-        assert_eq!(g0.field_int(&stores, ds::LFG_KIND), 1); // Index
+        assert_eq!(g0.field_int(&stores, ds::LFG_KIND), 0); // Tuple
         assert_eq!(g0.field_int(&stores, ds::LFG_INSTANCE), 2);
         assert_eq!(g0.field_int(&stores, ds::LFG_ALIGNMENT), 4);
         assert_eq!(g0.field_int(&stores, ds::LFG_SIZE), 9);

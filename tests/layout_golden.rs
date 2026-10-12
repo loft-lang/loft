@@ -253,7 +253,7 @@ fn referenced(db: &Stores, kt: u16, out: &mut Vec<u16>) {
         Parts::Sorted(e, _)
         | Parts::Ordered(e, _)
         | Parts::Hash(e, _)
-        | Parts::Index(e, _, _)
+        | Parts::Index(e, _)
         | Parts::Radix(e, _) => out.push(*e),
         Parts::ChildRec(c) => out.push(*c),
         // A plain variant (no data) keeps `known_type == u16::MAX`; only

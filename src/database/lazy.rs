@@ -623,7 +623,7 @@ impl Stores {
         let (elem, key_fields): (u16, Vec<u16>) = match &self.types[db as usize].parts {
             Parts::Hash(c, keys) | Parts::Radix(c, keys) => (*c, keys.clone()),
             Parts::Trie(c, k) => (*c, vec![*k]),
-            Parts::Sorted(c, keys) | Parts::Ordered(c, keys) | Parts::Index(c, keys, _) => {
+            Parts::Sorted(c, keys) | Parts::Ordered(c, keys) | Parts::Index(c, keys) => {
                 (*c, keys.iter().map(|(k, _)| *k).collect())
             }
             Parts::Base

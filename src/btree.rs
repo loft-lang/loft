@@ -171,6 +171,25 @@ impl Arena {
         );
     }
 
+    /// The position after (`back`: before) leaf position `pos`, or 0 off either end.
+    #[inline]
+    fn step(self, store: &Store, pos: u32, back: bool) -> u32 {
+        let (n, i) = (pos / FANOUT, pos % FANOUT);
+        if back {
+            if i > 0 {
+                return pos - 1;
+            }
+            match self.get(store, n, N_PREV) {
+                0 => 0,
+                p => p * FANOUT + self.count(store, p) - 1,
+            }
+        } else if i + 1 < self.count(store, n) {
+            pos + 1
+        } else {
+            self.get(store, n, N_NEXT) * FANOUT
+        }
+    }
+
     fn init_node(self, store: &mut Store, n: u32, leaf: bool) {
         self.set(store, n, N_COUNT, 0);
         self.set(store, n, N_LEAF, u32::from(leaf));
@@ -988,32 +1007,114 @@ pub fn position(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
 /// The first record, or 0 for an empty index.
 #[must_use]
 pub fn first_record(data: &DbRef, stores: &[Store]) -> u32 {
-    record(data, stores, first(data, stores))
+    end_record(data, stores, first(data, stores))
 }
 
 /// The last record, or 0 for an empty index.
 #[must_use]
 pub fn last_record(data: &DbRef, stores: &[Store]) -> u32 {
-    record(data, stores, last(data, stores))
+    end_record(data, stores, last(data, stores))
+}
+
+/// The record at an end position, remembered as a walk's first hint.
+fn end_record(data: &DbRef, stores: &[Store], pos: u32) -> u32 {
+    let found = record(data, stores, pos);
+    if found != 0 {
+        remember(data.store_nr, arena(data, stores), found, pos);
+    }
+    found
 }
 
 /// The record after `rec` in key order, or 0 past the last (or when `rec` is not in the
 /// index).
 #[must_use]
 pub fn next_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
-    match position(data, stores, keys, rec) {
-        0 => 0,
-        p => record(data, stores, next(data, stores, p)),
-    }
+    step_record(data, stores, keys, rec, false)
 }
 
 /// The record before `rec` in key order, or 0 before the first.
 #[must_use]
 pub fn previous_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
-    match position(data, stores, keys, rec) {
-        0 => 0,
-        p => record(data, stores, previous(data, stores, p)),
+    step_record(data, stores, keys, rec, true)
+}
+
+/// One step of a walk that holds a RECORD.  Finding the record's slot by key is a full
+/// descent; a walk asks for the slot of the record it was handed one step ago, so the slot
+/// that step found is kept as a HINT ([`WALK_HINTS`]) and tried first.
+fn step_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32, back: bool) -> u32 {
+    let Some(arena) = arena_of(data, stores) else {
+        return 0;
+    };
+    let store = keys::store(data, stores);
+    let at = match hinted(arena, store, data.store_nr, rec) {
+        Some(p) => p,
+        None => position(data, stores, keys, rec),
+    };
+    if at == 0 {
+        return 0;
     }
+    let to = arena.step(store, at, back);
+    if to == 0 {
+        return 0;
+    }
+    let found = arena.rec(store, to / FANOUT, to % FANOUT);
+    remember(data.store_nr, arena.0, found, to);
+    found
+}
+
+/// How many walks keep a hint at once, per thread: nested walks over different indexes
+/// each keep theirs.
+const HINTS: usize = 4;
+
+/// `(store, arena, record, position)` per walk.  A hint is never trusted: [`hinted`] reads
+/// the slot it names in the CURRENT arena and takes it only when that slot holds exactly the
+/// record asked for — and a record is in an index once — so a hint made stale by any change
+/// to the tree costs a descent and never a wrong slot.  Kept per thread and outside the
+/// store, so a walk writes nothing: a locked store and `par` workers reading one store
+/// concurrently are unaffected.
+type Hint = (u16, u32, u32, u32);
+
+thread_local! {
+    static WALK_HINTS: [std::cell::Cell<Hint>; HINTS] =
+        const { [const { std::cell::Cell::new((0, 0, 0, 0)) }; HINTS] };
+}
+
+/// The position the hints name for `rec` in this arena, if its slot still holds `rec`.
+fn hinted(arena: Arena, store: &Store, store_nr: u16, rec: u32) -> Option<u32> {
+    let pos = WALK_HINTS.with(|hints| {
+        hints
+            .iter()
+            .map(std::cell::Cell::get)
+            .find(|&(s, a, r, _)| r == rec && a == arena.0 && s == store_nr)
+            .map(|h| h.3)
+    })?;
+    let (n, i) = (pos / FANOUT, pos % FANOUT);
+    // Bounds before reads: the node must be one the arena handed out, a live leaf, and the
+    // slot inside its count.
+    let live = n != 0
+        && n < arena.hdr(store, H_USED)
+        && arena.get(store, n, N_LEAF) == 1
+        && i < arena.count(store, n)
+        && arena.rec(store, n, i) == rec;
+    live.then_some(pos)
+}
+
+/// Keep `pos` as the hint for `rec`, replacing this arena's hint or the oldest.
+fn remember(store_nr: u16, arena: u32, rec: u32, pos: u32) {
+    WALK_HINTS.with(|hints| {
+        let mine = |h: &std::cell::Cell<Hint>| {
+            let (s, a, _, _) = h.get();
+            s == store_nr && a == arena
+        };
+        if !mine(&hints[0]) {
+            // Most recent first, so the slot a new walk evicts is the least recently used.
+            let at = hints.iter().position(mine).unwrap_or(HINTS - 1);
+            for k in (1..=at).rev() {
+                hints[k].set(hints[k - 1].get());
+            }
+        }
+        hints[0].set((store_nr, arena, rec, pos));
+    });
 }
 
 /// [`find`] as a record: with `before` the last record strictly below `key`, otherwise

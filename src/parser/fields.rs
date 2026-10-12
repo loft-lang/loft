@@ -3734,7 +3734,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // `e#remove` needs the type to free what an element owns.
         let mut elem_tp = u16::MAX;
         match self.database.types[known as usize].parts {
-            Parts::Index(_, _, _) => {
+            Parts::Index(_, _) => {
                 // The index TYPE: its walk steps by record and finds each record's slot
                 // by key, so the stepper needs the keys, not a link offset.
                 on = 1;

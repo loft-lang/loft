@@ -853,7 +853,6 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t105, "content", 0);
     let vec_keys = db.vector(t91);
     db.field(t105, "keys", vec_keys);
-    db.field(t105, "left", 0);
     let byte_enum = db.byte(0, false);
     db.field(t106, "enum", byte_enum);
     db.field(t106, "content", 0);

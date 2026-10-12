@@ -1651,11 +1651,11 @@ pub fn size(self: const hash) -> integer {
 #pure
 
 // P192: `len(ix)` of an index<T[key]>: the B+tree keeps its length in its header
-// (`btree::count`, O(1)).  `fields` is the index type's bookkeeping offset the parser
-// fills for `len(ix)` — see parser/mod.rs `call()` special-case; the count needs none.
-fn OpLengthIndex(r: index, fields: const u16) -> integer;
+// (`btree::count`, O(1)).  The parser emits it for `len(ix)` / `ix.len()` — see
+// parser/mod.rs `index_len`.
+fn OpLengthIndex(r: index) -> integer;
 #cold
-#rust"{{ let _ = @fields; i64::from(btree::count(&@r, &s.database.allocations)) }}"
+#rust"i64::from(btree::count(&@r, &s.database.allocations))"
 
 fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
 #rust"@v1 == @v2"

@@ -254,13 +254,13 @@ pub enum Parts {
     // this encoding's absence (`u32::MAX`) as the value -1.  Which of the two a slot uses
     // is `IntegerSpec::unsigned_wide()`, asked once in `NarrowIntKind::of`.
     IntRaw(i32, bool),
-    Vector(u16),                       // The records are part of the vector
-    Array(u16),                        // The array holds references for each record
-    Sorted(u16, Vec<(u16, bool)>),     // Sorted vector on fields with an ascending flag
-    Ordered(u16, Vec<(u16, bool)>),    // Sorted array on fields with an ascending flag
-    Hash(u16, Vec<u16>), // A hash table, listing the field numbers that define its key
-    Index(u16, Vec<(u16, bool)>, u16), // An index to a table, listing the key fields and the left field-nr
-    Radix(u16, Vec<u16>),              // A spatial index with the listed coordinate fields as a key
+    Vector(u16),                    // The records are part of the vector
+    Array(u16),                     // The array holds references for each record
+    Sorted(u16, Vec<(u16, bool)>),  // Sorted vector on fields with an ascending flag
+    Ordered(u16, Vec<(u16, bool)>), // Sorted array on fields with an ascending flag
+    Hash(u16, Vec<u16>),            // A hash table, listing the field numbers that define its key
+    Index(u16, Vec<(u16, bool)>), // An index to a table (a B+tree, `btree.rs`), listing the key fields
+    Radix(u16, Vec<u16>),         // A spatial index with the listed coordinate fields as a key
     // A trie: a radix tree over ONE `text` key field, answering exact lookup, key
     // order and prefix.  Shares `radix_tree` with `Radix` and nothing above it —
     // `Radix` is geometric (Morton interleave, boxes, near/within/nearest) and none

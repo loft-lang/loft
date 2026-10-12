@@ -245,7 +245,7 @@ impl Stores {
                 | Parts::Hash(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::ChildRec(_)
         ) && rec.store_nr != u16::MAX
             && rec.rec != 0
@@ -374,7 +374,7 @@ impl Stores {
                 }
                 empty(Some(cur), Vec::new())
             }
-            Parts::Index(_, _, _) => {
+            Parts::Index(_, _) => {
                 let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
                 if cur == 0 || Self::owned_edge_absent(cur) || !self.owned_edge_in_store(rec, cur) {
                     return empty(None, Vec::new());
@@ -585,7 +585,7 @@ impl Stores {
                     container_rec = Some(cur);
                 }
             }
-            Parts::Index(c, _, _) => {
+            Parts::Index(c, _) => {
                 let c = *c;
                 let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
                 if cur != 0 && !Self::owned_edge_absent(cur) && !self.owned_edge_in_store(rec, cur)
@@ -708,7 +708,7 @@ impl Stores {
                 | Parts::Hash(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::ChildRec(_)
         );
         OwnedWalk {
@@ -1056,7 +1056,7 @@ impl Stores {
             Parts::Sorted(e, _)
             | Parts::Ordered(e, _)
             | Parts::Hash(e, _)
-            | Parts::Index(e, _, _)
+            | Parts::Index(e, _)
             | Parts::Radix(e, _)
             | Parts::Trie(e, _) => Some(*e),
             _ => None,
@@ -1540,7 +1540,7 @@ impl Stores {
             | Parts::Sorted(c, _)
             | Parts::Ordered(c, _)
             | Parts::Hash(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
             | Parts::ChildRec(c) => any(*c, &mut open),
@@ -3393,7 +3393,7 @@ impl Stores {
             // there is no record number in them to be out of range, so a walk has nothing
             // to say.  (`Base` at `tp == 5` is `text`, which DOES hold an offset and is
             // checked in the first arm above.)
-            Parts::Index(_, _, _)
+            Parts::Index(_, _)
             | Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::Int(_, _)
@@ -3747,7 +3747,7 @@ impl Stores {
             return;
         }
         let content_tp = match &self.types[tp as usize].parts {
-            Parts::Index(c, _, _) => *c,
+            Parts::Index(c, _) => *c,
             other => {
                 panic!("copy_claims_index_body called with non-index type {tp} (parts: {other:?})")
             }
@@ -3964,7 +3964,7 @@ impl Stores {
             }
             Parts::Trie(_, _) => self.copy_claims_trie_body(rec, to, tp),
             Parts::Radix(_, _) => self.copy_claims_radix_body(rec, to, tp),
-            Parts::Index(_, _, _) => self.copy_claims_index_body(rec, to, tp),
+            Parts::Index(_, _) => self.copy_claims_index_body(rec, to, tp),
             Parts::Enum(values) => {
                 let e_nr = self.store(rec).get_byte(rec.rec, rec.pos, -1);
                 // @PLN25 — `get_byte(.., -1)` applies a -1 shift, so a valid variant is
@@ -4046,7 +4046,7 @@ impl Stores {
                 | Parts::Array(_)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::ChildRec(_)
                 | Parts::Enum(_)
         ) || tp == 5 // text
@@ -5418,7 +5418,7 @@ impl Stores {
             | Parts::Ordered(c, _)
             | Parts::Hash(c, _)
             | Parts::ChildRec(c) => self.type_has_tree(*c, seen),
-            Parts::Index(c, _, _) => self.type_has_tree(*c, seen),
+            Parts::Index(c, _) => self.type_has_tree(*c, seen),
             // Spelled out rather than closed with `_`: a new collection kind that
             // can hold a trie must be named here, and the compiler is what says so.
             // DATABASE.md § "Adding or changing a collection kind".
@@ -5535,7 +5535,7 @@ impl Stores {
             Parts::Array(_)
             | Parts::Ordered(_, _)
             | Parts::Hash(_, _)
-            | Parts::Index(_, _, _)
+            | Parts::Index(_, _)
             | Parts::ChildRec(_) => {
                 let walk = self.for_each_owned_child(rec, tp);
                 let mut total = 0u32;
@@ -5611,7 +5611,7 @@ impl Stores {
             | Parts::Array(v)
             | Parts::Ordered(v, _)
             | Parts::Hash(v, _)
-            | Parts::Index(v, _, _)
+            | Parts::Index(v, _)
             | Parts::ChildRec(v) => self.type_is_compactable(*v, seen),
         };
         seen.pop();

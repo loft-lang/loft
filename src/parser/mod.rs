@@ -7570,10 +7570,9 @@ impl Parser {
         false
     }
 
-    /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex` with
-    /// the per-record link offset (`database.fields`), a constant only the parser knows once the
-    /// type is registered — which is why no stdlib `len(self: index)` can carry it (@FR-Col-Len).
-    /// An `index<…>?` counts 0 when absent, through `@FR-N-Store`'s store as every keyed `len`.
+    /// `len` of an `index<T[k]>` receiver, `len(ix)` and `ix.len()` alike: `OpLengthIndex`, the
+    /// length the B+tree keeps in its header (@FR-Col-Len).  An `index<…>?` counts 0 when
+    /// absent, through `@FR-N-Store`'s store as every keyed `len`.
     /// `None` when the type or the op is not registered yet.
     pub(crate) fn index_len(
         &mut self,
@@ -7589,11 +7588,9 @@ impl Parser {
         if known == u16::MAX || op_d_nr == u32::MAX {
             return None;
         }
-        let fields = self.database.fields(known);
         if absent && let Some(first) = args.first_mut() {
             self.convert_store(first, recv, &base, "parameter 1 of `len`", at);
         }
-        args.push(Value::Int(i32::from(fields)));
         *code = Value::Call(op_d_nr, args);
         Some(crate::data::I64.clone())
     }
