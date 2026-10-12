@@ -31,7 +31,7 @@ blocks or held in a nullable local.
 Declined: reclaiming a placed record when its reference is re-pointed (step 10).  A variable
 can still name the record, so a safe free needs a test on every reference write and either a
 check on variable reads or a re-point counted as a view disturbance; each re-point would still
-leave its 8-byte removal mark.  Recorded as a clause of C145
+leave its 8-byte removal mark.  Recorded as a clause of @C145
 ([DESIGN_DECISIONS_OWNERSHIP.md](../DESIGN_DECISIONS_OWNERSHIP.md)).
 
 Found and fixed on the way: loft#1978, a reference written into a keyed collection's element

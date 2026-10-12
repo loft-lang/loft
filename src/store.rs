@@ -2078,7 +2078,7 @@ impl Store {
         self.removed.contains(rec)
     }
 
-    /// `@FR-H-Removed` — remove a record a stored reference may still name.  Its header
+    /// `@C145`, `@FR-H-Removed` — remove a record a stored reference may still name.  Its header
     /// word stays behind as a one-word block outside `claims`: no claim reuses that
     /// position, so the reference sees that the record is gone.  The rest of the record is
     /// freed as an ordinary record of its own.  While the debugger's edit journal records,

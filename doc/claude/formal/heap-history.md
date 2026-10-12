@@ -2837,7 +2837,7 @@ The rule before `(H-Copy-Refuse)` moved a droppable's release along with a copy 
 the owner was unclear.  Wherever both structures lived on, that left a gotcha: the release went
 with one of them, and the program closed a handle the other was still using, or closed it twice.
 The refusal was decided with the owner on 2026-09-15 from the use cases in
-`plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).  @PLN163 P5 and P6 then removed the
+`plans/163-copy-leases.md` (DESIGN_DECISIONS.md @C121).  @PLN163 P5 and P6 then removed the
 reverse hand-off for a copy of what the caller holds and the field hand-off (`OpDropAllExcept`):
 a copy the rules accept either leases or does not exist, and a read through a member of a call
 result is a view of the call's record.
@@ -2882,7 +2882,7 @@ parameter's collection or a copy into one (no fixed place to copy into at the fr
 parameters naming one record (they may be two stores of the caller, and a copy each would split
 what one write showed through both), a record holding a stored reference, a callee answering a
 local, and a refilled local's record held from two blocks.  Reclaiming a placed record when its
-reference is re-pointed (the plan's step 10) was declined (C145): a variable may still name the
+reference is re-pointed (the plan's step 10) was declined (@C145): a variable may still name the
 record (`q = h.r` is a view), so a free would need either a check on every variable read or a
 re-point counted as a disturbance of such views, and in both cases a test on every reference
 write.  Even then each re-point leaves its 8-byte removal mark.  The owner chose not to burden

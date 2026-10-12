@@ -434,7 +434,7 @@ The items are a `vector<integer>`, the initial value an `integer`, and the fold 
 `fn(integer, integer) -> integer` named at the call: its name, or a lambda that captures
 nothing (`fn(acc: integer, x: integer) -> integer { acc + x }`).  A fold held in a variable,
 parameter or field, or a lambda that captures, is refused at compile time: a parallel worker
-is checked where it is named (C93).  To fold with context, forward it through the fused loop:
+is checked where it is named (@C93).  To fold with context, forward it through the fused loop:
 `for x in items par(b = f(x, k), 4) { total += b; }`.
 
 The parser lowers it to the builtin `n_parallel_fold`
