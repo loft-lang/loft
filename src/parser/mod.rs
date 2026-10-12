@@ -18240,7 +18240,7 @@ impl Parser {
                     } else {
                         // @C112 — a local hiding the function the author named: say so.
                         let context = match self.shadowed_function_hint(&actual_code, true) {
-                            Some(hint) if matches!(tp, Type::Function(..)) => {
+                            Some(hint) if matches!(tp.base(), Type::Function(..)) => {
                                 format!("{context}; {hint}")
                             }
                             _ => context,

@@ -5935,6 +5935,9 @@ fn a_local_hiding_a_function_is_named_where_the_function_was_expected() {
     code!("fn add(a: integer, b: integer) -> integer { a + b }\nfn test() { add = 1; v = [1, 2]; t = par_fold(v, 0, add, 2); }")
         .error("par_fold: third argument is not a function: `add` here is the local bound on line 2, which hides the function `add` — rename the local at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:61")
         .warning("Variable t is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:37");
+    code!("type Op = fn(integer) -> integer;\nfn double(x: integer) -> integer { x * 2 }\nfn apply(f: Op?, v: integer) -> integer { v }\nfn test() -> integer { double = 7; apply(double, 21) }")
+        .error("expected fn(integer) -> integer?, got integer on argument 1 of call to apply; `double` here is the local bound on line 4, which hides the function `double` — pass the function as `|x| { double(x) }` at a_local_hiding_a_function_is_named_where_the_function_was_expected:4:42")
+        .warning("Parameter f is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:3:42");
     code!("fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }\nfn test() -> integer { nothing = 7; apply(nothing, 21) }")
         .error("expected fn(integer) -> integer, got integer on argument 1 of call to apply at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:43");
 }
