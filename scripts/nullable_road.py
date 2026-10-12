@@ -69,7 +69,11 @@ NOISE = re.compile(r"^\s*(?://.*)?$")
 #
 # A measurement whose smallest result is entirely its own noise has not measured anything.
 STMT_POS = re.compile(r"^(\s*)\[\d+\]")
-CALL_PUSH = re.compile(r'(cr_call_push\([^,]*,\s*"[^"]*",\s*)\d+')
+# The file argument is an expression (`main_file_or("")`), so the line is matched as the LAST
+# argument rather than by the shape of the one before it.
+CALL_PUSH = re.compile(r"(cr_call_push\([^\n]*,\s*)\d+(?=\))")
+# `cr_call_site(<line>)` is the same source line, restated at each call.
+CALL_SITE = re.compile(r"(cr_call_site\()\d+(?=\))")
 # A bytecode line is `<pc>[<stack depth>]: [<source line>] <op> … var=x[<offset>]`.  ONLY the
 # third bracket is a source line; the depth and every `var=…[offset]` are real information and
 # erasing them would hide the very divergence this looks for — an extra temp shifts offsets.
@@ -80,18 +84,32 @@ WS = re.compile(r"[ \t]+")
 
 
 def loft_bin():
-    for p in ("target/debug/loft", "target/release/loft"):
-        if os.path.exists(os.path.join(ROOT, p)):
-            return os.path.join(ROOT, p)
-    sys.exit("no loft binary — `cargo build --bin loft` first")
+    """The NEWER of the two builds: the older one is the one a rebuild left behind."""
+    found = [os.path.join(ROOT, p) for p in ("target/debug/loft", "target/release/loft")
+             if os.path.exists(os.path.join(ROOT, p))]
+    if not found:
+        sys.exit("no loft binary — `cargo build --bin loft` first")
+    return max(found, key=os.path.getmtime)
 
 
 def introspect(path):
+    """One half's emitted IR, bytecode and Rust.
+
+    A run that emitted nothing STOPS the report.  A binary that refuses the tree prints the
+    same refusal for both halves, and two equal refusals compare `same` for every pair —
+    a report that reads as "the two spellings agree everywhere" having compiled nothing.
+    """
     out = subprocess.run(
         [loft_bin(), "--path", ROOT, "introspect", path],
         capture_output=True, text=True, cwd=ROOT, timeout=180,
     )
-    return out.stdout + out.stderr
+    text = out.stdout + out.stderr
+    if out.returncode != 0 or "=== bytecode ===" not in text:
+        first = (out.stderr.strip() or out.stdout.strip()).split("\n")[0]
+        sys.exit(f"{os.path.relpath(loft_bin(), ROOT)} emitted nothing for "
+                 f"{os.path.relpath(path, ROOT)} (exit {out.returncode}): {first[:300]}\n"
+                 "No pair was compared.  Rebuild loft from this tree and run again.")
+    return text
 
 
 def normalise(text, stem):
@@ -101,6 +119,7 @@ def normalise(text, stem):
     text = text.replace(stem, "<stem>")
     text = OPT_MARK.sub("", text)
     text = CALL_PUSH.sub(r"\g<1><line>", text)
+    text = CALL_SITE.sub(r"\g<1><line>", text)
     out = []
     for l in text.split("\n"):
         if NOISE.match(l):
@@ -264,16 +283,23 @@ def main():
         same = list(difflib.unified_diff(d, d, lineterm=""))
         print(f"CONTROL — {name}.dense against itself: "
               + ("PASS (empty)" if not same else f"FAIL ({len(same)} lines)"))
-        # And the other direction: the normaliser must NOT erase a real difference.
-        rough = diff_of(name)
-        print(f"CONTROL — the same pair's real diff survives normalisation: "
+        # And the other direction: the normaliser must NOT erase a real difference.  The
+        # difference is BUILT here — one more function in a copy — rather than read off a
+        # pair, because a pair's own diff is the thing a fix removes.
+        import tempfile
+        src = open(os.path.join(PAIRS, f"{name}.dense.loft"), encoding="utf-8").read()
+        with tempfile.TemporaryDirectory() as td:
+            grown = os.path.join(td, f"{name}.dense.loft")
+            open(grown, "w", encoding="utf-8").write(
+                src + "\nfn road_control(n: integer) -> integer { n + 41 }\n")
+            g = normalise(introspect(grown), name)
+        rough = list(difflib.unified_diff(d, g, lineterm=""))
+        print(f"CONTROL — a copy with one more function still differs after normalisation: "
               + ("PASS" if rough else "FAIL — normalisation ate the difference"))
         # ⚠ The control the first version lacked, and the one that matters most: a file against
         # a COSMETICALLY different copy of itself — one extra comment line, so every source
         # line number moves — must normalise to EMPTY.  Without it the report calls its own
         # line-number noise a divergence, which is exactly what it did.
-        import tempfile
-        src = open(os.path.join(PAIRS, f"{name}.dense.loft"), encoding="utf-8").read()
         with tempfile.TemporaryDirectory() as td:
             shifted = os.path.join(td, f"{name}.dense.loft")
             open(shifted, "w", encoding="utf-8").write("// an extra header line\n" + src)
