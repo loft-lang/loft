@@ -524,7 +524,7 @@ make ops-census        # declared, one-byte + escape-range, ceiling, free
 That same report answers the question the table's growth actually raises —
 which operators anything still **emits**. An operator is cheap to add and
 invisible to retire; `scripts/op_census.py` classifies each as live,
-unexercised (a site emits it, no program in the tree does), or orphan
+unexercised (`src/` names it, no program in the tree emits it), or orphan
 (nothing emits it and nothing in `src/` names it). It is a report, never a
 gate, and RELEASE.md § The operator census makes it a per-release read.
 
@@ -557,7 +557,7 @@ Similar arithmetic. Math functions are merged: `math_func_single` / `math_func_f
 Extra: `format_single`, `format_stack_single`, `format_float`, `format_stack_float`
 
 ### Text (152–175)
-`var_text`, `arg_text`, `const_text`, `conv_text_from_null`, `length_text`, `length_character`, `conv_bool_from_text`, `text`, `append_text`, `get_text_sub`, `text_character`, `conv_bool_from_character`, `clear_text`, `free_text`, `eq_text`, `ne_text`, `lt_text`, `le_text`, `format_text`, `format_stack_text`, `append_character`, `text_compare`, `cast_character_from_int`, `conv_int_from_character`
+`var_text`, `arg_text`, `const_text`, `conv_text_from_null`, `length_text`, `length_character`, `conv_bool_from_text`, `text`, `append_text`, `get_text_sub`, `text_character`, `conv_bool_from_character`, `clear_text`, `free_text`, `eq_text`, `ne_text`, `lt_text`, `le_text`, `format_text`, `format_stack_text`, `append_character`, `conv_int_from_character`
 
 ### Enum (176–184)
 `var_enum`, `const_enum`, `put_enum`, `conv_bool_from_enum`, `cast_text_from_enum`, `cast_enum_from_text`, `conv_int_from_enum`, `cast_enum_from_int`, `conv_enum_from_null`
@@ -568,10 +568,10 @@ Extra: `format_single`, `format_stack_single`, `format_float`, `format_stack_flo
 - Field access: `get_field`, `get_int`, `get_character`, `get_long`, `get_single`, `get_float`, `get_byte`, `get_enum`, `set_enum`, `get_short`, `get_text`, `set_int`, `set_character`, `set_long`, `set_single`, `set_float`, `set_byte`, `set_short`, `set_text`
 
 ### Vector (216–228)
-`var_vector`, `length_vector`, `clear_vector`, `get_vector`, `vector_ref`, `cast_vector_from_text`, `remove_vector`, `insert_vector`, `new_record`, `finish_record`, `append_vector`, `get_record`, `validate`
+`var_vector`, `length_vector`, `clear_vector`, `get_vector`, `vector_ref`, `cast_vector_from_text`, `remove_vector`, `insert_vector`, `new_record`, `finish_record`, `append_vector`, `get_record`
 
 ### Collections (229–241)
-`hash_add`, `hash_find`, `hash_remove`, `eq_bool`, `ne_bool`, `panic`, `print`, `iterate`, `step`, `remove`, `clear`, `append_copy`, `copy_record`
+`hash_add`, `hash_remove`, `eq_bool`, `ne_bool`, `print`, `iterate`, `step`, `remove`, `clear`, `append_copy`, `copy_record`
 
 ### Static / Stack (242–247)
 `static_call`, `create_stack`, `get_stack_text`, `get_stack_ref`, `set_stack_ref`, `append_stack_text`, `append_stack_character`, `clear_stack_text`

@@ -145,8 +145,8 @@ make interp-gap [ARGS="--only 14"]       # INTERPRETER vs NATIVE per bench routi
                                          #   move into the IR phase.  A report, by hand
                                          #   (bench/README.md § Interpreter against native)
 make ops-census                          # which bytecode operators anything still EMITS:
-                                         #   live / unexercised (a site emits it, no program
-                                         #   does — a test gap) / orphan (nothing emits it and
+                                         #   live / unexercised (src/ names it, no program
+                                         #   emits it — a test gap or a leftover reader) / orphan (nothing emits it and
                                          #   nothing in src/ names it — a retirement CANDIDATE,
                                          #   never a verdict).  A grep cannot answer this: the
                                          #   parser COMPUTES most operator names, so `OpEqText`
