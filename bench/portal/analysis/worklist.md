@@ -113,13 +113,13 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 7.85 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
 | 7.54 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
 | 7.43 | `panel_build` | S9, X1 | ≈ 5× (*est.*) |
-| 7.21 | `map_json` (7.44 before J4) | X6 | ≈ 3.5–4.5× with the tree gone and the lexer's five levers in (*est.*, none priced) |
 | 7.18 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
 | 6.93 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
 | 6.83 | `binary_read` (7.72 measured alone; the Rust lane is noisy beside others) | X8 | no figure |
 | 6.81 | cbor `encode` | X2, X9 | ≈ 5× (*est.*) |
 | 6.75 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.35 | `invert` | X10 | ≈ 4× (*est.*) |
+| 6.28 | `map_json` (7.44 before J4 and J8) | X6 | ≈ 3.5–4.5× with the tree gone and the lexer's five levers in (*est.*, none priced) |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
 | 5.83 | `slope_path_with_undo` (noisy) | § 5's record-build row names what is left | no figure |
 | 5.51 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
@@ -138,7 +138,7 @@ others land between 3.5× and 6.9×.
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
 | X4 | `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | first — `check_request` cannot be profiled with symbols without it; then `(R-DecodeView)` (decided, C141) and S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
-| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4, J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` (the lexer's functions 31 %, the JSON parser's 17 %, the tree and its walk ~10 %, `malloc` / `free` 24 % between them) | decided (§ 6); J4 built (the row −2 %), J5–J9 not priced | J8 next: `next` and `cont` are the cost per token, not per character; then J7 and J6 on the cursor, then J9 |
+| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4, J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` (the lexer's functions 31 %, the JSON parser's 17 %, the tree and its walk ~10 %, `malloc` / `free` 24 % between them) | decided (§ 6); J4 built (the row −2 %) and J8 built (−12.6 %); J5–J7 and J9 not priced | J7 and J6 on the cursor (a string and a number scanned once), then J9; re-profile first — the row's shares have moved |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
 | X8 | a file's handle and cursor held in locals across a read loop | `binary_read` (the whole row is the emitted loop) | no price; the typed read is built | hand-price |
@@ -165,14 +165,14 @@ before it; the slowest row goes first; a step with no price is priced before it 
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
    move with it.
 6. **`panel_build` (7.43×)** — size S9 on the row as item 2 left it, then build.
-7. **`map_json` (7.21×)** — X6: J4 is built; price J8, then J7 and J6, then J9 on the
-   lexer they leave.
-8. **`arguments/parse` (7.18×)** — X7, on what X2 left of the row.
-9. **`mapfile_to_painted` (6.93×), `reload_and_record` (6.75×)** — X5 d: P3 first, P4 with
+7. **`arguments/parse` (7.18×)** — X7, on what X2 left of the row.
+8. **`mapfile_to_painted` (6.93×), `reload_and_record` (6.75×)** — X5 d: P3 first, P4 with
    its range proof.
-10. **`binary_read` (6.83×)** — price X8, build.
-11. **cbor `encode` (6.81×)** — X9, on what X2 left of the row.
-12. **`invert` (6.35×), `insert_text` (5.32×)** — price X10 on `insert_text`, build.
+9. **`binary_read` (6.83×)** — price X8, build.
+10. **cbor `encode` (6.81×)** — X9, on what X2 left of the row.
+11. **`invert` (6.35×), `insert_text` (5.32×)** — price X10 on `insert_text`, build.
+12. **`map_json` (6.28×)** — X6: J4 and J8 are built; re-profile, then J7 and J6, then J9 on
+    the lexer they leave.
 13. **`slope_path_with_undo` (5.83×)** — re-profile; § 5's record-build row names what is left.
 14. **`rig_world_frame3` (5.51×)** — S2, then S3.
 15. **`forms_upto` (5.40×)** — X12.
@@ -180,7 +180,7 @@ before it; the slowest row goes first; a step with no price is priced before it 
 After each item, measure the rows it names (M5) and read this order again: a row under 5×
 leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
 row a step did not move as priced is re-profiled before the next step is built on it.  One
-full run (`make perf-portal`) after item 7 and one after item 15.
+full run (`make perf-portal`) after item 6 and one after item 15.
 
 ## 1. The axis the order follows
 

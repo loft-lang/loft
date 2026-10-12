@@ -455,7 +455,7 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
     loop {
         match lex.peek().has.clone() {
             LexItem::None => break,
-            LexItem::Token(t) if t == "[" => section = read_section(&mut lex, &mut m),
+            LexItem::Token("[") => section = read_section(&mut lex, &mut m),
             LexItem::Identifier(_) => {
                 let key = read_key(&mut lex);
                 if !lex.has_token("=") {
@@ -533,7 +533,7 @@ fn read_dotted(lex: &mut Lexer) -> String {
                 name.push_str(&s);
                 lex.cont();
             }
-            LexItem::Token(ref t) if t == "." || t == "-" => {
+            LexItem::Token(t) if t == "." || t == "-" => {
                 name.push_str(t);
                 lex.cont();
             }
@@ -553,7 +553,7 @@ fn read_key(lex: &mut Lexer) -> String {
                 key.push_str(&s);
                 lex.cont();
             }
-            LexItem::Token(ref t) if t == "-" => {
+            LexItem::Token("-") => {
                 key.push('-');
                 lex.cont();
             }
@@ -567,13 +567,13 @@ fn read_key(lex: &mut Lexer) -> String {
 /// value), or a number.  Consumes exactly the value's tokens.
 fn read_value(lex: &mut Lexer) -> MValue {
     match lex.peek().has.clone() {
-        LexItem::Token(ref t) if t == "[" => {
+        LexItem::Token("[") => {
             lex.cont(); // consume `[`
             let mut items = Vec::new();
             loop {
                 match lex.peek().has.clone() {
                     LexItem::None => break,
-                    LexItem::Token(ref t) if t == "]" => {
+                    LexItem::Token("]") => {
                         lex.cont();
                         break;
                     }
@@ -587,7 +587,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
             }
             MValue::List(items)
         }
-        LexItem::Token(ref t) if t == "{" => {
+        LexItem::Token("{") => {
             // An inline table (e.g. a dependency `{ path = "../x" }`).  Reconstruct
             // the raw `{ … }` text — the form `extract_path_dep` parses — rather
             // than interpret it here; this is the only inline-table use.
@@ -596,7 +596,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
             loop {
                 match lex.peek().has.clone() {
                     LexItem::None => break,
-                    LexItem::Token(ref t) if t == "}" => {
+                    LexItem::Token("}") => {
                         lex.cont();
                         break;
                     }
@@ -612,7 +612,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
                         lex.cont();
                     }
                     LexItem::Token(t) => {
-                        raw.push_str(&t);
+                        raw.push_str(t);
                         raw.push(' ');
                         lex.cont();
                     }

@@ -513,12 +513,12 @@ impl<'a> JParser<'a> {
                 }
                 Err(("unexpected end of input".to_string(), self.bytes.len()))
             }
-            LexItem::Token(t) if t == "-" => self.parse_number(),
+            LexItem::Token(t) if *t == "-" => self.parse_number(),
             LexItem::Integer(..) | LexItem::Long(_) | LexItem::Float(..) | LexItem::Single(_) => {
                 self.parse_number()
             }
-            LexItem::Token(t) if t == "[" => self.parse_array(),
-            LexItem::Token(t) if t == "{" => self.parse_object(),
+            LexItem::Token(t) if *t == "[" => self.parse_array(),
+            LexItem::Token(t) if *t == "{" => self.parse_object(),
             LexItem::CString(_) => {
                 let s = self.take_string()?;
                 Ok(Parsed::Str(s))
@@ -728,7 +728,7 @@ impl<'a> JParser<'a> {
         loop {
             let (name, key_at) = self.parse_object_key(start)?;
             let colon = self.lx.peek();
-            if !matches!(&colon.has, LexItem::Token(t) if t == ":") {
+            if !matches!(&colon.has, LexItem::Token(t) if *t == ":") {
                 let off = if colon.has == LexItem::None {
                     self.bytes.len()
                 } else {
