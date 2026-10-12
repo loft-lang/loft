@@ -85,9 +85,9 @@ struct SzIMain {
 
 fn test_sizeof_index_member() {
   m = SzIMain {};
-  // P191: bookkeeping fields are 4-byte int<0,false> (was 8-byte
-  // integer): 24 + 4 + 4 + 1 = 33, padded to 40 (@C138). 40 + 100*4 = 440.
-  assert(sizeof(SzIS)+100 * sizeof(m) == 440, "index member sizes");
+  // Three integers and nothing the index adds — its B+tree keeps its nodes apart
+  // (@PLN190): 24, and the index field is one 4-byte slot.  24 + 100*4 = 424.
+  assert(sizeof(SzIS)+100 * sizeof(m) == 424, "index member sizes");
 }
 
 struct SzRS {
