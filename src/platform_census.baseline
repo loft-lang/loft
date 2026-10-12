@@ -28,6 +28,7 @@
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs
 3 tests/registry_publish_categories.rs
+1 tests/registry_sign_scope.rs
 1 tests/self_update_swap.rs
 1 tests/store_persist_loft.rs
 1 tests/wasm_debug_relay.rs
