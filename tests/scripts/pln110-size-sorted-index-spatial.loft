@@ -25,6 +25,9 @@
 // @falsified-by: tests/falsified/pln110-size-sorted-index-spatial.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: the VALUE — the pre-fix build answers an element record's size for an empty
 //   index where its arena is 0, on both backends.
+//   HOLDS: the two `sorted` cells pass on both trees — `size` of a sorted is its vector
+//   buffer's, which the patch leaves alone.  The run stops at the empty index, the first
+//   cell the patch reaches, so the one assertion failure is that cell's.
 
 struct K {
   id: integer,

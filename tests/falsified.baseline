@@ -751,7 +751,6 @@ pln110-scanner-bytewalk.loft
 pln110-size-enum.loft
 pln110-size-hash.loft
 pln110-size-scalar.loft
-pln110-size-sorted-index-spatial.loft
 pln110-size-vector.loft
 pln110-text-surface-golden.loft
 pln114-h1-self-referential-default.loft
