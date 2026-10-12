@@ -246,21 +246,21 @@ fn content_part(c: &Content, k: &Key) -> Option<i64> {
 
 /// What a search orders slots against: a record's own key (an insert, a removal) or a
 /// lookup key, with its part resolved once.
-struct Probe<'arena> {
+struct Probe<'a> {
     part: Option<i64>,
     /// A tie of parts is equality: a one-value key on a field that is not text.
     exact: bool,
-    by: By<'arena>,
+    by: By<'a>,
     store_nr: u16,
 }
 
-enum By<'arena> {
+enum By<'a> {
     Rec(u32),
-    Key(&'arena [Content]),
+    Key(&'a [Content]),
 }
 
-impl<'arena> Probe<'arena> {
-    fn of_record(store: &Store, store_nr: u16, rec: u32, keys: &[Key]) -> Probe<'arena> {
+impl<'a> Probe<'a> {
+    fn of_record(store: &Store, store_nr: u16, rec: u32, keys: &[Key]) -> Probe<'a> {
         Probe {
             part: Some(record_part(store, rec, &keys[0])),
             exact: keys.len() == 1 && keys[0].type_nr.abs() != 6,
@@ -269,7 +269,7 @@ impl<'arena> Probe<'arena> {
         }
     }
 
-    fn of_key(store_nr: u16, key: &'arena [Content], keys: &[Key]) -> Probe<'arena> {
+    fn of_key(store_nr: u16, key: &'a [Content], keys: &[Key]) -> Probe<'a> {
         let part = key.first().and_then(|c| content_part(c, &keys[0]));
         Probe {
             part,
@@ -277,31 +277,6 @@ impl<'arena> Probe<'arena> {
             by: By::Key(key),
             store_nr,
         }
-    }
-
-    /// How the probe orders against slot `i` of node `n`.  The slot's record is read only
-    /// where the parts tie: the records sit a cache line away from the parts, and a descent
-    /// that read one per slot touched that line in every node it passed.
-    // Measured: as a hint the search kept a call per slot (`tests/btree_probe.rs`).
-    #[allow(clippy::inline_always)]
-    #[inline(always)]
-    fn order(
-        &self,
-        arena: Arena,
-        store: &Store,
-        n: u32,
-        i: u32,
-        stores: &[Store],
-        keys: &[Key],
-    ) -> Ordering {
-        if let Some(p) = self.part {
-            match p.cmp(&arena.part(store, n, i)) {
-                Ordering::Equal if self.exact => return Ordering::Equal,
-                Ordering::Equal => {}
-                o => return o,
-            }
-        }
-        self.full(arena.rec(store, n, i), stores, keys)
     }
 
     /// The general comparison against record `rec`, for a tie of parts.
@@ -397,28 +372,66 @@ fn child_index(
     probe: &Probe,
     ties_right: bool,
 ) -> u32 {
+    stop_at(arena, stores, st, keys, n, 1, probe, ties_right).0 - 1
+}
+
+/// The first slot from `from` of node `n` where the probe stops — the probe is below it,
+/// or equal to it and `!ties_right` — and whether that slot equals the probe (answered
+/// for `!ties_right` only).
+///
+/// Parts ascend, so the slots split in three runs: parts below the probe's (passed), parts
+/// equal to it, parts above (stopped at).  The first two are integer scans; only the equal
+/// run needs the records, and it is BINARY-searched — a text index whose keys share their
+/// first eight bytes ties across whole nodes, and compared slot by slot it read a record
+/// at every one.  A probe without a part has one run: the whole node.
+#[allow(clippy::too_many_arguments, clippy::inline_always)]
+#[inline(always)]
+fn stop_at(
+    arena: Arena,
+    stores: &[Store],
+    st: usize,
+    keys: &[Key],
+    n: u32,
+    from: u32,
+    probe: &Probe,
+    ties_right: bool,
+) -> (u32, bool) {
     let store = &stores[st];
     let c = arena.count(store, n);
-    let mut i = 1;
+    let (mut lo, mut hi) = (from, c);
     if let (Some(p), true) = (probe.part, probe.exact) {
-        // An exact part orders alone: the scan is integer compares and nothing else.
-        while i < c {
-            let sep = arena.part(store, n, i);
-            if p < sep || (p == sep && !ties_right) {
-                break;
+        // A tie of exact parts is equality, so one integer scan settles it.
+        while lo < c {
+            let q = arena.part(store, n, lo);
+            if p < q || (p == q && !ties_right) {
+                return (lo, p == q);
             }
-            i += 1;
+            lo += 1;
         }
-        return i - 1;
+        return (c, false);
     }
-    while i < c {
-        let o = probe.order(arena, store, n, i, stores, keys);
+    if let Some(p) = probe.part {
+        while lo < c && arena.part(store, n, lo) < p {
+            lo += 1;
+        }
+        hi = lo;
+        while hi < c && arena.part(store, n, hi) == p {
+            hi += 1;
+        }
+    }
+    let mut equal = false;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let o = probe.full(arena.rec(store, n, mid), stores, keys);
         if o == Ordering::Less || (o == Ordering::Equal && !ties_right) {
-            break;
+            hi = mid;
+            equal = o == Ordering::Equal;
+        } else {
+            lo = mid + 1;
         }
-        i += 1;
     }
-    i - 1
+    // `lo` is the last `mid` that stopped, whose `equal` was recorded, or the run's end.
+    (lo, equal)
 }
 
 /// The first slot of leaf `n` above the probe (`ties_right`) or at-or-above it, and whether
@@ -432,27 +445,7 @@ fn leaf_slot(
     probe: &Probe,
     ties_right: bool,
 ) -> (u32, bool) {
-    let store = &stores[st];
-    let c = arena.count(store, n);
-    let mut i = 0;
-    if let (Some(p), true) = (probe.part, probe.exact) {
-        while i < c {
-            let part = arena.part(store, n, i);
-            if p < part || (p == part && !ties_right) {
-                return (i, p == part);
-            }
-            i += 1;
-        }
-        return (c, false);
-    }
-    while i < c {
-        let o = probe.order(arena, store, n, i, stores, keys);
-        if o == Ordering::Less || (o == Ordering::Equal && !ties_right) {
-            return (i, o == Ordering::Equal);
-        }
-        i += 1;
-    }
-    (c, false)
+    stop_at(arena, stores, st, keys, n, 0, probe, ties_right)
 }
 
 fn arena_of(data: &DbRef, stores: &[Store]) -> Option<Arena> {
