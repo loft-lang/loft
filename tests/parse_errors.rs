@@ -382,6 +382,24 @@ fn record_errors_into_a_text_local_is_refused() {
     .error("Variable 'e' cannot change type from text to vector<text>; use a new variable name or cast with 'as' at record_errors_into_a_text_local_is_refused:2:50");
 }
 
+/// A null test narrows a nullable struct-enum as it narrows a nullable struct: inside the
+/// guard the value is passed to a non-null parameter without a report, on either side of the
+/// test, and outside it the report stands.
+#[test]
+fn a_null_guard_narrows_a_nullable_struct_enum() {
+    code!(
+        "enum Sh { Ci { r: integer }, Do { n: integer } }\nfn size(s: Sh) -> integer { match s { Ci { r } => r, Do { n } => n } }\nfn pick(n: integer) -> Sh? { if n > 0 { Ci { r: n } } else { null } }\nfn test() {\n  a = pick(2);\n  x = if a != null { size(a) } else { -1 };\n  y = if a == null { -1 } else { size(a) };\n  assert(x + y == 4, \"narrowed\");\n}"
+    );
+}
+
+#[test]
+fn an_unguarded_nullable_struct_enum_is_still_reported() {
+    code!(
+        "enum Sh { Ci { r: integer }, Do { n: integer } }\nfn size(s: Sh) -> integer { match s { Ci { r } => r, Do { n } => n } }\nfn pick(n: integer) -> Sh? { if n > 0 { Ci { r: n } } else { null } }\nfn test() {\n  a = pick(2);\n  assert(size(a) == 2, \"unguarded\");\n}"
+    )
+    .warning("a nullable `Sh?` is stored into parameter 1 of `size` of the non-null type `Sh` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended at an_unguarded_nullable_struct_enum_is_still_reported:6:20");
+}
+
 /// @C148 — only a record or a vector comes out of a parse, so only those have errors to ask.
 #[test]
 fn record_errors_of_a_scalar_is_refused() {

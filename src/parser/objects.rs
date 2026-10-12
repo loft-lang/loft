@@ -3253,7 +3253,14 @@ impl Parser {
                 );
             }
         }
-        Type::Reference(d_nr, crate::data::Deps::none())
+        // The parse answers a value of the type it was asked for, in that type's own
+        // spelling: a struct-enum is `Type::Enum`, and typed as a bare record it could not
+        // be bound, stored or returned where its own type was declared (loft#1986).
+        if self.data.def_type(d_nr) == DefType::Enum {
+            Type::Enum(d_nr, true, crate::data::Deps::none())
+        } else {
+            Type::Reference(d_nr, crate::data::Deps::none())
+        }
     }
 
     /// Parse `vector<T>.parse(text)` — parse a JSON array into a vector of T.

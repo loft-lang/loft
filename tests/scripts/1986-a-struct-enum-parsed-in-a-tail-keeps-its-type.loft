@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1986 — a struct-enum parsed from text is a value of that enum.  `Shape.parse(text)`
+// answered a bare record type, and a function forwarding such a tail through its return
+// buffer re-typed its own result as one, so the result could not be bound, stored, passed or
+// returned where `Shape` was declared: *"cannot change type from Shape to Shape"*.
+//
+// Axes it MOVES: the tail (`Shape.parse(t)`, `t as Shape`, another function's result), the
+// declared return (`Shape`, `Shape?`, `Shape?` with a `null` arm), and what the caller does
+// with the result (an inferred bind, an annotated bind, a rebind, a `match`, a method, an
+// element of a vector, a field, a null test that narrows).  Every value is hand-computed.
+//
+// @falsified-at: 5bfcbdf83 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1986-a-struct-enum-parsed-in-a-tail-keeps-its-type.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the control refuses the file at compile time, so no cell runs there.
+//   WITNESS: the control reports *expected TailShape?, got TailShape on return from block*;
+//   one shape per program, the inferred bind is *cannot change type from TailShape to
+//   TailShape*, the vector element *cannot store TailShape elements in a vector<TailShape>*
+//   and the field *Cannot assign TailShape to field TailBox.s of type TailShape*.
+//   HOLDS: a struct in the same shapes, and a struct-enum forwarded by a second function,
+//   compile and answer the same on both trees; leak, panic and free-refusal are clean.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum TailShape { TailCircle { r: integer }, TailDot { n: integer } }
+struct TailBox { s: TailShape }
+
+fn tail_parse(t: text) -> TailShape { TailShape.parse(t) }
+fn tail_cast(t: text) -> TailShape { t as TailShape }
+fn tail_outer(t: text) -> TailShape { tail_parse(t) }
+fn tail_maybe(t: text) -> TailShape? { TailShape.parse(t) }
+fn tail_or_null(t: text) -> TailShape? { if len(t) > 0 { TailShape.parse(t) } else { null } }
+fn tail_size(s: TailShape) -> integer { match s { TailCircle { r } => r, TailDot { n } => n } }
+fn size(self: TailShape) -> integer { match self { TailCircle { r } => r, TailDot { n } => n } }
+
+fn main() {
+  c = tail_parse(`{{"TailCircle":{{"r":2}}}}`);
+  assert_eq("{c}", "TailCircle {{r:2}}", "an inferred bind");
+  d: TailShape = tail_parse(`{{"TailDot":{{"n":5}}}}`);
+  assert_eq("{d}", "TailDot {{n:5}}", "an annotated bind");
+  c = tail_parse(`{{"TailDot":{{"n":5}}}}`);
+  assert_eq("{c}", "TailDot {{n:5}}", "a rebind");
+  assert_eq(tail_size(c) * 10 + c.size(), 55, "an argument and a method receiver");
+  k = tail_cast(`{{"TailCircle":{{"r":2}}}}`);
+  assert_eq("{k}", "TailCircle {{r:2}}", "the cast spelling");
+  o = tail_outer(`{{"TailDot":{{"n":5}}}}`);
+  assert_eq("{o}", "TailDot {{n:5}}", "forwarded by a second function");
+
+  all: vector<TailShape> = [];
+  all += [tail_parse(`{{"TailCircle":{{"r":2}}}}`)];
+  all += [tail_parse(`{{"TailDot":{{"n":5}}}}`)];
+  assert_eq("{len(all)} {all[0]}", "2 TailCircle {{r:2}}", "an element of a vector");
+  b = TailBox { s: tail_parse(`{{"TailDot":{{"n":5}}}}`) };
+  assert_eq("{b.s}", "TailDot {{n:5}}", "a field");
+
+  m = tail_maybe(`{{"TailCircle":{{"r":2}}}}`);
+  got = if m != null { tail_size(m) } else { -1 };
+  m = null;
+  assert_eq("{got} {m == null}", "2 true", "a nullable return, narrowed by its null test, then set null");
+  some = tail_or_null(`{{"TailCircle":{{"r":2}}}}`);
+  none = tail_or_null(``);
+  x = if some == null { -1 } else { tail_size(some) };
+  y = if none == null { -1 } else { tail_size(none) };
+  assert_eq("{x} {y}", "2 -1", "a `null` arm, narrowed on the else side");
+
+  println("struct-enum tail ok");
+}
