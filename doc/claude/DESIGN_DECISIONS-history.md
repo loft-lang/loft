@@ -4925,3 +4925,13 @@ parameters with 300 `text` variables fit the frame; 299 struct, vector and
 frame refusal — 65536 / 300 is 218 bytes a variable.  The count therefore arrives before the
 frame cap for every ordinary variable, which is the property the entry states and
 `the-variable-limit-arrives-before-the-frame-cap.loft` holds.
+
+## C150 — A collection's size() reports its representation, which the compiler may size
+
+Asked 2026-10-08 while working the worst native routines: gridmesh `build_index` (8.3× Rust)
+spends its time rebuilding and re-hashing the hash's table as 100,000 inserts fill it, and a
+reservation before the counted loop measured −45 %.  The reservation flipped
+`pln110-size-hash.loft`, which pins `size(h)` as the bucket table's bytes along the growth
+ladder.  Presented as: `size()` is a representation report the compiler may change; `size()`
+binds the optimiser (drop the clause); or the clause opt-in until a design pass.  The owner
+chose the first.
