@@ -1,30 +1,36 @@
 diff --git b/src/scopes/args.rs a/src/scopes/args.rs
-index abfa13ef0..89700a678 100644
+index 6ec6cd30e..89700a678 100644
 --- b/src/scopes/args.rs
 +++ a/src/scopes/args.rs
-@@ -217,10 +217,7 @@ impl Scopes<'_> {
+@@ -217,15 +217,7 @@ impl Scopes<'_> {
                  if *d == create_stack_nr
                      && matches!(cargs.first().map(Value::unspan), Some(Value::Var(_))))
          });
 -        // Where each argument's hoisted operations start in `preamble` (`keep_operand_order`).
--        let mut hoisted_from: Vec<usize> = Vec::with_capacity(args.len() + 1);
+-        // It stays unallocated while nothing is hoisted — every start is 0 then — because this
+-        // runs for every call the scope pass scans, the stdlib's included, on every compile.
+-        let mut hoisted_from: Vec<usize> = Vec::new();
          for (arg_idx, a) in args.iter().enumerate() {
--            hoisted_from.push(preamble.len());
+-            if !preamble.is_empty() {
+-                hoisted_from.resize(arg_idx, 0);
+-                hoisted_from.push(preamble.len());
+-            }
              // loft#1320 — a branch VALUE consumed by this call (`total(if c { g(a) } else { g(n) })`)
              // never reaches `scan_set`, so its arms get their owners here, homed in this statement's
              // scope: the call reads the temp and the scope's exit frees it by identity.
-@@ -580,10 +577,6 @@ impl Scopes<'_> {
+@@ -585,11 +577,6 @@ impl Scopes<'_> {
                  ls.push(scanned);
              }
          }
--        hoisted_from.push(preamble.len());
--        if ls.len() == args.len() {
+-        if !preamble.is_empty() && ls.len() == args.len() {
+-            hoisted_from.resize(args.len(), 0);
+-            hoisted_from.push(preamble.len());
 -            self.keep_operand_order(&mut preamble, &hoisted_from, &mut ls, function, data);
 -        }
          for (i, orig) in amp_foreign.iter().enumerate() {
              preamble.insert(
                  i,
-@@ -600,143 +593,6 @@ impl Scopes<'_> {
+@@ -606,143 +593,6 @@ impl Scopes<'_> {
          (preamble, ls, postamble)
      }
  
