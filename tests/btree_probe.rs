@@ -11,7 +11,7 @@
 //! run checks that both trees find every key and no absent one, so a fast wrong tree fails.
 use loft::btree;
 use loft::database::Stores;
-use loft::keys::{Content, DbRef};
+use loft::keys::{Content, DbRef, Str};
 use loft::store::Store;
 use loft::tree;
 use std::time::Instant;
@@ -316,6 +316,118 @@ fn btree_of_key_parts_against_the_red_black_index() {
             best[5],
             best[0] / best[4],
             best[1] / best[5]
+        );
+    }
+}
+
+/// A text-keyed run: red-black against `src/btree.rs` only (the stand-in above is
+/// integer-only).  Keys share a 4-byte prefix, so the 8-byte part separates most of them
+/// and a tie reads the record.  Answers ns per key (rb fill, rb find, btree fill, btree find).
+fn run_text(count: i64, m: i64) -> (f64, f64, f64, f64) {
+    let mut stores = Stores::new();
+    let s = stores.structure("Elm", 0);
+    stores.field(s, "k", stores.name("text"));
+    stores.field(s, "c", stores.name("integer"));
+    let v = stores.index(s, &[("k".to_string(), true)]);
+    let mm = stores.structure("Main", 0);
+    stores.field(mm, "index", v);
+    stores.finish();
+    let db = stores.database(2);
+    let into = DbRef {
+        store_nr: db.store_nr,
+        rec: db.rec,
+        pos: 8,
+    };
+    stores.set_default_value(mm, &into);
+    let keys = stores.keys(v).to_vec();
+    let fields = stores.fields(v);
+    let st = db.store_nr as usize;
+    let kpos = 8 + u32::from(keys[0].position);
+    let cpos = 8 + u32::from(stores.position(s, "c"));
+    let texts: Vec<String> = (0..count)
+        .map(|i| format!("key_{}", key_of(i, 0, m)))
+        .collect();
+    let mut recs = Vec::with_capacity(count as usize);
+    for (i, t) in texts.iter().enumerate() {
+        let rec = stores.claim(&db, 6);
+        let s = &mut stores.allocations[st];
+        let h = s.set_str(t);
+        s.set_u32_raw(rec.rec, kpos, h);
+        s.set_int(rec.rec, cpos, i as i64);
+        recs.push(rec);
+    }
+    let expect: i64 = (0..count).map(|i| i & 255).sum();
+    let t = Instant::now();
+    for r in &recs {
+        let _ = tree::add(&into, r, fields, &mut stores.allocations, &keys);
+    }
+    let rb_fill = t.elapsed().as_nanos() as f64;
+    let t = Instant::now();
+    let mut acc = 0i64;
+    for k in &texts {
+        let found = tree::find_exact(
+            &into,
+            fields,
+            &stores.allocations,
+            &keys,
+            &[Content::Str(Str::new(k))],
+        );
+        acc += stores.allocations[st].get_int(found, cpos) & 255;
+    }
+    let rb_find = t.elapsed().as_nanos() as f64;
+    assert_eq!(acc, expect, "the red-black tree finds every text key");
+    let holder = stores.claim(&db, 2).rec;
+    stores.allocations[st].set_u32_raw(holder, 8, 0);
+    let slot = DbRef {
+        store_nr: db.store_nr,
+        rec: holder,
+        pos: 8,
+    };
+    let t = Instant::now();
+    for r in &recs {
+        btree::add(&slot, r.rec, &mut stores.allocations, &keys);
+    }
+    let b_fill = t.elapsed().as_nanos() as f64;
+    let t = Instant::now();
+    let mut bacc = 0i64;
+    for k in &texts {
+        let found = btree::find_exact(
+            &slot,
+            &stores.allocations,
+            &keys,
+            &[Content::Str(Str::new(k))],
+        );
+        bacc += stores.allocations[st].get_int(found, cpos) & 255;
+    }
+    let b_find = t.elapsed().as_nanos() as f64;
+    assert_eq!(bacc, expect, "the built tree finds every text key");
+    let n = count as f64;
+    (rb_fill / n, rb_find / n, b_fill / n, b_find / n)
+}
+
+#[test]
+#[ignore = "a measurement: cargo test --release --test btree_probe -- --ignored --nocapture"]
+fn text_keys_against_the_red_black_index() {
+    for &(count, m, reps) in &[
+        (5000i64, 1_000_003i64, 100),
+        (100_000, 10_000_019, 5),
+        (1_000_000, 100_000_007, 2),
+    ] {
+        let mut best = [f64::MAX; 4];
+        for _ in 0..reps {
+            let r = run_text(count, m);
+            for (b, v) in best.iter_mut().zip([r.0, r.1, r.2, r.3]) {
+                *b = b.min(v);
+            }
+        }
+        println!(
+            "{count:>8}  text  red-black fill {:6.1} find {:6.1}  |  btree.rs fill {:6.1} find {:6.1}  ns/key  →  fill {:.1}×  find {:.1}×",
+            best[0],
+            best[1],
+            best[2],
+            best[3],
+            best[0] / best[2],
+            best[1] / best[3]
         );
     }
 }
