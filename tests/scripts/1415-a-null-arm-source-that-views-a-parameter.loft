@@ -16,11 +16,10 @@
 // `var_a``).  The interpreter never saw it, because frame slots have no block scope: one
 // decision expressed twice, and only half of it visible (loft#1415).
 //
-// The exclusion is deliberately not "every borrow".  `borrows_one_argument` — a NULLABLE local
-// bound from a parameter and later reassigned from a minting call — owns a store on some paths
-// (@FR-O-Latest), and this conditional free is its only one, because `get_free_vars` skips
-// every return source.  That half is held down by the code, not by a cell here — see the note
-// at the foot of this file and loft#1422.
+// The exclusion covers every local whose store is an argument's.  A NULLABLE local bound from
+// a parameter and later reassigned from a minting call is not one of them: it COPIES the
+// parameter as its dense twin does (@FR-N-Road), so it carries no argument dep and owns what
+// it holds — `1422-a-nullable-return-source-owns-its-store.loft` holds that shape.
 //
 // @falsified-at: 4e3ab5b7 — native exit 1 -> 0 (rustc E0425 on `var_a`, three occurrences,
 //   in `head_from_parameter`); interpret was already 0 on the control build, which is the
@@ -38,11 +37,9 @@ enum Tok { Fn { x: integer }, Id { x: integer } }
 
 fn head_from_parameter(v: vector<Tok>) -> Tok? { match v { [a, ..] => a, _ => null } }
 
-// The NULLABLE-element twin.  It is the cell this guard was missing: the binding's own type is
-// then `Tok?`, which makes `borrows_one_argument` true of it, and an exclusion written only as
-// "the store is the caller's, unless it is the one-argument borrow that may hold a mint" let it
-// straight back into the null-arm set.  Caught by loft3's #1414 guard on the native corpus, not
-// by this file, which is why it is here now.
+// The NULLABLE-element twin: the binding's own type is then `Tok?`, a nullable local whose one
+// dep names an argument.  An exclusion that makes an exception for such a local lets this one
+// straight back into the null-arm set.
 fn head_from_nullable_parameter(v: vector<Tok?>) -> Tok? { match v { [a, ..] => a, _ => null } }
 
 // The control that always compiled: a LOCAL subject materialises the view into a
@@ -122,11 +119,3 @@ fn an_owned_null_arm_source_is_still_freed() {
   assert_eq("{absent}", "12", "the null arm answered null");
 }
 
-// `borrows_one_argument` — a nullable local bound from a parameter and then reassigned from a
-// minting call — is deliberately kept IN the null-arm set by this fix, because it owns a store
-// on the minting path and this conditional free is its only one.  There is no cell for it here
-// on purpose: that shape LEAKS its minted store, 12 records over 24 calls, and it leaks
-// identically with this change applied and reverted (loft#1422).  A cell asserting it would
-// fail for a defect this fix neither causes nor cures, and one asserting the leak would freeze
-// it into the contract.  The inclusion is held down by the code comment and by loft#1422's own
-// guard when that lands.
