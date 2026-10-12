@@ -55,10 +55,10 @@ index a1f89a19d..527a1a680 100644
  fn OpStaticCall(call: const u16);
  // Create a DbRef that points INTO the current stack frame (not into a data store).
 diff --git b/src/btree.rs a/src/btree.rs
-index ba1607369..000dfc155 100644
+index b439b5dab..b96c5ac32 100644
 --- b/src/btree.rs
 +++ a/src/btree.rs
-@@ -1478,14 +1478,6 @@ pub fn range_cursors(
+@@ -1479,14 +1479,6 @@ pub fn range_cursors(
      }
  }
  
@@ -74,10 +74,10 @@ index ba1607369..000dfc155 100644
  #[must_use]
  pub fn count(data: &DbRef, stores: &[Store]) -> u32 {
 diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
-index 620ab0424..0368a5e47 100644
+index 220120b08..241076aed 100644
 --- b/src/codegen_runtime.rs
 +++ a/src/codegen_runtime.rs
-@@ -1586,18 +1586,6 @@ pub fn trie_len(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+@@ -1571,18 +1571,6 @@ pub fn trie_len(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
      crate::trie_db::count(coll, stores)
  }
  
@@ -97,15 +97,15 @@ index 620ab0424..0368a5e47 100644
  /// High 32 bits = finish; low 32 bits = cur.
  /// `finish == u32::MAX` signals that iteration is complete.
 diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
-index 74a7a230e..e38d9ac9a 100644
+index d2a426ed9..cb52489f4 100644
 --- b/src/compiled_stdlib_gen.rs
 +++ a/src/compiled_stdlib_gen.rs
-@@ -1702,4 +1702,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
+@@ -1695,4 +1695,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
  pub(crate) const PREFIX_TYPES: usize = 99;
  pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
  /// The hash of the `default/*.loft` source these bodies were compiled from.
--pub(crate) const SOURCE_HASH: u64 = 17687889875206529232;
-+pub(crate) const SOURCE_HASH: u64 = 12258126259066214083;
+-pub(crate) const SOURCE_HASH: u64 = 11642644059270743477;
++pub(crate) const SOURCE_HASH: u64 = 14961075223287042683;
 diff --git b/src/fill.rs a/src/fill.rs
 index 4101451be..2385dbc0c 100644
 --- b/src/fill.rs
@@ -246,7 +246,7 @@ index 4101451be..2385dbc0c 100644
  fn static_call<const F: bool>(s: &mut State) {
      s.static_call();
 diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
-index e59425295..2950be369 100644
+index d6cea2323..6463f3b5c 100644
 --- b/src/generation/hoist.rs
 +++ a/src/generation/hoist.rs
 @@ -85,7 +85,7 @@ const PURE_NULLARY_OPS: [&str; 19] = [
@@ -269,10 +269,10 @@ index e59425295..2950be369 100644
      "OpSizeStruct",
      // typed field reads through a reference
 diff --git b/src/parser/mod.rs a/src/parser/mod.rs
-index e149fbf2c..774ed7b37 100644
+index 76acbe4dd..fce56e25d 100644
 --- b/src/parser/mod.rs
 +++ a/src/parser/mod.rs
-@@ -8021,6 +8021,33 @@ impl Parser {
+@@ -8005,6 +8005,33 @@ impl Parser {
                  return crate::data::I64.clone();
              }
              Type::Unknown(0)
@@ -350,7 +350,7 @@ index 20d5ed70a..364a2af05 100644
  // Lifecycle
  // ---------------------------------------------------------------------------
 diff --git b/src/trie_db.rs a/src/trie_db.rs
-index 4f3cc4f11..3d55ddbee 100644
+index 6d70fad26..4d9a18348 100644
 --- b/src/trie_db.rs
 +++ a/src/trie_db.rs
 @@ -159,19 +159,6 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->

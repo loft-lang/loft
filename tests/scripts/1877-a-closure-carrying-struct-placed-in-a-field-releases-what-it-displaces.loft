@@ -17,7 +17,7 @@
 // Every value is hand-computed: `k1(n).f(x)` is `n * 10 + x`.
 //
 // @falsified-at: e0d151d80 — interpret leaked kt=96 V×8 -> clean, native leaked kt=96 V×8 -> clean
-// @falsified-by: tests/falsified/1877-a-closure-carrying-struct-placed-in-a-field-releases-what-it-displaces.patch — interpret leaked kt=96 V×8 -> clean, native leaked kt=96 V×8 -> clean
+// @falsified-by: tests/falsified/1877-a-closure-carrying-struct-placed-in-a-field-releases-what-it-displaces.patch — interpret leaked kt=99 V×8 -> clean, native leaked kt=99 V×8 -> clean
 //   CHANNEL: the LEAK — every overwrite left the displaced closure's adopted `V` unreleased.
 //   HOLDS: every cell is clean under `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
 //   `LOFT_POISON_CLAIM=1` with the exit leak check on this tree, both backends.

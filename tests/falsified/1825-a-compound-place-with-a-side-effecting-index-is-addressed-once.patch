@@ -1,11 +1,11 @@
 diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index b9f17af9b..a77cee8a9 100644
+index 655847a5d..3d6f8b762 100644
 --- b/src/parser/expressions.rs
 +++ a/src/parser/expressions.rs
-@@ -7289,13 +7289,8 @@ use a separate collection or add after the loop"
+@@ -8082,13 +8082,8 @@ use a separate collection or add after the loop"
      /// sub-expression?  Builtin `Op*` accessors/arithmetic are pure given stable
      /// args and may be re-evaluated freely; a place addressing sub-expression that
-     /// reaches a user call must be bound once (compound-assign place-once, C92).
+     /// reaches a user call must be bound once (compound-assign place-once, @C92).
 -    ///
 -    /// A WRITE is non-idempotent too, call or no call: `w[{c += 1; c}] -= 1` holds no user
 -    /// call, and without this arm the block ran for the read and again for the write — the

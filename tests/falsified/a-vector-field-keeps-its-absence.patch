@@ -1,7 +1,20 @@
-diff --git a/src/database/allocation.rs b/src/database/allocation.rs
-index 5783a6e25..cdc018d16 100644
---- a/src/database/allocation.rs
-+++ b/src/database/allocation.rs
+diff --git b/src/btree.rs a/src/btree.rs
+index b439b5dab..9634c2e6f 100644
+--- b/src/btree.rs
++++ a/src/btree.rs
+@@ -637,7 +637,7 @@ fn arena_of(data: &DbRef, stores: &[Store]) -> Option<Arena> {
+     if data.is_null() {
+         return None;
+     }
+-    match keys::store(data, stores).collection_rec(data.rec, data.pos) {
++    match keys::store(data, stores).get_i32_raw(data.rec, data.pos) as u32 {
+         0 => None,
+         arena => Some(Arena(arena)),
+     }
+diff --git b/src/database/allocation.rs a/src/database/allocation.rs
+index 4041572bd..8f7865818 100644
+--- b/src/database/allocation.rs
++++ a/src/database/allocation.rs
 @@ -224,34 +224,6 @@ impl Stores {
          cur == DbRef::ABSENT_REC
      }
@@ -27,7 +40,7 @@ index 5783a6e25..cdc018d16 100644
 -                | Parts::Hash(_, _)
 -                | Parts::Radix(_, _)
 -                | Parts::Trie(_, _)
--                | Parts::Index(_, _, _)
+-                | Parts::Index(_, _)
 -                | Parts::ChildRec(_)
 -        ) && rec.store_nr != u16::MAX
 -            && rec.rec != 0
@@ -37,7 +50,7 @@ index 5783a6e25..cdc018d16 100644
      /// Report an edge the walk refused to follow, once per site.
      ///
      /// Loud rather than silent: refusing the edge turns a crash into a leak, which is
-@@ -400,17 +372,6 @@ impl Stores {
+@@ -404,17 +376,6 @@ impl Stores {
          let mut children = Vec::new();
          let mut container_rec = None;
          let mut extra_recs = Vec::new();
@@ -55,7 +68,7 @@ index 5783a6e25..cdc018d16 100644
          // A view over records a sibling owns: keep the spine teardown, drop the
          // element walk.  Only the per-element-record kinds can be a view — a
          // contiguous `Vector`/`Sorted` stores its elements INLINE, so it cannot
-@@ -3418,12 +3379,8 @@ impl Stores {
+@@ -3415,12 +3376,8 @@ impl Stores {
          let length = vector::length_vector(rec, &self.allocations);
          let size = u32::from(self.size(content_tp));
          let cur = self.store(rec).get_u32_raw(rec.rec, rec.pos);
@@ -70,7 +83,7 @@ index 5783a6e25..cdc018d16 100644
              return;
          }
          let into = self.store_mut(to).claim(1 + (size * length).div_ceil(8));
-@@ -3860,27 +3817,7 @@ impl Stores {
+@@ -3833,27 +3790,7 @@ impl Stores {
          }
      }
  
@@ -98,7 +111,7 @@ index 5783a6e25..cdc018d16 100644
          // TODO prevent copying secondary structures
          match &self.types[tp as usize].parts {
              Parts::Base if tp == 5 => {
-@@ -5336,7 +5273,7 @@ impl Stores {
+@@ -5320,7 +5257,7 @@ impl Stores {
                  | Parts::Sorted(..)
                  | Parts::Ordered(..)
                  | Parts::Hash(..)
@@ -107,14 +120,14 @@ index 5783a6e25..cdc018d16 100644
                  _ => false,
              }
          })
-diff --git a/src/database/structures.rs b/src/database/structures.rs
-index f7cc26dd2..e14c225bc 100644
---- a/src/database/structures.rs
-+++ b/src/database/structures.rs
-@@ -1324,14 +1324,7 @@ impl Stores {
-         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index 9c503eef9..8ca147cfa 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -1409,14 +1409,7 @@ impl Stores {
          // absence are different values, and only the whole-value replace may turn one into
          // the other — an `a += b` must leave `a` alone.
+         self.deliver_vector_parse_errors(o_db, db, true);
 -        // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
 -        // slot, never the value-level null, so its absence is the marker the slot holds.
 -        let slot_absent = o_db.store_nr != u16::MAX
@@ -127,11 +140,11 @@ index f7cc26dd2..e14c225bc 100644
              self.clear_vector_release(db);
              self.mark_collection_absent(db);
              return;
-diff --git a/src/hash.rs b/src/hash.rs
-index 1d7618486..e36938ecd 100644
---- a/src/hash.rs
-+++ b/src/hash.rs
-@@ -672,7 +672,7 @@ fn hash_rec_pos(
+diff --git b/src/hash.rs a/src/hash.rs
+index a590a97ee..944751875 100644
+--- b/src/hash.rs
++++ a/src/hash.rs
+@@ -715,7 +715,7 @@ fn hash_rec_pos(
  #[must_use]
  pub fn find(hash_ref: &DbRef, stores: &[Store], keys: &[Key], key: &[Content]) -> DbRef {
      let store = &stores[hash_ref.store_nr as usize];
@@ -140,7 +153,7 @@ index 1d7618486..e36938ecd 100644
      let mut record = DbRef {
          store_nr: hash_ref.store_nr,
          rec: 0,
-@@ -739,7 +739,7 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
+@@ -782,7 +782,7 @@ pub fn find_long(hash_ref: &DbRef, stores: &[Store], key: &Key, value: i64) -> O
          return None;
      }
      let store = &stores[hash_ref.store_nr as usize];
@@ -149,7 +162,7 @@ index 1d7618486..e36938ecd 100644
      let mut found = DbRef {
          store_nr: hash_ref.store_nr,
          rec: 0,
-@@ -887,7 +887,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
+@@ -930,7 +930,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
      if rec.rec == 0 {
          return 0;
      }
@@ -158,7 +171,7 @@ index 1d7618486..e36938ecd 100644
      let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
      if length == 0 {
          return 0;
-@@ -949,7 +949,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
+@@ -992,7 +992,7 @@ pub fn remove(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key])
  /// holds what [`remove`] answered.  A record slot is somebody else's record and a
  /// borrowing table owns nothing, so both release nothing, as [`free_entry`] decides too.
  pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
@@ -167,7 +180,7 @@ index 1d7618486..e36938ecd 100644
      if claim == 0 || slot == 0 || slot & SLOT_RECORD != 0 {
          return;
      }
-@@ -969,7 +969,7 @@ pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
+@@ -1012,7 +1012,7 @@ pub fn free_slot(hash_ref: &DbRef, slot: u32, stores: &mut [Store]) {
  /// own first four bytes, so it must be released only after the caller has finished
  /// reading the entry's fields (its key to unlink by, its pointers to free).
  pub fn free_entry(hash_ref: &DbRef, rec: &DbRef, stores: &mut [Store]) {
@@ -176,7 +189,7 @@ index 1d7618486..e36938ecd 100644
      if claim == 0 {
          return;
      }
-@@ -1008,7 +1008,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
+@@ -1051,7 +1051,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
      if hash_ref.is_null() {
          return 0;
      }
@@ -185,7 +198,7 @@ index 1d7618486..e36938ecd 100644
      if claim == 0 {
          return 0;
      }
-@@ -1034,7 +1034,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
+@@ -1077,7 +1077,7 @@ pub fn count(hash_ref: &DbRef, stores: &[Store]) -> u32 {
  /// for an uninitialised hash (no claim allocated yet).
  #[must_use]
  pub fn table_bytes(hash_ref: &DbRef, stores: &[Store]) -> u32 {
@@ -194,7 +207,7 @@ index 1d7618486..e36938ecd 100644
      if claim == 0 {
          return 0;
      }
-@@ -1069,7 +1069,7 @@ pub fn records(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
+@@ -1112,7 +1112,7 @@ pub fn records(hash_ref: &DbRef, stores: &[Store]) -> Vec<DbRef> {
  #[must_use]
  pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
      let store = keys::store(hash_ref, stores);
@@ -203,7 +216,7 @@ index 1d7618486..e36938ecd 100644
      if claim == 0 {
          return Vec::new();
      }
-@@ -1099,7 +1099,7 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
+@@ -1142,7 +1142,7 @@ pub fn entries(hash_ref: &DbRef, stores: &[Store]) -> Vec<(DbRef, bool)> {
  #[must_use]
  pub fn arena_records(hash_ref: &DbRef, stores: &[Store]) -> Vec<u32> {
      let store = keys::store(hash_ref, stores);
@@ -212,7 +225,7 @@ index 1d7618486..e36938ecd 100644
      if claim == 0 {
          return Vec::new();
      }
-@@ -1143,7 +1143,7 @@ pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<D
+@@ -1186,7 +1186,7 @@ pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<D
  /// debug-time structural invariant check; callers should never hit a
  /// panic here in production.
  pub fn validate(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) {
@@ -221,11 +234,11 @@ index 1d7618486..e36938ecd 100644
      let length = keys::store(hash_ref, stores).get_u32_raw(claim, LEN_FLD);
      let mut l = 0;
      for record in records(hash_ref, stores) {
-diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 69d432df4..3ccf1e171 100644
---- a/src/parser/expressions.rs
-+++ b/src/parser/expressions.rs
-@@ -6700,19 +6700,9 @@ use a separate collection or add after the loop"
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 655847a5d..1f98d8425 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -6903,19 +6903,9 @@ use a separate collection or add after the loop"
                      code.unspan(),
                      Value::Var(rv) if self.vars.tp(*rv).depend().is_empty()
                  );
@@ -246,7 +259,7 @@ index 69d432df4..3ccf1e171 100644
                      ops.push(append);
                      *code = Value::Insert(ops);
                  } else if matches!(code.unspan(), Value::Var(_)) {
-@@ -6724,20 +6714,19 @@ use a separate collection or add after the loop"
+@@ -6927,20 +6917,19 @@ use a separate collection or add after the loop"
                      let dep_free_tp = Type::Vector(Box::new(elm_tp_clone.clone()), Deps::none());
                      let tmp = self.vars.unique("_p154_rhs", &dep_free_tp, &mut self.lexer);
                      let init_tmp = v_set(tmp, Value::Null);
@@ -274,7 +287,7 @@ index 69d432df4..3ccf1e171 100644
                      *code = Value::Insert(ops);
                  } else {
                      let rhs_saved = code.clone();
-@@ -6777,7 +6766,7 @@ use a separate collection or add after the loop"
+@@ -6980,7 +6969,7 @@ use a separate collection or add after the loop"
                      let fill_tmp = if projection {
                          vec![
                              v_set(tmp, Value::Null),
@@ -283,7 +296,7 @@ index 69d432df4..3ccf1e171 100644
                          ]
                      } else {
                          if Self::borrows_its_storage(&self.data, &rhs_saved, &s_type) {
-@@ -6786,7 +6775,7 @@ use a separate collection or add after the loop"
+@@ -6989,7 +6978,7 @@ use a separate collection or add after the loop"
                          vec![v_set(tmp, rhs_saved)]
                      };
                      let clear = self.clear_vector_field(to, &lhs_parent_tp);
@@ -292,11 +305,11 @@ index 69d432df4..3ccf1e171 100644
                      let mut ops = fill_tmp;
                      ops.extend(clear);
                      ops.push(append);
-diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 4b70df15c..d425955bd 100644
---- a/src/parser/objects.rs
-+++ b/src/parser/objects.rs
-@@ -7024,14 +7024,7 @@ impl Parser {
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 68a80855b..8db57257d 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -7186,14 +7186,7 @@ impl Parser {
                              Value::Int(i32::from(vec_tp)),
                          ],
                      );
@@ -312,10 +325,10 @@ index 4b70df15c..d425955bd 100644
                      // `@FR-R-Place` — "the buffer IS the place": the literal's field exists (the
                      // header prime wrote its empty handle) and a call that fills its buffer is
                      // handed the field itself, so the result is built where it lives and the
-diff --git a/src/radix_db.rs b/src/radix_db.rs
-index 316a6725f..18a9a7fc1 100644
---- a/src/radix_db.rs
-+++ b/src/radix_db.rs
+diff --git b/src/radix_db.rs a/src/radix_db.rs
+index c42059a81..799f0b97b 100644
+--- b/src/radix_db.rs
++++ a/src/radix_db.rs
 @@ -147,7 +147,7 @@ pub(crate) fn key_bits(keys: &[Key]) -> u32 {
  /// entities share a bucket; no dedup here.
  pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
@@ -343,7 +356,7 @@ index 316a6725f..18a9a7fc1 100644
      if tree == 0 {
          return false;
      }
-@@ -196,7 +196,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+@@ -209,7 +209,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
          return 0;
      }
      let store = keys::store(coll, stores);
@@ -352,7 +365,7 @@ index 316a6725f..18a9a7fc1 100644
      if tree == 0 {
          0
      } else {
-@@ -209,7 +209,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+@@ -222,7 +222,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
  #[must_use]
  pub fn records(coll: &DbRef, stores: &[Store]) -> Vec<u32> {
      let store = keys::store(coll, stores);
@@ -361,7 +374,7 @@ index 316a6725f..18a9a7fc1 100644
      let mut out = Vec::new();
      if tree != 0 {
          let mut it = rt::rtree_first(store, tree);
-@@ -295,7 +295,7 @@ pub fn range(
+@@ -308,7 +308,7 @@ pub fn range(
      limit: Option<usize>,
  ) -> Vec<u32> {
      let store = keys::store(coll, stores);
@@ -370,7 +383,7 @@ index 316a6725f..18a9a7fc1 100644
      if tree == 0 {
          return Vec::new();
      }
-@@ -367,7 +367,7 @@ pub fn near_range(
+@@ -380,7 +380,7 @@ pub fn near_range(
      limit: Option<usize>,
  ) -> Vec<u32> {
      let store = keys::store(coll, stores);
@@ -379,7 +392,7 @@ index 316a6725f..18a9a7fc1 100644
      if tree == 0 {
          return Vec::new();
      }
-@@ -763,7 +763,7 @@ pub fn box_range(
+@@ -776,7 +776,7 @@ pub fn box_range(
      limit: Option<usize>,
  ) -> Vec<u32> {
      let store = keys::store(coll, stores);
@@ -388,51 +401,10 @@ index 316a6725f..18a9a7fc1 100644
      if tree == 0 {
          return Vec::new();
      }
-diff --git a/src/tree.rs b/src/tree.rs
-index 36b65d1c1..be3a25084 100644
---- a/src/tree.rs
-+++ b/src/tree.rs
-@@ -37,7 +37,7 @@ pub fn find(
-     key: &[Content],
- ) -> u32 {
-     let store = keys::store(data, stores);
--    let mut rec = store.collection_rec(data.rec, data.pos);
-+    let mut rec = store.get_i32_raw(data.rec, data.pos) as u32;
-     let mut result = DbRef {
-         store_nr: data.store_nr,
-         rec: 0,
-@@ -300,8 +300,7 @@ pub fn last(data: &DbRef, fields: u16, stores: &[Store]) -> DbRef {
- 
- fn end(data: &DbRef, fields: u16, stores: &[Store], forward: u32) -> DbRef {
-     let store = keys::store(data, stores);
--    // The root through `collection_rec`: an ABSENT collection has no first or last node.
--    let mut i = store.collection_rec(data.rec, data.pos) as i32;
-+    let mut i = store.get_i32_raw(data.rec, data.pos);
-     while i > 0 && store.get_i32_raw(i as u32, u32::from(fields) + forward) > 0 {
-         i = store.get_i32_raw(i as u32, u32::from(fields) + forward);
-     }
-@@ -876,7 +875,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
-     let store = keys::store(data, stores);
-     let rec = DbRef {
-         store_nr: data.store_nr,
--        rec: store.collection_rec(data.rec, data.pos),
-+        rec: store.get_i32_raw(data.rec, data.pos) as u32,
-         pos: u32::from(fields),
-     };
-     if rec.rec == 0 {
-@@ -900,7 +899,7 @@ pub fn validate(data: &DbRef, fields: u16, stores: &[Store], keys: &[Key]) {
- 
- pub fn remove(data: &DbRef, rec: &DbRef, fields: u16, stores: &mut [Store], keys: &[Key]) {
-     let mut black = false;
--    let top = keys::store(data, stores).collection_rec(data.rec, data.pos);
-+    let top = keys::store(data, stores).get_i32_raw(data.rec, data.pos) as u32;
-     let r = DbRef {
-         store_nr: rec.store_nr,
-         rec: rec.rec,
-diff --git a/src/trie_db.rs b/src/trie_db.rs
-index 3d55ddbee..fde722139 100644
---- a/src/trie_db.rs
-+++ b/src/trie_db.rs
+diff --git b/src/trie_db.rs a/src/trie_db.rs
+index 6d70fad26..66018ed2c 100644
+--- b/src/trie_db.rs
++++ a/src/trie_db.rs
 @@ -105,7 +105,7 @@ pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
          return;
      };
@@ -460,7 +432,7 @@ index 3d55ddbee..fde722139 100644
      if tree == 0 {
          return false;
      }
-@@ -167,7 +167,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+@@ -180,7 +180,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
          return 0;
      }
      let store = crate::keys::store(coll, stores);
@@ -469,7 +441,7 @@ index 3d55ddbee..fde722139 100644
      if tree == 0 {
          0
      } else {
-@@ -180,7 +180,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
+@@ -193,7 +193,7 @@ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {
  #[must_use]
  pub fn records(coll: &DbRef, stores: &[Store]) -> Vec<u32> {
      let store = crate::keys::store(coll, stores);
@@ -478,7 +450,7 @@ index 3d55ddbee..fde722139 100644
      let mut out = Vec::new();
      if tree != 0 {
          let mut it = rt::rtree_first(store, tree);
-@@ -219,7 +219,7 @@ pub fn prefix(
+@@ -232,7 +232,7 @@ pub fn prefix(
      limit: Option<usize>,
  ) -> Vec<u32> {
      let store = crate::keys::store(coll, stores);
@@ -487,11 +459,11 @@ index 3d55ddbee..fde722139 100644
      let mut out = Vec::new();
      let Some(key) = keys.first() else {
          return out;
-diff --git a/src/vector.rs b/src/vector.rs
-index 6846034e6..3b20dc0cc 100644
---- a/src/vector.rs
-+++ b/src/vector.rs
-@@ -718,13 +718,6 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
+diff --git b/src/vector.rs a/src/vector.rs
+index f4b4cdc4e..25a292cb7 100644
+--- b/src/vector.rs
++++ a/src/vector.rs
+@@ -720,13 +720,6 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
          store.release_foreign();
          return;
      }
