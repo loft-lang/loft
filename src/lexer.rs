@@ -13,7 +13,6 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
 use std::rc::Rc;
-use std::vec::IntoIter;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mode {
@@ -281,6 +280,75 @@ struct Recorded {
     scan: Option<ScanState>,
 }
 
+/// The scan cursor over the current source line: the line's own text and a byte offset into
+/// it.  It answers what a `Peekable` over the line's characters answers — the character at
+/// the cursor, and a step past it — with nothing decoded ahead: the line is neither copied
+/// nor spread into a `char` per character first.  A compile and a `T.parse` both read every
+/// character of their input through here.
+#[derive(Default)]
+struct LineCursor {
+    line: String,
+    /// Byte offset of `cur` in `line`; `line.len()` at the end.
+    at: usize,
+    /// The character at the cursor, `None` at the end of the line.
+    cur: Option<char>,
+}
+
+impl LineCursor {
+    fn new(line: String) -> Self {
+        let mut cursor = LineCursor {
+            line,
+            at: 0,
+            cur: None,
+        };
+        cursor.cur = cursor.decode();
+        cursor
+    }
+
+    /// The character at byte offset `at`: one byte for ASCII, a UTF-8 decode otherwise.
+    #[inline]
+    fn decode(&self) -> Option<char> {
+        let byte = *self.line.as_bytes().get(self.at)?;
+        if byte < 0x80 {
+            Some(byte as char)
+        } else {
+            self.decode_wide()
+        }
+    }
+
+    /// [`Self::decode`] for a character of more than one byte: kept out of line, so the
+    /// step over an ASCII character stays small enough to be inlined at every scan site.
+    #[cold]
+    #[inline(never)]
+    fn decode_wide(&self) -> Option<char> {
+        self.line[self.at..].chars().next()
+    }
+
+    /// The character at the cursor, without stepping.
+    #[inline]
+    fn peek(&self) -> Option<&char> {
+        self.cur.as_ref()
+    }
+
+    /// The characters from the cursor to the end of the line, for a look-ahead that leaves
+    /// the cursor where it is.
+    fn rest(&self) -> Peekable<std::str::Chars<'_>> {
+        self.line[self.at..].chars().peekable()
+    }
+}
+
+impl Iterator for LineCursor {
+    type Item = char;
+
+    #[inline]
+    fn next(&mut self) -> Option<char> {
+        let c = self.cur?;
+        self.at += if c.is_ascii() { 1 } else { c.len_utf8() };
+        self.cur = self.decode();
+        Some(c)
+    }
+}
+
 /// A lexer that can remember a state via a link and then optionally return to that state.
 ///
 /// It defaults to reading all found data into Text elements but has a list of TOKENS and
@@ -308,7 +376,7 @@ pub struct Lexer {
     /// [`Self::begin_parse`] at the start of each parse, so the next one sees the disk as it
     /// is then.
     parse_snapshot: std::collections::HashMap<String, String>,
-    iter: Peekable<IntoIter<char>>,
+    iter: LineCursor,
     peek: LexResult,
     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
     memory: Vec<Recorded>,
@@ -419,8 +487,6 @@ impl Debug for Lexer {
         fmt.write_str(&format!("{:?}", self.position))
     }
 }
-
-static LINE: String = String::new();
 
 static TOKENS: &[&str] = &[
     ":", "::", ".", "..", ",", "{", "}", "(", ")", "[", "]", ";", "!", "!=", "+", "+=", "-", "-=",
@@ -642,7 +708,7 @@ impl Default for Lexer {
             link: 0,
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
-            iter: LINE.chars().collect::<Vec<_>>().into_iter().peekable(),
+            iter: LineCursor::default(),
             tok1: token_tables(&cfg.tokens).0,
             tok2: token_tables(&cfg.tokens).1,
             tokens: cfg.tokens,
@@ -714,7 +780,7 @@ impl Lexer {
             link: 0,
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
-            iter: LINE.chars().collect::<Vec<_>>().into_iter().peekable(),
+            iter: LineCursor::default(),
             tok1: token_tables(&config.tokens).0,
             tok2: token_tables(&config.tokens).1,
             tokens: config.tokens,
@@ -831,7 +897,7 @@ impl Lexer {
                                 self.position.line += 1;
                                 continue;
                             }
-                            self.iter = ln.chars().collect::<Vec<_>>().into_iter().peekable();
+                            self.iter = LineCursor::new(ln);
                             self.position.line += 1;
                             self.position.pos = 1;
                         }
@@ -955,7 +1021,7 @@ impl Lexer {
         } else if let Some(line_result) = self.lines.next() {
             match line_result {
                 Ok(ln) => {
-                    self.iter = ln.chars().collect::<Vec<_>>().into_iter().peekable();
+                    self.iter = LineCursor::new(ln);
                     self.position.line += 1;
                     self.position.pos = 1;
                     Some(LexResult::new(LexItem::None, self.position))
@@ -1694,7 +1760,7 @@ impl Lexer {
         if let Some(line_result) = self.lines.next() {
             match line_result {
                 Ok(ln) => {
-                    self.iter = ln.chars().collect::<Vec<_>>().into_iter().peekable();
+                    self.iter = LineCursor::new(ln);
                     self.position.line += 1;
                     self.position.pos = 1;
                     true
@@ -2407,7 +2473,7 @@ impl Lexer {
         self.replay_return = None;
         self.link = 0;
         self.links = Rc::new(RefCell::new(0));
-        self.iter = LINE.chars().collect::<Vec<_>>().into_iter().peekable();
+        self.iter = LineCursor::default();
         self.mode = Mode::Code;
         self.cont();
     }
@@ -2514,7 +2580,7 @@ impl Lexer {
         }
         // The `{` is already consumed, so the hole itself is the first frame.
         let mut stack = vec![Ctx::Code];
-        let mut it = self.iter.clone();
+        let mut it = self.iter.rest();
         while let Some(c) = it.next() {
             // An escape hides whatever follows it.  That is also what makes the
             // Rust-macro spelling `{\"inner\"}` scan clean: both delimiters are
