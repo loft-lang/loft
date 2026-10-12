@@ -396,7 +396,6 @@ mod radix_tree;
 mod spatial;
 pub mod store;
 pub mod store_budget;
-pub mod tree;
 pub mod trie_db;
 mod typedef;
 
