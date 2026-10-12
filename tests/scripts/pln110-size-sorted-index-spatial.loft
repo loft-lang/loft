@@ -6,12 +6,8 @@
 //   * `sorted<T[key]>` shares vector's length-prefixed BUFFER, so its size is a
 //     real aggregate: element count × the element node's in-buffer stride
 //     (`size(sorted) == len × size(node)`), exactly like `size(vector)`.
-//   * `index<T[key]>` (red-black tree) and `spatial<T[keys]>` (radix / Morton
-//     tree) keep their ordering as bookkeeping embedded IN each element record —
-//     there is NO separate structure allocation to sum, so `size` reports a
-//     SINGLE node record's size (a compile-time constant, INDEPENDENT of the
-//     element count). An index node record is the element plus its red-black
-//     bookkeeping (left / right / colour).
+//   * `index<T[key]>` and `spatial<T[keys]>`: `size` reports a SINGLE element
+//     record's size (a compile-time constant, INDEPENDENT of the element count).
 //
 // Values verified against both backends (interpret + native) during Phase 1.
 

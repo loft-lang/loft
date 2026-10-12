@@ -2146,7 +2146,7 @@ pub fn vector_prev(data: &DbRef, pos: &mut i32, size: u16, stores: &[Store]) {
 const ORDERED_STRIDE: u32 = 4;
 
 /// The `(start, finish)` cursor pair for iterating an `ordered` collection over a
-/// key range — the shared derivation both backends call, the way `tree::range_cursors`
+/// key range — the shared derivation both backends call, the way `btree::range_cursors`
 /// is shared for an `index`.
 ///
 /// Both cursors are BYTE OFFSETS into the slot vector, which is the unit

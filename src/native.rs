@@ -2890,7 +2890,7 @@ pub fn type_named_in(stores: &mut Stores, name: &str) -> DbRef {
 /// **The position is checked, never trusted.**  Only a field the descriptor says
 /// BEGINS at `position` — and that [`LayoutField::is_data`] admits — is read.  A
 /// hand-made offset, a position belonging to a different type, the interior of a
-/// wider field, or an index node's `#left_1` bookkeeping all answer `OtherKind`
+/// wider field, or a `#`-prefixed synthetic field all answer `OtherKind`
 /// with no read at all, so there is no argument a caller can pass that addresses
 /// bytes the layout did not name.
 ///
@@ -3411,7 +3411,7 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
     // Keys — a keyed collection only. The descriptor holds them as INDICES into
     // the element record's field list, so they are resolved here rather than
     // published raw: an index is meaningless to a caller that also has to skip
-    // the synthetic fields (`#left_1` and friends), and the byte position is the
+    // the `#`-prefixed synthetic fields, and the byte position is the
     // one number that identifies a field in both lists.
     if let Some(LayoutNode::Iterated(it)) = &node {
         let keys = reflect_keys(it);

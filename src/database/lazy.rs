@@ -763,7 +763,7 @@ impl Stores {
     /// true rather than intended.
     ///
     /// `record_finish` is also what makes the KIND someone else's problem: it
-    /// dispatches to `hash::add` / the sorted placement / `tree::add`, so a
+    /// dispatches to `hash::add` / the sorted placement / `btree::add`, so a
     /// `sorted` or `index` collection materialises without a second insert path
     /// here — and there is no per-kind list for a new collection kind to go
     /// missing from ([DATABASE.md § Adding or changing a collection

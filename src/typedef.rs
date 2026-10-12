@@ -733,12 +733,11 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         for v in 0..var_count {
             // @FR-L-Null: layout(τ) = layout(τ?).  A nullable keyed local holds the same
             // handle its dense twin does, so it has to reach this pre-registration the same
-            // way — read BARE, `Optional(Index(…))` matched nothing, `index`'s bookkeeping
-            // triple was appended after `finish()` had already sized the content struct, and
-            // `#left_1 / #right_1 / #color_1` kept `position: 0` on top of each other and
-            // the first real field.  The nullable form then refused to lay out at all while
-            // its dense twin was fine — a layout the `?` changed, which is exactly what
-            // @FR-L-Null forbids (loft#1125).  Invisible whenever the same index type also
+            // way — a registration that adds fields to the content struct must land before
+            // `finish()` sizes it, or the added fields keep `position: 0` on top of each
+            // other and the first real field, and the nullable form lays out differently from
+            // its dense twin — a layout the `?` changed, which is exactly what @FR-L-Null
+            // forbids (loft#1125).  Invisible whenever the same index type also
             // has a DENSE local somewhere in the program: that one registers it in time and
             // the nullable one inherits a correct layout.
             let tp = data.def(d_nr).variables.tp(v).base().clone();

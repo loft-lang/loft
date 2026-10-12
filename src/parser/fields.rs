@@ -3774,7 +3774,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             on += 128;
         }
         // Key DIRECTION is the comparator's business and nothing else's: `keys::compare`
-        // reverses per descending key, so the tree `tree::put` builds is already in the
+        // reverses per descending key, so the tree `btree::add` builds is already in the
         // declared order and a forward walk of it is the declared order.  The reverse bit
         // therefore carries ONE fact — did the user write `rev(...)` — the same way it
         // does for `sorted`, whose `ordered_range_cursors` reads no sign at all

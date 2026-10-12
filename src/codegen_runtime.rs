@@ -1596,7 +1596,7 @@ fn pack_iter(cur: u32, finish: u32) -> i64 {
 /// Initialize a sorted/index iterator state and return it as a packed `i64`.
 ///
 /// `on` encodes collection type and flags:
-/// - bits 0–5: collection type (1 = red-black tree / index, 2 = sorted vector)
+/// - bits 0–5: collection type (1 = index, 2 = sorted vector)
 /// - bit 6: reverse iteration
 /// - bit 7: inclusive end (if clear, end is exclusive)
 ///

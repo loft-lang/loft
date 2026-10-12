@@ -5354,8 +5354,7 @@ pub struct Definition {
     pub purity: Purity,
     /// Linked-field groups on this definition's attributes.
     /// Used **exclusively** for tuple elements (one group covering all
-    /// `_0`, `_1`, …) and index bookkeeping triples (one group per
-    /// index instance, covering `#left_N` / `#right_N` / `#color_N`).
+    /// `_0`, `_1`, …).
     /// Empty for ordinary user-defined structs.
     pub field_groups: Vec<LinkedFieldGroup>,
     /// Origin tag for definitions the compiler synthesises rather than

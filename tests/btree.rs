@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! @PLN190 — the index's B+tree (`src/btree.rs`) against a MODEL: the same records in a
+//! @PLN190, @C147 — the index's B+tree (`src/btree.rs`) against a MODEL: the same records in a
 //! plain list kept sorted by `keys::compare`, which is the order an index is defined by and
 //! shares no code with the tree's parts, nodes or descent.
 //!

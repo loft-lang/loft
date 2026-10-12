@@ -339,10 +339,9 @@ pub fn derive_select(
     let type_name = desc.names.get(&elem)?;
     let table = map.quote(&map.table(type_name))?;
 
-    // Only the fields the PROGRAM wrote become columns. An `index` element
-    // record carries its own red-black links (`#left_1`, `#right_1`, `#color_1`)
-    // and `#color_1` is an ordinary boolean, so filtering by field TYPE alone
-    // would have selected a column no table has (`LayoutField::is_data`).
+    // Only the fields the PROGRAM wrote become columns: a `#`-prefixed synthetic
+    // field can have an ordinary type, so filtering by field TYPE alone would
+    // select a column no table has (`LayoutField::is_data`).
     let mut columns = Vec::with_capacity(fields.len());
     for (i, f) in fields.iter().enumerate() {
         if !f.is_data() {

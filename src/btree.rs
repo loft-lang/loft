@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The `index` collection as a B+tree of KEY PARTS and RECORD REFS (@PLN190).
 //!
-//! The red-black tree (`tree.rs`) threads its links through the element records, so every
-//! step of a descent reads a different record and compares through the general comparator.
-//! This tree keeps its nodes apart, in one ARENA record of the collection's store: a node
+//! The tree keeps its nodes apart from the records (@C147), in one ARENA record of the
+//! collection's store, so a descent does not read a different record per level: a node
 //! holds up to [`FANOUT`] slots, each an 8-byte KEY PART beside a record ref, and a descent
 //! compares parts — a node's worth of them in one cache line or two — and reads a record
 //! only where two parts tie.
@@ -297,7 +296,7 @@ fn part_in(store: &Store, rec: u32, keys: &[Key], skip: usize) -> i64 {
 }
 
 /// The part of a record's first key field — the read `keys::compare_ref` makes for it,
-/// arm for arm, mapped to an order-preserving `i64`.
+/// arm for arm, mapped to an order-preserving `i64` (@C147).
 fn record_part(store: &Store, rec: u32, k: &Key) -> i64 {
     let at = 8 + u32::from(k.position);
     let v = match k.type_nr.abs() {
@@ -371,7 +370,7 @@ impl<'a> Probe<'a> {
     fn of_key(store_nr: u16, key: &'a [Content], keys: &[Key]) -> Probe<'a> {
         let part = key.first().and_then(|c| content_part(c, &keys[0]));
         let text = match key.first() {
-            Some(Content::Str(s)) if is_text(keys) => Some(s.clone()),
+            Some(Content::Str(s)) if is_text(keys) => Some(*s),
             _ => None,
         };
         let (head, len) = head_of(text.as_ref());
@@ -702,7 +701,7 @@ fn keyed_slots(store: &Store, arena: Arena, n: u32) -> std::ops::Range<u32> {
 /// Make node `n`'s shared prefix the one its keys have now — the common prefix of its first
 /// and last key, which is every key's, since they are sorted — and restamp every part when
 /// that changed, or always with `force` (slots moved in from a node with another prefix).
-/// A text index only: every other index keeps whole parts.
+/// A text index only: every other index keeps whole parts (@C147).
 #[inline]
 fn fit(store: &mut Store, arena: Arena, n: u32, keys: &[Key], force: bool) {
     if is_text(keys) {
@@ -786,8 +785,8 @@ fn place_text(store: &mut Store, arena: Arena, n: u32, i: u32, rec: u32, keys: &
 /// Add record `rec`, which carries its key, to the index at `data`.
 ///
 /// Answers 0 when the record went in (or was already in), and otherwise the record that
-/// already carries its key — the tree is then UNCHANGED, so the caller can displace that record and add again
-/// (@FR-Col-Insert), exactly as `tree::add` answers.
+/// already carries its key — the tree is then UNCHANGED, so the caller can displace that
+/// record and add again (@FR-Col-Insert): the insert's own descent finds the duplicate.
 pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
     let st = data.store_nr as usize;
     let mut arena = match arena_of(data, stores) {
@@ -798,8 +797,7 @@ pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
     let path = descend(arena, stores, st, keys, &probe, true);
     let (slot, equal) = leaf_slot(arena, stores, st, keys, path.leaf, &probe, false);
     if equal {
-        // The record itself is already filed: nothing to add and nothing displaced, as
-        // `tree::add` answered.
+        // The record itself is already filed: nothing to add and nothing displaced.
         let held = arena.rec(&stores[st], path.leaf, slot);
         return if held == rec { 0 } else { held };
     }
@@ -1131,7 +1129,7 @@ fn bound(
     }
 }
 
-/// The boundary lookup `tree::find` answers, as a position: with `before` the last record
+/// The boundary lookup, as a position: with `before` the last record
 /// strictly below `key`, otherwise the first strictly above it; 0 when there is none.  A
 /// PARTIAL key (shorter than `keys`) compares on the values it has.
 #[must_use]
@@ -1325,9 +1323,10 @@ pub fn previous_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -
     step_record(data, stores, keys, rec, true)
 }
 
-/// One step of a walk that holds a RECORD.  Finding the record's slot by key is a full
-/// descent; a walk asks for the slot of the record it was handed one step ago, so the slot
-/// that step found is kept as a HINT ([`WALK_HINTS`]) and tried first.
+/// One step of a walk that holds a RECORD (@C147: a body may remove others by key, which
+/// moves slots).  Finding the record's slot by key is a full descent; a walk asks for the
+/// slot of the record it was handed one step ago, so the slot that step found is kept as a
+/// HINT ([`WALK_HINTS`]) and tried first.
 fn step_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32, back: bool) -> u32 {
     let Some(arena) = arena_of(data, stores) else {
         return 0;

@@ -706,7 +706,7 @@ impl Stores {
         // loft#901 — every member of a group names its elements by a 4-byte record
         // id: a hash slot encodes `rec.rec` (`hash::SLOT_RECORD`), an `array` /
         // `ordered` slot stores it raw and reads it back at a hard-coded payload
-        // start, and an `index` keeps its red-black links in FIELDS of the record.
+        // start, and an `index` node holds the record number beside a key part.
         // None of them can express a position INSIDE a record, so an element that
         // does not own one is unaddressable through its siblings.  Two shapes made
         // elements that do not:
@@ -1022,14 +1022,11 @@ impl Stores {
         content
     }
 
-    /// Where an `index`'s red-black bookkeeping (`#left_N` / `#right_N` / `#color_N`) lives for
-    /// an element type — the RECORD that a tree node actually is.
+    /// The RECORD type an `index` over element type `content` actually files — what its
+    /// layout is validated and dumped against.
     ///
     /// For a dense element that is the element struct itself.  For a synth `__nullable<S>` the
-    /// stored record is the `Some` variant (discriminant plus the inline payload), and the enum
-    /// has no field list to append to at all — so the bookkeeping belongs on `Some`.  Every
-    /// reader of `Parts::Index`'s `left_field_nr` resolves through here, so the append and the
-    /// byte offset `tree` descends from cannot disagree.
+    /// stored record is the `Some` variant (discriminant plus the inline payload).
     pub(crate) fn index_owner(&self, content: u16) -> u16 {
         self.nullable_some_variant(content).unwrap_or(content)
     }
@@ -1304,9 +1301,8 @@ impl Stores {
     /// size, and content type.  Fields are sorted by position so gaps
     /// and overlaps are visually obvious.
     ///
-    /// Useful for diagnosing layout bugs (e.g. tree::add writing
-    /// at wrong offsets when bookkeeping fields land at non-contiguous
-    /// positions per `calc::calculate_positions`'s alignment-aware
+    /// Useful for diagnosing layout bugs (fields placed at unexpected
+    /// positions by `calc::calculate_positions`'s alignment-aware
     /// reordering).
     ///
     /// For Sorted/Hash/Index/Radix: also shows the content struct's
@@ -1503,7 +1499,6 @@ impl Stores {
     /// `visited` prevents infinite recursion through cyclic
     /// references (e.g. struct containing a vector of itself).
     #[allow(dead_code, clippy::many_single_char_names)]
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn validate_layout_by_nr(
         &self,
         tp: u16,
@@ -3485,10 +3480,9 @@ pub struct Type {
     pub(super) linked: bool,
     pub(super) size: u16,
     pub(super) align: u8,
-    /// Linked-field groups appended to this type's `Parts::Struct` /
-    /// `Parts::EnumValue` field list.  Used **exclusively** for index
-    /// bookkeeping triples (`#left_N` / `#right_N` / `#color_N`) per
-    /// `index<T[key]>` instance.  Empty for plain user structs.
+    /// Linked-field groups on this type's `Parts::Struct` /
+    /// `Parts::EnumValue` field list — a tuple's elements.  Empty for plain
+    /// user structs.
     /// Tuple element groups live on the parser-side
     /// `Definition::field_groups` instead.
     pub field_groups: Vec<crate::data::LinkedFieldGroup>,

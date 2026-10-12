@@ -8737,10 +8737,7 @@ extern crate loft;"
                 // ⚠ **What makes a second emission safe is NAME AGREEMENT, not this
                 // exclusion**, which is measured rather than argued.  Every `db.*`
                 // collection constructor is interned by the type NAME it builds, so a
-                // repeat call returns the existing id and the FIRST position wins; only
-                // `db.index` has a side effect (the `#left_N` / `#right_N` / `#color_N`
-                // triple it appends to the element), and it dedups early for exactly
-                // that reason.  `Radix` / `Trie` are absent from `field_keyed` and so
+                // repeat call returns the existing id and the FIRST position wins.  `Radix` / `Trie` are absent from `field_keyed` and so
                 // are ALWAYS emitted twice for a field-referenced type — measured
                 // harmless on both backends once the two call sites spell the key list
                 // the same way.  They did not: the bare stream renders key numbers

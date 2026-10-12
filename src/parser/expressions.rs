@@ -4260,7 +4260,7 @@ use a separate collection or add after the loop"
         // here, manually tokenise the literal, parse each item against
         // the element type, and dispatch via `new_record` (vectors.rs:1745)
         // which already routes per-kind (sorted_finish / hash::add /
-        // tree::add / ordered_finish) via its P188-followup `lhs_known`
+        // btree::add / ordered_finish) via its P188-followup `lhs_known`
         // lookup at lines 1783-1822.  The struct-field twin at lines
         // ~1159-1194 handles the same shape for fields after-the-fact;
         // we cannot do that here because the LHS-local path errors out
@@ -5598,7 +5598,7 @@ use a separate collection or add after the loop"
         // P188 — local-var collection `+= elem` for keyed collections
         // (sorted/hash/index/spatial) ONLY.  Routes the singleton element
         // through OpNewRecord + OpFinishRecord (per-kind dispatch via
-        // record_finish: hash::add / sorted_finish / tree::add /
+        // record_finish: hash::add / sorted_finish / btree::add /
         // ordered_finish).  Returns Type::Void before change_var fires
         // the "cannot change type from sorted<…> to T" diagnostic that
         // would otherwise reject this shape.
