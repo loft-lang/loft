@@ -2735,6 +2735,24 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-51 — OPENED AND CLOSED (2026-10-12, loft#1985): a parsed vector was an unrecorded view of a temporary store
+
+`(H-View)` makes a projection a view of the record it reads, kept alive by that record's
+owner.  `vector<T>.parse(text)` was lowered as field 0 of the parse call — the same address
+as the call's own result — so the bound local was typed an OWNED vector while it was a view
+of a lifted temp, with no dependency saying so.  The temp is freed at the end of the scope
+that made it: a local bound to the parse and returned, bound inside a block and read after
+it, or returned through `if` arms named a freed store.  The interpreter read the stale bytes
+and mostly answered right (`LOFT_STRICT_STORES=1` reports the use after free); `--native`
+answered `0 0` for the block and the nullable shapes.
+
+Closed in `Parser::parse_vector_parse`: the parse call IS the value, so whoever binds it owns
+the store, as `arguments()` is bound.  The same function typed every element as a record
+whatever the element type named; the elements are values of that type now (a
+`vector<integer>.parse` took no operator, a `vector<text>.parse` rendered its texts quoted).
+Guards `tests/scripts/1985-a-parsed-vector-is-owned-by-what-binds-it.loft` and
+`tests/scripts/1985b-a-parsed-vector-holds-elements-of-the-named-type.loft`.
+
 ### D-heap-50 — CLOSED (2026-10-10, loft#1973): a store freed under a stored reference handed its number to the next value
 
 A local's store freed at its scope end, or the old store a reassigned local dropped, went back
