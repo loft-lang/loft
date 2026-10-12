@@ -27,6 +27,8 @@ src/spatial.rs::bench_queries	benchmark — run with --release --ignored --nocap
 src/trie_db.rs::prefix_query_page_span	measurement — run with --release --lib --ignored --nocapture
 src/trie_db.rs::record_placement	measurement — run with --release --lib --ignored --nocapture
 src/trie_db.rs::warm_cache_session	measurement — run with --release --lib --ignored --nocapture
+tests/btree_probe.rs::btree_of_key_parts_against_the_red_black_index	a measurement: cargo test --release --test btree_probe -- --ignored --nocapture
+tests/btree_probe.rs::text_keys_against_the_red_black_index	a measurement: cargo test --release --test btree_probe -- --ignored --nocapture
 tests/compiled_stdlib.rs::regen_compiled_stdlib	maintenance: regenerates src/compiled_stdlib_gen.rs — run with `--ignored` via `make compiled-stdlib`
 tests/differential_oracle.rs::oracle_corpus_agrees_across_backends	differential oracle — runs nightly in ci.yml's `test` job (the Differential oracle step); by hand: --test differential_oracle -- --ignored
 tests/doc_hygiene.rs::every_patch_receipt_still_applies	PR-time: .github/workflows/receipts.yml refreshes and scores stale receipts on a runner, then runs this with `--ignored`; a join does not stop on a receipt the code moved under
