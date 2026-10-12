@@ -3759,7 +3759,9 @@ impl Stores {
         // `collect_index_nodes(rec)` call and hands each node back as
         // `owning_elem`, so this is position-for-position the walk it replaces.
         // The DESTINATION build (claim → back-pointer → `copy_block` → recurse →
-        // `btree::add`) stays per-kind: unifying it is how @P318/@P309 come back.
+        // `btree::add`) stays per-kind: each kind lays its destination out for itself — a
+        // hash by its own bucket count, an ordered list by its element count — and a build
+        // shared between them copies the source's layout instead.
         let nodes: Vec<u32> = self
             .for_each_owned_child(rec, tp)
             .children
