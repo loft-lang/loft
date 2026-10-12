@@ -110,7 +110,7 @@ const TYPES: &[&str] = &[
 /// alignment.  Ten rows moved and every one is a SIZE rounded up (`Item` 17→24, `Narrow`
 /// 7→8, `Scalars` 29→32, …) or an `elem_size` following it; no field position moved,
 /// because the corpus places no field after an inline record of odd size.)
-const LAYOUT_ALGO_HASH: u64 = 3_601_047_186_591_577_711;
+const LAYOUT_ALGO_HASH: u64 = 1_591_903_154_127_288_799;
 
 /// @PLN135 Q2 — `keys::key_hash` for a fixed seed over a fixed key set: the function a
 /// reader must reproduce to find an entry a writer placed. Pinned by
