@@ -334,6 +334,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     reserve_hash::<false>,
     size_hash::<false>,
     length_index::<false>,
+    size_index::<false>,
     panic::<false>,
     print::<false>,
     remove::<false>,
@@ -344,7 +345,9 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     clear_keyed::<false>,
     fill_keyed::<false>,
     length_spatial::<false>,
+    size_spatial::<false>,
     length_trie::<false>,
+    size_trie::<false>,
     fn_ref_detach_shared::<false>,
     parallel_begin::<false>,
     parallel_arm::<false>,
@@ -685,6 +688,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     reserve_hash::<true>,
     size_hash::<true>,
     length_index::<true>,
+    size_index::<true>,
     panic::<true>,
     print::<true>,
     remove::<true>,
@@ -695,7 +699,9 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     clear_keyed::<true>,
     fill_keyed::<true>,
     length_spatial::<true>,
+    size_spatial::<true>,
     length_trie::<true>,
+    size_trie::<true>,
     fn_ref_detach_shared::<true>,
     parallel_begin::<true>,
     parallel_arm::<true>,
@@ -1036,6 +1042,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     reserve_hash_r,
     size_hash_r,
     length_index_r,
+    size_index_r,
     panic_r,
     print_r,
     remove_r,
@@ -1046,7 +1053,9 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     clear_keyed_r,
     fill_keyed_r,
     length_spatial_r,
+    size_spatial_r,
     length_trie_r,
+    size_trie_r,
     fn_ref_detach_shared_r,
     parallel_begin_r,
     parallel_arm_r,
@@ -1387,6 +1396,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpReserveHash",
     "OpSizeHash",
     "OpLengthIndex",
+    "OpSizeIndex",
     "OpPanic",
     "OpPrint",
     "OpRemove",
@@ -1397,7 +1407,9 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpClearKeyed",
     "OpFillKeyed",
     "OpLengthSpatial",
+    "OpSizeSpatial",
     "OpLengthTrie",
+    "OpSizeTrie",
     "OpFnRefDetachShared",
     "OpParallelBegin",
     "OpParallelArm",
@@ -5741,6 +5753,19 @@ fn length_index_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn size_index<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = i64::from(btree::table_bytes(&v_r, &s.database.allocations));
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn size_index_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    size_index::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn eq_bool<const F: bool>(s: &mut State) {
     let v_v2 = s.get_stack_m::<F, u8>();
     let v_v1 = s.get_stack_m::<F, u8>();
@@ -6086,6 +6111,22 @@ fn length_spatial_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
+fn size_spatial<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = i64::from(codegen_runtime::spatial_bytes(
+        &v_r,
+        &s.database.allocations,
+    ));
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn size_spatial_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    size_spatial::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
 fn length_trie<const F: bool>(s: &mut State) {
     let v_r = s.get_stack_m::<F, DbRef>();
     let new_value = i64::from(codegen_runtime::trie_len(&v_r, &s.database.allocations));
@@ -6095,6 +6136,19 @@ fn length_trie<const F: bool>(s: &mut State) {
 fn length_trie_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     length_trie::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn size_trie<const F: bool>(s: &mut State) {
+    let v_r = s.get_stack_m::<F, DbRef>();
+    let new_value = i64::from(codegen_runtime::trie_bytes(&v_r, &s.database.allocations));
+    s.put_stack_m::<F, _>(new_value);
+}
+
+fn size_trie_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    size_trie::<true>(s);
     s.regs_out()
 }
 

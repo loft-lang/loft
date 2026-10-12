@@ -1,0 +1,375 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index a1f89a19d..527a1a680 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1656,17 +1656,6 @@ pub fn size(self: const hash) -> integer {
+ fn OpLengthIndex(r: index) -> integer;
+ #cold
+ #rust"i64::from(btree::count(&@r, &s.database.allocations))"
+-fn OpSizeIndex(r: index) -> integer;
+-#cold
+-#rust"i64::from(btree::table_bytes(&@r, &s.database.allocations))"
+-/// The byte footprint of an index: its B+tree's node arena, room included.
+-/// Allocation-local, as `size` of a hash: the element records live in separate
+-/// allocations and are not counted.  Grows in steps as the arena doubles.  0 for an
+-/// empty (unallocated) index.
+-pub fn size(self: const index) -> integer {
+-  OpSizeIndex(self)
+-}
+-#pure
+ 
+ fn OpEqBool(v1: boolean, v2: boolean) -> boolean;
+ #rust"@v1 == @v2"
+@@ -1888,16 +1877,6 @@ pub fn len(self: const spatial) -> integer {
+   OpLengthSpatial(self)
+ }
+ #pure
+-fn OpSizeSpatial(r: spatial) -> integer;
+-#cold
+-#rust"i64::from(codegen_runtime::spatial_bytes(&@r, &s.database.allocations))"
+-/// The byte footprint of a spatial index: its tree's node array, room included.
+-/// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
+-/// an empty (unallocated) one.
+-pub fn size(self: const spatial) -> integer {
+-  OpSizeSpatial(self)
+-}
+-#pure
+ // Number of elements in a trie.  Same cached length word as `len(spatial)` —
+ // the tree is shared, only the key oracle above it differs.
+ fn OpLengthTrie(r: trie) -> integer;
+@@ -1908,16 +1887,6 @@ pub fn len(self: const trie) -> integer {
+   OpLengthTrie(self)
+ }
+ #pure
+-fn OpSizeTrie(r: trie) -> integer;
+-#cold
+-#rust"i64::from(codegen_runtime::trie_bytes(&@r, &s.database.allocations))"
+-/// The byte footprint of a trie: its tree's node array, room included.
+-/// Allocation-local, as `size` of a hash: the element records are not counted.  0 for
+-/// an empty (unallocated) one.
+-pub fn size(self: const trie) -> integer {
+-  OpSizeTrie(self)
+-}
+-#pure
+ // Call a predefined system function (but not an operator).
+ fn OpStaticCall(call: const u16);
+ // Create a DbRef that points INTO the current stack frame (not into a data store).
+diff --git b/src/btree.rs a/src/btree.rs
+index ba1607369..000dfc155 100644
+--- b/src/btree.rs
++++ a/src/btree.rs
+@@ -1478,14 +1478,6 @@ pub fn range_cursors(
+     }
+ }
+ 
+-/// The index's own footprint in bytes: its arena's node room, the header node left out —
+-/// what `size` reports, allocation-local as a hash's bucket table is (#1983).  0 when no
+-/// arena is allocated.
+-#[must_use]
+-pub fn table_bytes(data: &DbRef, stores: &[Store]) -> u32 {
+-    arena_of(data, stores).map_or(0, |a| (a.hdr(keys::store(data, stores), H_CAP) - 1) * NODE)
+-}
+-
+ /// The number of records — kept in the header, so O(1).
+ #[must_use]
+ pub fn count(data: &DbRef, stores: &[Store]) -> u32 {
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 620ab0424..0368a5e47 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -1586,18 +1586,6 @@ pub fn trie_len(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+     crate::trie_db::count(coll, stores)
+ }
+ 
+-/// `size` of a spatial index: its tree's node array, room included.
+-#[must_use]
+-pub fn spatial_bytes(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+-    crate::radix_db::table_bytes(coll, stores)
+-}
+-
+-/// `size` of a trie: its tree's node array, room included.
+-#[must_use]
+-pub fn trie_bytes(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+-    crate::trie_db::table_bytes(coll, stores)
+-}
+-
+ /// Pack a (current-position, finish) pair into a single i64 iterator state.
+ /// High 32 bits = finish; low 32 bits = cur.
+ /// `finish == u32::MAX` signals that iteration is complete.
+diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
+index 74a7a230e..e38d9ac9a 100644
+--- b/src/compiled_stdlib_gen.rs
++++ a/src/compiled_stdlib_gen.rs
+@@ -1702,4 +1702,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
+ pub(crate) const PREFIX_TYPES: usize = 99;
+ pub(crate) const PREFIX_FINGERPRINT: u64 = 6998692425317995149;
+ /// The hash of the `default/*.loft` source these bodies were compiled from.
+-pub(crate) const SOURCE_HASH: u64 = 17687889875206529232;
++pub(crate) const SOURCE_HASH: u64 = 12258126259066214083;
+diff --git b/src/fill.rs a/src/fill.rs
+index 4101451be..2385dbc0c 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -334,7 +334,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
+     reserve_hash::<false>,
+     size_hash::<false>,
+     length_index::<false>,
+-    size_index::<false>,
+     panic::<false>,
+     print::<false>,
+     remove::<false>,
+@@ -345,9 +344,7 @@ pub static OPERATORS: &[fn(&mut State)] = &[
+     clear_keyed::<false>,
+     fill_keyed::<false>,
+     length_spatial::<false>,
+-    size_spatial::<false>,
+     length_trie::<false>,
+-    size_trie::<false>,
+     fn_ref_detach_shared::<false>,
+     parallel_begin::<false>,
+     parallel_arm::<false>,
+@@ -688,7 +685,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
+     reserve_hash::<true>,
+     size_hash::<true>,
+     length_index::<true>,
+-    size_index::<true>,
+     panic::<true>,
+     print::<true>,
+     remove::<true>,
+@@ -699,9 +695,7 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
+     clear_keyed::<true>,
+     fill_keyed::<true>,
+     length_spatial::<true>,
+-    size_spatial::<true>,
+     length_trie::<true>,
+-    size_trie::<true>,
+     fn_ref_detach_shared::<true>,
+     parallel_begin::<true>,
+     parallel_arm::<true>,
+@@ -1042,7 +1036,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
+     reserve_hash_r,
+     size_hash_r,
+     length_index_r,
+-    size_index_r,
+     panic_r,
+     print_r,
+     remove_r,
+@@ -1053,9 +1046,7 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
+     clear_keyed_r,
+     fill_keyed_r,
+     length_spatial_r,
+-    size_spatial_r,
+     length_trie_r,
+-    size_trie_r,
+     fn_ref_detach_shared_r,
+     parallel_begin_r,
+     parallel_arm_r,
+@@ -1396,7 +1387,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
+     "OpReserveHash",
+     "OpSizeHash",
+     "OpLengthIndex",
+-    "OpSizeIndex",
+     "OpPanic",
+     "OpPrint",
+     "OpRemove",
+@@ -1407,9 +1397,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
+     "OpClearKeyed",
+     "OpFillKeyed",
+     "OpLengthSpatial",
+-    "OpSizeSpatial",
+     "OpLengthTrie",
+-    "OpSizeTrie",
+     "OpFnRefDetachShared",
+     "OpParallelBegin",
+     "OpParallelArm",
+@@ -5752,19 +5740,6 @@ fn length_index_r(s: &mut State, r: Regs) -> Regs {
+     s.regs_out()
+ }
+ 
+-#[inline(always)]
+-fn size_index<const F: bool>(s: &mut State) {
+-    let v_r = s.get_stack_m::<F, DbRef>();
+-    let new_value = i64::from(btree::table_bytes(&v_r, &s.database.allocations));
+-    s.put_stack_m::<F, _>(new_value);
+-}
+-
+-fn size_index_r(s: &mut State, r: Regs) -> Regs {
+-    s.regs_in(r);
+-    size_index::<true>(s);
+-    s.regs_out()
+-}
+-
+ #[inline(always)]
+ fn eq_bool<const F: bool>(s: &mut State) {
+     let v_v2 = s.get_stack_m::<F, u8>();
+@@ -6110,22 +6085,6 @@ fn length_spatial_r(s: &mut State, r: Regs) -> Regs {
+     s.regs_out()
+ }
+ 
+-#[inline(always)]
+-fn size_spatial<const F: bool>(s: &mut State) {
+-    let v_r = s.get_stack_m::<F, DbRef>();
+-    let new_value = i64::from(codegen_runtime::spatial_bytes(
+-        &v_r,
+-        &s.database.allocations,
+-    ));
+-    s.put_stack_m::<F, _>(new_value);
+-}
+-
+-fn size_spatial_r(s: &mut State, r: Regs) -> Regs {
+-    s.regs_in(r);
+-    size_spatial::<true>(s);
+-    s.regs_out()
+-}
+-
+ #[inline(always)]
+ fn length_trie<const F: bool>(s: &mut State) {
+     let v_r = s.get_stack_m::<F, DbRef>();
+@@ -6139,19 +6098,6 @@ fn length_trie_r(s: &mut State, r: Regs) -> Regs {
+     s.regs_out()
+ }
+ 
+-#[inline(always)]
+-fn size_trie<const F: bool>(s: &mut State) {
+-    let v_r = s.get_stack_m::<F, DbRef>();
+-    let new_value = i64::from(codegen_runtime::trie_bytes(&v_r, &s.database.allocations));
+-    s.put_stack_m::<F, _>(new_value);
+-}
+-
+-fn size_trie_r(s: &mut State, r: Regs) -> Regs {
+-    s.regs_in(r);
+-    size_trie::<true>(s);
+-    s.regs_out()
+-}
+-
+ #[inline(always)]
+ fn static_call<const F: bool>(s: &mut State) {
+     s.static_call();
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index e59425295..2950be369 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -85,7 +85,7 @@ const PURE_NULLARY_OPS: [&str; 19] = [
+ /// direction: a reader left out of this list only means a loop that keeps re-deriving its
+ /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
+ /// that a measurement said was slow.
+-const READ_ONLY_COLLECTION_OPS: [&str; 39] = [
++const READ_ONLY_COLLECTION_OPS: [&str; 36] = [
+     "OpVectorIsNull",
+     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
+     // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
+@@ -112,9 +112,6 @@ const READ_ONLY_COLLECTION_OPS: [&str; 39] = [
+     "OpLengthTrie",
+     "OpSizeVector",
+     "OpSizeHash",
+-    "OpSizeIndex",
+-    "OpSizeSpatial",
+-    "OpSizeTrie",
+     // a record's byte size is the compile-time constant; the reference is not read
+     "OpSizeStruct",
+     // typed field reads through a reference
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index e149fbf2c..774ed7b37 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -8021,6 +8021,33 @@ impl Parser {
+                 return crate::data::I64.clone();
+             }
+             Type::Unknown(0)
++        } else if name == "size"
++            && types.len() == 1
++            && named_args.is_empty()
++            && matches!(
++                *recv,
++                Type::Index(_, _, _) | Type::Radix(_, _, _) | Type::Trie(_, _, _)
++            )
++        {
++            // @PLN110 1d: `size` of an `index` / `spatial` / `trie` reports a SINGLE
++            // element record's size (a compile-time constant), reusing the
++            // struct-record path.  The arg is evaluated; only its element type feeds
++            // the const record size.
++            let elem_kt = match recv {
++                Type::Index(tp, _, _) | Type::Radix(tp, _, _) | Type::Trie(tp, _, _) => {
++                    self.data.def(*tp).known_type()
++                }
++                _ => u16::MAX,
++            };
++            let op_d_nr = self.data.def_nr("OpSizeStruct");
++            if elem_kt != u16::MAX && op_d_nr != u32::MAX {
++                let sz = self.database.size(elem_kt);
++                let mut args = list.to_vec();
++                args.push(Value::Int(i32::from(sz)));
++                *code = Value::Call(op_d_nr, args);
++                return crate::data::I64.clone();
++            }
++            Type::Unknown(0)
+         } else if name == "size"
+             && types.len() == 1
+             && named_args.is_empty()
+diff --git b/src/radix_db.rs a/src/radix_db.rs
+index c42059a81..316a6725f 100644
+--- b/src/radix_db.rs
++++ a/src/radix_db.rs
+@@ -187,19 +187,6 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->
+     rt::rtree_remove(store, tree, rec.rec, &RadixOracle { keys })
+ }
+ 
+-/// The tree's own footprint in bytes (`radix_tree::rtree_bytes`), 0 when none is allocated.
+-#[must_use]
+-pub fn table_bytes(coll: &DbRef, stores: &[Store]) -> u32 {
+-    if coll.is_null() {
+-        return 0;
+-    }
+-    let store = crate::keys::store(coll, stores);
+-    match store.collection_rec(coll.rec, coll.pos) {
+-        0 => 0,
+-        tree => rt::rtree_bytes(store, tree),
+-    }
+-}
+-
+ /// Number of element records in the collection.  Reads the tree's cached length
+ /// word (O(1)); key-free, mirroring `hash::count`.
+ #[must_use]
+diff --git b/src/radix_tree.rs a/src/radix_tree.rs
+index 20d5ed70a..364a2af05 100644
+--- b/src/radix_tree.rs
++++ a/src/radix_tree.rs
+@@ -794,14 +794,6 @@ pub fn rtree_len(store: &Store, tree: u32) -> u32 {
+     store.get_u32_raw(tree, LEN)
+ }
+ 
+-/// The tree's own footprint: its node array, room included (`CAP` nodes of `NODE_SIZE`
+-/// bytes), the header word left out — what `size` reports, allocation-local as a hash's
+-/// bucket table is.
+-#[must_use]
+-pub fn rtree_bytes(store: &Store, tree: u32) -> u32 {
+-    store.get_u32_raw(tree, CAP) * NODE_SIZE
+-}
+-
+ // ---------------------------------------------------------------------------
+ // Lifecycle
+ // ---------------------------------------------------------------------------
+diff --git b/src/trie_db.rs a/src/trie_db.rs
+index 4f3cc4f11..3d55ddbee 100644
+--- b/src/trie_db.rs
++++ a/src/trie_db.rs
+@@ -159,19 +159,6 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) ->
+     rt::rtree_remove(store, tree, rec.rec, &TextOracle { key })
+ }
+ 
+-/// The tree's own footprint in bytes (`radix_tree::rtree_bytes`), 0 when none is allocated.
+-#[must_use]
+-pub fn table_bytes(coll: &DbRef, stores: &[Store]) -> u32 {
+-    if coll.is_null() {
+-        return 0;
+-    }
+-    let store = crate::keys::store(coll, stores);
+-    match store.collection_rec(coll.rec, coll.pos) {
+-        0 => 0,
+-        tree => rt::rtree_bytes(store, tree),
+-    }
+-}
+-
+ /// Number of element records. Reads the tree's cached length word (O(1)).
+ #[must_use]
+ pub fn count(coll: &DbRef, stores: &[Store]) -> u32 {

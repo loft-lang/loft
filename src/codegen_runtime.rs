@@ -1586,6 +1586,18 @@ pub fn trie_len(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
     crate::trie_db::count(coll, stores)
 }
 
+/// `size` of a spatial index: its tree's node array, room included.
+#[must_use]
+pub fn spatial_bytes(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+    crate::radix_db::table_bytes(coll, stores)
+}
+
+/// `size` of a trie: its tree's node array, room included.
+#[must_use]
+pub fn trie_bytes(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+    crate::trie_db::table_bytes(coll, stores)
+}
+
 /// Pack a (current-position, finish) pair into a single i64 iterator state.
 /// High 32 bits = finish; low 32 bits = cur.
 /// `finish == u32::MAX` signals that iteration is complete.
