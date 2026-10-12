@@ -234,7 +234,7 @@ nothing — the outcome the feature exists to prevent (loft#1263).
 exit-code check cannot tell production mode from a halt. What separates them is whether the
 statements AFTER the fault ran, and whether a record reached the log.
 
-In production mode the hidden return value from the fatal/error log call is `Value::Null` so that the IR position after the call is reachable.  The existing `OpPanic`-based inline implementation of `assert` (in `parse_call`) must be replaced with a native function call that checks the production flag at runtime.
+In production mode the hidden return value from the fatal/error log call is `Value::Null` so that the IR position after the call is reachable.  `assert` is a native function call that checks the production flag at runtime.
 
 The production flag is stored on the `Logger` (and thus on `Stores`).  It is read by `n_panic` and `n_assert` to decide whether to `panic!` or log.
 
@@ -262,7 +262,7 @@ Value::Call(n_panic_d_nr, [
 
 User writes: `assert(x > 0, "x must be positive")` at `src/compute.loft:200`.
 
-Currently the parser rewrites `assert(test, msg)` → `if !test { OpPanic(msg) }` (an inline operator).  In the new design the parser instead emits a native call:
+The parser emits a native call, which can carry the location an inline operator could not:
 
 ```
 Value::Call(n_assert_d_nr, [
@@ -393,9 +393,7 @@ fn n_log_fatal(stores: &mut Stores, stack: &mut DbRef) { … }
 
 Extend the `if name == "assert"` block to emit a native `n_assert` call with injected location.  Add parallel handling for `panic`, `log_info`, `log_warn`, `log_error`, `log_fatal`.
 
-The current `assert` implementation uses `OpPanic` (an inline operator) which cannot carry runtime information.  The new implementation drops `OpPanic` from the `assert` path and instead emits `Value::Call(n_assert_d_nr, args_with_location)`.
-
-`OpPanic` is still used directly by the compiler for internal fatal conditions (e.g. null dereference guards); it is not removed.
+`assert` emits `Value::Call(n_assert_d_nr, args_with_location)`.  There is no `OpPanic` operator: `assert` and `panic` are both native calls.
 
 ```rust
 fn parse_call(&mut self, val: &mut Value, source: u16, name: &str) -> Type {
@@ -454,8 +452,6 @@ pub fn log_warn(message: text);
 pub fn log_error(message: text);
 pub fn log_fatal(message: text);
 ```
-
-The `#rust` declarations of `OpPanic` remain (used internally for null checks, etc.).
 
 ### Changes to `src/main.rs`
 

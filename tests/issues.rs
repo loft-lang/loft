@@ -2872,7 +2872,7 @@ fn test() {
 // The capturing-closure-in-struct-field surface that was previously
 // rejected at parse time is now backed by `Parts::ChildRec(closure_kt)`
 // — a 4B u32 rec-id that points at a closure record co-located in
-// host's Store.  `OpClaimChildRec` writes; `OpRefFromChildRec` reads;
+// host's Store.  `OpChildRec` builds it in place; `OpRefFromChildRec` reads;
 // the cascade in `copy_claims` / `remove_claims` handles deep-copy and
 // free automatically when the host moves cross-store or is freed.
 

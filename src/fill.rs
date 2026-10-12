@@ -151,8 +151,6 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     format_text::<false>,
     format_stack_text::<false>,
     append_character::<false>,
-    text_compare::<false>,
-    cast_character_from_int::<false>,
     conv_int_from_character::<false>,
     var_enum::<false>,
     const_enum::<false>,
@@ -235,12 +233,10 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     push_enum::<false>,
     push_character::<false>,
     push_byte::<false>,
-    claim_child_rec::<false>,
     ref_from_child_rec::<false>,
     child_rec::<false>,
     get_record::<false>,
     hash_add::<false>,
-    hash_find::<false>,
     length_hash::<false>,
     eq_bool::<false>,
     ne_bool::<false>,
@@ -329,13 +325,11 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     insert_vector::<false>,
     adopt_vector::<false>,
     replace_vector::<false>,
-    validate::<false>,
     hash_remove::<false>,
     reserve_hash::<false>,
     size_hash::<false>,
     length_index::<false>,
     size_index::<false>,
-    panic::<false>,
     print::<false>,
     remove::<false>,
     clear::<false>,
@@ -505,8 +499,6 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     format_text::<true>,
     format_stack_text::<true>,
     append_character::<true>,
-    text_compare::<true>,
-    cast_character_from_int::<true>,
     conv_int_from_character::<true>,
     var_enum::<true>,
     const_enum::<true>,
@@ -589,12 +581,10 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     push_enum::<true>,
     push_character::<true>,
     push_byte::<true>,
-    claim_child_rec::<true>,
     ref_from_child_rec::<true>,
     child_rec::<true>,
     get_record::<true>,
     hash_add::<true>,
-    hash_find::<true>,
     length_hash::<true>,
     eq_bool::<true>,
     ne_bool::<true>,
@@ -683,13 +673,11 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     insert_vector::<true>,
     adopt_vector::<true>,
     replace_vector::<true>,
-    validate::<true>,
     hash_remove::<true>,
     reserve_hash::<true>,
     size_hash::<true>,
     length_index::<true>,
     size_index::<true>,
-    panic::<true>,
     print::<true>,
     remove::<true>,
     clear::<true>,
@@ -859,8 +847,6 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     format_text_r,
     format_stack_text_r,
     append_character_r,
-    text_compare_r,
-    cast_character_from_int_r,
     conv_int_from_character_r,
     var_enum_r,
     const_enum_r,
@@ -943,12 +929,10 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     push_enum_r,
     push_character_r,
     push_byte_r,
-    claim_child_rec_r,
     ref_from_child_rec_r,
     child_rec_r,
     get_record_r,
     hash_add_r,
-    hash_find_r,
     length_hash_r,
     eq_bool_r,
     ne_bool_r,
@@ -1037,13 +1021,11 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     insert_vector_r,
     adopt_vector_r,
     replace_vector_r,
-    validate_r,
     hash_remove_r,
     reserve_hash_r,
     size_hash_r,
     length_index_r,
     size_index_r,
-    panic_r,
     print_r,
     remove_r,
     clear_r,
@@ -1213,8 +1195,6 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpFormatText",
     "OpFormatStackText",
     "OpAppendCharacter",
-    "OpTextCompare",
-    "OpCastCharacterFromInt",
     "OpConvIntFromCharacter",
     "OpVarEnum",
     "OpConstEnum",
@@ -1297,12 +1277,10 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpPushEnum",
     "OpPushCharacter",
     "OpPushByte",
-    "OpClaimChildRec",
     "OpRefFromChildRec",
     "OpChildRec",
     "OpGetRecord",
     "OpHashAdd",
-    "OpHashFind",
     "OpLengthHash",
     "OpEqBool",
     "OpNeBool",
@@ -1391,13 +1369,11 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpInsertVector",
     "OpAdoptVector",
     "OpReplaceVector",
-    "OpValidate",
     "OpHashRemove",
     "OpReserveHash",
     "OpSizeHash",
     "OpLengthIndex",
     "OpSizeIndex",
-    "OpPanic",
     "OpPrint",
     "OpRemove",
     "OpClear",
@@ -1447,7 +1423,7 @@ pub const OPERATOR_NAMES: &[&str] = &[
 pub const OP_HOT: u16 = 36;
 /// How many operators are neither `#hot` nor `#cold` (the slots after the hot ones); the
 /// `#cold` operators follow them, into the two-byte opcodes.
-pub const OP_NORMAL: u16 = 223;
+pub const OP_NORMAL: u16 = 219;
 
 #[inline(always)]
 fn goto<const F: bool>(s: &mut State) {
@@ -3682,35 +3658,6 @@ fn append_character_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn text_compare<const F: bool>(s: &mut State) {
-    s.text_compare();
-}
-
-fn text_compare_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    text_compare::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
-fn cast_character_from_int<const F: bool>(s: &mut State) {
-    let v_v1 = s.get_stack_m::<F, i32>();
-    let new_value = if let Some(c) = char::from_u32(v_v1 as u32) {
-        c
-    } else {
-        s.raise_recoverable(crate::runtime_error::RuntimeErrorKind::CastOutOfRange);
-        char::from(0)
-    };
-    s.put_stack_m::<F, _>(new_value);
-}
-
-fn cast_character_from_int_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    cast_character_from_int::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn conv_int_from_character<const F: bool>(s: &mut State) {
     let v_v1 = char::from_u32(s.get_stack_m::<F, u32>()).unwrap_or('\0');
     let new_value = if v_v1 == char::from(0) {
@@ -5601,21 +5548,6 @@ fn replace_vector_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn claim_child_rec<const F: bool>(s: &mut State) {
-    let operands = s.operands(2);
-    let v_tp = operands.get::<u16>(0);
-    let v_src = s.get_stack_m::<F, DbRef>();
-    let v_field = s.get_stack_m::<F, DbRef>();
-    s.database.claim_child_rec(&v_field, &v_src, v_tp);
-}
-
-fn claim_child_rec_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    claim_child_rec::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn ref_from_child_rec<const F: bool>(s: &mut State) {
     let v_field = s.get_stack_m::<F, DbRef>();
     let new_value = s.database.ref_from_child_rec(&v_field);
@@ -5655,17 +5587,6 @@ fn get_record_r(s: &mut State, r: Regs) -> Regs {
 }
 
 #[inline(always)]
-fn validate<const F: bool>(s: &mut State) {
-    s.validate();
-}
-
-fn validate_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    validate::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
 fn hash_add<const F: bool>(s: &mut State) {
     s.hash_add();
 }
@@ -5673,17 +5594,6 @@ fn hash_add<const F: bool>(s: &mut State) {
 fn hash_add_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     hash_add::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
-fn hash_find<const F: bool>(s: &mut State) {
-    s.hash_find();
-}
-
-fn hash_find_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    hash_find::<true>(s);
     s.regs_out()
 }
 
@@ -5790,18 +5700,6 @@ fn ne_bool<const F: bool>(s: &mut State) {
 fn ne_bool_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     ne_bool::<true>(s);
-    s.regs_out()
-}
-
-#[inline(always)]
-fn panic<const F: bool>(s: &mut State) {
-    let v_message = s.string();
-    panic!("{}", v_message.str());
-}
-
-fn panic_r(s: &mut State, r: Regs) -> Regs {
-    s.regs_in(r);
-    panic::<true>(s);
     s.regs_out()
 }
 

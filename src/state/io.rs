@@ -2130,24 +2130,6 @@ impl State {
         );
     }
 
-    pub fn validate(&mut self) {
-        let tp = self.code::<u16>();
-        let data = self.get_stack::<DbRef>();
-        self.database.validate(&data, tp);
-    }
-
-    pub fn hash_find(&mut self) {
-        let data = self.get_stack::<DbRef>();
-        let (db_tp, key) = self.read_key(true);
-        let res = hash::find(
-            &data,
-            &self.database.allocations,
-            &self.database.types[db_tp as usize].keys,
-            &key,
-        );
-        self.put_stack(res);
-    }
-
     /// Remove one record from a keyed collection.
     ///
     /// `tp`'s [`CLEAR_KEYED_VIEW`] bit says UNLINK ONLY — the same convention

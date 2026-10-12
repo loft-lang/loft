@@ -414,42 +414,6 @@ impl Stores {
     }
 
     /**
-    Validate the structure in any way possible.
-    What is still open to validate:
-    - individual allocations inside store size
-    - length of vector/sorted/array/ordered stays within allocation
-    - when called fully; but allow for single vector:
-      - allocations linked together correctly (linked from previous and to next)
-      - open space validation
-      - references of array/ordered/separate to correct allocations
-    # Panics
-    When the structure is not correct
-    */
-    pub fn validate(&mut self, data: &DbRef, db: u16) {
-        match self.types[db as usize].parts.clone() {
-            Parts::Hash(_, _) => {
-                hash::validate(data, &self.allocations, &self.types[db as usize].keys);
-            }
-            Parts::Index(_, _) => {
-                btree::validate(data, &self.allocations, &self.types[db as usize].keys);
-            }
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                for f in fields {
-                    self.validate(
-                        &DbRef {
-                            store_nr: data.store_nr,
-                            rec: data.rec,
-                            pos: data.pos + u32::from(f.position),
-                        },
-                        f.content,
-                    );
-                }
-            }
-            _ => (),
-        }
-    }
-
-    /**
     Get the next record given a specific point in a structure.
     # Panics
     When not in a valid structure

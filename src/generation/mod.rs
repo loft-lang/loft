@@ -10310,10 +10310,9 @@ extern crate loft;"
         // native + interp agree on layout.  Without this, native
         // computes the closure record's auto-Reference field as
         // inline-bytes (size = inner struct's size) but interp writes
-        // 12-byte DbRef bytes — the resulting size mismatch causes
-        // `claim_child_rec`'s byte-copy to truncate at native's
-        // smaller size and the lambda body reads garbage instead of
-        // the captured DbRef.
+        // 12-byte DbRef bytes — the resulting size mismatch leaves the
+        // child record at native's smaller size and the lambda body
+        // reads garbage instead of the captured DbRef.
         //
         // #682: mirror the ADOPTED / BORROWED split too.  Both shapes are 12
         // bytes, so getting it wrong costs no layout mismatch — it silently
