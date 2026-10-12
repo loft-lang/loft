@@ -36,8 +36,10 @@ pub enum LexItem {
     /// same number.
     Float(f64, bool),
     Single(f32),
-    /// Can be both a keyword and one or more position tokens.
-    Token(String),
+    /// Can be both a keyword and one or more position tokens.  Its text is the lexicon's
+    /// own ([`LexConfig`]): a token is one of a fixed set, so it names its spelling and
+    /// owns nothing.
+    Token(&'static str),
     /// A still unknown identifier.
     Identifier(String),
     /// A constant string: was presented as "content" with possibly escaped tokens inside.
@@ -402,16 +404,16 @@ pub struct Lexer {
     /// injects into `assert`.  Restoring it at the next freshly scanned token bounds a
     /// missing restore to the one diagnostic it was made for.
     seek_return: Option<(u32, u32)>,
-    tokens: HashSet<String>,
-    /// [`token_tables`] of `tokens`: which ASCII characters are a token alone, and which
-    /// begin a two-character token — so a punctuation character costs an index, not a
-    /// `HashSet<String>` lookup, and the two-character lookup runs only where one can match.
-    tok1: [bool; 128],
+    tokens: HashSet<&'static str>,
+    /// [`token_tables`] of `tokens`: the token an ASCII character is alone, and which
+    /// characters begin a two-character token — so a punctuation character costs an index,
+    /// not a set lookup, and the two-character lookup runs only where one can match.
+    tok1: [Option<&'static str>; 128],
     tok2: [bool; 128],
-    keywords: HashSet<String>,
+    keywords: HashSet<&'static str>,
     /// The comment marker (from it to end-of-line is skipped); loft `//`.  See
     /// [`LexConfig`].
-    comment: String,
+    comment: &'static str,
     /// Whether `"…"` literals interpret `{…}` as interpolation (loft) or as literal
     /// braces (configs).  See [`LexConfig::interpolate_strings`].
     interpolate_strings: bool,
@@ -554,11 +556,11 @@ pub fn is_keyword(word: &str) -> bool {
 pub struct LexConfig {
     /// Tokens/operators recognised — single- AND multi-character (both are matched
     /// against this set).  MUST contain `comment`.
-    pub tokens: HashSet<String>,
+    pub tokens: HashSet<&'static str>,
     /// Bare identifiers promoted to keywords.
-    pub keywords: HashSet<String>,
+    pub keywords: HashSet<&'static str>,
     /// The comment marker: from it to end-of-line is skipped (loft `//`, TOML `#`).
-    pub comment: String,
+    pub comment: &'static str,
     /// When true (loft), a lone `{` in a `"…"` literal opens a `{expr}` format slot;
     /// when false (configs), `{` / `}` are literal string content.
     pub interpolate_strings: bool,
@@ -575,9 +577,9 @@ impl Default for LexConfig {
     /// `{…}` string interpolation.
     fn default() -> Self {
         LexConfig {
-            tokens: TOKENS.iter().map(|s| (*s).to_string()).collect(),
-            keywords: KEYWORDS.iter().map(|s| (*s).to_string()).collect(),
-            comment: "//".to_string(),
+            tokens: TOKENS.iter().copied().collect(),
+            keywords: KEYWORDS.iter().copied().collect(),
+            comment: "//",
             interpolate_strings: true,
             json_strings: false,
         }
@@ -589,13 +591,13 @@ impl LexConfig {
     /// `comment` marker, no keywords, and NO string interpolation (`{ }` are
     /// literal).  `comment` is added to `tokens` automatically so it lexes.
     #[must_use]
-    pub fn config(tokens: &[&str], comment: &str) -> Self {
-        let mut tokens: HashSet<String> = tokens.iter().map(|s| (*s).to_string()).collect();
-        tokens.insert(comment.to_string());
+    pub fn config(tokens: &[&'static str], comment: &'static str) -> Self {
+        let mut tokens: HashSet<&'static str> = tokens.iter().copied().collect();
+        tokens.insert(comment);
         LexConfig {
             tokens,
             keywords: HashSet::default(),
-            comment: comment.to_string(),
+            comment,
             interpolate_strings: false,
             json_strings: false,
         }
@@ -614,14 +616,13 @@ impl LexConfig {
         // parser raw-scans the full dotted identifier and skips past these tokens.
         // (Fractional numbers like `1.5` are still read as a single number token
         // before the `.` token rule applies.)
-        let tokens: HashSet<String> = ["{", "}", "[", "]", ":", ",", "-", "."]
-            .iter()
-            .map(|s| (*s).to_string())
+        let tokens: HashSet<&'static str> = ["{", "}", "[", "]", ":", ",", "-", "."]
+            .into_iter()
             .collect();
         LexConfig {
             tokens,
             keywords: HashSet::default(),
-            comment: String::new(),
+            comment: "",
             interpolate_strings: false,
             json_strings: true,
         }
@@ -944,31 +945,30 @@ impl Lexer {
                 }
                 ' ' | '\t' => {
                     self.next_char();
-                    LexResult::new(LexItem::Token(" ".to_string()), pos)
+                    LexResult::new(LexItem::Token(" "), pos)
                 }
                 _ => {
-                    // Both candidates are spelled in a stack buffer and only the token that
-                    // is returned is allocated: this runs per operator character, and the
-                    // two-character candidate is usually not a token (@PLN166).
+                    // Both candidates are spelled in a stack buffer and looked up: the token
+                    // returned is the lexicon's own text, so nothing is allocated.  This runs
+                    // per operator character, and the two-character candidate is usually
+                    // not a token (@PLN166).
                     let mut spelled = [0u8; 8];
                     let one = c.len_utf8();
                     c.encode_utf8(&mut spelled);
-                    let single = std::str::from_utf8(&spelled[..one]).unwrap_or_default();
-                    let is_token = if c.is_ascii() {
+                    let found = if c.is_ascii() {
                         self.tok1[c as usize]
                     } else {
-                        self.tokens.contains(single)
+                        let single = std::str::from_utf8(&spelled[..one]).unwrap_or_default();
+                        self.tokens.get(single).copied()
                     };
-                    if is_token {
-                        let single = single.to_string();
+                    if let Some(single) = found {
                         self.next_char();
                         let may_pair = !c.is_ascii() || self.tok2[c as usize];
                         if let Some(&d) = self.iter.peek() {
                             d.encode_utf8(&mut spelled[one..]);
                             let double = std::str::from_utf8(&spelled[..one + d.len_utf8()])
                                 .unwrap_or_default();
-                            if may_pair && self.tokens.contains(double) {
-                                let double = double.to_string();
+                            if may_pair && let Some(&double) = self.tokens.get(double) {
                                 self.next_char();
                                 LexResult::new(LexItem::Token(double), pos)
                             } else if self.mode == Mode::Formatting && single == "}" {
@@ -1010,8 +1010,8 @@ impl Lexer {
                             self.err(Level::Error, &format!("Unexpected character {c:?}"));
                             self.next_char();
                             Lexer::none()
-                        } else if self.keywords.contains(&ident) {
-                            LexResult::new(LexItem::Token(ident), pos)
+                        } else if let Some(&keyword) = self.keywords.get(ident.as_str()) {
+                            LexResult::new(LexItem::Token(keyword), pos)
                         } else {
                             LexResult::new(LexItem::Identifier(ident), pos)
                         }
@@ -2135,13 +2135,13 @@ impl Lexer {
         // access), the current number is a tuple/struct field index —
         // never a float.  `n.v.0.0` must lex as `n`, `.`, `v`, `.`,
         // `0`, `.`, `0` instead of `n`, `.`, `v`, `.`, `0.0`.
-        let prev_was_field_dot = matches!(&self.peek.has, LexItem::Token(t) if t == ".");
+        let prev_was_field_dot = matches!(&self.peek.has, LexItem::Token(t) if *t == ".");
         if let Some('.') = self.iter.peek() {
             self.next_char();
             if let Some('.') = self.iter.peek() {
                 self.next_char();
                 self.link = self.memory.len();
-                self.queue(LexResult::new(LexItem::Token("..".to_string()), pos));
+                self.queue(LexResult::new(LexItem::Token(".."), pos));
                 // Through `ret_number`, NOT a bare `u32` parse (loft#1559).  This
                 // short-circuit is taken when a number is followed by `..`, and parsing it
                 // as `u32` skipped the width split every other integer literal goes
@@ -2184,10 +2184,7 @@ impl Lexer {
                 // the following token (digit, identifier, or whatever)
                 // re-lexes fresh.
                 self.link = self.memory.len();
-                self.queue(LexResult::new(
-                    LexItem::Token(".".to_string()),
-                    self.position,
-                ));
+                self.queue(LexResult::new(LexItem::Token("."), self.position));
                 // Through `ret_number` for the same reason as the `..` site above: one
                 // home for what an integer literal's token is.  A tuple index this large is
                 // out of range for every tuple, and the three projection sites read it with
@@ -2652,7 +2649,7 @@ impl Lexer {
         // Compared in place: an operator parse asks this six to eight times per operator,
         // and building a `String` to compare against was 684 206 allocations on a compile
         // of the 12 826-line front-end corpus (@PLN166 B4).
-        matches!(&self.peek.has, LexItem::Token(t) if t == token)
+        matches!(&self.peek.has, LexItem::Token(t) if *t == token)
     }
 
     fn end(&mut self) {
@@ -2999,12 +2996,11 @@ impl Lexer {
         if self.peek_token(">") {
             self.cont();
             true
-        } else if let LexItem::Token(ref t) = self.peek.has
+        } else if let LexItem::Token(t) = self.peek.has
             && t.starts_with('>')
             && t.len() > 1
         {
-            let rest = t[1..].to_string();
-            self.peek.has = LexItem::Token(rest);
+            self.peek.has = LexItem::Token(&t[1..]);
             true
         } else {
             false
@@ -3165,12 +3161,12 @@ impl Lexer {
     }
 }
 
-/// The ASCII halves of a token set: which characters are a token on their own, and which
-/// begin a two-character token.  A character outside ASCII is asked of the set itself.
-fn token_tables(tokens: &HashSet<String>) -> ([bool; 128], [bool; 128]) {
-    let mut one = [false; 128];
+/// The ASCII halves of a token set: the token each character is on its own, and which
+/// characters begin a two-character token.  A character outside ASCII is asked of the set itself.
+fn token_tables(tokens: &HashSet<&'static str>) -> ([Option<&'static str>; 128], [bool; 128]) {
+    let mut one = [None; 128];
     let mut two = [false; 128];
-    for t in tokens {
+    for &t in tokens {
         let mut cs = t.chars();
         let (Some(a), second, None) = (cs.next(), cs.next(), cs.next()) else {
             continue;
@@ -3179,7 +3175,7 @@ fn token_tables(tokens: &HashSet<String>) -> ([bool; 128], [bool; 128]) {
             if second.is_some() {
                 two[a as usize] = true;
             } else {
-                one[a as usize] = true;
+                one[a as usize] = Some(t);
             }
         }
     }
@@ -3333,7 +3329,7 @@ mod test {
                     panic!("Cannot parse {s}");
                 }
             } else if KEYWORDS.contains(s) || TOKENS.contains(s) {
-                data.push(LexItem::Token((*s).to_string()));
+                data.push(LexItem::Token(s));
             } else {
                 data.push(LexItem::Identifier((*s).to_string()));
             }
@@ -3375,7 +3371,7 @@ mod test {
             "1..4",
             &[
                 LexItem::Integer(1, false),
-                LexItem::Token("..".to_string()),
+                LexItem::Token(".."),
                 LexItem::Integer(4, false),
             ],
         );
@@ -3414,11 +3410,11 @@ mod test {
             "n.v.0.0",
             &[
                 LexItem::Identifier("n".to_string()),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Identifier("v".to_string()),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(0, true),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(0, true),
             ],
         );
@@ -3428,7 +3424,7 @@ mod test {
             "x = 0.0",
             &[
                 LexItem::Identifier("x".to_string()),
-                LexItem::Token("=".to_string()),
+                LexItem::Token("="),
                 LexItem::Float(0.0, true),
             ],
         );
@@ -3437,9 +3433,9 @@ mod test {
             "1.5 + p.0",
             &[
                 LexItem::Float(1.5, false),
-                LexItem::Token("+".to_string()),
+                LexItem::Token("+"),
                 LexItem::Identifier("p".to_string()),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(0, true),
             ],
         );
@@ -3448,11 +3444,11 @@ mod test {
             "t.1.2.3",
             &[
                 LexItem::Identifier("t".to_string()),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(1, false),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(2, false),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(3, false),
             ],
         );
@@ -3462,7 +3458,7 @@ mod test {
             "0..5",
             &[
                 LexItem::Integer(0, true),
-                LexItem::Token("..".to_string()),
+                LexItem::Token(".."),
                 LexItem::Integer(5, false),
             ],
         );
@@ -3482,9 +3478,9 @@ mod test {
             "r.0.x",
             &[
                 LexItem::Identifier("r".to_string()),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(0, true),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Identifier("x".to_string()),
             ],
         );
@@ -3493,9 +3489,9 @@ mod test {
             "p.1.field",
             &[
                 LexItem::Identifier("p".to_string()),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Integer(1, false),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Identifier("field".to_string()),
             ],
         );
@@ -3509,7 +3505,7 @@ mod test {
             "123.a",
             &[
                 LexItem::Integer(123, false),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Identifier("a".to_string()),
             ],
         );
@@ -3517,7 +3513,7 @@ mod test {
             "5._x",
             &[
                 LexItem::Integer(5, false),
-                LexItem::Token(".".to_string()),
+                LexItem::Token("."),
                 LexItem::Identifier("_x".to_string()),
             ],
         );
@@ -3553,7 +3549,7 @@ mod test {
     fn test_links() {
         let mut lex = Lexer::from_str("{num:1 + a*(2.0e2+= b )", "test_links");
         assert_eq!(lex.count_links(), 0);
-        assert_eq!(lex.peek().has, LexItem::Token(String::from("{")));
+        assert_eq!(lex.peek().has, LexItem::Token("{"));
         {
             lex.cont();
             test_id(&lex, "num");
@@ -3572,7 +3568,7 @@ mod test {
         test_id(&lex, "num");
         lex.cont();
         links(&lex, 0);
-        assert_eq!(lex.peek().has, LexItem::Token(":".to_string()));
+        assert_eq!(lex.peek().has, LexItem::Token(":"));
         lex.mode = Mode::Code;
         assert!(lex.has_token(":"));
         if let Some(n) = lex.has_integer() {
@@ -3621,11 +3617,11 @@ mod test {
         // The replay must be what was READ, number included.
         assert_eq!(lex.peek().has, LexItem::Identifier("i".into()));
         lex.cont();
-        assert_eq!(lex.peek().has, LexItem::Token("+".into()));
+        assert_eq!(lex.peek().has, LexItem::Token("+"));
         lex.cont();
         assert_eq!(lex.peek().has, LexItem::Integer(1, false));
         lex.cont();
-        assert_eq!(lex.peek().has, LexItem::Token("..".into()));
+        assert_eq!(lex.peek().has, LexItem::Token(".."));
         lex.cont();
         assert_eq!(lex.peek().has, LexItem::Integer(4, false));
     }
@@ -3644,9 +3640,9 @@ mod test {
         lex.revert(l);
         assert_eq!(lex.peek().has, LexItem::Integer(2, false));
         lex.cont();
-        assert_eq!(lex.peek().has, LexItem::Token("..".into()));
+        assert_eq!(lex.peek().has, LexItem::Token(".."));
         lex.cont();
-        assert_eq!(lex.peek().has, LexItem::Token("=".into()));
+        assert_eq!(lex.peek().has, LexItem::Token("="));
         lex.cont();
         assert_eq!(lex.peek().has, LexItem::Integer(5, false));
     }
@@ -3722,7 +3718,7 @@ mod test {
             &[
                 LexItem::CString("ab".to_string()),
                 LexItem::Identifier("c".to_string()),
-                LexItem::Token(":".to_string()),
+                LexItem::Token(":"),
                 LexItem::Identifier("d".to_string()),
                 LexItem::CString("ef".to_string()),
             ],

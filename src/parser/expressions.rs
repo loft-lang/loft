@@ -1303,15 +1303,15 @@ impl Parser {
         loop {
             match &self.lexer.peek().has {
                 LexItem::None => return,
-                LexItem::Token(t) if depth == 0 && !first && t == "{" => return,
-                LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => depth += 1,
-                LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                LexItem::Token(t) if depth == 0 && !first && *t == "{" => return,
+                LexItem::Token(t) if matches!(*t, "(" | "[" | "{") => depth += 1,
+                LexItem::Token(t) if matches!(*t, ")" | "]" | "}") => {
                     if depth == 0 {
                         return;
                     }
                     depth -= 1;
                 }
-                LexItem::Token(t) if depth == 0 && matches!(t.as_str(), ";" | ",") => return,
+                LexItem::Token(t) if depth == 0 && matches!(*t, ";" | ",") => return,
                 _ => {}
             }
             first = false;

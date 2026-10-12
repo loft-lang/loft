@@ -19524,9 +19524,8 @@ impl Parser {
                 );
             } else {
                 let token = match &res.has {
-                    crate::lexer::LexItem::Token(s) | crate::lexer::LexItem::Identifier(s) => {
-                        format!("'{s}'")
-                    }
+                    crate::lexer::LexItem::Token(s) => format!("'{s}'"),
+                    crate::lexer::LexItem::Identifier(s) => format!("'{s}'"),
                     crate::lexer::LexItem::CString(s) => format!("\"{s}\""),
                     other => format!("{other:?}"),
                 };

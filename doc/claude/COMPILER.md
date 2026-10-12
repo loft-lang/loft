@@ -76,7 +76,7 @@ pub enum LexItem {
     Long(u64),
     Float(f64),
     Single(f32),
-    Token(String),       // keyword or punctuation
+    Token(&'static str), // keyword or punctuation: the lexicon's own text, nothing owned
     Identifier(String),  // any non-keyword identifier
     CString(String),     // string literal content up to next { or "
     Character(u32),      // 'x' character constant

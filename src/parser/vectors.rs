@@ -3516,11 +3516,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         loop {
             match &self.lexer.peek().has {
                 crate::lexer::LexItem::None => break,
-                crate::lexer::LexItem::Token(t) if depth == 0 && t == "]" => break,
-                crate::lexer::LexItem::Token(t) if matches!(t.as_str(), "(" | "[" | "{") => {
+                crate::lexer::LexItem::Token(t) if depth == 0 && *t == "]" => break,
+                crate::lexer::LexItem::Token(t) if matches!(*t, "(" | "[" | "{") => {
                     depth += 1;
                 }
-                crate::lexer::LexItem::Token(t) if matches!(t.as_str(), ")" | "]" | "}") => {
+                crate::lexer::LexItem::Token(t) if matches!(*t, ")" | "]" | "}") => {
                     depth -= 1;
                 }
                 _ => {}
