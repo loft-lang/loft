@@ -337,6 +337,10 @@ struct Probe<'a> {
     /// The first key value as bytes, for a text index: a node with a shared prefix compares
     /// the probe's own prefix first and takes its part past it.
     text: Option<Str>,
+    /// The text's first `MAX_SKIP + 8` bytes, zero-padded, and its length: what that
+    /// comparison and that part read, as whole words.
+    head: [u8; MAX_SKIP + 8],
+    len: usize,
     /// A tie of parts is equality: a one-value key on a field that is not text.
     exact: bool,
     by: By<'a>,
@@ -353,9 +357,12 @@ impl<'a> Probe<'a> {
         let text = is_text(keys).then(|| {
             Str::new(store.get_str(store.get_u32_raw(rec, 8 + u32::from(keys[0].position))))
         });
+        let (head, len) = head_of(text.as_ref());
         Probe {
             part: Some(record_part(store, rec, &keys[0])),
             text,
+            head,
+            len,
             exact: keys.len() == 1 && keys[0].type_nr.abs() != 6,
             by: By::Rec(rec),
             store_nr,
@@ -368,9 +375,12 @@ impl<'a> Probe<'a> {
             Some(Content::Str(s)) if is_text(keys) => Some(s.clone()),
             _ => None,
         };
+        let (head, len) = head_of(text.as_ref());
         Probe {
             part,
             text,
+            head,
+            len,
             exact: part.is_some() && key.len() == 1 && keys[0].type_nr.abs() != 6,
             by: By::Key(key),
             store_nr,
@@ -498,7 +508,7 @@ fn stop_at(
     let c = arena.count(store, n);
     let (mut lo, mut hi) = (from, c);
     let mut part = probe.part;
-    if probe.text.is_some() && part.is_some() {
+    if probe.text.is_some() && part.is_some() && arena.get16(store, n, N_SKIP) != 0 {
         match text_order(arena, store, n, probe, keys) {
             TextOrder::Whole => {}
             TextOrder::Part(v) => part = Some(v),
@@ -541,6 +551,30 @@ fn stop_at(
     (lo, equal)
 }
 
+/// A text's first `MAX_SKIP + 8` bytes, zero-padded, and its length.
+fn head_of(text: Option<&Str>) -> ([u8; MAX_SKIP + 8], usize) {
+    let mut head = [0u8; MAX_SKIP + 8];
+    let Some(t) = text else {
+        return (head, 0);
+    };
+    let b = t.str().as_bytes();
+    let n = b.len().min(head.len());
+    head[..n].copy_from_slice(&b[..n]);
+    (head, b.len())
+}
+
+/// Word `k` (eight bytes, big-endian) of `bytes`, keeping only those below `skip`.
+#[inline]
+fn word_below(bytes: &[u8], k: usize, skip: usize) -> u64 {
+    let keep = skip.saturating_sub(8 * k).min(8);
+    let w = u64::from_be_bytes(bytes[8 * k..8 * k + 8].try_into().unwrap_or([0; 8]));
+    if keep == 8 {
+        w
+    } else {
+        w & !(u64::MAX >> (8 * keep))
+    }
+}
+
 /// Where a text probe stands against node `n`'s shared prefix.
 enum TextOrder {
     /// The node keeps no prefix: the probe's whole part orders it.
@@ -559,18 +593,26 @@ enum TextOrder {
 #[inline(never)]
 fn text_order(arena: Arena, store: &Store, n: u32, probe: &Probe, keys: &[Key]) -> TextOrder {
     let (skip, prefix) = arena.prefix(store, n);
-    let Some(t) = &probe.text else {
-        return TextOrder::Whole;
-    };
-    if skip == 0 {
+    if skip == 0 || probe.text.is_none() {
         return TextOrder::Whole;
     }
-    let b = t.str().as_bytes();
-    let head = &b[..b.len().min(skip)];
     let desc = keys[0].type_nr < 0;
-    match head.cmp(&prefix[..head.len()]).then(head.len().cmp(&skip)) {
+    let order = if probe.len >= skip {
+        // Whole words, masked to the prefix: the probe's head is zero-padded past its end,
+        // and it is at least `skip` long here, so the padding never meets the mask.
+        (0..skip.div_ceil(8))
+            .map(|k| word_below(&probe.head, k, skip).cmp(&word_below(&prefix, k, skip)))
+            .find(|o| *o != Ordering::Equal)
+            .unwrap_or(Ordering::Equal)
+    } else {
+        // Shorter than the prefix: below every key if it is a prefix of theirs.
+        let b = &probe.head[..probe.len];
+        b.cmp(&prefix[..probe.len]).then(Ordering::Less)
+    };
+    match order {
         Ordering::Equal => {
-            let v = text_part_at(b, skip);
+            let v = u64::from_be_bytes(probe.head[skip..skip + 8].try_into().unwrap_or([0; 8]));
+            let v = (v ^ (1 << 63)) as i64;
             TextOrder::Part(if desc { !v } else { v })
         }
         o if (o == Ordering::Less) != desc => TextOrder::Below,
@@ -687,16 +729,25 @@ fn fit_text(store: &mut Store, arena: Arena, n: u32, keys: &[Key], force: bool) 
         (cp, a[..cp].to_vec())
     };
     // A prefix pays only where parts TIE — a tie reads records — and costs a check in every
-    // descent through the node.  So a node without one takes one only once its parts tie;
-    // one that keeps one follows its keys' common prefix (which can only have grown, the
-    // keys still sharing the old one); slots moved in from elsewhere take it outright.
+    // descent through the node, and changing it restamps every part.  So a node takes or
+    // lengthens its prefix only once its parts tie at the one it keeps; slots moved in from
+    // elsewhere take the common prefix outright.  (Without a move, the keys still share the
+    // prefix kept, so it never has to shrink here; `place` shrinks it for a key that does not.)
+    // "Tie" means common: a quarter of the slots equal to their neighbour.  One tied pair
+    // costs a descent that lands in it a record read or two; a prefix costs every descent.
     let ties = || {
-        slots
+        let tied = slots
             .clone()
             .skip(1)
-            .any(|i| arena.part(store, n, i) == arena.part(store, n, i - 1))
+            .filter(|&i| arena.part(store, n, i) == arena.part(store, n, i - 1))
+            .count();
+        tied >= 2 && tied * 4 >= slots.len()
     };
-    let skip = if force || old > 0 || ties() { cp } else { 0 };
+    let skip = if force || (old > 0 && cp < old) || ties() {
+        cp
+    } else {
+        old
+    };
     if !force && old == skip && prefix[..skip] == bytes[..skip] {
         return;
     }
@@ -724,7 +775,8 @@ fn place_text(store: &mut Store, arena: Arena, n: u32, i: u32, rec: u32, keys: &
     let (skip, prefix) = arena.prefix(store, n);
     let t = key_text(store, rec, &keys[0]);
     if t.len() >= skip && t[..skip] == prefix[..skip] {
-        let part = part_in(store, rec, keys, skip);
+        let v = text_part_at(t, skip);
+        let part = if keys[0].type_nr < 0 { !v } else { v };
         arena.set_slot(store, n, i, part, rec);
     } else {
         arena.set_slot(store, n, i, 0, rec);
