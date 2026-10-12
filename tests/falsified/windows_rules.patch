@@ -1,8 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index fe6daf4cc..f845febb0 100644
+index 220120b08..570ea271a 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -3038,6 +3038,9 @@ pub fn n_ticks(_cell: &std::cell::UnsafeCell<Stores>) -> i64 {
+@@ -3260,6 +3260,9 @@ pub fn n_ticks(_cell: &std::cell::UnsafeCell<Stores>) -> i64 {
  /// The separator of a loft path, as a loft character (`i32`): `'/'` on every platform
  /// (`@FR-Path-Sep`).  Bytecode equivalent: `n_path_sep` in `src/native.rs`.
  pub fn n_path_sep() -> i32 {
@@ -13,10 +13,10 @@ index fe6daf4cc..f845febb0 100644
  }
  
 diff --git a/src/file_access/mod.rs b/src/file_access/mod.rs
-index dbd70473b..b01f6b496 100644
+index 908128efb..d4dba424a 100644
 --- a/src/file_access/mod.rs
 +++ b/src/file_access/mod.rs
-@@ -366,6 +366,9 @@ pub fn path_refused() -> std::io::Error {
+@@ -680,6 +680,9 @@ pub fn path_refused() -> std::io::Error {
  /// # Errors
  /// The clash, naming both spellings.
  pub fn case_clash(full: &str) -> Result<(), String> {
@@ -26,7 +26,7 @@ index dbd70473b..b01f6b496 100644
      let want = PathText::parse(full, Flavor::program_host());
      // The longest prefix that exists, and the first name below it that does not.
      let mut existing = want.clone();
-@@ -417,7 +420,7 @@ pub fn given(path: &str) -> String {
+@@ -742,7 +745,7 @@ pub fn given(path: &str) -> String {
      if path.is_empty() {
          String::new()
      } else {
@@ -36,10 +36,10 @@ index dbd70473b..b01f6b496 100644
  }
  
 diff --git a/src/file_access/path.rs b/src/file_access/path.rs
-index 64804618d..c65cb8fce 100644
+index ca2f45d3c..ec2f715c3 100644
 --- a/src/file_access/path.rs
 +++ b/src/file_access/path.rs
-@@ -140,7 +140,7 @@ impl PathText {
+@@ -148,7 +148,7 @@ impl PathText {
      /// # Errors
      /// The refused name and why.
      pub fn program_in(raw: &str, flavor: Flavor) -> Result<PathText, String> {
@@ -48,7 +48,7 @@ index 64804618d..c65cb8fce 100644
          // A drive without a root (`a:b.txt`, `C:x`) is Windows's drive-RELATIVE form: it
          // names a place by that drive's hidden current directory.  `:` is allowed only for a
          // drive leading an absolute path.
-@@ -150,7 +150,7 @@ impl PathText {
+@@ -158,7 +158,7 @@ impl PathText {
                  p.prefix
              ));
          }
@@ -58,10 +58,10 @@ index 64804618d..c65cb8fce 100644
                  return Err(why);
              }
 diff --git a/src/native.rs b/src/native.rs
-index 8c98d2f77..36e81d4f7 100644
+index 8b8f403b5..f714c6fbe 100644
 --- a/src/native.rs
 +++ b/src/native.rs
-@@ -3587,7 +3587,7 @@ fn populate_frame_variables(
+@@ -3599,7 +3599,7 @@ fn populate_frame_variables(
  /// The separator of a loft path, as a loft `character`: `'/'` on every platform
  /// (`@FR-Path-Sep`).
  fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
@@ -69,4 +69,4 @@ index 8c98d2f77..36e81d4f7 100644
 +    stores.put(stack, crate::file_access::Flavor::program_host().separator());
  }
  
- /// Return the error text from the last `Type.parse()` call.
+ /// `record#errors`: the errors of the parse that built the record, as a fresh
