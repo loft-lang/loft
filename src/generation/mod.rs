@@ -4128,14 +4128,11 @@ impl Output<'_> {
         Ok(windows)
     }
 
-    /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
-    /// ([`hoist::mint_loop`]): the vector reserved for its trip count times the most mints
-    /// a pass runs, the record-push header re-derived, and — where [`hoist::mint_window_ok`]
-    /// admits the loop — a window opened that every mint group's slot, address and finish
-    /// go through, closed by the caller after every copy of the loop.
     /// `@FR-R-PushFill`'s hash clause: `reserve(h, len(h) + inserts × trip count)` before a
     /// counted loop inserting records into hash `h` ([`hoist::hash_fill_loop`]).  An ABSENT
     /// hash (a discharged receiver, loft#1214's shape) reserves nothing.
+    /// `size(h)` then answers the reserved table (@C150); length, entries and order are the
+    /// plain fill's.
     fn hash_reserve(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
         if self.push_fill_disabled || self.in_coroutine_body || !hash_reserve_enabled() {
             return Ok(());
@@ -4158,6 +4155,11 @@ impl Output<'_> {
         Ok(())
     }
 
+    /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
+    /// ([`hoist::mint_loop`]): the vector reserved for its trip count times the most mints
+    /// a pass runs, the record-push header re-derived, and — where [`hoist::mint_window_ok`]
+    /// admits the loop — a window opened that every mint group's slot, address and finish
+    /// go through, closed by the caller after every copy of the loop.
     fn mint_reserve(
         &mut self,
         w: &mut dyn Write,

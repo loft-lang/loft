@@ -106,3 +106,4 @@ C146	code	src/hash.rs::pub fn home_bucket(digest: u64, count: u32); src/hash.rs:
 C147	code	src/btree.rs; src/placement.rs::the B+tree in `crate::btree`	ok	-	
 C148	code	src/store.rs; src/database/format.rs; src/parser/objects.rs	ok	-	
 C149	code	src/limits.rs::pub const LIMIT: u32 = 300	ok	-	
+C150	code	src/generation/mod.rs::fn hash_reserve(&mut self	ok	-	
