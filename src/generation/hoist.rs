@@ -167,9 +167,10 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
 ];
 
 /// The operators that only COMPARE a reference — its record number, or the whole `DbRef` —
-/// and read no store: a view tested against null (`v != null`) is still the view it was, so a
-/// held address survives them (`@FR-R-RecPtr`).  An allow-list like the one above.
-pub const REF_COMPARE_OPS: [&str; 3] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef"];
+/// and read no store: a view tested against null (`v != null`, or the handle test
+/// `OpRefIsNull`) is still the view it was, so a held address survives them (`@FR-R-RecPtr`).
+/// An allow-list like the one above.
+pub const REF_COMPARE_OPS: [&str; 4] = ["OpEqRef", "OpNeRef", "OpConvBoolFromRef", "OpRefIsNull"];
 
 /// `@FR-R-InPlace`'s copy clause — `OpCopyRecord(src, dst, tp)` with no flag set, over a
 /// record type that owns NO heap: `size(tp)` bytes stored at the address of `dst`, which is
