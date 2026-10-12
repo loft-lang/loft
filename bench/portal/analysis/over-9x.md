@@ -259,6 +259,24 @@ names) per value walked to escape a borrow, and the two passes themselves: a sch
 parse straight into the store layout (one lexer still, @PLN109) is the structural lever that
 removes the `Parsed` tree.
 
+**What the lexer and the parse still pay** (the row alone at `f7f23c5b5`, 7.44×; self time,
+rustc-vs-twin.md § Method notes).  The lexer's own functions are 31 % of the row before
+their allocations, the JSON parser's 17 %, the tree and its walk about 10 %, and `malloc` /
+`free` 24 % shared between them.  None of these is priced.
+
+| lever | what it removes | share of the row |
+|---|---|---|
+| J4 | the text is copied twice before a character is looked at: `Lexer::from_str_with` splits it into a `String` per line, and each line is decoded into a `Vec<char>` the scan walks through a `Peekable`.  A cursor over the text's own bytes copies nothing — and it is the scan every compile runs | `next` 9.9 %, `cont` 9.2 %, the `Vec<char>` 2.5 %, two allocations per line |
+| J5 | the lexer counts characters per line and JSON asks in bytes, so `ByteMapper::byte` maps every token's position back.  With J4 the cursor is the offset | `byte_of` 3.6 % |
+| J6 | a number is scanned twice: the lexer's `get_number` builds a `String` of the digits loft's grammar accepts, `JParser::scan_number` reads the raw bytes again by JSON's grammar, and `advance_past` steps the lexer until it has caught up | `parse_number` 2.4 %, `get_number` 1.9 %, `scan_number` 1.3 % |
+| J7 | a string is scanned twice and copied once more: `Lexer::string` builds it, `json_string_validate` walks the raw bytes again, and `take_string` clones the token's text where it could take it | `string` 7.7 %, `json_string_validate` 2.5 %, the clone 1.4 % |
+| J8 | a `String` allocated per punctuation token (`LexItem::Token(String)`).  The token set is fixed, so a token can name a `&'static str`; the compiler's parser shares the representation, so this is a front-end change with a compile-time win of its own | a part of the 24 % |
+| J9 | the `Parsed` tree itself (decided: no intermediate format — worklist.md § 6): a key matched against the type's field names as it is read, a value written to its field | `walk_parsed_into` 3 %, the found-field set 4 %, the type's field list cloned per value 1.3 %, the tree's drop 1 %, and its part of the 24 % |
+
+J4 carries J5 and makes J6 and J7 cheap to do (a number or a string the parser reads itself
+is skipped by moving the cursor).  J4 and J8 change the lexer every compile runs, so they are
+measured on the front-end allocation pins and the compile benches as well as on this row.
+
 ### dryopea `mapfile_to_painted` — a store per insert
 
 Same algorithm as the twin: per ground entry a palette scan (≤ 16 text compares) and a hash

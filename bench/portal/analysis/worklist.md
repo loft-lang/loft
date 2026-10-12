@@ -112,7 +112,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 7.92 | `flow_layout_full` | S1c, X2, X3 | ≈ 5× (*est.*) |
 | 7.85 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
 | 7.54 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
-| 7.44 | `map_json` | X6 | ≈ 5× parsed into the store by the one lexer; ≈ 3× only with a JSON reader of its own (both *est.*) |
+| 7.44 | `map_json` | X6 | ≈ 3.5–4.5× with the tree gone and the lexer's five levers in (*est.*, none priced) |
 | 7.43 | `panel_build` | S9, X1 | ≈ 5× (*est.*) |
 | 7.18 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
 | 6.93 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
@@ -127,8 +127,8 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.32 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
-Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`), and
-`map_json` only by the wider half of its decision; the others land between 3.6× and 6.9×.
+Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`); the
+others land between 3.5× and 6.9×.
 
 | | step | rows it moves (share of the row) | state | first action |
 |---|---|---|---|---|
@@ -138,7 +138,7 @@ Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
 | X4 | `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | first — `check_request` cannot be profiled with symbols without it; then `(R-DecodeView)` (decided, C141) and S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
-| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between — **a** driven by the one lexer (@PLN109 kept), or **b** by a JSON reader of its own | `map_json` (lexer and parser 46 %, `malloc` / `free` of the tree and its token texts 25 %) | a decision (§ 6); neither half priced | the owner's; nothing is built before it |
+| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4, J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` (the lexer's functions 31 %, the JSON parser's 17 %, the tree and its walk ~10 %, `malloc` / `free` 24 % between them) | decided (§ 6); none of J4–J9 priced | price J4 on the row — it carries J5 and makes J6 and J7 cheap; J4 and J8 are also read on the front-end allocation pins |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
 | X8 | a file's handle and cursor held in locals across a read loop | `binary_read` (the whole row is the emitted loop) | no price; the typed read is built | hand-price |
@@ -151,9 +151,9 @@ Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`
 **Order.**  Three rules, applied in this order: a step another step or a row WAITS on goes
 before it; the slowest row goes first; a step with no price is priced before it is built.
 
-1. **Unblock** — small, and a row waits on each.  X4: `check_request`, the third slowest
-   row, has no profile without it.  X6 put to the owner: `map_json` waits on the answer,
-   and nothing else does.  X11: `fill_polygon` cannot be measured on this box until then.
+1. **Unblock** — small, and a row waits on each (X6's decision is taken, § 6).  X4:
+   `check_request`, the third slowest row, has no profile without it.  X11: `fill_polygon`
+   cannot be measured on this box until then.
 2. **`truncate_to` (8.17×)** — price X1 on `history_push`, build it if the price holds.  It
    also moves `panel_build`, so item 7 is sized on the profile X1 leaves.
 3. **`flow_layout_full` (7.92×)** — build S1c (priced).  Price X2, then build it: the same
@@ -164,7 +164,8 @@ before it; the slowest row goes first; a step with no price is priced before it 
 5. **`field_add_cell` (7.54×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
    move with it.
-6. **`map_json` (7.44×)** — X6, as decided in item 1.
+6. **`map_json` (7.44×)** — X6: price J4, build J4 and J5, then J6–J8, then J9 on the
+   lexer they leave.
 7. **`panel_build` (7.43×)** — size S9 on the row as item 2 left it, then build.
 8. **`arguments/parse` (7.18×)** — X7, on what X2 left of the row.
 9. **`mapfile_to_painted` (6.93×), `reload_and_record` (6.75×)** — X5 d: P3 first, P4 with
@@ -329,16 +330,12 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 - **A checked expression computed once where the program spells it twice**: DECIDED (owner,
   2026-10-11) — an overflow must be reported, not reported as often as it was spelled.
   `(R-SameRead)`'s guard clause (`locate`) rests on it.
-- **`map_json`'s parse** (X6, § 0).  `Map.parse(json)` runs loft's own lexer in JSON mode,
-  builds a `Parsed` tree, and walks the tree into the store; the twin reads bytes and writes
-  its struct in one pass.  Two questions, the second only if the first is yes:
-  1. May `T.parse` write the store as it reads, with no tree?  Everything a program can
-     observe stays: the fields, the defaults of absent ones, the last of a repeated key, and
-     `x#errors` (@C148) — so a document that fails half way must leave what the tree form
-     leaves, which the direct form has to undo or build aside.  Est. ≈ 5× for the row.
-  2. Who reads the bytes: the one lexer (@PLN109 — one set of number and string rules, and
-     its per-character step and a text per token stay, ≈ 23 % of the row), or a JSON reader
-     of its own (est. ≈ 3×, and two readers that must never disagree — what @PLN109 removed).
+- **`map_json`'s parse** (X6, § 0): DECIDED (owner, 2026-10-12) — `T.parse` needs no
+  intermediate format: it writes the store as it reads, and the `Parsed` tree goes.  The
+  one lexer stays the reader (@PLN109) and is made cheaper rather than joined by a second.
+  What a program can observe stays: the fields, the defaults of absent ones, the last of a
+  repeated key, and `x#errors` (@C148) — a document that fails half way leaves what the
+  tree form left.
 - **Keyed store format**: DECIDED and built — a hash's bucket count is a power of two (@C146);
   `index` is a B+tree of key parts and record numbers (@C147).  `sorted`'s random insert stays
   as it is (declined).
