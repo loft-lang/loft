@@ -38,8 +38,9 @@ struct Ops {
     free_ref: u32,
     free_if_distinct: u32,
     copy: u32,
-    /// The ops that write INTO a vector named by their first argument.
-    writes: Vec<u32>,
+    /// The ops that write INTO a vector named by their first argument; `u32::MAX`, which no
+    /// call names, where the stdlib lacks one.
+    writes: [u32; 4],
 }
 
 impl Ops {
@@ -62,9 +63,7 @@ impl Ops {
                 "OpNewRecord",
                 "OpFinishRecord",
             ]
-            .iter()
-            .filter_map(|count| nr(count))
-            .collect(),
+            .map(|count| nr(count).unwrap_or(u32::MAX)),
         })
     }
 }
@@ -108,6 +107,39 @@ fn mint_group(stmts: &[Value], at: usize, ops: &Ops) -> Option<(u16, u16, i32, i
         return None;
     }
     Some((*wit, *val, *tp, ft))
+}
+
+/// The rebind group's SHAPE at `stmts[at..at + 4]` — a mint group, then the append of another
+/// variable into what it minted — as `(witness, local, wrapper type, field type, source)`.
+fn rebind_shape(stmts: &[Value], at: usize, ops: &Ops) -> Option<(u16, u16, i32, i32, u16)> {
+    let (wit, dst, tp, ft) = mint_group(stmts, at, ops)?;
+    let Value::Call(opd, args) = stmts.get(at + 3)?.unspan() else {
+        return None;
+    };
+    if *opd != ops.append || args.len() != 3 || !is_var(&args[0], dst) {
+        return None;
+    }
+    let Value::Var(src) = args[1].unspan() else {
+        return None;
+    };
+    Some((wit, dst, tp, ft, *src))
+}
+
+/// Does any statement list of `code` hold a rebind group's shape?  Almost no function does,
+/// and only one that does pays for the copy of its code [`admit`] reads beside the list it
+/// rewrites.
+fn has_rebind_shape(code: &Value, ops: &Ops) -> bool {
+    let mut found = false;
+    code.walk(&mut |node| {
+        let list: &[Value] = match node {
+            Value::Block(bl) | Value::Loop(bl) => &bl.operators,
+            Value::Insert(list) => list,
+            _ => return,
+        };
+        found = found
+            || (0..list.len().saturating_sub(3)).any(|at| rebind_shape(list, at, ops).is_some());
+    });
+    found
 }
 
 /// How many nodes name `x`: a `Var`, or a `Set` of it.
@@ -156,6 +188,9 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     let Some(ops) = Ops::lookup(data) else {
         return;
     };
+    if !has_rebind_shape(data.def(d_nr).code(), &ops) {
+        return;
+    }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     let whole = code.clone();
     let mut fired = 0usize;
@@ -246,17 +281,7 @@ fn admit(
     d_nr: u32,
     ops: &Ops,
 ) -> Option<Plan> {
-    let (wit, dst, tp, ft) = mint_group(stmts, at, ops)?;
-    let Value::Call(opd, args) = stmts.get(at + 3)?.unspan() else {
-        return None;
-    };
-    if *opd != ops.append || args.len() != 3 || !is_var(&args[0], dst) {
-        return None;
-    }
-    let Value::Var(src) = args[1].unspan() else {
-        return None;
-    };
-    let src = *src;
+    let (wit, dst, tp, ft, src) = rebind_shape(stmts, at, ops)?;
     let vars = data.def(d_nr).variables();
     let trace = |why: &str| {
         if crate::keys::trace_place() {
