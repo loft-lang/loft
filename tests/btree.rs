@@ -24,6 +24,7 @@ enum Shape {
     IntDesc,
     Float,
     Text,
+    TextDesc,
     Compound,
 }
 
@@ -51,7 +52,17 @@ impl Rng {
     }
 }
 
-const PREFIXES: [&str; 5] = ["", "a", "ab", "common_prefix_", "common_prefix_x"];
+/// Text keys share prefixes of every length a node can keep — none, one byte, past eight —
+/// and past the 24 it keeps at most (the URLs), so parts tie beyond the prefix too.
+const PREFIXES: [&str; 7] = [
+    "",
+    "a",
+    "ab",
+    "common_prefix_",
+    "common_prefix_x",
+    "https://www.example.com/index/",
+    "https://www.example.com/index/page/",
+];
 
 struct World {
     stores: Stores,
@@ -84,6 +95,10 @@ impl World {
             Shape::Text => {
                 stores.field(s, "k", stores.name("text"));
                 vec![("k".into(), true)]
+            }
+            Shape::TextDesc => {
+                stores.field(s, "k", stores.name("text"));
+                vec![("k".into(), false)]
             }
             Shape::Compound => {
                 stores.field(s, "cat", stores.name("integer"));
@@ -137,7 +152,7 @@ impl World {
                 1 => Kv::F(0.0),
                 _ => Kv::F((r.below(dom) as i64 - half) as f64 / 4.0),
             },
-            Shape::Text => Kv::T(Self::text(r, dom)),
+            Shape::Text | Shape::TextDesc => Kv::T(Self::text(r, dom)),
             Shape::Compound => Kv::C(r.below(5) as i64, Self::text(r, dom / 5 + 1)),
         }
     }
@@ -447,11 +462,12 @@ fn run(shape: Shape, seed: u64, dom: u64, ops: u32, every: u32, insert_pct: u64)
     assert_eq!(btree::last(&w.bt, &w.stores.allocations), 0);
 }
 
-const SHAPES: [Shape; 5] = [
+const SHAPES: [Shape; 6] = [
     Shape::Int,
     Shape::IntDesc,
     Shape::Float,
     Shape::Text,
+    Shape::TextDesc,
     Shape::Compound,
 ];
 

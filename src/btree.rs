@@ -30,7 +30,7 @@
 //!
 //! No record points at its node (@C145): a removal finds its slot by descending with the
 //! record's own key.
-use crate::keys::{self, Content, DbRef, Key};
+use crate::keys::{self, Content, DbRef, Key, Str};
 use crate::store::Store;
 use std::cmp::Ordering;
 
@@ -44,14 +44,24 @@ const MAX_HEIGHT: usize = 24;
 
 // Node layout, bytes from the node's start.
 const N_COUNT: u32 = 0;
+/// 1 for a leaf, 0 for an internal node, 2 for a freed one (a `u16`).
 const N_LEAF: u32 = 4;
+/// A text index's SHARED PREFIX length (a `u16`): every key in the node starts with these
+/// bytes, kept at `N_PREFIX`, and the node's parts are the eight bytes after them.  0 for
+/// every other key type.  In the header, so a descent learns it from a line it reads anyway.
+const N_SKIP: u32 = 6;
 const N_NEXT: u32 = 8; // the next leaf, or the next free node
 const N_PREV: u32 = 12;
 const N_PART: u32 = 16;
 const N_REC: u32 = N_PART + 8 * FANOUT;
 const N_CHILD: u32 = N_REC + 4 * FANOUT;
+/// The prefix bytes, behind the slots: read only by a node that keeps a prefix, so a scan of
+/// the parts touches the cache lines it did without them.
+const N_PREFIX: u32 = N_CHILD + 4 * FANOUT;
+/// The longest prefix a node keeps; keys sharing more tie on their parts past it.
+const MAX_SKIP: usize = 24;
 /// Bytes per node, a multiple of 8.
-const NODE: u32 = N_CHILD + 4 * FANOUT;
+const NODE: u32 = (N_PREFIX + MAX_SKIP as u32).div_ceil(8) * 8;
 
 // Header fields (node 0).
 const H_ROOT: u32 = 0;
@@ -97,12 +107,20 @@ impl Arena {
         store.write::<u32>(self.0, node_at(n) + f, v);
     }
     #[inline]
+    fn get16(self, store: &Store, n: u32, f: u32) -> u16 {
+        store.read::<u16>(self.0, node_at(n) + f)
+    }
+    #[inline]
+    fn set16(self, store: &mut Store, n: u32, f: u32, v: u16) {
+        store.write::<u16>(self.0, node_at(n) + f, v);
+    }
+    #[inline]
     fn count(self, store: &Store, n: u32) -> u32 {
         self.get(store, n, N_COUNT)
     }
     #[inline]
     fn is_leaf(self, store: &Store, n: u32) -> bool {
-        self.get(store, n, N_LEAF) == 1
+        self.get16(store, n, N_LEAF) == 1
     }
     #[inline]
     fn part(self, store: &Store, n: u32, i: u32) -> i64 {
@@ -191,9 +209,31 @@ impl Arena {
 
     fn init_node(self, store: &mut Store, n: u32, leaf: bool) {
         self.set(store, n, N_COUNT, 0);
-        self.set(store, n, N_LEAF, u32::from(leaf));
+        self.set16(store, n, N_LEAF, u16::from(leaf));
         self.set(store, n, N_NEXT, 0);
         self.set(store, n, N_PREV, 0);
+        self.set16(store, n, N_SKIP, 0);
+    }
+
+    /// The shared prefix of node `n`: its length and its bytes (only the first `skip` mean
+    /// anything).
+    #[inline]
+    fn prefix(self, store: &Store, n: u32) -> (usize, [u8; MAX_SKIP]) {
+        let skip = usize::from(self.get16(store, n, N_SKIP));
+        if skip == 0 {
+            return (0, [0; MAX_SKIP]);
+        }
+        (
+            skip,
+            store.read::<[u8; MAX_SKIP]>(self.0, node_at(n) + N_PREFIX),
+        )
+    }
+
+    fn set_prefix(self, store: &mut Store, n: u32, skip: usize, bytes: &[u8]) {
+        let mut buf = [0u8; MAX_SKIP];
+        buf[..skip].copy_from_slice(&bytes[..skip]);
+        self.set16(store, n, N_SKIP, skip as u16);
+        store.write::<[u8; MAX_SKIP]>(self.0, node_at(n) + N_PREFIX, buf);
     }
 }
 
@@ -223,11 +263,37 @@ fn single_part(v: f32) -> i64 {
 /// text that orders below another never has the greater part.  A tie says nothing — a
 /// shorter text and one with a NUL there pad alike — so text parts are never exact.
 fn text_part(t: &str) -> i64 {
-    let b = t.as_bytes();
+    text_part_at(t.as_bytes(), 0)
+}
+
+/// [`text_part`] of the bytes from `skip` on: the part a node with that shared prefix keeps.
+/// Between two texts that share their first `skip` bytes it orders as the texts do.
+fn text_part_at(b: &[u8], skip: usize) -> i64 {
+    let b = b.get(skip..).unwrap_or(&[]);
     let mut w = [0u8; 8];
     let n = b.len().min(8);
     w[..n].copy_from_slice(&b[..n]);
     (u64::from_be_bytes(w) ^ (1 << 63)) as i64
+}
+
+/// The text of record `rec`'s first key field (a text index).
+fn key_text<'s>(store: &'s Store, rec: u32, k: &Key) -> &'s [u8] {
+    let s: &'s str = store.get_str(store.get_u32_raw(rec, 8 + u32::from(k.position)));
+    s.as_bytes()
+}
+
+/// Is the first key field of this index a text — the one kind whose nodes keep a prefix?
+fn is_text(keys: &[Key]) -> bool {
+    keys[0].type_nr.abs() == 6
+}
+
+/// The part record `rec` takes in a node whose shared prefix is `skip` bytes long.
+fn part_in(store: &Store, rec: u32, keys: &[Key], skip: usize) -> i64 {
+    if skip == 0 {
+        return record_part(store, rec, &keys[0]);
+    }
+    let v = text_part_at(key_text(store, rec, &keys[0]), skip);
+    if keys[0].type_nr < 0 { !v } else { v }
 }
 
 /// The part of a record's first key field — the read `keys::compare_ref` makes for it,
@@ -267,6 +333,9 @@ fn content_part(c: &Content, k: &Key) -> Option<i64> {
 /// lookup key, with its part resolved once.
 struct Probe<'a> {
     part: Option<i64>,
+    /// The first key value as bytes, for a text index: a node with a shared prefix compares
+    /// the probe's own prefix first and takes its part past it.
+    text: Option<Str>,
     /// A tie of parts is equality: a one-value key on a field that is not text.
     exact: bool,
     by: By<'a>,
@@ -280,8 +349,12 @@ enum By<'a> {
 
 impl<'a> Probe<'a> {
     fn of_record(store: &Store, store_nr: u16, rec: u32, keys: &[Key]) -> Probe<'a> {
+        let text = is_text(keys).then(|| {
+            Str::new(store.get_str(store.get_u32_raw(rec, 8 + u32::from(keys[0].position))))
+        });
         Probe {
             part: Some(record_part(store, rec, &keys[0])),
+            text,
             exact: keys.len() == 1 && keys[0].type_nr.abs() != 6,
             by: By::Rec(rec),
             store_nr,
@@ -290,8 +363,13 @@ impl<'a> Probe<'a> {
 
     fn of_key(store_nr: u16, key: &'a [Content], keys: &[Key]) -> Probe<'a> {
         let part = key.first().and_then(|c| content_part(c, &keys[0]));
+        let text = match key.first() {
+            Some(Content::Str(s)) if is_text(keys) => Some(s.clone()),
+            _ => None,
+        };
         Probe {
             part,
+            text,
             exact: part.is_some() && key.len() == 1 && keys[0].type_nr.abs() != 6,
             by: By::Key(key),
             store_nr,
@@ -418,7 +496,16 @@ fn stop_at(
     let store = &stores[st];
     let c = arena.count(store, n);
     let (mut lo, mut hi) = (from, c);
-    if let (Some(p), true) = (probe.part, probe.exact) {
+    let mut part = probe.part;
+    if probe.text.is_some() && part.is_some() {
+        match text_order(arena, store, n, probe, keys) {
+            TextOrder::Whole => {}
+            TextOrder::Part(v) => part = Some(v),
+            TextOrder::Below => return (from, false),
+            TextOrder::Above => return (c, false),
+        }
+    }
+    if let (Some(p), true) = (part, probe.exact) {
         // A tie of exact parts is equality, so one integer scan settles it.
         while lo < c {
             let q = arena.part(store, n, lo);
@@ -429,7 +516,7 @@ fn stop_at(
         }
         return (c, false);
     }
-    if let Some(p) = probe.part {
+    if let Some(p) = part {
         while lo < c && arena.part(store, n, lo) < p {
             lo += 1;
         }
@@ -451,6 +538,43 @@ fn stop_at(
     }
     // `lo` is the last `mid` that stopped, whose `equal` was recorded, or the run's end.
     (lo, equal)
+}
+
+/// Where a text probe stands against node `n`'s shared prefix.
+enum TextOrder {
+    /// The node keeps no prefix: the probe's whole part orders it.
+    Whole,
+    /// The probe shares the prefix; this is its part past it.
+    Part(i64),
+    /// The probe is below every key in the node, in tree order.
+    Below,
+    /// The probe is above every key in the node.
+    Above,
+}
+
+/// Every key in node `n` starts with its prefix: a probe that does not lies below or above
+/// them all, and one that does orders by the bytes past it.  Out of line, so the descent of
+/// every other key type does not carry it.
+#[inline(never)]
+fn text_order(arena: Arena, store: &Store, n: u32, probe: &Probe, keys: &[Key]) -> TextOrder {
+    let (skip, prefix) = arena.prefix(store, n);
+    let Some(t) = &probe.text else {
+        return TextOrder::Whole;
+    };
+    if skip == 0 {
+        return TextOrder::Whole;
+    }
+    let b = t.str().as_bytes();
+    let head = &b[..b.len().min(skip)];
+    let desc = keys[0].type_nr < 0;
+    match head.cmp(&prefix[..head.len()]).then(head.len().cmp(&skip)) {
+        Ordering::Equal => {
+            let v = text_part_at(b, skip);
+            TextOrder::Part(if desc { !v } else { v })
+        }
+        o if (o == Ordering::Less) != desc => TextOrder::Below,
+        _ => TextOrder::Above,
+    }
 }
 
 /// The first slot of leaf `n` above the probe (`ties_right`) or at-or-above it, and whether
@@ -517,10 +641,94 @@ fn alloc(store: &mut Store, data: &DbRef, arena: &mut Arena, leaf: bool) -> u32 
 }
 
 fn release(store: &mut Store, arena: Arena, n: u32) {
-    arena.set(store, n, N_LEAF, 2);
+    arena.set16(store, n, N_LEAF, 2);
     let free = arena.hdr(store, H_FREE);
     arena.set(store, n, N_NEXT, free);
     arena.set_hdr(store, H_FREE, n);
+}
+
+/// The slots of node `n` that carry a key: all of a leaf's, an internal node's from 1.
+fn keyed_slots(store: &Store, arena: Arena, n: u32) -> std::ops::Range<u32> {
+    let c = arena.count(store, n);
+    if arena.is_leaf(store, n) {
+        0..c
+    } else {
+        1.min(c)..c
+    }
+}
+
+/// Make node `n`'s shared prefix the one its keys have now — the common prefix of its first
+/// and last key, which is every key's, since they are sorted — and restamp every part when
+/// that changed, or always with `force` (slots moved in from a node with another prefix).
+/// A text index only: every other index keeps whole parts.
+#[inline]
+fn fit(store: &mut Store, arena: Arena, n: u32, keys: &[Key], force: bool) {
+    if is_text(keys) {
+        fit_text(store, arena, n, keys, force);
+    }
+}
+
+#[inline(never)]
+fn fit_text(store: &mut Store, arena: Arena, n: u32, keys: &[Key], force: bool) {
+    let slots = keyed_slots(store, arena, n);
+    let (old, prefix) = arena.prefix(store, n);
+    let (cp, bytes) = if slots.len() < 2 {
+        (0, Vec::new())
+    } else {
+        let a = key_text(store, arena.rec(store, n, slots.start), &keys[0]);
+        let b = key_text(store, arena.rec(store, n, slots.end - 1), &keys[0]);
+        let cp = a
+            .iter()
+            .zip(b)
+            .take_while(|(x, y)| x == y)
+            .count()
+            .min(MAX_SKIP);
+        (cp, a[..cp].to_vec())
+    };
+    // A prefix pays only where parts TIE — a tie reads records — and costs a check in every
+    // descent through the node.  So a node without one takes one only once its parts tie;
+    // one that keeps one follows its keys' common prefix (which can only have grown, the
+    // keys still sharing the old one); slots moved in from elsewhere take it outright.
+    let ties = || {
+        slots
+            .clone()
+            .skip(1)
+            .any(|i| arena.part(store, n, i) == arena.part(store, n, i - 1))
+    };
+    let skip = if force || old > 0 || ties() { cp } else { 0 };
+    if !force && old == skip && prefix[..skip] == bytes[..skip] {
+        return;
+    }
+    arena.set_prefix(store, n, skip, &bytes);
+    for i in slots {
+        let rec = arena.rec(store, n, i);
+        let part = part_in(store, rec, keys, skip);
+        store.write::<i64>(arena.0, node_at(n) + N_PART + 8 * i, part);
+    }
+}
+
+/// Write `rec` into slot `i` of node `n` (the slot already shifted open), with the part this
+/// node keeps for it.  A key outside the node's prefix widens the prefix ([`fit`]).
+#[inline]
+fn place(store: &mut Store, arena: Arena, n: u32, i: u32, rec: u32, part: i64, keys: &[Key]) {
+    if is_text(keys) {
+        place_text(store, arena, n, i, rec, keys);
+    } else {
+        arena.set_slot(store, n, i, part, rec);
+    }
+}
+
+#[inline(never)]
+fn place_text(store: &mut Store, arena: Arena, n: u32, i: u32, rec: u32, keys: &[Key]) {
+    let (skip, prefix) = arena.prefix(store, n);
+    let t = key_text(store, rec, &keys[0]);
+    if t.len() >= skip && t[..skip] == prefix[..skip] {
+        let part = part_in(store, rec, keys, skip);
+        arena.set_slot(store, n, i, part, rec);
+    } else {
+        arena.set_slot(store, n, i, 0, rec);
+        fit(store, arena, n, keys, true);
+    }
 }
 
 /// Add record `rec`, which carries its key, to the index at `data`.
@@ -545,7 +753,7 @@ pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
     }
     let part = probe.part.unwrap_or_default();
     let store = &mut stores[st];
-    let mut up = insert_leaf(store, data, &mut arena, path.leaf, slot, part, rec);
+    let mut up = insert_leaf(store, data, &mut arena, path.leaf, slot, part, rec, keys);
     let height = arena.hdr(store, H_HEIGHT) as usize;
     let mut level = height;
     while let Some(sep) = up {
@@ -562,15 +770,16 @@ pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
                     child: old,
                 },
             );
-            arena.put(store, root, 1, sep);
             arena.set(store, root, N_COUNT, 2);
+            arena.set_child(store, root, 1, sep.child);
+            place(store, arena, root, 1, sep.rec, sep.part, keys);
             arena.set_hdr(store, H_ROOT, root);
             arena.set_hdr(store, H_HEIGHT, height as u32 + 1);
             break;
         }
         level -= 1;
         let (p, i) = path.steps[level];
-        up = insert_internal(store, data, &mut arena, p, i + 1, sep);
+        up = insert_internal(store, data, &mut arena, p, i + 1, sep, keys);
     }
     let len = arena.hdr(store, H_LEN);
     arena.set_hdr(store, H_LEN, len + 1);
@@ -578,7 +787,8 @@ pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
 }
 
 /// Put `(part, rec)` at `slot` of leaf `n`; answers the separator slot for the parent when
-/// the leaf split.
+/// the leaf split.  `part` is the record's whole part; a text node restamps it for its prefix.
+#[allow(clippy::too_many_arguments)]
 fn insert_leaf(
     store: &mut Store,
     data: &DbRef,
@@ -587,15 +797,22 @@ fn insert_leaf(
     slot: u32,
     part: i64,
     rec: u32,
+    keys: &[Key],
 ) -> Option<Slot> {
     let c = arena.count(store, n);
     if c < FANOUT {
         arena.shift(store, n, slot, slot + 1, c - slot, false);
-        arena.set_slot(store, n, slot, part, rec);
         arena.set(store, n, N_COUNT, c + 1);
+        place(store, *arena, n, slot, rec, part, keys);
         return None;
     }
     let r = alloc(store, data, arena, true);
+    // The new leaf takes the old one's prefix with the slots it copies, then each half fits
+    // its own (a half shares at least what the whole did).
+    if is_text(keys) {
+        let (skip, prefix) = arena.prefix(store, n);
+        arena.set_prefix(store, r, skip, &prefix);
+    }
     let half = FANOUT / 2;
     for i in half..FANOUT {
         let v = arena.slot(store, n, i);
@@ -619,11 +836,19 @@ fn insert_leaf(
     };
     let c = arena.count(store, into);
     arena.shift(store, into, at, at + 1, c - at, false);
-    arena.set_slot(store, into, at, part, rec);
     arena.set(store, into, N_COUNT, c + 1);
+    place(store, *arena, into, at, rec, part, keys);
+    fit(store, *arena, n, keys, false);
+    fit(store, *arena, r, keys, false);
+    // The separator travels with its WHOLE part: the parent restamps it for its own prefix.
+    let first = arena.rec(store, r, 0);
     Some(Slot {
-        part: arena.part(store, r, 0),
-        rec: arena.rec(store, r, 0),
+        part: if is_text(keys) {
+            0
+        } else {
+            arena.part(store, r, 0)
+        },
+        rec: first,
         child: r,
     })
 }
@@ -637,12 +862,14 @@ fn insert_internal(
     n: u32,
     at: u32,
     sep: Slot,
+    keys: &[Key],
 ) -> Option<Slot> {
     let c = arena.count(store, n);
     if c < FANOUT {
         arena.shift(store, n, at, at + 1, c - at, true);
-        arena.put(store, n, at, sep);
         arena.set(store, n, N_COUNT, c + 1);
+        arena.set_child(store, n, at, sep.child);
+        place(store, *arena, n, at, sep.rec, sep.part, keys);
         return None;
     }
     let mut all = [Slot::default(); FANOUT as usize + 1];
@@ -663,9 +890,12 @@ fn insert_internal(
     }
     arena.set(store, n, N_COUNT, keep);
     arena.set(store, r, N_COUNT, FANOUT + 1 - keep);
+    // The incoming separator's part is whole, not this node's: every slot is restamped.
+    fit(store, *arena, n, keys, true);
+    fit(store, *arena, r, keys, true);
     let up = all[keep as usize];
     Some(Slot {
-        part: up.part,
+        part: if is_text(keys) { 0 } else { up.part },
         rec: up.rec,
         child: r,
     })
@@ -711,17 +941,18 @@ pub fn remove(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> boo
     arena.set(store, n, N_COUNT, c - 1);
     if let (Some((p, i)), Some((part, r))) = (named, successor) {
         // When the subtree held only `rec` there is no successor INSIDE it; it is a single
-        // leaf then, and the rebalance below drops it together with this separator.
-        arena.set_slot(store, p, i, part, r);
+        // leaf then, and the rebalance below drops it together with this separator.  A text
+        // successor's part is its leaf's; the parent restamps it for its own prefix.
+        place(store, arena, p, i, r, part, keys);
     }
     let len = arena.hdr(store, H_LEN);
     arena.set_hdr(store, H_LEN, len - 1);
-    rebalance(store, arena, &path, height);
+    rebalance(store, arena, &path, height, keys);
     true
 }
 
 /// Restore the fill of the nodes on `path` after a removal, bottom-up.
-fn rebalance(store: &mut Store, arena: Arena, path: &Path, height: usize) {
+fn rebalance(store: &mut Store, arena: Arena, path: &Path, height: usize, keys: &[Key]) {
     let mut n = path.leaf;
     let mut level = height;
     loop {
@@ -770,6 +1001,8 @@ fn rebalance(store: &mut Store, arena: Arena, path: &Path, height: usize) {
             let cp = arena.count(store, parent);
             arena.shift(store, parent, ri + 1, ri, cp - ri - 1, true);
             arena.set(store, parent, N_COUNT, cp - 1);
+            // The slots came from two nodes, and the parent's separator from a third.
+            fit(store, arena, left, keys, true);
         } else {
             // Even the two out; the parent's separator becomes the right node's new minimum.
             let mut all = [Slot::default(); 2 * FANOUT as usize];
@@ -796,8 +1029,11 @@ fn rebalance(store: &mut Store, arena: Arena, path: &Path, height: usize) {
             }
             arena.set(store, left, N_COUNT, keep);
             arena.set(store, right, N_COUNT, total - keep);
+            fit(store, arena, left, keys, true);
+            fit(store, arena, right, keys, true);
             let up = all[keep as usize];
-            arena.set_slot(store, parent, ri, up.part, up.rec);
+            let whole = if is_text(keys) { 0 } else { up.part };
+            place(store, arena, parent, ri, up.rec, whole, keys);
         }
         n = parent;
         level -= 1;
@@ -1092,7 +1328,7 @@ fn hinted(arena: Arena, store: &Store, store_nr: u16, rec: u32) -> Option<u32> {
     // slot inside its count.
     let live = n != 0
         && n < arena.hdr(store, H_USED)
-        && arena.get(store, n, N_LEAF) == 1
+        && arena.get16(store, n, N_LEAF) == 1
         && i < arena.count(store, n)
         && arena.rec(store, n, i) == rec;
     live.then_some(pos)
@@ -1269,6 +1505,27 @@ fn check(
         pos: 8,
     };
     assert!(c <= FANOUT, "index tree: node {n} holds {c} slots");
+    // The node's prefix: every key it holds starts with it, and its parts are taken past it.
+    let (skip, prefix) = arena.prefix(store, n);
+    assert!(
+        skip == 0 || (is_text(keys) && skip <= MAX_SKIP),
+        "index tree: node {n} keeps a {skip}-byte prefix"
+    );
+    let part_ok = |i: u32| {
+        let r = arena.rec(store, n, i);
+        if skip > 0 {
+            let t = key_text(store, r, &keys[0]);
+            assert!(
+                t.len() >= skip && t[..skip] == prefix[..skip],
+                "index tree: node {n} slot {i} does not share the node's prefix"
+            );
+        }
+        assert_eq!(
+            arena.part(store, n, i),
+            part_in(store, r, keys, skip),
+            "index tree: part of node {n} slot {i}"
+        );
+    };
     if depth == 0 {
         assert!(
             arena.is_leaf(store, n),
@@ -1278,11 +1535,7 @@ fn check(
         leaves.push(n);
         for i in 0..c {
             let r = arena.rec(store, n, i);
-            assert_eq!(
-                arena.part(store, n, i),
-                record_part(store, r, &keys[0]),
-                "index tree: part of leaf {n} slot {i}"
-            );
+            part_ok(i);
             if i > 0 {
                 let o = keys::compare(&at(arena.rec(store, n, i - 1)), &at(r), stores, keys);
                 assert_eq!(
@@ -1318,11 +1571,7 @@ fn check(
     );
     for i in 1..c {
         let sep = arena.rec(store, n, i);
-        assert_eq!(
-            arena.part(store, n, i),
-            record_part(store, sep, &keys[0]),
-            "index tree: part of node {n} separator {i}"
-        );
+        part_ok(i);
         let (lo, hi, t) = check(
             arena,
             data,

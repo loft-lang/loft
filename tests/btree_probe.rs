@@ -1,259 +1,38 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! @PLN190 P0 — the probe: is a B+tree of KEY PARTS and RECORD REFS, built over loft's own
-//! `Store`, faster than the red-black `index` tree (`src/tree.rs`) on the same records and
-//! keys?  A measurement, not a gate (`#[ignore]`): run with
-//! `cargo test --release --test btree_probe -- --ignored --nocapture`.
+//! @PLN190 — the index's B+tree (`src/btree.rs`) timed against Rust's `BTreeMap`, the twin
+//! `bench/15_stdlib_keyed`'s `index_fill_find` is measured against.  A measurement, not a
+//! gate (`#[ignore]`): run with
+//! `cargo test --release --test btree_probe -- --ignored --nocapture --test-threads=1`.
 //!
-//! Both trees index the SAME claimed `Elm { k, c }` records in one store, with the keys of
-//! `bench/15_stdlib_keyed`'s `index_fill_find` (`(i·7919 + salt) mod m`), and every node
-//! access of the probe goes through the `Store` reads and writes loft itself makes.  Each
-//! run checks that both trees find every key and no absent one, so a fast wrong tree fails.
+//! The tree indexes claimed `Elm { k, c }` records in one store, with that routine's keys
+//! (`(i·7919 + salt) mod m`); the map holds the same keys.  Each run checks that both find
+//! every key with its own value, so a fast wrong tree fails.  The red-black tree this
+//! replaced measured fill / find 154 · 80 ns at 5k keys and 250 · 131 at 1M (integer),
+//! 235 · 123 and 418 · 236 (text), and walked 6.4 – 9.1 ns a record; the plan's issue keeps
+//! the comparison.
 use loft::btree;
 use loft::database::Stores;
-use loft::keys::{Content, DbRef, Str};
-use loft::store::Store;
-use loft::tree;
+use loft::keys::{Content, DbRef, Key, Str};
+use std::collections::BTreeMap;
+use std::hint::black_box;
 use std::time::Instant;
-
-/// Slots a node holds.
-const F: u32 = 16;
-// Node layout, bytes from the record start (payload from 8): count, leaf flag, next leaf,
-// then F key parts (i64) and F + 1 refs (i32: a record in a leaf, a child node above).
-const COUNT: u32 = 8;
-const LEAF: u32 = 12;
-const NEXT: u32 = 16;
-const KEY0: u32 = 24;
-const REF0: u32 = KEY0 + 8 * F;
-const NODE_WORDS: u32 = (REF0 + 4 * (F + 1)).div_ceil(8);
-
-// Reads of the tree's OWN nodes go through `Store::read` — a node is the tree's record, its
-// layout known, so the per-access validity test `get_int` makes is the cost a built tree
-// would not pay (it resolves a node once, as `(R-RecPtr)` resolves a record).
-fn key_at(s: &Store, n: u32, i: u32) -> i64 {
-    s.read::<i64>(n, KEY0 + 8 * i)
-}
-fn ref_at(s: &Store, n: u32, i: u32) -> u32 {
-    s.read::<i32>(n, REF0 + 4 * i) as u32
-}
-fn count(s: &Store, n: u32) -> u32 {
-    s.read::<i32>(n, COUNT) as u32
-}
-
-struct Probe {
-    root: u32,
-}
-
-impl Probe {
-    fn new_node(stores: &mut Stores, db: &DbRef, leaf: bool) -> u32 {
-        let n = stores.claim(db, NODE_WORDS).rec;
-        let s = &mut stores.allocations[db.store_nr as usize];
-        s.set_i32_raw(n, COUNT, 0);
-        s.set_i32_raw(n, LEAF, i32::from(leaf));
-        s.set_i32_raw(n, NEXT, 0);
-        n
-    }
-
-    fn find(&self, s: &Store, key: i64) -> u32 {
-        let mut n = self.root;
-        while s.read::<i32>(n, LEAF) == 0 {
-            let c = count(s, n);
-            // Children: c; separators: c - 1.  Take the first separator above the key.
-            let mut i = 0;
-            while i + 1 < c && key >= key_at(s, n, i) {
-                i += 1;
-            }
-            n = ref_at(s, n, i);
-        }
-        let c = count(s, n);
-        for i in 0..c {
-            if key_at(s, n, i) == key {
-                return ref_at(s, n, i);
-            }
-        }
-        0
-    }
-
-    /// Insert `key → rec` under node `n`; answers the split (separator, new right node).
-    fn insert(stores: &mut Stores, db: &DbRef, n: u32, key: i64, rec: u32) -> Option<(i64, u32)> {
-        let st = db.store_nr as usize;
-        let leaf = stores.allocations[st].get_i32_raw(n, LEAF) != 0;
-        if leaf {
-            let s = &mut stores.allocations[st];
-            let c = count(s, n);
-            let mut at = 0;
-            while at < c && key_at(s, n, at) < key {
-                at += 1;
-            }
-            let mut j = c;
-            while j > at {
-                let (k, r) = (key_at(s, n, j - 1), ref_at(s, n, j - 1));
-                s.set_int(n, KEY0 + 8 * j, k);
-                s.set_i32_raw(n, REF0 + 4 * j, r as i32);
-                j -= 1;
-            }
-            s.set_int(n, KEY0 + 8 * at, key);
-            s.set_i32_raw(n, REF0 + 4 * at, rec as i32);
-            s.set_i32_raw(n, COUNT, (c + 1) as i32);
-            if c + 1 < F {
-                return None;
-            }
-            // Split the full leaf: the upper half to a new leaf, linked after this one.
-            let right = Self::new_node(stores, db, true);
-            let s = &mut stores.allocations[st];
-            let half = F / 2;
-            for i in half..F {
-                let (k, r) = (key_at(s, n, i), ref_at(s, n, i));
-                s.set_int(right, KEY0 + 8 * (i - half), k);
-                s.set_i32_raw(right, REF0 + 4 * (i - half), r as i32);
-            }
-            s.set_i32_raw(right, COUNT, (F - half) as i32);
-            s.set_i32_raw(n, COUNT, half as i32);
-            let next = s.get_i32_raw(n, NEXT);
-            s.set_i32_raw(right, NEXT, next);
-            s.set_i32_raw(n, NEXT, right as i32);
-            return Some((key_at(s, right, 0), right));
-        }
-        let (c, child_at) = {
-            let s = &stores.allocations[st];
-            let c = count(s, n);
-            let mut i = 0;
-            while i + 1 < c && key >= key_at(s, n, i) {
-                i += 1;
-            }
-            (c, i)
-        };
-        let child = ref_at(&stores.allocations[st], n, child_at);
-        let (sep, new) = Self::insert(stores, db, child, key, rec)?;
-        let s = &mut stores.allocations[st];
-        // Separator `sep` goes at child_at, the new child at child_at + 1.
-        let mut j = c;
-        while j > child_at + 1 {
-            let r = ref_at(s, n, j - 1);
-            s.set_i32_raw(n, REF0 + 4 * j, r as i32);
-            let k = key_at(s, n, j - 2);
-            s.set_int(n, KEY0 + 8 * (j - 1), k);
-            j -= 1;
-        }
-        s.set_int(n, KEY0 + 8 * child_at, sep);
-        s.set_i32_raw(n, REF0 + 4 * (child_at + 1), new as i32);
-        s.set_i32_raw(n, COUNT, (c + 1) as i32);
-        if c < F {
-            return None;
-        }
-        // Split the internal node: F + 1 children, the middle separator moves up.
-        let right = Self::new_node(stores, db, false);
-        let s = &mut stores.allocations[st];
-        let children = c + 1;
-        let left_children = children / 2;
-        let up = key_at(s, n, left_children - 1);
-        for i in left_children..children {
-            let r = ref_at(s, n, i);
-            s.set_i32_raw(right, REF0 + 4 * (i - left_children), r as i32);
-            if i + 1 < children {
-                let k = key_at(s, n, i);
-                s.set_int(right, KEY0 + 8 * (i - left_children), k);
-            }
-        }
-        s.set_i32_raw(right, COUNT, (children - left_children) as i32);
-        s.set_i32_raw(n, COUNT, left_children as i32);
-        Some((up, right))
-    }
-
-    fn add(&mut self, stores: &mut Stores, db: &DbRef, key: i64, rec: u32) {
-        if let Some((sep, right)) = Self::insert(stores, db, self.root, key, rec) {
-            let root = Self::new_node(stores, db, false);
-            let s = &mut stores.allocations[db.store_nr as usize];
-            s.set_i32_raw(root, REF0, self.root as i32);
-            s.set_int(root, KEY0, sep);
-            s.set_i32_raw(root, REF0 + 4, right as i32);
-            s.set_i32_raw(root, COUNT, 2);
-            self.root = root;
-        }
-    }
-}
 
 fn key_of(i: i64, salt: i64, m: i64) -> i64 {
     (i * 7919 + salt) % m
 }
 
-/// One run: fill and find `count` keys with each tree; answers ns per key (rb fill, rb find,
-/// probe fill, probe find, built fill, built find).
-fn run(count: i64, m: i64) -> (f64, f64, f64, f64, f64, f64) {
+/// A store with an `index<Elm[k]>` over `Elm { k: <key>, c: integer }` and an empty slot
+/// for it: the stores, the slot, the keys, and the byte positions of `k` and `c`.
+fn world(text: bool) -> (Stores, DbRef, Vec<Key>, u32, u32) {
     let mut stores = Stores::new();
     let s = stores.structure("Elm", 0);
-    stores.field(s, "k", stores.name("integer"));
+    stores.field(s, "k", stores.name(if text { "text" } else { "integer" }));
     stores.field(s, "c", stores.name("integer"));
     let v = stores.index(s, &[("k".to_string(), true)]);
-    let mm = stores.structure("Main", 0);
-    stores.field(mm, "index", v);
     stores.finish();
     let db = stores.database(2);
-    let into = DbRef {
-        store_nr: db.store_nr,
-        rec: db.rec,
-        pos: 8,
-    };
-    stores.set_default_value(mm, &into);
-    let keys = stores.keys(v).to_vec();
-    // The red-black tree's links, placed by hand past the two fields: the layout no longer
-    // reserves them (@PLN190), and this run keeps the old tree only as the reference.
-    let fields = 24u16;
     let st = db.store_nr as usize;
-    // The records, claimed once and shared by both trees (the RB links live in them).
-    let mut recs = Vec::with_capacity(count as usize);
-    for i in 0..count {
-        let rec = stores.claim(&db, 6);
-        let s = &mut stores.allocations[st];
-        s.set_int(rec.rec, 8, key_of(i, 0, m));
-        s.set_int(rec.rec, 16, i);
-        recs.push(rec);
-    }
-    let t = Instant::now();
-    for r in &recs {
-        let _ = tree::add(&into, r, fields, &mut stores.allocations, &keys);
-    }
-    let rb_fill = t.elapsed().as_nanos() as f64;
-    let t = Instant::now();
-    let mut acc = 0i64;
-    for i in 0..count {
-        let found = tree::find_exact(
-            &into,
-            fields,
-            &stores.allocations,
-            &keys,
-            &[Content::Long(key_of(i, 0, m))],
-        );
-        acc += stores.allocations[st].get_int(found, 16) & 255;
-    }
-    let rb_find = t.elapsed().as_nanos() as f64;
-    let t = Instant::now();
-    let mut p = Probe {
-        root: Probe::new_node(&mut stores, &db, true),
-    };
-    for r in &recs {
-        let k = stores.allocations[st].get_int(r.rec, 8);
-        p.add(&mut stores, &db, k, r.rec);
-    }
-    let p_fill = t.elapsed().as_nanos() as f64;
-    let t = Instant::now();
-    let mut pacc = 0i64;
-    for i in 0..count {
-        let found = p.find(&stores.allocations[st], key_of(i, 0, m));
-        pacc += stores.allocations[st].get_int(found, 16) & 255;
-    }
-    let p_find = t.elapsed().as_nanos() as f64;
-    assert_eq!(acc, pacc, "both trees answer every lookup alike");
-    let expect: i64 = (0..count).map(|i| i & 255).sum();
-    assert_eq!(pacc, expect, "every key found, with its own record");
-    for i in 0..count.min(2000) {
-        assert_eq!(
-            p.find(&stores.allocations[st], key_of(i, 0, m) + m),
-            0,
-            "an absent key"
-        );
-    }
-    // The built tree, `src/btree.rs`, over the same records from its own slot.
     let holder = stores.claim(&db, 2).rec;
     stores.allocations[st].set_u32_raw(holder, 8, 0);
     let slot = DbRef {
@@ -261,231 +40,99 @@ fn run(count: i64, m: i64) -> (f64, f64, f64, f64, f64, f64) {
         rec: holder,
         pos: 8,
     };
-    let t = Instant::now();
-    for r in &recs {
-        btree::add(&slot, r.rec, &mut stores.allocations, &keys);
-    }
-    let b_fill = t.elapsed().as_nanos() as f64;
-    let t = Instant::now();
-    let mut bacc = 0i64;
-    for i in 0..count {
-        let found = btree::find_exact(
-            &slot,
-            &stores.allocations,
-            &keys,
-            &[Content::Long(key_of(i, 0, m))],
-        );
-        bacc += stores.allocations[st].get_int(found, 16) & 255;
-    }
-    let b_find = t.elapsed().as_nanos() as f64;
-    assert_eq!(
-        bacc, expect,
-        "the built tree finds every key, with its own record"
-    );
-    let n = count as f64;
-    (
-        rb_fill / n,
-        rb_find / n,
-        p_fill / n,
-        p_find / n,
-        b_fill / n,
-        b_find / n,
-    )
-}
-
-#[test]
-#[ignore = "a measurement: cargo test --release --test btree_probe -- --ignored --nocapture"]
-fn btree_of_key_parts_against_the_red_black_index() {
-    for &(count, m, reps) in &[
-        (5000i64, 1_000_003i64, 200),
-        (100_000, 10_000_019, 10),
-        (1_000_000, 100_000_007, 3),
-    ] {
-        let mut best = [f64::MAX; 6];
-        for _ in 0..reps {
-            let r = run(count, m);
-            for (b, v) in best.iter_mut().zip([r.0, r.1, r.2, r.3, r.4, r.5]) {
-                *b = b.min(v);
-            }
-        }
-        println!(
-            "{count:>8}  red-black fill {:6.1} find {:6.1}  |  probe fill {:6.1} find {:6.1}  |  btree.rs fill {:6.1} find {:6.1}  ns/key  →  btree.rs fill {:.1}×  find {:.1}×",
-            best[0],
-            best[1],
-            best[2],
-            best[3],
-            best[4],
-            best[5],
-            best[0] / best[4],
-            best[1] / best[5]
-        );
-    }
-}
-
-/// A text-keyed run: red-black against `src/btree.rs` only (the stand-in above is
-/// integer-only).  Keys share a 4-byte prefix, so the 8-byte part separates most of them
-/// and a tie reads the record.  Answers ns per key (rb fill, rb find, btree fill, btree find).
-fn run_text(count: i64, m: i64) -> (f64, f64, f64, f64) {
-    let mut stores = Stores::new();
-    let s = stores.structure("Elm", 0);
-    stores.field(s, "k", stores.name("text"));
-    stores.field(s, "c", stores.name("integer"));
-    let v = stores.index(s, &[("k".to_string(), true)]);
-    let mm = stores.structure("Main", 0);
-    stores.field(mm, "index", v);
-    stores.finish();
-    let db = stores.database(2);
-    let into = DbRef {
-        store_nr: db.store_nr,
-        rec: db.rec,
-        pos: 8,
-    };
-    stores.set_default_value(mm, &into);
     let keys = stores.keys(v).to_vec();
-    let fields = 24u16; // the red-black links, placed by hand (see `run`)
-    let st = db.store_nr as usize;
     let kpos = 8 + u32::from(keys[0].position);
     let cpos = 8 + u32::from(stores.position(s, "c"));
+    (stores, slot, keys, kpos, cpos)
+}
+
+/// Fill and find `count` keys; ns per key (map fill, map find, tree fill, tree find).
+fn run(count: i64, m: i64, text: bool) -> [f64; 4] {
+    let (mut stores, slot, keys, kpos, cpos) = world(text);
+    let st = slot.store_nr as usize;
     let texts: Vec<String> = (0..count)
         .map(|i| format!("key_{}", key_of(i, 0, m)))
         .collect();
     let mut recs = Vec::with_capacity(count as usize);
-    for (i, t) in texts.iter().enumerate() {
-        let rec = stores.claim(&db, 6);
+    for i in 0..count {
+        let rec = stores.claim(&slot, 3).rec;
         let s = &mut stores.allocations[st];
-        let h = s.set_str(t);
-        s.set_u32_raw(rec.rec, kpos, h);
-        s.set_int(rec.rec, cpos, i as i64);
+        if text {
+            let h = s.set_str(&texts[i as usize]);
+            s.set_u32_raw(rec, kpos, h);
+        } else {
+            s.set_int(rec, kpos, key_of(i, 0, m));
+        }
+        s.set_int(rec, cpos, i);
         recs.push(rec);
     }
     let expect: i64 = (0..count).map(|i| i & 255).sum();
+    let n = count as f64;
+    // The twin: a BTreeMap from the key to the value.
+    let (map_fill, map_find) = if text {
+        let t = Instant::now();
+        let mut map = BTreeMap::new();
+        for (i, k) in texts.iter().enumerate() {
+            map.insert(k.clone(), i as i64);
+        }
+        let fill = t.elapsed().as_nanos() as f64;
+        let t = Instant::now();
+        let acc: i64 = texts.iter().map(|k| map[k] & 255).sum();
+        let find = t.elapsed().as_nanos() as f64;
+        assert_eq!(black_box(acc), expect);
+        (fill, find)
+    } else {
+        let t = Instant::now();
+        let mut map = BTreeMap::new();
+        for i in 0..count {
+            map.insert(key_of(i, 0, m), i);
+        }
+        let fill = t.elapsed().as_nanos() as f64;
+        let t = Instant::now();
+        let acc: i64 = (0..count).map(|i| map[&key_of(i, 0, m)] & 255).sum();
+        let find = t.elapsed().as_nanos() as f64;
+        assert_eq!(black_box(acc), expect);
+        (fill, find)
+    };
     let t = Instant::now();
-    for r in &recs {
-        let _ = tree::add(&into, r, fields, &mut stores.allocations, &keys);
+    for &r in &recs {
+        btree::add(&slot, r, &mut stores.allocations, &keys);
     }
-    let rb_fill = t.elapsed().as_nanos() as f64;
+    let fill = t.elapsed().as_nanos() as f64;
     let t = Instant::now();
     let mut acc = 0i64;
-    for k in &texts {
-        let found = tree::find_exact(
-            &into,
-            fields,
-            &stores.allocations,
-            &keys,
-            &[Content::Str(Str::new(k))],
-        );
+    for i in 0..count {
+        let key = if text {
+            [Content::Str(Str::new(&texts[i as usize]))]
+        } else {
+            [Content::Long(key_of(i, 0, m))]
+        };
+        let found = btree::find_exact(&slot, &stores.allocations, &keys, &key);
         acc += stores.allocations[st].get_int(found, cpos) & 255;
     }
-    let rb_find = t.elapsed().as_nanos() as f64;
-    assert_eq!(acc, expect, "the red-black tree finds every text key");
-    let holder = stores.claim(&db, 2).rec;
-    stores.allocations[st].set_u32_raw(holder, 8, 0);
-    let slot = DbRef {
-        store_nr: db.store_nr,
-        rec: holder,
-        pos: 8,
-    };
-    let t = Instant::now();
-    for r in &recs {
-        btree::add(&slot, r.rec, &mut stores.allocations, &keys);
-    }
-    let b_fill = t.elapsed().as_nanos() as f64;
-    let t = Instant::now();
-    let mut bacc = 0i64;
-    for k in &texts {
-        let found = btree::find_exact(
-            &slot,
-            &stores.allocations,
-            &keys,
-            &[Content::Str(Str::new(k))],
-        );
-        bacc += stores.allocations[st].get_int(found, cpos) & 255;
-    }
-    let b_find = t.elapsed().as_nanos() as f64;
-    assert_eq!(bacc, expect, "the built tree finds every text key");
-    let n = count as f64;
-    (rb_fill / n, rb_find / n, b_fill / n, b_find / n)
+    let find = t.elapsed().as_nanos() as f64;
+    assert_eq!(acc, expect, "the tree finds every key, with its own record");
+    [map_fill / n, map_find / n, fill / n, find / n]
 }
 
-#[test]
-#[ignore = "a measurement: cargo test --release --test btree_probe -- --ignored --nocapture"]
-fn text_keys_against_the_red_black_index() {
-    for &(count, m, reps) in &[
-        (5000i64, 1_000_003i64, 100),
-        (100_000, 10_000_019, 5),
-        (1_000_000, 100_000_007, 2),
-    ] {
-        let mut best = [f64::MAX; 4];
-        for _ in 0..reps {
-            let r = run_text(count, m);
-            for (b, v) in best.iter_mut().zip([r.0, r.1, r.2, r.3]) {
-                *b = b.min(v);
-            }
-        }
-        println!(
-            "{count:>8}  text  red-black fill {:6.1} find {:6.1}  |  btree.rs fill {:6.1} find {:6.1}  ns/key  →  fill {:.1}×  find {:.1}×",
-            best[0],
-            best[1],
-            best[2],
-            best[3],
-            best[0] / best[2],
-            best[1] / best[3]
-        );
-    }
-}
-
-/// A whole walk in key order, ns per record: the red-black tree's `next`, the B+tree stepping
-/// by RECORD (what a loop does: it holds the record and finds its slot again by key, so a
-/// removal by key in the body cannot invalidate it) and the B+tree stepping by POSITION.
-fn run_walk(count: i64, m: i64) -> (f64, f64, f64) {
-    let mut stores = Stores::new();
-    let s = stores.structure("Elm", 0);
-    stores.field(s, "k", stores.name("integer"));
-    stores.field(s, "c", stores.name("integer"));
-    let v = stores.index(s, &[("k".to_string(), true)]);
-    let mm = stores.structure("Main", 0);
-    stores.field(mm, "index", v);
-    stores.finish();
-    let db = stores.database(2);
-    let into = DbRef {
-        store_nr: db.store_nr,
-        rec: db.rec,
-        pos: 8,
-    };
-    stores.set_default_value(mm, &into);
-    let keys = stores.keys(v).to_vec();
-    let fields = 24u16;
-    let st = db.store_nr as usize;
-    let holder = stores.claim(&db, 2).rec;
-    stores.allocations[st].set_u32_raw(holder, 8, 0);
-    let slot = DbRef {
-        store_nr: db.store_nr,
-        rec: holder,
-        pos: 8,
-    };
+/// A whole walk in key order, ns per record: the map's iterator, the tree stepping by
+/// RECORD (what a loop does) and by POSITION.
+fn run_walk(count: i64, m: i64) -> [f64; 3] {
+    let (mut stores, slot, keys, kpos, _) = world(false);
+    let st = slot.store_nr as usize;
+    let mut map = BTreeMap::new();
     for i in 0..count {
-        let rec = stores.claim(&db, 6);
-        stores.allocations[st].set_int(rec.rec, 8, key_of(i, 0, m));
-        stores.allocations[st].set_int(rec.rec, 16, i);
-        let _ = tree::add(&into, &rec, fields, &mut stores.allocations, &keys);
-        btree::add(&slot, rec.rec, &mut stores.allocations, &keys);
+        let rec = stores.claim(&slot, 3).rec;
+        stores.allocations[st].set_int(rec, kpos, key_of(i, 0, m));
+        btree::add(&slot, rec, &mut stores.allocations, &keys);
+        map.insert(key_of(i, 0, m), rec);
     }
     let all = &stores.allocations;
+    let c = count as f64;
     let t = Instant::now();
-    let (mut n, mut cur) = (0, tree::first(&into, fields, all).rec);
-    while cur != 0 {
-        n += 1;
-        cur = tree::next(
-            &all[st],
-            &DbRef {
-                store_nr: db.store_nr,
-                rec: cur,
-                pos: u32::from(fields),
-            },
-        );
-    }
-    let rb = t.elapsed().as_nanos() as f64;
-    assert_eq!(n, count);
+    let n = black_box(map.values().count());
+    let in_map = t.elapsed().as_nanos() as f64;
+    assert_eq!(n as i64, count);
     let t = Instant::now();
     let (mut n, mut cur) = (0, btree::first_record(&slot, all));
     while cur != 0 {
@@ -502,28 +149,53 @@ fn run_walk(count: i64, m: i64) -> (f64, f64, f64) {
     }
     let by_pos = t.elapsed().as_nanos() as f64;
     assert_eq!(n, count);
-    let c = count as f64;
-    (rb / c, by_rec / c, by_pos / c)
+    [in_map / c, by_rec / c, by_pos / c]
+}
+
+const SIZES: [(i64, i64, u32); 3] = [
+    (5000, 1_000_003, 100),
+    (100_000, 10_000_019, 5),
+    (1_000_000, 100_000_007, 2),
+];
+
+fn best<const N: usize>(reps: u32, f: impl Fn() -> [f64; N]) -> [f64; N] {
+    let mut best = [f64::MAX; N];
+    for _ in 0..reps {
+        for (b, v) in best.iter_mut().zip(f()) {
+            *b = b.min(v);
+        }
+    }
+    best
 }
 
 #[test]
 #[ignore = "a measurement: cargo test --release --test btree_probe -- --ignored --nocapture"]
-fn a_walk_against_the_red_black_index() {
-    for &(count, m, reps) in &[
-        (5000i64, 1_000_003i64, 100),
-        (100_000, 10_000_019, 5),
-        (1_000_000, 100_000_007, 2),
-    ] {
-        let mut best = [f64::MAX; 3];
-        for _ in 0..reps {
-            let r = run_walk(count, m);
-            for (b, v) in best.iter_mut().zip([r.0, r.1, r.2]) {
-                *b = b.min(v);
-            }
+fn fill_and_find_against_btreemap() {
+    for text in [false, true] {
+        for (count, m, reps) in SIZES {
+            let b = best(reps, || run(count, m, text));
+            println!(
+                "{count:>8} {}  BTreeMap fill {:6.1} find {:6.1}  |  btree.rs fill {:6.1} find {:6.1}  ns/key  →  {:.1}× · {:.1}× the map",
+                if text { "text" } else { "int " },
+                b[0],
+                b[1],
+                b[2],
+                b[3],
+                b[2] / b[0],
+                b[3] / b[1]
+            );
         }
+    }
+}
+
+#[test]
+#[ignore = "a measurement: cargo test --release --test btree_probe -- --ignored --nocapture"]
+fn a_walk_against_btreemap() {
+    for (count, m, reps) in SIZES {
+        let b = best(reps, || run_walk(count, m));
         println!(
-            "{count:>8}  walk  red-black {:6.1}  |  btree.rs by record {:6.1}  by position {:6.1}  ns/record",
-            best[0], best[1], best[2]
+            "{count:>8} walk  BTreeMap {:5.1}  |  btree.rs by record {:5.1}  by position {:5.1}  ns/record",
+            b[0], b[1], b[2]
         );
     }
 }
