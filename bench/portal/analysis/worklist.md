@@ -62,7 +62,7 @@ format decision (§ 6).
 |---|--:|---|---|
 | `field_add_cell` | 7.09 | the library's double bucket lookup (−8 %) | ≈ 5.1× |
 | `build_index` | 6.35 | C7 `mint_target` (−8 %) | ≈ 5.8× |
-| `index_fill_find` | 5.49 | `index` as a B-tree of inline keys (the tree of store records is 45 %) | the format decision |
+| `index_fill_find` | 3.14 | DONE: `index` is a B+tree of key parts and record numbers (@C147, @PLN190); 5.93× → 3.14× on one host | off the cut |
 | `reload_and_record` | 5.76 | P3 (≤ 12 %), P4 (≤ 15 %, needs a range proof) — keyed.md | ≈ 4.1× if both pay |
 | `mapfile_to_painted` | 5.44 | the same P3 / P4 | under if both pay |
 | `anim_of` | 5.38 | ~45 % is the returned text copied (`malloc`, `memmove`, `free`); the twin returns a borrow: S8 `(R-ViewReturn)` | under, after its decision |
@@ -214,7 +214,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 
 | class | rows | where to start |
 |---|---|---|
-| keyed (10) | `reload_and_record`, `index_fill_find`, `anim_of`, `index_build`, `composite_hash`, `hash_find`, `collect_dirty_inputs`, `hash_text_keys`, `word_count`, `blob_put` | six sit within 16 % of the bar: price keyed.md § What is left on them (the typed append, the arena's insert bookkeeping, the rebuild's re-hash, text keys copied into the record).  `index` as a tree of store records and the division in `home_bucket` are format work (§ 6).  @PLN185 D2 owes this class a named root mechanism.  `reload_and_record` 10.88× → 7.06× and `mapfile_to_painted` −14 % through a compound key's decorated walk sort (keyed.md L8b); its remainder is unpriced |
+| keyed (10) | `reload_and_record`, `index_fill_find`, `anim_of`, `index_build`, `composite_hash`, `hash_find`, `collect_dirty_inputs`, `hash_text_keys`, `word_count`, `blob_put` | six sit within 16 % of the bar: price keyed.md § What is left on them (the typed append, the arena's insert bookkeeping, the rebuild's re-hash, text keys copied into the record).  Both format decisions are made and built: `index` is a B+tree (@C147), a hash's bucket count a power of two (@C146).  @PLN185 D2 owes this class a named root mechanism.  `reload_and_record` 10.88× → 7.06× and `mapfile_to_painted` −14 % through a compound key's decorated walk sort (keyed.md L8b); its remainder is unpriced |
 | text-build (5) | `map_json`, `render_inline`, `materialise`, `format_iso`, `char_roundtrip` | the per-character append (`out += "{c}"`) is the class-wide hypothesis (libraries-wide.md), and `slugify` is the same shape; `map_json` is `Map.parse` running the source lexer over JSON |
 | call (5) | `clock_pump`, `forms_upto`, `combine_cut`, `edges_cut`, `resolve_move` | @PLN185 D2: one hand-priced edit naming the mechanism; `resolve_move` is five hash lookups a call.  `forms_upto` PRICED: the caller releases its pooled `Form` buffer before every `form_new` call (`remove_claims`), and `form_new` is a `(R-RefillBuffer)` callee that empties each vector field in place — the release frees the two vectors the refill would keep, and `vector_add` claims two new ones.  BUILT as `(R-RefillText)`'s vector clause: 12.96× → 6.62× (2.00 → 1.02 ms), hash unchanged |
 | float-kernel (5) | `ease`, `terrain_fbm`, `terrain_surface_at`, `roof_match`, `roof_cone` | @PLN185 D2; `ease` is over the bar on arm64 macOS only — it counts as over until both agree |
@@ -246,8 +246,9 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 - **A checked expression computed once where the program spells it twice**: DECIDED (owner,
   2026-10-11) — an overflow must be reported, not reported as often as it was spelled.
   `(R-SameRead)`'s guard clause (`locate`) rests on it.
-- **Keyed store format**: the division in `hash::home_bucket`, and `index` as a B-tree of
-  inline keys.  `sorted`'s random insert stays as it is (declined).
+- **Keyed store format**: DECIDED and built — a hash's bucket count is a power of two (@C146);
+  `index` is a B+tree of key parts and record numbers (@C147).  `sorted`'s random insert stays
+  as it is (declined).
 
 ## 7. Order
 
