@@ -35,6 +35,10 @@
 // are climbed by the 9th, 17th and 33rd insert; this samples both sides of each (8|9,
 // 16|17, 32|33).  `LOFT_NO_POW2_BUCKETS=1` is the old ladder.
 //
+// The fills are `while` loops, on purpose: a COUNTED fill (`for i in a..b { h += … }`) may
+// reserve its table up front (@C150, `(R-PushFill)`'s hash clause), and `size(h)` then answers
+// the reserved table — this file measures the growth ladder an unreserved fill climbs.
+//
 // Values verified against both backends (interpret + native) during Phase 1.
 
 struct K {
@@ -53,8 +57,10 @@ fn main() {
   assert(size(h) == 64, "initial table = 16 slots × 4 = 64 (13 holes counted): {size(h)}");
   assert(size(h) >= len(h)*4, "table ≥ live entries × 4 (holes make it larger)");
 
-  for i in 4..9 {
-    h += K { id: i, v: i * 10 };
+  j = 4;
+  while j < 9 {
+    h += K { id: j, v: j * 10 };
+    j += 1;
   }
   // 8 entries: exactly half of 16 slots, and the table is still the first one — the
   // rebuild belongs to the insert that FINDS it half full.
@@ -63,16 +69,20 @@ fn main() {
   // first rehash: 16 → 32 slots × 4
   assert(size(h) == 128, "the 9th insert rebuilds: 32 slots × 4 = 128: {size(h)}");
 
-  for i in 10..17 {
-    h += K { id: i, v: i * 10 };
+  j = 10;
+  while j < 17 {
+    h += K { id: j, v: j * 10 };
+    j += 1;
   }
   assert(size(h) == 128, "16 entries = half of 32: not yet: {size(h)}");
   h += K { id: 17, v: 170 };
   // second rehash: 32 → 64 slots × 4
   assert(size(h) == 256, "the 17th insert rebuilds: 64 slots × 4 = 256: {size(h)}");
 
-  for i in 18..32 {
-    h += K { id: i, v: i * 10 };
+  j = 18;
+  while j < 32 {
+    h += K { id: j, v: j * 10 };
+    j += 1;
   }
   // the full table exceeds the live count: 31 live entries in a 64-slot table
   assert(
