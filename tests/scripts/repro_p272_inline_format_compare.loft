@@ -1,11 +1,10 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @P272 regression — a SIDE-EFFECTING text producer used inside an INLINE
-// format-string comparison must be evaluated exactly once.  `#errors`
-// (i_parse_errors) clears the stored parse errors on read.  Native used to
-// hoist the format block into a `_pre_N` binding AND re-inline it in the
-// comparison: the dead hoisted copy consumed the errors, so the live copy read
-// empty — `inline=false` on --native, `inline=true` on --interpret.
+// format-string comparison must be evaluated exactly once.  `stamp` counts its
+// own calls, so a second evaluation is a count of two.  Native used to hoist
+// the format block into a `_pre_N` binding AND re-inline it in the comparison:
+// the producer ran in the dead hoisted copy and again in the live one.
 //
 // The fix is the pre-eval cut-over: emission substitutes a hoisted node by its
 // intrinsic identity (node address → `_pre_N`), so the operand is emitted once
@@ -16,17 +15,27 @@ struct PScore {
   val: integer,
 }
 
+struct Calls {
+  n: integer,
+}
+
+fn stamp(c: Calls) -> text {
+  c.n += 1;
+  "call {c.n}"
+}
+
 fn main() {
   // Side-effecting producer inside an inline format-string comparison.
-  b = PScore.parse("not_json");
-  inline = "[{b#errors}]" != "[]";
-  assert(inline, "inline #errors compare must be non-empty (evaluated once)");
+  seen = Calls { n: 0 };
+  inline = "[{stamp(seen)}]" != "[]";
+  assert(inline, "inline side-effecting compare must be non-empty");
+  assert_eq(seen.n, 1, "the inline producer's evaluations");
 
-  // The documented var-form workaround must keep working too.
-  c = PScore.parse("also_bad");
-  errs = "[{c#errors}]";
-  varform = errs != "[]";
-  assert(varform, "var-form #errors compare");
+  // The var-form must agree.
+  errs = "[{stamp(seen)}]";
+  varform = errs == "[call 2]";
+  assert(varform, "var-form compare: {errs}");
+  assert_eq(seen.n, 2, "the var-form producer's evaluations");
 
   // A PURE producer in the same inline shape stays correct (no regression).
   d = PScore.parse("nope");

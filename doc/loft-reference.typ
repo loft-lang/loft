@@ -5013,11 +5013,10 @@ Both parse forms report. 'json\_errors()' holds the LAST parse's diagnostics and
 if json_errors() != "" { log_warn(json_errors()); }
 ```
 
-'record\#errors' is the same answer scoped to one parsed value, and the READ clears it:
+'record\#errors' answers for the last 'Type.parse(text)' as a vector\<text\>, one entry per error, and stays until the next parse:
 
 ```
-errs = user#errors;
-if errs != "" { log_warn(errs); }
+for e in user#errors { log_warn(e); }
 ```
 
 The two parse spellings differ in WHICH HALF of the answer they give, and that is the reason to choose between them:

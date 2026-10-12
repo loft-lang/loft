@@ -1237,15 +1237,10 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
     into
 }
 
-/// Return the parse errors from the last `Type.parse()` call as a single
-/// newline-separated string.  Called by the `#errors` accessor.
-// @PLN10 — owned `String` (no scratch).  In lockstep with
-// `generation::native_returns_owned_string`, which makes the generated `n_*`
-// wrapper `-> String` so wrapper and body agree on every backend (incl. wasip2).
-pub fn i_parse_errors(stores: &mut Stores) -> String {
-    let msg = stores.last_parse_errors.join("\n");
-    stores.last_parse_errors.clear();
-    msg
+/// Return the parse errors from the last `Type.parse()` call as a fresh `vector<text>`,
+/// one element per error.  Called by the `#errors` accessor; the register is left alone.
+pub fn i_parse_errors(stores: &mut Stores) -> DbRef {
+    stores.parse_errors_vector()
 }
 
 /// Push a constraint-check error to the parse error list.
@@ -1258,7 +1253,8 @@ pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
 /// Mirrors the interpreter's `n_json_errors` (`src/native.rs`) which does
 /// NOT clear the buffer — errors persist across `json_errors()` reads
 /// until the next successful parse implicitly clears them.
-// @PLN10 — owned `String` (no scratch); same gate as `i_parse_errors`.
+// @PLN10 — owned `String` (no scratch); gated by
+// `generation::native_returns_owned_string`.
 pub fn i_json_errors(stores: &mut Stores) -> String {
     stores.last_json_errors.join("|")
 }

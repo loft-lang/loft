@@ -172,7 +172,6 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
             // @PLN129 arc C — always-non-null: "" IS the healthy answer.
             | "n_store_lazy_error"
             // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
-            | "i_parse_errors"
             | "n_struct_to_json"
             | "n_struct_to_json_pretty"
             // @PLN10 Phase 1 — par-text buffer reader (interp; native is owned

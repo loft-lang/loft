@@ -148,7 +148,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_ymd_days_ago_dest", n_ymd_days_ago_dest),
     ("n_store_memory_dest", n_store_memory_dest),
     // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
-    ("i_parse_errors_dest", i_parse_errors_dest),
     ("n_struct_to_json_dest", n_struct_to_json_dest),
     ("n_struct_to_json_pretty_dest", n_struct_to_json_pretty_dest),
     ("t_9character_is_lowercase", t_9character_is_lowercase),
@@ -462,6 +461,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_reflect_field", n_reflect_field),
     ("n_reflect_field_path", n_reflect_field_path),
     ("n_path_sep", n_path_sep),
+    ("i_parse_errors", i_parse_errors),
     ("i_parse_error_push", i_parse_error_push),
     ("n_hash_sorted", n_hash_sorted),
     ("n_vector_sum_int", n_vector_sum_int),
@@ -3610,17 +3610,11 @@ fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
     stores.last_parse_errors.push(msg.str().to_owned());
 }
 
-// @PLN10 Phase 1 — destination-passing variant of `i_parse_errors`.
-// Always-non-null (the joined error text, possibly empty); no stack args.
-// Routed by `is_text_dest_native`.
-fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = stores.get::<DbRef>(stack);
-    let msg = stores.last_parse_errors.join("\n");
-    stores.last_parse_errors.clear();
-    stores
-        .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&msg);
+/// `record#errors`: the last `Type.parse()` call's errors as a fresh `vector<text>`, empty
+/// when the parse succeeded.  Reading leaves the register alone.
+fn i_parse_errors(stores: &mut Stores, stack: &mut DbRef) {
+    let new_value = stores.parse_errors_vector();
+    stores.put(stack, new_value);
 }
 
 // HTTP client glue removed — n_http_do and n_http_body are now auto-marshalled.

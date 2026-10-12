@@ -27,12 +27,9 @@ cited as `QUALITY.md § B6m` or similar lives there.
 
 ## Open programmer-biting issues
 
-Programmer-facing defects are GitHub issues.  This table holds only what is open and is not a
-defect: a behaviour a program can depend on, waiting for a decision.
-
-| # | Issue | Severity | Status |
-|---|-------|----------|--------|
-| `#errors` | `record#errors` returns one newline-separated text, and reading it clears it; `for e in r#errors` therefore iterates nothing, and bound to a variable first it iterates CHARACTERS. The docs show the shape that works (read it into a variable, then test it) | Medium | **OPEN — a compatibility decision** ([COMPATIBILITY.md](COMPATIBILITY.md)): keep the text, or make the accessor a `vector<text>` with one entry per error. `tests/scripts/197-struct-json-parse-errors-dest.loft` depends on the text shape and on clear-on-read. Measured: [QUALITY-history.md § JSON cluster](QUALITY-history.md#json-cluster) |
+Programmer-facing defects are GitHub issues.  This section holds only what is open and is not
+a defect: a behaviour a program can depend on, waiting for a decision.  None is open; the
+decided ones are in [QUALITY-history.md § JSON cluster](QUALITY-history.md#json-cluster).
 
 ---
 

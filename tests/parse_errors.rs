@@ -364,6 +364,34 @@ fn cross_type_eq_bool_text() {
         .error("No matching operator '==' on 'boolean' and 'text' at cross_type_eq_bool_text:1:28");
 }
 
+/// `record#errors` is a `vector<text>`: the comparison with a text that tested the accessor
+/// while it was one text is refused, naming both types, and a text local does not take it.
+#[test]
+fn record_errors_compared_with_a_text_is_refused() {
+    code!(
+        "struct S { v: integer }\nfn test() { r = S.parse(\"x\"); if r#errors != \"\" { r.v = 1; } }"
+    )
+    .error("No matching operator '!=' on 'vector<text>' and 'text' at record_errors_compared_with_a_text_is_refused:2:49");
+}
+
+#[test]
+fn record_errors_into_a_text_local_is_refused() {
+    code!(
+        "struct S { v: integer }\nfn test() { r = S.parse(\"x\"); e: text = r#errors; r.v = len(e); }"
+    )
+    .error("Variable 'e' cannot change type from text to vector<text>; use a new variable name or cast with 'as' at record_errors_into_a_text_local_is_refused:2:50");
+}
+
+/// The truthiness test that asked "were there errors?" of the text is constant on a vector,
+/// and says so.
+#[test]
+fn record_errors_as_a_condition_is_reported() {
+    code!(
+        "struct S { v: integer }\nfn test() { r = S.parse(\"x\"); if r#errors { r.v = 1; } }"
+    )
+    .warning("a non-null `vector<text>` is always true in a `if` condition — a heap value is falsy only when absent, and this one cannot be at record_errors_as_a_condition_is_reported:2:34");
+}
+
 #[test]
 fn cross_type_ne_int_text() {
     code!("fn test() { b = 5 != \"x\"; }")

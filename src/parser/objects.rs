@@ -970,11 +970,12 @@ impl Parser {
             if self.lexer.has_token("#") {
                 self.var_usages(index_var, true);
                 if self.lexer.has_keyword("errors") {
-                    // s#errors — return the parse errors from the last Type.parse() call.
+                    // s#errors — the parse errors from the last Type.parse() call, one
+                    // element per error; a fresh vector the caller owns.
                     let fn_nr = self.data.def_nr("i_parse_errors");
                     if fn_nr != u32::MAX {
                         *code = Value::Call(fn_nr, vec![]);
-                        t = Type::Text(crate::data::Deps::none());
+                        t = self.data.def(fn_nr).returned.clone();
                     }
                     return t;
                 }

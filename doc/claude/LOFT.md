@@ -834,14 +834,16 @@ user = User.parse(`{{"id":42,"name":"Alice"}}`);
 scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 shape = Shape.parse(`{{"Circle":{{"radius":3.14}}}}`);   // struct-enum round-trip
 
-if json_errors() != "" { log_warn(json_errors()); }   // the JSON surface
-errs = user#errors;                                   // the record surface: TEXT, and
-if errs != "" { log_warn(errs); }                     // reading it clears it
+if json_errors() != "" { log_warn(json_errors()); }   // the JSON surface: one text
+for e in shape#errors { log_warn(e); }                // the record surface: a vector<text>
 ```
 
-`record#errors` is a single text (newline-separated when a parse produced several), not a
-collection — `for e in user#errors` iterates CHARACTERS, and because the read clears, it
-iterates none at all.  Read it into a variable and test it, as above.
+`record#errors` is a `vector<text>` with one entry per error, empty after a parse that
+succeeded: test it with `len(r#errors) > 0`.  Each read answers a fresh vector of the same
+entries, so reading does not clear them.  It answers for the LAST `Type.parse(text)` call,
+whichever record it is asked through — in the sample above, `user#errors` would report on
+`shape`.  Guards: `tests/scripts/a-record-errors-read-holds-one-entry-per-error-and-leaves-them.loft`,
+`tests/scripts/a-record-errors-read-is-a-vector-of-text.loft`.
 
 ---
 

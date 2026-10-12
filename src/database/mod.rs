@@ -531,7 +531,8 @@ pub struct Stores {
     /// `src/generation/calls.rs`) resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
-    /// Errors from the last `Type.parse()` call, read via `s#errors`.
+    /// Errors from the last `Type.parse()` call, read via `s#errors`; the next parse
+    /// clears them, a read does not.
     pub last_parse_errors: Vec<String>,
     /// errors from the last `json_parse()` call, read via
     /// `json_errors()`.  Cleared on every successful `json_parse`;

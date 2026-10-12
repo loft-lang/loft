@@ -1,0 +1,196 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index fc451a2c0..c5bf00f84 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -1237,10 +1237,15 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
+     into
+ }
+ 
+-/// Return the parse errors from the last `Type.parse()` call as a fresh `vector<text>`,
+-/// one element per error.  Called by the `#errors` accessor; the register is left alone.
+-pub fn i_parse_errors(stores: &mut Stores) -> DbRef {
+-    stores.parse_errors_vector()
++/// Return the parse errors from the last `Type.parse()` call as a single
++/// newline-separated string.  Called by the `#errors` accessor.
++// @PLN10 — owned `String` (no scratch).  In lockstep with
++// `generation::native_returns_owned_string`, which makes the generated `n_*`
++// wrapper `-> String` so wrapper and body agree on every backend (incl. wasip2).
++pub fn i_parse_errors(stores: &mut Stores) -> String {
++    let msg = stores.last_parse_errors.join("\n");
++    stores.last_parse_errors.clear();
++    msg
+ }
+ 
+ /// Push a constraint-check error to the parse error list.
+@@ -1253,8 +1258,7 @@ pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
+ /// Mirrors the interpreter's `n_json_errors` (`src/native.rs`) which does
+ /// NOT clear the buffer — errors persist across `json_errors()` reads
+ /// until the next successful parse implicitly clears them.
+-// @PLN10 — owned `String` (no scratch); gated by
+-// `generation::native_returns_owned_string`.
++// @PLN10 — owned `String` (no scratch); same gate as `i_parse_errors`.
+ pub fn i_json_errors(stores: &mut Stores) -> String {
+     stores.last_json_errors.join("|")
+ }
+diff --git b/src/compiled_stdlib_gen.rs a/src/compiled_stdlib_gen.rs
+index 3ac46702e..f6f54163b 100644
+--- b/src/compiled_stdlib_gen.rs
++++ a/src/compiled_stdlib_gen.rs
+@@ -535,7 +535,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
+ }
+ 
+ #[inline]
+-fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
++fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> String {
+   let stores: &mut Stores = unsafe { &mut *cell.get() };
+   loft::codegen_runtime::i_parse_errors(stores)
+ }
+diff --git b/src/database/format.rs a/src/database/format.rs
+index eafbaaa10..e91c06d01 100644
+--- b/src/database/format.rs
++++ a/src/database/format.rs
+@@ -452,8 +452,8 @@ impl Stores {
+     /// data, and a `vector<T>.parse` reported an error naming a different type entirely.
+     ///
+     /// One entry point, both registers: cleared on entry, written on failure.  The two
+-    /// surfaces stay separate by design (`#errors` is a `vector<text>`, `json_errors()` one
+-    /// text; the suite and `STDLIB.md` both rely on that) — what they must not do is DISAGREE about
++    /// surfaces stay separate by design (`#errors` is text and clears on read; the suite
++    /// and `STDLIB.md` both rely on that) — what they must not do is DISAGREE about
+     /// whether the last parse succeeded.
+     fn record_text_parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
+         self.last_json_errors.clear();
+@@ -511,15 +511,6 @@ impl Stores {
+         self.text_vector(&args)
+     }
+ 
+-    /// What `record#errors` reads: the last `Type.parse()` call's errors as a fresh
+-    /// `vector<text>`, one element per error.  The register is left as it stands, so a second
+-    /// read answers the same; the next parse is what clears it.
+-    #[must_use]
+-    pub fn parse_errors_vector(&mut self) -> DbRef {
+-        let errors = self.last_parse_errors.clone();
+-        self.text_vector(&errors)
+-    }
+-
+     /// Build a `vector<text>` from an explicit string slice.
+     #[must_use]
+     pub fn text_vector(&mut self, args: &[String]) -> DbRef {
+diff --git b/src/database/mod.rs a/src/database/mod.rs
+index b375b5123..06bc5a38d 100644
+--- b/src/database/mod.rs
++++ a/src/database/mod.rs
+@@ -531,8 +531,7 @@ pub struct Stores {
+     /// `src/generation/calls.rs`) resolves from any function context
+     /// that only has `&mut Stores`.
+     pub const_refs: Vec<DbRef>,
+-    /// Errors from the last `Type.parse()` call, read via `s#errors`; the next parse
+-    /// clears them, a read does not.
++    /// Errors from the last `Type.parse()` call, read via `s#errors`.
+     pub last_parse_errors: Vec<String>,
+     /// errors from the last `json_parse()` call, read via
+     /// `json_errors()`.  Cleared on every successful `json_parse`;
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 01e0baff6..6faff109b 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -1893,7 +1893,10 @@ fn block_needs_i64_widen(val: &Value, dest: &Type) -> bool {
+ /// fns.  Curate this in **lockstep** with the body conversions in
+ /// `codegen_runtime.rs`.  Sibling of `state::codegen::is_text_dest_native`.
+ fn native_returns_owned_string(name: &str) -> bool {
+-    matches!(name, "n_json_errors" | "n_parallel_buf_get_text")
++    matches!(
++        name,
++        "i_parse_errors" | "n_json_errors" | "n_parallel_buf_get_text"
++    )
+ }
+ 
+ /// @PLN10 Phase A — a **USER** text-returning function with **no `RefVar(Text)`
+diff --git b/src/native.rs a/src/native.rs
+index 59d2eb4a6..989b50a7f 100644
+--- b/src/native.rs
++++ a/src/native.rs
+@@ -148,6 +148,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
+     ("n_ymd_days_ago_dest", n_ymd_days_ago_dest),
+     ("n_store_memory_dest", n_store_memory_dest),
+     // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
++    ("i_parse_errors_dest", i_parse_errors_dest),
+     ("n_struct_to_json_dest", n_struct_to_json_dest),
+     ("n_struct_to_json_pretty_dest", n_struct_to_json_pretty_dest),
+     ("t_9character_is_lowercase", t_9character_is_lowercase),
+@@ -461,7 +462,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
+     ("n_reflect_field", n_reflect_field),
+     ("n_reflect_field_path", n_reflect_field_path),
+     ("n_path_sep", n_path_sep),
+-    ("i_parse_errors", i_parse_errors),
+     ("i_parse_error_push", i_parse_error_push),
+     ("n_hash_sorted", n_hash_sorted),
+     ("n_vector_sum_int", n_vector_sum_int),
+@@ -3610,11 +3610,17 @@ fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
+     stores.last_parse_errors.push(msg.str().to_owned());
+ }
+ 
+-/// `record#errors`: the last `Type.parse()` call's errors as a fresh `vector<text>`, empty
+-/// when the parse succeeded.  Reading leaves the register alone.
+-fn i_parse_errors(stores: &mut Stores, stack: &mut DbRef) {
+-    let new_value = stores.parse_errors_vector();
+-    stores.put(stack, new_value);
++// @PLN10 Phase 1 — destination-passing variant of `i_parse_errors`.
++// Always-non-null (the joined error text, possibly empty); no stack args.
++// Routed by `is_text_dest_native`.
++fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
++    let dest = stores.get::<DbRef>(stack);
++    let msg = stores.last_parse_errors.join("\n");
++    stores.last_parse_errors.clear();
++    stores
++        .store_mut(&dest)
++        .addr_mut::<String>(dest.rec, dest.pos)
++        .push_str(&msg);
+ }
+ 
+ // HTTP client glue removed — n_http_do and n_http_body are now auto-marshalled.
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 761b77cbb..c24912649 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1836,8 +1836,7 @@ impl Parser {
+             pos: 0,
+         };
+         let d = data.add_def("i_parse_errors", &pos, DefType::Function);
+-        data.definitions[d as usize].returned =
+-            Type::Vector(Box::new(Type::Text(Deps::none())), Deps::none());
++        data.definitions[d as usize].returned = Type::Text(Deps::none());
+         let d = data.add_def("i_parse_error_push", &pos, DefType::Function);
+         data.definitions[d as usize].returned = Type::Void;
+         {
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index edddf1325..3a65dbb52 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -905,12 +905,11 @@ impl Parser {
+             if self.lexer.has_token("#") {
+                 self.var_usages(index_var, true);
+                 if self.lexer.has_keyword("errors") {
+-                    // s#errors — the parse errors from the last Type.parse() call, one
+-                    // element per error; a fresh vector the caller owns.
++                    // s#errors — return the parse errors from the last Type.parse() call.
+                     let fn_nr = self.data.def_nr("i_parse_errors");
+                     if fn_nr != u32::MAX {
+                         *code = Value::Call(fn_nr, vec![]);
+-                        t = self.data.def(fn_nr).returned.clone();
++                        t = Type::Text(crate::data::Deps::none());
+                     }
+                     return t;
+                 }
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 01904d915..10cbc0207 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -172,6 +172,7 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
+             // @PLN129 arc C — always-non-null: "" IS the healthy answer.
+             | "n_store_lazy_error"
+             // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
++            | "i_parse_errors"
+             | "n_struct_to_json"
+             | "n_struct_to_json_pretty"
+             // @PLN10 Phase 1 — par-text buffer reader (interp; native is owned

@@ -452,8 +452,8 @@ impl Stores {
     /// data, and a `vector<T>.parse` reported an error naming a different type entirely.
     ///
     /// One entry point, both registers: cleared on entry, written on failure.  The two
-    /// surfaces stay separate by design (`#errors` is text and clears on read; the suite
-    /// and `STDLIB.md` both rely on that) — what they must not do is DISAGREE about
+    /// surfaces stay separate by design (`#errors` is a `vector<text>`, `json_errors()` one
+    /// text; the suite and `STDLIB.md` both rely on that) — what they must not do is DISAGREE about
     /// whether the last parse succeeded.
     fn record_text_parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
         self.last_json_errors.clear();
@@ -509,6 +509,15 @@ impl Stores {
         // the binary path + loft CLI flags.
         let args = self.user_args.clone();
         self.text_vector(&args)
+    }
+
+    /// What `record#errors` reads: the last `Type.parse()` call's errors as a fresh
+    /// `vector<text>`, one element per error.  The register is left as it stands, so a second
+    /// read answers the same; the next parse is what clears it.
+    #[must_use]
+    pub fn parse_errors_vector(&mut self) -> DbRef {
+        let errors = self.last_parse_errors.clone();
+        self.text_vector(&errors)
     }
 
     /// Build a `vector<text>` from an explicit string slice.

@@ -123,9 +123,9 @@ fn a_successful_parse_leaves_no_errors_behind() {
   assert(json_errors() == "", "a successful parse left the old error behind: {json_errors()}");
 }
 
-// It is a TEXT — several diagnostics joined with `|`, not a collection — and `record#errors`
-// is the same answer per value, cleared by the READ rather than by the next parse.
-fn the_error_channel_is_a_text_and_the_record_one_clears() {
+// It is a TEXT — several diagnostics joined with `|`, not a collection — while `record#errors`
+// is a `vector<text>`, one entry per error, that a read leaves in place.
+fn the_error_channel_is_a_text_and_the_record_one_is_a_vector() {
   JUser.parse(json_parse(`{{"id":"not_a_number","name":42}}`));
   both = json_errors();
   assert(both.contains("|"), "two diagnostics are not pipe-joined: {both}");
@@ -135,6 +135,7 @@ fn the_error_channel_is_a_text_and_the_record_one_clears() {
   u = JUser.parse(`{{"id":"x"}}`);
   first = u#errors;
   second = u#errors;
-  assert(first != "", "`#errors` said nothing about a mismatch");
-  assert(second == "", "`#errors` was not cleared by the read: {second}");
+  assert(len(first) == 1, "`#errors` did not hold the one mismatch: {first}");
+  assert(len(second) == 1, "a read emptied `#errors`: {second}");
+  assert(first[0] == second[0], "the two reads disagree: {first} / {second}");
 }

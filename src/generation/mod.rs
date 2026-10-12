@@ -1896,10 +1896,7 @@ fn block_needs_i64_widen(val: &Value, dest: &Type) -> bool {
 /// fns.  Curate this in **lockstep** with the body conversions in
 /// `codegen_runtime.rs`.  Sibling of `state::codegen::is_text_dest_native`.
 fn native_returns_owned_string(name: &str) -> bool {
-    matches!(
-        name,
-        "i_parse_errors" | "n_json_errors" | "n_parallel_buf_get_text"
-    )
+    matches!(name, "n_json_errors" | "n_parallel_buf_get_text")
 }
 
 /// @PLN10 Phase A — a **USER** text-returning function with **no `RefVar(Text)`

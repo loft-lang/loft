@@ -10,6 +10,17 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### `record#errors` returns a `vector<text>` and leaves the register alone (2026-10-12)
+
+`i_parse_errors` returned the register joined with newlines as one text and cleared it; it
+now returns `Stores::parse_errors_vector()`, a fresh `vector<text>` built by the builder
+`arguments()` uses, and only the next `Type.parse` clears `last_parse_errors`.  The def's
+return type is `Type::Vector(Text)`, which the `#errors` parse site reads back instead of
+naming a type of its own.  The accessor left the two text-producer lists
+(`state::codegen::is_text_dest_native`, `generation::native_returns_owned_string`) and its
+`_dest` native is gone; the interpreter registers `i_parse_errors` as an ordinary native.
+An owner decision (QUALITY-history.md § JSON cluster).
+
 ### Binary operators parsed by precedence climbing (@PLN188, 2026-10-09)
 
 `parse_operators` (`src/parser/operators.rs`) reads the operand first (`parse_primary`) and

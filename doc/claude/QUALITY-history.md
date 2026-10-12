@@ -10300,6 +10300,34 @@ depends on the text shape (`len(b1#errors) > 0`, `b2#errors != empty`,
 `"[{b3#errors}]"`) and on the clear-on-read, and it says so in its own comment.  Deciding it
 belongs to [COMPATIBILITY.md](COMPATIBILITY.md)'s process, not to a fix pass.
 
+**DECIDED 2026-10-12 (owner): `record#errors` is a `vector<text>`, and a read does not clear
+it.**  One entry per error of the last `Type.parse(text)`, empty after a success, replaced by
+the next parse; each read builds a fresh vector (`Stores::parse_errors_vector`), so the
+reader's copy and the register never alias.  The accessor left the destination-passing text
+producers (`is_text_dest_native`, `native_returns_owned_string`) and returns the way
+`arguments()` does.
+
+Re-measured on the build before the change: `for e in r#errors` ran 14 times — the direct
+loop evaluated the accessor once and walked its characters, so the "0 iterations" above no
+longer held; a second read answered `""`.
+
+What the old spellings do now, measured: `r#errors != ""`, `e == ""` and `x: text =
+r#errors` are refused at compile time; `if r#errors { … }` draws the gating
+`constant-condition` warning; `len(r#errors) > 0` keeps its meaning; `"{r#errors}"` prints
+the vector (`["line 1:1 path:"]`) where it printed the bare text.  No published library and
+no consumer read `#errors` (a grep of the eight `loft-libs-*` repos, moros, dryopea and
+crawler).
+
+Two guards were using `#errors` as their side-effecting text producer and lost that subject:
+`repro_p272_inline_format_compare.loft` now counts the calls of a producer of its own, which
+native still emits through the `_pre_N` hoist the defect lived in, and
+`197-struct-json-parse-errors-dest.loft` keeps its `to_json` cells only.
+
+Left as it was: the walker stops at the first error, so a parse yields at most one entry,
+and `i_parse_error_push`, the only other writer of the register, has no caller.  The
+register is also per PROGRAM, not per record — `a#errors` after a later parse of `b` reports
+on `b`.
+
 ### Native runtime cluster
 
 | Item | Section | Status |

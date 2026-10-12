@@ -1836,7 +1836,8 @@ impl Parser {
             pos: 0,
         };
         let d = data.add_def("i_parse_errors", &pos, DefType::Function);
-        data.definitions[d as usize].returned = Type::Text(Deps::none());
+        data.definitions[d as usize].returned =
+            Type::Vector(Box::new(Type::Text(Deps::none())), Deps::none());
         let d = data.add_def("i_parse_error_push", &pos, DefType::Function);
         data.definitions[d as usize].returned = Type::Void;
         {

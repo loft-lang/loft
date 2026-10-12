@@ -535,7 +535,7 @@ fn init(cell: &std::cell::UnsafeCell<Stores>) {
 }
 
 #[inline]
-fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> String {
+fn i_parse_errors(cell: &std::cell::UnsafeCell<Stores>) -> DbRef {
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   loft::codegen_runtime::i_parse_errors(stores)
 }

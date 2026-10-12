@@ -688,7 +688,7 @@ return response.to_json_pretty();
 | `"{value:j}"` | Serialise any struct/enum/vector to JSON text |
 | `Type.parse(text)` | Parse JSON or loft-native text into a struct (P54 step 5 will require `Type.parse(JsonValue)` for structs) |
 | `vector<T>.parse(text)` | Parse a JSON array into an iterable vector |
-| `record#errors` | The last `Type.parse()` call's errors as ONE text (newline-separated), cleared by the read |
+| `record#errors` | The last `Type.parse()` call's errors as a `vector<text>`, one entry per error; empty after a success, and a read leaves them in place |
 
 <!-- from tests/reference/json-values.loft -->
 ```loft
@@ -696,7 +696,7 @@ user = User.parse(`{{"id":42,"name":"Alice"}}`);
 scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 
 // A failed parse leaves the record at its type's zeros, so ask whether it failed.
-errs = user#errors;              // TEXT, not a collection — and the read clears it
+errs = user#errors;              // a vector<text>: one entry per error of the last parse
 ```
 
 Reach for this form when you KNOW the document's shape and it maps onto a struct you have
