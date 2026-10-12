@@ -126,9 +126,9 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.40 | `forms_upto` | X12 | no figure |
 | 5.32 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
 
-The steps, in the order of the slowest row each moves.  Three rows reach 3× with everything
-here built (`rig_world_frame3`, `insert_text`, and `map_json` by its decision); the others
-land between 3.6× and 6.9×, so each step ends with a re-profile of its rows.
+The steps these rows name; **Order**, under the table, is the sequence they are worked in.
+Three rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`, and
+`map_json` by its decision); the others land between 3.6× and 6.9×.
 
 | | step | rows it moves (share of the row) | state | first action |
 |---|---|---|---|---|
@@ -147,6 +147,39 @@ land between 3.6× and 6.9×, so each step ends with a re-profile of its rows.
 | X11 | `graphics`, `drawing`, `text2d`, `stage` and `assets` build on this box again: they resolve dependencies (`mesh3d` 0.1.2 through `drawing`'s lock file, `shapes`) that lack the `pub` fields @C140 requires, and `main`'s own compiler refuses them the same way | `fill_polygon`, and those five libraries' census rows | library work | bump the pins, then re-measure the lane |
 | S2, S3 | § 3 | `rig_world_frame3` → 2.75×, `mat4_mul` (4.54× here) → 0.63× | priced | build, S2 first |
 | X12 | `forms_upto`'s remaining claims attributed (`(R-CtorLiteral)` and the refill clause are built) | `forms_upto` (claim and release 24 %) | no step | read `forms_upto__rg` and `form_closes` by line |
+
+**Order.**  Three rules, applied in this order: a step another step or a row WAITS on goes
+before it; the slowest row goes first; a step with no price is priced before it is built.
+
+1. **Unblock** — small, and a row waits on each.  X4: `check_request`, the third slowest
+   row, has no profile without it.  X6 put to the owner: `map_json` waits on the answer,
+   and nothing else does.  X11: `fill_polygon` cannot be measured on this box until then.
+2. **`truncate_to` (8.17×)** — price X1 on `history_push`, build it if the price holds.  It
+   also moves `panel_build`, so item 7 is sized on the profile X1 leaves.
+3. **`flow_layout_full` (7.92×)** — build S1c (priced).  Price X2, then build it: the same
+   step moves `arguments/parse` (7.18×), cbor `encode` (6.81×) and `rig_world_frame3`
+   (5.51×), which is why it stands here and not at their rows.  Then price X3 on what is left.
+4. **`check_request` (7.85×)** — with X4 in: profile the row, build `(R-DecodeView)`; S8
+   after its decision (§ 6).
+5. **`field_add_cell` (7.54×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
+   on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
+   move with it.
+6. **`map_json` (7.44×)** — X6, as decided in item 1.
+7. **`panel_build` (7.43×)** — size S9 on the row as item 2 left it, then build.
+8. **`arguments/parse` (7.18×)** — X7, on what X2 left of the row.
+9. **`mapfile_to_painted` (6.93×), `reload_and_record` (6.75×)** — X5 d: P3 first, P4 with
+   its range proof.
+10. **`binary_read` (6.83×)** — price X8, build.
+11. **cbor `encode` (6.81×)** — X9, on what X2 left of the row.
+12. **`invert` (6.35×), `insert_text` (5.32×)** — price X10 on `insert_text`, build.
+13. **`slope_path_with_undo` (5.83×)** — re-profile; § 5's record-build row names what is left.
+14. **`rig_world_frame3` (5.51×)** — S2, then S3.
+15. **`forms_upto` (5.40×)** — X12.
+
+After each item, measure the rows it names (M5) and read this order again: a row under 5×
+leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
+row a step did not move as priced is re-profiled before the next step is built on it.  One
+full run (`make perf-portal`) after item 7 and one after item 15.
 
 ## 1. The axis the order follows
 
