@@ -698,17 +698,27 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 1.**
 
-- **D-types-32** (open; the tracking issue is loft#1934) — violates `(N-Road)`: τ and τ? take the same lowering.  The <!-- doc-lint: ok -->
+- **D-types-32** (open; the tracking issue is loft#1989) — violates `(N-Road)`: τ and τ? take the same lowering.  The <!-- doc-lint: ok -->
   record return is unified: a `-> S?` takes the caller's buffer as `-> S` does
-  (`Type::ret_promo_base` peels `Optional` of a record or record enum as it peeled
-  `Optional(Vector)`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller binds
-  either spelling through one arm (`use_analysis::first_bind_shape`).  Still open:
-  `captured-local-rebind` and `local-rebound-by-mint` (`scripts/nullable_road.py`).  `--native`
-  value records take the nullable flat record too (`(R-ValueRecord)`'s nullable clause, @C144):
-  the `mint`, `method` and `param` pairs take the tuple in both spellings, and a
-  `??` with a record default is the one value-record shape still on the record road.  The `??` <!-- doc-lint: ok -->
-  lowering is the rule's one exception, and pairs such as `ret-view-of-param` now differ in it
-  alone.  The values agree and both halves are leak-clean under `LOFT_STRICT_STORES=1`.
+  (`Type::ret_promo_base`; `LOFT_NO_NULLABLE_RETBUF=1` restores the old road), and the caller
+  binds either spelling through one arm (`use_analysis::first_bind_shape`).  `make nullable-road`
+  compares fifteen dense/nullable pairs, and four roads still differ, each at one site:
+  1. `--native`'s live-reload entry check (`Generator::live_entry_check`) picks its thunk and
+     its pushes by bare type former, so a function returning or taking a `τ?` gets no entry
+     check and no `LOFT_LIVE_FNS` slot;
+  2. `Function::borrows_one_argument` reads a one-argument borrow as ownership only for the
+     nullable spelling, so a `__ret` temp joining a parameter view with a built record frees
+     its previous occupant in a `-> S?` function and not in its `-> S` twin (`ifmix`);
+  3. a `-> S?` whose tail is a local binds the block's value to a `__ret` temp and frees the
+     local unconditionally, where `-> S` returns the materialised copy directly (`recur`);
+  4. `x: S? = S { … }` builds through a work reference, where `x: S = S { … }` constructs in
+     place (`captured-local-rebind`).
+
+  `--native` value records carry a `τ?` as the flat record with a presence word
+  (`(R-ValueRecord)`'s nullable clause, @C144).  The `??` lowering is the rule's one exception,
+  and the other pairs differ in it alone.  `element-over-param` is not a pair: its halves
+  differ in an arm's value, `S { a: 0 }` against `null`.  The values agree and both halves
+  are leak-clean on `--interpret` under `LOFT_STRICT_STORES=1`.
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
