@@ -4863,7 +4863,7 @@ against the red-black tree's 6–9; the verified hint brought it to 9.  Text key
 eight bytes — which is what the node prefix answers.  C113's rationale was restated the same day:
 its storage argument went with the link triple.
 
-## C148 — one structural limit, 300, for every count a program has — a function's variables included
+## C149 — one structural limit, 300, for every count a program has — a function's variables included
 
 Decided 2026-10-12 by the owner.  PR #1967 had replaced four separate bounds (256, 128 in a
 sandbox, 499, 999) by one, 300, and with it a function's variables were counted for the first

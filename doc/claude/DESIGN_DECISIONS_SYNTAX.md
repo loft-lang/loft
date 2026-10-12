@@ -306,7 +306,7 @@ Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--privat
 holds on every build.
 **Catalogue:** @F2 / modules.  Extends [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.
 
-## C148 — one structural limit, 300, for every count a program has — a function's variables included
+## C149 — one structural limit, 300, for every count a program has — a function's variables included
 
 **Decision.** One number bounds a program's structure: an expression nests 300 levels deep, a
 struct declares 300 fields, a function takes 300 parameters and binds 300 variables of its own,
@@ -324,7 +324,7 @@ is the supported path and the message says so.
 
 **Revisit when.** A function that cannot be split meets the count — generated code, or a
 table-shaped initialiser — or a slot grows until 300 ordinary variables no longer fit the frame.
-Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c148--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included).
+Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included).
 **Holds at:** `tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft` (the margin),
 `the-counts-within-the-limit-compile.loft` beside `a-count-past-the-limit-is-refused.loft` (the
 count itself).

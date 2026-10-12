@@ -865,7 +865,7 @@ Polymorphism, generic functions and structs, best practices, interfaces and boun
 
 ## Limits
 
-One number bounds a program's structure: **300** (@C148).  At 300 everything works, on both backends;
+One number bounds a program's structure: **300** (@C149).  At 300 everything works, on both backends;
 the 301st is refused at compile time with a message naming the limit.
 
 - an expression nested 300 levels deep — each bracket, call argument, block, branch, vector
