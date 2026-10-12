@@ -98,7 +98,7 @@ impl Stores {
             | Parts::Sorted(content, _)
             | Parts::Array(content)
             | Parts::Ordered(content, _)
-            | Parts::Index(content, _, _)
+            | Parts::Index(content, _)
             | Parts::Hash(content, _)
             | Parts::Radix(content, _)
             | Parts::Trie(content, _) => self.eq_collection(a, b, tp, *content, seen),

@@ -54,7 +54,7 @@ impl RemoveKind {
             Parts::Sorted(c, _) | Parts::Vector(c) => Self::Inline(*c),
             Parts::Ordered(_, _) | Parts::Array(_) => Self::ByReference,
             Parts::Hash(_, _) => Self::Hash,
-            Parts::Index(_, _, _) => Self::Index,
+            Parts::Index(_, _) => Self::Index,
             Parts::Trie(_, _) => Self::Trie,
             Parts::Radix(_, _) => Self::Radix,
             Parts::Base
@@ -80,27 +80,6 @@ impl Stores {
             key.push(self.field_content(fld, db, *k));
         }
         key
-    }
-
-    /// Byte offset within a record where an `index`'s red-black links start — what `tree`
-    /// descends from.  `u16::MAX` when `tp` is not an index.
-    ///
-    /// The field list is the one `Stores::index_owner` names, so a synth `__nullable<S>`
-    /// element reads its links out of the `Some` record the append put them in.
-    #[must_use]
-    pub fn fields(&self, tp: u16) -> u16 {
-        if let Parts::Index(c, _, f) = self.types[tp as usize].parts {
-            let c = self.index_owner(c);
-            if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-                &self.types[c as usize].parts
-            {
-                8 + fields[f as usize].position
-            } else {
-                u16::MAX
-            }
-        } else {
-            u16::MAX
-        }
     }
 
     #[must_use]
@@ -302,7 +281,7 @@ impl Stores {
             Parts::Radix(_, _) => {
                 crate::radix_db::find(data, &self.allocations, self.keys(db), key)
             }
-            Parts::Index(_, _, _) => self.find_index(data, db, key),
+            Parts::Index(_, _) => self.find_index(data, db, key),
         }
     }
 
@@ -386,7 +365,7 @@ impl Stores {
     pub(crate) fn compute_key_contents(&self, db: u16) -> Vec<u16> {
         match &self.types[db as usize].parts {
             Parts::Vector(_) | Parts::Array(_) => vec![0],
-            Parts::Sorted(c, key) | Parts::Ordered(c, key) | Parts::Index(c, key, _) => {
+            Parts::Sorted(c, key) | Parts::Ordered(c, key) | Parts::Index(c, key) => {
                 // Key content TYPES (for `read_key` to pop the right widths).  Route through
                 // the `key_field` chokepoint so a synth `__nullable<S>` element resolves the
                 // key inside the `Some` payload, and through `key_contents_for_field` so a
@@ -451,7 +430,7 @@ impl Stores {
             Parts::Hash(_, _) => {
                 hash::validate(data, &self.allocations, &self.types[db as usize].keys);
             }
-            Parts::Index(_, _, _) => {
+            Parts::Index(_, _) => {
                 btree::validate(data, &self.allocations, &self.types[db as usize].keys);
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
@@ -502,7 +481,7 @@ impl Stores {
                     pos: 8,
                 }
             }
-            Parts::Index(_, _, _) => {
+            Parts::Index(_, _) => {
                 // The cursor is the RECORD, never a slot: a walk survives removals by key.
                 let n = if *pos == i32::MAX {
                     btree::first_record(data, &self.allocations)
@@ -668,7 +647,7 @@ impl Stores {
         let content_tp = match self.types[db as usize].parts {
             Parts::Hash(c, _)
             | Parts::Sorted(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Ordered(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _) => c,
@@ -930,10 +909,9 @@ impl Stores {
         let (content, own_block, is_hash) = match &self.types[db as usize].parts {
             Parts::Vector(c) | Parts::Array(c) | Parts::Sorted(c, _) => (*c, false, false),
             Parts::Hash(c, _) => (*c, true, true),
-            Parts::Ordered(c, _)
-            | Parts::Radix(c, _)
-            | Parts::Trie(c, _)
-            | Parts::Index(c, _, _) => (*c, true, false),
+            Parts::Ordered(c, _) | Parts::Radix(c, _) | Parts::Trie(c, _) | Parts::Index(c, _) => {
+                (*c, true, false)
+            }
             // Not a collection: `remove` panics on these, and it stays the one
             // place that decides so.
             _ => {

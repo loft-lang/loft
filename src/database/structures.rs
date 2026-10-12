@@ -124,7 +124,7 @@ impl InsertKind {
             Parts::Sorted(c, _) => Self::Sorted(*c),
             Parts::Array(_) => Self::Array,
             Parts::Hash(c, _) => Self::Hash(*c),
-            Parts::Index(c, _, _) => Self::Index(*c),
+            Parts::Index(c, _) => Self::Index(*c),
             Parts::Ordered(c, _) => Self::Ordered(*c),
             Parts::Trie(c, _) => Self::Trie(*c),
             Parts::Radix(_, _) => Self::Radix,
@@ -332,7 +332,7 @@ impl Stores {
             }
             Parts::Array(c)
             | Parts::Ordered(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
             | Parts::Hash(c, _) => {
@@ -847,7 +847,7 @@ impl Stores {
             | Parts::Sorted(c, _)
             | Parts::Ordered(c, _)
             | Parts::Hash(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _) => Some(*c),
             _ => None,
@@ -2327,7 +2327,7 @@ impl Stores {
             | Parts::Hash(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
-            | Parts::Index(c, _, _) => {
+            | Parts::Index(c, _) => {
                 let crate::json::Parsed::Array(items) = parsed else {
                     return Err(mismatch());
                 };

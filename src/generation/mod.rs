@@ -8647,7 +8647,7 @@ extern crate loft;"
                             self.stores.types[f.content as usize].parts,
                             crate::database::Parts::Sorted(_, _)
                                 | crate::database::Parts::Hash(_, _)
-                                | crate::database::Parts::Index(_, _, _)
+                                | crate::database::Parts::Index(_, _)
                         ) && decided.insert(f.content)
                             && f.content > container
                         {
@@ -8766,14 +8766,14 @@ extern crate loft;"
                 crate::database::Parts::Radix(c, keys) if !field_keyed.contains(&tid) => {
                     bare_io.push((tid, BareIo::Radix(*c, keys.clone())));
                 }
-                crate::database::Parts::Index(c, keys, _) if !field_keyed.contains(&tid) => {
+                crate::database::Parts::Index(c, keys) if !field_keyed.contains(&tid) => {
                     bare_io.push((tid, BareIo::Index(*c, keys.clone())));
                 }
                 crate::database::Parts::Sorted(_, _)
                 | crate::database::Parts::Hash(_, _)
                 | crate::database::Parts::Radix(_, _)
                 | crate::database::Parts::Trie(_, _)
-                | crate::database::Parts::Index(_, _, _) => {}
+                | crate::database::Parts::Index(_, _) => {}
                 _ => {}
             }
         }

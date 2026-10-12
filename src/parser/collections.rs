@@ -1036,7 +1036,7 @@ impl Parser {
                 && matches!(
                     self.database.types[*db_tp_val as usize].parts,
                     Parts::Hash(_, _)
-                        | Parts::Index(_, _, _)
+                        | Parts::Index(_, _)
                         | Parts::Sorted(_, _)
                         | Parts::Ordered(_, _)
                         | Parts::Radix(_, _)
@@ -1518,7 +1518,7 @@ impl Parser {
                     // collection stayed empty — in a program that never used the struct
                     // whose second field caused the promotion.
                     | Parts::Ordered(_, _)
-                    | Parts::Index(_, _, _)
+                    | Parts::Index(_, _)
                     | Parts::Radix(_, _)
                     | Parts::Trie(_, _)
             )

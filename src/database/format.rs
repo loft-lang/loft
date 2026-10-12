@@ -1460,7 +1460,7 @@ impl ShowDb<'_> {
                 | Parts::Array(tp)
                 | Parts::Ordered(tp, _)
                 | Parts::Hash(tp, _)
-                | Parts::Index(tp, _, _)
+                | Parts::Index(tp, _)
                 | Parts::Radix(tp, _) => {
                     // `(F-Render)`: a null of any type renders `null`.  A collection field or
                     // local is addressed AT its slot, so its absence is the slot's
@@ -2217,7 +2217,7 @@ impl ShowDb<'_> {
             | Parts::Sorted(tp, _)
             | Parts::Array(tp)
             | Parts::Ordered(tp, _)
-            | Parts::Index(tp, _, _) => {
+            | Parts::Index(tp, _) => {
                 self.write_dump_list(s, *tp, indent);
             }
             Parts::Hash(_, _) | Parts::Radix(_, _) | Parts::Trie(_, _) => {

@@ -5012,41 +5012,31 @@ impl Display for DefType {
 }
 
 /// A group of fields on a struct/type that belong together as a single
-/// logical unit.  Used **exclusively** for two patterns — tuple
-/// elements and index bookkeeping triples.  Do not extend for other
-/// uses without explicit user direction.
+/// logical unit.  Used **exclusively** for tuple elements.  Do not
+/// extend for other uses without explicit user direction.
 ///
 /// `Tuple` — synthetic `__tuple<T1,T2,…>` struct's element fields
 /// `_0`, `_1`, ….  One group per tuple-shape struct; `field_indices`
 /// lists every attribute in element order.  Registered by
 /// [`Data::tuple_def`].
 ///
-/// `Index` — bookkeeping triple appended to a content struct when
-/// `index<T[key]>` is registered.  One group per index instance on the
-/// struct (multiple indexes → multiple groups); `field_indices`
-/// lists exactly `[left, right, color]` in that order.  Registered by
-/// [`Stores::index`].
+/// An `index<T[key]>` once appended a red-black bookkeeping triple as a second kind; its
+/// B+tree (`btree.rs`) keeps its nodes apart and adds no field (@PLN190).
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkedFieldKind {
     Tuple,
-    Index,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkedFieldGroup {
     pub kind: LinkedFieldKind,
     /// 0 for Tuple (only one tuple group per synthetic struct).
-    /// 1-based index instance counter for Index (matches the `_N`
-    /// suffix on `#left_N` / `#right_N` / `#color_N`).
     pub instance: u16,
-    /// Indices into the host struct's field/attribute list.
-    /// For Tuple: element order, length = arity.
-    /// For Index: exactly `[left, right, color]`, length = 3.
+    /// Indices into the host struct's field/attribute list, in element order (length =
+    /// arity).
     pub field_indices: Vec<u16>,
     /// Alignment the GROUP must be placed at — the MAX of every
-    /// member field's alignment.  An index triple
-    /// `[int4 (align 4), int4 (align 4), bool (align 1)]` has group
-    /// alignment 4.  A tuple `(integer (align 8), byte (align 1))` has
+    /// member field's alignment.  A tuple `(integer (align 8), byte (align 1))` has
     /// group alignment 8.  Pass this to the layout routine as the
     /// alignment requirement when reserving the group's contiguous
     /// block — the routine must honour it so the int/integer members
@@ -5055,8 +5045,7 @@ pub struct LinkedFieldGroup {
     /// Total bytes the group occupies when laid out atomically — the
     /// sum of every member's size, **plus** any internal padding
     /// needed to align larger members after smaller ones in element
-    /// order.  An index triple is `4 + 4 + 1 = 9` (no internal padding,
-    /// 1-byte bool last).  A tuple `(byte, integer)` requires 7 bytes
+    /// order.  A tuple `(byte, integer)` requires 7 bytes
     /// of internal padding between them: `1 + 7 + 8 = 16`.
     pub size: u16,
 }

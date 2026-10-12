@@ -371,7 +371,7 @@ enum DbParts {
   PtSorted { content: integer, keys: vector<KeyField> },
   PtOrdered { content: integer, keys: vector<KeyField> },
   PtHash { content: integer, fields: vector<integer> },
-  PtIndex { content: integer, keys: vector<KeyField>, left: integer },
+  PtIndex { content: integer, keys: vector<KeyField> },
   PtRadix { content: integer, fields: vector<integer> },
   PtDbRef,
   PtChildRec { content: integer },

@@ -773,11 +773,7 @@ fn read_field_groups(stores: &Stores, parent: Record) -> Vec<LinkedFieldGroup> {
         .map(|i| {
             let r = v.get(i, stores);
             LinkedFieldGroup {
-                kind: if r.field_int(stores, ds::LFG_KIND) == 0 {
-                    LinkedFieldKind::Tuple
-                } else {
-                    LinkedFieldKind::Index
-                },
+                kind: LinkedFieldKind::Tuple,
                 instance: r.field_int(stores, ds::LFG_INSTANCE) as u16,
                 field_indices: read_dep_list(stores, r, ds::LFG_FIELD_INDICES),
                 alignment: r.field_int(stores, ds::LFG_ALIGNMENT) as u8,
@@ -965,11 +961,7 @@ fn read_db_parts(stores: &Stores, r: Record) -> Parts {
         ds::PT_SORTED => Parts::Sorted(content(), read_key_fields(stores, r, ds::PTKEYS)),
         ds::PT_ORDERED => Parts::Ordered(content(), read_key_fields(stores, r, ds::PTKEYS)),
         ds::PT_HASH => Parts::Hash(content(), read_dep_list(stores, r, ds::PTFIELDS)),
-        ds::PT_INDEX => Parts::Index(
-            content(),
-            read_key_fields(stores, r, ds::PTKEYS),
-            r.field_int(stores, ds::PTINDEX_LEFT) as u16,
-        ),
+        ds::PT_INDEX => Parts::Index(content(), read_key_fields(stores, r, ds::PTKEYS)),
         ds::PT_RADIX => Parts::Radix(content(), read_dep_list(stores, r, ds::PTFIELDS)),
         ds::PT_TRIE => Parts::Trie(content(), r.field_int(stores, ds::PTTRIE_KEY) as u16),
         ds::PT_DB_REF => Parts::DbRef,
@@ -1057,11 +1049,7 @@ fn read_field_groups_at(stores: &Stores, parent: Record, off: u32) -> Vec<Linked
         .map(|i| {
             let r = v.get(i, stores);
             LinkedFieldGroup {
-                kind: if r.field_int(stores, ds::LFG_KIND) == 0 {
-                    LinkedFieldKind::Tuple
-                } else {
-                    LinkedFieldKind::Index
-                },
+                kind: LinkedFieldKind::Tuple,
                 instance: r.field_int(stores, ds::LFG_INSTANCE) as u16,
                 field_indices: read_dep_list(stores, r, ds::LFG_FIELD_INDICES),
                 alignment: r.field_int(stores, ds::LFG_ALIGNMENT) as u8,

@@ -5729,13 +5729,8 @@ fn size_hash_r(s: &mut State, r: Regs) -> Regs {
 
 #[inline(always)]
 fn length_index<const F: bool>(s: &mut State) {
-    let operands = s.operands(2);
-    let v_fields = operands.get::<u16>(0);
     let v_r = s.get_stack_m::<F, DbRef>();
-    let new_value = {
-        let _ = v_fields;
-        i64::from(btree::count(&v_r, &s.database.allocations))
-    };
+    let new_value = i64::from(btree::count(&v_r, &s.database.allocations));
     s.put_stack_m::<F, _>(new_value);
 }
 

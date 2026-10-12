@@ -1,19 +1,21 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! @PLN190 P1 — the B+tree index (`src/btree.rs`) against the red-black one (`src/tree.rs`).
+//! @PLN190 — the index's B+tree (`src/btree.rs`) against a MODEL: the same records in a
+//! plain list kept sorted by `keys::compare`, which is the order an index is defined by and
+//! shares no code with the tree's parts, nodes or descent.
 //!
-//! Both trees index the SAME records in one store, and every operation is applied to both:
-//! an insert must refuse the same duplicate, a removal must find the record, every lookup
-//! must answer the same record, and the in-order walks must be the same sequence, forward
-//! and back.  A range is checked against the red-black walk filtered by `keys::key_compare`
-//! — the order and the bounds both come from somewhere the B+tree does not.  Each key shape
-//! the parts treat differently has a run: an integer (exact parts), a descending one, a
-//! float (signed zero is one key), a text with long shared prefixes (every part ties), and
-//! a compound key with partial lookups.  `btree::validate` checks the tree's own invariants.
+//! Every operation is applied to both: an insert must refuse the same duplicate, a removal
+//! must find the record, every lookup must answer what a search of the list answers, and
+//! the tree's walks — by position and by record, forward and back — must be the list.  A
+//! walk by record also has to survive the records around it being removed and added by key
+//! while it is under way (`iteration.md`, I-For), which is what its slot hints must not
+//! get wrong.  Each key shape the parts treat differently has a run: an integer (exact
+//! parts), a descending one, a float (signed zero is one key), a text with long shared
+//! prefixes (every part ties), and a compound key with partial lookups.
+//! `btree::validate` checks the tree's own invariants.
 use loft::btree;
 use loft::database::Stores;
 use loft::keys::{self, Content, DbRef, Key, Str};
-use loft::tree;
 use std::cmp::Ordering;
 
 #[derive(Clone, Copy, Debug)]
@@ -53,11 +55,13 @@ const PREFIXES: [&str; 5] = ["", "a", "ab", "common_prefix_", "common_prefix_x"]
 
 struct World {
     stores: Stores,
-    rb: DbRef,
+    /// The holder record's slot: records are claimed in its store.
+    home: DbRef,
     bt: DbRef,
     keys: Vec<Key>,
-    fields: u16,
     shape: Shape,
+    /// The model: every record in the tree, sorted by `keys::compare`.
+    model: Vec<u32>,
 }
 
 impl World {
@@ -92,12 +96,12 @@ impl World {
         stores.field(m, "index", v);
         stores.finish();
         let db = stores.database(2);
-        let rb = DbRef {
+        let home = DbRef {
             store_nr: db.store_nr,
             rec: db.rec,
             pos: 8,
         };
-        stores.set_default_value(m, &rb);
+        stores.set_default_value(m, &home);
         let holder = stores.claim(&db, 2);
         stores.allocations[db.store_nr as usize].set_u32_raw(holder.rec, 8, 0);
         let bt = DbRef {
@@ -106,14 +110,13 @@ impl World {
             pos: 8,
         };
         let keys = stores.keys(v).to_vec();
-        let fields = stores.fields(v);
         World {
             stores,
-            rb,
+            home,
             bt,
             keys,
-            fields,
             shape,
+            model: Vec::new(),
         }
     }
 
@@ -149,8 +152,8 @@ impl World {
     }
 
     fn record(&mut self, kv: &Kv) -> u32 {
-        let rec = self.stores.claim(&DbRef { pos: 8, ..self.rb }, 8).rec;
-        let s = &mut self.stores.allocations[self.rb.store_nr as usize];
+        let rec = self.stores.claim(&self.home, 8).rec;
+        let s = &mut self.stores.allocations[self.home.store_nr as usize];
         let at = |k: &Key| 8 + u32::from(k.position);
         match kv {
             Kv::I(v) => {
@@ -174,62 +177,69 @@ impl World {
 
     fn at(&self, rec: u32) -> DbRef {
         DbRef {
-            store_nr: self.rb.store_nr,
+            store_nr: self.home.store_nr,
             rec,
             pos: 8,
         }
     }
 
-    /// Insert into both; answers the duplicate both name, or 0.
+    /// How `a` orders against `b` — the collection's own order.
+    fn order(&self, a: u32, b: u32) -> Ordering {
+        keys::compare(
+            &self.at(a),
+            &self.at(b),
+            &self.stores.allocations,
+            &self.keys,
+        )
+    }
+
+    /// The first index of the model whose record is NOT below `rec`.
+    fn model_at(&self, rec: u32) -> usize {
+        self.model
+            .partition_point(|&m| self.order(m, rec) == Ordering::Less)
+    }
+
+    /// The model's records below `key` (a prefix of the list) and at-or-below it.
+    fn model_bounds(&self, key: &[Content]) -> (usize, usize) {
+        let a = &self.stores.allocations;
+        let below = self.model.partition_point(|&m| {
+            keys::key_compare(key, &self.at(m), a, &self.keys) == Ordering::Greater
+        });
+        let upto = self.model.partition_point(|&m| {
+            keys::key_compare(key, &self.at(m), a, &self.keys) != Ordering::Less
+        });
+        (below, upto)
+    }
+
+    /// Insert into both; answers the new record and the duplicate both name, or 0.
     fn insert(&mut self, kv: &Kv) -> (u32, u32) {
         let rec = self.record(kv);
-        let d1 = tree::add(
-            &self.rb,
-            &self.at(rec),
-            self.fields,
-            &mut self.stores.allocations,
-            &self.keys,
-        );
-        let d2 = btree::add(&self.bt, rec, &mut self.stores.allocations, &self.keys);
+        let i = self.model_at(rec);
+        let expect = match self.model.get(i) {
+            Some(&m) if self.order(m, rec) == Ordering::Equal => m,
+            _ => 0,
+        };
+        let got = btree::add(&self.bt, rec, &mut self.stores.allocations, &self.keys);
         assert_eq!(
-            d1, d2,
-            "{:?}: insert {kv:?} — the duplicate each tree names",
+            got, expect,
+            "{:?}: insert {kv:?} — the duplicate",
             self.shape
         );
-        (rec, d1)
+        if expect == 0 {
+            self.model.insert(i, rec);
+        }
+        (rec, expect)
     }
 
     fn remove(&mut self, rec: u32) {
-        tree::remove(
-            &self.rb,
-            &self.at(rec),
-            self.fields,
-            &mut self.stores.allocations,
-            &self.keys,
-        );
+        let i = self.model_at(rec);
+        assert_eq!(self.model[i], rec, "the model holds {rec}");
+        self.model.remove(i);
         assert!(
             btree::remove(&self.bt, rec, &mut self.stores.allocations, &self.keys),
             "{:?}: record {rec} was not found to remove",
             self.shape
         );
-    }
-
-    fn rb_walk(&self) -> Vec<u32> {
-        let a = &self.stores.allocations;
-        let mut out = Vec::new();
-        let mut cur = tree::first(&self.rb, self.fields, a).rec;
-        let s = keys::store(&self.rb, a);
-        while cur != 0 {
-            out.push(cur);
-            cur = tree::next(
-                s,
-                &DbRef {
-                    pos: u32::from(self.fields),
-                    ..self.at(cur)
-                },
-            );
-        }
-        out
     }
 
     fn bt_walk(&self) -> Vec<u32> {
@@ -252,29 +262,46 @@ impl World {
             "{:?}: the forward and the backward walk differ",
             self.shape
         );
+        let mut by_rec = Vec::new();
+        let mut r = btree::first_record(&self.bt, a);
+        while r != 0 {
+            by_rec.push(r);
+            r = btree::next_record(&self.bt, a, &self.keys, r);
+        }
+        assert_eq!(out, by_rec, "{:?}: the walk by record differs", self.shape);
+        let mut back = Vec::new();
+        let mut r = btree::last_record(&self.bt, a);
+        while r != 0 {
+            back.push(r);
+            r = btree::previous_record(&self.bt, a, &self.keys, r);
+        }
+        back.reverse();
+        assert_eq!(
+            out, back,
+            "{:?}: the backward walk by record differs",
+            self.shape
+        );
         out
     }
 
-    /// Both trees valid, the same sequence, every record found at its own position.
+    /// The tree valid, the model's sequence, every record found at its own position.
     fn agree(&self, live: usize) {
         let a = &self.stores.allocations;
-        tree::validate(&self.rb, self.fields, a, &self.keys);
         btree::validate(&self.bt, a, &self.keys);
-        let seq = self.rb_walk();
         assert_eq!(
-            seq,
+            self.model,
             self.bt_walk(),
             "{:?}: the in-order sequences differ",
             self.shape
         );
-        assert_eq!(seq.len(), live, "{:?}: length", self.shape);
+        assert_eq!(self.model.len(), live, "{:?}: length", self.shape);
         assert_eq!(
             btree::count(&self.bt, a) as usize,
             live,
             "{:?}: count",
             self.shape
         );
-        for &r in &seq {
+        for &r in &self.model {
             let p = btree::position(&self.bt, a, &self.keys, r);
             assert_eq!(
                 btree::record(&self.bt, a, p),
@@ -288,9 +315,10 @@ impl World {
     fn lookups(&self, kv: &Kv, r: &mut Rng) {
         let a = &self.stores.allocations;
         let full = Self::content(kv);
-        let rb = tree::find_exact(&self.rb, self.fields, a, &self.keys, &full);
+        let (below, upto) = self.model_bounds(&full);
+        let exact = if upto > below { self.model[below] } else { 0 };
         assert_eq!(
-            rb,
+            exact,
             btree::find_exact(&self.bt, a, &self.keys, &full),
             "{:?}: exact lookup of {kv:?}",
             self.shape
@@ -301,15 +329,13 @@ impl World {
         } else {
             full
         };
-        for before in [true, false] {
-            let rb = tree::find(&self.rb, before, self.fields, a, &self.keys, &key);
-            let bt = btree::record(
-                &self.bt,
-                a,
-                btree::find(&self.bt, before, a, &self.keys, &key),
-            );
+        let (below, upto) = self.model_bounds(&key);
+        let expect_before = if below == 0 { 0 } else { self.model[below - 1] };
+        let expect_after = self.model.get(upto).copied().unwrap_or(0);
+        for (before, expect) in [(true, expect_before), (false, expect_after)] {
+            let bt = btree::find_record(&self.bt, before, a, &self.keys, &key);
             assert_eq!(
-                rb,
+                expect,
                 bt,
                 "{:?}: find {kv:?} before={before} (len {})",
                 self.shape,
@@ -321,8 +347,9 @@ impl World {
     fn range(&self, from: &[Content], till: &[Content], ex: bool) {
         let a = &self.stores.allocations;
         let expect: Vec<u32> = self
-            .rb_walk()
-            .into_iter()
+            .model
+            .iter()
+            .copied()
             .filter(|&r| {
                 let at = self.at(r);
                 let lo = from.is_empty()
@@ -559,4 +586,91 @@ fn hand_computed_integer_index() {
         vec![1, 5, 8]
     );
     assert_eq!(btree::count(&w.bt, a), 3);
+}
+
+/// A walk holds a RECORD and finds its slot again each step; the slot it found last is a
+/// HINT.  The records around it are removed and added by key while it walks — splits,
+/// merges and shifts under the hint — and each step must still yield the record that now
+/// follows the one it holds.  Two walks interleave over the same index (one hint evicts the
+/// other's) and over a second index (hints of other arenas), forward and back.
+#[test]
+fn a_walk_by_record_survives_changes_around_it() {
+    for (n, shape) in [Shape::Int, Shape::Text].into_iter().enumerate() {
+        for seed in 1..=3u64 {
+            let mut w = World::new(shape);
+            let mut other = World::new(shape);
+            let mut r = Rng(seed * 104_729 + n as u64);
+            for _ in 0..3000 {
+                let kv = w.key(&mut r, 20_000);
+                w.insert(&kv);
+                let kv = other.key(&mut r, 20_000);
+                other.insert(&kv);
+            }
+            for back in [false, true] {
+                let first = |w: &World| {
+                    let a = &w.stores.allocations;
+                    if back {
+                        btree::last_record(&w.bt, a)
+                    } else {
+                        btree::first_record(&w.bt, a)
+                    }
+                };
+                let step = |w: &World, rec: u32| {
+                    let a = &w.stores.allocations;
+                    if back {
+                        btree::previous_record(&w.bt, a, &w.keys, rec)
+                    } else {
+                        btree::next_record(&w.bt, a, &w.keys, rec)
+                    }
+                };
+                // The model's neighbour of `rec` in the walk's direction.
+                let follows = |w: &World, rec: u32| {
+                    let i = w.model_at(rec);
+                    if back {
+                        if i == 0 { 0 } else { w.model[i - 1] }
+                    } else {
+                        w.model.get(i + 1).copied().unwrap_or(0)
+                    }
+                };
+                let (mut cur, mut twin) = (first(&w), first(&w));
+                let mut o = first(&other);
+                let mut steps = 0;
+                while cur != 0 {
+                    // Change the tree around the walk: remove records other than the one
+                    // held (and the twin's), add new ones.
+                    for _ in 0..r.below(4) {
+                        if w.model.len() > 2 {
+                            let victim = w.model[r.below(w.model.len() as u64) as usize];
+                            if victim != cur && victim != twin {
+                                w.remove(victim);
+                            }
+                        }
+                    }
+                    for _ in 0..r.below(3) {
+                        let kv = w.key(&mut r, 20_000);
+                        w.insert(&kv);
+                    }
+                    let expect = follows(&w, cur);
+                    let got = step(&w, cur);
+                    assert_eq!(got, expect, "{shape:?} back={back}: the step after {cur}");
+                    cur = got;
+                    // The twin walks the same index every other step; the other index's
+                    // walk takes a hint slot in between.
+                    if steps % 2 == 0 && twin != 0 {
+                        let expect = follows(&w, twin);
+                        twin = step(&w, twin);
+                        assert_eq!(twin, expect, "{shape:?} back={back}: the twin's step");
+                    }
+                    if o != 0 {
+                        let expect = follows(&other, o);
+                        o = step(&other, o);
+                        assert_eq!(o, expect, "{shape:?} back={back}: the other index's step");
+                    }
+                    steps += 1;
+                }
+                assert!(steps > 1000, "the walk ran ({steps} steps)");
+                w.agree(w.model.len());
+            }
+        }
+    }
 }

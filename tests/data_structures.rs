@@ -8,7 +8,7 @@ use loft::hash;
 #[cfg(feature = "random")]
 use loft::keys;
 use loft::keys::{Content, DbRef, Str};
-use loft::{tree, vector};
+use loft::{btree, tree, vector};
 #[cfg(feature = "random")]
 use rand_core::{RngCore, SeedableRng};
 #[cfg(feature = "random")]
@@ -661,14 +661,7 @@ pub fn index() {
     let key = [Content::Str(Str::new("four"))];
     let rec = DbRef {
         store_nr: into.store_nr,
-        rec: tree::find(
-            &into,
-            true,
-            stores.fields(v),
-            &stores.allocations,
-            stores.keys(v),
-            &key,
-        ),
+        rec: btree::find_record(&into, true, &stores.allocations, stores.keys(v), &key),
         pos: 8,
     };
     stores.show(&mut check, &rec, s, false);
@@ -815,10 +808,9 @@ pub fn hash_load_factor_threshold() {
 fn find_rec(key: u8, before: bool, s: u16, v: u16, data: &DbRef, stores: &Stores) -> String {
     let rec = DbRef {
         store_nr: data.store_nr,
-        rec: tree::find(
+        rec: btree::find_record(
             data,
             before,
-            stores.fields(v),
             &stores.allocations,
             stores.keys(v),
             &[Content::Long(key as i64)],

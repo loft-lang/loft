@@ -196,7 +196,9 @@ fn run(count: i64, m: i64) -> (f64, f64, f64, f64, f64, f64) {
     };
     stores.set_default_value(mm, &into);
     let keys = stores.keys(v).to_vec();
-    let fields = stores.fields(v);
+    // The red-black tree's links, placed by hand past the two fields: the layout no longer
+    // reserves them (@PLN190), and this run keeps the old tree only as the reference.
+    let fields = 24u16;
     let st = db.store_nr as usize;
     // The records, claimed once and shared by both trees (the RB links live in them).
     let mut recs = Vec::with_capacity(count as usize);
@@ -340,7 +342,7 @@ fn run_text(count: i64, m: i64) -> (f64, f64, f64, f64) {
     };
     stores.set_default_value(mm, &into);
     let keys = stores.keys(v).to_vec();
-    let fields = stores.fields(v);
+    let fields = 24u16; // the red-black links, placed by hand (see `run`)
     let st = db.store_nr as usize;
     let kpos = 8 + u32::from(keys[0].position);
     let cpos = 8 + u32::from(stores.position(s, "c"));
@@ -428,6 +430,100 @@ fn text_keys_against_the_red_black_index() {
             best[3],
             best[0] / best[2],
             best[1] / best[3]
+        );
+    }
+}
+
+/// A whole walk in key order, ns per record: the red-black tree's `next`, the B+tree stepping
+/// by RECORD (what a loop does: it holds the record and finds its slot again by key, so a
+/// removal by key in the body cannot invalidate it) and the B+tree stepping by POSITION.
+fn run_walk(count: i64, m: i64) -> (f64, f64, f64) {
+    let mut stores = Stores::new();
+    let s = stores.structure("Elm", 0);
+    stores.field(s, "k", stores.name("integer"));
+    stores.field(s, "c", stores.name("integer"));
+    let v = stores.index(s, &[("k".to_string(), true)]);
+    let mm = stores.structure("Main", 0);
+    stores.field(mm, "index", v);
+    stores.finish();
+    let db = stores.database(2);
+    let into = DbRef {
+        store_nr: db.store_nr,
+        rec: db.rec,
+        pos: 8,
+    };
+    stores.set_default_value(mm, &into);
+    let keys = stores.keys(v).to_vec();
+    let fields = 24u16;
+    let st = db.store_nr as usize;
+    let holder = stores.claim(&db, 2).rec;
+    stores.allocations[st].set_u32_raw(holder, 8, 0);
+    let slot = DbRef {
+        store_nr: db.store_nr,
+        rec: holder,
+        pos: 8,
+    };
+    for i in 0..count {
+        let rec = stores.claim(&db, 6);
+        stores.allocations[st].set_int(rec.rec, 8, key_of(i, 0, m));
+        stores.allocations[st].set_int(rec.rec, 16, i);
+        let _ = tree::add(&into, &rec, fields, &mut stores.allocations, &keys);
+        btree::add(&slot, rec.rec, &mut stores.allocations, &keys);
+    }
+    let all = &stores.allocations;
+    let t = Instant::now();
+    let (mut n, mut cur) = (0, tree::first(&into, fields, all).rec);
+    while cur != 0 {
+        n += 1;
+        cur = tree::next(
+            &all[st],
+            &DbRef {
+                store_nr: db.store_nr,
+                rec: cur,
+                pos: u32::from(fields),
+            },
+        );
+    }
+    let rb = t.elapsed().as_nanos() as f64;
+    assert_eq!(n, count);
+    let t = Instant::now();
+    let (mut n, mut cur) = (0, btree::first_record(&slot, all));
+    while cur != 0 {
+        n += 1;
+        cur = btree::next_record(&slot, all, &keys, cur);
+    }
+    let by_rec = t.elapsed().as_nanos() as f64;
+    assert_eq!(n, count);
+    let t = Instant::now();
+    let (mut n, mut p) = (0, btree::first(&slot, all));
+    while p != 0 {
+        n += 1;
+        p = btree::next(&slot, all, p);
+    }
+    let by_pos = t.elapsed().as_nanos() as f64;
+    assert_eq!(n, count);
+    let c = count as f64;
+    (rb / c, by_rec / c, by_pos / c)
+}
+
+#[test]
+#[ignore = "a measurement: cargo test --release --test btree_probe -- --ignored --nocapture"]
+fn a_walk_against_the_red_black_index() {
+    for &(count, m, reps) in &[
+        (5000i64, 1_000_003i64, 100),
+        (100_000, 10_000_019, 5),
+        (1_000_000, 100_000_007, 2),
+    ] {
+        let mut best = [f64::MAX; 3];
+        for _ in 0..reps {
+            let r = run_walk(count, m);
+            for (b, v) in best.iter_mut().zip([r.0, r.1, r.2]) {
+                *b = b.min(v);
+            }
+        }
+        println!(
+            "{count:>8}  walk  red-black {:6.1}  |  btree.rs by record {:6.1}  by position {:6.1}  ns/record",
+            best[0], best[1], best[2]
         );
     }
 }

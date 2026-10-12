@@ -94,10 +94,8 @@ impl LayoutField {
     ///
     /// Three kinds of field are not data and every walk over a record has to
     /// skip all three: the struct-enum discriminant, a field with no position,
-    /// and the `#`-prefixed synthetics — an `index` element carries its own
-    /// red-black links (`#left_1` / `#right_1` / `#color_1`) INSIDE the record,
-    /// and `#color_1` is an ordinary boolean, so a walk that filters by type
-    /// alone lets it through.
+    /// and the `#`-prefixed synthetics the layout adds, whose types are ordinary
+    /// ones, so a walk that filters by type alone lets them through.
     ///
     /// One home because the answer is one fact: `read_via_descriptor`, the
     /// browser delivery and @PLN129's query derivation all ask it, and a walk
@@ -115,31 +113,12 @@ impl LayoutField {
 /// re-renders the exact layout-dump line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Iterated {
-    Sorted {
-        elem: u16,
-        keys: Vec<(u16, bool)>,
-    },
-    Ordered {
-        elem: u16,
-        keys: Vec<(u16, bool)>,
-    },
-    Hash {
-        elem: u16,
-        keys: Vec<u16>,
-    },
-    Index {
-        elem: u16,
-        keys: Vec<(u16, bool)>,
-        left: u16,
-    },
-    Radix {
-        elem: u16,
-        keys: Vec<u16>,
-    },
-    Trie {
-        elem: u16,
-        key: u16,
-    },
+    Sorted { elem: u16, keys: Vec<(u16, bool)> },
+    Ordered { elem: u16, keys: Vec<(u16, bool)> },
+    Hash { elem: u16, keys: Vec<u16> },
+    Index { elem: u16, keys: Vec<(u16, bool)> },
+    Radix { elem: u16, keys: Vec<u16> },
+    Trie { elem: u16, key: u16 },
 }
 
 impl Iterated {
@@ -327,9 +306,9 @@ impl LayoutDesc {
                         crate::placement::tag(crate::placement::HASH)
                     )
                 }
-                Iterated::Index { elem, keys, left } => {
+                Iterated::Index { elem, keys } => {
                     format!(
-                        "index<{}>(keys={keys:?},left={left},elem_size={}{})",
+                        "index<{}>(keys={keys:?},elem_size={}{})",
                         self.name(*elem),
                         self.size(*elem),
                         crate::placement::tag(crate::placement::INDEX)
@@ -676,10 +655,9 @@ impl Stores {
                 elem: *e,
                 keys: keys.clone(),
             }),
-            Parts::Index(e, keys, left) => LayoutNode::Iterated(Iterated::Index {
+            Parts::Index(e, keys) => LayoutNode::Iterated(Iterated::Index {
                 elem: *e,
                 keys: keys.clone(),
-                left: *left,
             }),
             // The descriptor's `Iterated` needs its own trie variant, and that is a FORMAT
             // change (it crosses to the JS `deliver` reader).  Deferred to step 3 with the
@@ -772,8 +750,7 @@ impl Stores {
             LayoutNode::Choices(_) => out.push(store.get_byte(r.rec, r.pos, 0) as u8),
             LayoutNode::Record(fields) | LayoutNode::EnumValue(_, fields) => {
                 for f in fields {
-                    // The enum discriminant, absent fields, and an index node's
-                    // `#left`/`#right`/`#color` tree bookkeeping are not data.
+                    // The enum discriminant, absent fields and `#`-synthetics are not data.
                     if !f.is_data() {
                         continue;
                     }

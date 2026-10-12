@@ -1030,7 +1030,6 @@ fn write_purity(out: &mut String, p: Purity) {
 fn write_linked_field_group(out: &mut String, g: &LinkedFieldGroup) {
     let kind = match g.kind {
         LinkedFieldKind::Tuple => "Tuple",
-        LinkedFieldKind::Index => "Index",
     };
     let _ = write!(out, "{{\"kind\":\"{kind}\",\"instance\":{}", g.instance);
     out.push_str(",\"field_indices\":");
@@ -1263,7 +1262,6 @@ fn purity_from_parsed(p: &Parsed) -> Result<Purity, TypeDecodeError> {
 fn linked_field_group_from_parsed(p: &Parsed) -> Result<LinkedFieldGroup, TypeDecodeError> {
     let kind = match as_str(field(p, "kind")?)?.as_str() {
         "Tuple" => LinkedFieldKind::Tuple,
-        "Index" => LinkedFieldKind::Index,
         other => {
             return Err(TypeDecodeError::UnknownTag(format!(
                 "LinkedFieldKind::{other}"
