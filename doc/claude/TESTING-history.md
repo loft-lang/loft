@@ -334,7 +334,7 @@ unlooked-at.
 
 _From TESTING.md § Annotations supported by wrap.rs._
 
-`--deny-warnings` exactly as in a file with no expectation.  Until C123 one expectation
+`--deny-warnings` exactly as in a file with no expectation.  Until @C123 one expectation
 exempted the whole file from both, which is how `regex`'s test, pinning two
 `shadowed-by-method` warnings, hid the `both-receiver-deprecated` warning on its own source
 from its CI (`tests/post_scope_lints_under_tests.rs`,

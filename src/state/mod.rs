@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 /// @PLN11 N3 — a **usage sentinel** on the auto-native shared-store bridge
-/// (`extensions::shared_store_dispatch`): every C71 default-native library call that
+/// (`extensions::shared_store_dispatch`): every @C71 default-native library call that
 /// dispatches to its compiled cdylib increments this.  It backs the liveness
 /// regression guard (`tests/n2_cdylib.rs::f3_body_bearing_marked_fn_dispatch_vs_interpret`):
 /// output-parity tests can't tell a real dispatch from interpreting the body (both
@@ -1026,7 +1026,7 @@ impl State {
         // Plan-07 phase 4f.12 — stack overflow becomes a typed
         // RuntimeError instead of an opaque Rust panic.  Detect at
         // call entry, raise StackOverflow.  Production logs +
-        // continues per C66 (host frame loop decides whether to
+        // continues per @C66 (host frame loop decides whether to
         // restart); dev mode halts + renders.
         //
         // loft#1058 — the guard counts the FRAMES ON THE STACK, which is what
@@ -4983,7 +4983,7 @@ impl State {
                 Type::Float => *store.addr_mut::<f64>(rec, at) = f64::NAN,
                 Type::Single => *store.addr_mut::<f32>(rec, at) = f32::NAN,
                 Type::Character => *store.addr_mut::<u32>(rec, at) = 0,
-                // 255 is the three-state boolean's null (C73); a simple enum's null is 0.
+                // 255 is the three-state boolean's null (@C73); a simple enum's null is 0.
                 Type::Boolean => *store.addr_mut::<u8>(rec, at) = 255,
                 _ => *store.addr_mut::<u8>(rec, at) = 0,
             }
@@ -6145,7 +6145,7 @@ impl State {
                     .read::<i64>(rec, at)
                     .to_string(),
             },
-            // 255 is @PLN17's three-state-boolean null sentinel (C73); rendering it as
+            // 255 is @PLN17's three-state-boolean null sentinel (@C73); rendering it as
             // "null" is inert pre-merge (two-state writes only 0/1) and correct after.
             Type::Boolean => match self.database.store(&self.stack_cur).read::<u8>(rec, at) {
                 0 => "false",
@@ -6333,7 +6333,7 @@ impl State {
     /// touch the loop machinery, just call `s.raise(kind)` and let
     /// the op finish (e.g. with a placeholder result on the stack).
     ///
-    /// **Production-vs-development split (DESIGN_DECISIONS.md § C66).**
+    /// **Production-vs-development split (@C66).**
     /// When `database.logger.config.production == true` the production
     /// branch fires: log the typed event through `Logger::log_runtime_kind`,
     /// set `had_fatal = true`, and **return without populating
@@ -6747,7 +6747,7 @@ impl State {
         position: Option<Position>,
     ) {
         // Production: log + had_fatal + return.  Do NOT populate
-        // runtime_error so the dispatch loop continues (per C66).
+        // runtime_error so the dispatch loop continues (per @C66).
         // The check matches `n_panic` / `n_assert`'s production check
         // shape from `src/native.rs`.
         let production = self
@@ -8497,7 +8497,7 @@ impl State {
     ///
     /// **A fault inside the callee is CONTAINED, not propagated.** For an
     /// ordinary call, propagating is right. For a fetch it is not: @PLN129's
-    /// contract is C80 — a failed fetch reports through `store_lazy_error` and
+    /// contract is @C80 — a failed fetch reports through `store_lazy_error` and
     /// the lookup answers null — so a buggy source function must not turn a
     /// lookup into a program halt. The reason comes back as `Err`, the outer
     /// program keeps its own fault slot, and execution continues.

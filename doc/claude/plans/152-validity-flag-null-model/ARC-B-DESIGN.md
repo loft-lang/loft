@@ -112,7 +112,7 @@ change. The measurement did not evaluate this design; it evaluated the one this 
 That is the trade the owner is buying: the cost lands on the narrow widths, where the fault
 is frequent (a `u8` overflows at 256) and the author has asked to handle it — and stays off
 `integer`/`float`/`single`, where the fault is rare, already representable, and the code is
-hot. It is the same shape as C85's proportionality argument, applied to the bit instead of to
+hot. It is the same shape as @C85's proportionality argument, applied to the bit instead of to
 the type.
 
 ⚠ Unmeasured, and it should be: a narrow-width loop that DOES carry the bit. The claim above

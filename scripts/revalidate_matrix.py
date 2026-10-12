@@ -56,10 +56,11 @@ import tomllib
 # tracking issue and be removed the moment the lib republishes migrated.
 KNOWN_BROKEN: dict[str, str] = {
     # Add an entry ONLY with a tracking issue + a remove-on-republish note.
-    "time": (
-        "operator definitions (@PLN182): a format hook is `operator to_text`, a keyword no "
-        "released loft has, so the migrated 0.4.0 (loft-libs-game "
-        "pln182-operator-definitions) needs loft >= 2026.11.0 — remove when it publishes"
+    "lavition_ui": (
+        "field visibility (@C140): 0.1.1 reads its own structs' fields across its files "
+        "without `pub`, and its source left moros `main` (now `lib/moros_ui`), so no "
+        "republish is on its way (loft#1984) — remove when a migrated version publishes or "
+        "both versions are yanked"
     ),
 }
 

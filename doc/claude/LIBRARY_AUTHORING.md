@@ -51,7 +51,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 7. **Written in loft, readable first.**  A slow routine is cured in the engine or in its own
    loft algorithm; a native rewrite is a per-routine exception with its reason beside it.
    A native crate (`#native`) bridges a capability loft lacks, never speed; `#rust` is the
-   standard library's own template and is refused in a library (C87).  And a rewrite IN
+   standard library's own template and is refused in a library (@C87).  And a rewrite IN
    LOFT for speed is the last resort after the code generation, allowed only when an
    `advice` can name the faster API to a user.
    [formal/performance.md](formal/performance.md) `(Perf-Cure)`, `(Perf-Teach)`
@@ -72,7 +72,7 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 13. **A clean surface** — no duplicates or confusable names, no footguns or hidden setup
     ([API_SURFACE.md](API_SURFACE.md) S1–S7); public names live under the library's module,
     so the stdlib can grow beside them, and a free function a same-named method would
-    silently shadow is refused (DESIGN_DECISIONS.md C95, C97, C101; `warning[shadowed-by-method]`);
+    silently shadow is refused (DESIGN_DECISIONS.md @C95, @C97, @C101; `warning[shadowed-by-method]`);
     a parameter or field that is never written is `const` (loft-write skill).
 14. **Only a browser-declared library knows JavaScript**; a platform-blind one carries bytes,
     and a blocking-looking primitive yields.  [BROWSER_INTEROP.md](BROWSER_INTEROP.md)
@@ -277,7 +277,7 @@ Created library `my_lib/`:
 
 `loft new` validates the name (lowercase ascii + digits +
 underscore), refuses a **reserved namespace name** (`std`, `core` — these resolve to a
-built-in namespace, not a package; see [C101](DESIGN_DECISIONS.md)), and refuses to
+built-in namespace, not a package; see [@C101](DESIGN_DECISIONS.md)), and refuses to
 overwrite an existing dir.
 
 `release.sh` (executable) is a one-command release: it reads name + version
@@ -729,7 +729,7 @@ release whose `loft` floor names the first loft build that has it.  The steps, i
 
 1. **Prove the delta is loft's change and nothing else.**  Diff the layout descriptor the pin
    is computed from, old loft against new: every changed line must be one the loft change
-   explains (C138's alignment, for example, rounds sizes up and moves no field).  A change you
+   explains (@C138's alignment, for example, rounds sizes up and moves no field).  A change you
    cannot explain is not re-pinned.
 2. **Re-pin, move `data_compatible_with`, bump the version** — in one commit, as above.  Check
    whether the library ships persisted data in the old layout; such data is refused, not

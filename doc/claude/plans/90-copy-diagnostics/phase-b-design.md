@@ -15,11 +15,11 @@ that scope's slice 1 (the loft-codegen gate) produces. Captured bytecode:
 > A construction (`S { f: src }`) or record (`v[i] = e`, `o.f = src`) copy whose **source is a
 > named var, provably dead after the copy** is lowered as a **store transfer** — the source's
 > existing store *becomes* the field/element (no fresh field store, no element copy, no separate
-> source-free). It is **value-identical** to the copy (never observable — C86: an elision, not a
+> source-free). It is **value-identical** to the copy (never observable — @C86: an elision, not a
 > semantic), **leak- and double-free-free on both backends**, and a **surviving** source keeps its
 > copy untouched.
 
-This is C86's own last-use rule (`ElidePlan` is exactly this analysis) applied to two shapes it
+This is @C86's own last-use rule (`ElidePlan` is exactly this analysis) applied to two shapes it
 does not yet cover. The *decision* already exists — the phase-A survival split classifies these as
 `move: source consumed`. Phase B adds the **lowering**, not new analysis.
 
@@ -79,12 +79,12 @@ native target Rust in slice 1b (the interp capture above is the spec for the sha
 ## Boundary matrix (assert value + length + **leak + poison**, both backends)
 
 `{construction S{f:src}, record v[i]=e, record o.f=src} × {source DEAD (must MOVE), source SURVIVES
-(must COPY — C86), source MUTATED after (must COPY), source is a param (never dead — must COPY),
+(must COPY — @C86), source MUTATED after (must COPY), source is a param (never dead — must COPY),
 nested field s.a.b = src, source in a loop} × {interp, native}`.
 
 - **DEAD** cells: 0 runtime copies (`LOFT_COPY_DUMP`), value identical, no leak, no double-free.
 - **SURVIVES / MUTATED / param** cells: unchanged from today (still copy) — proves phase B touches
-  only what C86 sanctions. These are the falsification cells: if a survivor elides, C86 is broken.
+  only what @C86 sanctions. These are the falsification cells: if a survivor elides, @C86 is broken.
 - **leak** must be checked *with value+length* (a move that drops the field reads leak-free but
   wrong; only value+length catches it).
 
@@ -94,7 +94,7 @@ nested field s.a.b = src, source in a loop} × {interp, native}`.
 |---|---|---|---|
 | F1 | **double-free** — source freed by both the transfer-owner and the old `OpFreeRef(src)` | forgot to suppress site (3) | POISON + native leak-check on every DEAD cell; the plan MUST drop the source-free |
 | F2 | **leak** — source store transferred but the field-free doesn't reach it | the field slot didn't actually adopt the store | `LOFT_STORES=warn` / `LOFT_NATIVE_LEAK_CHECK`; assert store count returns to base |
-| F3 | **survivor elided** — a live source becomes the field's store, later read/mutation now aliases | the dead-source fact was wrong / too wide | the SURVIVES + MUTATED matrix cells (must still copy); this is the C86 boundary |
+| F3 | **survivor elided** — a live source becomes the field's store, later read/mutation now aliases | the dead-source fact was wrong / too wide | the SURVIVES + MUTATED matrix cells (must still copy); this is the @C86 boundary |
 | F4 | **one backend moves, the other copies** | the plan lowered in only one generator | both-backends matrix; not landable until both move |
 | F5 | **nested / aliased field** (`s.rows[i] = src`) transfers into an aliased slot | the field slot is itself a view | reject the un-transferable case cleanly (fall back to copy — loud, never silent) |
 
@@ -478,7 +478,7 @@ copies. Multiple replacements per fn handled (loop, like the fresh case). Guard:
    DEAD construction cell under `LOFT_POISON=1` + `LOFT_STORES=warn` — must be clean. If it
    double-frees, site (3) suppression is wrong; if it leaks, the field didn't adopt the store.
 2. *Claim: a survivor is untouched.* Probe: `keep_alive` (base read after) must STILL emit the
-   copy (`LOFT_COPY_DUMP` shows the append) — value-identical to today. A silent 0-copy here = C86
+   copy (`LOFT_COPY_DUMP` shows the append) — value-identical to today. A silent 0-copy here = @C86
    broken.
 3. *Claim: the decision is the phase-A `move` fact, not a new re-derivation.* Probe: the B1.2 plan
    dump must be exactly the survival split's `bucket=implicit [move: source consumed]` rows — no
@@ -488,7 +488,7 @@ copies. Multiple replacements per fn handled (loop, like the fresh case). Guard:
 
 ## Do-not-ship (revert, don't push through)
 
-Any DEAD cell double-frees/leaks (F1/F2); a SURVIVES/MUTATED cell elides (F3, C86 broken); one
+Any DEAD cell double-frees/leaks (F1/F2); a SURVIVES/MUTATED cell elides (F3, @C86 broken); one
 backend moves and the other copies (F4); the plan diverges from the survival `move` rows (re-derivation).
 
 ## Why this is safe to build on (per the "do the complexity now" rule)
@@ -496,6 +496,6 @@ backend moves and the other copies (F4); the plan diverges from the survival `mo
 The move-elision is the store-lifetime engine's **positive** direction (transfer a store INTO a
 container), the mirror of @PLN85 P4's borrow-return (borrow a field OUT —
 [borrow-return/DESIGN.md](borrow-return/DESIGN.md)). Landing it makes the survival `move` fact
-*load-bearing* (not just diagnostic), which is the foundation the rest of phase B / the C86 elision
+*load-bearing* (not just diagnostic), which is the foundation the rest of phase B / the @C86 elision
 completeness builds on — and it retires a real, measured cost (every dead-source construction /
 record set currently copies-then-frees).

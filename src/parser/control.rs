@@ -979,6 +979,8 @@ impl Parser {
                     // position rather than taking `report_pos`'s consumed-source default,
                     // which would put the caret on the line above.
                     let at = self.lexer.peek().clone();
+                    // @C63 — a `fn` is defined at file scope only; one inside a body or block is
+                    // refused.
                     self.lexer.specific(
                         &at,
                         Level::Error,
@@ -3904,8 +3906,20 @@ impl Parser {
             Type::Reference(td, Deps::frame1(buf_var)),
             "fwd_copy_409_ref",
         );
+        // The deps belong to the storage and the kind and the `?` to the value: the result
+        // is delivered through the buffer, and stays the struct-enum or the nullable the
+        // signature declared (`set_delivered_vector_return` says the same of a vector).
         let dep = Deps::attrs(vec![buf_attr]);
-        self.data.definitions[self.context as usize].returned = Type::Reference(td, dep);
+        let declared = self.data.def(self.context).returned();
+        let delivered = match declared.base() {
+            Type::Enum(e, true, _) => Type::Enum(*e, true, dep),
+            _ => Type::Reference(td, dep),
+        };
+        self.data.definitions[self.context as usize].returned = if declared.ret_promo_peels() {
+            Type::optional(delivered)
+        } else {
+            delivered
+        };
     }
 
     /// when there is no buffer, no work-var, or no tail.
@@ -5146,6 +5160,14 @@ impl Parser {
         if let Value::Var(v) = test.unspan() {
             return Some((*v, true));
         }
+        // A HEAP value tests against `null` through a dedicated op rather than a comparison
+        // with a null literal, so the scalar arm below never sees one: `s == null` on a
+        // struct or a vector is `OpRefIsNull(s)` / `OpVectorIsNull(s)`, and on a struct-enum
+        // that test with a second question behind it, which is not a call at all.  The bare
+        // test is the `== null` question, which proves the var non-null on the ELSE side.
+        if let Some(v) = self.heap_null_test(test) {
+            return Some((v, false));
+        }
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -5164,15 +5186,8 @@ impl Parser {
                 return Some((v, name.starts_with("OpNe")));
             }
         }
-        // A HEAP value tests against `null` through a dedicated op rather than a comparison
-        // with a null literal, so the scalar arm above never sees one: `s == null` on a
-        // struct or a vector is `OpRefIsNull(s)` / `OpVectorIsNull(s)`, and `s != null` is
-        // that test under `OpNot`.  The polarity follows the test's own sense — the bare op
-        // is the `== null` question, which proves the var non-null on the ELSE side, and
-        // negated it is `!= null`, which proves it in the THEN branch.
-        if let Some(v) = self.heap_null_test(test) {
-            return Some((v, false));
-        }
+        // `s != null` on a heap value is its null test under `OpNot`: negated, the test
+        // proves the var non-null in the THEN branch.
         if name == "OpNot"
             && args.len() == 1
             && let Some(v) = self.heap_null_test(&args[0])
@@ -5264,7 +5279,19 @@ impl Parser {
     /// `coalesce_not_null` mirrors.  Unrecognised, `if e != null { s += e.a }` over such an
     /// element proved nothing and `e.a` stayed `integer?`.  Only a wrapper qualifies: an
     /// ordinary enum's discriminant test says nothing about null.
+    ///
+    /// A STRUCT-ENUM in a handle asks twice — `if OpRefIsNull(v) true else <its first word is
+    /// 0>` (`null_test`'s handle arms) — because a present value has a variant there and an
+    /// absent slot has none.  Whatever the else arm asks, the whole test is true wherever the
+    /// handle is null, so it names the same variable: unrecognised, `if e != null { f(e) }`
+    /// on an `E?` proved nothing and `f(e)` was reported as a nullable stored into a
+    /// non-null parameter, where the struct twin was not.
     fn heap_null_test(&self, test: &Value) -> Option<u16> {
+        if let Value::If(handle, then, _) = test.unspan()
+            && matches!(then.unspan(), Value::Boolean(true))
+        {
+            return self.heap_null_test(handle);
+        }
         let Value::Call(op, args) = test.unspan() else {
             return None;
         };
@@ -11469,11 +11496,6 @@ impl Parser {
             };
             diagnostic_at!(self.lexer, &pos, Level::Error, "{}", r.message);
         }
-        let ops = crate::scopes::PlaceOps {
-            set_db_ref: self.data.def_nr("OpSetDbRef"),
-            database: self.data.def_nr("OpDatabase"),
-            place_record: self.data.def_nr("OpPlaceRecord"),
-        };
         let mut placing: Vec<u32> = found
             .places
             .iter()
@@ -11482,6 +11504,13 @@ impl Parser {
             .collect();
         placing.sort_unstable();
         placing.dedup();
+        // Looked up only when something is placed: a program without stored references
+        // pays nothing here.
+        let ops = (!placing.is_empty()).then(|| crate::scopes::PlaceOps {
+            set_db_ref: self.data.def_nr("OpSetDbRef"),
+            database: self.data.def_nr("OpDatabase"),
+            place_record: self.data.def_nr("OpPlaceRecord"),
+        });
         for d in placing {
             // `@FR-H-RefHome` — a literal or call result written into a holder that outlives
             // it is built in the holder's store, by a fresh variable that borrows the holder.
@@ -11510,7 +11539,9 @@ impl Parser {
                 def.variables.set_type(fresh, tp.clone());
                 here.push((p, fresh, tp));
             }
-            crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, &ops);
+            if let Some(ops) = &ops {
+                crate::scopes::apply_places(&mut def.variables, &mut def.code, &here, ops);
+            }
         }
         for e in &found.evacuations {
             if self.data.def(e.d_nr).variables.done {
@@ -19513,7 +19544,7 @@ impl Parser {
                 }
             }
             // @PLN85 D-own-2 — prune a STALE visible-param return dep that no pass-2
-            // return source justifies.  `r = x` on a struct is a C86 COPY (`r` owns
+            // return source justifies.  `r = x` on a struct is a @C86 COPY (`r` owns
             // its store), but the copy dep-strip is pass-2-only, so PASS 1 records the
             // source param `x` in the return dep and PASS 2 carries it via
             // `cur.clone()` above — into a pass where `r` is owned and `x` is NOT in

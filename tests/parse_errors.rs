@@ -364,6 +364,60 @@ fn cross_type_eq_bool_text() {
         .error("No matching operator '==' on 'boolean' and 'text' at cross_type_eq_bool_text:1:28");
 }
 
+/// `record#errors` is a `vector<text>`: the comparison with a text that tested the accessor
+/// while it was one text is refused, naming both types, and a text local does not take it.
+#[test]
+fn record_errors_compared_with_a_text_is_refused() {
+    code!(
+        "struct S { v: integer }\nfn test() { r = S.parse(\"x\"); if r#errors != \"\" { r.v = 1; } }"
+    )
+    .error("No matching operator '!=' on 'vector<text>' and 'text' at record_errors_compared_with_a_text_is_refused:2:49");
+}
+
+#[test]
+fn record_errors_into_a_text_local_is_refused() {
+    code!(
+        "struct S { v: integer }\nfn test() { r = S.parse(\"x\"); e: text = r#errors; r.v = len(e); }"
+    )
+    .error("Variable 'e' cannot change type from text to vector<text>; use a new variable name or cast with 'as' at record_errors_into_a_text_local_is_refused:2:50");
+}
+
+/// A null test narrows a nullable struct-enum as it narrows a nullable struct: inside the
+/// guard the value is passed to a non-null parameter without a report, on either side of the
+/// test, and outside it the report stands.
+#[test]
+fn a_null_guard_narrows_a_nullable_struct_enum() {
+    code!(
+        "enum Sh { Ci { r: integer }, Do { n: integer } }\nfn size(s: Sh) -> integer { match s { Ci { r } => r, Do { n } => n } }\nfn pick(n: integer) -> Sh? { if n > 0 { Ci { r: n } } else { null } }\nfn test() {\n  a = pick(2);\n  x = if a != null { size(a) } else { -1 };\n  y = if a == null { -1 } else { size(a) };\n  assert(x + y == 4, \"narrowed\");\n}"
+    );
+}
+
+#[test]
+fn an_unguarded_nullable_struct_enum_is_still_reported() {
+    code!(
+        "enum Sh { Ci { r: integer }, Do { n: integer } }\nfn size(s: Sh) -> integer { match s { Ci { r } => r, Do { n } => n } }\nfn pick(n: integer) -> Sh? { if n > 0 { Ci { r: n } } else { null } }\nfn test() {\n  a = pick(2);\n  assert(size(a) == 2, \"unguarded\");\n}"
+    )
+    .warning("a nullable `Sh?` is stored into parameter 1 of `size` of the non-null type `Sh` — it becomes null there; discharge with `?` (the type's default), `?? <default>`, or `match` if that is not intended at an_unguarded_nullable_struct_enum_is_still_reported:6:20");
+}
+
+/// @C148 — only a record or a vector comes out of a parse, so only those have errors to ask.
+#[test]
+fn record_errors_of_a_scalar_is_refused() {
+    code!("fn test() { n = 5; t = \"x\"; assert(len(n#errors) + len(t#errors) == 0, \"m\"); }")
+        .error("`n#errors` asks a parsed record or vector for the errors of its parse, and `n` is integer at record_errors_of_a_scalar_is_refused:1:49")
+        .error("`t#errors` asks a parsed record or vector for the errors of its parse, and `t` is text at record_errors_of_a_scalar_is_refused:1:65");
+}
+
+/// The truthiness test that asked "were there errors?" of the text is constant on a vector,
+/// and says so.
+#[test]
+fn record_errors_as_a_condition_is_reported() {
+    code!(
+        "struct S { v: integer }\nfn test() { r = S.parse(\"x\"); if r#errors { r.v = 1; } }"
+    )
+    .warning("a non-null `vector<text>` is always true in a `if` condition — a heap value is falsy only when absent, and this one cannot be at record_errors_as_a_condition_is_reported:2:34");
+}
+
 #[test]
 fn cross_type_ne_int_text() {
     code!("fn test() { b = 5 != \"x\"; }")
@@ -5887,4 +5941,29 @@ fn operator_equals_is_refused() {
         "value struct D { n: integer }\noperator equals(self: D, other: D) -> boolean { self.n % 10 == other.n % 10 }\nfn test() { }"
     )
     .error("`==` is always structural, for every type: there is no `operator equals` — write a named method (`same_second(self, other)`) and call it at operator_equals_is_refused:2:48");
+}
+
+/// @C112 — a local that carries a function's name hides the function, and an author who passes
+/// that name where a function is expected meant the function: the refusal says which local
+/// hides it and how to reach the function — a lambda around it, `std::` for a standard-library
+/// one, and "rename the local" where the position takes no lambda (`par_fold`).  A local whose
+/// name matches no function keeps the plain message (the last cell).  Every cure named here
+/// compiles and answers the function's value on both backends (checked by hand: 42, `B`).
+#[test]
+fn a_local_hiding_a_function_is_named_where_the_function_was_expected() {
+    code!("fn double(x: integer) -> integer { x * 2 }\nfn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }\nfn test() -> integer { double = 7; apply(double, 21) }")
+        .error("expected fn(integer) -> integer, got integer on argument 1 of call to apply; `double` here is the local bound on line 3, which hides the function `double` — pass the function as `|x| { double(x) }` at a_local_hiding_a_function_is_named_where_the_function_was_expected:3:42");
+    code!("fn show(f: fn(integer) -> text) -> text { f(66) }\nfn test() -> text { chr = 65; show(chr) }")
+        .error("expected fn(integer) -> text, got integer on argument 1 of call to show; `chr` here is the local bound on line 2, which hides the function `chr` — pass the function as `|x| { chr(x) }`, or name it `std::chr` at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:36");
+    code!("fn double(x: integer) -> integer { x * 2 }\nfn test() { double = 7; v = [1, 2]; w = map(v, double); }")
+        .error("map: second argument is not a function: `double` here is the local bound on line 2, which hides the function `double` — pass the function as `|x| { double(x) }` at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:56")
+        .warning("Variable w is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:40");
+    code!("fn add(a: integer, b: integer) -> integer { a + b }\nfn test() { add = 1; v = [1, 2]; t = par_fold(v, 0, add, 2); }")
+        .error("par_fold: third argument is not a function: `add` here is the local bound on line 2, which hides the function `add` — rename the local at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:61")
+        .warning("Variable t is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:37");
+    code!("type Op = fn(integer) -> integer;\nfn double(x: integer) -> integer { x * 2 }\nfn apply(f: Op?, v: integer) -> integer { v }\nfn test() -> integer { double = 7; apply(double, 21) }")
+        .error("expected fn(integer) -> integer?, got integer on argument 1 of call to apply; `double` here is the local bound on line 4, which hides the function `double` — pass the function as `|x| { double(x) }` at a_local_hiding_a_function_is_named_where_the_function_was_expected:4:42")
+        .warning("Parameter f is never read at a_local_hiding_a_function_is_named_where_the_function_was_expected:3:42");
+    code!("fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }\nfn test() -> integer { nothing = 7; apply(nothing, 21) }")
+        .error("expected fn(integer) -> integer, got integer on argument 1 of call to apply at a_local_hiding_a_function_is_named_where_the_function_was_expected:2:43");
 }

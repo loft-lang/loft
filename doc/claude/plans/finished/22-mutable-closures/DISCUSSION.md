@@ -29,7 +29,7 @@ items move from here into the spec.
 The
 [novice-readiness evaluation in EVENT_LOOP_DISCUSSION.md](../../32-event-loop/DISCUSSION.md#novice-readiness-evaluation-2026-05-05--pivot-trigger)
 identified closure capture by value (loft's
-[C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition))
+[@C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition))
 as the dominant blocker for novice game programmers.  Every
 novice's first instinct, on every game framework they've ever
 used:
@@ -171,7 +171,7 @@ hierarchy, lifetime annotations on captured references.
 
 **Outcome:** eliminated as a near-term option.  Stays as the
 recorded long-term direction in
-[C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition).
+[@C38](../../../DESIGN_DECISIONS_OWNERSHIP.md#c38--closure-capture-is-copy-at-definition).
 
 ### G. Co-scoped mutable capture — adopted and refined
 

@@ -753,7 +753,7 @@ pub struct ElidePlan {
 
 /// @PLN90 phase B — a construction / record copy that can be lowered as a MOVE (a store transfer)
 /// instead of a deep copy: the source is a **dead-after owned local**, so its store transfers into
-/// the field/element (C86's last-use elision — the same rule `ElidePlan` runs for the var-buffer
+/// the field/element (@C86's last-use elision — the same rule `ElidePlan` runs for the var-buffer
 /// idiom). Produced only under `LOFT_MOVE_ELIDE`. B1.2 computes + dumps it; the lowering that
 /// consumes it lands in B1.3+ (no codegen change yet — byte-identical off). Design + captured IR:
 /// `doc/claude/plans/90-copy-diagnostics/phase-b-design.md`.
@@ -1290,7 +1290,7 @@ pub fn dump_link_observability(data: &Data) {
 
 /// `@FR-H-Elide` — can nothing in this function write a store its CALLER holds, by a route the
 /// per-variable `written` fact does not name?  A copy `u = p.f` off a parameter elides into a
-/// read of `p.f` only where the copy is unobservable (C86), and `p`'s own name staying unwritten
+/// read of `p.f` only where the copy is unobservable (@C86), and `p`'s own name staying unwritten
 /// does not prove that: two parameters are never proven apart (`formal/rewrites.md` R-Hold's
 /// growth clause — a caller can hand one record twice), a closure writes THROUGH to its capture,
 /// a function reference runs code this body cannot see, and a generator lets the caller run
@@ -1890,7 +1890,7 @@ fn move_elidable_source(
         return None; // a parameter's store belongs to the caller — not ours to transfer
     }
     // Survival MOVE only: a source that survives (read after) or is copied every loop iteration
-    // must keep its COPY (C86) — never move.
+    // must keep its COPY (@C86) — never move.
     let survives = u.last_use_pos.get(&s).is_some_and(|&p| p > copy_end);
     if survives || loop_surv {
         return None;
@@ -5654,6 +5654,8 @@ pub fn drop_copy_census(
 /// reported and in what words.  One error per copy, de-duplicated by position and by the value it
 /// names: several sites can share a line (the corpus's 355 refusals fall on 227 lines), and the
 /// same sentence twice on one line is noise, while two DIFFERENT copies there are two findings.
+///
+/// @C121 — a copy of a droppable takes its own lease or is refused.
 fn raise_copy_refusals(
     cx: &mut Census<'_>,
     def: &crate::data::Definition,
@@ -6870,7 +6872,7 @@ impl GroupAppends<'_> {
 /// Is `v` a whole-record COPY of the parameter `base`, though `ownership_of` reads it as a
 /// borrow of that parameter?
 ///
-/// `v = p` from a record parameter — plain or `&` — deep-copies (`@FR-B-Copy`, C86; through a
+/// `v = p` from a record parameter — plain or `&` — deep-copies (`@FR-B-Copy`, @C86; through a
 /// `&` by `@FR-C-Ref`): both emitters copy it, and `v`'s own type carries no dep, which is the
 /// fact they read to free it.  `ownership_of` follows the bind back to the parameter and answers
 /// `Borrowed`, the answer for a PROJECTION off it (`m = w.f`, `(B-View)`), whose type keeps the
@@ -8005,6 +8007,7 @@ pub fn c_binding_call_unsupported(
             pos.file.as_str()
         };
         let why = uncovered(data, d_nr).unwrap_or_default();
+        // @C106 — one `#c` arity ceiling for both backends (`c_signature::MAX_C_ARITY`).
         diags.add_at_coded(
             crate::diagnostics::Level::Error,
             Some("c-binding-not-interpretable"),
@@ -8210,7 +8213,7 @@ fn lifted_call_results(
 ///
 /// `hurt(first(s), 10.0)` and `hurt(s.es[0] ?? E {}, 10.0)` are the same types, the same
 /// call, and the same write — but the first one does nothing. Returning a struct hands back
-/// a COPY (C86), which lives in a temporary that is freed at the end of the statement, so
+/// a COPY (@C86), which lives in a temporary that is freed at the end of the statement, so
 /// `hurt` writes the copy and the element keeps the value it had. Passing the element
 /// directly hands over a view of it, so the same write lands.
 ///

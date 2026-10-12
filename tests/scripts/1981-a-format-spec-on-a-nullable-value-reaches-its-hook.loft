@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-N-Shape`, `@FR-F-FaultSafe` — a format spec on a NULLABLE value whose type has an
+// `operator to_text(self, spec)` reaches that hook, as it does for the value non-null; an
+// absent value renders `null` and the hook does not run.  Before, the spec was read as a radix
+// and refused (`` `x` has no effect on D ``) for a `D?` local, a keyed element's field (a lookup
+// can miss), a nullable call result and a nullable struct (loft#1981).  One cell per spelling,
+// present and absent:
+//
+// - a `value struct` local `D?` (<4x>, null), a keyed element's field (<5x>, null for a missing
+//   key), a nullable call result (<7date>, null);
+// - a plain struct local `S?` ([3q], null) and a keyed element's struct field ([9q]);
+// - the same values without a spec (<4>, null).
+//
+// @falsified-at: c5b4f7736 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1981-a-format-spec-on-a-nullable-value-reaches-its-hook.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the exit — the control refuses each spec on a nullable value as a radix that has
+//   no effect on the type, so the file does not compile.
+//   HOLDS: leak and panic are equal on both trees; nothing else is reported.
+
+value struct D { ms: integer }
+struct S { k: integer }
+struct K { k: integer, d: D }
+struct KS { k: integer, s: S }
+operator to_text(self: D, spec: text) -> text { "<{self.ms}{spec}>" }
+operator to_text(self: S, spec: text) -> text { "[{self.k}{spec}]" }
+fn opt(b: boolean) -> D? { if b { D { ms: 7 } } else { null } }
+
+fn a_nullable_value_struct() {
+  e: D? = D { ms: 4 };
+  n: D? = null;
+  assert("{e:x} {n:x} {e} {n}" == "<4x> null <4> null", "local: {e:x} {n:x} {e} {n}");
+}
+
+fn a_keyed_elements_field() {
+  m: hash<K[k]> = [K { k: 1, d: D { ms: 5 } }];
+  assert("{m[1].d:x} {m[2].d:x}" == "<5x> null", "keyed: {m[1].d:x} {m[2].d:x}");
+}
+
+fn a_nullable_call_result() {
+  assert("{opt(true):date} {opt(false):date}" == "<7date> null", "call: {opt(true):date} {opt(false):date}");
+}
+
+fn a_nullable_struct() {
+  s: S? = S { k: 3 };
+  t: S? = null;
+  ms: hash<KS[k]> = [KS { k: 1, s: S { k: 9 } }];
+  assert("{s:q} {t:q} {ms[1].s:q}" == "[3q] null [9q]", "struct: {s:q} {t:q} {ms[1].s:q}");
+}

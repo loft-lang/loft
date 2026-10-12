@@ -174,7 +174,6 @@ fn write_field_groups(out: &mut String, groups: &[LinkedFieldGroup]) {
         }
         let kind = match g.kind {
             LinkedFieldKind::Tuple => "Tuple",
-            LinkedFieldKind::Index => "Index",
         };
         let _ = write!(out, "{{\"kind\":\"{kind}\",\"instance\":{}", g.instance);
         out.push_str(",\"field_indices\":");
@@ -190,7 +189,6 @@ fn field_groups_from(p: &Parsed) -> Result<Vec<LinkedFieldGroup>, SchemaDecodeEr
         .map(|it| {
             let kind = match as_str(field(it, "kind")?)?.as_str() {
                 "Tuple" => LinkedFieldKind::Tuple,
-                "Index" => LinkedFieldKind::Index,
                 other => {
                     return Err(SchemaDecodeError::UnknownTag(format!(
                         "LinkedFieldKind::{other}"
@@ -378,10 +376,10 @@ fn write_parts(out: &mut String, parts: &Parts) {
             u16_list(out, keys);
             out.push('}');
         }
-        Parts::Index(c, keys, left) => {
+        Parts::Index(c, keys) => {
             let _ = write!(out, "{{\"k\":\"Index\",\"c\":{c},\"keys\":");
             key_pairs(out, keys);
-            let _ = write!(out, ",\"left\":{left}}}");
+            out.push('}');
         }
         Parts::Trie(c, k) => {
             let _ = write!(out, "{{\"k\":\"Trie\",\"c\":{c},\"key\":{k}}}");
@@ -423,11 +421,7 @@ fn parts_from(p: &Parsed) -> Result<Parts, SchemaDecodeError> {
         "Sorted" => Parts::Sorted(as_u16(field(p, "c")?)?, key_pair_vec(field(p, "keys")?)?),
         "Ordered" => Parts::Ordered(as_u16(field(p, "c")?)?, key_pair_vec(field(p, "keys")?)?),
         "Hash" => Parts::Hash(as_u16(field(p, "c")?)?, u16_vec(field(p, "keys")?)?),
-        "Index" => Parts::Index(
-            as_u16(field(p, "c")?)?,
-            key_pair_vec(field(p, "keys")?)?,
-            as_u16(field(p, "left")?)?,
-        ),
+        "Index" => Parts::Index(as_u16(field(p, "c")?)?, key_pair_vec(field(p, "keys")?)?),
         "Trie" => Parts::Trie(as_u16(field(p, "c")?)?, as_u16(field(p, "key")?)?),
         "Radix" => Parts::Radix(as_u16(field(p, "c")?)?, u16_vec(field(p, "keys")?)?),
         other => return Err(SchemaDecodeError::UnknownTag(format!("Parts::{other}"))),

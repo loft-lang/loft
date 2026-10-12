@@ -2960,6 +2960,8 @@ impl Parser {
                 .collect();
             unnamed_var = !unnamed.is_empty();
             if unnamed_var && !self.first_pass {
+                // @C126 — a type variable binds from any parameter, and a generic may declare
+                // several.
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -3223,7 +3225,7 @@ impl Parser {
                  {type_var_name})` and call it as `{fn_name}(x)`"
             );
         }
-        // C123 — `both` as a first parameter is deprecated: `self` already gives a function both
+        // @C123 — `both` as a first parameter is deprecated: `self` already gives a function both
         // call spellings, so the two names meant one thing.  Still accepted, meaning exactly
         // `self`, and warned — a warning gates a library's CI, which is how published uses are
         // found and renamed.
@@ -3924,7 +3926,7 @@ impl Parser {
     /// Two things are checked here because neither can be recovered from later:
     ///
     /// **It must not answer.** A drop runs at a closing brace with no caller left to tell,
-    /// and loft has no runtime errors (C80), so a result would go nowhere.  That is a real
+    /// and loft has no runtime errors (@C80), so a result would go nowhere.  That is a real
     /// semantic weakening and it is the design: anything whose failure MATTERS stays an
     /// explicit call (`tx.commit()` answers; the scope end does not).  Better to say so at
     /// the declaration than to let an author write a `-> boolean` nobody reads.
@@ -4169,7 +4171,7 @@ impl Parser {
                 // definite KNOWN-vs-KNOWN mismatch is rejected; the check is skipped
                 // when either side is not a concrete type to check against:
                 //   * a literal `null` default — the internal "no default" sentinel
-                //     and a valid absent-value default for any type (C80 in-band
+                //     and a valid absent-value default for any type (@C80 in-band
                 //     null), e.g. a `&Data = null` mutable-reference param;
                 //   * an `unknown` default type — an untyped literal that takes its
                 //     type from the parameter (e.g. `&vector<integer> = []`, an
@@ -4972,6 +4974,7 @@ impl Parser {
             // giving a tuple the tagged representation.
             if self.lexer.has_token("?") {
                 let spelled = Type::Tuple(types.clone()).source_name(&self.data);
+                // @C119 — a tuple type is never nullable.
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -5280,7 +5283,7 @@ impl Parser {
                         // So it could be declared, and only declared.
                         //
                         // Refused where it is written rather than given storage, the
-                        // same call DESIGN_DECISIONS C113 makes for two `index`
+                        // same call @C113 makes for two `index`
                         // members over one key — and the cure named below is a real
                         // one that costs nothing the element would not have cost.
                         //
@@ -5828,18 +5831,8 @@ impl Parser {
     /// Refuse a SECOND `index` field over the same element type and the same key
     /// in one structure (loft#902).
     ///
-    /// Every other collection kind keeps its own storage, so two of them over one
-    /// element type are two routes to a shared record set — the linked-collection
-    /// group loft#843 built. An `index` cannot be: a red-black tree keeps its
-    /// links in FIELDS OF THE ELEMENT RECORD, and the field triple is allocated
-    /// per index TYPE (`#left_N / #right_N / #color_N`). Two fields whose declared
-    /// type is identical resolve to that one type, so they name one set of links —
-    /// not two trees, but ONE tree reached through two roots.
-    ///
-    /// That is why the FILL looked right and only removal fell over: both roots
-    /// walked the same structure, so lengths and iteration agreed, and the first
-    /// removal rebalanced through one root and left the other stale — a panic in
-    /// `tree.rs` on the next walk, which "no runtime errors, ever" does not allow.
+    /// Two keyed fields over one element type in one structure are two routes to
+    /// ONE record set — the linked-collection group loft#843 built (@C113).
     ///
     /// It is refused rather than made to work because there is nothing to make
     /// work: a second index with the SAME key answers exactly what the first
@@ -6165,6 +6158,9 @@ impl Parser {
     /// Only fires where a group would actually form: two vectors with NO keyed member over
     /// that element type are independent (`(Col-Group)`'s last sentence), so a dense and a
     /// nullable vector alone keep compiling.
+    ///
+    /// @C117 — a linked group's members share one element layout; a dense and a nullable member are
+    /// refused.
     fn refuse_mixed_nullability_group(
         &mut self,
         d_nr: u32,
@@ -8557,6 +8553,8 @@ impl Parser {
     /// the host's own store (`OpChildRec`, loft#1867), so it lives and dies with the host and
     /// the host's cascade runs the record's.  One lambda per field (`assigned_lambda_d_nr`),
     /// so the record's type is known here.
+    ///
+    /// @C75 — the struct owns what its closures adopted: its drop cascade releases their records.
     pub(crate) fn cascade_fn_fields(&self, d_nr: u32) -> Vec<(u16, u32)> {
         let def = self.data.def(d_nr);
         if def.name.starts_with("__closure_") {

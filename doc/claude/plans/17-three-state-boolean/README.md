@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **Status — DONE 2026-06-10 (both backends).**  Reference for the shipped semantics
 lives in [`LOFT.md` § Null representation](../../LOFT.md) and the design decision in
-[`DESIGN_DECISIONS.md` § C73](../../DESIGN_DECISIONS.md).  This file is a closure
+[`DESIGN_DECISIONS.md` § @C73](../../DESIGN_DECISIONS.md).  This file is a closure
 record; the design *history* (Stage-A characterization, the decision-B reversal, the
 interpreter spike, the field-null attempt+revert) is in [SPIKE.md](SPIKE.md).
 Tracked as [@PLN17](https://github.com/loft-lang/plans/issues/17).
@@ -21,7 +21,7 @@ returns, tuples, struct fields, vector/keyed-collection elements, closure captur
 `boolean not null` stays 2-state.  Both backends produce byte-identical results;
 regression: [`tests/scripts/292-pln17-three-state-boolean.loft`](../../../../tests/scripts/292-pln17-three-state-boolean.loft).
 
-**Semantics (design A — integer-consistent), recorded in DESIGN_DECISIONS § C73:**
+**Semantics (design A — integer-consistent), recorded in DESIGN_DECISIONS § @C73:**
 - `==` / `!=` are **raw** → `null == false` is `false`; `b == null` is the null test.
 - Truthiness (`if`/`while`/`!`/`&&`/`||`) **coerces** `null → false`.
 - `??` / `?? return` work (null-check is `== 255`, not truthiness) → `false ?? x` keeps `false`.
@@ -51,7 +51,7 @@ regression: [`tests/scripts/292-pln17-three-state-boolean.loft`](../../../../tes
 | E — native u8/bool two-form split + FFI/runtime seams | Done — the gating piece |
 | Field/element null storage | Done — `OpGetBoolean`/`OpSetBoolean`, plain-enum model |
 | fn-ref/closure dispatch returning boolean (native) | Done — `infer_type(CallRef)` (caught by the final verification pass) |
-| F/H — serialization + docs | Done — LOFT.md + DESIGN_DECISIONS C73 + loft-write skill |
+| F/H — serialization + docs | Done — LOFT.md + DESIGN_DECISIONS @C73 + loft-write skill |
 
 ## Headline insights (kept for the record)
 
@@ -74,5 +74,5 @@ Left to its own investigation (binary-I/O validation, [plans/future/43](../47-bi
 ## See also
 
 - [`LOFT.md` § Null representation](../../LOFT.md) — the shipped semantics (reference home).
-- [`DESIGN_DECISIONS.md` § C73](../../DESIGN_DECISIONS.md) — the design decision; § C69 (adjacent, `!x` on non-boolean).
+- [`DESIGN_DECISIONS.md` § @C73](../../DESIGN_DECISIONS.md) — the design decision; § @C69 (adjacent, `!x` on non-boolean).
 - [SPIKE.md](SPIKE.md) — design history (characterization, reversal, spike, field-null attempt).

@@ -394,7 +394,7 @@ no stack unwinding, and no `finally` block to get wrong — a fault is a **value
 control-flow event**, so it can't leave the half-cleaned-up state that is `try`/`catch`'s own
 corruption surface. This inverts the half-true "if it compiles it works" (which really means "it
 halts cleanly at the first logic fault"): loft's promise is **"it won't stop."** See
-[DESIGN_DECISIONS.md C80](DESIGN_DECISIONS.md) and
+[DESIGN_DECISIONS.md @C80](DESIGN_DECISIONS.md) and
 [formal/operational.md § E-Uncomp](formal/operational.md).
 
 **Who it wins.** Anyone building something that must **stay up** — and that is not just games.
@@ -404,7 +404,7 @@ stopping *is* a dead machine. Termination is the larger failure for any long-run
 availability-as-a-default — not a framework bolted on — wins all of them.
 
 **The turn-off.** Two, on the same topic. First, **it isn't built yet**: the runtime still
-traps/halts on these faults in development (the old C66 behaviour, tracked as
+traps/halts on these faults in development (the old @C66 behaviour, tracked as
 [operational.md D-op-4](formal/operational.md)) — the promise is *decided, not delivered*.
 Second, the inherent one: **silent degradation can hide the cause** — you see a null
 *downstream*, not *where* it first arose, the mirror image of Rust's halt-at-the-source

@@ -288,7 +288,7 @@ impl Stores {
                 Parts::Sorted(_, _)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _) => panic!(
                     "binary I/O not supported for type '{}': it contains a collection field \
@@ -491,7 +491,7 @@ impl Stores {
                 | Parts::Sorted(_, _)
                 | Parts::Ordered(_, _)
                 | Parts::Hash(_, _)
-                | Parts::Index(_, _, _)
+                | Parts::Index(_, _)
                 | Parts::Radix(_, _)
                 | Parts::Trie(_, _) => panic!(
                     "binary I/O not supported for type '{}': it contains a collection field \

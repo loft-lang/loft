@@ -12,7 +12,9 @@ fn main() {
            "../lib/engine_host/src/engine_host.loft",
            "../doc/kernel-differential.html", "../doc/kernel-swap.html", "../doc/loft-rt.js"];
   for name in list_dir("../default") ?? [] {
-    if name.ends_with(".loft") { parts += ["../default/{name}"]; }
+    // A dot-name is no stdlib file (a `.loft/` cache directory is one): the shell twin's
+    // `default/*.loft` glob skips them too.
+    if name.ends_with(".loft") && !name.starts_with(".") { parts += ["../default/{name}"]; }
   }
   data = "";
   for p in parts {

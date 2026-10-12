@@ -85,7 +85,7 @@ const PURE_NULLARY_OPS: [&str; 19] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 36] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 39] = [
     "OpVectorIsNull",
     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
     // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
@@ -112,6 +112,9 @@ const READ_ONLY_COLLECTION_OPS: [&str; 36] = [
     "OpLengthTrie",
     "OpSizeVector",
     "OpSizeHash",
+    "OpSizeIndex",
+    "OpSizeSpatial",
+    "OpSizeTrie",
     // a record's byte size is the compile-time constant; the reference is not read
     "OpSizeStruct",
     // typed field reads through a reference
@@ -2486,9 +2489,11 @@ pub fn param_view_ptr(
 }
 
 /// How many fusable scalar field reads and writes of record `r` — either spelling of the
-/// field ([`view_field`]) — stand in `stmts`.
+/// field ([`view_field`]) — stand in `stmts`, beside those at an offset in `served`: a
+/// twin's inputs (`@FR-R-Inputs`), which its body reads from a parameter and not the record.
+/// A served field is one the body never writes, so every use at its offset is a read.
 #[must_use]
-pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data) -> usize {
+pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data, served: &[i64]) -> usize {
     let mut n = 0;
     for op in stmts {
         op.walk(&mut |c| {
@@ -2498,7 +2503,8 @@ pub fn scalar_field_uses(stmts: &[Value], r: u16, data: &Data) -> usize {
             {
                 let name = data.def(*g).name();
                 if (scalar_kind(name).is_some() || setter_kind(name).is_some())
-                    && view_field(data, &args[0], &args[1]).is_some_and(|(v, _)| v == r)
+                    && view_field(data, &args[0], &args[1])
+                        .is_some_and(|(v, off)| v == r && !served.contains(&off))
                 {
                     n += 1;
                 }
@@ -4346,10 +4352,56 @@ pub fn borrowed_store_texts(
         false
     });
     let mut why: HashMap<u16, &'static str> = HashMap::new();
+    // The format clause: a local bound to a format string borrows the format's work text
+    // instead of copying it, when that work text is the format's own — named nowhere else
+    // in the body — so only the bind's next run rewrites it.  The format must not read the
+    // local it binds (its old value would still borrow the text being rewritten) and no
+    // other variable may be bound from the local (the copy would outlive that rewrite).
+    let fmt_own = |to: &Value| own_format_work(body, to, data).is_some();
+    let mut fmt_bound: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n
+            && locals.contains(v)
+            && fmt_own(to)
+        {
+            fmt_bound.insert(*v);
+        }
+        false
+    });
+    let mut fmt_refused: Vec<(u16, &'static str)> = Vec::new();
+    for &v in &fmt_bound {
+        let mut self_read = false;
+        let mut copied = false;
+        body.any_node(&mut |n| {
+            match n {
+                Value::Set(x, to) if *x == v && fmt_own(to) => {
+                    if to.any_node(&mut |m| matches!(m, Value::Var(y) if *y == v)) {
+                        self_read = true;
+                    }
+                }
+                Value::Set(x, to) if *x != v && matches!(to.unspan(), Value::Var(y) if *y == v) => {
+                    copied = true;
+                }
+                _ => {}
+            }
+            false
+        });
+        if self_read {
+            fmt_refused.push((v, "a format binding it reads itself"));
+        } else if copied {
+            fmt_refused.push((v, "bound to a format and copied into another variable"));
+        }
+    }
+    for (v, w) in fmt_refused {
+        fmt_bound.remove(&v);
+        locals.remove(&v);
+        why.insert(v, w);
+    }
     loop {
         let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
+            Value::Block(_) => fmt_own(to),
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4387,6 +4439,14 @@ pub fn borrowed_store_texts(
         .copied()
         .collect::<Vec<_>>()
     {
+        // A borrow of the frame's own work text names no store: no store write can move it.
+        if fmt_bound.contains(&v)
+            && text_bound_only_by(body, v, &|to: &Value| {
+                matches!(to.unspan(), Value::Text(_)) || fmt_own(to)
+            })
+        {
+            continue;
+        }
         let scope = mention_scope(body, v);
         if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
             temps.remove(&v);
@@ -4400,6 +4460,7 @@ pub fn borrowed_store_texts(
         let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
         let source_ok = |to: &Value| match to.unspan() {
             Value::Text(_) => true,
+            Value::Block(_) => fmt_own(to),
             Value::Var(s) => {
                 admitted.contains(s)
                     || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
@@ -4421,8 +4482,13 @@ pub fn borrowed_store_texts(
     }
     if trace {
         for v in temps.iter().chain(locals.iter()) {
+            let what = if fmt_bound.contains(v) {
+                "a format's work text"
+            } else {
+                "a parameter's text"
+            };
             eprintln!(
-                "[text-borrow] {}: `{}` borrows a parameter's text",
+                "[text-borrow] {}: `{}` borrows {what}",
                 def.name(),
                 vars.name(*v)
             );
@@ -4440,6 +4506,63 @@ pub fn borrowed_store_texts(
     }
     out.locals = locals;
     out
+}
+
+/// `@FR-R-TextBorrow`'s format clause — the work text of the format string `to` when that
+/// text is the format's OWN: `to` is a `Formatted string` block (its work text set first and
+/// answered last), and nothing else in `body` names the work text, so only another run of
+/// this block rewrites it.  The frame's own bookkeeping of the work text is no other use:
+/// its declaration (a text literal) and its `OpFreeText` as statements of the function's
+/// outermost block, which run before the first and after the last statement that could
+/// bind or read a borrow of it.
+fn own_format_work(body: &Value, to: &Value, data: &Data) -> Option<u16> {
+    let Value::Block(b) = to.unspan() else {
+        return None;
+    };
+    if b.name != "Formatted string" {
+        return None;
+    }
+    let work = match b.operators.first().map(Value::unspan) {
+        Some(Value::Set(w, _)) => *w,
+        _ => return None,
+    };
+    if !matches!(b.operators.last().map(Value::unspan), Some(Value::Var(w)) if *w == work) {
+        return None;
+    }
+    let mentions = |node: &Value| {
+        let mut c = 0usize;
+        node.any_node(&mut |n| {
+            if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == work) {
+                c += 1;
+            }
+            false
+        });
+        c
+    };
+    let bookkeeping = match body.unspan() {
+        Value::Block(top) => top
+            .operators
+            .iter()
+            .filter(|st| match st.unspan() {
+                Value::Set(w, init) => *w == work && matches!(init.unspan(), Value::Text(_)),
+                Value::Call(d, args) => {
+                    (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpFreeText"
+                        && matches!(args.as_slice(), [a] if matches!(a.unspan(), Value::Var(w) if *w == work))
+                }
+                _ => false,
+            })
+            .count(),
+        _ => 0,
+    };
+    (mentions(body) == mentions(to) + bookkeeping).then_some(work)
+}
+
+/// Is every binding of `v` in `body` one that `ok` accepts (a null declaration aside)?
+fn text_bound_only_by(body: &Value, v: u16, ok: &dyn Fn(&Value) -> bool) -> bool {
+    !body.any_node(&mut |n| {
+        matches!(n, Value::Set(x, to) if *x == v && !matches!(to.unspan(), Value::Null) && !ok(to))
+    })
 }
 
 /// Is `r` a PARAMETER reached through field and element reads — a place in a store that was
@@ -5655,21 +5778,197 @@ pub fn push_window_ok(
             _ => parts.push(s),
         }
     }
-    window_parts_ok(&parts, root, root_is_retbuf, vars, data, stores, cache)
+    window_parts_ok(
+        &parts,
+        &[root],
+        root_is_retbuf,
+        vars,
+        data,
+        stores,
+        cache,
+        None,
+    )
+}
+
+/// `@FR-R-PushFill`'s several-paths WINDOW clause — [`push_window_ok`] for the paths of
+/// [`push_loop_paths`] TOGETHER: every root exclusive, and the body's parts beside the pushes
+/// (each push of ANY path contributes its value operand alone) name no root and no variable
+/// that may view a root's store, and write no store.  Every path is reserved before any
+/// header is re-derived, and each path's pushes are counted and unconditional, so no push
+/// outgrows its window: no store reallocates while the windows are open, which is what each
+/// window's address stands on — two windows into ONE store included.
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.  The caller
+/// keeps the header pushes, which costs the windows and never a value.
+pub fn push_windows_ok(
+    lp: &Block,
+    ps: &[PushLoop],
+    data: &Data,
+    def_nr: u32,
+    stores: Option<&Stores>,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
+    let vars = data.def(def_nr).variables();
+    let retbuf = retbuf_var(data, def_nr);
+    let roots: Vec<u16> = ps.iter().map(|p| p.path.0).collect();
+    for &root in &roots {
+        if root >= vars.count()
+            || !(owned_local(vars, root)
+                || retbuf == Some(root)
+                || work_buffer_arg(data, def_nr, root))
+        {
+            return Err(format!(
+                "the pushed vector's root `{}` is not exclusive",
+                vars.name(root)
+            ));
+        }
+    }
+    let Some(body) = push_loop_body(lp) else {
+        return Err("not a counted push loop".to_string());
+    };
+    let mut parts: Vec<&Value> = Vec::new();
+    for s in body {
+        match s.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args
+                        .first()
+                        .and_then(|f| vector_path(data, f))
+                        .is_some_and(|fp| ps.iter().any(|p| p.path == fp))
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(n, _, _)| *n == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                parts.extend(args.iter().skip(1));
+            }
+            _ => parts.push(s),
+        }
+    }
+    let any_retbuf = roots.iter().any(|r| retbuf == Some(*r));
+    window_parts_ok(&parts, &roots, any_retbuf, vars, data, stores, cache, None)
+}
+
+/// `@FR-R-PushFill`'s DEEP window clause — a loop whose pushes to `paths` stand at any depth
+/// (under an `if` arm, in an inner loop), with no reservation: a push that fits is the
+/// window's store and bump, one that does not takes the window's growth arm, which appends
+/// through the runtime and answers a fresh window.  So the window needs only what its
+/// address and its deferred length stand on — every root exclusive, the body outside the
+/// pushes of these paths naming no root and no variable that may view a root's store and
+/// writing no store ([`window_parts_ok`]) — and that the close after the loop runs on
+/// every way out: no `return` or `yield` in the body, and no `break` or `continue` that
+/// leaves a loop enclosing it.  Without a reservation the growth arm can run, and a growth
+/// moves every address into its store — a second window's too — so the loop pushes to ONE
+/// path: a push to any other is a store write the parts test declines.  The growth arm is
+/// the header push's own growth step, so what else the loop holds is judged as it is for
+/// the header push (`@FR-R-Alias` counts the push a mover either way).
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.  The caller
+/// keeps the header pushes, which costs the window and never a value.
+pub fn deep_window_ok(
+    lp: &Block,
+    path: &PathKey,
+    data: &Data,
+    def_nr: u32,
+    stores: Option<&Stores>,
+    cache: &mut HashMap<u32, bool>,
+    facts: Option<&StoreFacts>,
+) -> Result<(), String> {
+    fn collect<'v>(
+        n: &'v Value,
+        data: &Data,
+        path: &PathKey,
+        depth: u16,
+        parts: &mut Vec<&'v Value>,
+    ) -> Result<(), String> {
+        match n.unspan() {
+            Value::Return(_) | Value::Yield(_) => Err("the body can return".to_string()),
+            Value::Break(k) | Value::Continue(k) if *k > depth => {
+                Err("a jump leaves a loop enclosing the window".to_string())
+            }
+            Value::Break(_) | Value::Continue(_) | Value::Line(_) => Ok(()),
+            Value::If(c, t, e) => {
+                parts.push(c);
+                collect(t, data, path, depth, parts)?;
+                collect(e, data, path, depth, parts)
+            }
+            Value::Block(b) => b
+                .operators
+                .iter()
+                .try_for_each(|o| collect(o, data, path, depth, parts)),
+            Value::Loop(b) => b
+                .operators
+                .iter()
+                .try_for_each(|o| collect(o, data, path, depth + 1, parts)),
+            Value::Insert(ops) => ops
+                .iter()
+                .try_for_each(|o| collect(o, data, path, depth, parts)),
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref() == Some(path)
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(name, _, _)| *name == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                // A push contributes its value operands alone; the window is its vector.
+                parts.extend(args.iter().skip(1));
+                Ok(())
+            }
+            _ => {
+                parts.push(n);
+                Ok(())
+            }
+        }
+    }
+    let vars = data.def(def_nr).variables();
+    let root = path.0;
+    let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
+    if root >= vars.count()
+        || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
+    {
+        return Err("the pushed vector's root is not exclusive".to_string());
+    }
+    let mut parts: Vec<&Value> = Vec::new();
+    for o in &lp.operators {
+        collect(o, data, path, 0, &mut parts)?;
+    }
+    window_parts_ok(
+        &parts,
+        &[root],
+        root_is_retbuf,
+        vars,
+        data,
+        stores,
+        cache,
+        facts,
+    )
 }
 
 /// The window clause's aliasing test over the `parts` of a loop body that are NOT the
-/// pushes themselves: none names the pushed `root`, none names a variable that may view
-/// the root's store, and none writes a store.  Shared by the scalar window
-/// ([`push_window_ok`]) and the record one ([`mint_window_ok`]).
+/// pushes themselves: none names a pushed root, none names a variable that may view a
+/// root's store, and none writes a store.  Shared by the scalar window
+/// ([`push_window_ok`]), the several-paths one ([`push_windows_ok`]) and the record one
+/// ([`mint_window_ok`]).  `root_is_retbuf` is whether ANY root is the return buffer.  With
+/// `facts`, a variable whose store they prove apart from every root's (`@FR-R-Base`'s growth
+/// clause, an `@FR-R-Alias` versioned copy's runtime test) cannot view one either.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the window's facts, one per argument"
+)]
 fn window_parts_ok(
     parts: &[&Value],
-    root: u16,
+    roots: &[u16],
     root_is_retbuf: bool,
     vars: &crate::variables::Function,
     data: &Data,
     stores: Option<&Stores>,
     cache: &mut HashMap<u32, bool>,
+    facts: Option<&StoreFacts>,
 ) -> Result<(), String> {
     // The variables that COULD name the root's store: asked per variable through the one
     // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
@@ -5685,7 +5984,8 @@ fn window_parts_ok(
             // that field, and stays a possible viewer.
             let record_view = plain_record_type(data, vars.tp(x))
                 .is_some_and(|tp| stores.is_some_and(|st| !st.owns_heap(tp)));
-            x != root
+            !roots.contains(&x)
+                && !facts.is_some_and(|f| roots.iter().all(|&r| f.distinct(x, r)))
                 && !is_scalar(vars.tp(x))
                 && !matches!(vars.tp(x).base(), Type::Text(_))
                 && !owned_local(vars, x)
@@ -5694,7 +5994,7 @@ fn window_parts_ok(
         })
         .collect();
     for part in parts {
-        if part.reads_var(root) {
+        if roots.iter().any(|&r| part.reads_var(r)) {
             return Err("the body names the pushed vector outside its pushes".to_string());
         }
         if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
@@ -5944,6 +6244,10 @@ fn copies_heap_into_fresh(
 /// # Errors
 ///
 /// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.
+#[expect(
+    clippy::too_many_lines,
+    reason = "inherited; the window test's store facts wrapped its call"
+)]
 pub fn mint_window_ok(
     lp: &Block,
     m: &MintLoop,
@@ -6054,7 +6358,16 @@ pub fn mint_window_ok(
     for s in &body.operators {
         collect(s, data, &m.path, &fresh, &mut parts);
     }
-    window_parts_ok(&parts, root, root_is_retbuf, vars, data, stores, cache)
+    window_parts_ok(
+        &parts,
+        &[root],
+        root_is_retbuf,
+        vars,
+        data,
+        stores,
+        cache,
+        None,
+    )
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
@@ -12432,6 +12745,8 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                 && let Some(fields) = out.types.get(record).map(|t| t.fields.as_slice())
                 && fields.iter().any(|(_, rt)| is_view_part(rt))
             {
+                // @C122 — a rewrite is free where its conditions are validated, and stops at the
+                // library API.
                 // @PLN164 C5 / `(R-Escape)` — a `pub` function's result can leave the
                 // unit the compiler sees whole: a library's cdylib bridge materialises a
                 // tuple field by field into the record its ABI promises, and a reference

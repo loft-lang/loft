@@ -35,7 +35,7 @@ step, because the two tiers differ by an order of magnitude:
   variant for each target automatically. **There is no bridge to build.** Shipping = write →
   `loft.toml` → cross-mode test → publish. Most libraries are here; keep them here.
   (`#rust"…"` is NOT a library route: it is the standard library's own template, and the
-  parser refuses it outside `default/` — C87.)
+  parser refuses it outside `default/` — @C87.)
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
   is where the real cost and nearly all the bugs live. Only pay it when the library needs a
@@ -120,7 +120,7 @@ Each of these has broken a real library. Skim them before you start, not after y
   and keeps a local ~1h-TTL cache of its own (`~/.loft/registry/`). A just-published version may not resolve as `@latest` immediately — verify with
   `loft install --refresh <lib>@<version>`, and don't conclude "publish failed" from a stale edge.
 - **A loft change moved your layout, and you floored on a release that does not have it.**  When
-  loft's own rules move a library's layout or format (no edit in the library — C138's alignment
+  loft's own rules move a library's layout or format (no edit in the library — @C138's alignment
   re-pinned `assets`), the fixing release floors `loft` on the DAILY build that carries the
   change (`loft = ">=2026.10.20261006"`), not on the last release: older lofts must keep
   resolving to the previous version, whose layout matches them.  Procedure:

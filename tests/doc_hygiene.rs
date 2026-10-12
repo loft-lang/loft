@@ -3091,36 +3091,12 @@ fn every_ignore_reason_says_how_it_runs() {
     );
 }
 
-/// The bash that runs `scripts/test_subjects.sh` — Git Bash on Windows, `bash` elsewhere.
-///
-/// ⚠ On Windows a bare `bash` is NOT Git Bash — it resolves to `C:\Windows\System32\bash.exe`,
-/// the WSL launcher, which with no distribution installed prints "Windows Subsystem for Linux
-/// has no installed distributions" to STDOUT (UTF-16) and exits 1.  A windows-probe run of the
-/// identical command passes because the probe runs INSIDE Git Bash, where `bash` resolves to
-/// Git Bash first, while the test process inherits a different PATH order.  `sh` is not the
+/// The bash that runs `scripts/test_subjects.sh` — `platform::bash_program`: Git Bash on
+/// Windows, where a bare `bash` is the WSL launcher, and `bash` elsewhere.  `sh` is not the
 /// cure: `test_subjects.sh` needs `BASH_SOURCE` and `[[ ]]`, and `/bin/sh` on Linux is dash.
-/// Every guard here that spawns the script asks this one resolver — it was a closure inside
-/// `every_test_binary_matches_a_subject` alone, and the two loft#1520 guards beside it kept a
-/// bare `bash` and failed the Windows daily the day they reached `main`.
+/// Every guard here that spawns the script asks this one resolver.
 fn git_bash() -> std::ffi::OsString {
-    // approved exemption: needs a Git Bash resolver in platform; future work outside @PLN184
-    #[cfg(windows)]
-    {
-        let mut roots: Vec<std::path::PathBuf> = Vec::new();
-        for var in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
-            if let Some(v) = std::env::var_os(var) {
-                roots.push(std::path::PathBuf::from(v));
-            }
-        }
-        roots.push(std::path::PathBuf::from(r"C:\Program Files"));
-        for r in roots {
-            let c = r.join("Git").join("bin").join("bash.exe");
-            if fa::is_file(&c) {
-                return c.into_os_string();
-            }
-        }
-    }
-    std::ffi::OsString::from("bash")
+    loft::platform::bash_program()
 }
 
 /// Every subject's PATH pattern claims the sources it names — the map `--changed` reads.

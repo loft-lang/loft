@@ -14,7 +14,9 @@ trade-offs and evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-histor
 added and held by a guard.
 
 Every entry, by the subject it decides.  Ids are one flat sequence across the subject files;
-`./scripts/idx next-decision` names the next free one.
+`./scripts/idx next-decision` names the next free one.  What each entry still owes — an uncited site,
+a guard that does not exercise it — is its line in
+[DESIGN_DECISIONS_WORKLIST.tsv](DESIGN_DECISIONS_WORKLIST.tsv) (`make decisions`).
 
 ## Values, null and arithmetic — [DESIGN_DECISIONS_VALUES.md](DESIGN_DECISIONS_VALUES.md)
 
@@ -77,6 +79,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C123](DESIGN_DECISIONS_SYNTAX.md#c123--one-name-has-one-body-per-receiver-type-both-is-how-a-function-takes-both-spellings) — one name has one body per receiver type; `both` is how a function takes both spellings
 - [C126](DESIGN_DECISIONS_SYNTAX.md#c126--a-generics-type-variables-are-unrestricted-a-keyed-collection-stays-a-record-set) — a generic's type variables are unrestricted; a keyed collection stays a record set
 - [C140](DESIGN_DECISIONS_SYNTAX.md#c140--private-by-default-pub-is-consent-fields-literals-and-variants) — private by default, `pub` is consent: fields, literals and variants
+- [C149](DESIGN_DECISIONS_SYNTAX.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included) — one structural limit, 300, for every count a program has — a function's variables included
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 
@@ -88,6 +91,8 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C114](DESIGN_DECISIONS_COLLECTIONS.md#c114--a-keyed-collection-is-refused-as-a-vector-element-not-given-an-element-form) — a keyed collection is refused as a vector ELEMENT, not given an element form
 - [C117](DESIGN_DECISIONS_COLLECTIONS.md#c117--a-linked-groups-members-must-share-one-element-layout-the-tag-aware-dense-read-is-declined) — a linked group's members must share one element LAYOUT; the tag-aware dense read is declined
 - [C118](DESIGN_DECISIONS_COLLECTIONS.md#c118--an-append-to-an-absent-collection-instantiates-it-empty-and-fills-it-refusing-or-warning-is-declined) — an append to an ABSENT collection instantiates it empty and fills it; refusing or warning is declined
+- [C146](DESIGN_DECISIONS_COLLECTIONS.md#c146--a-hash-tables-bucket-count-is-a-power-of-two) — A hash table's bucket count is a power of two
+- [C147](DESIGN_DECISIONS_COLLECTIONS.md#c147--an-index-is-a-btree-of-key-parts-and-record-numbers-kept-apart-from-the-records) — An `index` is a B+tree of key parts and record numbers, kept apart from the records
 
 ## Failure — [DESIGN_DECISIONS_FAILURE.md](DESIGN_DECISIONS_FAILURE.md)
 
@@ -96,6 +101,7 @@ Every entry, by the subject it decides.  Ids are one flat sequence across the su
 - [C80](DESIGN_DECISIONS_FAILURE.md#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) — The spreadsheet fault model: nothing stops a running calculation
 - [C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment) — A store carries its own failure arm: else after the assignment
 - [C131](DESIGN_DECISIONS_FAILURE.md#c131--a-cast-to-a-variant-answers-the-variant-a-provable-miss-is-refused-an-unproven-one-defaults-and-warns) — A cast to a variant answers the variant: a provable miss is refused, an unproven one defaults and warns
+- [C148](DESIGN_DECISIONS_FAILURE.md#c148--a-parsed-value-carries-its-own-parse-errors-wherever-the-whole-value-goes) — A parsed value carries its own parse errors, wherever the whole value goes
 - [C142](DESIGN_DECISIONS_FAILURE.md#c142--a-null-inside-a--hole-renders-plain-null-never-the-reason-it-is-null) — A null inside a `{…}` hole renders plain `null`, never the reason it is null
 
 ## Backends, execution and libraries — [DESIGN_DECISIONS_PLATFORM.md](DESIGN_DECISIONS_PLATFORM.md)

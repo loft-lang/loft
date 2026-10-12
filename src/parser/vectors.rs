@@ -535,14 +535,14 @@ impl Parser {
             self.unresolved_types = self.unresolved_types.saturating_add(1);
         }
         // Both operands of `&&`/`||` are TRUTHINESS positions, so the result is a definite
-        // two-state boolean — C73 (`&&`/`||`/`!` coerce `null` to `false`), which is why the
+        // two-state boolean — @C73 (`&&`/`||`/`!` coerce `null` to `false`), which is why the
         // caller types this expression the non-null `Type::Boolean`.  The left operand becomes
         // the `if` CONDITION below and a jump coerces it (`OpGotoFalse` tests `!= 1`); the
         // right operand becomes a branch VALUE, which nothing coerces.  `convert` does not
         // close that: it inserts a real conversion for every OTHER nullable type reaching a
         // boolean position (`integer?` picks up `OpConvBoolFromInt`, whose `!= i64::MIN` is
         // already 0/1), but `boolean?` to `boolean` shares a base type, so it converts to
-        // nothing at all.  `b == true` is the definite-iser — C73's raw compare answers
+        // nothing at all.  `b == true` is the definite-iser — @C73's raw compare answers
         // `false` for the 255 sentinel and is measured identical on both backends — and it is
         // applied to the one operand the jump never sees.  @FR-E-Truthy, the truthiness
         // exception to @FR-E-NullArg's contagion.
@@ -686,6 +686,8 @@ impl Parser {
                 && operand_not_null
                 && !matches!(eff, Type::Boolean | Type::Null | Type::Unknown(_))
             {
+                // @C69 — `!x` on a non-boolean is a null test, so on a non-null operand it is
+                // always false.
                 diagnostic!(
                     self.lexer,
                     Level::Warning,
@@ -1560,7 +1562,7 @@ impl Parser {
     /// `[1,2]` as `[7,7]`, on both backends, with nothing reported.
     ///
     /// Refusing rather than lowering it is the same call the `&`-scalar shape makes one
-    /// rule over (DESIGN_DECISIONS C115 records both halves as one decided edge),
+    /// rule over (@C115 records both halves as one decided edge),
     /// and for the same reason: making it MEAN what it says needs the binding reachable
     /// from inside the closure plus a write-back, and the cell machinery that gives a
     /// mutated captured SCALAR exactly that cannot serve a heap value — reads in the
@@ -2298,6 +2300,8 @@ or build a local and use that."
 
     // emit the lambda value — plain Int(d_nr) for non-capturing
     // lambdas, or an Insert block that allocates and populates the closure record.
+    /// @C38 — the record is filled here, at the definition: a read-only scalar capture is the value
+    /// it has now.
     fn emit_lambda_code(&mut self, code: &mut Value, d_nr: u32) {
         self.emit_lambda_code_in(code, d_nr, None);
     }
@@ -2902,7 +2906,7 @@ or build a local and use that."
             // A DECLARED `&` SCALAR parameter written from inside a closure is the one
             // capture shape that cannot be made to mean what it says, and it is refused HERE
             // rather than allowed to compute quietly (loft#1276; the decision and why no code
-            // change closes it are DESIGN_DECISIONS C115).
+            // change closes it are @C115).
             //
             // Everything else about a `&` capture works, because `closure_attr_type` captures
             // the POINTEE: a `&S` / `&vector<τ>` shares its DbRef, so a field write, an
@@ -3220,6 +3224,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
     }
 
+    /// @C74 — a mutated scalar may be captured by one closure; a second capture is refused.
     pub(crate) fn reject_shared_mutable_scalar_captures(&mut self, parent_d: u32) {
         if !self.first_pass
             || parent_d == u32::MAX
@@ -3313,7 +3318,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // ⚠ What this does NOT give back is the `&` itself.  A write THROUGH the capture
         // to the caller's slot — a scalar write, or a whole-value rebind of a heap
         // capture — needs the ref in the record and a write-back, which the language does
-        // not have (DESIGN_DECISIONS C115); `reject_ref_capture_write` refuses those at the
+        // not have (@C115); `reject_ref_capture_write` refuses those at the
         // capture site rather than letting them land in a copy.
         let tp = match tp {
             Type::RefVar(inner) => inner.as_ref(),
@@ -4496,7 +4501,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         // loft#703 — a KEYED destination keeps its own type.  The elements are added
         // THROUGH it: `new_record` reads the local's type to pick `hash::add` /
-        // `sorted_new` / `tree::add`, which is how `h += [K { … }]` already builds one.
+        // `sorted_new` / `btree::add`, which is how `h += [K { … }]` already builds one.
         // Retyping it to `vector<K>` here is what made `h: hash<K[k]> = [K { … }]`
         // report a type change, so loft had no way to write a non-empty keyed
         // collection as a VALUE at all — only through a keyed destination that already
@@ -4963,7 +4968,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// loft#703 — is this literal being built straight into a KEYED accumulator?
     ///
     /// Such a variable owns a keyed store of its own (`hash::add` / `sorted_new` /
-    /// `tree::add` add through it), so none of the vector backing applies: no `__vdb_N`
+    /// `btree::add` add through it), so none of the vector backing applies: no `__vdb_N`
     /// store, no capacity pre-allocation, no `vector<T>` retype.  Asked in one place so
     /// the build and the type agree — a literal built as a vector under a variable still
     /// typed keyed reads its elements back through the wrong container.
@@ -5061,7 +5066,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
 
     /// The registered database type for a KEYED collection type — the id that makes
     /// `record_new` / `record_finish` dispatch to `hash::add` / `sorted_new` /
-    /// `tree::add` / the spatial index rather than to `vector_append`.
+    /// `btree::add` / the spatial index rather than to `vector_append`.
     ///
     /// Registration is idempotent (the same call the typedef walker makes), so asking
     /// is also how the type comes to exist.  `None` for a non-keyed type, or one whose
@@ -6119,7 +6124,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             ls.push(p.clone());
             p = Value::Insert(ls);
         }
-        // A collection takes non-capturing lambdas only (DESIGN_DECISIONS.md C116):
+        // A collection takes non-capturing lambdas only (@C116):
         // refuse the statically-detectable capturing shapes — a direct lambda, a
         // local holding one, a closure factory's return — at the literal.
         if !self.first_pass
@@ -6153,7 +6158,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// collection has one element layout and each capture set is its own record
     /// shape, so the element slot holds a plain fn-ref only; a struct FIELD holds a
     /// capturing closure, which is the route the message names
-    /// (DESIGN_DECISIONS.md C116).
+    /// (@C116).
     /// INFERRED element type: does `in_t` WIDEN to this item's `t` (`[1, 2.5]` →
     /// vector<float>)?  Asked on a scratch, because the EARLIER items are what the widening
     /// converts — the item itself is already of type `t`, and converting IT wrote 2.5's bits
@@ -6536,7 +6541,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // P188: when the LHS local is a keyed collection
         // (sorted/hash/index/spatial<T[key]>), the container type id
         // must be the keyed-collection's own known_type so OpNewRecord
-        // dispatches to sorted_new / hash::add / tree::add / etc.
+        // dispatches to sorted_new / hash::add / btree::add / etc.
         // Falling back to `vector_of(in_t)` returns the wrap-`vector<T>`
         // id which would route through `Parts::Vector` → vector_append
         // and crash with index 65535.
@@ -6549,7 +6554,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // record_finish dispatched through `Parts::Vector` instead of
         // `Parts::Hash`/`Parts::Index` — producing 6 records for 3
         // adds (vector_finish appends without dedup) and bypassing
-        // tree::add entirely (1 record for 2 adds).  Fix: register
+        // btree::add entirely (1 record for 2 adds).  Fix: register
         // the keyed-collection db type directly (idempotent — same
         // call as gen_set_first_keyed_null and the typedef walker).
         // @PLN93 (#511): the keyed-collection type that drives the record-kind dispatch
@@ -7538,6 +7543,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// generator read a released store, and two lambdas over one `v` corrupted it on both
     /// backends, differently.  The store the rebuild DISPLACED (the previous pass's record) is
     /// the consumer's now, so the displaced release the build prefixes is dropped with it.
+    ///
+    /// @C128 — a yielded lambda owns copies of what it captures.
     pub(crate) fn yield_owned_closure(&mut self, val: &mut Value) {
         if self.first_pass {
             return;
@@ -8331,6 +8338,8 @@ impl Parser {
     /// Named by its KIND, not by `Type::name`: a keyed type's registered name carries its
     /// key list in the schema's own spelling (`sorted<E,[("k", true)]>`), which is not what
     /// the author wrote and not something to hand back to them.
+    ///
+    /// @C114 — a keyed collection is refused as a vector element.
     pub(crate) fn refuse_keyed_vector_element(&mut self, tp: &Type) -> bool {
         let kind = match tp.base() {
             Type::Hash(_, _, _) => "hash",
@@ -8493,7 +8502,7 @@ fn ensure_tuple_defs_for_capture(
 /// A nullable capture takes `__cell_opt_<stem>` instead (see below).
 pub(crate) fn cell_struct_name(tp: &Type, data: &crate::data::Data) -> Option<String> {
     // A NULLABLE capture takes a cell of its own.  `Optional(Ï)` shares `Ï`'s storage
-    // in-band (C90), so the cell reads and writes with the same ops — but the `value`
+    // in-band (@C90), so the cell reads and writes with the same ops — but the `value`
     // field has to DECLARE the nullability, because a `Ï` field may not hold the
     // sentinel (`@FR-N-Store`).  One field cannot be spelled both ways, so the answer is
     // a second cell rather than a widened one, and the dense path is left untouched.

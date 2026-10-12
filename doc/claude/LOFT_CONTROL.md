@@ -387,7 +387,7 @@ nested patterns (`Wrap { inner: Holder { items } }`).  To change a scalar payloa
 the variant again (`n = Num { v: 9 }`).
 
 A whole-value BIND is a third case and always copies — `b = e.items; b += "y"` leaves
-`e` alone (C86); the difference is that a pattern binding is not a bind, and you never
+`e` alone (@C86); the difference is that a pattern binding is not a bind, and you never
 wrote the copy.  A subject that is a temporary (`match make_e() { … }`) has nothing to
 write back to, so a write there updates only the arm's own view.
 

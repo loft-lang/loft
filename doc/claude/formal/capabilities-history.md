@@ -84,7 +84,7 @@ a struct literal is the script's own, while a copy of a parameter is not.  Cells
   literal, `c = v`, a projection `fv = e.items`, a slice `s = v[0..2]` — all leave the source
   untouched, `x[0] = 99` ⇒ `orig[0] == 1`), so a plain-copied local vector is script-owned. But
   the original close made a **false claim** — that "even `r = &v` copies". It does NOT: an explicit
-  `&`-bind is a **live reference** (heap.md `H-Ref`, C77), so `r = &v; r[0] = 99` ⇒ `v[0] == 99`.
+  `&`-bind is a **live reference** (heap.md `H-Ref`, @C77), so `r = &v; r[0] = 99` ⇒ `v[0] == 99`.
   A vector **parameter** likewise aliases the caller. So a write is host iff its target root is a
   **parameter OR aliases one through a `&`-bind** (directly `r = &v`, or transitively `b = &a;
   a = &v`) — not merely "the root is a parameter".

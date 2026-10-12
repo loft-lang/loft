@@ -346,7 +346,7 @@ impl Parser {
                 );
             }
         }
-        // @PLN102 C93 / read-residual — a par worker runs on an ISOLATED store clone,
+        // @PLN102 @C93 / read-residual — a par worker runs on an ISOLATED store clone,
         // so a captured REFERENCE argument (a heap DbRef) is invalid in the worker's
         // store: it used to read empty (silent-wrong) or, mis-ordered, slot-panic at
         // codegen.  Disallow it cleanly (no runtime errors, ever — we do not allow what
@@ -810,10 +810,11 @@ impl Parser {
         let (worker_arg_types, worker_ret_type) = if let Type::Function(args, ret, ..) = &types[0] {
             (args.clone(), (**ret).clone())
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "parallel_for: first argument must be a function — pass its name"
+            self.refuse_function_argument(
+                "parallel_for: first argument",
+                list.first(),
+                false,
+                "parallel_for: first argument must be a function — pass its name",
             );
             return Type::Unknown(0);
         };
@@ -1000,10 +1001,11 @@ impl Parser {
         let (fn_args, fn_ret) = if let Type::Function(args, ret, ..) = &types[2] {
             (args.clone(), (**ret).clone())
         } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "par_fold: third argument must be a function — pass its name, or a lambda with typed parameters `fn(acc: integer, x: integer) -> integer {{ … }}`"
+            self.refuse_function_argument(
+                "par_fold: third argument",
+                list.get(2),
+                false,
+                "par_fold: third argument must be a function — pass its name, or a lambda with typed parameters `fn(acc: integer, x: integer) -> integer { … }`",
             );
             return Type::Unknown(0);
         };

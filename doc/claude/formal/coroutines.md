@@ -169,7 +169,7 @@ computed lazily, on demand, rather than read from a store.
                  for a type that owns a droppable that copy is refused (H-Copy-Refuse).
              Scope: a record, a struct-enum, a vector, and a tuple whose reference members
              are those (each member is handed over or copied on its own).
-               - `yield` of a LAMBDA hands over its closure record, and every HEAP value the
+               - `yield` of a LAMBDA (@C128) hands over its closure record, and every HEAP value the
                  lambda captures is COPIED into a store the record owns and releases
                  (@FR-L-CapOwn) — at the yield, whatever the capture's source.  The lambda's
                  writes therefore reach its copy, not the generator's local, and two yielded

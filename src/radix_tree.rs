@@ -794,6 +794,14 @@ pub fn rtree_len(store: &Store, tree: u32) -> u32 {
     store.get_u32_raw(tree, LEN)
 }
 
+/// The tree's own footprint: its node array, room included (`CAP` nodes of `NODE_SIZE`
+/// bytes), the header word left out — what `size` reports, allocation-local as a hash's
+/// bucket table is.
+#[must_use]
+pub fn rtree_bytes(store: &Store, tree: u32) -> u32 {
+    store.get_u32_raw(tree, CAP) * NODE_SIZE
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------

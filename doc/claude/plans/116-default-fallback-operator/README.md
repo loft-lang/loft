@@ -64,7 +64,7 @@ value, with a compile error wherever that default is not well-defined.
 
 loft's own null-flow manufactures the boilerplate this relieves: DN3 makes float ops yield
 `float?` ([@PLN25](../25-nullable-sequences/README.md) gate-2 null model), so `(a / b) ?? 0.0`
-recurs; map/field/index reads are nullable by the C80 spreadsheet model. `x ?? 0` is
+recurs; map/field/index reads are nullable by the @C80 spreadsheet model. `x ?? 0` is
 explicit but repetitive, and it forces the author to *spell* a default the type already
 knows. `x?` reads the type's default instead. The `x ?? v` / `x?` pair is the mnemonic:
 **`??` = the default I give; `?` = the default the type gives.**
@@ -91,7 +91,7 @@ the invariant this plan protects ([Goal E](../../GOALS.md): one home per fact).
 the first field that fails**, e.g. *"record `Order` has no default: field `customer:
 Customer` has none — add `customer: Customer = <expr>`, make it `Customer?` (defaults null),
 or give `Customer` a default."* This is a *compile* error (a static well-definedness check),
-fully consistent with "no **runtime** errors ever" (C80).
+fully consistent with "no **runtime** errors ever" (@C80).
 
 Cycles self-resolve: value-recursion is illegal (infinite size), and ref-recursion bottoms
 out at a reference, which has no default → error. No special cycle handling.
@@ -150,7 +150,7 @@ for the same type — the proof that the predicate has one home.
 3. **Notation — RESOLVED to `?`** (record in `DESIGN_DECISIONS.md`): postfix `?`, not
    `?? _` or a named form. Rationale: loft has no exceptions / no early-return-on-null, so
    `x?` cannot carry Rust's hidden-control-flow hazard (local, total, value-in-value-out);
-   and `.` already null-propagates (C80), so Swift/Kotlin `?.` is redundant here — both
+   and `.` already null-propagates (@C80), so Swift/Kotlin `?.` is redundant here — both
    neighbouring `?`-slots are semantically vacant, making `x?` the safer claimant.
 
 ## Cross-arc dependencies

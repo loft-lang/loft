@@ -70,11 +70,10 @@ struct Catalogue { all: vector<Item>, by_key: hash<Item[key]> }
 //
 //   if json_errors() != "" { log_warn(json_errors()); }
 //
-// 'record#errors' is the same answer scoped to one parsed value, and the READ
-// clears it:
+// 'record#errors' answers for the 'Type.parse(text)' that built that record, as a
+// vector<text> with one entry per error. Each parsed record keeps its own:
 //
-//   errs = user#errors;
-//   if errs != "" { log_warn(errs); }
+//   for e in user#errors { log_warn(e); }
 //
 // The two parse spellings differ in WHICH HALF of the answer they give, and
 // that is the reason to choose between them:

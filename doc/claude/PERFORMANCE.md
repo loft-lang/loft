@@ -91,10 +91,10 @@ Both backends, in this order.  Each step's detail lives where it points; the ord
    targeted (class medians, `make perf-portal`).  A representation of the compiler's own —
    a stack array, a tuple in registers — is allowed wherever a program cannot observe it,
    which is everywhere except a package's native code and a store bound to a file
-   ([C135](DESIGN_DECISIONS_PLATFORM.md), [APART_VALUES.md](APART_VALUES.md)).  Only proven situations
-   ([C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
-   ([C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
-   model ([C125](DESIGN_DECISIONS_OWNERSHIP.md)).
+   ([@C135](DESIGN_DECISIONS_PLATFORM.md), [APART_VALUES.md](APART_VALUES.md)).  Only proven situations
+   ([@C120](DESIGN_DECISIONS_VALUES.md)), the contract is semantics, not representation
+   ([@C122](DESIGN_DECISIONS_PLATFORM.md)), remove the object rather than complicate the memory
+   model ([@C125](DESIGN_DECISIONS_OWNERSHIP.md)).
 6. **Verify it cannot be wrong**: a guard with hand-computed values on both backends whose
    planted defects go red (`@falsified-at`, [GUARDS.md](GUARDS.md)), its switch A/B
    ([formal/rewrites.md § Every rewrite is switchable and
@@ -633,7 +633,7 @@ hole: a lazily minted buffer met a latent double release and read the first pass
 both backends, six days on main, seen by nothing in this suite.  The gate that sees it is the
 switch A/B nightly (`.github/workflows/switch-ab.yml`): the script corpus and the consumer
 suites run twice per rewrite switch, off and on, and any output difference is a defect by
-definition — C122, a rewrite is free only where its conditions hold.  The landing rule is in
+definition — @C122, a rewrite is free only where its conditions hold.  The landing rule is in
 [formal/rewrites.md § Every rewrite is switchable and
 falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable).
 
@@ -797,7 +797,7 @@ What each cut measured, and the leads left, are [PERFORMANCE-history.md § F1](P
 
 ## What makes a slow routine a bug
 
-A routine over **3× its Rust twin** (C136) is a defect.  Who owns it depends on its mechanism
+A routine over **3× its Rust twin** (@C136) is a defect.  Who owns it depends on its mechanism
 class (`bench/portal/classes.tsv`):
 
 - **an OUTLIER** — over the bar in a class whose median is at or under it: an ordinary

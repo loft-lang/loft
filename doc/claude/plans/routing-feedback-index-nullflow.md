@@ -76,7 +76,7 @@ then breaks the native build — the worst failure shape (green locally, red on 
 > **SUPERSEDED by @PLN102 #583's strict-index lint (2026-07-16).**  The tuxedo fix
 > (`6ba336ec`) typed the mismatched `w[i]` NULLABLE + a same-base-struct SoA carve-out.
 > Mainline #583 chose the opposite, canonical design — `w[i]` stays NON-NULL (reads
-> C80-null on overrun) with an opt-in `LOFT_LINT_STRICT_INDEX` audit that fires even on
+> @C80-null on overrun) with an opt-in `LOFT_LINT_STRICT_INDEX` audit that fires even on
 > same-base fields (see `102-stability-contract/strict-index-corpus.loft` FIRE 3).  On the
 > `tuxedo-work`↔`origin/main` merge the tuxedo f1 fix was REVERTED in favour of #583 (the
 > two typings are incompatible).  The finding's concern is now addressed by that lint.

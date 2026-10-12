@@ -67,7 +67,7 @@ scalars ([formal/types.md](formal/types.md) `(N-Store)`).
 leave the reserved pattern in a non-null slot: an integer overflow writes the sentinel
 and the slot then reads `null`, and a non-null `float` can hold a `NaN` the same way
 (the deliberate, bounded edge in
-[DESIGN_DECISIONS C85](DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).
+[DESIGN_DECISIONS @C85](DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)).
 A width with no code to spare — `u8`, `i8`, `u16`, `i16` — cannot hold the pattern at
 all, so the same fault leaves the type's default there instead. So `x == null` on a
 non-null slot is not dead code.
@@ -89,7 +89,7 @@ Loft uses in-band sentinel values to represent `null`. Each type has a dedicated
 | narrow int (`u8`/`u16`/`i8`/`i16`) | top of the packed range | e.g. `i8::MIN` for `i8`; stored compactly in `Parts::Byte`/`Short` |
 | `i32` / `integer size(4)` | `i32::MIN` | 4-byte storage via `Parts::Int`; widens to i64 on the stack |
 
-**Arithmetic safety — the spreadsheet model (C80, [formal/operational.md](formal/operational.md)):**
+**Arithmetic safety — the spreadsheet model (@C80, [formal/operational.md](formal/operational.md)):**
 integer arithmetic that can't produce a value — overflow (`i64::MAX + 1`,
 `i64::MIN - 1`, `i64::MAX * 2`), or `/` / `%` by zero — yields **null and keeps
 running**.  It does NOT trap or halt.  A bad calculation degrades that one value
@@ -154,7 +154,7 @@ if !count { skipped += 1; }  // catches only null; zero passes through
 The idiomatic "zero or null" check on an integer is `count == 0 or !count`,
 or simply `count == 0` if the sentinel and zero should be treated the same.
 This asymmetry is a deliberate, settled choice — see
-[DESIGN_DECISIONS.md § C69](DESIGN_DECISIONS_VALUES.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
+[DESIGN_DECISIONS.md § @C69](DESIGN_DECISIONS_VALUES.md#c69--x-on-a-non-boolean-is-a-null-test-not-logical-not).
 The compiler warns (`redundant-null-negation`) when `!` is applied to a value whose type
 keeps no code for null — a non-null `u8` / `i8` / `u16` / `i16` / `u32` / `limit` slot —
 since `!x` there is always false; the one exception, directly after a store, is below.
@@ -341,7 +341,7 @@ enum Shape {
 ```
 
 A variant's fields are read **directly** — `s.radius` — with `match` / `is` reserved for
-*dispatch* rather than extraction ([C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced)).  A field EVERY variant
+*dispatch* rather than extraction ([@C89](DESIGN_DECISIONS_SYNTAX.md#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced)).  A field EVERY variant
 declares shares one slot and reads correctly from any of them.
 
 **A field only SOME variants declare answers for the variant the value holds** (loft#980).
@@ -546,11 +546,11 @@ footgun). Parenthesise if you truly mean the boolean compare (`(a == b) == c`), 
 types (consistent with `bool < int`, which was always rejected). Convert explicitly if you
 really mean it. (`b == null` on a `boolean?` is fine — `null` is not an integer.)
 
-**`==` compares what a value holds, for every type (C91).** Two structs are equal when their
+**`==` compares what a value holds, for every type (@C91).** Two structs are equal when their
 fields are, a vector when its elements are (in order), a `hash` / `sorted` / `index` / `spatial` /
 `trie` when it holds the same records whatever order they were inserted in, a struct-enum value
 when the variant and its fields are; a `reference<T>` field is followed to the record it names,
-and a cyclic value terminates.  `b = a` copies (C86), so `a == b` is `true` afterwards.  A type's
+and a cyclic value terminates.  `b = a` copies (@C86), so `a == b` is `true` afterwards.  A type's
 own `OpEq` replaces this; `x == null` still tests presence.  Whether two names are **one record**
 is asked with `&` on both sides — `&a == &b` / `&a != &b` — and `&` on one side only is refused.
 `0.0 == -0.0`, and a float key agrees: `0.0` and `-0.0` are one entry of a keyed collection.
@@ -586,7 +586,7 @@ Assignment operators: `=`, `+=`, `-=`, `*=`, `/=`, `%=`.
 **dividend** (`-7 % 2 == -1`, `7 % -2 == 1`) — the C/Rust convention, so `a == (a / b) * b + a % b`
 holds. When you want a remainder that wraps into `[0, n)` (the sign of the *divisor*, for
 circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` by zero is a
-**null**, never a fault (C80) — discharge it with `?? default`.
+**null**, never a fault (@C80) — discharge it with `?? default`.
 
 ### Operators on your own type — `operator compare`, `plus`, `minus`, `times`, …
 
@@ -665,7 +665,7 @@ Postfix `x?` discharges a nullable `x: T?` to `T` by falling back to `T`'s **def
 give*, `?` supplies *the default the type gives*; that pairing is the mnemonic (`??` = my
 default, `?` = the type's). It relieves the `?? 0` / `?? ""` / `?? 0.0` boilerplate that loft's
 own null-flow manufactures (DN3 makes float ops yield `float?`; index/map/field reads are
-nullable by the C80 model).
+nullable by the @C80 model).
 
 <!-- from tests/reference/null-operators.loft -->
 ```loft
@@ -685,7 +685,7 @@ The **default** is the one `has_default(T)` / `construct_default(T)` predicate t
 every field defaulted, nullable `U?` → `null`.
 
 Two things have **no default**, so `x?` on them (and the matching `S{}`) is a **compile** error (a
-static well-definedness check, fully consistent with "no *runtime* errors ever" — C80):
+static well-definedness check, fully consistent with "no *runtime* errors ever" — @C80):
 
 - a **bare reference / non-null `DbRef`**; and
 - a **record with a bare (non-`Optional`) enum field that has no `= expr`**. An enum's 0 *is* its
@@ -715,7 +715,7 @@ misses += 1;                // null  — no `?`, so the null propagates through 
 
 `(a ?? d) += e` is refused rather than guessed: it names two values and no place, so it takes
 no assignment at all. A place whose **address calls a function** is fine — `w[idx()]? += 1`
-calls `idx()` once, as [C92](DESIGN_DECISIONS.md) requires of every compound assignment.
+calls `idx()` once, as [@C92](DESIGN_DECISIONS.md) requires of every compound assignment.
 Rule: `@FR-E-Asgn-Discharge`, [formal/operational.md](formal/operational.md).
 
 ### The `as` operator
@@ -834,14 +834,21 @@ user = User.parse(`{{"id":42,"name":"Alice"}}`);
 scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 shape = Shape.parse(`{{"Circle":{{"radius":3.14}}}}`);   // struct-enum round-trip
 
-if json_errors() != "" { log_warn(json_errors()); }   // the JSON surface
-errs = user#errors;                                   // the record surface: TEXT, and
-if errs != "" { log_warn(errs); }                     // reading it clears it
+if json_errors() != "" { log_warn(json_errors()); }   // the JSON surface: one text
+for e in user#errors { log_warn(e); }                 // the record surface: a vector<text>
 ```
 
-`record#errors` is a single text (newline-separated when a parse produced several), not a
-collection — `for e in user#errors` iterates CHARACTERS, and because the read clears, it
-iterates none at all.  Read it into a variable and test it, as above.
+`x#errors` is a `vector<text>` with one entry per error of the parse that built the value `x`
+holds, empty after a parse that succeeded: test it with `len(x#errors) > 0`.  Reading it
+changes nothing, and each of `user`, `scores` and `shape` above answers for its own parse
+(@C148).  The errors go where the WHOLE value goes — bound, rebound, passed, returned from a
+function, copied to another variable.  A value built any other way has none, and neither has a
+part copied out of a parsed value or a parsed value stored into a field or an element.  Ask a
+variable: `f()#errors` does not parse, and a variable that is neither a record nor a vector is
+refused.  The surface is the one-step `Type.parse(text)` and the `text as T` cast; the staged
+`Type.parse(json_parse(text))` reports through `json_errors()`.  Guards:
+`tests/scripts/a-record-errors-read-answers-for-its-own-parse.loft`,
+`tests/scripts/a-vector-errors-read-answers-for-its-own-parse.loft`.
 
 ---
 
@@ -863,7 +870,7 @@ Polymorphism, generic functions and structs, best practices, interfaces and boun
 
 ## Limits
 
-One number bounds a program's structure: **300**.  At 300 everything works, on both backends;
+One number bounds a program's structure: **300** (@C149).  At 300 everything works, on both backends;
 the 301st is refused at compile time with a message naming the limit.
 
 - an expression nested 300 levels deep — each bracket, call argument, block, branch, vector
@@ -881,8 +888,12 @@ files are not limited.  Two technical caps stand apart:
   while they run — holds at most 64 KiB.  Only large tuples reach it; a struct or a vector
   lives in a store and does not count.
 
+A function at the count fits its frame whatever its variables hold, short of 300 tuples of 28
+integers each, so the count is the limit a function meets.
+
 Guards: `tests/scripts/a-nesting-within-the-bound-compiles.loft`,
-`the-counts-within-the-limit-compile.loft` and their refused twins, `tests/limits.rs`.
+`the-counts-within-the-limit-compile.loft` and their refused twins,
+`the-variable-limit-arrives-before-the-frame-cap.loft`, `tests/limits.rs`.
 
 ## See also
 - [STDLIB.md](STDLIB.md) — Standard library API (math, text, collections, file I/O, logging, parallel)

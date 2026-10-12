@@ -232,7 +232,7 @@ routes between the two views.
 | `chr(cp: integer) -> text` | Build a one-character text from a Unicode CODE POINT — the inverse of the `ch as integer` that iteration gives. `chr(65)` → `"A"`, `chr(20013)` → `"中"`, `chr(128512)` → `"😀"`. For decoding an escape (`\u{…}`, an HTML entity) or reassembling text a code point at a time. |
 | `ch as integer` | The code point of a `character` (via `as i32?` for a nullable). The direction that already existed; `chr` is its inverse. |
 
-⚠ **A code point that names no character gives `""`, not an error** (C80): a
+⚠ **A code point that names no character gives `""`, not an error** (@C80): a
 surrogate (`D800`–`DFFF`), anything past `U+10FFFF`, a negative number — and `0`,
 because `character` uses 0 as its null and text ITERATION STOPS at a NUL, so a
 NUL built by `chr` could not be read back by the loop it is the inverse of. The
@@ -554,7 +554,7 @@ print("{p}\n");                // a user type via its to_text
 
 This one tool covers printing a value, separating several values, and appending strings
 — loft has no variadic `print(a, b, c)` and no bare `print(42)` (a deliberate decision,
-[DESIGN_DECISIONS.md § C100](DESIGN_DECISIONS_SYNTAX.md#c100--print-stays-text-only-no-bare-printvalue-or-variadic-print); @PLN13 step 5). Write the separator you
+[DESIGN_DECISIONS.md § @C100](DESIGN_DECISIONS_SYNTAX.md#c100--print-stays-text-only-no-bare-printvalue-or-variadic-print); @PLN13 step 5). Write the separator you
 want inside the braces (`"{a} {b}"` spaces, `"{a}, {b}"` commas, `"{a}{b}"` appends).
 
 ---
@@ -688,7 +688,7 @@ return response.to_json_pretty();
 | `"{value:j}"` | Serialise any struct/enum/vector to JSON text |
 | `Type.parse(text)` | Parse JSON or loft-native text into a struct (P54 step 5 will require `Type.parse(JsonValue)` for structs) |
 | `vector<T>.parse(text)` | Parse a JSON array into an iterable vector |
-| `record#errors` | The last `Type.parse()` call's errors as ONE text (newline-separated), cleared by the read |
+| `record#errors` | The errors of the `Type.parse(text)` call that built `record`, as a `vector<text>` with one entry per error; empty after a success, unchanged by a read, and carried with the whole value (@C148) |
 
 <!-- from tests/reference/json-values.loft -->
 ```loft
@@ -696,7 +696,7 @@ user = User.parse(`{{"id":42,"name":"Alice"}}`);
 scores = vector<Score>.parse(`[{{"value":10}},{{"value":20}}]`);
 
 // A failed parse leaves the record at its type's zeros, so ask whether it failed.
-errs = user#errors;              // TEXT, not a collection — and the read clears it
+errs = user#errors;              // a vector<text>: one entry per error of user's own parse
 ```
 
 Reach for this form when you KNOW the document's shape and it maps onto a struct you have

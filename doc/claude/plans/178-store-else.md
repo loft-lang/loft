@@ -9,7 +9,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **DONE — finished 2026-10-06.**  Tracker: [@PLN178](https://github.com/loft-lang/plans/issues/178)
 (`status:finished`).  The ruling is
-[DESIGN_DECISIONS.md C130](../DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment).
+[DESIGN_DECISIONS.md @C130](../DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment).
 
 ## Where it lives now
 
@@ -25,7 +25,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 | # | Phase | Delivered |
 |---|---|---|
-| 0 | Refuse a store in condition position | shipped with C130 |
+| 0 | Refuse a store in condition position | shipped with @C130 |
 | 1 | Rules first | `(H-Write-Else)`, the `(E-Report)` clause, `(E-Uncomp-Seen)` restated |
 | 2 | `else` after a store | the arm over every write shape: setters, record copies, temps (`__place_N`, `__lift_N`), a local, a tuple element; a record variable bound as a view; the place's target bound once; the arm is a branch for the dead-store lint |
 | 3 | Native | the IR lowering serves `--native` unchanged; the hoisted writers decline on a guarded store (measured: `vec_set_at` fires unguarded, the plain path runs guarded); the `(R-RefillText)` bodies carry the report |

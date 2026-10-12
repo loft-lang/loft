@@ -90,7 +90,7 @@ impl Parser {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
         // receiver is nullable (`s: S? = null`, `w.inner` where `inner: Inner?`),
         // reading `s.field` yields the field type's null when the receiver is absent
-        // (C80), so `s.field == null` is NOT "always false" and `s.field ?? d` is NOT
+        // (@C80), so `s.field == null` is NOT "always false" and `s.field ?? d` is NOT
         // redundant.  `get_field` sets `expr_not_null` from the FIELD's own nullness;
         // clear it below when the receiver's TYPE is `Optional`.  (The receiver TYPE is
         // the right signal — `expr_not_null` alone is false even for a non-null
@@ -874,7 +874,7 @@ impl Parser {
                 self.last_field_read_site = Some(key);
             }
         }
-        // A field of a NULLABLE receiver can itself be null (C80), regardless of the
+        // A field of a NULLABLE receiver can itself be null (@C80), regardless of the
         // field's declared non-nullness — so it is not "not null" for the redundant-
         // check / redundant-coalesce lints.
         if receiver_nullable && self.expr_not_null {
@@ -898,7 +898,7 @@ impl Parser {
     ///
     /// `get_field` types the read from the FIELD's declared nullness, which is the field's own
     /// promise and says nothing about whether the receiver is there to hold it: reading `s.f`
-    /// on an absent `s: S?` yields the C80 null whatever `f` declares.  The lint clear beside
+    /// on an absent `s: S?` yields the @C80 null whatever `f` declares.  The lint clear beside
     /// this call already knew that — it is why `s.f ?? d` is not reported redundant — but a
     /// lint switch is not a type, and `(N-Store)` reads the type.
     ///
@@ -1094,7 +1094,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// The guard goes on the RECEIVER, not the access:
     /// `if tag(c) ∈ declaring { c } else { null }`. A null receiver ALREADY reads as null
     /// and ALREADY swallows a write, on both backends — so the read answers the type's
-    /// sentinel (the same answer C80 gives a hash miss or an out-of-range index) and the
+    /// sentinel (the same answer @C80 gives a hash miss or an out-of-range index) and the
     /// write is suppressed, with no new opcode. And because only the receiver changed, the
     /// access is still a PLACE: the assignment path needs no lvalue notion for a guarded
     /// read, which is what made the write half unbuildable when the guard wrapped the
@@ -1619,7 +1619,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // `index_provably_fit` trusts the INDEX — the number the developer typed, a loop
             // variable, a bounded computation (loft#1436) — and says nothing about whether the
             // COLLECTION exists.  Reading an element of an ABSENT vector yields the element
-            // type's null (C80) whatever the index, so a nullable receiver types the read `τ?`
+            // type's null (@C80) whatever the index, so a nullable receiver types the read `τ?`
             // even where the index is trusted, and `@FR-N-Store` asks for the discharge.
             // `@FR-N-Opt`'s side condition — the third constructor, and the one where the
             // missing question was not latent.  A `vector<fn() -> integer>` read by a plain
@@ -1874,7 +1874,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     ///
     /// Such a read yields null at runtime when the element is absent, whatever the
     /// element type says: an out-of-range index and a missing key both produce the
-    /// null value (C80).  The index arms already clear `expr_not_null` for exactly
+    /// null value (@C80).  The index arms already clear `expr_not_null` for exactly
     /// that reason — a bare `v[i]` warning about an overrun while `v[i] ?? d`
     /// warned "redundant" left the author no clean idiom.  A following field read
     /// re-armed the flag from the FIELD's own non-nullness and put the trap back
@@ -1950,7 +1950,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             }
             // @PLN102 D1 — a computed index like `m[k*4+row]` is the matrix-indexing contract: an
             // integer-arithmetic tree over constants and active loop vars. Trust it exactly as a
-            // bare loop var (a real OOB still faults → null at runtime, C80). This deliberately does
+            // bare loop var (a real OOB still faults → null at runtime, @C80). This deliberately does
             // NOT thread the `i < len(v)` guard through arithmetic — that proof is specific to
             // `v[i]` and does not survive `v[i*2]` — so `index_arith_trusted` reads only the two
             // by-contract leaves, never `index_bounded`.
@@ -1993,7 +1993,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             // `@FR-N-Domain` — the LAST-ELEMENT idiom, `v[len(v) - 1]`.  `len` OF THE VECTOR
             // BEING INDEXED is a trusted leaf for the same reason the arm above trusts a
             // constant: it is the developer's explicit contract, and a genuine overrun still
-            // raises the recoverable OOB fault (C80).  `v[-1]` — the same element, spelled
+            // raises the recoverable OOB fault (@C80).  `v[-1]` — the same element, spelled
             // negatively — has been trusted here since loft#1436; spelling it with `len` is not
             // a weaker claim, and the rule's own elision names a GUARD, which `if len(v) >= 2`
             // is.  Published `web` 0.3.0 writes exactly this and stopped compiling when
@@ -2269,7 +2269,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // @PLN102 strict-index lint (gated by `LOFT_LINT_STRICT_INDEX`, advisory). The index is
         // trusted in-bounds because it is a for-loop iter var — but if that loop is bounded by
         // `len(<other vector>)`, `for i in 0..len(v) { w[i] }` types `w[i]` non-null yet reads
-        // C80-null on overrun. Warn on the mismatch; the type stays non-null (a real proof would
+        // @C80-null on overrun. Warn on the mismatch; the type stays non-null (a real proof would
         // break the ubiquitous `for i in 0..n { v[i] }` idiom — see `strict_index_lint_enabled`).
         if self.last_index_fit
             && !self.first_pass
@@ -3395,6 +3395,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         w
     }
 
+    /// @C99 — a keyed subscript is addressed by KEY (lookup, range, removal), never by position.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_key(&mut self, code: &mut Value, typedef: &Type, key_types: &[Type]) {
         // A keyed kind with NO key only arrives after its declaration was refused
@@ -3733,9 +3734,11 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // `e#remove` needs the type to free what an element owns.
         let mut elem_tp = u16::MAX;
         match self.database.types[known as usize].parts {
-            Parts::Index(_, _, _) => {
+            Parts::Index(_, _) => {
+                // The index TYPE: its walk steps by record and finds each record's slot
+                // by key, so the stepper needs the keys, not a link offset.
                 on = 1;
-                arg = self.database.fields(known);
+                arg = known;
             }
             Parts::Sorted(tp, _) => {
                 on = 2;
@@ -3772,7 +3775,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             on += 128;
         }
         // Key DIRECTION is the comparator's business and nothing else's: `keys::compare`
-        // reverses per descending key, so the tree `tree::put` builds is already in the
+        // reverses per descending key, so the tree `btree::add` builds is already in the
         // declared order and a forward walk of it is the declared order.  The reverse bit
         // therefore carries ONE fact — did the user write `rev(...)` — the same way it
         // does for `sorted`, whose `ordered_range_cursors` reads no sign at all
@@ -3787,8 +3790,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         ls.push(Value::Int(i32::from(on)));
         ls.push(Value::Int(i32::from(arg)));
         // What `OpRemove` is handed, which is NOT always `arg`:
-        //  - Index (on 1): the COLLECTION type, so it can reach `fields()` and
-        //    `remove_owned(..., tp)`;
+        //  - Index (on 1): the COLLECTION type, which is `arg` itself;
         //  - Sorted / Ordered (on 2 / 3): the ELEMENT type, because removing an
         //    element has to free what it owns and a width cannot say what that is
         //    (loft#903).  `arg` stays the STRIDE the stepper needs.

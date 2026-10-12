@@ -185,6 +185,71 @@ impl Parser {
         None
     }
 
+    /// @C112 — a local that carries a function's name hides the function from a bare mention.
+    /// That is the rule (a binding position mints a local), but an author who passes the name
+    /// where a function is expected meant the function.  When `arg` is such a local and a
+    /// function of its name exists, the words that say so and name what reaches the function:
+    /// a lambda around it and, for a standard-library function, its `std::` name.  Where the
+    /// position takes no `|x| { … }` lambda (`lambda_ok` false: `par_fold`, `parallel_for`), the
+    /// cure is to rename the local.  `None` for any other argument, so a caller appends this only where it
+    /// explains the refusal.
+    pub(crate) fn shadowed_function_hint(&self, arg: &Value, lambda_ok: bool) -> Option<String> {
+        let Value::Var(v) = arg.unspan() else {
+            return None;
+        };
+        let nm = self.vars.name(*v);
+        let d_nr = self.data.def_nr(&format!("n_{nm}"));
+        if d_nr == u32::MAX || !matches!(self.data.def_type(d_nr), DefType::Function) {
+            return None;
+        }
+        let line = self.vars.var_source(*v).0;
+        if !lambda_ok {
+            return Some(format!(
+                "`{nm}` here is the local bound on line {line}, which hides the function `{nm}` — \
+                 rename the local"
+            ));
+        }
+        let params = (0..self.fn_ref_arg_types(d_nr).len())
+            .map(|i| {
+                ["x", "y", "z", "w"]
+                    .get(i)
+                    .map_or_else(|| format!("a{i}"), |s| (*s).to_string())
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let std = if self.data.def(d_nr).is_stdlib() {
+            format!(", or name it `std::{nm}`")
+        } else {
+            String::new()
+        };
+        Some(format!(
+            "`{nm}` here is the local bound on line {line}, which hides the function `{nm}` — \
+             pass the function as `|{params}| {{ {nm}({params}) }}`{std}"
+        ))
+    }
+
+    /// The refusal for a builtin's argument that must be a function: when the author passed a
+    /// local that hides a function of its name (@C112), say so and how to reach the function;
+    /// otherwise `plain`, the builtin's own wording.  `which` names the argument
+    /// (`map: second argument`).
+    pub(crate) fn refuse_function_argument(
+        &mut self,
+        which: &str,
+        arg: Option<&Value>,
+        lambda_ok: bool,
+        plain: &str,
+    ) {
+        if let Some(hint) = arg.and_then(|a| self.shadowed_function_hint(a, lambda_ok)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "{which} is not a function: {hint}"
+            );
+        } else {
+            diagnostic!(self.lexer, Level::Error, "{plain}");
+        }
+    }
+
     fn fn_ref_arg_types(&self, fn_d_nr: u32) -> Vec<Type> {
         self.fn_ref_visible_args(fn_d_nr)
             .into_iter()
@@ -905,11 +970,27 @@ impl Parser {
             if self.lexer.has_token("#") {
                 self.var_usages(index_var, true);
                 if self.lexer.has_keyword("errors") {
-                    // s#errors — return the parse errors from the last Type.parse() call.
-                    let fn_nr = self.data.def_nr("i_parse_errors");
+                    // @C148: s#errors — the errors of the parse that built the value `s` holds,
+                    // one element per error; a fresh vector the caller owns.  Only a record
+                    // or a vector comes out of a parse, so nothing else has errors to ask.
+                    let asked = self.vars.tp(index_var).clone();
+                    if !self.first_pass
+                        && !matches!(
+                            asked.peel_link(),
+                            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+                        )
+                    {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{name}#errors` asks a parsed record or vector for the errors of its parse, and `{name}` is {}",
+                            self.data.written_type_name(&asked)
+                        );
+                    }
+                    let fn_nr = self.data.def_nr("n_parse_errors_of");
                     if fn_nr != u32::MAX {
-                        *code = Value::Call(fn_nr, vec![]);
-                        t = Type::Text(crate::data::Deps::none());
+                        *code = Value::Call(fn_nr, vec![Value::Var(index_var)]);
+                        t = self.data.def(fn_nr).returned.clone();
                     }
                     return t;
                 }
@@ -1299,7 +1380,7 @@ impl Parser {
                     t = Type::Never;
                 }
             } else {
-                // loft#1008 — the OTHER half. A `both` receiver (deprecated, C123) registers a
+                // loft#1008 — the OTHER half. A `both` receiver (deprecated, @C123) registers a
                 // dispatch entry under the PLAIN name (which is what makes the free-call
                 // spelling `f(x)` work), so unlike a `self` method the bare name is FOUND
                 // here — as a `Dynamic` def — and fell through to a silent null. `x = f` bound null with
@@ -1321,7 +1402,7 @@ impl Parser {
                         // A fn-typed PARAMETER seeds `expected` for its argument (`parse_call`),
                         // so there the name is being passed; anywhere else it is being bound.
                         // A `self` method reaches this branch too since it registers its bare
-                        // name (C123), and the argument site's wording is the one it had.
+                        // name (@C123), and the argument site's wording is the one it had.
                         let verb = if matches!(self.expected.base(), Type::Function(..)) {
                             "pass"
                         } else {
@@ -1753,7 +1834,7 @@ impl Parser {
         }
         let value_tp = value_attr.typedef.clone();
         let pos = Value::Int(0);
-        // `.base()`: a nullable cell's `value` is stored in-band (C90), so the READ op is its
+        // `.base()`: a nullable cell's `value` is stored in-band (@C90), so the READ op is its
         // dense twin's.  `value_tp` itself is returned unpeeled, so the expression keeps the
         // `?` and the ordinary discharge rules apply to it (loft#1408).
         let (op_name, is_bool) = match value_tp.base() {
@@ -3172,7 +3253,14 @@ impl Parser {
                 );
             }
         }
-        Type::Reference(d_nr, crate::data::Deps::none())
+        // The parse answers a value of the type it was asked for, in that type's own
+        // spelling: a struct-enum is `Type::Enum`, and typed as a bare record it could not
+        // be bound, stored or returned where its own type was declared (loft#1986).
+        if self.data.def_type(d_nr) == DefType::Enum {
+            Type::Enum(d_nr, true, crate::data::Deps::none())
+        } else {
+            Type::Reference(d_nr, crate::data::Deps::none())
+        }
     }
 
     /// Parse `vector<T>.parse(text)` — parse a JSON array into a vector of T.
@@ -3182,7 +3270,15 @@ impl Parser {
         let mut text_expr = Value::Null;
         let tp = self.expression(&mut text_expr);
         self.lexer.token(")");
-        let elem_tp = Type::Reference(elem_d_nr, crate::data::Deps::none());
+        // The element is a value of the named type, in that type's own spelling: a struct is
+        // a record, and `text`, a number or an enum is what its definition answers.  Typed as
+        // a record whatever it named, a `vector<integer>.parse` had elements no operator
+        // took and a `vector<text>.parse` rendered its texts quoted (loft#1985).
+        let elem_tp = if self.data.def_type(elem_d_nr) == DefType::Struct {
+            Type::Reference(elem_d_nr, crate::data::Deps::none())
+        } else {
+            self.data.def(elem_d_nr).returned().without_deps()
+        };
         let vec_type = Type::Vector(Box::new(elem_tp.clone()), crate::data::Deps::none());
         if !self.first_pass {
             if !matches!(tp, Type::Text(_)) {
@@ -3195,15 +3291,13 @@ impl Parser {
                 "OpCastVectorFromText",
                 &[text_expr, Value::Int(i32::from(vec_kt))],
             );
-            // The parse returns a DbRef to the wrapper struct main_vector<T>.
-            // Extract the vector field (at position 0) so the result is directly iterable.
-            let wrapper_name = format!("main_vector<{}>", self.data.def(elem_d_nr).name());
-            let wrapper_d_nr = self.data.def_nr(&wrapper_name);
-            if wrapper_d_nr == u32::MAX {
-                *code = parse_call;
-            } else {
-                *code = self.get_field(wrapper_d_nr, 0, parse_call);
-            }
+            // `@FR-H-View` — the parse answers the vector itself, the one field of the store
+            // it minted, at that store's root: the call IS the value and whoever binds it
+            // owns the store.  Read as field 0 of the call instead, the same address was a VIEW of a
+            // lifted temporary that nothing recorded: a local bound to it and returned, or
+            // bound inside a block and read after it, named a store already freed
+            // (loft#1985).
+            *code = parse_call;
         }
         // Ensure the vector def exists for type resolution.
         self.data.vector_def(&mut self.lexer, &elem_tp);
@@ -3254,7 +3348,7 @@ impl Parser {
             };
             self.in_format_expr = saved_in_fmt;
             // `@FR-F-FaultSafe` (@C142) — formatting never traps: every fault-prone op in the
-            // hole is swapped to its silent nullable peer (C66), so `"{a / b}"`, `"{v[i]}"`
+            // hole is swapped to its silent nullable peer (@C66), so `"{a / b}"`, `"{v[i]}"`
             // and `"{user.name}"` yield the null VALUE and the hole renders it as a plain
             // `null`, never the fault's cause.
             if !self.first_pass {
@@ -3282,8 +3376,11 @@ impl Parser {
             // of the numeric width/radix grammar (which rejects `date`/`dollars`
             // as an "Unknown variable" width expression). Pass-stable: the
             // `t_<len><Type>_to_text` def is collected in both parser passes, so
-            // both take this branch.
-            let custom_fmt = if let Type::Reference(fd, _) = &tp {
+            // both take this branch.  `@FR-N-Shape` — a nullable value (`D?`, a keyed
+            // element's field) owns the same DSL: the shape is asked of the peeled type,
+            // and an absent value renders `null` before the hook would run
+            // (`append_user_text_unless_null`).
+            let custom_fmt = if let Type::Reference(fd, _) = tp.base() {
                 self.data.def_type(*fd) == DefType::Struct && {
                     let m = self.type_method(*fd, "to_text");
                     // Only an `operator to_text` owns the spec (`@FR-Op-Mark`).
@@ -5845,7 +5942,7 @@ impl Parser {
             // ⚠ @FR-N-Shape / @FR-N-Road (@PLN160) — this names ONE spelling: `x: S?` is
             // `Optional(Reference(S))` and does not match, so every nullable local bound from a
             // struct literal declines the in-place hint and builds into a work-ref instead,
-            // while its dense twin builds in place.  C90 makes the two the same slot, so the
+            // while its dense twin builds in place.  @C90 makes the two the same slot, so the
             // divergence is an accident of this test and the cure is `var_tp.base()`, which
             // peels the `?` and not the `&`.
             //
@@ -6913,7 +7010,7 @@ impl Parser {
     // `list` / `sinks`, of which `sinks` is itself the bundle for the literal-level
     // accumulators).  There is exactly ONE call site, so a further struct would be packed
     // once and unpacked once and name nothing that these parameters do not — the same trade
-    // `tree::range_cursors` records for its own list.
+    // `btree::range_cursors` records for its own list.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn handle_field(

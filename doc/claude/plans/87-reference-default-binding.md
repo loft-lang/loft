@@ -122,7 +122,7 @@ recurring "`&Object` needed to mutate" confusion; realizes the OWNERSHIP_MODEL b
 binding semantics. (The "`&` = reassignment write-back" reading is corrected in the box above.)
 
 Design + rationale: [OWNERSHIP_MODEL.md § The law](../OWNERSHIP_MODEL.md) +
-[DESIGN_DECISIONS.md C77](../DESIGN_DECISIONS.md). Builds on @PLN85 (the store-lifetime
+[DESIGN_DECISIONS.md @C77](../DESIGN_DECISIONS.md). Builds on @PLN85 (the store-lifetime
 cluster); the W4 lint joins the @PLN46 warning family.
 
 ## Status & handoff — READ FIRST after a context reset
@@ -159,7 +159,7 @@ backends for the reference-default (vector-index) case: `cells = &vv[0]; cells[0
 diagnosis on the loft2 agent's task #2.
 
 **Rebased onto main `67710d7d` (2026-06-22): the substrate work MERGED** — #426 + #429 resolved,
-the reference-default + `&`-to-reassign design documented (C77, OWNERSHIP_MODEL). Clean rebase,
+the reference-default + `&`-to-reassign design documented (@C77, OWNERSHIP_MODEL). Clean rebase,
 build green; P1 **vector** case works on both backends (`cells = &vv[0]; cells[0] = 99` →
 `vv[0][0] == 99`).
 
@@ -169,7 +169,7 @@ stays `10`/`20`, both backends) because **#415 makes a struct vector-field read 
 (OWNERSHIP_MODEL.md:152) — a documented store-lifetime STOPGAP, narrowed to struct fields (vector
 INDEX reads keep their view), that CONTRADICTS reference-default. The design's end state reverses it
 (struct-field reads become VIEWS via dep-driven ownership — row 102), which is OWNERSHIP_MODEL /
-substrate-stream work, NOT P1. Per the revised design (C77) **`&` means "reassigning writes back"
+substrate-stream work, NOT P1. Per the revised design (@C77) **`&` means "reassigning writes back"
 (P2) and is REDUNDANT for a field/element mutation** (the W4 lint) — so the struct write-through is
 REFERENCE-DEFAULT, not `&`. The P1.2 verify (`&chunk.cells; cells[0]=99`) therefore exercises
 reference-default struct-field aliasing, which can only pass AFTER the #415 reversal.

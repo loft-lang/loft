@@ -127,7 +127,7 @@ on code their authors had not touched.
 
 The owner's standing ruling: when a fix meets a rule whose letter and the code disagree, the
 agent applies the letter.  The reason measured that week: the three rulings asked for
-(loft#1600 block scoping, loft#1619 the once-taken range end, C127 narrow ranges) all went the
+(loft#1600 block scoping, loft#1619 the once-taken range end, @C127 narrow ranges) all went the
 letter's way, and each waited on the owner's attention.
 
 ## 2026-09-24 — a stale registry clone

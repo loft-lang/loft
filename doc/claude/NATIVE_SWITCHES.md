@@ -149,7 +149,19 @@ re-reads the element at the walk's release and panics when the borrow does not n
 (address first, so a dangling borrow is never read); `LOFT_TRACE_TEXT_BORROW=1` names each
 walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
 `&text` parameter, tupled or returned, a store written in the body and a generator keep
-the copy.
+the copy.  Its FORMAT clause is under the same switch: a text local bound to a format
+string (`cs = "{c}"`) whose work text is the format's own reads that work text as a `&str`
+instead of a copy (markdown `render_inline` 7.5 → 3.8 ms); a format that reads the local,
+and a local copied into another variable, keep the copy.
+**`LOFT_NO_TEXT_CLEAR=1`** (`@FR-R-TextClear`, default-ON, generation time, `--native`
+only) empties a text with a fresh `String` again — with it off, `s = ""` on a declared text
+local or a `&text` parameter is `s.clear()`, the buffer's capacity kept (zttext
+`materialise` −59 %) — and is the first bisect step for a text that reads leftover content
+after it was emptied.
+**`LOFT_NO_FLAT_COPY=1`** (`@FR-R-FlatCopy`, default-ON, RUNTIME, `--native` only) copies a
+record that owns no heap through the full release-and-walk path again — with it off, such a
+copy that keeps its source is the block copy alone (zttext `insert_text` ≈ −40 %) — and is
+the first bisect step for a wrong value or a leak right after a record copy.
 **`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
 makes `for c in text` take every character through the step as written again — with it
 off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
@@ -418,7 +430,7 @@ behind a guard evaluated once at the loop's entry: no range end or invariant is 
 every vector read has a known element bound (taken ONCE at the outermost loop whose body
 leaves the vector alone, never at the nest's own prelude), and the magnitude bound of every
 chain and of `|acc| + trips × bound(term)` fits, so no operation can fault and the plain
-answer is the checked one; the checked loop is the `else` arm.  It is C120's admissible
+answer is the checked one; the checked loop is the `else` arm.  It is @C120's admissible
 successor built — the fact is established before the arithmetic runs, not assumed — and it
 took the drawing lane's three resample rows from 4.9–6.1× to 2.4–2.8× their Rust reference
 (`render_marks` −54 %).  **Step 2, `LOFT_NO_NEST_RAW_READS=1`** keeps the arm's bounds-tested
@@ -451,7 +463,7 @@ in `0..=u32::MAX`, a byte, a counted range's counter, a one-expression callee su
 `color_a`, and interval arithmetic over those in i128) emits the processor's operator, since
 no fault can occur — and is the first bisect step for a wrong integer value on native where
 the range proof admitted a plain operator; `LOFT_HOIST_VERIFY=1` compares the plain answer
-with the checked one at every such operator.  It is C120's admissible successor for
+with the checked one at every such operator.  It is @C120's admissible successor for
 straight-line arithmetic; a parameter or a record/element read is never ranged.  A counted
 range's counter is seeded from the statement BEFORE the loop, where the parser emits it.  A
 pin can borrow another rewrite's evidence and read as proof of its own clause.
@@ -486,7 +498,7 @@ trip loop in a per-byte helper, whose doubled body stopped inlining into its cal
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain
 one — what the eventual release build pass for games would emit (DESIGN_DECISIONS.md
-C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the language's
+@C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the language's
 (`b = MAX + 1; d = (b + 5) * 2` reads `10` for null), so a row is comparable only while
 its hash still agrees; its time is the CEILING the checked build is measured against,
 which is what says whether a row is bound by the checks or by something else — the
@@ -512,7 +524,7 @@ view's field tuple and never a view leaf (read as one, it leaks the store its co
 mints, one record per call); the generic instance's statement join binds its join local
 the same way.
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
-**`LOFT_NO_NULLABLE_VALUE_RECORD=1`** (`@FR-R-ValueRecord`'s nullable clause, C144,
+**`LOFT_NO_NULLABLE_VALUE_RECORD=1`** (`@FR-R-ValueRecord`'s nullable clause, @C144,
 default-ON, generation time, `--native` only) — set, it keeps every `-> S?` on its return buffer and
 every `S?` local a `DbRef`, leaving the dense road untouched — the first bisect step for a
 wrong field or a wrong presence test (`if x`, `x == null`) out of a nullable record-returning

@@ -46,6 +46,14 @@ build with `cargo clean --manifest-path <worktree>/Cargo.toml` and remove scratc
 caches when the probes are done.  Build a scratch worktree OUTSIDE a RAM `/tmp` (under
 `~/.cache`) in the first place.
 
+**A commit made in a scratch worktree is held by that worktree alone.**  A detached worktree
+gives its commits no branch, and an agent session's scratch directory does not outlive the
+session: once the directory is gone no ref names those commits, `git log --all` does not show
+them, and `git gc` drops them when they age out.  Before a session ends with commits in a
+scratch worktree, put them on the checkout's branch and push, or anchor the tip
+(`git update-ref refs/keep/<name> <sha>`).  `git fsck --unreachable --no-reflogs` lists the
+commits a vanished worktree left behind.
+
 **A direct run does not get the gate's redirect.**  `find_problems.sh` and the gate export
 `TMPDIR` and `LOFT_TMPDIR` as the checkout's `/var/tmp/loft-test-scratch-<checkout>.<cksum>`;
 a bare `cargo test`, `loft --native` probe or `perf record` started by hand inherits `/tmp`.

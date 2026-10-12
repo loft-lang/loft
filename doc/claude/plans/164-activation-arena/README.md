@@ -60,7 +60,7 @@ line the compiler minted:
 | **E-2** — a single-consumer vector built in its element (`@FR-R-ElemFirst`) | E-2a and E-2b built 2026-09-17, `LOFT_NO_ELEMENT_PLACE` — 19 → 13 stores per parse; loft#1552, #1553 and #1554 found and fixed on the way |
 | **The wilderness** — the store's tail free block held beside the free tree (`@FR-H-Wilderness`) | Built 2026-09-17, `LOFT_NO_WILDERNESS` — the row −6.3 %, `fronds` −2.6 % |
 | **Runtime pass** — the write check inlined, the no-heap claims walk skipped, a fresh store initialised once | Shipped 2026-09-17 — the row 28.3–28.5 k → 25.0–25.3 k ns/op; an accessor reorder measured and DROPPED (pixel rows +15–38 %) |
-| **A1/A2** — the activation arena | **Superseded 2026-09-17** (owner ruling C125): the temporaries are REMOVED, not co-located, and the store model stays *one store is one object* |
+| **A1/A2** — the activation arena | **Superseded 2026-09-17** (owner ruling @C125): the temporaries are REMOVED, not co-located, and the store model stays *one store is one object* |
 | **E-3** — `PointList` reused per call site | Priced by hand patch 2026-09-17 and **DROPPED** — a wash once E-2 removed the copies around it |
 | **Text per character** — `#[inline]` on the two per-character runtime calls | Measured and **DROPPED** 2026-09-17 (−1.0 % instructions, +1.1 % cycles) |
 
@@ -72,7 +72,7 @@ emission unit — the default emission proved byte-identical with the switch off
 
 ## The elimination queue, and its two remaining units
 
-After the owner's ruling C125 the plan's remaining order was elimination, unit by unit.  The
+After the owner's ruling @C125 the plan's remaining order was elimination, unit by unit.  The
 census it worked from (stores minted per parse, `LOFT_TRACE_DB=1`):
 
 | stores | what | outcome |
@@ -126,12 +126,12 @@ field assigned from a local 382, a bind-then-return 96, `x = f(x, …)` on a rec
 
 ## Open design questions at close
 
-1. **E1 — store identity once buffers share a store: WITHDRAWN** with tier 1 (C125).  The store
+1. **E1 — store identity once buffers share a store: WITHDRAWN** with tier 1 (@C125).  The store
    model stays *one store is one object*.
 2. **Is the arena an IR fact or an emission fact:** moot with E1.
 3. **Where a moved-from local's `deps` go:** answered by B2 — the path state is a compile-time
    fact written into the IR (`OpMoveRecord`, `OpFreeRecordIn`), never a runtime stand-in.
-4. **`(O-ViewField)`:** DECIDED admitted (C122) and recorded as `(R-Escape)` in
+4. **`(O-ViewField)`:** DECIDED admitted (@C122) and recorded as `(R-Escape)` in
    `formal/rewrites.md` — a rewrite needs its validated conditions and nothing else; the one
    boundary is a library API whose callers are unseen.
 5. **`(R-Place)` across stores** stands as a rule: the placement is per call, decided by the
@@ -168,5 +168,5 @@ per-path proof).
   lever; § The clear case first — the bar the two dropped units were priced against.
 - [`../157-native-4x-drawing/README.md`](../157-native-4x-drawing/README.md) — the drawing arc
   this plan is the parse unit of; the 14-row bench and its § V rewrite family.
-- [`DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) C122 (`(R-Escape)`), C125 (eliminate the
+- [`DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) @C122 (`(R-Escape)`), @C125 (eliminate the
   object rather than co-locate it).

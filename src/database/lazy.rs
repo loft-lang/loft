@@ -518,6 +518,8 @@ impl Stores {
     /// order to range over — and keyed on ONE column, because two numbers cannot
     /// say which value pins a composite key's leading column. A composite range
     /// is the explicit query's job until there is a shape that can carry it.
+    ///
+    /// @C104 — a range on a lazily-bound collection is this explicit call; a slice never fetches.
     #[cfg(feature = "native-extensions")]
     pub fn lazy_range(&mut self, coll: &DbRef, lo: i64, hi: i64) -> i64 {
         use crate::database::sql_query::{Mapping, QueryShape, derive_select};
@@ -621,7 +623,7 @@ impl Stores {
         let (elem, key_fields): (u16, Vec<u16>) = match &self.types[db as usize].parts {
             Parts::Hash(c, keys) | Parts::Radix(c, keys) => (*c, keys.clone()),
             Parts::Trie(c, k) => (*c, vec![*k]),
-            Parts::Sorted(c, keys) | Parts::Ordered(c, keys) | Parts::Index(c, keys, _) => {
+            Parts::Sorted(c, keys) | Parts::Ordered(c, keys) | Parts::Index(c, keys) => {
                 (*c, keys.iter().map(|(k, _)| *k).collect())
             }
             Parts::Base
@@ -763,7 +765,7 @@ impl Stores {
     /// true rather than intended.
     ///
     /// `record_finish` is also what makes the KIND someone else's problem: it
-    /// dispatches to `hash::add` / the sorted placement / `tree::add`, so a
+    /// dispatches to `hash::add` / the sorted placement / `btree::add`, so a
     /// `sorted` or `index` collection materialises without a second insert path
     /// here — and there is no per-kind list for a new collection kind to go
     /// missing from ([DATABASE.md § Adding or changing a collection
@@ -815,7 +817,7 @@ fn cell_of(c: &Content) -> crate::database::sql_source::Cell {
 /// 6 character. Keeping the two spelled the same way is what makes a fetched
 /// record read back as the value the database holds.
 ///
-/// A SQL `NULL` writes loft's null for that type rather than a zero: C80 says a
+/// A SQL `NULL` writes loft's null for that type rather than a zero: @C80 says a
 /// read never raises, so absence has to be a VALUE, and `0` is a number someone
 /// may have meant.
 #[cfg(feature = "native-extensions")]

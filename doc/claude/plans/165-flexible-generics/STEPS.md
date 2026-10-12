@@ -21,8 +21,8 @@ means `--interpret` and `--native`, with `LOFT_STRICT_STORES=1` and `LOFT_POISON
 
 ## The arcs
 
-Five arcs, each a PR that closes on its own.  Step C0 — the owner revising C110 — is done
-(C126, 2026-09-21), so nothing below waits on a decision; the "Waits for C0" column records
+Five arcs, each a PR that closes on its own.  Step C0 — the owner revising @C110 — is done
+(@C126, 2026-09-21), so nothing below waits on a decision; the "Waits for C0" column records
 which steps the revision unblocked.
 
 | Arc | What a program can write afterwards | Steps | Waits for C0 |
@@ -422,14 +422,14 @@ keeps declining the open profile's stub for a set with a template member — a s
 
 ### C0 — the owner revises C110  ·  DONE 2026-09-21
 
-Recorded as [C126](../../DESIGN_DECISIONS.md) — *a generic's type variables are
-unrestricted; a keyed collection stays a record set* — with C110 carrying a revision note at
+Recorded as [@C126](../../DESIGN_DECISIONS.md) — *a generic's type variables are
+unrestricted; a keyed collection stays a record set* — with @C110 carrying a revision note at
 its top.  Arc C, step D9 and steps E6–E7 are unblocked.  What stays decided: no
 `hash<K, V>`, and the `hole_*` family stays per-kind.
 
 ### C1 — one variable, any parameter  ·  S
 
-C110 (a).  `D-Every-Var` replaces the first-parameter rule.  `bind_template` gains its consistency check:
+@C110 (a).  `D-Every-Var` replaces the first-parameter rule.  `bind_template` gains its consistency check:
 a variable that two parameters bind to two types makes a template inapplicable in a set, and
 is refused naming both parameters where it stands alone (F9).
 
@@ -457,7 +457,7 @@ is refused naming both parameters where it stands alone (F9).
 
 ### C2 — a header declares a list  ·  S
 
-C110 (b), for functions.  `<K, V>` and `<K: Ordered, V: Printable>` parse into
+@C110 (b), for functions.  `<K, V>` and `<K: Ordered, V: Printable>` parse into
 `cur_type_vars` — the one header parser, which D2 already uses for `struct` at one variable.  Nothing else changes: A3's binding loop and A5's key were
 written over a list and have been running with one element since.
 
@@ -811,7 +811,7 @@ step is cells and whatever they find.
 - **The alarm:** if this step needs more than cells, D3 or D5 assumed one argument
   somewhere.  Fix it there.
 - **Why it is in:** no consumer asks for it — a tuple already covers `Pair` (DESIGN.md §
-  C110, evaluated).  It is here because stopping at the second variable would be a
+  @C110, evaluated).  It is here because stopping at the second variable would be a
   restriction no reader could derive.
 - **Built** (2026-09-22).  The cells found no one-argument assumption in D3–D6.  They found a
   literal RECEIVER taking its statement's expected type: in `s = Pair { k: 1, v: "a" }.swap()`
@@ -971,7 +971,7 @@ when no definition the program declares applies.  One built-in per step, each a 
 | E6 | `map<T, U>(v: vector<T>, f: fn(T) -> U) -> vector<U>` | **two** | A6, C2 |
 | E7 | `reduce<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U` | **two** | A6, C2 |
 
-E6 and E7 are the consumer C110 asked for (DESIGN.md § C110, evaluated): the language's own
+E6 and E7 are the consumer @C110 asked for (DESIGN.md § @C110, evaluated): the language's own
 two-variable generics, which the no-observable-special-names rule cannot retire without arc C.
 
 - **Red on its own:** the comparison in 2, per built-in.

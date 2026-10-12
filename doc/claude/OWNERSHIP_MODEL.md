@@ -168,7 +168,7 @@ wants a live reference instead of the default copy/alias. That is the entire sur
 user-facing borrow checker is **declined** ([DESIGN_DECISIONS.md](DESIGN_DECISIONS.md)) — it
 would fight loft's *fun-on-pickup* goal ([GOALS.md](GOALS.md)).
 
-**The one carve-out: loft DECLINES what it cannot implement safely** (C79, revisited
+**The one carve-out: loft DECLINES what it cannot implement safely** (@C79, revisited
 2026-08-05). "Never rejects" is about programs loft *can* compile correctly — and that is
 nearly all of them, which is why the surface stays clean. It is not a promise to accept a
 program whose meaning loft cannot deliver. Writing `&` is an ownership decision by the author,
@@ -181,10 +181,10 @@ it at all — it gets the copy described below.
 
 ## The law — whole-value binds COPY, projections view; `&` binds a live REFERENCE
 
-> **CORRECTED (2026-07-03, C86 — maker's call).** The earlier text ("a binding to a heap
+> **CORRECTED (2026-07-03, @C86 — maker's call).** The earlier text ("a binding to a heap
 > value aliases; it does not copy") was empirically FALSE on both backends for whole-value
 > binds and never matched the ecosystem's behaviour. The 2026-06-23 correction (the `&`
-> reading) stands. See [DESIGN_DECISIONS C86](DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)
+> reading) stands. See [DESIGN_DECISIONS @C86](DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)
 > and [plans/87-reference-default-binding.md](plans/87-reference-default-binding.md).
 
 **Whole-value heap binds COPY** — `p = o` (struct), `b = x` (vector), `af = bx.v` (a
@@ -281,7 +281,7 @@ is its conformant oracle) and `tests/callee_disturb.rs`.
 
 Pinned by `tests/scripts/774-view-outlives-reassigned-container.loft` (the reassignment
 boundary, with the write-through cells as controls), `tests/scripts/145-view-materialised-on-reshape.loft`
-and `tests/scripts/201-bind-copies-projection-views.loft` (the C86 copy/view boundary).
+and `tests/scripts/201-bind-copies-projection-views.loft` (the @C86 copy/view boundary).
 
 **`&` binds a live REFERENCE** to its source — a variable, struct field, or vector
 element. Every operation goes *through* the reference to the source: a read sees the

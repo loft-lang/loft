@@ -48,7 +48,7 @@ Two halves, each a single carried fact so it cannot be re-derived per site:
 
 ## Q3 — whose obligation, resolved (the crux)
 
-**The question** (README open-question 3): C86 changed the meaning of code libraries had *already
+**The question** (README open-question 3): @C86 changed the meaning of code libraries had *already
 shipped*. A warning at **loft-build** time reaches the loft team (they already know); at
 **library-compile** time reaches the author (who can act); at **consumer-compile** time reaches the
 wrong person (a consumer cannot fix the library). *Where does it fire?*
@@ -81,7 +81,7 @@ X") to **prioritise which folds are worth doing** and to target an author-facing
 distinct audiences: dev-compile → the code's author (act now); registry scan → the loft owner
 (prioritise). Neither ever reaches a consumer about a dependency's internals.
 
-**The contract-keyed variant (C86's actual class) is C4, not the MVP.** C86 was a *semantic* change
+**The contract-keyed variant (@C86's actual class) is C4, not the MVP.** @C86 was a *semantic* change
 (plain-bind now copies), which **cannot be folded** (the old behaviour is not expressible over the
 new — folding's limit, below). A semantic change is handled by the **contract-keyed escape valve**
 (C4 / leg 3): the old behaviour is preserved under the declared `contract`, and the author is steered
@@ -132,7 +132,7 @@ a later increment reading the *same* provenance fact — see step 7.)
   toggles.
 - **Over-unification guard (step 4) — the cleanest claim: "arc C is one attribute + one gate + one
   lint."** Attacked: (a) type/field steers need a second emission point → scoped OUT of the MVP
-  (step 7), not absorbed falsely. (b) The contract-keyed author-alert (C86's class) *looks* like the
+  (step 7), not absorbed falsely. (b) The contract-keyed author-alert (@C86's class) *looks* like the
   same channel but has a different trigger (a contract bump, not a bare marker) and cannot fold →
   routed to C4, not absorbed. (c) A steer whose successor is in a *different* library (cross-package
   fold) — the fold lint must resolve Y across the loaded `Data`, and if Y is unresolvable the marker
@@ -168,13 +168,13 @@ Folding works **only when Y is a genuine superset** — same observable semantic
 - `#superseded` is for **preference steers over supersets** — "use `write_through` instead of the
   plain-bind idiom", "use `floor_mod` instead of the manual wrap". The old and new produce identical
   observable results; the fold is a pure refactor.
-- A **semantic** replacement (the old behaviour is *not* expressible over the new — C86) is NOT an
+- A **semantic** replacement (the old behaviour is *not* expressible over the new — @C86) is NOT an
   arc-C steer. It is **contract-keyed** (C4 / leg 3): loft carries both behaviours, keyed on the
   declared `contract`; the author sees the new idiom only when they bump contract. Arc C's channel is
   *reused* to deliver that author-alert (same owned-source gate), but the trigger and the "fold" (=
   contract-keying) are C4's, built when the first keyed change is genuinely needed.
 
-Stating this boundary is load-bearing: it stops the elegant over-absorption of C86 into the bare
+Stating this boundary is load-bearing: it stops the elegant over-absorption of @C86 into the bare
 `#superseded` channel, where it would be a lie (the fold cannot exist).
 
 ## First applications + the pre-freeze survey (2026-07-18)
@@ -199,11 +199,11 @@ The three real cases:
 |---|---|---|
 | `sum_of` → `sum` (stdlib) | **keep marked** | `sum(v, init)` is a strict *generalization* (superset, same return type, `sum(v, 0)` costs ~nothing); `_of` adds no concept. The one defensible stdlib supersession. |
 | `contains` → `find` (stdlib) | **mark REMOVED** | `find` is not a generalization of `contains` — it returns a *position*, `contains` a *boolean*; different questions. Steering the membership test to `find(v) != null` is more verbose + less clear. A fold, wrongly marked as a supersede. |
-| `regex` — 4 spellings → clean verbs `search`/`matches`/`split_on` (loft-libs-core) | **first ecosystem mark** | regex exposed *four* spellings for two ops: pattern-first free fns (`regex::find`/`regex::split`) **and** `regex_`-prefixed methods (`line.regex_find`/`line.regex_split`). The prefix was a mechanical dodge: bare `find`/`split` as `text` methods collide with the stdlib literal `text.find`/`text.split` — and **C95 blocks reusing the name even as an argument-type overload** (verified: `Cannot redefine 'split'`). Consolidated on the *conventional* regex verbs as clean methods — `search` (cf. JS `String.search`, Python `re.search`), `matches`, `split_on` — and superseded all four old spellings → the two clean verbs. A genuine *pre-freeze API cleanup* that `#superseded` implements. |
+| `regex` — 4 spellings → clean verbs `search`/`matches`/`split_on` (loft-libs-core) | **first ecosystem mark** | regex exposed *four* spellings for two ops: pattern-first free fns (`regex::find`/`regex::split`) **and** `regex_`-prefixed methods (`line.regex_find`/`line.regex_split`). The prefix was a mechanical dodge: bare `find`/`split` as `text` methods collide with the stdlib literal `text.find`/`text.split` — and **@C95 blocks reusing the name even as an argument-type overload** (verified: `Cannot redefine 'split'`). Consolidated on the *conventional* regex verbs as clean methods — `search` (cf. JS `String.search`, Python `re.search`), `matches`, `split_on` — and superseded all four old spellings → the two clean verbs. A genuine *pre-freeze API cleanup* that `#superseded` implements. |
 
 **Naming under the collision constraint (why the clean form is a method with a *conventional* verb, not
 a prefix).** The instinct "just call it `find`" fails: the stdlib owns `text.find`/`text.split` as the
-*literal* operations, so a regex method cannot reuse those names (C95, hard error — not even a
+*literal* operations, so a regex method cannot reuse those names (@C95, hard error — not even a
 by-argument overload). The mechanical fix (`regex_find`) reads badly. The clean fix is the verb every
 regex API already uses: `search` for find-position and `split_on` for pattern-split (only `split` needs
 a distinguishing word; `search` and `matches` are collision-free bare names). This keeps the *method*

@@ -9,7 +9,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **CLOSED 2026-07-09 — superseded (same disposition as @PLN79 / @PLN81).**  Tier 1
 shipped (2026-05-02).  Tier 3 (template migration) = @PLN81, now **closed by
-decision** — [DESIGN_DECISIONS.md § C87](../../DESIGN_DECISIONS.md) keeps the
+decision** — [DESIGN_DECISIONS.md § @C87](../../DESIGN_DECISIONS.md) keeps the
 `#rust"..."` template path and **reverses** the direction (fold the ~5 emitters
 INTO `#rust`, not the other way), so Tier 3 is dead.  Tier 2's arm migration is
 already largely done: `src/generation/dispatch.rs::output_call_inner` is a clean

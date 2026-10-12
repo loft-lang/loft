@@ -4,7 +4,7 @@
 
 //! @PLN11 Arc N / N2 — auto-generate a native cdylib from a library's functions.
 //!
-//! In the native-library execution model (C71) a stable library compiles to a
+//! In the native-library execution model (@C71) a stable library compiles to a
 //! cdylib and the interpreter dispatches calls to it (the stdlib `#native` path,
 //! `OpStaticCall` → dlsym).  This module generates that cdylib's `lib.rs`.  Two
 //! dispatch ABIs, by what crosses the boundary:
@@ -21,7 +21,7 @@
 //! `shared_store_dispatchable`): a non-scalar value (`vector`/`reference`) crosses
 //! the boundary.  Because an auto-generated cdylib **links libloft**, its `Stores`
 //! / `DbRef` are the *same Rust types* as the interpreter's — so the bridge
-//! **shares the caller's real `Stores` by pointer** (zero-marshalling, C71's
+//! **shares the caller's real `Stores` by pointer** (zero-marshalling, @C71's
 //! promise) rather than going through the `LoftStore` FFI handle (that handle
 //! exists for hand-written cdylibs that don't link `Stores`).  The bridge wrapper
 //! `loft_shared_n_<name>(stores: *mut Stores, args, n, ret)` casts `*mut Stores` →
@@ -1522,7 +1522,7 @@ pub fn build_shared_cdylib(
         args.push("-L".to_string());
         args.push(dir.display().to_string());
     }
-    // @PLN54 S9 — mixed-boundary (C71) AddressSanitizer.  When the interpreter
+    // @PLN54 S9 — mixed-boundary (@C71) AddressSanitizer.  When the interpreter
     // HOST is ASan-instrumented (LOFT_NATIVE_ASAN=1), instrument the auto-built
     // cdylib too, so an out-of-bounds / use-after-free on the `*mut Stores` the
     // host shares with this cdylib BY RAW POINTER is caught on BOTH sides of the
@@ -1586,15 +1586,39 @@ pub fn build_shared_cdylib(
 /// native.  Callers gate the fallback on this.
 #[must_use]
 pub fn rustc_available() -> bool {
-    use std::sync::OnceLock;
-    static AVAIL: OnceLock<bool> = OnceLock::new();
-    *AVAIL.get_or_init(|| {
-        Spawn::new(Program::search("rustc"))
-            .arg("--version")
-            .run(b"")
-            .is_ok_and(|o| o.status.success())
-    })
+    rustc_version().is_some()
 }
+
+/// The first line `rustc --version` answers on `PATH` (`rustc 1.85.0 (…)`), or `None` when
+/// there is no working `rustc`.  Asked once per process.
+#[must_use]
+pub fn rustc_version() -> Option<&'static str> {
+    use std::sync::OnceLock;
+    static VERSION: OnceLock<Option<String>> = OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            Spawn::new(Program::search("rustc"))
+                .arg("--version")
+                .run(b"")
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("rustc")
+                        .trim()
+                        .to_string()
+                })
+        })
+        .as_deref()
+}
+
+/// @C102 — what a developer is told when this machine has no `rustc`.  A program run says
+/// nothing (it succeeds on the interpreter); the moments that belong to the developer say
+/// this: `loft --version`, the `loft test` summary, and `loft new --native`'s next steps.
+pub const NO_RUSTC: &str = "no rustc on PATH, so native builds are unavailable \
+                            (install one from https://rustup.rs)";
 
 /// Detect ENVIRONMENT failures that masquerade as compiler/linker errors.
 ///

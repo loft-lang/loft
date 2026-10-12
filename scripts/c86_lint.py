@@ -2,9 +2,9 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# c86_lint.py — flag loft code that relies on pre-C86 vector alias-by-default.
+# c86_lint.py — flag loft code that relies on pre-@C86 vector alias-by-default.
 #
-# Under loft's C86 rule (DESIGN_DECISIONS.md C86; OWNERSHIP_MODEL.md; regression
+# Under loft's @C86 rule (@C86; OWNERSHIP_MODEL.md; regression
 # test tests/scripts/503-vector-reference-alias.loft) a whole-value heap bind
 # COPIES; `&` is the opt-in for shared mutation.  So this pattern silently loses
 # its writes on current loft:
@@ -46,7 +46,7 @@ IDX_WRITE = re.compile(r"^\s*([a-z_]\w*)\s*\[[^\]]*\]\s*=(?!=)")      # x[..] =
 FIELD_WRITE = re.compile(r"^\s*([a-z_]\w*)\s*\.[a-z_]\w*\s*=(?!=)")   # x.f  =
 VEC_GROW = re.compile(r"^\s*([a-z_]\w*)\s*\+=\s*\[")                  # x += [..]
 FN = re.compile(r"^\s*(?:pub\s+)?fn\s+(\w+)")
-# A plain field-access chain (`a.b`, `a.b.c`) — a heap read that COPIES under C86.
+# A plain field-access chain (`a.b`, `a.b.c`) — a heap read that COPIES under @C86.
 # Excludes calls, indexing, and expressions (those are not the aliasing trap).
 FIELD_RHS = re.compile(r"^[a-z_]\w*(?:\.[a-z_]\w*)+$")
 

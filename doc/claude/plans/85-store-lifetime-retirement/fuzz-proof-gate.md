@@ -446,7 +446,7 @@ survived via the eval-stack channel; native returned the typed null — a
 silent backend divergence).  Two producer fixes, with depth-1's
 `materialized_view_return` emission (copy-then-free) as the captured spec:
 (1) `operators.rs` — the inline-ref capture COPIES a projection of a call
-    (`OpDatabase` + `OpCopyRecord`, the C86 escape rule) instead of aliasing
+    (`OpDatabase` + `OpCopyRecord`, the @C86 escape rule) instead of aliasing
     it into an owning work-ref that argument-lifting later frees mid-chain;
     a direct call result still binds raw (it genuinely adopts the store);
 (2) `control.rs::return_field_base_var` — the #425 base walk recurses through

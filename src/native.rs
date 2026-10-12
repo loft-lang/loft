@@ -148,7 +148,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_ymd_days_ago_dest", n_ymd_days_ago_dest),
     ("n_store_memory_dest", n_store_memory_dest),
     // @PLN10 Phase 1 batch 2 — always-non-null codegen_runtime producers.
-    ("i_parse_errors_dest", i_parse_errors_dest),
     ("n_struct_to_json_dest", n_struct_to_json_dest),
     ("n_struct_to_json_pretty_dest", n_struct_to_json_pretty_dest),
     ("t_9character_is_lowercase", t_9character_is_lowercase),
@@ -462,7 +461,7 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_reflect_field", n_reflect_field),
     ("n_reflect_field_path", n_reflect_field_path),
     ("n_path_sep", n_path_sep),
-    ("i_parse_error_push", i_parse_error_push),
+    ("n_parse_errors_of", n_parse_errors_of),
     ("n_hash_sorted", n_hash_sorted),
     ("n_vector_sum_int", n_vector_sum_int),
     ("n_radix_sorted", n_radix_sorted),
@@ -887,7 +886,7 @@ fn n_assert(stores: &mut Stores, stack: &mut DbRef) {
     if v_test {
         return;
     }
-    // Production mode logs and continues (C66).  The decision is
+    // Production mode logs and continues (@C66).  The decision is
     // `runtime_error::logged_in_production`, shared with the body the
     // native generator emits, because the two backends have to answer
     // this identically and once did not (loft#1263).
@@ -2890,7 +2889,7 @@ pub fn type_named_in(stores: &mut Stores, name: &str) -> DbRef {
 /// **The position is checked, never trusted.**  Only a field the descriptor says
 /// BEGINS at `position` — and that [`LayoutField::is_data`] admits — is read.  A
 /// hand-made offset, a position belonging to a different type, the interior of a
-/// wider field, or an index node's `#left_1` bookkeeping all answer `OtherKind`
+/// wider field, or a `#`-prefixed synthetic field all answer `OtherKind`
 /// with no read at all, so there is no argument a caller can pass that addresses
 /// bytes the layout did not name.
 ///
@@ -3411,7 +3410,7 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
     // Keys — a keyed collection only. The descriptor holds them as INDICES into
     // the element record's field list, so they are resolved here rather than
     // published raw: an index is meaningless to a caller that also has to skip
-    // the synthetic fields (`#left_1` and friends), and the byte position is the
+    // the `#`-prefixed synthetic fields, and the byte position is the
     // one number that identifies a field in both lists.
     if let Some(LayoutNode::Iterated(it)) = &node {
         let keys = reflect_keys(it);
@@ -3603,24 +3602,12 @@ fn n_path_sep(stores: &mut Stores, stack: &mut DbRef) {
     stores.put(stack, '/');
 }
 
-/// Return the error text from the last `Type.parse()` call.
-/// Empty string means the parse succeeded.
-fn i_parse_error_push(stores: &mut Stores, stack: &mut DbRef) {
-    let msg = stores.get::<Str>(stack);
-    stores.last_parse_errors.push(msg.str().to_owned());
-}
-
-// @PLN10 Phase 1 — destination-passing variant of `i_parse_errors`.
-// Always-non-null (the joined error text, possibly empty); no stack args.
-// Routed by `is_text_dest_native`.
-fn i_parse_errors_dest(stores: &mut Stores, stack: &mut DbRef) {
-    let dest = stores.get::<DbRef>(stack);
-    let msg = stores.last_parse_errors.join("\n");
-    stores.last_parse_errors.clear();
-    stores
-        .store_mut(&dest)
-        .addr_mut::<String>(dest.rec, dest.pos)
-        .push_str(&msg);
+/// `record#errors`: the errors of the parse that built the record, as a fresh
+/// `vector<text>`; mirrors the `#rust` template in `default/06_json.loft`.
+fn n_parse_errors_of(stores: &mut Stores, stack: &mut DbRef) {
+    let v_r = stores.get::<DbRef>(stack);
+    let new_value = stores.parse_errors_vector(&v_r);
+    stores.put(stack, new_value);
 }
 
 // HTTP client glue removed — n_http_do and n_http_body are now auto-marshalled.
@@ -4260,7 +4247,7 @@ fn n_as_bool(stores: &mut Stores, stack: &mut DbRef) {
         let b = u8::from(stores.store(&v).get_byte(v.rec, value_pos, 0) != 0);
         stores.put(stack, b);
     } else {
-        // The tri-state null byte (C73 / @PLN17) the `boolean?` declaration promises — not
+        // The tri-state null byte (@C73 / @PLN17) the `boolean?` declaration promises — not
         // `false`, which a caller cannot tell from a field that really says false.
         stores.put(stack, 255u8);
     }
@@ -4803,7 +4790,7 @@ fn unwrap_float(
 
 /// `None` as in [`unwrap_long`].  It used to answer `0` here, which made an absent
 /// nullable boolean read back as the VALUE `false` instead of null — a boolean stores
-/// tri-state and 255 is its null (@PLN17 C73), and only the declaration knows whether
+/// tri-state and 255 is its null (@PLN17 @C73), and only the declaration knows whether
 /// this slot may carry it.
 fn unwrap_bool(
     stores: &mut Stores,

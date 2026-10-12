@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-O-Override`, `@FR-O-Proxy` — formatting a value-struct element through its `to_text`
+// hook (`"{v[i]:spec}"`) copies the element into the hook's subject, and the copy's source is a
+// VIEW of the collection: it owns nothing and is never freed.  A copy of an element after that
+// (`first = v[0]`) leaves the collection whole.  After each cell a three-element vector is
+// built, so a freed store reused for it would show up as 777, 778 or 779.
+//
+// - a vector element formatted with a spec, then an element copied and rebuilt (3, 1, 10001),
+//   and with the hook's spec left out (3);
+// - the same through an operator on the copy (`first + days(10)`), the shape the `time`
+//   library's suite runs (10001 1);
+// - a field and a vector field of a struct (7 9 2 9), and a keyed element's field (5 6);
+// - each pass of a loop formatting and copying an element (10,20,30, length 3);
+// - an element of a PARAMETER's collection formatted and copied (202, and the caller's
+//   collection keeps its length), and a by-value parameter copied whole, whose store the
+//   callee releases (3, no leak).
+//
+// @falsified-at: f809174ed — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+// @falsified-by: tests/falsified/a-format-hook-on-a-value-struct-element-leaves-its-collection.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   CHANNEL: the assertions — on the control the collection's store is freed under it, so its
+//   length reads 99 or 0 and its elements read null (loft#1980).
+//   HOLDS: leak and panic are equal on both trees; nothing is refused on either.
+
+value struct D { ms: integer }
+value struct S { ms: integer }
+struct O { d: D, ds: vector<D> }
+struct K { k: integer, d: D }
+fn days(n: integer) -> S { S { ms: n * 1000 } }
+operator plus(self: D, span: S) -> D { D { ms: self.ms + span.ms } }
+operator to_text(self: D, spec: text) -> text { "<{self.ms}{spec}>" }
+fn noise() -> integer { t: vector<D> = [D { ms: 777 }, D { ms: 778 }, D { ms: 779 }]; t[0].ms + t[1].ms }
+
+fn an_element_formatted_then_copied() {
+  events = [D { ms: 1 }, D { ms: 2 }, D { ms: 3 }];
+  s = "{events[2]:date}";
+  first = events[0];
+  first = D { ms: first.ms + 10000 };
+  assert(noise() == 1555 && s == "<3date>" && len(events) == 3, "formatted: {s} {len(events)}");
+  assert(first.ms == 10001 && events[0].ms == 1 && events[2].ms == 3, "copied: {first.ms} {events[0].ms}");
+}
+
+fn without_a_spec() {
+  events = [D { ms: 1 }, D { ms: 2 }, D { ms: 3 }];
+  s = "{events[2]}";
+  first = events[0];
+  first = D { ms: first.ms + 10000 };
+  assert(noise() == 1555 && s == "<3>" && len(events) == 3 && first.ms == 10001, "no spec: {s} {len(events)}");
+}
+
+fn through_an_operator() {
+  events = [D { ms: 1 }, D { ms: 2 }, D { ms: 3 }];
+  s = "{events[2]:date}";
+  first = events[0];
+  first = first + days(10);
+  assert(noise() == 1555 && first.ms == 10001 && events[0].ms == 1 && len(events) == 3, "operator: {first.ms} {len(events)}");
+}
+
+fn a_field_and_a_keyed_element() {
+  o = O { d: D { ms: 7 }, ds: [D { ms: 8 }, D { ms: 9 }] };
+  a = "{o.d:x}";
+  f1 = o.ds[0];
+  f1 = D { ms: f1.ms + 1 };
+  m: hash<K[k]> = [K { k: 1, d: D { ms: 5 } }];
+  b = "{m[1].d}";
+  f2 = m[1].d;
+  f2 = D { ms: f2.ms + 1 };
+  assert(noise() == 1555 && a == "<7x>" && f1.ms == 9 && o.d.ms == 7 && len(o.ds) == 2 && o.ds[1].ms == 9, "field: {a} {f1.ms} {len(o.ds)}");
+  assert(b == "<5>" && f2.ms == 6 && m[1].d.ms == 5, "keyed: {b} {f2.ms}");
+}
+
+fn each_pass_of_a_loop() {
+  vs: vector<D> = [D { ms: 1 }, D { ms: 2 }, D { ms: 3 }];
+  s = "";
+  for i in 0..3 { s += "{vs[i]:x}"; c = vs[i]; c = D { ms: c.ms * 10 }; s += "{c.ms},"; }
+  assert(noise() == 1555 && s == "<1x>10,<2x>20,<3x>30," && len(vs) == 3 && vs[2].ms == 3, "loop: {s} {len(vs)}");
+}
+
+fn of_a_parameter(v: vector<D>) -> integer { s = "{v[0]:x}"; c = v[0]; c = D { ms: c.ms + 1 }; len(v) * 100 + c.ms }
+fn a_by_value_parameter(d: D) -> integer { c = d; c = D { ms: c.ms + 1 }; c.ms }
+
+fn an_element_of_a_parameter_and_a_parameter_itself() {
+  vs = [D { ms: 1 }, D { ms: 2 }];
+  a = of_a_parameter(vs);
+  b = a_by_value_parameter(vs[1]);
+  assert(noise() == 1555 && a == 202 && b == 3 && len(vs) == 2 && vs[1].ms == 2, "parameters: {a} {b} {len(vs)}");
+}

@@ -302,60 +302,15 @@ fn registry_fixture(tag: &str, validator: Option<&str>) -> PathBuf {
     dir
 }
 
-/// The bash that runs a POSIX script on Windows — Git Bash, never `bash` off `PATH`.
-///
-/// A bare `bash` resolves to `C:\Windows\System32\bash.exe`, the **WSL launcher**, because
-/// System32 comes first on the runner's `PATH`.  With no distribution installed it prints
-/// "Windows Subsystem for Linux has no installed distributions" (in UTF-16, which is why the
-/// nightly log showed it letter-spaced) and exits non-zero WITHOUT running the script.  All
-/// three gate tests then failed for one reason that had nothing to do with the gate: the
-/// accepting fixture looked refused, and the two refusals carried the wrong message.
-///
-/// Deliberately falls back to plain `bash` rather than skipping when Git Bash is absent: a
-/// skipped gate test looks exactly like a passing one, which is the very property
-/// `a_missing_validator_refuses_rather_than_skips` exists to deny.
-// approved exemption: needs a Git Bash resolver in platform; future work outside @PLN184
-#[cfg(windows)]
-fn windows_bash() -> PathBuf {
-    // Beside `git.exe`: `<root>/cmd/git.exe` and `<root>/bin/bash.exe` ship together, so
-    // finding one locates the other whatever drive Git was installed on.
-    if let Ok(out) = loft::platform::process::harness_command("where")
-        .arg("git")
-        .output()
-        && let Some(first) = String::from_utf8_lossy(&out.stdout).lines().next()
-    {
-        let git = PathBuf::from(first.trim());
-        if let Some(root) = git.parent().and_then(|p| p.parent()) {
-            let candidate = root.join("bin").join("bash.exe");
-            if fa::is_file(&candidate) {
-                return candidate;
-            }
-        }
-    }
-    for root in ["C:\\Program Files\\Git", "C:\\Program Files (x86)\\Git"] {
-        let candidate = Path::new(root).join("bin").join("bash.exe");
-        if fa::is_file(&candidate) {
-            return candidate;
-        }
-    }
-    PathBuf::from("bash")
-}
-
 fn run_gate(dir: &Path) -> (i32, String) {
     let script = repo_root().join("scripts/registry_schema_gate.sh");
-    // Windows `CreateProcess` has no shebang handling, so handing it a `.sh` fails outright
-    // with `%1 is not a valid Win32 application` — not a gate that refused, a gate that never
-    // ran.  The interpreter has to be named there; on unix the shebang still picks it.
-    // approved exemption: needs a Git Bash resolver in platform; future work outside @PLN184
-    #[cfg(windows)]
-    let mut cmd = {
-        let mut c = loft::platform::process::harness_command(windows_bash());
-        c.arg(&script);
-        c
-    };
-    // approved exemption: needs a Git Bash resolver in platform; future work outside @PLN184
-    #[cfg(not(windows))]
-    let mut cmd = loft::platform::process::harness_command(&script);
+    // The interpreter is named on every platform (`platform::bash_program`): Windows has no
+    // shebang handling, and a bare `bash` there is the WSL launcher, which runs nothing — a
+    // gate that never ran, reading as a gate that refused.  With no bash at all the spawn
+    // fails here rather than skipping: a skipped gate test looks exactly like a passing one,
+    // the very property `a_missing_validator_refuses_rather_than_skips` exists to deny.
+    let mut cmd = loft::platform::process::harness_command(loft::platform::bash_program());
+    cmd.arg(&script);
     let out = cmd.arg(dir).output().expect("run registry_schema_gate.sh");
     let text = format!(
         "{}{}",

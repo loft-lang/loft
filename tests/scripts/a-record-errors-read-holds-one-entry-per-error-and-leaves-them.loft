@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `record#errors` holds one entry per error of the parse that built the record, and reading
+// it leaves the entries where they are.  As one newline-joined text that the read cleared,
+// `len` counted characters, a loop walked characters, and a second read answered nothing.
+//
+// Every cell is a COUNT, so the file compiles on a build where the accessor is a text and
+// fails there on its assertions.  The typed positions are in
+// `a-record-errors-read-is-a-vector-of-text.loft`.
+//
+// Axes it MOVES: the reader (`len`, a loop over the accessor, a loop over a bound read), the
+// read's ordinal (first, second, the 200th), and what the parse was (a failure, another
+// failure, a success).  Every value is hand-computed.
+//
+// @falsified-at: 1895c78f0 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-record-errors-read-holds-one-entry-per-error-and-leaves-them.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the control compiles this file and answers other counts.
+//   WITNESS: the control stops at the first cell, *one failed parse is one entry: got 14,
+//   want 1* (the message's characters).  Run one at a time there, the loop cells answer 14,
+//   the 200-read cell 14, and a second `len(r#errors) > 0` is false.
+//   HOLDS: the successful-parse cells answer 0 on both trees; leak, panic and free-refusal
+//   are clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct ErrCount { val: integer }
+struct ErrPair { a: integer, b: integer }
+
+fn count_direct(doc: text) -> integer {
+  r = ErrCount.parse(doc);
+  n = 0;
+  for _e in r#errors { n += 1; }
+  n
+}
+
+fn count_bound(doc: text) -> integer {
+  r = ErrCount.parse(doc);
+  errs = r#errors;
+  n = 0;
+  for _e in errs { n += 1; }
+  n
+}
+
+fn main() {
+  bad = ErrCount.parse(`not_json`);
+  assert_eq(len(bad#errors), 1, "one failed parse is one entry");
+  assert_eq(len(bad#errors), 1, "a second read answers what the first did");
+
+  assert_eq(count_direct(`not_json`), 1, "a loop over the accessor runs once per error");
+  assert_eq(count_bound(`not_json`), 1, "a loop over a bound read runs once per error");
+
+  again = ErrCount.parse(`still not json`);
+  assert_eq(len(again#errors), 1, "another failed parse has one entry of its own");
+
+  total = 0;
+  for _ in 0..200 { total += len(again#errors); }
+  assert_eq(total, 200, "two hundred reads each answer one entry");
+
+  pair = ErrPair.parse(`{{"a":1,"b":2}}`);
+  assert_eq(pair.a + pair.b, 3, "the good document landed");
+  assert_eq(len(pair#errors), 0, "a successful parse leaves no entries");
+  assert_eq(count_direct(`{{"val":7}}`), 0, "and a loop over them does not run");
+
+  println("record#errors counts ok");
+}

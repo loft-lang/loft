@@ -6,7 +6,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # formal/formatting.md — semantics for text formatting & interpolation (strict)
 
 **Catalogue:** @F (text formatting), @PLN89 (differential oracle). Behaviour sources:
-[LOFT.md § Strings](../LOFT.md), [STDLIB.md](../STDLIB.md); fault-safety is C66 / @P376.
+[LOFT.md § Strings](../LOFT.md), [STDLIB.md](../STDLIB.md); fault-safety is @C66 / @P376.
 
 > **Rules then deviations** (see [README](README.md)). This is the relation for **string
 > interpolation** — the `"…{e}…"` template — and the **value→text rendering** every scalar and
@@ -218,7 +218,7 @@ Nothing is still a rendering, and a width pads whatever the rendering is.
 ```
 
 **In words.** `"{a / b}"` with `b = 0` renders `null` rather than crashing the program — the
-formatter rewrites fault-prone operations in interpolation position to their nullable peers (C66 /
+formatter rewrites fault-prone operations in interpolation position to their nullable peers (@C66 /
 @P376), so building a diagnostic string can never itself fault.  The null a fault yields is the
 null any other null is: `"{a / b}"`, `"{v[9]}"` and `"{c}"` after `c = a / b` all render `null`,
 whatever type the hole has, so a rendering never depends on where in the expression the fault sat.

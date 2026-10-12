@@ -5,6 +5,11 @@ orders the WORK between the tree and that bar.  It holds no price of its own: ea
 at the analysis file beside it that priced it, and at its rule in
 `doc/claude/formal/rewrites.md` (§ Proposed for a rule no site implements).
 
+**The release cut.**  The stable release waits only on rows over **5×** (C136's release clause);
+those go first, by whatever cure removes the mechanism (no restriction to low-risk changes),
+and the 3–5× rows follow after stability.  § 0 is that cut: the rows over 5×, by mechanism,
+with what takes each under the line.
+
 **Position.**  `python3 bench/portal/outliers.py bench/portal/results/<host>.tsv` reads the
 last full run; it does not start one.  The rows
 named here are read off `results/firewall02.lan.betterbe.com.tsv` (arm64 macOS, commit
@@ -23,6 +28,75 @@ unit leaves when it is built, and its record goes to its analysis file's § Buil
 moves sixteen.  Of the five worst rows only `draw_bezier` has a priced form under 3×; the
 other four land at 3.6–5.5× by hand.  Two thirds of the list has never been priced, so the
 pricing pass (§ 5) is the larger half of the work.
+
+## 0. The release cut — every row over 5×
+
+Read off `bench/stats.py` runs of every lane that held a row over 5× (arm64 macOS, commit
+`801d0137d`, the library checkouts synced as step 0 below): **21 rows over 5×**, plus
+`panel_build` (5.03×) and `slope_path_with_undo` (5.09×, noisy) on the line; `truncate_to`
+(4.81×) and `emit_to_material` (4.85×) sit just under and stay in view.  `clock_pump`,
+`locate` and `mesh_to_floats` have left since (A below), `doc_read` is down to 5.27×: **18
+remain**.  The levers already priced take about four more under;
+the rest need a lever, a decision (§ 6) or a price.
+
+**Step 0 — the bench checkouts, DONE.**  The checkouts were on `main` while four libraries
+keep their benches on `laptop-perf-bench` (`libs.tsv` names the branch per repository); each
+bench branch now has `main` merged in, as M2 asks.  `surface_fitted_spread` left the list
+with its realigned twin (6.62× → 2.18×); `arguments/parse` (5.69×) and `index_fill_find`
+(5.49×) moved with the library.
+
+**A. Record-field rows — two prices, two different mechanisms.**
+
+| row | × | what the price shows |
+|---|--:|---|
+| `clock_pump` | 6.82 | BUILT: a twin runs `(R-RecPtr)`'s parameter clause over the accesses its inputs leave (`bind_param_record_ptrs`); before, every left-over field access in `n_clock_pump__inv` and its callees re-resolved the store.  `bench/stats.py`: 6.82× → **2.33×** (16.66 ms, the hand price), `clock_advance` 24 → 10.7 ms (1.38×), hashes unchanged.  Leaves the cut |
+| `locate` | 6.19 → 4.29 | BUILT: `(R-SameRead)`'s guard clause — the checked sum `cum + p.count` spelled in `if a < cum + p.count { return … }` and again in `cum += p.count` is bound once before the `if` (LLVM cannot merge two checked adds whose overflow path is an opaque call).  8.8 → 6.11 ms, the hand price, hash unchanged; plain adds would be 3.44 ms.  Leaves the cut |
+| `mesh_to_floats` | 5.53 → 1.74 | BUILT: `(R-PushFill)`'s deep window — its six float pushes stand under `if mf_v != null` in a literal loop nested in the triangle walk, so no counted clause took them and each went through the header push.  A window opened on the outer loop's push header with no reservation (the growth arm answers a fresh one): 1.11 → 0.35 ms, the hand price, every row's hash unchanged.  Leaves the cut, and the bar |
+| `fill_polygon` | 5.28 | 18 store accesses per edge in `polygon_crossings` |
+| `stencil_rotate` | 5.09 | accessor helpers (`nb_q`, `nb_r`, `eg_index`) and out-of-line `length_vector` / `get_vector`; the `--names` profile disables inlining, so the helper shares are a lead, not a price.  NOT `clock_pump`'s lever: its helper twins (`eg_index__inv`, `hs_index__inv`, `ly_slot__inv`) read every field from their inputs and touch no store, so no address has anything to serve |
+
+**B. Keyed collections** — the largest bloc; most of it clears 5× only with the keyed store
+format decision (§ 6).
+
+| row | × | known lever | lands at |
+|---|--:|---|---|
+| `field_add_cell` | 7.09 | the library's double bucket lookup (−8 %) | ≈ 5.1× |
+| `build_index` | 6.35 | C7 `mint_target` (−8 %) | ≈ 5.8× |
+| `index_fill_find` | 3.14 | DONE: `index` is a B+tree of key parts and record numbers (@C147, @PLN190); 5.93× → 3.14× on one host | off the cut |
+| `reload_and_record` | 5.76 | P3 (≤ 12 %), P4 (≤ 15 %, needs a range proof) — keyed.md | ≈ 4.1× if both pay |
+| `mapfile_to_painted` | 5.44 | the same P3 / P4 | under if both pay |
+| `anim_of` | 5.38 | ~45 % is the returned text copied (`malloc`, `memmove`, `free`); the twin returns a borrow: S8 `(R-ViewReturn)` | under, after its decision |
+
+**C. A temporary built, then copied or moved.**
+
+| row | × | known lever | lands at |
+|---|--:|---|---|
+| `check_request` | 7.95 | `(R-DecodeView)` (decided, C141) | ≈ 5.5× — still over |
+| `flow_layout_full` | 7.00 | S1c (−8 % alone; S1b is built) and a fused `character` element read | re-price on today's code |
+| `invert` | 5.82 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
+| `sphere` | 5.72 | none named (vector growth, the two `add_triangle` writes); 5.97 → 5.72 with the deep window | unpriced |
+| `decode` | 5.61 | C1 D4′ RE-PRICED: the resolve clause already serves its byte reads, and a base held from entry (the reads all precede the first growth) is −5.5 % on `read_value__d` and `__rg`, the same with all 12 sites held; the −21 % priced before predates the resolve clause.  And `(R-Base)` never proves a parameter apart from the return buffer, so the held form needs a prefix clause (the base valid up to the first statement that may grow).  Then C2 | ≈ 5.3×, then C2 |
+
+**D. A cause of their own.**
+
+| row | × | known lever | lands at |
+|---|--:|---|---|
+| `doc_read` | 6.56 → 5.27 | C8 is BUILT (`OpReadFileInt`: one store resolve, a buffered take, two cursor writes).  Profiled at the current tree: `edgeset_new` 22 % — two vectors built side by side, which `(R-PushFill)`'s several-paths clause reserved but pushed element by element.  BUILT: a window per path (`push_windows_ok`), 2.20 → 1.84 ms, hash unchanged.  Left: `hz_index__inv` 13 %, the u8 and i32 reads 10 % and 9 %, `store_mut` 9 %, `hexset_set__inv` 8 %, the float reads through the generic `OpReadFile` 8 % | ≈ 5.3× |
+| `map_json` | 6.64 | none priced: `Map.parse` is 86 % — the `Parsed` → store walk, the lexer's per-character step | unpriced |
+| `arguments/parse` | 5.69 | none named: the option walk reads its vector out of line (16 %), `len(name) > 0` counts characters (4 %), text copies (~10 %) | unpriced |
+| `fill_rect` | 5.50 | C9, no bounds test where the index is proved in range | the range-facts decision |
+| `rand_indices` | 5.35 | none — unprofiled: `hand_price.sh` cannot link a package with a cdylib (§ Tooling) | fix the tooling, then price |
+
+**Order for the cut.**
+1. Step 0 (done).
+2. A: `(R-RecPtr)` in the `(R-Inputs)` twins (`clock_pump`) and `(R-SameRead)`'s guard
+   clause (`locate`) are built, and the deep window took `mesh_to_floats` under the bar;
+   re-measure `fill_polygon`.
+3. The priced units: C1 + C2 (`decode`), C8 (`doc_read`), `(R-DecodeView)`
+   (`check_request`), S1c re-priced (`flow_layout_full`).
+4. The three decisions, the keyed store format first (most of B), then `(R-ViewReturn)`
+   (`anim_of`, `check_request`) and relational range facts (`fill_rect`).
+5. Price the rest: `invert`, `sphere`, `map_json`, `arguments/parse`, `rand_indices`.
 
 ## 1. The axis the order follows
 
@@ -102,6 +176,8 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 | C8 | a fixed-size scalar `f#read` without the runtime crossing; a leaner `OpReadFile` | not sized | `doc_read` ~−30 %, −15 % | under-10x.md |
 | C9 | no bounds test where the index is proved in range (the write's lock test is BUILT) | a design | `10_sort` 2.77× → ~1.3× | vector-write.md |
 
+| S11 | BUILT — an emptied text keeps its buffer: `s = ""` on a declared text local or a `&text` parameter emits `s.clear()`, not a fresh `String` | XS | `materialise` 500 → 206 µs (−59 %), `seg` 950 → 665 µs (−30 %) on arm64 macOS, hashes unchanged | this file |
+| S12 | BUILT — `(R-TextBorrow)`'s format clause: a local bound to a format string borrows the format's own work text | S | `render_inline` 7.5 → 3.7–3.9 ms (7.45× → ≈ 3.8×) on arm64 macOS, hash unchanged | formal/rewrites.md § The format clause |
 | S10 | BUILT — `(R-ElemFirst)`'s comprehension clause: a row built by a comprehension and appended as a whole element is built in that element | M | `grid` 58.8 → 31.3 µs on one core (−47 %, the price), hash unchanged | this file |
 
 ### Where the priced path stops
@@ -138,7 +214,7 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 
 | class | rows | where to start |
 |---|---|---|
-| keyed (10) | `reload_and_record`, `index_fill_find`, `anim_of`, `index_build`, `composite_hash`, `hash_find`, `collect_dirty_inputs`, `hash_text_keys`, `word_count`, `blob_put` | six sit within 16 % of the bar: price keyed.md § What is left on them (the typed append, the arena's insert bookkeeping, the rebuild's re-hash, text keys copied into the record).  `index` as a tree of store records and the division in `home_bucket` are format work (§ 6).  @PLN185 D2 owes this class a named root mechanism.  `reload_and_record` 10.88× → 7.06× and `mapfile_to_painted` −14 % through a compound key's decorated walk sort (keyed.md L8b); its remainder is unpriced |
+| keyed (10) | `reload_and_record`, `index_fill_find`, `anim_of`, `index_build`, `composite_hash`, `hash_find`, `collect_dirty_inputs`, `hash_text_keys`, `word_count`, `blob_put` | six sit within 16 % of the bar: price keyed.md § What is left on them (the typed append, the arena's insert bookkeeping, the rebuild's re-hash, text keys copied into the record).  Both format decisions are made and built: `index` is a B+tree (@C147), a hash's bucket count a power of two (@C146).  @PLN185 D2 owes this class a named root mechanism.  `reload_and_record` 10.88× → 7.06× and `mapfile_to_painted` −14 % through a compound key's decorated walk sort (keyed.md L8b); its remainder is unpriced |
 | text-build (5) | `map_json`, `render_inline`, `materialise`, `format_iso`, `char_roundtrip` | the per-character append (`out += "{c}"`) is the class-wide hypothesis (libraries-wide.md), and `slugify` is the same shape; `map_json` is `Map.parse` running the source lexer over JSON |
 | call (5) | `clock_pump`, `forms_upto`, `combine_cut`, `edges_cut`, `resolve_move` | @PLN185 D2: one hand-priced edit naming the mechanism; `resolve_move` is five hash lookups a call.  `forms_upto` PRICED: the caller releases its pooled `Form` buffer before every `form_new` call (`remove_claims`), and `form_new` is a `(R-RefillBuffer)` callee that empties each vector field in place — the release frees the two vectors the refill would keep, and `vector_add` claims two new ones.  BUILT as `(R-RefillText)`'s vector clause: 12.96× → 6.62× (2.00 → 1.02 ms), hash unchanged |
 | float-kernel (5) | `ease`, `terrain_fbm`, `terrain_surface_at`, `roof_match`, `roof_cone` | @PLN185 D2; `ease` is over the bar on arm64 macOS only — it counts as over until both agree |
@@ -167,10 +243,16 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 - **A move through a by-value parameter**: it changes what a callee may assume of its
   parameter's store after an append.
 - **Relational range facts** (`index < len(v)`) in `generation::range` (C9's second half).
-- **Keyed store format**: the division in `hash::home_bucket`, and `index` as a B-tree of
-  inline keys.  `sorted`'s random insert stays as it is (declined).
+- **A checked expression computed once where the program spells it twice**: DECIDED (owner,
+  2026-10-11) — an overflow must be reported, not reported as often as it was spelled.
+  `(R-SameRead)`'s guard clause (`locate`) rests on it.
+- **Keyed store format**: DECIDED and built — a hash's bucket count is a power of two (@C146);
+  `index` is a B+tree of key parts and record numbers (@C147).  `sorted`'s random insert stays
+  as it is (declined).
 
 ## 7. Order
+
+The release cut's order (§ 0) comes first; this is the order toward 3× after it.
 
 1. M1–M3 and the regressions that stand: they change which rows are on the list.
 2. S2 and S3, then `(R-RefillText)`'s collection clause: the units that take a row under
@@ -189,5 +271,11 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   a cdylib (`server`, `pluginabi` through crypto, `web`, `ssh`) needs the `-L native=…` and
   rpath lines by hand (over-9x.md § Tooling).
 - No script attributes a profile's samples to one routine of a lane (rules.md § Change 6).
+  On macOS, `sample <pid>` over a `--native-release --names` build gives the call tree;
+  a routine's share is its `n_bench_<row>` (or op helper) subtree.  `--names` disables
+  inlining, so a small helper's share is inflated.
 - `make rewrite-census` read 1–3 low on `R-ExitVector` and `R-Header` on the aarch64 box with
-  the libraries at the baseline's commits (records.md); unexplained.
+  the libraries at the baseline's commits (records.md); unexplained.  The same box reads
+  `R-RefillBuffer` 1 → 0 in `web` and `server` with the checkout at the baseline's commit — and
+  so does the loft commit that blessed the baseline (`9c69e6d8e`, built here), so it is the
+  box, not a change.  The baseline is one host's; the census has no per-host row.

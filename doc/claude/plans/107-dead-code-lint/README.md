@@ -207,7 +207,7 @@ positives before flipping default-on.
   && reads == 0 && write_targets > 0` (plus the `test_used` exclusions: `_`/`#`, argument,
   captured, global-shadow), gated on `LOFT_DEAD_STORES` (default OFF). Message (refined to the arc-C
   steer, @PLN102 alias-where-correct step 6): *"'d' is mutated but its value is never read — the
-  write is LOST. A whole-value bind (`d = …`) COPIES the heap value (C86), so the mutation lands in
+  write is LOST. A whole-value bind (`d = …`) COPIES the heap value (@C86), so the mutation lands in
   the copy, not the source. For write-through, bind a live reference with `&` (`d = &…`). If a copy
   was intended, read `d` after the mutation."* — points straight at the explicit fix (`&`) and offers
   the read-back alternative; the write-through is always the programmer's `&`, never inferred.
@@ -362,7 +362,7 @@ The lint is worthless if it cries wolf on legitimate code. Non-negotiable:
 ## The payoff — already banked
 
 The motivating case is **fixed** on `tuxedo-work` (commit pending): `lib/graphics`
-`set_pixel` / `fill_rect` / `hline` / `vline` used `X_d = self.data; X_d[i] = c` — a C86
+`set_pixel` / `fill_rect` / `hline` / `vline` used `X_d = self.data; X_d[i] = c` — a @C86
 copy-then-mutate, so the writes were **silent no-ops on both backends** (verified: the
 copy leaves `data[0]=0`, direct write-through gives `data[1]=222`). Rewritten to direct
 `self.data[i] = c` write-through (matching `blend_pixel`/`clear`), so the software canvas
@@ -373,7 +373,7 @@ would have flagged all four at authoring time; it is the general guard against t
 
 - @PLN90 [COPY_DIAGNOSTICS.md](../../COPY_DIAGNOSTICS.md) + [90-copy-diagnostics/](../90-copy-diagnostics/) —
   the copy/borrow lint and the `use_analysis.rs` classification this reuses.
-- [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) (C86: whole-value heap binds COPY; #415) —
+- [OWNERSHIP_MODEL.md](../../OWNERSHIP_MODEL.md) (@C86: whole-value heap binds COPY; #415) —
   *why* `d = self.data` copies, which is what makes the dead-store shape possible.
 - @PLN106 [106-android-build-target/](../106-android-build-target/README.md) — the consumer
   that surfaced the copy-mutate footgun in `lib/graphics`.

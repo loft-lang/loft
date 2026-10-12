@@ -368,7 +368,7 @@ architecture, so nothing else should be built first.
 10. **A fault inside the nested fetch must not halt the program — MEASURED, and
    it does today.** P1c ran a loft fetch function that overflowed the call stack:
    the fault propagated and the program halted, and the caller read a garbage
-   value. For an ordinary call that is right; for a fetch it violates C80, where a
+   value. For an ordinary call that is right; for a fetch it violates @C80, where a
    failed fetch reports through `store_lazy_error` and the lookup answers null.
    So the nested run must CONTAIN the fault and convert it into arc C's channel —
    otherwise moving the source from Rust to loft turns a class of source bug into
@@ -420,7 +420,7 @@ requires is already how `find_or_fetch` works.
 **P1c found a failure path the prose had not listed.** When the nested function
 FAULTS (runaway recursion → call-stack overflow), the fault propagates and
 **halts the program**, and the probe read a garbage value off the stack. For an
-ordinary call that is correct. For a FETCH it is not: @PLN129's contract is C80 —
+ordinary call that is correct. For a FETCH it is not: @PLN129's contract is @C80 —
 a failed fetch reports through `store_lazy_error`, never a halt. So a buggy or
 unlucky loft fetch function would turn a lookup into a program halt where the
 Rust source reported through the channel.
@@ -518,7 +518,7 @@ notation, duckdb is correct everywhere:
 | E = 294 and above | ok | ok |
 
 A *window*, not a threshold: it recovers above E = 293. In the window the answer
-is a plausible number roughly 10²⁵⁶ too small — the failure class C80 exists to
+is a plausible number roughly 10²⁵⁶ too small — the failure class @C80 exists to
 prevent, arriving as data.
 
 **The mechanism is a TYPE decision, and `typeof` says it outright:**
@@ -666,7 +666,7 @@ Measured with a fetch function that overflows the call stack on its first call
 and succeeds on its second:
 
 - the fault was **contained** — `contained fault: call stack overflow`;
-- the lookup answered **null**, which is the C80 / arc C shape;
+- the lookup answered **null**, which is the @C80 / arc C shape;
 - the outer program **continued** with every local intact;
 - a **later** nested call succeeded and delivered its record;
 - exit status 0.

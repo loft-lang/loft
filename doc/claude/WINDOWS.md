@@ -346,7 +346,9 @@ branches for LNK1181 and "required to be available in rlib format" are removed;
   `doc_hygiene::every_test_binary_matches_a_subject` was never load-dependent, which is what
   I first concluded and wrote here: the probe passed only because a `run:` probe executes
   INSIDE Git Bash, where `bash` resolves to Git Bash first, while the test process inherits a
-  different PATH order.  Resolve Git Bash explicitly from `%ProgramFiles%`.
+  different PATH order.  The cure is one resolver: `platform::bash_program()` (for a `Spawn`,
+  `Program::bash()`) answers the bash of Git for Windows, found beside the `git.exe` on the
+  search path or under the program directories; never spawn a bare `bash`.
 
   Two things made the wrong conclusion cheap to reach and the right one cheap to get.  The
   guard reported only stderr, which was EMPTY — so its message read `scripts/test_subjects.sh

@@ -91,7 +91,7 @@ which stay as the record of what was checked.**  Today's flow:
 ```
 main thread Stores
     └── clone_for_light_worker()    — BORROW: every parent store shared read-only
-                                       (captured state is provably unwritten, C93)
+                                       (captured state is provably unwritten, @C93)
             ├── parent slots  → shared ptr, read_only:true, borrowed:true (Drop skips dealloc)
             └── freed slots   → Store::new(100)  (fresh, so a worker may re-initialise it)
     └── one rayon task per worker (`parallel_workers`, contiguous range per thread)

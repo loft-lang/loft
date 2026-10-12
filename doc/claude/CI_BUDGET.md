@@ -461,7 +461,8 @@ it NAMED and run `scripts/ci-run.sh recheck`; do not start another gate.  A rech
 last gate in this tree (`.ci-gate-head`, written by `start`) and runs, each timed:
 
 * the pre-flight — `cargo fmt --check`, QUALITY.md's audit rows against
-  `ir_walker_audit.py`, `check_doc_drift.sh` (`scripts/gate_preflight.sh`, ~15 s);
+  `ir_walker_audit.py`, the `τ?` shape-test ratchet (`make optional-ratchet`),
+  `check_doc_drift.sh` (`scripts/gate_preflight.sh`, under a minute);
 * both clippy variants the gate runs, when Rust changed since the gate;
 * EXACTLY the tests the gate failed (`.ci-failed`, nextest `binary_id(=…) & test(=…)`);
 * `find_problems.sh --changed <gate sha>` — the subjects the change since the gate touches.

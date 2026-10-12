@@ -1448,6 +1448,147 @@ pub fn shell_invocation(line: &str) -> (&'static str, [&str; 2]) {
     }
 }
 
+/// The program that runs a bash script: `bash`, left to the search path — except on Windows,
+/// where a bare `bash` is `C:\Windows\System32\bash.exe`, the WSL launcher, because System32
+/// comes first on the search path.  With no distribution installed the launcher runs nothing
+/// and exits non-zero, so a script handed to it reads as a script that failed.  There the
+/// answer is the bash of Git for Windows ([`git_bash`]), and a bare `bash` only when no Git
+/// installation is found: a caller then gets the launcher's own failure, never a silent skip.
+#[must_use]
+pub fn bash_program() -> std::ffi::OsString {
+    if cfg!(windows) {
+        let on_path: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        let mut program_dirs: Vec<std::path::PathBuf> =
+            ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
+                .iter()
+                .filter_map(std::env::var_os)
+                .map(std::path::PathBuf::from)
+                .collect();
+        program_dirs.push(std::path::PathBuf::from(r"C:\Program Files"));
+        if let Some(bash) = git_bash(&on_path, &program_dirs) {
+            return bash.into_os_string();
+        }
+    }
+    std::ffi::OsString::from("bash")
+}
+
+/// The `bash.exe` of a Git for Windows installation, found by reading directories only.
+///
+/// An installation is `<root>\bin\bash.exe` with its `git.exe` in `<root>\cmd`, `<root>\bin`
+/// or `<root>\mingw64\bin`, whichever of those the search path names.  So the first `git.exe`
+/// on `search_path` locates it: its root is one or two directories above the one that holds
+/// it.  A `git.exe` with no `bin\bash.exe` above it (a package manager's shim directory) is
+/// passed over.  Failing that, `<dir>\Git\bin\bash.exe` under each of `program_dirs`, the
+/// directories programs are installed in.  A `bash.exe` that is itself on the search path is
+/// never the answer: that is how the WSL launcher is reached.
+fn git_bash(
+    search_path: &[std::path::PathBuf],
+    program_dirs: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    let beside_git = search_path
+        .iter()
+        .filter(|dir| crate::file_access::is_file(dir.join("git.exe")))
+        .flat_map(|dir| dir.ancestors().skip(1).take(2))
+        .map(|root| root.join("bin").join("bash.exe"));
+    let installed = program_dirs
+        .iter()
+        .map(|dir| dir.join("Git").join("bin").join("bash.exe"));
+    beside_git
+        .chain(installed)
+        .find(|bash| crate::file_access::is_file(bash))
+}
+
+#[cfg(test)]
+mod git_bash_tests {
+    use super::git_bash;
+    use crate::file_access as fa;
+    use std::path::{Path, PathBuf};
+
+    /// A private tree holding `files`, each an empty file at its relative path.
+    fn tree(tag: &str, files: &[&str]) -> PathBuf {
+        let root = super::scratch_dir().join(format!("git-bash-{tag}-{}", std::process::id()));
+        let _ = fa::remove_dir_all(&root);
+        for f in files {
+            let p = files_path(&root, f);
+            fa::create_dir_all(p.parent().expect("a parent")).expect("mkdir");
+            fa::write(&p, "").expect("write");
+        }
+        root
+    }
+
+    fn files_path(root: &Path, rel: &str) -> PathBuf {
+        rel.split('/')
+            .fold(root.to_path_buf(), |p, part| p.join(part))
+    }
+
+    /// The layouts a search path can name an installation by — `cmd`, `bin`, `mingw64/bin` —
+    /// each answer `<root>/bin/bash.exe`, and a `bash.exe` standing on the search path ahead
+    /// of them (the WSL launcher in System32) is never taken.  Checked on every host by
+    /// passing the directories in: left to the environment it could only run on Windows.
+    #[test]
+    fn git_bash_is_found_beside_git_and_never_on_the_search_path() {
+        for git_dir in ["Git/cmd", "Git/bin", "Git/mingw64/bin"] {
+            let git = format!("{git_dir}/git.exe");
+            let root = tree(
+                &git_dir.replace('/', "-"),
+                &["System32/bash.exe", "Git/bin/bash.exe", &git],
+            );
+            let search = [files_path(&root, "System32"), files_path(&root, git_dir)];
+            assert_eq!(
+                git_bash(&search, &[]),
+                Some(files_path(&root, "Git/bin/bash.exe")),
+                "git.exe in {git_dir}"
+            );
+            let _ = fa::remove_dir_all(&root);
+        }
+    }
+
+    /// A `git.exe` with no installation above it (a shim directory) is passed over for the
+    /// installed copy under a program directory; with neither there is no answer, and the
+    /// caller falls back to a bare `bash`.  The launcher on the search path is not one.
+    #[test]
+    fn git_bash_falls_back_to_the_program_directories_and_then_to_nothing() {
+        let root = tree(
+            "fallback",
+            &[
+                "System32/bash.exe",
+                "shims/git.exe",
+                "Program Files/Git/bin/bash.exe",
+            ],
+        );
+        let search = [files_path(&root, "System32"), files_path(&root, "shims")];
+        let programs = [
+            files_path(&root, "Empty"),
+            files_path(&root, "Program Files"),
+        ];
+        assert_eq!(
+            git_bash(&search, &programs),
+            Some(files_path(&root, "Program Files/Git/bin/bash.exe"))
+        );
+        assert_eq!(git_bash(&search, &programs[..1]), None);
+        assert_eq!(git_bash(&[], &[]), None);
+        let _ = fa::remove_dir_all(&root);
+    }
+
+    /// Off Windows the program is `bash` from the search path.  On Windows it is a path, and
+    /// never the bare name while Git is installed where a runner has it.
+    #[test]
+    fn the_bash_program_is_bash_off_windows() {
+        let bash = super::bash_program();
+        if cfg!(windows) {
+            assert!(
+                bash != "bash" && fa::is_file(Path::new(&bash)),
+                "no Git for Windows bash found: {}",
+                bash.display()
+            );
+        } else {
+            assert_eq!(bash, "bash");
+        }
+    }
+}
+
 /// The host OS as a display name for a diagnostic: `Linux`, `macOS`, `Windows`, or `this OS`.
 #[must_use]
 pub fn host_os_name() -> &'static str {

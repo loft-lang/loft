@@ -249,7 +249,7 @@ programs. The per-definition fact it needs is `removed_ref_params` — *"this ca
 #### Step 4, as shipped — two things the measurement changed
 
 **The `&` is not the carrier, and loft#779's own boundary table said it was.** The issue's row A2
-reads *"same as A1 with the `&` dropped — plain param copies (C86), so nothing to lose"*. It does
+reads *"same as A1 with the `&` dropped — plain param copies (@C86), so nothing to lose"*. It does
 not copy. Probe 40 cell **X9** is one line — `fn w(t: Box) { t.n = 99 }` called as `w(v[2])` —
 and it writes **99 into the caller's `v`**. A plain struct parameter aliases the caller's element
 exactly as a `&` one does, which is precisely what loft's own `warn_redundant_amp` advice tells
@@ -290,7 +290,7 @@ and it means the stdlib is checked too.
 - **B-Ref-Reshape** is now a rule in `formal/binding.md` beside B-Ref-Alias, and D-bind-8 is
   closed with its evidence; `OPEN` is **0** once step 6 below lands.
 - [OWNERSHIP_MODEL.md § A view lasts as long as the thing it names](../../OWNERSHIP_MODEL.md) and
-  the C86 lifetime paragraph in [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) carry the shipped
+  the @C86 lifetime paragraph in [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) carry the shipped
   two-row rule (plain → materialise; reference → refused) instead of the *"known gap"* wording.
 - `LOFT.md`'s user-facing paragraph gains the error and the index workaround.
 - Three gaps the formal validation surfaced and closed: `collections.md` had no removal rule at
@@ -361,7 +361,7 @@ So step 3 is not merely permitted, it is on the pre-freeze audit's own list.
 
 **The one caveat that genuinely applies, and why it does not block.** The same section says the
 *first* resolution of a would-be-error is **a rewrite to correct function, not an error** (the
-C80 model: give it a sane defined behaviour instead of rejecting). For this shape that rewrite
+@C80 model: give it a sane defined behaviour instead of rejecting). For this shape that rewrite
 exists and is named above — make the link FOLLOW its element, which a dense vector makes
 arithmetic rather than a lookup. It was considered and **declined by the maker** as not worth
 runtime arithmetic per link for an edge case. That is the required "consciously accept" step,

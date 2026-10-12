@@ -814,7 +814,7 @@ elif [ "$PUSH" = 1 ]; then
     # system, which without a helper falls back to prompting — and GitHub no
     # longer accepts a password there.  GIT_TERMINAL_PROMPT=0 makes a genuinely
     # missing credential fail fast instead of hanging on an interactive prompt.
-    # CAS push (C96 single-writer): a concurrent push to the registry makes ours
+    # CAS push (@C96 single-writer): a concurrent push to the registry makes ours
     # non-fast-forward.  Retry by rebasing our signed commit onto the fetched tip —
     # a concurrent change that did NOT touch index.json rebases cleanly (our signed
     # index is unchanged, its signature still valid) and we re-push.  A genuine

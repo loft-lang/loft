@@ -9,7 +9,7 @@
 //! equivalence) and [`load_snapshot`] (file load).  Decode reuses loft's own
 //! JSON parser — never serde.  Absolute `def_nr` / `known_type` indices are
 //! stored verbatim: this is the whole-bundle image (internally consistent),
-//! not the deferred per-library form ([`DESIGN_DECISIONS.md` § C69]).
+//! not a per-library form, which @C70 declines ([`DESIGN_DECISIONS_PLATFORM.md`]).
 //!
 //! ## Interim — slated for retirement (@PLN11)
 //!
@@ -22,7 +22,7 @@
 //! § Standalone upside decision.  Nothing in the live compile path calls into
 //! this module yet — only the `LOFT_DUMP_SNAPSHOT` debug hook in `main.rs`.
 //!
-//! [`DESIGN_DECISIONS.md` § C69]: ../../doc/claude/DESIGN_DECISIONS.md
+//! [`DESIGN_DECISIONS_PLATFORM.md`]: ../../doc/claude/DESIGN_DECISIONS_PLATFORM.md#c70--no-per-library-ir-snapshot--cache
 
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, IntegerSpec, LinkedFieldGroup,
@@ -1030,7 +1030,6 @@ fn write_purity(out: &mut String, p: Purity) {
 fn write_linked_field_group(out: &mut String, g: &LinkedFieldGroup) {
     let kind = match g.kind {
         LinkedFieldKind::Tuple => "Tuple",
-        LinkedFieldKind::Index => "Index",
     };
     let _ = write!(out, "{{\"kind\":\"{kind}\",\"instance\":{}", g.instance);
     out.push_str(",\"field_indices\":");
@@ -1263,7 +1262,6 @@ fn purity_from_parsed(p: &Parsed) -> Result<Purity, TypeDecodeError> {
 fn linked_field_group_from_parsed(p: &Parsed) -> Result<LinkedFieldGroup, TypeDecodeError> {
     let kind = match as_str(field(p, "kind")?)?.as_str() {
         "Tuple" => LinkedFieldKind::Tuple,
-        "Index" => LinkedFieldKind::Index,
         other => {
             return Err(TypeDecodeError::UnknownTag(format!(
                 "LinkedFieldKind::{other}"

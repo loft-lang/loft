@@ -262,7 +262,7 @@ false-clean.
 
 - **Branch hygiene (Q1–Q3) behaved as specified.** `net/tuxedo-add-to-project`
   resolved **merged** via the PR-merged signal — a squash-merge that ancestry alone
-  would miss (the exact false-"unmerged" C86 fix motivates) → prunable, not a gate
+  would miss (the exact false-"unmerged" @C86 fix motivates) → prunable, not a gate
   failure.  `graphics`'s three branches are all PR-tracked (#2 / #7 / #10) → known,
   acceptable.  Four branches are **untracked unknown work** and fail the gate:
   `core/cbor`, `core/crypto-v0.3.0`, `core/fix/cbor-loft-2026.6.0-narrowing`, and
@@ -276,7 +276,7 @@ false-clean.
 
 Both libraries rely on **pre-C86 vector alias-by-default** semantics.  Under the
 current model a whole-value heap bind **COPIES** and `&` opts into shared mutation
-(`OWNERSHIP_MODEL.md`, `DESIGN_DECISIONS.md` C86, regression test
+(`OWNERSHIP_MODEL.md`, `DESIGN_DECISIONS.md` @C86, regression test
 `tests/scripts/503-vector-reference-alias.loft`), so a plain bind `x = obj.field`
 copies and writes through `x` never reach `obj.field`.
 
@@ -293,7 +293,7 @@ copies and writes through `x` never reach `obj.field`.
   herring**: it discharges `sqrt` results (`?? 0.0`) for an unrelated null-flow
   concern and, checked out under current loft, still reports 0 land cells.
 
-**Disposition:** no loft issue (not a language defect); library-side C86 migration.
+**Disposition:** no loft issue (not a language defect); library-side @C86 migration.
 The gate rule already fits it — a fix PR that tracks the migration (graphics #10) is
 *known/acceptable*; no working fix (hex_terrain) means the work is still owed.  See
 Open question 5 for whether this deserves its own verdict tag.
@@ -334,7 +334,7 @@ Open question 5 for whether this deserves its own verdict tag.
    deliberate collapse of the taxonomy. The deciding objection is A-class: a verdict
    meaning "failing, but for a reason we accept" turns a red into an amber, while the
    user-facing truth is that the library does not work against current loft. The *cause*
-   is already reported separately by the C86 write-through lint.
+   is already reported separately by the @C86 write-through lint.
 
 ## Cross-arc dependencies
 

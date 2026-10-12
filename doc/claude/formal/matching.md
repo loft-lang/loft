@@ -219,7 +219,7 @@ backtracking safe.
                  is a static error at the arm (M-Unit) rather than an arm that never fires.
                • SCALAR subject (integer / character — an unbounded domain) — coverage is NOT decidable
                  and NOT required.  With no total final arm the match MAY select no arm at runtime; by
-                 the C80 spreadsheet model ([DESIGN_DECISIONS.md C80](../DESIGN_DECISIONS.md)) it then
+                 the @C80 spreadsheet model ([DESIGN_DECISIONS.md @C80](../DESIGN_DECISIONS.md)) it then
                  yields **null**, so the match's result type is **nullable** (`τ?`) — no error, the null
                  surfaces at the use site (the null-flow discipline).  This is the one place a `match`
                  "falls through", and it falls through to null, never to a fault.
@@ -238,7 +238,7 @@ arm names it — a guard does not), or a final `_`; otherwise the program does n
 > renamed variant would otherwise fall to `_` and answer the wildcard's value
 > (`tests/scripts/a-match-arm-names-a-variant-that-exists.loft`). For a
 SCALAR subject (integer / character) coverage cannot be decided, so it is not required — a match with
-no total final arm may select nothing at runtime and then yields **null** (the C80 model), which makes
+no total final arm may select nothing at runtime and then yields **null** (the @C80 model), which makes
 its result type nullable. So a `match` still never faults on a fall-through: on an enum it cannot fall
 through at all, and on a scalar it falls through to null. For a pure-enum match, nothing changes from
 `M-Exhaust`.

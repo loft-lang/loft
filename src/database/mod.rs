@@ -254,13 +254,13 @@ pub enum Parts {
     // this encoding's absence (`u32::MAX`) as the value -1.  Which of the two a slot uses
     // is `IntegerSpec::unsigned_wide()`, asked once in `NarrowIntKind::of`.
     IntRaw(i32, bool),
-    Vector(u16),                       // The records are part of the vector
-    Array(u16),                        // The array holds references for each record
-    Sorted(u16, Vec<(u16, bool)>),     // Sorted vector on fields with an ascending flag
-    Ordered(u16, Vec<(u16, bool)>),    // Sorted array on fields with an ascending flag
-    Hash(u16, Vec<u16>), // A hash table, listing the field numbers that define its key
-    Index(u16, Vec<(u16, bool)>, u16), // An index to a table, listing the key fields and the left field-nr
-    Radix(u16, Vec<u16>),              // A spatial index with the listed coordinate fields as a key
+    Vector(u16),                    // The records are part of the vector
+    Array(u16),                     // The array holds references for each record
+    Sorted(u16, Vec<(u16, bool)>),  // Sorted vector on fields with an ascending flag
+    Ordered(u16, Vec<(u16, bool)>), // Sorted array on fields with an ascending flag
+    Hash(u16, Vec<u16>),            // A hash table, listing the field numbers that define its key
+    Index(u16, Vec<(u16, bool)>), // An index to a table (a B+tree, `btree.rs`), listing the key fields
+    Radix(u16, Vec<u16>),         // A spatial index with the listed coordinate fields as a key
     // A trie: a radix tree over ONE `text` key field, answering exact lookup, key
     // order and prefix.  Shares `radix_tree` with `Radix` and nothing above it —
     // `Radix` is geometric (Morton interleave, boxes, near/within/nearest) and none
@@ -419,7 +419,7 @@ pub struct Stores {
     /// @PLN129 arc C — why a fetch for this collection could not reach its
     /// source. Absent means healthy.
     ///
-    /// A lookup cannot report this: C80 says a value read never raises, and
+    /// A lookup cannot report this: @C80 says a value read never raises, and
     /// answering `null` would make "no such person" and "the database is
     /// unreachable" the same answer — and an UNSTABLE one, since it changes with
     /// the network. So the failure lives on a channel the value cannot carry,
@@ -531,8 +531,6 @@ pub struct Stores {
     /// `src/generation/calls.rs`) resolves from any function context
     /// that only has `&mut Stores`.
     pub const_refs: Vec<DbRef>,
-    /// Errors from the last `Type.parse()` call, read via `s#errors`.
-    pub last_parse_errors: Vec<String>,
     /// errors from the last `json_parse()` call, read via
     /// `json_errors()`.  Cleared on every successful `json_parse`;
     /// populated with `format!("{msg} (byte {pos})")` on parse failure.
@@ -777,7 +775,6 @@ impl Clone for Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1550,7 +1547,6 @@ impl Stores {
             free_bits: Vec::new(),
             bridge_text_dest: None,
             const_refs: Vec::new(),
-            last_parse_errors: Vec::new(),
             last_json_errors: Vec::new(),
             parallel_ctx: None,
             par_buffer_stack: Vec::new(),
@@ -1693,7 +1689,7 @@ impl Stores {
     /// rustc compile error from the s.raise call.
     ///
     /// Production-vs-development split mirrors `State::raise` per
-    /// `DESIGN_DECISIONS.md § C66`:
+    /// @C66`:
     /// - production logger attached → log via `log_runtime_kind` +
     ///   set `had_fatal` + return without populating `runtime_error`
     /// - development (no logger or non-production logger) → populate
@@ -1778,36 +1774,27 @@ impl Stores {
         finish: u32,
         reverse: bool,
     ) -> Option<u32> {
-        let fields = self.fields(tp);
+        let keys = self.keys(tp).to_vec();
+        let n_after = if reverse {
+            crate::btree::previous_record(data, &self.allocations, &keys, cur)
+        } else {
+            crate::btree::next_record(data, &self.allocations, &keys, cur)
+        };
+        // Read before the removal: `cur` is about to stop being in the tree.
+        let removed_the_last = cur == finish;
         let cur_ref = crate::keys::DbRef {
             store_nr: data.store_nr,
             rec: cur,
-            pos: u32::from(fields),
+            pos: 8,
         };
-        let n_after = {
-            let store = crate::keys::store(data, &self.allocations);
-            if reverse {
-                crate::tree::previous(store, &cur_ref)
-            } else {
-                crate::tree::next(store, &cur_ref)
-            }
-        };
-        // Read before the removal: `cur` is about to stop being a node.
-        let removed_the_last = cur == finish;
         self.remove_owned(data, &cur_ref, tp);
         if n_after == 0 || removed_the_last {
             return None;
         }
-        let n_ref = crate::keys::DbRef {
-            store_nr: data.store_nr,
-            rec: n_after,
-            pos: u32::from(fields),
-        };
-        let store = crate::keys::store(data, &self.allocations);
         Some(if reverse {
-            crate::tree::next(store, &n_ref)
+            crate::btree::next_record(data, &self.allocations, &keys, n_after)
         } else {
-            crate::tree::previous(store, &n_ref)
+            crate::btree::previous_record(data, &self.allocations, &keys, n_after)
         })
     }
 

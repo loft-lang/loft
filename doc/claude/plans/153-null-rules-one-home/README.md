@@ -34,7 +34,7 @@ projection through a nullable receiver drops the `?`), re-measured at 115 sites 
 The null MODEL is decided and was not reopened here: @PLN102's
 [keystone](../102-stability-contract/keystone-null-model.md) chose **B** (an in-band sentinel
 for scalars, out-of-band absence for references and for a struct stored inline), frozen in
-[DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
+[DESIGN_DECISIONS.md § @C90](../../DESIGN_DECISIONS.md), with @PLN25 (the dense element
 model) and @PLN116 (`x?`) shipped on top of it.  What this plan changes is the rules'
 REPRESENTATION IN CODE: of the 18 `@FR-N-*` rules in [types.md](../../formal/types.md) three
 are cited (7 sites); the four `@FR-L-Null*` rules in [layout.md](../../formal/layout.md) are
@@ -54,7 +54,7 @@ watermark, or the residual is characterised as a different mechanism.
 ## Effort + design
 
 - **Effort:** H — six phases, each an afternoon to a day, none straddling a PR.
-- **Design:** ~ — the model is decided (C90); the homes are to be located, and phase 3's
+- **Design:** ~ — the model is decided (@C90); the homes are to be located, and phase 3's
   chokepoint is the one design call (§ Open design questions).
 - **Value category:** S (silent failure).  A sentinel that collides with a real value, or a
   `τ?` that reaches a `τ` slot undischarged, answers wrong with nothing said.
@@ -108,7 +108,7 @@ the axes it reports unreached are the cells still to build, not a note.
 | **2** | **`N-Prop` has 10 `nullflow_enabled()` sites in 4 files.**  Which question does each ask — propagate, gate, or warn?  Fold the fact-reading half onto one predicate; the per-site residue stays where it is per-site. | `introspect` output (IR, bytecode, Rust) byte-identical over the 1247-file corpus against the committed compiler (the B7r/B7s method), under the default AND under `LOFT_NO_NULLFLOW=1`. | **Done** 2026-09-05 — § Phase 2 fold |
 | **3** | **The `N-Store` refusal at ONE point.**  Today the teeth sit at the local slot, the field, the return, the index, the call argument and the heap half as separate gates, each a spelling; a nullable reaching a non-null slot through a position none of them covers is answered wrong in silence.  One check where every store passes — the `⇐` lowering, whose ten push sites and six admission lists B6t already measured — is the chokepoint. | The Stage A matrix, position × type kind × discharge, with an `@EXPECT_WARNING` / `@EXPECT_ERROR` cell wherever a nullable meets a non-null slot undischarged and a silent cell wherever it is discharged; `make falsify` against the current build names the cells that pass silently today. | **Done** 2026-09-05 — 3a, 3b, 3c (§ Phase 3a–3c) |
 | **4** | **The `optional` screen, ranked.**  The 352 opaque functions ordered by *can an undischarged value reach here*: declaration reads (a field's, a local's, a return's declared type) and lvalue places first, use-path sites last.  Each function in the top tier either peels through `base()` or is shown unreachable by a probe cell. | The gated `optional` audit row in QUALITY.md moves DOWN and every moved function has a cell; a peel added with no cell is the B6u receipt and is not counted. | **CLOSED by CONVERSION** — 11 batches, the row 359 → 338; batch 11 measured the real population (1520 TESTS, not 338 functions), wrote `@FR-N-Shape` and put a ratchet on it.  The remaining sites are gated, not queued |
-| **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **DECLINED** after 2 batches — the bug review has scored citation-convergence NO EFFECT three times; the remaining 42 are not work this plan hands on |
+| **5** | **`@FR-L-Null`'s 45 citations converged.**  The two questions B6u split — *what value means absent in this storage?* (the per-type sentinel table frozen in @C90, `Stores::is_null`) and *is this the same storage?* (`base()`) — each have a home; every citation either reads it or is removed as a redundant spelling. | The site count goes DOWN, and where a change is a fold the emission is byte-identical over the corpus; where it is a fix, a probe cell. | **DECLINED** after 2 batches — the bug review has scored citation-convergence NO EFFECT three times; the remaining 42 are not work this plan hands on |
 | **6** | **Re-measure.**  `make bug-review` on the null/sentinel class after the plan's watermark against the window before it. | The class falls, or the residual names a mechanism this plan did not touch and a follow-on plan is filed for it. | **DONE** 2026-09-08 — NO EFFECT (14.1 % → 37.3 %, → 25.9 % net of this plan's own finds); residual characterised and routed to @PLN160 |
 
 ## Phase 0 — result (2026-09-05)
@@ -559,13 +559,13 @@ closure's private copy (`11 21 100` against the twin's `11 110 110`), and — th
 this more than a lost write — **three refusals read the same list**, so a `τ?` capture was not
 merely un-boxed but unguarded: sharing between two closures is refused for a dense local and
 silently wrong for a nullable one, `const` on a nullable parameter is silently not enforced, and
-C115's `&`-from-closure refusal is never asked.  **loft#1408**, `silent-wrong`.
+@C115's `&`-from-closure refusal is never asked.  **loft#1408**, `silent-wrong`.
 
 Cured by the peel at seven sites of the one family — the boxable SET (`accumulate_scalars_to_box`),
 the cell NAME and its `value` type (`cell_struct_name`, restructured around a `cell_stem` so the
 boxable set is spelled once; `cell_value_type`, wrapping through `Type::optional`, phase 0's
 `(N-Idem)` home), the read and write ops (`auto_deref_boxed_scalar`, `cell_value_set_op` — both
-choose the op from `.base()` because `Optional(τ)` shares `τ`'s storage in-band under C90, while
+choose the op from `.base()` because `Optional(τ)` shares `τ`'s storage in-band under @C90, while
 the declared type keeps its `?` so ordinary discharge still applies), the type-flip preservation
 guard, and the boxed-text LHS test.  A nullable takes a cell of its OWN (`__cell_opt_<T>`)
 rather than a widened one, because the `value` field has to declare the nullability or
@@ -1124,7 +1124,7 @@ the return's bind and its field, a copy-bind, an inline test, a field read), wit
 `reference<S>?` field and every source PRESENT as controls, on both backends under strict
 stores and poison.  Every `S?` sink of every source was wrong before; the controls were right.
 Every cell reads by a VARIABLE index or an absent key, because a constant index is trusted by
-contract and its overrun is a C80 null that no rule above the runtime sees (`(N-Index)`'s
+contract and its overrun is a @C80 null that no rule above the runtime sees (`(N-Index)`'s
 EXCEPT) — measured beside the promised cells and found to answer the same `nullref`.
 
 **Batch 1 — the READ mints the value.**  B6u split `@FR-L-Null` into two questions, and this
@@ -1312,7 +1312,7 @@ because the declaration-time sites it names are where the matrix's undischarged 
 - [formal/types.md](../../formal/types.md) — the N rules; [formal/layout.md](../../formal/layout.md)
   — the L-Null rules; [formal/README.md](../../formal/README.md) § When to reach for this doc.
 - [keystone-null-model.md](../102-stability-contract/keystone-null-model.md) — the decided
-  representation; [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md) — the frozen table.
+  representation; [DESIGN_DECISIONS.md § @C90](../../DESIGN_DECISIONS.md) — the frozen table.
 - [STABILITY_METHOD.md § The rule-led walk](../../STABILITY_METHOD.md) — the method; the
   2026-09-05 evaluation in the session record that put null apart from lifetime.
 - [BUG_REVIEW.md](../../BUG_REVIEW.md) — the null/sentinel class rows this plan is measured by.

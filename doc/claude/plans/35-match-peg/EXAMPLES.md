@@ -6,8 +6,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # @PLN35 — What an actual loft parser looks like (target-syntax examples)
 
 > Illustrative **target** syntax — not yet runnable; the PEG operators land per the phases in
-> [IMPLEMENTATION.md](IMPLEMENTATION.md). Struct-variants only ([C89](../../DESIGN_DECISIONS.md)).
-> The bar (D-F6 / C89): **each arm should read like the grammar production it implements**, using
+> [IMPLEMENTATION.md](IMPLEMENTATION.md). Struct-variants only ([@C89](../../DESIGN_DECISIONS.md)).
+> The bar (D-F6 / @C89): **each arm should read like the grammar production it implements**, using
 > `|` / `?` / `*` / `+` on *named* elements — no regex training required.
 
 ## Token model — unit variants for fixed tokens, named fields for data
@@ -132,5 +132,5 @@ Edges to know — the honest limits of the design as scoped:
 
 The arms read like the productions they implement — the `move`/`say`/`stop` alternatives,
 `IDENT ( ':' IDENT )?`, `'[' NUM* ']'` — with `|` / `?` / `*` on named tokens and no regex
-training. The cost lands exactly where [C89](../../DESIGN_DECISIONS.md) said it would: extra parser
+training. The cost lands exactly where [@C89](../../DESIGN_DECISIONS.md) said it would: extra parser
 logic (whole-consume, bare-name tail elements, function-call recursion) bought for a readable surface.

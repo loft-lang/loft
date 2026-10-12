@@ -1,3 +1,4 @@
+// @catches: LOFT_NO_OWNER_WITNESS — the switch emits the pre-witness form, whose release of the view-reassigned copy empties `vs`, which this program asserts.
 // @PLN90 loft#495 — runtime-Join over-free regression guard.
 //
 // `loop_cv` COPIES a Reference param (`r = x`, owned per C86) then VIEW-reassigns

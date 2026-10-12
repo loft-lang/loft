@@ -5013,11 +5013,10 @@ Both parse forms report. 'json\_errors()' holds the LAST parse's diagnostics and
 if json_errors() != "" { log_warn(json_errors()); }
 ```
 
-'record\#errors' is the same answer scoped to one parsed value, and the READ clears it:
+'record\#errors' answers for the 'Type.parse(text)' that built that record, as a vector\<text\> with one entry per error. Each parsed record keeps its own:
 
 ```
-errs = user#errors;
-if errs != "" { log_warn(errs); }
+for e in user#errors { log_warn(e); }
 ```
 
 The two parse spellings differ in WHICH HALF of the answer they give, and that is the reason to choose between them:
@@ -8518,6 +8517,12 @@ pub fn size(self: const hash) -> integer
 
 The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 
+```rust
+pub fn size(self: const index) -> integer
+```
+
+The byte footprint of an index: its B+tree's node arena, room included. Allocation-local, as `size` of a hash: the element records live in separate allocations and are not counted.  Grows in steps as the arena doubles.  0 for an empty (unallocated) index.
+
 == Output and Diagnostics
 
 ```rust
@@ -8593,10 +8598,22 @@ pub fn len(self: const spatial) -> integer
 Number of elements in a spatial (radix / Morton tree) collection.
 
 ```rust
+pub fn size(self: const spatial) -> integer
+```
+
+The byte footprint of a spatial index: its tree's node array, room included. Allocation-local, as `size` of a hash: the element records are not counted.  0 for an empty (unallocated) one.
+
+```rust
 pub fn len(self: const trie) -> integer
 ```
 
 Number of elements in the trie.
+
+```rust
+pub fn size(self: const trie) -> integer
+```
+
+The byte footprint of a trie: its tree's node array, room included. Allocation-local, as `size` of a hash: the element records are not counted.  0 for an empty (unallocated) one.
 
 == Vector aggregates
 

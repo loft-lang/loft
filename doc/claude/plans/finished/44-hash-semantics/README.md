@@ -3,7 +3,7 @@
 **Status:** ✅ COMPLETE (2026-05-21). Opened to close the keyed-collection
 contract surfaced by `gridmesh` lib-plan 19 Phase B (a deduplicating,
 clearable dirty-chunk index). All three holes resolved: @P305 + @P307
-fixed in code, @P306 closed by decision C68.
+fixed in code, @P306 closed by decision @C68.
 
 **Goal:** make `hash` / `sorted` / `index` (the keyed collections) behave
 the way a keyed map/set should — *every* operation, on *both* backends —
@@ -47,7 +47,7 @@ plan is done when every case is `PASS` on both backends. Run:
 **All three fixed in code 2026-05-21** — @P305 (`OpSetKeyed` upsert), @P306
 (dedup in the shared insert path: `dedup_keyed` for hash/index, overwrite-on-
 found for sorted), @P307 (`OpClearKeyed`).  Both `coll += [entry]` and
-`coll[key] = value` now dedup by key (latest wins).  C68 records the @P306
+`coll[key] = value` now dedup by key (latest wins).  @C68 records the @P306
 reverse (briefly closed-by-decision, then implemented once the world-chunk
 index made dedup-on-insert a correctness requirement).  **Plan 44 complete.**
 

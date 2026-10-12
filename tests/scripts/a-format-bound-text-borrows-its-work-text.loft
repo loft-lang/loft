@@ -1,0 +1,164 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A text local bound to a format string (`cs = "{c}"`) reads the value that format built,
+// for every way the local can be used afterwards.
+//
+// `--native` binds such a local as a `&str` into the format's own work text instead of
+// copying it into a fresh `String` (`@FR-R-TextBorrow`'s format clause): markdown's
+// `render_inline` built and freed one `String` per character.  The borrow is sound only
+// while nothing rewrites the work text before the local's last read, which the clause
+// proves by the work text being the format's own and the format not reading the local.
+// These cells hold each use that could break that: the format reading the local (f3), the
+// local copied away (f4), two formats alive at once (f13), the local outliving its loop
+// (f2), returned (f7), stored (f8), appended to (f10), in a generator (f9), copied in a
+// frame that writes no store (f4b).  Each expected value is worked out by hand beside it;
+// values AND sizes are asserted.
+//
+// A wrong admission is refused by rustc (a borrowed work text cannot be rewritten), so it
+// fails this file at compile time rather than answering wrong; f4b is the cell that shows
+// it, the copy refusal switched off: E0506 on `chain`'s work text.
+//
+// @falsified-at: none — a speed change with no earlier defect; scored by hand: with the
+// clause's copy refusal disabled, --native fails to compile f4b (E0506)
+
+struct Pair { name: text, n: integer }
+
+fn shout(s: text) -> integer { len(s) * 10 }
+
+fn render(src: text) -> text {
+  out = "";
+  i = 0;
+  while i < src.size() {
+    c = src[i] ?? '\0';
+    if c == '<' { out += "&lt;"; i += 1; }
+    else {
+      cs = "{c}";
+      out += cs;
+      i += cs.size();
+    }
+  }
+  out
+}
+
+fn last_of(n: integer) -> text {
+  t = "";
+  for k in 0..n { t = "k{k}"; }
+  t
+}
+
+fn chain(n: integer) -> integer {
+  prev = "-";
+  total = 0;
+  for k in 0..n {
+    cur = "c{k}";
+    total += prev.size() * 10 + cur.size();
+    prev = cur;
+  }
+  total
+}
+
+fn give(k: integer) -> text {
+  g = "<{k}>";
+  return g;
+}
+
+fn tags(n: integer) -> iterator<text> {
+  for k in 0..n {
+    y = "t{k}";
+    yield y;
+  }
+}
+
+fn main() {
+  // f1 — 'a', '<' -> "&lt;", 'b', 'é' (2 bytes), '<', 'c': "a&lt;bé&lt;c", 13 bytes and
+  // 12 characters.
+  r1 = render("a<bé<c");
+  assert(r1 == "a&lt;bé&lt;c", "f1 {r1}");
+  assert(r1.size() == 13, "f1 size {r1.size()}");
+  assert(len(r1) == 12, "f1 characters {len(r1)}");
+
+  // f2 — bound in the loop, read after it: the last pass k = 4 leaves "k4".
+  r2 = last_of(5);
+  assert(r2 == "k4", "f2 {r2}");
+  t2 = "";
+  for k in 0..3 { t2 = "v{k * 7}"; }
+  assert(t2 == "v14", "f2 after loop {t2}");
+
+  // f3 — the format reads the local: "x", "xx", "xxx".
+  t3 = "";
+  for _ in 0..3 { t3 = "{t3}x"; }
+  assert(t3 == "xxx", "f3 {t3}");
+
+  // f4 — the local copied away: prev holds the PREVIOUS pass's text.
+  prev = "none";
+  seen4 = "";
+  for k in 0..3 {
+    cur = "c{k}";
+    seen4 += "{prev}>{cur};";
+    prev = cur;
+  }
+  assert(seen4 == "none>c0;c0>c1;c1>c2;", "f4 {seen4}");
+  assert(prev == "c2", "f4 last {prev}");
+
+  // f4b — the same in a frame with no store write: prev "-" (1), then "c0", "c1" (2 each);
+  // cur 2 each: (10 + 2) + (20 + 2) + (20 + 2) = 56.
+  assert(chain(3) == 56, "f4b {chain(3)}");
+
+  // f5 — two format sites in if/else arms: even k "e{k}", odd k "o{k}".
+  s5 = "";
+  for k in 0..4 {
+    if k % 2 == 0 { a5 = "e{k}"; s5 += a5; } else { a5 = "o{k}"; s5 += a5; }
+  }
+  assert(s5 == "e0o1e2o3", "f5 {s5}");
+
+  // f6 — handed to a text parameter: len("ab12") * 10 = 40.
+  x6 = 12;
+  t6 = "ab{x6}";
+  assert(shout(t6) == 40, "f6 {shout(t6)}");
+
+  // f7 — returned: "<3>".
+  assert(give(3) == "<3>", "f7 {give(3)}");
+
+  // f8 — stored in a record field and a vector: each keeps its own text.
+  ps: vector<Pair> = [];
+  names: vector<text> = [];
+  for k in 0..3 {
+    nm = "p{k}";
+    ps += [Pair { name: nm, n: k }];
+    names += [nm];
+  }
+  assert(ps[0].name == "p0" && ps[2].name == "p2", "f8 records {ps[0].name} {ps[2].name}");
+  assert(names[1] == "p1" && len(names) == 3, "f8 vector {names[1]}");
+
+  // f9 — a generator's local: "t0", "t1", "t2".
+  g9 = "";
+  for y in tags(3) { g9 += "{y},"; }
+  assert(g9 == "t0,t1,t2,", "f9 {g9}");
+
+  // f10 — appended to after the bind: "m5" then "+" -> "m5+".
+  t10 = "m{5}";
+  t10 += "+";
+  assert(t10 == "m5+", "f10 {t10}");
+
+  // f11 — a format reading another format-bound local: a = "[7]", b = "[7][7]".
+  a11 = "[{7}]";
+  b11 = "{a11}{a11}";
+  assert(b11 == "[7][7]", "f11 {b11}");
+  assert(len(b11) == 6, "f11 size {len(b11)}");
+
+  // f12 — a literal binding mixed with a format binding: "" then "z3".
+  t12 = "";
+  assert(t12 == "", "f12 empty {t12}");
+  for k in 0..4 { t12 = "z{k}"; }
+  assert(t12 == "z3", "f12 {t12}");
+
+  // f13 — two formats alive at once: a = "A1", b = "B2", both read afterwards.
+  q1 = 1;
+  q2 = 2;
+  a13 = "A{q1}";
+  b13 = "B{q2}";
+  assert("{a13}{b13}" == "A1B2", "f13 {a13} {b13}");
+
+  println("ok");
+}

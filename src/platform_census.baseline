@@ -9,7 +9,6 @@
 3 tests/common/timing.rs
 1 tests/crash_report_file.rs
 1 tests/crash_report_naming.rs
-1 tests/doc_hygiene.rs
 1 tests/engine_host_kernel.rs
 1 tests/engine_host_placed.rs
 1 tests/error_path_state.rs
@@ -27,7 +26,6 @@
 1 tests/placement_parity.rs
 1 tests/placement_remote.rs
 1 tests/placement_worker.rs
-3 tests/registry_publish_categories.rs
 1 tests/self_update_swap.rs
 1 tests/store_persist_loft.rs
 1 tests/wasm_debug_relay.rs

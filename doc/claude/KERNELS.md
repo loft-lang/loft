@@ -15,7 +15,8 @@ it exists and when it goes.
 ## The rule
 
 **Kernels have their place, but each is a stop-gap, and none may dominate loft** (the owner's
-rule).  A library function with a clear goal and a fast loft implementation is almost
+rule; @C78 at the scale of one routine — Rust carries mechanism, and loft code that needs Rust
+to be fast is a defect to fix in loft).  A library function with a clear goal and a fast loft implementation is almost
 always preferred, and optimisation work slightly favours the loft version over a new kernel.
 The reason is reach: a kernel fixes one NAME, while making the loft code fast fixes the
 PATTERN everywhere it is written, in users' own programs too.  A slow `split` body was the
@@ -29,14 +30,14 @@ for a gap the INTERPRETER (or, for `sum`, the code generator) has not closed yet
 
 **Every kernel is to be removed, and the standard library is to be compiled like any other
 library** (the owner's rule).  A `use`d library is already compiled for an interpreted script
-(C71, below), so its loops run as compiled loft; the standard library will run the same way,
+(@C71, below), so its loops run as compiled loft; the standard library will run the same way,
 and then an interpreted script calls a kernel's compiled LOFT body just as a native program
 does.  The Rust version of a routine is replaced by loft as soon as that is viable.
 
 **Until then, kernels live only in the standard library** (the owner's rule).  Outside it,
 hand-written Rust stays sparse: a library writes its loops in loft, and a `use`d library is
 compiled for an interpreted script anyway
-([C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
+([@C71](DESIGN_DECISIONS_PLATFORM.md#c71--native-libraries-compile-scripts-interpret--the-steady-state-execution-model),
 `src/native_lib.rs`).  A library's `#native` Rust is for what loft cannot express (an OS or a
 foreign API), never for speed.
 

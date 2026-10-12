@@ -39,10 +39,10 @@ single reconciled view (supersedes the scattered "open" markers).
 |---|---|---|
 | **Semantics** | INCONSISTENCIES.md High (silent-wrong) all fixed | ✅ *"All fixed — see CHANGELOG.md"* |
 | **Semantics** | INCONSISTENCIES.md Medium/Low resolved-as-design-point (documented + regression-guarded) | ✅ all in the resolved table |
-| **Errors** | Pre-freeze error surface maximally strict (add every error we might want — one-way) | ✅ Tier 0/1 fixed; E2-A + E2-B shipped (`tuxedo-e1-diag-codes`); sentinel collisions accepted (C85) |
+| **Errors** | Pre-freeze error surface maximally strict (add every error we might want — one-way) | ✅ Tier 0/1 fixed; E2-A + E2-B shipped (`tuxedo-e1-diag-codes`); sentinel collisions accepted (@C85) |
 | **Errors** | Diagnostic machine-identity exists (codes, so prose stays improvable) | ✅ E1 shipped (codes are additive post-flip, so full back-fill is NOT a gate) |
 | **Syntax** | The last in-flight syntax plans settled (they *define* what contract 1 is) | 🔶 **effectively settled** (query 2026-07-19: all syntax plans `future`/additive) — pending 2 owner rulings (@PLN15, @PLN91); see "Syntax-settled" below |
-| **Stdlib / libs** | lib-audit worklist resolved (H1–H9) | ✅ done or consciously accepted (H8 = C99) |
+| **Stdlib / libs** | lib-audit worklist resolved (H1–H9) | ✅ done or consciously accepted (H8 = @C99) |
 | **Stdlib / libs** | The dedicated unhurried lib pass (owner phase 2 — stdlib + core libs, equally permanent) | 🔶 the second half of the E gate |
 | **Formats** | Layout/persistence identity distinguishes every semantically-distinct layout | ✅ **F9 built 2026-07-19** — `τ` vs `τ?` distinguished ([layout-nullability-identity.md](layout-nullability-identity.md)); deep raw-store gate grandfathered |
 | **Formats** | Format sub-language (interpolation) warts fixed | ✅ E2-A (unescaped `}`) shipped; format-brace is the last known one |
@@ -123,7 +123,7 @@ A behavioural break need not touch layout — a changed *observable output* on a
 corpus is the general silent-semantics detector (shared with arcs A/C).
 
 **Built** (`tests/behavior_golden.rs` + `tests/golden/behavior/{corpus.loft,corpus.out}`):
-a curated corpus prints one labelled VALUE per frozen semantic surface (C80/C85 null
+a curated corpus prints one labelled VALUE per frozen semantic surface (@C80/@C85 null
 model, casts, shifts, `??`, vectors + comprehensions, match, text — VALUES only, never
 error PROSE, so an improvable wording change never trips it). The output is pinned to a
 golden (re-bless `LOFT_BLESS_BEHAVIOR=1`), the drift is loud at commit, and a second

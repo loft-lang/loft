@@ -142,7 +142,7 @@ and any inline example still match what the code does **now**? Doc edits are XS 
 Then the README and the guide, the same way: **run every example in them**, and measure
 every claim that names a target, a number or a limitation. The defect met most is an
 example written as `use lib;` followed by a bare name — a bare `use` brings in only the
-`lib::` qualifier (C98), so it does not compile; the cure is `use lib::*;`. The next is a
+`lib::` qualifier (@C98), so it does not compile; the cure is `use lib::*;`. The next is a
 limitation the code has since outgrown: "does not build on `--native-wasm`", "is not
 drawn", "import it in this order". A limitation is a claim — run it before keeping it.
 
@@ -254,21 +254,21 @@ as a STALE ROW rather than ignored.
 | `random` | 2026-10 | `06aa45e` | `RandStream` described; `rand_indices`' negative case named (0.3.4) |
 | `regex` | 2026-10 | `06aa45e` | `regex_find`'s supersession named the wrong `search`; roadmap's FFI-gap cause was stale (0.4.2) |
 | `zttext` | 2026-10 | `06aa45e` | Guide written and falsified; `zttext_version()` answers the manifest; design pointers name where the notation lives (0.1.3) |
-| `assets` | 2026-10 | `efd8ed7` | Guide and @PAK-001..003 written; README example did not compile under C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
+| `assets` | 2026-10 | `efd8ed7` | Guide and @PAK-001..003 written; README example did not compile under @C98 and the v2026.8.0 hang note was obsolete; `blob_put`'s `+=` claim was stale (0.2.4). Found loft's text-key replace duplicating (fixed in loft) |
 | `glb` | 2026-10 | `63e6b03` | Guide written; README claimed camera nodes that are never written (0.1.4). A spot light now carries the `spot` object KHR_lights_punctual requires and its node's translation (0.1.5) |
-| `mesh3d` | 2026-10 | `efd8ed7` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated C98 (0.1.3) |
-| `drawing` | 2026-10 | `1868d3c` | Guide and @DRW-001..003 written; the README's example did not compile under C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. 0.4.0's Brush/Lock rows read against the parser (`flip` defaults to 0); the corpus re-measured with the `Lock` brush: all 36 of the crawler's scenes byte-identical on both backends (0.4.0) |
+| `mesh3d` | 2026-10 | `efd8ed7` | Guide written; `mat4_scale` is per-axis, not uniform; the bare-import claim predated @C98 (0.1.3) |
+| `drawing` | 2026-10 | `1868d3c` | Guide and @DRW-001..003 written; the README's example did not compile under @C98, and its rasteriser import order, `--native-wasm` and "Fronds / gradients / checks not drawn" claims were stale. 0.4.0's Brush/Lock rows read against the parser (`flip` defaults to 0); the corpus re-measured with the `Lock` brush: all 36 of the crawler's scenes byte-identical on both backends (0.4.0) |
 | `graphics` | 2026-10 | `98b270f` | README listed `mesh3d` and `glb` as sub-modules it does not pass on; every listed function exists, the wasm PNG and blend claims measured (0.9.5) |
 | `gridmesh` | 2026-10 | `98b270f` | Guide written; its read-only functions take `const`, so a rule holding the field `const` can call `idx_at`; plan history out of the comments (0.2.4). Found loft's false avoidable-copy advice on a field or parameter copy (fixed in loft) |
 | `imaging` | 2026-10 | `98b270f` | README only: `--native-wasm` builds and decodes as the interpreter does; @IMG-002 described as RGBA with alpha carried (0.4.2) |
 | `shapes` | 2026-10 | `98b270f` | Guide written; a depth is the distance out, not the part inside (0.5.2) |
 | `stage` | 2026-10 | `98b270f` | README read against the source: all 100 listed names exist, the test-backed claims each have their test; guide linked (0.18.6) |
 | `text2d` | 2026-10 | `98b270f` | Guide and @T2D-001..003 written; `write_text("")` answered -1 and a scale below 1 measured unlike it drew (0.4.3) |
-| `tween` | 2026-10 | `98b270f` | Guide and @TWN-001..003 written; the README's fixstep example did not compile under C98 (0.1.2). Found loft's misleading bare-variant import advice (fixed in loft) |
+| `tween` | 2026-10 | `98b270f` | Guide and @TWN-001..003 written; the README's fixstep example did not compile under @C98 (0.1.2). Found loft's misleading bare-variant import advice (fixed in loft) |
 | `audio_bus` | 2026-10 | `92f7483` | Guide written: the bus tree and its products, one write moving a subtree, the duck that comes home exactly (nested), what silence means, `stop_bus` counting a subtree. The README example's bare `use audio_bus;` did not compile → imports the names; the "until graphics 0.9.0 is in the registry" note removed (0.1.2) |
 | `fixstep` | 2026-10 | `658f0a0` | Guide written: a frame clock banking its remainder, a rate through a `Bank`, a cooldown firing once. The `--native-wasm` row was "not yet exercised"; measured, it answers as the interpreter does (0.1.3) |
 | `input` | 2026-10 | `658f0a0` | Guide written, driven headless through `input_tick_from_state`; the repo README listed `input` as "(planned)" (0.2.4) |
-| `time` | 2026-10 | `b24a332` | Read at 0.4.0, the @PLN182 P5 release (operator definitions; loft-libs-game#16). Every README claim measured on both backends; its bare `use time;` example did not compile — the C98 qualifier and, under it, no operator of the type (D-opr-1, fixed in loft); the README imports the names. Floored on the dated daily `>=2026.10.20261002` |
+| `time` | 2026-10 | `b24a332` | Read at 0.4.0, the @PLN182 P5 release (operator definitions; loft-libs-game#16). Every README claim measured on both backends; its bare `use time;` example did not compile — the @C98 qualifier and, under it, no operator of the type (D-opr-1, fixed in loft); the README imports the names. Floored on the dated daily `>=2026.10.20261002` |
 | `game_protocol` | 2026-10 | `c3d22a8` | Guide written (JSON on the wire with `:j` and `GameEnvelope.parse`); the README promised framing and ack/retransmit the package does not have — it is message types and constructors (0.1.5) |
 | `ssh` | 2026-10 | `c3d22a8` | Guide written, runs with no sshd; the README's loop bounded `recv` bytes by `len` — the mistake @SSH-002 warns against (0.1.3) |
 | `server` | 2026-10 | `fdcd652` | Read at 0.7.3 (`next` is an `operator next`; loft-libs-net#29). Its three `use server;` examples iterated `for req in srv`, unreachable through a bare `use` (D-opr-1, fixed in loft); they import the names, and all five README blocks compile warning-clean. Floored on `>=2026.10.20261002` |
@@ -284,10 +284,10 @@ as a STALE ROW rather than ignored.
 | `hex_recover` | 2026-10 | `c9ddda6` | Guide written; comments cited a `tests/trip.loft` the package lacks (0.1.4) |
 | `hex_roof` | 2026-10 | `c9ddda6` | Guide written; `roof_match` answering `ROOF_UNKNOWN` dropped the closest ridge's far end — fixed in code and guarded (0.1.6) |
 | `hex_shape` | 2026-10 | `c9ddda6` | Guide written; the wall-direction error is 1.1021°, the header said 4.11° (0.1.4) |
-| `hex_terrain` | 2026-10 | `c9ddda6` | Guide written; the README example was refused under C98 (0.1.5) |
+| `hex_terrain` | 2026-10 | `c9ddda6` | Guide written; the README example was refused under @C98 (0.1.5) |
 | `hex_way` | 2026-10 | `c9ddda6` | Guide written; the README listed six of seven examples and half the surface (0.1.3) |
 | `hex_world` | 2026-10 | `c9ddda6` | Guide written; the README named two consumers that do not use it. Ships `src/overland.loft` and `src/wall.loft`, which fail `--check` and nothing reaches — left for the owner to remove (0.2.2) |
-| `pluginabi` | 2026-10 | `b4dcdb4` | Guide written (a counter plugin and its host over frames); both README examples were refused under C98, the loft#1491 leak note was obsolete (clean under `LOFT_STORES=warn`), and the header's example spelled the error code `unknown_op` (0.1.5) |
+| `pluginabi` | 2026-10 | `b4dcdb4` | Guide written (a counter plugin and its host over frames); both README examples were refused under @C98, the loft#1491 leak note was obsolete (clean under `LOFT_STORES=warn`), and the header's example spelled the error code `unknown_op` (0.1.5) |
 | `html` | 2026-10 | `13205f6` | @HTM-001..002 written: escaping is one pass but not idempotent (escape once, at the output), and the apostrophe keeps a single-quoted attribute closed. "`&` is escaped first" described a replace chain the function is not (0.1.2) |
 | `markdown` | 2026-10 | `13205f6` | @MKD-001..003 written: a non-empty `base_dir` routes relative links through `/file/` (undocumented until now), a heading's text is raw with `render`'s slug, `html_escape` leaves `'`. Only `@P<n>` / `@PLAN<n>` mentions are linked (0.2.4) |
 

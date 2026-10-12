@@ -22,7 +22,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > The model here is now also the one in [OWNERSHIP_MODEL.md § The law](../OWNERSHIP_MODEL.md) —
 > @PLN87 rewrote it to the bind-site-link framing (the old "`&` = reassignment write-back"
 > framing is gone). Design home: [OWNERSHIP_MODEL.md](../OWNERSHIP_MODEL.md),
-> [DESIGN_DECISIONS.md C77](../DESIGN_DECISIONS.md).
+> [DESIGN_DECISIONS.md @C77](../DESIGN_DECISIONS.md).
 > This doc is the **binding surface**; the `deps`/borrow *checker* (lifetimes) stays in
 > the deferred `ownership.md`.
 
@@ -246,7 +246,7 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   with no runtime machinery.  Taking a `&` is the author's OWNERSHIP
                   DECISION, and this is its consequence: loft will not quietly downgrade
                   the reference to a copy, so where it cannot honour the write it
-                  declines the program (C79, revisited 2026-08-05).  LIVENESS is the
+                  declines the program (@C79, revisited 2026-08-05).  LIVENESS is the
                   condition, not existence — `c = &v[0]; c.n = 1; v.remove(0);` is fine,
                   because the reference is dead at the disturbance.  The disturbance may
                   be in this frame or in anything the frame CALLS (`f(v[i], v)` where
@@ -367,7 +367,7 @@ source: [../plans/40-const-fields/const-model.md](../plans/40-const-fields/const
                           a `&` link to a part is a VIEW (B-View), read-only like the
                           value; every write — through the value, a view or a link —
                           is Const-Value's compile-time error, never a runtime check
-                          (C80).  The cure is a copy, which is the reader's own:
+                          (@C80).  The cure is a copy, which is the reader's own:
                           `c = t.0 + "!"` where `c = &t.0; c += "!"` is refused,
                           `w = v` (B-Copy).  Foreign data is never presented as
                           writable (@C139).

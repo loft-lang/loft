@@ -292,7 +292,7 @@ border**. The border is the admission set, decided before the first instruction 
   each frame. The call runs to completion at trusted speed with **zero injected runtime checks**.
   There is nothing to catch: admission excludes the abort ops (`assert`/`panic`/`log_fatal`/`exit`),
   unbounded loops, and recursion, and total ops make the residual faults yield `null` and
-  continue (C80) rather than halt.
+  continue (@C80) rather than halt.
 - **Status: 🟢 MODEL COMPLETE (no runtime work by decision).** The load-time gate exists
   (`sandbox_admission_errors` + the `loft sandbox-check` CLI); a host embedding loft calls the
   same surface at mod-load. What remains is purely **ergonomic** — a documented host-entry

@@ -957,7 +957,7 @@ fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
 // The RELEASE tag stays calendar-versioned (`CARGO_PKG_VERSION`, checked by
 // `check_version` above).  The COMPATIBILITY contract is a separate monotone
 // integer that increments iff loft makes a *silent* breaking change — old code
-// that still compiles and runs, but now produces a different result (the C86
+// that still compiles and runs, but now produces a different result (the @C86
 // plain-bind-copy class that broke `hex_terrain`).  Additive and loud-failing
 // changes (a missing symbol errors at compile) do NOT bump it, so a library's
 // declared contract stays valid exactly as long as loft's silent contract is

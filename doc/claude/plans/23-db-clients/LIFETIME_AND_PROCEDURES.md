@@ -47,7 +47,7 @@ hand-rolled `defer` would have to rediscover every one.
 ### What it costs, honestly
 
 **A drop cannot fail.** loft's rule is that there are no runtime errors ever
-(C80). A rollback at scope end can fail for real — the connection dropped, the
+(@C80). A rollback at scope end can fail for real — the connection dropped, the
 server went away — and there is no caller left to tell. So a drop is
 *best-effort and silent*, and that is a genuine semantic weakening: a transaction
 you believed was rolled back may not have been, and nothing raised. The cure is

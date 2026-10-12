@@ -46,6 +46,8 @@ pub const BUCKET0: u32 = 32;
 /// Words reserved before the bucket array: header, seed, and the arena's four fields.
 pub const RESERVED_WORDS: u32 = 4;
 /// Bytes per bucket slot — a `u32` entry index, 2 to a word.
+///
+/// @C105 — a slot holds the entry index only: no cached hash, no entries in the bucket table.
 pub const SLOT_BYTES: u32 = 4;
 
 /// Bytes per entry slot for an element type of `size` bytes.
@@ -60,19 +62,40 @@ pub fn stride_for(size: u32) -> u32 {
     size.max(8).next_multiple_of(8)
 }
 
-/// The bucket a key's walk starts at — the ONE place a digest becomes a bucket number.
+/// The bucket a key's walk starts at — the ONE place a digest becomes a bucket number,
+/// for the writer here and the paged reader alike.
 ///
-/// Part of the on-disk placement contract (`crate::placement::HASH`): a reader that
-/// derives it differently looks in the wrong bucket.  That is also why it is still a
-/// 64-bit `%` by a count that is not a power of two — a division on every lookup's
-/// critical path, priced at 7–10 % of a cache-resident lookup
-/// (`bench/portal/analysis/keyed.md`).  A multiply-shift range reduction would remove it
-/// and move every entry of every stored hash, and an exact reciprocal needs a per-table
-/// magic number the table's header has no word for; both are a format break, so neither
-/// is taken here.
+/// Part of the on-disk placement contract (`crate::placement::HASH`): the bucket is
+/// `digest mod count`, and a reader that derives it differently looks in the wrong bucket.
+/// Enforces `@FR-Col-Bucket` (@C146): every table this program sizes has a POWER-OF-TWO
+/// count, for which the remainder is a mask — the 64-bit division on every lookup's
+/// critical path priced at 7–10 % of a lookup (`bench/portal/analysis/keyed.md`) is gone,
+/// and the bucket is the same number.  A table the allocator handed a few words more, or
+/// one a store written before carries, keeps the division: same formula, so no stored hash
+/// moves and none is refused.
 #[inline]
-fn home_bucket(digest: u64, count: u32) -> u32 {
-    (digest % u64::from(count)) as u32
+#[must_use]
+pub fn home_bucket(digest: u64, count: u32) -> u32 {
+    if count.is_power_of_two() && pow2_buckets() {
+        (digest & u64::from(count - 1)) as u32
+    } else {
+        (digest % u64::from(count)) as u32
+    }
+}
+
+/// `LOFT_NO_POW2_BUCKETS=1` — `@FR-Col-Bucket` off: tables grow and reserve to the sizes
+/// they had before (a count that is not a power of two) and every bucket is a division.
+/// The A/B for the rule, and the way to write a table the rule's reader must still place.
+fn pow2_buckets() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| !keys::env_set("LOFT_NO_POW2_BUCKETS"))
+}
+
+/// The words a table record needs for a POWER-OF-TWO bucket count of at least `elms`
+/// slots (`@FR-Col-Bucket`, @C146): the bucket array is `RESERVED_WORDS` behind the
+/// header, two slots a word, so the count is `2·(room - RESERVED_WORDS)`.
+fn room_for_buckets(elms: u64) -> u64 {
+    u64::from(RESERVED_WORDS) + elms.max(2).next_power_of_two() / 2
 }
 
 /// Bucket slots in table record `claim`.
@@ -269,7 +292,8 @@ pub fn ensure_table(hash: &DbRef, stride: u32, stores: &mut [Store]) -> u32 {
         return existing;
     }
     // Claim 12 words so the bucket array (room - RESERVED_WORDS words, 2 slots/word)
-    // starts at 16 slots, the size it has always started at.
+    // starts at 16 slots, the size it has always started at — a power of two
+    // (`@FR-Col-Bucket`).
     let claim = keys::mut_store(hash, stores).claim(12);
     keys::mut_store(hash, stores).zero_fill(claim);
     // Seed the new table and store the seed with its buckets, so any
@@ -378,7 +402,18 @@ fn grow_if_full(
     if !is_full(length, room) {
         return None;
     }
-    let new_claim = keys::mut_store(hash, stores).claim(room * 2 - 1);
+    // Twice the buckets, at a power-of-two count (`@FR-Col-Bucket`): a table that was not
+    // one — a store written before, a claim the allocator rounded up — reaches it here.
+    let want = if pow2_buckets() {
+        let elms = u64::from(room - RESERVED_WORDS) * 4;
+        let Ok(want) = u32::try_from(room_for_buckets(elms)) else {
+            return None;
+        };
+        want
+    } else {
+        room * 2 - 1
+    };
+    let new_claim = keys::mut_store(hash, stores).claim(want);
     keys::mut_store(hash, stores).zero_fill(new_claim);
     rehash_into(hash, claim, new_claim, stores, keys);
     install_table(hash, claim, new_claim, stores);
@@ -537,7 +572,15 @@ pub fn reserve(hash: &DbRef, count: i64, stride: u32, stores: &mut [Store], keys
     // `length == count` — sized to exactly the trigger, the last insert grows the table
     // and the reservation buys nothing but a doubling (measured under the 0.75 rule: a
     // 1M table reserved at the trigger ended up 10.7 MB at load 0.37 instead of 5.3 MB).
-    let Ok(want) = u32::try_from(words_for(count)) else {
+    // At a power-of-two bucket count (`@FR-Col-Bucket`): the words past the trigger,
+    // rounded up to the next table of that shape.
+    let need = words_for(count).saturating_sub(u64::from(RESERVED_WORDS)) * 2;
+    let words = if pow2_buckets() {
+        room_for_buckets(need)
+    } else {
+        words_for(count)
+    };
+    let Ok(want) = u32::try_from(words) else {
         return;
     };
     // Create the table if it is not there yet, so the seed, the stride and the arena

@@ -96,6 +96,6 @@ instrument before trusting a reading.
 
 - [REPL.md](../../REPL.md) — where the reference content lives now.
 - [CONVERGENCE.md](CONVERGENCE.md) — the model this plan built.
-- [DESIGN_DECISIONS.md § C72](../../DESIGN_DECISIONS.md) — resume restores stored
+- [DESIGN_DECISIONS.md § @C72](../../DESIGN_DECISIONS.md) — resume restores stored
   values but deliberately **not** RNG generator state.
 - **Tracker:** [loft-lang/plans#14](https://github.com/loft-lang/plans/issues/14).

@@ -185,11 +185,11 @@ fn signature_break(old_sig: &str, new_sig: &str) -> Option<String> {
 
 /// One receiver, written either way: `both` and `self` name the SAME parameter.
 ///
-/// C123 revised: *"`both` still compiles and means `self`"* — the two spellings were measured
+/// @C123 revised: *"`both` still compiles and means `self`"* — the two spellings were measured
 /// identical across method and free calls, overloads, **named and default arguments**, nullable
 /// and scalar receivers, enum-variant and generic dispatch. So a first parameter renamed between
 /// them changes nothing a caller can observe, and reporting it as a break would refuse the very
-/// migration C123 prescribes — it names `regex`'s `matches` as the published case to rename.
+/// migration @C123 prescribes — it names `regex`'s `matches` as the published case to rename.
 ///
 /// Applied at position 0 ONLY, because only the first parameter is the receiver: `both` at any
 /// other position is an ordinary name whose rename IS a break. The type is untouched, so
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn a_receiver_renamed_both_to_self_is_not_a_break() {
-        // C123: `both` still compiles and MEANS `self`, so this rename — the migration C123
+        // @C123: `both` still compiles and MEANS `self`, so this rename — the migration @C123
         // prescribes, naming `regex`'s `matches` — changes nothing a caller can observe.
         let old = vec![pubm(
             "matches",

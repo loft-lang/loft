@@ -2950,7 +2950,7 @@ fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
         return 1;
     }
     // A library may not claim a language-namespace name (`std`, `core`): those
-    // resolve to a built-in namespace, not a package (@PLN13 / C101).
+    // resolve to a built-in namespace, not a package (@PLN13 / @C101).
     if loft::libscan::is_reserved_package_name(name) {
         eprintln!(
             "loft new: `{name}` is a reserved namespace name (the standard library is `std::`); choose another library name"
@@ -3199,6 +3199,10 @@ echo "  external lib         -> loft publish + open a registry PR."
     }
     println!();
     println!("Next steps:");
+    if native && !loft::native_lib::rustc_available() {
+        // @C102 — `native/` is a Rust crate: say so where the developer is setting it up.
+        println!("  # native/ is Rust: {}", loft::native_lib::NO_RUSTC);
+    }
     println!("  cd {name}");
     println!("  loft test           # exercises the smoke test");
     println!("  $EDITOR src/{name}.loft   # add your library's API");
@@ -5484,7 +5488,7 @@ fn api_surface_of(
     Ok((surface, identity))
 }
 
-/// @PLN102 C96 — `loft ship [args…]`: the maintainer ship verb.  Locates
+/// @PLN102 @C96 — `loft ship [args…]`: the maintainer ship verb.  Locates
 /// `scripts/registry_maintain.sh` (env override, exe-relative, or CWD) and runs it.
 /// On a KEY-PRESENT machine (`~/.loft/trust-root/registry-signing-key.bin` exists) it
 /// defaults the local file signer + non-interactive `--yes` — autonomous package →
@@ -5527,7 +5531,7 @@ fn run_ship_command(args: &[String]) -> i32 {
         .is_some_and(|p| fa::is_file(&p));
 
     // The script may prompt (a push asking for credentials): it is handed the terminal.
-    let mut cmd = Spawn::new(Program::search("bash")).tree(Tree::Foreground);
+    let mut cmd = Spawn::new(Program::bash()).tree(Tree::Foreground);
     cmd.push_arg(&script);
     let passthrough_yes = args.iter().any(|a| a == "--yes" || a == "--dry-run");
     if key_present {
@@ -7403,6 +7407,12 @@ fn main() {
         }
         if a == "--version" {
             println!("loft {}", loft::manifest::LOFT_RUNNING_VERSION);
+            // @C102 — the toolchain a native build would use, on the line after the version
+            // (a reader of the first line alone sees what it always saw).
+            match loft::native_lib::rustc_version() {
+                Some(v) => println!("native: {v}"),
+                None => println!("native: {}", loft::native_lib::NO_RUSTC),
+            }
             return;
         } else if a == "--migrate-long" {
             // C54.B migration tool — rewrite `long` type references and
@@ -7452,7 +7462,7 @@ fn main() {
             production = true;
             // A `--native` run spawns the compiled program, which builds its own logger:
             // the environment is what carries production mode across to it, so a panic, an
-            // assert or a locked write logs there instead of halting, as it does here (C80).
+            // assert or a locked write logs there instead of halting, as it does here (@C80).
             //
             // SAFETY: set_var is unsafe in Rust 2024; this runs during argument parsing,
             // before any thread or State exists, as the `--dev-soft-halt` arm below does.
@@ -8509,7 +8519,7 @@ fn main() {
                 std::process::exit(1);
             }
         } else if a == "ship" {
-            // C96 — the maintainer ship verb.  On a key-present machine (the local
+            // @C96 — the maintainer ship verb.  On a key-present machine (the local
             // trust-root file key exists) it packages + signs + pushes every own lib
             // newer than the index, autonomously; a key-absent machine can only defer
             // to a submission.  Wraps scripts/registry_maintain.sh (which chains the
@@ -9727,7 +9737,7 @@ fn main() {
         }
     }
     // @PLN181 — the standard library's compiled loft bodies, routed like a `use`d library's
-    // (C71) when the program is INTERPRETED; `--native` compiles those bodies itself, and a
+    // (@C71) when the program is INTERPRETED; `--native` compiles those bodies itself, and a
     // browser build has no bridge dispatcher.  Declines on its own when the program's type
     // table does not start with the standard library's (`compiled_stdlib::mark`).
     if !native_mode && html_out.is_none() {

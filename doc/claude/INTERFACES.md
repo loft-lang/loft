@@ -388,7 +388,7 @@ than it gets credit for. Measured on the current tree, not recalled:
 | bounded generics | **yes** | structural satisfaction, no `impl` block |
 | **receive the parts of `"{…}"`** | **yes** | `fn lit(self: T, s: text)` + `fn hole_<kind>(self: T, v: τ)` — the target type decides (@PLN124). A hole may be a scalar OR a value of a named type, whose kind is its own name in method case (`SqlIdent` → `hole_sql_ident`) |
 | **associated types** | **yes** | `type Rows: Cursor` in an interface body; `Self.Rows` in its signatures (@PLN125 arc A) |
-| `x[i]` indexing | **no, by decision** | `[…]` belongs to the built-in collections; a type reads through a named method, `x.at(i)` (C132, see below) |
+| `x[i]` indexing | **no, by decision** | `[…]` belongs to the built-in collections; a type reads through a named method, `x.at(i)` (@C132, see below) |
 | **run at scope end** | **yes** | `fn OpDrop(self: T)` — runs when the value's OWNER dies (@PLN125 arc B, @PLN139) |
 | **lease a copy** | **yes** | `fn OpCopy(self: T)` — runs on the new structure a copy makes (@PLN163 P4) |
 
@@ -424,7 +424,7 @@ r.at(0)     // 20 — the ring's own offset, not `data[0]`
 The index type is whatever the method declares (a row addressed by column name takes a
 `text`), and out of range is the TYPE's answer.  `x[i]` on a program's type — and `x[a, b]`,
 `x[a..b]`, `x[i] = v` — is one refusal naming that cure, and an interface cannot require
-`op []`, since no type could meet it.  A type defined `fn OpIndex` for `x[i]` until C132
+`op []`, since no type could meet it.  A type defined `fn OpIndex` for `x[i]` until @C132
 retired it with every other `fn Op…` (@PLN182 Q10); `tests/scripts/pln125-c-index.loft` keeps
 that arc's cases running through `at`, and `tests/scripts/996-opindex-composite-subscript.loft`
 pins the refusal.
@@ -581,8 +581,8 @@ the target off the one expected-type channel that already carries `lambda_hint` 
 sixth side-channel.
 
 The per-kind `hole_*` form is **deliberate and stays**.  Collapsing it into one
-generic `hole<T>` was evaluated and DECLINED ([C110](DESIGN_DECISIONS.md), kept by
-[C126](DESIGN_DECISIONS.md)).  An unbounded `hole<T>` accepts every type, deleting the
+generic `hole<T>` was evaluated and DECLINED ([@C110](DESIGN_DECISIONS.md), kept by
+[@C126](DESIGN_DECISIONS.md)).  An unbounded `hole<T>` accepts every type, deleting the
 per-kind opt-in.  A BOUNDED one (`<T: SqlHole>`) keeps the compile error — a type that has
 not opted in is refused naming the method to add — but hands the opt-in list to every
 implementor, where the per-kind form keeps it with the target's author: the refusal above
@@ -680,7 +680,7 @@ other: Money) -> Money`"*), not a silently dropped operand.
 would share `Numeric`'s `*` at the SAME arity, and same-name same-arity requirements from two
 interfaces are one stub, so the second is taken to agree with the first.
 `text` satisfies `Ordered` and `Equatable`. No extra declarations are needed.
-Every type satisfies `Equatable` (`(G-Sat-Eq)`, C91): a struct, `value struct`, struct-enum,
+Every type satisfies `Equatable` (`(G-Sat-Eq)`, @C91): a struct, `value struct`, struct-enum,
 vector or keyed collection with no `op ==` of its own is compared by content in the monomorph,
 exactly as a concrete `a == b` on it is; a tuple element by element, nested tuples included.
 
@@ -707,7 +707,7 @@ over all bounds. The incremental cost over a single-bound design is ~40 lines.
 
 **Q2: Operator method naming in interfaces** — resolved.  An interface spells an operator
 requirement as the definition that meets it, `operator compare(self: Self, other: Self) ->
-Ordering`, and a type meets it with its `operator` method, never by a function's name (C132,
+Ordering`, and a type meets it with its `operator` method, never by a function's name (@C132,
 @PLN182 Q13).
 
 **Q3: Interface visibility / `pub`** — should interfaces follow the same

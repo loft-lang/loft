@@ -20,7 +20,7 @@ the same day: #1356 (a struct or vector yielded from a generator's LOOP body com
 dropped every statement after the last yield, leaking each persistent heap local and losing a
 `print`), #1357 (every text buffer a frame mints is released — the sibling checkout's fix,
 cherry-picked as `3ece3109`), #1358 (a capturing closure in a collection is refused by design,
-C116, with the struct-field route named) and #1359 (the warm cache carries its import tables,
+@C116, with the struct-field route named) and #1359 (the warm cache carries its import tables,
 IR cache format 4). `#1342`'s library half — 34 undocumented types across six `loft-libs-*`
 repos — is done on their `doc-types-2026-09` branches and lands with their next releases.
 

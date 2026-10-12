@@ -190,7 +190,7 @@ where
                 // as on `thread::scope`: `pool.install` blocks until the parallel iterator
                 // has `collect`ed every task, so no worker (nor its read-only borrow of
                 // `stores`) outlives this call, and `stores` outlives `pool.install`.
-                // Workers never write the parent (C93 → compile error), so the shared
+                // Workers never write the parent (@C93 → compile error), so the shared
                 // read-only buffers are race-free.  `WorkerStores: Send` (unsafe impl),
                 // so a borrowed one moves into a rayon task like the copy did.
                 let worker_stores = unsafe { stores.clone_for_light_worker() };

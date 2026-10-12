@@ -108,14 +108,8 @@ The pieces join exactly:
 record, so the key field is the field whose `position` matches. Nothing is
 declared twice and nothing is matched by guessing a name.
 
-Two things the descriptor carries that a reader of the type would not expect:
+One thing the descriptor carries that a reader of the type would not expect:
 
-- **An `index` element record carries its own tree links** — `#left_1`,
-  `#right_1`, `#color_1` after the declared fields, the red-black bookkeeping
-  stored inside the element. `#color_1` is an ordinary boolean, so a column filter
-  written on field TYPE selects it and the SELECT names a column no table has.
-  The predicate to use is `LayoutField::is_data`, shared with
-  `read_via_descriptor` and the browser delivery.
 - **A key is an index into the FULL field list**, synthetic fields included, so
   the key list and the column list are numbered in the same space. Do not re-base
   keys on the filtered columns.
@@ -181,7 +175,7 @@ naming what was wrong.
 
 ## A failed fetch cannot raise, and a later success must not erase it
 
-loft has no runtime errors (C80). If an unreachable database answered `null`, then
+loft has no runtime errors (@C80). If an unreachable database answered `null`, then
 "no such person" and "the network is down" would be indistinguishable **and
 unstable across runs** — the worst class, because it looks like data. So the
 failure lives on a store-level channel a program can ask:
@@ -281,7 +275,7 @@ connect and an auth per row, which is a different order of problem, and those ar
 exactly the backends core has no Rust driver for.
 
 **A fault inside the driver is CONTAINED.** For an ordinary call, propagating a
-fault is right; for a fetch it is not, because C80 says a failed fetch reports
+fault is right; for a fetch it is not, because @C80 says a failed fetch reports
 through `store_lazy_error` and the lookup answers null. So a buggy driver leaves
 the lookup answering null with a reason, the outer frame intact, and the program
 running.
@@ -322,7 +316,7 @@ count is asking the wrong object.
 This is why a range is an explicit call rather than a slice that fetches: a slice
 that silently consulted the source would make `len` and iteration mean two
 different things depending on how the collection was reached. See
-[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) § C104.
+[DESIGN_DECISIONS.md](DESIGN_DECISIONS.md) § @C104.
 
 ## A traversal sees one world
 

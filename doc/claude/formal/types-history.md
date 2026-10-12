@@ -56,7 +56,7 @@ predicate, so lint and refusal cannot disagree about which stores are narrowings
 
 **What loft#984 keeps.**  Its three regressions — an aliased, a dropped and a wrapped store
 in the store layer — are still guarded, on the one seam the alias also leaves open: a slot
-stepped past its range by its OWN arithmetic (`+=`, C85's overflow edge, `(E-Uncomp-NN)`).
+stepped past its range by its OWN arithmetic (`+=`, @C85's overflow edge, `(E-Uncomp-NN)`).
 Cells 984, 1009, 1379 and the boxed-capture cell re-spell every out-of-range arrival as `+=`
 from a known value, so the same value reaches the same setter; the plain-store forms are
 pinned as refusals in `tests/scripts/1593-a-limit-slot-refuses-the-narrowing-the-alias-refuses.loft`,
@@ -203,7 +203,7 @@ The last of loft#1450's three legs, and the one the register could not see: `D-N
 the ABSENT-collection read and `D-col-lookup` the keyed MISS, but a plain `s.f` on an `s: S?`
 still typed `f`'s declared type.  `get_field` reads the FIELD's own nullness, which is the field's
 promise about itself and says nothing about whether the receiver is there to hold it — reading
-`s.f` on an absent `s` yields the C80 null whatever `f` declares.
+`s.f` on an absent `s` yields the @C80 null whatever `f` declares.
 
 **The site already knew and could not say it.**  `fields.rs`'s own header has said since @PLN102
 that *"a field access can't be MORE non-null than its receiver"*, and it acted on that by clearing
@@ -293,7 +293,7 @@ and elides that only where the input is *"PROVABLY in-domain (constant / range /
 elision is `index_provably_fit`, and what it proves is about the INDEX — a literal the developer
 typed, a loop variable, a bounded computation (the loft#1436 trust).  It says nothing about
 whether the COLLECTION exists.  Reading an element of an absent collection answers the element
-type's null (C80) whatever the index names, so the elision was being asked a question it does
+type's null (@C80) whatever the index names, so the elision was being asked a question it does
 not answer:
 
 ```loft
@@ -312,7 +312,7 @@ the fix reads the receiver's nullability BEFORE that peel and carries it to the 
 Closed at `parse_index`; the dense-receiver trust is untouched, which is the control.
 
 This also closes the *"nullable-receiver index typing"* half that loft#1434's ruling
-(`(Col-Insert-Absent)`, C118) left open for whoever took the fix.
+(`(Col-Insert-Absent)`, @C118) left open for whoever took the fix.
 
 ⚠ **Two legs of loft#1450 stay open and are deliberately NOT closed here**, because they are
 migrations rather than one-site fixes and were measured before the split was chosen: a FIELD
@@ -382,7 +382,7 @@ null"* — a tuple has no faithful document form anyway.  `(N-Opt)` now reads `�
 ⟹ τ? wf`, which is what it always meant (two formers were refused by name under it), and the
 representation of a tuple's absence is `tuples.md (T-Absent)`: `optional((τ₁, …, τₙ)) ≡
 (τ₁?, …, τₙ?)`, no `Optional(Tuple)` even in flight.  The stack-tag layout that would have
-made `(τ, τ)?` a type is declined in DESIGN_DECISIONS C119 on brittleness (ten-plus silent
+made `(τ, τ)?` a type is declined in DESIGN_DECISIONS @C119 on brittleness (ten-plus silent
 re-assertion sites for a one-clause rule).  The CODE half — `Type::optional` still wraps a
 tuple, so a generic `T?` at a tuple answers garbage / E0308 (loft#1451), `v[i].0` is refused
 where the rule types it `τ?`, and `t == null` has no tuple home — is `D-tup-10` in tuples.md.
@@ -392,7 +392,7 @@ The entry as opened follows.
 
 `(N-Opt)` is `τ wf ⟹ τ? wf` — *"`τ?` is a type for any τ"*.  Two types are refused at the
 declaration instead, and for the same reason: the null MODEL (the @PLN102 keystone, option B,
-frozen as C90) gives absence either `(L-Null)`'s in-band sentinel — a value the type RESERVES —
+frozen as @C90) gives absence either `(L-Null)`'s in-band sentinel — a value the type RESERVES —
 or `(L-Null-Tag)`'s discriminant, which is for a STRUCT stored inline.  A `value struct` has
 neither (@PLN101, refused by name since then), and neither does a TUPLE: it is its members'
 bytes, and the synthetic `__tuple<…>` is a struct only where the tuple is STORED — a stack-backed
@@ -1076,10 +1076,10 @@ audience-demo servers `?? 0`). The runtime "may produce null" warnings are RETIR
 `(N-Store)` is the enforcement). Regressions: `25-division-nullable.loft`, `25-index-nullable.loft`,
 `inc17_text_to_integer_requires_as` + `102` reject twins; both backends. **DECIDED EDGE (not a
 deviation) — overflow arithmetic** `a*b`/`a+b`/`a-b` stays NON-null: overflow → the null sentinel +
-continue (C80, no trap), NOT `τ?`. The fault is extraordinary (operands ~3×10⁹) while the op is
+continue (@C80, no trap), NOT `τ?`. The fault is extraordinary (operands ~3×10⁹) while the op is
 ubiquitous, so forcing discharge on all arithmetic is disproportionate + (given no traps) would
 block a game over a fault its player never hits —
-[DESIGN_DECISIONS C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--). Range-tracking keeps provably-fit multiplies exact.
+[DESIGN_DECISIONS @C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--). Range-tracking keeps provably-fit multiplies exact.
 
 ### DN4 — CLOSED (2026-07-02, F5 cutover): `as` to a narrower type enforces the range
 `400 as u8` was UB (the cast asserted the *type* but left an out-of-range value in a `u8`
@@ -1145,7 +1145,7 @@ is chosen now (pre-freeze-only).
 
 **Rule.** A float/single op types its result `τ?` **iff it can yield the reserved NaN-null
 from an input a normal program reaches** — the DN3 boundary read across to floats, with
-[C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)
+[@C85](../DESIGN_DECISIONS_VALUES.md#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--)
 (overflow → non-null) as its complement:
 
 - **`τ?`:** `/` and `%` (÷0 — mirror of integer `/`; the existing `divisor_provably_nonzero`
@@ -1159,12 +1159,12 @@ from an input a normal program reaches** — the DN3 boundary read across to flo
   an argument that is **not** provably in-domain is `τ?` (bare `sqrt(x)` on an unknown-sign `x`
   stays nullable). A constant *out-of-domain* argument (`sqrt(-1.0)`) may warn
   *"always null"*, the parallel of the existing constant-`/0` warning.
-- **Non-null (C85-style decided edge):** `sin`/`cos`/`tan`/`atan`/`atan2`/`exp`/`abs`/
+- **Non-null (@C85-style decided edge):** `sin`/`cos`/`tan`/`atan`/`atan2`/`exp`/`abs`/
   `ceil`/`floor`/`round` — a *finite* argument is always finite; NaN arises only from an
-  `±inf` argument, itself reachable only through a C85 overflow, so forcing `?` on the
+  `±inf` argument, itself reachable only through a @C85 overflow, so forcing `?` on the
   ubiquitous op is disproportionate.
 
-**Runtime is UNCHANGED** — null + continue (C80); **no runtime error is added** (owner:
+**Runtime is UNCHANGED** — null + continue (@C80); **no runtime error is added** (owner:
 *"a null is fine, errors never"*). Two type-level rules do the work, refining DN3 **across
 the shipped integer model** (@PLN25) too — the runtime *already* propagates the null
 sentinel through arithmetic (`n+5` / `n*5` / `5-n` / `abs(n)` on a null `n` all stay null,
@@ -1173,7 +1173,7 @@ both backends), so the type only has to stop lying:
 - **(N-Prop) — nullability propagates through arithmetic.** An arithmetic op with any
   nullable operand yields a nullable result: `integer? + integer → integer?`,
   `float - float? → float?` (either operand position). Already true for `text? + text`; now
-  uniform over `integer` / `float` / `single`. **C85 is untouched** — non-null × non-null
+  uniform over `integer` / `float` / `single`. **@C85 is untouched** — non-null × non-null
   stays non-null (overflow → sentinel silently, no `?` forced); propagation fires only when
   an operand is *already* nullable, so the two compose (non-null arithmetic stays non-null;
   a null, once present, stays visible).
@@ -1189,7 +1189,7 @@ both backends), so the type only has to stop lying:
   holds `255`), so they have no spare bit-pattern for null — a null there is unrepresentable
   and would silently corrupt to a real value. They **keep the hard error** (`?? d`, or widen
   the target to `u8?`). Split principle: *warn iff the null is representable-and-observable in
-  the non-null slot* — the in-band-sentinel property C85 already relies on. Narrow stores
+  the non-null slot* — the in-band-sentinel property @C85 already relies on. Narrow stores
   already error (DN1/DN4/DN5), so keeping them costs zero compatibility.
 
 Together, a `float?` rides through inference, arithmetic, comparison, interpolation, and
@@ -1206,7 +1206,7 @@ are recorded in
 
 D2 was framed as a deviation to *remove* by widening the IR (`Value::Int` → i64) so the default
 integer is "i64 end-to-end." That framing is **declined** — see
-[DESIGN_DECISIONS.md C83](../DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience).
+[DESIGN_DECISIONS.md @C83](../DESIGN_DECISIONS_OWNERSHIP.md#c83--the-internal-representation-follows-the-user-visible-contract-never-widen-storage-for-implementation-convenience).
 The reconciliation:
 
 - **The user-visible contract is met.** `integer` *is* i64 everywhere a user can observe it — a
@@ -1216,7 +1216,7 @@ The reconciliation:
   the interpreter and `--native`**. The runtime computes on `i64` throughout.
 - **The internal model is *supposed* to be compact.** `Value::Int(i32)`/`Value::Long(i64)` is a
   deliberate value-size encoding (i32 for the small-value majority, i64 when needed), and
-  `forced_size = None` marks the full i64 range. Per **C83** the internal representation *follows*
+  `forced_size = None` marks the full i64 range. Per **@C83** the internal representation *follows*
   the user-visible contract and is memory-bandwidth-conscious — it is **never widened for
   implementation convenience**. Blanket i64 storage would double every integer node/field for
   zero user-visible gain; the earlier "widen `Value::Int`" attempt was correctly **reverted** (it
@@ -1230,9 +1230,9 @@ The reconciliation:
   + the i64 user-visible regression above.
 
 **If** a *user-visible* i64 truncation is ever found (a value a user can observe being clipped),
-that narrow path is fixed — still without blanket widening (C83 § Revisit). The site audit in
+that narrow path is fixed — still without blanket widening (@C83 § Revisit). The site audit in
 [plans/88-integer-i64.md](../plans/88-integer-i64.md) remains the reference for any such targeted
-fix. @PLN88's storage-rework rungs are **not** pursued (off the path per C83).
+fix. @PLN88's storage-rework rungs are **not** pursued (off the path per @C83).
 
 ## Carried by types.md until 2026-09-04
 
@@ -1505,14 +1505,14 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   `redundant-coalesce` and `redundant-default-fallback` read a FIELD as never null whenever it
   was not declared `?`, so they called `!s.i`, `s.i == null`, `s.i ?? d` and `s.i?` constant on
   every full-width field — integer, float, text, character, enum — while the slot held the null
-  `(N-Store)` let into it, and while C85's overflow reached a plain `integer` field with nothing
+  `(N-Store)` let into it, and while @C85's overflow reached a plain `integer` field with nothing
   said at all (`s.i = a * b` read null, `!s.i` read true).  The deleted check was the only
   thing that saw it.  A local and a parameter of the same types were already quiet, so the
   spelling decided the answer.  `constant-condition` made the same claim about `text` in every
   position (`if t` on a null text took the ELSE branch), and `IntegerSpec::non_null_reads_null`
   read `not_null`, a flag every field carries and that has no effect on the bytes.  **Fix.**
   One home, `Type::non_null_slot_reads_null`: yes for the in-band kinds, no for a declared
-  narrow range (C127), a dense record and a collection; `get_field` and `constant-condition`
+  narrow range (@C127), a dense record and a collection; `get_field` and `constant-condition`
   ask it.  Guards `tests/runtime_warnings.rs` `never_null_lints_*` (a lint × field-kind matrix with
   each cell's value) and `tests/constant_condition_lint.rs` (the text cell).  loft#1297 had softened the
   `== null` message for the integer case; its table rated a `text` field "genuinely always
@@ -1638,7 +1638,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   v[0].0 += 10` is refused with *"Not implemented operation + for type integer(0, 255)"*, a
   message about an operator that is plainly implemented — loft#1228's own shape one level
   deeper.  Found by `scripts/matrix_axes.py`, which reports `A3 … MISSING tuple-element`
-  against the C127 guards.  **Closed** the same day: the narrowing refusal and loft#984's range
+  against the @C127 guards.  **Closed** the same day: the narrowing refusal and loft#984's range
   guard now live in one method (`Parser::narrow_store_checks`) that the general assign path and
   the tuple branch both call, so a tuple member is bounded like every other slot and the third
   slot kind that reaches neither has one place to be added to.  Guard

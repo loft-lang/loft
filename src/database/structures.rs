@@ -35,7 +35,7 @@ fn vadd_trace_enabled() -> bool {
 use crate::keys::DbRef;
 use crate::store::{RECORD_PAYLOAD, Store};
 use crate::vector;
-use crate::{hash, keys, tree};
+use crate::{btree, hash, keys};
 
 /// @PLN174 F5 — one cdylib bridge call's heap-typed arguments as the bridge is handed
 /// them ([`Stores::bridge_args`]): the store the bridge allocates in, whether that store
@@ -124,7 +124,7 @@ impl InsertKind {
             Parts::Sorted(c, _) => Self::Sorted(*c),
             Parts::Array(_) => Self::Array,
             Parts::Hash(c, _) => Self::Hash(*c),
-            Parts::Index(c, _, _) => Self::Index(*c),
+            Parts::Index(c, _) => Self::Index(*c),
             Parts::Ordered(c, _) => Self::Ordered(*c),
             Parts::Trie(c, _) => Self::Trie(*c),
             Parts::Radix(_, _) => Self::Radix,
@@ -332,7 +332,7 @@ impl Stores {
             }
             Parts::Array(c)
             | Parts::Ordered(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
             | Parts::Hash(c, _) => {
@@ -847,11 +847,27 @@ impl Stores {
             | Parts::Sorted(c, _)
             | Parts::Ordered(c, _)
             | Parts::Hash(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _) => Some(*c),
             _ => None,
         }
+    }
+
+    /// `@FR-H-RefHome` — does any record type hold a user's `reference<T>` field?  A program
+    /// without one stores no reference, so the analysis has nothing to judge.
+    #[must_use]
+    pub fn has_reference_fields(&self) -> bool {
+        self.types.iter().any(|t| match &t.parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields.iter().any(|f| {
+                f.target != u16::MAX
+                    && matches!(
+                        self.types.get(f.content as usize).map(|t| &t.parts),
+                        Some(Parts::DbRef)
+                    )
+            }),
+            _ => false,
+        })
     }
 
     /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
@@ -1016,9 +1032,9 @@ impl Stores {
         );
     }
 
-    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `tree::add` reports, taken BEFORE the
+    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `btree::add` reports, taken BEFORE the
     /// add on a throwaway descent: the record `dedup_keyed`'s lookup names, or none.
-    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16, left: u16) {
+    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16) {
         let key = keys::get_key(rec, &self.allocations, &self.types[tp as usize].keys);
         let looked = self.find(data, tp, &key);
         let looked = if looked.rec != 0 && looked.rec != rec.rec {
@@ -1026,13 +1042,8 @@ impl Stores {
         } else {
             0
         };
-        let walked = tree::find_exact(
-            data,
-            left,
-            &self.allocations,
-            &self.types[tp as usize].keys,
-            &key,
-        );
+        let walked =
+            btree::find_exact(data, &self.allocations, &self.types[tp as usize].keys, &key);
         let walked = if walked == rec.rec { 0 } else { walked };
         assert!(
             walked == looked,
@@ -1162,30 +1173,31 @@ impl Stores {
             }
             InsertKind::Index(c) => {
                 // @P306, @FR-Col-Insert — replace any existing record with this key
-                // (dedup); tree::add otherwise rejects the duplicate and keeps the old.
-                let left = self.fields(tp);
+                // (dedup); `btree::add` otherwise refuses the duplicate and keeps the old.
+                debug_assert_eq!(
+                    rec.store_nr, data.store_nr,
+                    "an index's records live in its store"
+                );
                 if !keys::fast_order_enabled() {
                     let gone = self.dedup_keyed(data, rec, tp, c, secondary);
-                    tree::add(
+                    btree::add(
                         data,
-                        rec,
-                        left,
+                        rec.rec,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
                     return if secondary { gone } else { None };
                 }
-                // The insert's OWN descent finds the duplicate: a refused `tree::add`
+                // The insert's OWN descent finds the duplicate: a refused `btree::add`
                 // names it and leaves the tree as it was, so the lookup that used to run
                 // first — a second full descent per insert — is only ever the rare
                 // displacement's.
                 if keys::keyed_verify() {
-                    self.verify_tree_duplicate(data, rec, tp, left);
+                    self.verify_tree_duplicate(data, rec, tp);
                 }
-                let duplicate = tree::add(
+                let duplicate = btree::add(
                     data,
-                    rec,
-                    left,
+                    rec.rec,
                     &mut self.allocations,
                     &self.types[tp as usize].keys,
                 );
@@ -1197,10 +1209,9 @@ impl Stores {
                     };
                     self.displace_keyed(data, &existing, tp, c, secondary);
                     displaced = Some(existing);
-                    tree::add(
+                    btree::add(
                         data,
-                        rec,
-                        left,
+                        rec.rec,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
@@ -1234,7 +1245,7 @@ impl Stores {
                 }
             }
             InsertKind::Trie(c) => {
-                // @FR-Col-Insert, C68 — a trie key names one record: the record already filed
+                // @FR-Col-Insert, @C68 — a trie key names one record: the record already filed
                 // under this key is displaced first, as a hash's is.  (A spatial keeps both:
                 // its key is a point, and two records may share one.)
                 displaced = self.dedup_keyed(data, rec, tp, c, secondary);
@@ -1397,6 +1408,7 @@ impl Stores {
         // absent then answered an empty vector where `a == null` (loft#1319).  Emptiness and
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
+        self.deliver_vector_parse_errors(o_db, db, true);
         // Absent is asked of the SLOT too: a field source (`g = o.v`) is a reference AT its
         // slot, never the value-level null, so its absence is the marker the slot holds.
         let slot_absent = o_db.store_nr != u16::MAX
@@ -1815,6 +1827,7 @@ impl Stores {
     /// meets the read-only refusal instead of the silent drop #410 closed.
     /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
     pub fn vector_adopt(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+        self.deliver_vector_parse_errors(o_db, db, true);
         let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
         if view
             && !db.is_null()
@@ -1991,6 +2004,7 @@ impl Stores {
                 self.types.get(known as usize).map(|t| t.parts.clone())
             );
         }
+        self.deliver_vector_parse_errors(o_db, db, false);
         let o_length = vector::length_vector(o_db, &self.allocations);
         if o_length == 0 {
             // The other vector has no data
@@ -2316,7 +2330,7 @@ impl Stores {
             | Parts::Hash(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _)
-            | Parts::Index(c, _, _) => {
+            | Parts::Index(c, _) => {
                 let crate::json::Parsed::Array(items) = parsed else {
                     return Err(mismatch());
                 };
@@ -3063,7 +3077,7 @@ impl Stores {
                     self.store_mut(rec).set_float(rec.rec, rec.pos, v);
                 }
                 4 => {
-                    // @PLN17 C73 — a boolean stores tri-state (0 / 1 / 255), and 255 IS
+                    // @PLN17 @C73 — a boolean stores tri-state (0 / 1 / 255), and 255 IS
                     // its null.  Writing `false` for an absent NULLABLE boolean made it
                     // the one nullable base type whose absence read back as a VALUE; the
                     // integer, float and text arms beside it all write their sentinel.

@@ -381,6 +381,7 @@ pub mod vector;
 
 pub mod trace;
 
+pub mod btree;
 pub mod codegen_runtime;
 pub mod generation;
 pub mod ops;
@@ -395,7 +396,6 @@ mod radix_tree;
 mod spatial;
 pub mod store;
 pub mod store_budget;
-pub mod tree;
 pub mod trie_db;
 mod typedef;
 

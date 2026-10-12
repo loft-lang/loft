@@ -280,7 +280,7 @@ nothing of that kind is added.**  The instrument is a census of `default/*.loft`
 `pub fn`, whether it is a primitive (a `#rust` body the runtime must answer) or loft over
 primitives, and who calls it — and the number it moves is the one finding 001 measures: 748
 definitions parsed before a script's first statement.  A move is invisible to a caller
-because the trigger surface fires on the moved name and `std::name` / C97 keep the
+because the trigger surface fires on the moved name and `std::name` / @C97 keep the
 resolution rule, and it is gated the way every library is: the testbed, the twin on the
 scripts that used it, and the shipped libraries re-validated (REVALIDATE_LIBS.md).
 

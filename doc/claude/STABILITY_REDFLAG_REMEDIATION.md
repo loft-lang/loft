@@ -120,7 +120,7 @@ other three copy that shape with a hand-rolled source loop.
 
 | helper (line) | source walk to replace | destination build that STAYS |
 |---|---|---|
-| `copy_claims_index_body` (`:1640`) | `collect_index_nodes(rec, left)` — the **same call** the keystone's Index arm makes (`:180`) | `tree::add` re-insert; already mirrors `hash_body` |
+| `copy_claims_index_body` (`:1640`) | `collect_index_nodes(rec)` — the **same call** the keystone's Index arm makes (`:180`) | `btree::add` re-insert; already mirrors `hash_body` |
 | `copy_claims_array_body` (`:1501`) | `for i in 0..length { elm = get_u32_raw(cur, 8+4*i) }` | @P309 length-header `set_u32_raw(into, 4, length)`; per-element slot-copy |
 | `copy_claims_seq_vector` (`:1457`) | `for i in 0..length { pos: 8 + size*i }` | one bulk `copy_block(length*size+4)`; positional slot-copy |
 
@@ -144,7 +144,7 @@ continuing (bisect-by-site).  `B=./target/release/loft`,
   `cargo test --release --test leak` → pass.
 - **Phase 1 — fold `index_body` (lowest risk).**  Replace the `collect_index_nodes` source
   walk with the keystone children, reading `child.owning_elem` as the source node; keep the
-  `tree::add` destination body unchanged.  *Verify:* `$T` both backends → ok; leak gate →
+  `btree::add` destination body unchanged.  *Verify:* `$T` both backends → ok; leak gate →
   pass; `LOFT_COPY_CHECK=1` → clean; `62-index-range-queries.loft` +
   `129-sorted-index-field-deepcopy.loft` both backends → ok.
 - **Phase 2 — fold `array_body`.**  Change the call site / signature to pass the container

@@ -18,10 +18,10 @@
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 
+use crate::btree;
 use crate::database::{ShowDb, Stores};
 use crate::keys::{Content, DbRef, Key};
 use crate::ops;
-use crate::tree;
 
 // ============================================================
 // Plan 09 phase 01 — Cell/Stores ABI consolidation
@@ -729,7 +729,7 @@ thread_local! {
     ///
     /// It changes what a fault MEANS. An ordinary loft call that overflows the
     /// stack is a program bug and halting is right; the same overflow inside a
-    /// FETCH is not, because @PLN129's contract is C80 — a failed fetch reports
+    /// FETCH is not, because @PLN129's contract is @C80 — a failed fetch reports
     /// through `store_lazy_error` and the lookup answers null. So a buggy driver
     /// must not turn a lookup into a program halt, which is what moving the
     /// source from Rust to loft would otherwise have cost.
@@ -1230,27 +1230,9 @@ pub fn db_from_text(stores: &mut Stores, val: &str, db_tp: u16) -> DbRef {
         pos: 8,
     };
     stores.set_final_default_value(db_tp, &into);
-    stores.last_parse_errors.clear();
-    if let Some(err) = stores.parse(val, db_tp, &into) {
-        stores.last_parse_errors.push(err);
-    }
+    let err = stores.parse(val, db_tp, &into);
+    stores.set_parse_errors(&into, db_tp, err);
     into
-}
-
-/// Return the parse errors from the last `Type.parse()` call as a single
-/// newline-separated string.  Called by the `#errors` accessor.
-// @PLN10 — owned `String` (no scratch).  In lockstep with
-// `generation::native_returns_owned_string`, which makes the generated `n_*`
-// wrapper `-> String` so wrapper and body agree on every backend (incl. wasip2).
-pub fn i_parse_errors(stores: &mut Stores) -> String {
-    let msg = stores.last_parse_errors.join("\n");
-    stores.last_parse_errors.clear();
-    msg
-}
-
-/// Push a constraint-check error to the parse error list.
-pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
-    stores.last_parse_errors.push(msg.to_owned());
 }
 
 /// Return the JSON parse / schema-walk errors from the last `json_parse()`
@@ -1258,7 +1240,8 @@ pub fn i_parse_error_push(stores: &mut Stores, msg: &str) {
 /// Mirrors the interpreter's `n_json_errors` (`src/native.rs`) which does
 /// NOT clear the buffer — errors persist across `json_errors()` reads
 /// until the next successful parse implicitly clears them.
-// @PLN10 — owned `String` (no scratch); same gate as `i_parse_errors`.
+// @PLN10 — owned `String` (no scratch); gated by
+// `generation::native_returns_owned_string`.
 pub fn i_json_errors(stores: &mut Stores) -> String {
     stores.last_json_errors.join("|")
 }
@@ -1340,6 +1323,22 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
         }
         return;
     }
+    // `@FR-R-FlatCopy` — a record that owns no heap is its bytes: the release of the
+    // destination's claims and the walk of the source's both find nothing, so a copy that
+    // keeps its source is the block copy alone.  The fn-ref hand-off flag is still taken, as
+    // the full path takes it.  A traced or checked copy, and one that gives its source up,
+    // take the full path.
+    if (tp as u16) & crate::keys::COPY_FREE_SOURCE == 0
+        && crate::keys::flat_copy_enabled()
+        && stores.flat_record_type((tp as u16) & crate::keys::COPY_TP_MASK)
+        && !crate::keys::trace_copy()
+        && !stores.copy_check_enabled()
+    {
+        let _ = cr_take_fnref_borrowed(data.store_nr);
+        let size = u32::from(stores.size((tp as u16) & crate::keys::COPY_TP_MASK));
+        stores.copy_block(&data, &to, size);
+        return;
+    }
     // mirror `state/io.rs::copy_record`'s tag handling and
     // cleanup.  The bytecode form masks the high bit of `tp` before
     // indexing into `stores.types` (0x8000 marks "free source after
@@ -1390,6 +1389,8 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     if free_source && !borrowed && stores.try_swap_in(&data, &to, tp) {
         return;
     }
+    // The exchange moved the source's parse errors with its records; a copy brings them.
+    stores.deliver_parse_errors(&data, &to, tp);
     if !fresh_dest {
         stores.remove_claims(&to, tp);
     }
@@ -1570,6 +1571,18 @@ pub fn trie_len(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
     crate::trie_db::count(coll, stores)
 }
 
+/// `size` of a spatial index: its tree's node array, room included.
+#[must_use]
+pub fn spatial_bytes(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+    crate::radix_db::table_bytes(coll, stores)
+}
+
+/// `size` of a trie: its tree's node array, room included.
+#[must_use]
+pub fn trie_bytes(coll: &DbRef, stores: &[crate::store::Store]) -> u32 {
+    crate::trie_db::table_bytes(coll, stores)
+}
+
 /// Pack a (current-position, finish) pair into a single i64 iterator state.
 /// High 32 bits = finish; low 32 bits = cur.
 /// `finish == u32::MAX` signals that iteration is complete.
@@ -1577,19 +1590,10 @@ fn pack_iter(cur: u32, finish: u32) -> i64 {
     ((u64::from(finish) << 32) | u64::from(cur)).cast_signed()
 }
 
-/// Build a minimal `DbRef` pointing at record `rec` with field offset `pos`.
-fn iter_ref(data: &DbRef, rec: u32, pos: u16) -> DbRef {
-    DbRef {
-        store_nr: data.store_nr,
-        rec,
-        pos: u32::from(pos),
-    }
-}
-
 /// Initialize a sorted/index iterator state and return it as a packed `i64`.
 ///
 /// `on` encodes collection type and flags:
-/// - bits 0–5: collection type (1 = red-black tree / index, 2 = sorted vector)
+/// - bits 0–5: collection type (1 = index, 2 = sorted vector)
 /// - bit 6: reverse iteration
 /// - bit 7: inclusive end (if clear, end is exclusive)
 ///
@@ -1673,11 +1677,9 @@ pub fn OpIterate(
             }
         }
         1 => {
-            // red-black tree / index: arg = fields offset.  The cursor derivation is
-            // shared with `State::iterate` (loft#691) — the two had their own copies
-            // and drifted apart.
-            let (start, finish) =
-                tree::range_cursors(&data, arg as u16, all, keys, from, till, ex, reverse);
+            // index: arg = the index type.  The cursor derivation is shared with
+            // `State::iterate` (loft#691) — the two had their own copies and drifted apart.
+            let (start, finish) = btree::range_cursors(&data, all, keys, from, till, ex, reverse);
             pack_iter(start, finish)
         }
         3 | 4 => {
@@ -1759,19 +1761,20 @@ pub fn OpStep(
             stores.element_reference(&data, byte_pos)
         }
         1 => {
-            // red-black tree / index: arg = fields offset
-            let fields = arg as u16;
-            let store = crate::keys::store(&data, all);
+            // index: arg = the index type; the cursor is the record last yielded.
             let next_rec = if cur == 0 {
                 if reverse {
-                    tree::last(&data, fields, all).rec
+                    btree::last_record(&data, all)
                 } else {
-                    tree::first(&data, fields, all).rec
+                    btree::first_record(&data, all)
                 }
-            } else if reverse {
-                tree::previous(store, &iter_ref(&data, cur, fields))
             } else {
-                tree::next(store, &iter_ref(&data, cur, fields))
+                let keys = stores.keys(arg as u16);
+                if reverse {
+                    btree::previous_record(&data, all, keys, cur)
+                } else {
+                    btree::next_record(&data, all, keys, cur)
+                }
             };
             if next_rec == finish {
                 finish = u32::MAX;
@@ -3058,7 +3061,7 @@ pub fn OpRemove<S: IterState>(
             state.set_cur_i64_plain(n);
         }
         1 => {
-            // index (red-black tree): arg is the type index; fields offset derived from it
+            // index: arg is the index type
             let cur_u = cur as u32;
             if cur_u == u32::MAX {
                 return;
@@ -3618,7 +3621,7 @@ pub fn t_9JsonValue_as_bool(cell: &std::cell::UnsafeCell<Stores>, v: DbRef) -> u
         let value_pos = u32::from(stores.position(bool_tp, "value")) + v.pos;
         u8::from(stores.store(&v).get_byte(v.rec, value_pos, 0) != 0)
     } else {
-        // The tri-state null (C73 / @PLN17), which the `boolean?` return renders as `u8`.
+        // The tri-state null (@C73 / @PLN17), which the `boolean?` return renders as `u8`.
         255
     }
 }

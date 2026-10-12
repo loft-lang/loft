@@ -26,7 +26,7 @@ never carried.
 normalised away, and every one of the five moves ownership machinery rather than only the `??`
 operator's own lowering.
 
-Two are classified, and both are ACCIDENTS of the site rather than anything C90 requires — the
+Two are classified, and both are ACCIDENTS of the site rather than anything @C90 requires — the
 second of them (`element-over-param`) turned out to be a `(F-Ret)` violation in the DENSE
 spelling, filed as **loft#1482**.
 
@@ -292,7 +292,7 @@ different ways, and the only thing that selects between them is the spelling:
 | nullable `d: S?` | **a runtime boolean** — `__lbo_d`, false at entry, true after the mint, guarding `if __lbo_d { OpFreeRef(d) }` |
 
 The site is `scopes.rs:2678`, fed by `nullable_locals_that_displace` (loft#1200) — **nullable by
-construction**, so the dense spelling can never reach it.  C90 makes the two spellings the same
+construction**, so the dense spelling can never reach it.  @C90 makes the two spellings the same
 slot and store identity answers identically for both, so nullability does not require the flag.
 
 That is three parallel ownership mechanisms in one function's prologue — `__rbo_` (loft#1128),
@@ -327,7 +327,7 @@ mechanism to ship one.
 
 ## The enumeration is COMPLETE
 
-All five diverging pairs are classified, and **not one of them is required by C90**:
+All five diverging pairs are classified, and **not one of them is required by @C90**:
 
 | pair | verdict | where it stands |
 |---|---|---|
@@ -352,7 +352,7 @@ question about how a value is LOWERED — which delivery it takes, which ops are
 mechanism tracks its ownership, whether a temporary stands between it and its destination —
 answers identically for `τ` and `τ?`, so a divergence in the emitted IR is an accident of its
 site.  It is EARNED rather than asserted: five of six pairs diverge and every one classified as
-an accident, none required by C90.
+an accident, none required by @C90.
 
 It carries the plan's hardest-won caveat as part of the rule text: **the dense spelling is not
 the oracle.**  `@FR-N-Road` says only that the two must AGREE — what settles which answer they

@@ -1040,7 +1040,7 @@ pub fn find_hash_entry<P: PageProvider>(
     let stride = reader.u32_at(claim, crate::hash::STRIDE_FLD);
     let seed = reader.i64_at(claim, crate::hash::SEED_FLD) as u64;
     let hash_val = crate::keys::key_hash(key, seed);
-    let mut index = (hash_val % u64::from(elms)) as u32;
+    let mut index = crate::hash::home_bucket(hash_val, elms);
     let mut slot = reader.u32_at(
         claim,
         crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES,
@@ -1122,7 +1122,7 @@ pub fn hash_bucket_addrs<P: PageProvider>(
     key_sets
         .iter()
         .map(|k| {
-            let index = (crate::keys::key_hash(k, seed) % u64::from(elms)) as u32;
+            let index = crate::hash::home_bucket(crate::keys::key_hash(k, seed), elms);
             (
                 u64::from(claim) * 8
                     + u64::from(crate::hash::BUCKET0 + index * crate::hash::SLOT_BYTES),

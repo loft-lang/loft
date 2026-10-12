@@ -1275,7 +1275,7 @@ impl Output<'_> {
         // Stores-side helpers use `position: None`).  Phase 4g (backtrace
         // + polish) will thread codegen-time positions through.
         res = res.replace("s.raise(", "stores.raise_runtime(");
-        // C80 / E-Uncomp — div-by-zero templates now `raise_recoverable`
+        // @C80 / E-Uncomp — div-by-zero templates now `raise_recoverable`
         // (null-and-continue) instead of `raise`.  `s.raise(` above does NOT
         // match inside `s.raise_recoverable(` (an `_` follows `s.raise`, not
         // `(`), so this is an independent substitution; the `_runtime` suffix

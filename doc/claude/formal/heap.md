@@ -51,7 +51,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   is `H` updated at `r`.
 - `store(r)` is `r.store_nr`; `H ⊢ r live` means `store(r) ∈ dom(H)` and that store is not
   freed. `fresh(H)` is a `store_nr` not in `dom(H)`.
-- `⊥` is the faulting configuration **only** where noted; per operational.md's C80, most
+- `⊥` is the faulting configuration **only** where noted; per operational.md's @C80, most
   "can't" cases are the value `null` + continue, **not** a halt (see `H-ReadNull`).
 
 ---
@@ -178,7 +178,7 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                  the END (H-Index), and the write LANDS there.
   (H-WriteLocked)  a write to a read_only store is a STATIC reject where provable; else a
                    DEVELOPMENT run halts with the lock report and a PRODUCTION run logs the
-                   write and DISCARDS it — the store keeps its bytes (C80).  Never a silent
+                   write and DISCARDS it — the store keeps its bytes (@C80).  Never a silent
                    successful write.
   (H-Write-Else)  an assignment STATEMENT may end in `else { B }`: `place = v else { B }`
                    (and `place op= v else { B }`).  The place and `v` are each evaluated
@@ -245,9 +245,9 @@ only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](
   (H-Copy)   ⟨x = r, ⟨ρ, H⟩⟩ → ⟨r', ⟨ρ[x ↦ r'], H'⟩⟩            when x = r is a PLAIN bind of a
                WHOLE VALUE — a local variable, or a VECTOR-typed projection (`fv = e.items`) —
                where r' = (fresh(H),0,0) and H'[store(r')] := deep-copy of the record graph at r.
-               x and the source are then INDEPENDENT (C86, #415).
+               x and the source are then INDEPENDENT (@C86, #415).
   (H-Ref)    ⟨x = &r, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ[x ↦ r], H⟩⟩              an EXPLICIT `&`-bind aliases: x
-               shares r's backing (NO fresh store), so `x[0] = 99` mutates r (C77).  This is the
+               shares r's backing (NO fresh store), so `x[0] = 99` mutates r (@C77).  This is the
                vector twin of a parameter — both reach the source; only a plain bind copies.
   (H-View)   ⟨x = r, ⟨ρ, H⟩⟩ → ⟨r, ⟨ρ[x ↦ r], H⟩⟩               when r is a STRUCT-TYPED PROJECTION
                — a struct FIELD (`c = o.i`) or a struct ELEMENT of a vector (`s = v[0]`).  x is a
@@ -281,7 +281,7 @@ agree exactly (verified):
   **vector-typed** projection (`fv = e.items`). A fresh store is allocated and the graph
   duplicated, so the two are independent: `fv = e.items; fv[0] = 99` leaves `e.items[0] == 1`;
   `c = o; c.v = 9` leaves `o.v == 1`.
-- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
+- **ALIAS** — an **explicit `&`-bind** (`r = &v`) binds a **live reference** ([@C77](../DESIGN_DECISIONS_OWNERSHIP.md#c77--binding-ownership-heap-aliases-by-default--binds-a-live-reference)),
   NOT a copy: `r = &v; r[0] = 99` makes `v[0] == 99` (verified both backends). This is why a `&`
   is written — to share the backing, not duplicate it. (A vector **parameter** likewise aliases
   the caller — see the invariant below.)
@@ -296,7 +296,7 @@ agree exactly (verified):
   `v[0].n == 11`. Order matters: `c = v[0]; c.n = 99; v.remove(2)` keeps the alias and lands the
   99, because the view is dead before the container changes.
 
-This is the [DESIGN_DECISIONS.md C86](../DESIGN_DECISIONS.md) (`#415`) copy vs [ownership.md](ownership.md)
+This is the [DESIGN_DECISIONS.md @C86](../DESIGN_DECISIONS.md) (`#415`) copy vs [ownership.md](ownership.md)
 `#426` view boundary, and it is **exactly** the struct-vs-vector split
 [capabilities.md](capabilities.md)'s raw-write rule (D-cap-3) already encodes: a **vector** local is
 owned (copies, so writing it is `Cap-Own`), a **struct-typed** local may be a view of host data (so
@@ -407,17 +407,13 @@ through calls: what it cannot see, no `deps` can.
 
 **Where `(H-RefHome)` holds in the code.**
 - *The analysis.* `scopes::stored_reference_homes` (`src/scopes/stored_refs.rs`), run after
-  pass 2 by `Parser::check_reshape_under_reference`, walks each body with its block nesting.
-  At every `OpSetDbRef` into a user's `reference<T>` field (`Stores::reference_field_name`) it
-  compares the holder's life with the record's home (`Walk::holder_life`, `Walk::home_life`).
-  It carries holds through `OpCopyRecord`, a record assigned to a record, and calls, using a
-  per-function summary of the parameters a callee links (`ParamPair`), closed over the
-  functions it calls.  `Walk::resolve` keeps an outlived home (`Walk::hoist`, `Walk::place`,
-  `Walk::place_own`, `Walk::evacuate`) or refuses it.
-- *The placement.* `scopes::apply_places` turns the literal's mint, the call's buffer or the
-  local's every mint into `OpPlaceRecord(holder, tp)`, held by a variable that borrows the
-  holder; `place_result::callee_keeps_an_offered_record` admits a callee, and
-  `scopes::keep_placed_results` drops the scope pass's free of the call's result.
+  pass 2 by `Parser::check_reshape_under_reference`, compares at every `OpSetDbRef` into a
+  user's `reference<T>` field the holder's life with the record's home (`Walk::holder_life`,
+  `Walk::home_life`), through copies of the holder and calls (a per-callee summary, `ParamPair`).
+  `Walk::resolve` keeps an outlived home (`hoist`, `place`, `place_own`, `evacuate`) or refuses it.
+- *The placement.* `scopes::apply_places` claims the record in the holder's store
+  (`OpPlaceRecord`) for a variable borrowing the holder; `scopes::keep_placed_results` drops the
+  free of a placed call result (callee test: `place_result::callee_keeps_an_offered_record`).
 - *The copy-out.* `scopes::insert_evacuations` puts `OpEvacuate` (`Stores::evacuate`) before
   each free of the home's owner; `(R-Place)` and `(R-ExitVector)` leave such an owner unplaced.
 - *The move.* The parser marks each store owner on the home's dep chain (`mark_ref_home`),
@@ -732,7 +728,7 @@ installed, which the frame does own.
                  place, a call result, a rebind to null — after the new value has been
                  computed and before anything after the statement runs (loft#1362);
                - a CONTAINER's death for what it holds, its own hook first and then its
-                 members, through the synthesized cascade (C111).
+                 members, through the synthesized cascade (@C111).
              ⚠ **A DROP HAS NO SAFE DIRECTION, and a cure discussion that assumes one is
              already wrong.**  For a FREE there is one: never free what might still be held,
              because a leak costs memory and a double free corrupts.  A drop's two failures
@@ -812,7 +808,7 @@ installed, which the frame does own.
              disturbance and naming the view — (B-Ref-Reshape), for a view the author did
              not spell with `&`.
   (H-Elide)  the compiler may elide a copy of a type with `OpCopy` together with the drop
-             of the structure the copy would have made, where C86's transparent-link
+             of the structure the copy would have made, where @C86's transparent-link
              conditions hold.  Neither hook may rely on running for an elided copy.
   (H-Drop-Not) the OLD value of an overwritten FIELD or ELEMENT (`o.s = other`,
              `v[i] = other`), an element taken OUT (`v.remove(i)`), and a keyed
@@ -861,7 +857,7 @@ the one line that would duplicate it is the line the error names.
 goes with one structure while the other still uses the handle; a mark recording which member
 moved out, or a static fact deciding which copy owns, leaves the programmer guessing which
 structure still works.  Refusing the copy leaves no guess: a program that compiles has one
-structure per lease (DESIGN_DECISIONS.md C121; the earlier rule is in heap-history.md).
+structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-history.md).
 
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
@@ -946,7 +942,7 @@ The rules are checkable directly, and every check is a program both backends mus
 - **Copy vs alias vs view (`H-Copy` / `H-Ref` / `H-View`)** — proven both backends: a PLAIN
   whole-value / vector bind COPIES — `c = o; c.v = 9` ⇒ `o.v == 1`; `fv = e.items; fv[0] = 99` ⇒
   `e.items[0] == 1`. An EXPLICIT `&`-bind ALIASES — `r = &v; r[0] = 99` ⇒ `v[0] == 99` (a live
-  reference, C77; the vector twin of a parameter). A STRUCT-typed projection is a VIEW —
+  reference, @C77; the vector twin of a parameter). A STRUCT-typed projection is a VIEW —
   `c = o.i; c.v = 9` ⇒ `o.i.v == 9`; `s = v[0]; s.v = 9` ⇒ `v[0].v == 9` (a struct element of a
   vector). capabilities.md's raw-write rule encodes this: a plain-copied vector is owned, a
   `&`-aliased or parameter-rooted vector is host (D-cap-3 follows the dep chain), a struct is a
@@ -976,7 +972,7 @@ The rules are checkable directly, and every check is a program both backends mus
   down (`tests/scripts/164-callee-disturb.loft`, every cell paired with its inline twin).
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md
-  C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
+  @C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
   at EITHER layout — is `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout.loft`;
   no guard is dedicated to the read's null answer itself, which every `??` cell in the corpus
   exercises without naming it.

@@ -11,7 +11,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > adds three things: a **validation gate** every version must pass before it is
 > trusted, a **race-free ship transaction** so concurrent lib landings can't corrupt
 > the index, and a **key-gated trust split** (a key-present machine ships autonomously;
-> a key-absent one defers). Companion decisions: **C96** (key-gated ship) and **C97**
+> a key-absent one defers). Companion decisions: **@C96** (key-gated ship) and **@C97**
 > (library symbols are module-namespaced) — see [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md).
 
 ## The substrate (what we already have)
@@ -32,7 +32,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Two weaknesses this design closes: (1) nothing systematically **validates** a version
 before it's trusted — a lib that fails the parity gate, breaks compat, or doesn't
 compile against the current loft can be signed anyway (exactly the `shapes`/`time`
-C95 class); (2) a foreign PR and a maintain run **both edit `index.json`**, so two
+@C95 class); (2) a foreign PR and a maintain run **both edit `index.json`**, so two
 libs landing near-simultaneously **race** on that one file.
 
 ## Part 1 — The validation gate (before a version is trusted)
@@ -46,7 +46,7 @@ just before signing — the signature then *means* "validated by a trust holder"
 |---|---|---|---|
 | **V1** | **Reproducible package** — `loft package` of the pinned source byte-matches the release tarball (sha256 + size). | `loft package` | stale-release drift (main moved past the tag with no version bump) |
 | **V2** | **Parity gate** — `loft test` on every claimed target; **interpret == native == native-wasm (== browser)**, not just each exits 0. Bounded by `LOFT_TIMEOUT`; leak check where it allocates. | `loft test`, the ship skill's gate | interp/native/wasm divergence (the #1 lib-bug class) |
-| **V3** | **Compiles against current loft** — clean parse+type on `--interpret` and `--native`. | `loft` | C95 stdlib-name collisions, DN nullable-cast breakage — the whole `shapes`/`time` class |
+| **V3** | **Compiles against current loft** — clean parse+type on `--interpret` and `--native`. | `loft` | @C95 stdlib-name collisions, DN nullable-cast breakage — the whole `shapes`/`time` class |
 | **V4** | **Compat** — `loft api-surface` diff `prev → new` is **additive-only**, unless the semver step declares breaking (pre-1.0: a **minor** bump may break, a **patch** may not; 1.x+: only a **major** may break). | `loft api-surface`, `api-compat.yml` | silent public-API removal/change (e.g. `shapes` dropping `clamp` is breaking → allowed only because 0.2→**0.3**) |
 | **V5** | **Metadata** — `loft.toml` well-formed; `version` matches the tag; license present; package name == its registry namespace; every `dep` resolves in the index; no reserved / duplicate `(name, version)`. | `registry_validate.sh` | squatting, dangling deps, immutability violations (re-publishing an existing version) |
 | **V6** | **Risk tier** (gates *how* it's trusted, not pass/fail) — a **pure-loft** lib with only declared capabilities is **auto-trustable**; a lib carrying `#rust`/`#native` external code, or requesting broad capabilities, **requires human review** before its *first* trusted release. | capability annotations, `#native`/`#rust` scan | arbitrary native code from an untrusted source |
@@ -54,7 +54,7 @@ just before signing — the signature then *means* "validated by a trust holder"
 **V6 is the one deliberate human gate, and it is a *policy* decision, not a
 per-release step.** Own libs are already trusted (I wrote them — `#native` is fine).
 An outside lib with native code is reviewed **once** at first admission; subsequent
-additive versions re-run V1–V5 automatically. This is the same shape as C96's trust
+additive versions re-run V1–V5 automatically. This is the same shape as @C96's trust
 split: humans sign *policy* (admit this source), machines validate *releases*.
 
 ## Part 2 — The race-free ship transaction
@@ -136,7 +136,7 @@ cargo run --bin loft -- install time@0.2.1
 ```
 
 `gh pr create` stays **out** of this list — opening PRs remains your explicit,
-separate call every time. If you later want unattended CI publishing, the C96
+separate call every time. If you later want unattended CI publishing, the @C96
 key-absent tier upgrades from "submission PR" to a scoped, revocable delegated key;
 until then the above is the whole surface.
 
@@ -167,4 +167,4 @@ until then the above is the whole surface.
 ## See also
 
 - [PKG_REGISTRY.md](../../PKG_REGISTRY.md) · [REGISTRY_SUBMIT.md](../../REGISTRY_SUBMIT.md) · [COMPATIBILITY.md](../../COMPATIBILITY.md) · the publish runbook (loft-ship skill, `references/publish.md`)
-- The trigger: adding stdlib `floor_mod` (C94) broke shipped `shapes`/`time` (C95) — the case for V3 + V4 + C97.
+- The trigger: adding stdlib `floor_mod` (@C94) broke shipped `shapes`/`time` (@C95) — the case for V3 + V4 + @C97.

@@ -467,7 +467,6 @@ pub(crate) const PTNUM_NULLABLE: u32 = 7; // Byte/Short/Int/ShortRaw/IntRaw
 pub(crate) const PTCONTENT: u32 = 8; // Vector/Array/Sorted/Ordered/Hash/Index/Radix/ChildRec
 pub(crate) const PTKEYS: u32 = 4; // Sorted/Ordered/Index (vector<KeyField>)
 pub(crate) const PTFIELDS: u32 = 4; // Hash/Radix (vector<integer>)
-pub(crate) const PTINDEX_LEFT: u32 = 16;
 pub(crate) const PTTRIE_KEY: u32 = 16; // Trie's key FIELD INDEX (content is at PTCONTENT)
 
 /// `DbType` (`database::Type`) record — `parents` is derived, not stored.
@@ -1663,7 +1662,6 @@ mod tests {
         for v in [ids.pt_hash, ids.pt_radix] {
             assert_eq!(pos(v, "fields"), PTFIELDS);
         }
-        assert_eq!(pos(ids.pt_index, "left"), PTINDEX_LEFT);
 
         assert_eq!(u32::from(stores.size(ids.db_type)), DBTYPE_STRIDE);
         assert_eq!(pos(ids.db_type, "size"), DBTYPE_SIZE);

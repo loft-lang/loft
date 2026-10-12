@@ -1258,9 +1258,12 @@ pub struct Output<'a> {
     /// build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
     /// division emits the processor's wrapping operator and every float comparison the
     /// plain one, as the eventual release build pass for games would (DESIGN_DECISIONS.md
-    /// C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the
+    /// @C120, NATIVE.md § Optimisation tiers).  The values after a fault are NOT the
     /// language's; a row whose hash still agrees never faulted, and its time is the
     /// ceiling the checked build is measured against.
+    ///
+    /// @C129 — the processor's wrapping arithmetic only behind this probe: no build or syntax opts
+    /// in to it.
     pub release_pass_probe: bool,
     /// Per-definition cache of [`non_sentinel::non_sentinel_float_vars`],
     /// keyed by `def_nr` — computed on the first simplifiable compare a
@@ -1893,10 +1896,7 @@ fn block_needs_i64_widen(val: &Value, dest: &Type) -> bool {
 /// fns.  Curate this in **lockstep** with the body conversions in
 /// `codegen_runtime.rs`.  Sibling of `state::codegen::is_text_dest_native`.
 fn native_returns_owned_string(name: &str) -> bool {
-    matches!(
-        name,
-        "i_parse_errors" | "n_json_errors" | "n_parallel_buf_get_text"
-    )
+    matches!(name, "n_json_errors" | "n_parallel_buf_get_text")
 }
 
 /// @PLN10 Phase A — a **USER** text-returning function with **no `RefVar(Text)`
@@ -1913,7 +1913,7 @@ pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
     // nwb = a real loft **Block** body that returns text WITHOUT a `RefVar(Text)`
     // work buffer.  The discriminator is the Block body itself, NOT
     // `rust()/native()` emptiness: an auto-native library fn inlined into a
-    // consumer build (main's C71) has a Block body AND `native()` set, yet is
+    // consumer build (main's @C71) has a Block body AND `native()` set, yet is
     // still an ordinary user text fn whose buffered-vs-bufferless shape is
     // decided solely by the presence of the work-buffer attribute.  emit.rs only
     // ever runs this on Block bodies, so a non-Block (FFI-direct / `#rust` / Null)
@@ -1938,7 +1938,7 @@ pub(crate) fn def_returns_owned_text(def: &crate::data::Definition) -> bool {
 ///   `LoftStr` bytes as an owned `String` (N2).  This path is taken ONLY when the
 ///   body is `Null` (no inlined `Block`), so gate on `code() == Null` to stay
 ///   aligned with the body selector — an inlined native-lib fn (`Block` body AND
-///   `native()` set, main's C71 consumer build) returns `Str`, not `String`;
+///   `native()` set, main's @C71 consumer build) returns `Str`, not `String`;
 /// - a bufferless ("nwb") user text fn (`def_returns_owned_text`).
 /// - @PLN24 arc D — a **`#c` binding** returning a C `char *`.  Its wrapper owns
 ///   the copied bytes (`output_c_direct_call` builds the `String`), exactly as an
@@ -2026,7 +2026,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         | Type::Enum(_, true, _)
         | Type::Index(_, _, _)
         // N8b.1: generator variables are stored as DbRef (index into native coroutine table).
-        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (C125).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` in native code too (@C125).
         | Type::Iterator(_, _) => "DbRef",
         Type::Routine(_) => "u32",
         // C39/A5.6: fn-ref carries d_nr + closure DbRef as a tuple.
@@ -2674,7 +2674,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
         }
         let owned = match to.unspan() {
             // A whole-value copy of another heap var — native emits `OpCopyRecord`
-            // into a fresh store, so r OWNS the result (C86), regardless of the
+            // into a fresh store, so r OWNS the result (@C86), regardless of the
             // source's own ownership.
             Value::Var(src) if vars.record_copy_source(data, v, *src).is_some() => true,
             // An owned call / struct literal is Owned; an `?? `/ncc block is a
@@ -3876,25 +3876,29 @@ impl Output<'_> {
         &mut self,
         w: &mut dyn Write,
         lp: &crate::data::Block,
-    ) -> std::io::Result<Option<(String, String, String)>> {
+    ) -> std::io::Result<Vec<(String, String, String)>> {
         if self.push_fill_disabled {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
             if let Some(ps) = hoist::push_loop_paths(lp, self.data) {
-                self.push_reserve_paths(w, &ps)?;
-                return Ok(None);
+                return self.push_reserve_paths(w, lp, &ps);
             }
             // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
             // mint groups, possibly under `if` arms, reserves and opens a window the same
             // way, over the record-push header the loop holds.
-            return self.mint_reserve(w, lp);
+            if let Some(window) = self.mint_reserve(w, lp)? {
+                return Ok(vec![window]);
+            }
+            return self.deep_window(w, lp);
         };
-        if p.fill.is_some() {
-            return Ok(None);
+        // A window an enclosing loop holds on the path serves this loop's pushes too; a
+        // reservation would move the record under it.
+        if p.fill.is_some() || self.active_push_window(&p.path).is_some() {
+            return Ok(Vec::new());
         }
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let count = self.push_trip_count(&p)?;
         let vec = self.expr_string(p.vector)?;
@@ -3908,7 +3912,7 @@ impl Output<'_> {
             || self.in_coroutine_body
             || self.coroutine_persistent_fields.contains_key(&p.path.0)
         {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         if let Err(why) = hoist::push_window_ok(
             lp,
@@ -3925,7 +3929,7 @@ impl Output<'_> {
                     lp.scope
                 );
             }
-            return Ok(None);
+            return Ok(Vec::new());
         }
         self.hoist_counter += 1;
         let win = format!("__pw_{}", self.hoist_counter);
@@ -3937,7 +3941,83 @@ impl Output<'_> {
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
         crate::rewrite_census::fired("R-PushFill", 1);
-        Ok(Some((win, hdr, vec)))
+        Ok(vec![(win, hdr, vec)])
+    }
+
+    /// `@FR-R-PushFill`'s DEEP window clause — a loop whose fused pushes, at any depth, reach
+    /// ONE path whose push header is held and no window is open on: where
+    /// [`hoist::deep_window_ok`] admits it, a window is opened on the held header with no
+    /// reservation (its growth arm answers a fresh one) and answered for the caller to close
+    /// after the loop.  A loop nested in a windowed one finds the window open and pushes
+    /// through it.
+    fn deep_window(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<Vec<(String, String, String)>> {
+        if self.push_window_disabled || self.in_coroutine_body {
+            return Ok(Vec::new());
+        }
+        let mut paths: Vec<(hoist::PathKey, &Value, u32)> = Vec::new();
+        for op in &lp.operators {
+            op.any_node(&mut |n| {
+                if let Value::Call(d, args) = n
+                    && (*d as usize) < self.data.definitions.len()
+                    && let Some(fp) = hoist::fused_push(self.data, self.data.def(*d).name(), args)
+                    && !paths.iter().any(|(p, _, _)| *p == fp.path)
+                {
+                    paths.push((fp.path, fp.vector, fp.size));
+                }
+                false
+            });
+        }
+        let [(path, vector, size)] = paths.as_slice() else {
+            return Ok(Vec::new());
+        };
+        if self.active_push_window(path).is_some()
+            || self.coroutine_persistent_fields.contains_key(&path.0)
+        {
+            return Ok(Vec::new());
+        }
+        let Some(hdr) = self.active_push_header(path).map(str::to_owned) else {
+            return Ok(Vec::new());
+        };
+        let facts = (!self.distinct_growth_disabled).then_some(hoist::StoreFacts {
+            vars: self.data.def(self.def_nr).variables(),
+            placed: &self.placed_locals,
+            adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+            owned: Some(&self.hoist_owned),
+            assumed: &self.assumed_distinct,
+        });
+        if let Err(why) = hoist::deep_window_ok(
+            lp,
+            path,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+            facts.as_ref(),
+        ) {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header pushes (deep) — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(Vec::new());
+        }
+        let vec = self.expr_string(vector)?;
+        self.hoist_counter += 1;
+        let win = format!("__pw_{}", self.hoist_counter);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {win} = vector::push_window(&{hdr}, {size}_u32, &stores.allocations); //@FR-R-PushFill push window, deep"
+        )?;
+        self.push_windows.push((path.clone(), win.clone()));
+        crate::rewrite_census::fired("R-PushFill", 1);
+        Ok(vec![(win, hdr, vec)])
     }
 
     /// `@FR-R-PushFill`'s several-paths clause — reserve every path a counted loop pushes to
@@ -3946,11 +4026,23 @@ impl Output<'_> {
     /// second reserve move the record the first header was just derived from.  A path whose
     /// header the loop does not hold is not reserved (its pushes go through the runtime,
     /// which grows as it needs).
+    ///
+    /// THE WINDOW CLAUSE for several paths — where every path's header is held (so every
+    /// path is reserved) and [`hoist::push_windows_ok`] admits the loop, a window is opened
+    /// on each reserved header, after all of them were re-derived; answered for the caller
+    /// to close after the loop, as [`Self::push_reserve`]'s own window is.
     fn push_reserve_paths(
         &mut self,
         w: &mut dyn Write,
+        lp: &crate::data::Block,
         ps: &[hoist::PushLoop<'_>],
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<Vec<(String, String, String)>> {
+        if ps
+            .iter()
+            .any(|p| self.active_push_window(&p.path).is_some())
+        {
+            return Ok(Vec::new());
+        }
         let mut held: Vec<(String, String, u32, u32)> = Vec::new();
         for p in ps {
             if let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) {
@@ -3959,7 +4051,7 @@ impl Output<'_> {
             }
         }
         if held.is_empty() {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let count = self.push_trip_count(&ps[0])?;
         use std::fmt::Write as _;
@@ -3980,7 +4072,47 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(w, "{line}")?;
         crate::rewrite_census::fired("R-PushFill", 1);
-        Ok(())
+        if held.len() < ps.len()
+            || self.push_window_disabled
+            || self.in_coroutine_body
+            || ps
+                .iter()
+                .any(|p| self.coroutine_persistent_fields.contains_key(&p.path.0))
+        {
+            return Ok(Vec::new());
+        }
+        if let Err(why) = hoist::push_windows_ok(
+            lp,
+            ps,
+            self.data,
+            self.def_nr,
+            Some(self.stores),
+            &mut self.hoist_cache,
+        ) {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header pushes on {} paths — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope,
+                    ps.len()
+                );
+            }
+            return Ok(Vec::new());
+        }
+        let mut windows = Vec::with_capacity(ps.len());
+        for (p, (hdr, vec, _, size)) in ps.iter().zip(held) {
+            self.hoist_counter += 1;
+            let win = format!("__pw_{}", self.hoist_counter);
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let mut {win} = vector::push_window(&{hdr}, {size}_u32, &stores.allocations); //@FR-R-PushFill push window, several paths"
+            )?;
+            self.push_windows.push((p.path.clone(), win.clone()));
+            windows.push((win, hdr, vec));
+        }
+        crate::rewrite_census::fired("R-PushFill", windows.len());
+        Ok(windows)
     }
 
     /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
@@ -4196,6 +4328,11 @@ impl Output<'_> {
         let Some(val) = p.fill else {
             return Ok(false);
         };
+        // A loop nested in one that holds a window on the path pushes through it: a fill
+        // writes the record's length, which the window defers.
+        if self.active_push_window(&p.path).is_some() {
+            return Ok(false);
+        }
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
             return Ok(false);
         };
@@ -5368,11 +5505,6 @@ impl Output<'_> {
         if !self.coroutine_persistent_fields.is_empty() {
             return Ok(0);
         }
-        // A twin's scalar reads arrive as its inputs (`(R-Inputs)`), so the address would serve
-        // only what is left over — in hex_field's `eg_index__inv`, nothing.
-        if self.twin.is_some() {
-            return Ok(0);
-        }
         let vars = self.data.def(self.def_nr).variables();
         let params: Vec<u16> = (0..vars.count()).filter(|v| vars.is_argument(*v)).collect();
         let mut frames = 0;
@@ -5386,7 +5518,17 @@ impl Output<'_> {
             }
             // The address costs two runtime calls at entry, which one field access does not
             // repay: a parameter read or written once keeps its store access.
-            if hoist::scalar_field_uses(stmts, p, self.data) < 2 {
+            // A twin's scalar reads of `p` arrive as its inputs (`(R-Inputs)`), so the address
+            // serves only what is left over — in hex_field's `eg_index__inv`, nothing; in
+            // `clock_pump__inv`, the fields its in-place callees write.
+            let served: Vec<i64> = self.twin.as_ref().map_or_else(Vec::new, |t| {
+                t.scalars
+                    .iter()
+                    .filter(|(q, _, _)| *q == p)
+                    .map(|(_, f, _)| *f)
+                    .collect()
+            });
+            if hoist::scalar_field_uses(stmts, p, self.data, &served) < 2 {
                 continue;
             }
             // No twin call is served (`param_rec_ptrs`), so none counts as a use.
@@ -7542,7 +7684,7 @@ extern crate loft;"
         writeln!(w, "use loft::ops;")?;
         writeln!(w, "use loft::vector;")?;
         writeln!(w, "use loft::hash;")?;
-        writeln!(w, "use loft::tree;")?;
+        writeln!(w, "use loft::btree;")?;
         writeln!(w, "use loft::codegen_runtime;")?;
         writeln!(w, "use loft::codegen_runtime::*;")?;
         // A `#rust` template names a loft module as `crate::<m>::…` so the INTERPRETER's
@@ -8505,7 +8647,7 @@ extern crate loft;"
                             self.stores.types[f.content as usize].parts,
                             crate::database::Parts::Sorted(_, _)
                                 | crate::database::Parts::Hash(_, _)
-                                | crate::database::Parts::Index(_, _, _)
+                                | crate::database::Parts::Index(_, _)
                         ) && decided.insert(f.content)
                             && f.content > container
                         {
@@ -8595,10 +8737,7 @@ extern crate loft;"
                 // ⚠ **What makes a second emission safe is NAME AGREEMENT, not this
                 // exclusion**, which is measured rather than argued.  Every `db.*`
                 // collection constructor is interned by the type NAME it builds, so a
-                // repeat call returns the existing id and the FIRST position wins; only
-                // `db.index` has a side effect (the `#left_N` / `#right_N` / `#color_N`
-                // triple it appends to the element), and it dedups early for exactly
-                // that reason.  `Radix` / `Trie` are absent from `field_keyed` and so
+                // repeat call returns the existing id and the FIRST position wins.  `Radix` / `Trie` are absent from `field_keyed` and so
                 // are ALWAYS emitted twice for a field-referenced type — measured
                 // harmless on both backends once the two call sites spell the key list
                 // the same way.  They did not: the bare stream renders key numbers
@@ -8624,14 +8763,14 @@ extern crate loft;"
                 crate::database::Parts::Radix(c, keys) if !field_keyed.contains(&tid) => {
                     bare_io.push((tid, BareIo::Radix(*c, keys.clone())));
                 }
-                crate::database::Parts::Index(c, keys, _) if !field_keyed.contains(&tid) => {
+                crate::database::Parts::Index(c, keys) if !field_keyed.contains(&tid) => {
                     bare_io.push((tid, BareIo::Index(*c, keys.clone())));
                 }
                 crate::database::Parts::Sorted(_, _)
                 | crate::database::Parts::Hash(_, _)
                 | crate::database::Parts::Radix(_, _)
                 | crate::database::Parts::Trie(_, _)
-                | crate::database::Parts::Index(_, _, _) => {}
+                | crate::database::Parts::Index(_, _) => {}
                 _ => {}
             }
         }
@@ -10319,7 +10458,7 @@ extern crate loft;"
             // target and `report_and_exit` printed none; the frames now come from the
             // shadow call stack inside `report_and_exit` itself, so nothing is traded away
             // — and `--interpret`, which had no frames here either, gains them too.
-            // Production mode logs and continues (C66), through the same
+            // Production mode logs and continues (@C66), through the same
             // `logged_in_production` the interpreter's `native.rs::n_assert` calls — the
             // two backends implement one documented behaviour and only the interpreter
             // used to honour it, so `loft app.loft` aborted where `loft --interpret`
@@ -11246,22 +11385,7 @@ extern crate loft;"
                 // Internal i_ functions have implementations in codegen_runtime.rs;
                 // all others get a todo!() stub.
                 writeln!(w, "{{")?;
-                if def.name() == "i_parse_errors" {
-                    writeln!(
-                        w,
-                        "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
-                    )?;
-                    writeln!(w, "  loft::codegen_runtime::i_parse_errors(stores)")?;
-                } else if def.name() == "i_parse_error_push" {
-                    writeln!(
-                        w,
-                        "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
-                    )?;
-                    writeln!(
-                        w,
-                        "  loft::codegen_runtime::i_parse_error_push(stores, var_msg)"
-                    )?;
-                } else if def.name() == "n_json_errors" {
+                if def.name() == "n_json_errors" {
                     writeln!(
                         w,
                         "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"

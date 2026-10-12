@@ -37,7 +37,7 @@
 //! refused, and a library could ship a binding only half of loft could call.
 //! The ladder was extended to 32 and `--native` is held to the same number:
 //! unifying by RAISING rather than narrowing, so nothing that compiled stopped
-//! compiling. See `c_signature::MAX_C_ARITY` and DESIGN_DECISIONS.md § C106.
+//! compiling. See `c_signature::MAX_C_ARITY` and DESIGN_DECISIONS.md § @C106.
 
 #![cfg(feature = "native-extensions")]
 
@@ -497,7 +497,7 @@ pub fn register_native(libs: &[(&str, &str)], syms: &[(&str, &[&str])]) {
 /// A library the program never declared answers false rather than probing the
 /// dynamic linker for it. Asking about one is a program bug, and false is the
 /// answer that keeps a caller on its fallback path instead of into a fault
-/// (C80: no runtime errors, ever).
+/// (@C80: no runtime errors, ever).
 /// [`library_available`], for generated Rust — the main binary AND every
 /// auto-built package cdylib.
 ///
@@ -816,7 +816,7 @@ fn over_arity_message(binding: &CBinding, slots: usize) -> String {
 ///   loft text carries a length and can hold an interior NUL; a C string cannot,
 ///   so the crossing truncates there rather than inventing a length.
 /// - **Invalid UTF-8 is replaced, not refused** — loft text is UTF-8, and a
-///   locale-encoded byte from C must not take the program down (C80).
+///   locale-encoded byte from C must not take the program down (@C80).
 ///
 /// The pointer is COPIED and never freed. See the return check in
 /// `c_signature::check` for why borrowed is the only safe default.

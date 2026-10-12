@@ -26,11 +26,11 @@
 
 /// Package names reserved for a language namespace — a library may not claim
 /// one, because it resolves to a built-in namespace rather than a package
-/// (@PLN13 / [C101](../doc/claude/DESIGN_DECISIONS.md)):
+/// (@PLN13 / @C101):
 ///
 ///   * `std` — the standard library. `std::name` is the stdlib's qualified form
 ///     and the escape hatch when a bare name is shadowed (by a user definition
-///     or a `use lib::*` import — see C97/C98). It is already bound in `data.rs`
+///     or a `use lib::*` import — see @C97/@C98). It is already bound in `data.rs`
 ///     (`use_names["std"] = STD_SOURCE`), so a `std` library could never override
 ///     it — reserving the *name* keeps it from being claimed or confused.
 ///   * `core` — held for a possible future stdlib-core split (cf. Rust). Free to
@@ -245,7 +245,7 @@ pub fn scan_method_calls(content: &str) -> Vec<String> {
 /// The CamelCase names a file DECLARES as types — `struct X`, `enum X`, `type X` at the top level
 /// of the file — outside comments, strings and every `{ … }` block.  Read before pass 1 so a
 /// program type that shares a standard-library type's name owns that name in its file from the
-/// first line on (C101: the program's definition shadows the stdlib's wherever it is written),
+/// first line on (@C101: the program's definition shadows the stdlib's wherever it is written),
 /// not only below its declaration.  Order-preserving, de-duplicated.
 #[must_use]
 /// Type names a file REFERENCES, for the type half of the auto-`use` trigger surface

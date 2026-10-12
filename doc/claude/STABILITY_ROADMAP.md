@@ -102,7 +102,7 @@ to have been failing silently.
 | meter | stable when | measured 2026-09-29 | moved |
 |---|---|---|---|
 | `contract:strained` share of judged fixes | 0 for two weeks | 21 of 147 closes in the seven days to this date (14 %) | 16 % over 60 days → 14 % this week |
-| owner rulings asked for | 0 | 2 this week (C129, C130), both *a rule that does not exist yet* — the kind that may reach the owner; 0 of the process-defect kind | first count |
+| owner rulings asked for | 0 | 2 this week (@C129, @C130), both *a rule that does not exist yet* — the kind that may reach the owner; 0 of the process-defect kind | first count |
 | the consumer gate | green two weeks running | **red 2026-09-27 and 2026-09-28, `dryopea` only (3 of 4 jobs green)**: the interpreted suite hits the 600 s watchdog in `loot_rate` (`wallet.loft:289`) and again during the parse of `tests/23_k1_composition.loft`, then SIGABRT — twenty minutes both nights, so deterministic; **no issue tracks it** | red, and untracked |
 | `silent-wrong` open on main | 0 | 0 (loft#1710 closed in the #1730 join) | 1 → 0 |
 | rule coverage (`make rule-coverage`) | 70 % / 40 % floors | 73.9 % annotated / 57.7 % guarded over 395 rules | 73.4 / 57.6 → up |
@@ -166,7 +166,7 @@ where that is decided; nothing in these ten weeks decides it earlier.
 blocked the 2026.10.0 tag and the one open `silent-wrong`; the walk's yield is now hygiene
 gates on new files rather than wrong answers (this branch's own day: a store in condition
 position refused on both backends, a `default/` that does not match its binary refused at
-load, and [C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment)
+load, and [@C130](DESIGN_DECISIONS_FAILURE.md#c130--a-store-carries-its-own-failure-arm-else-after-the-assignment)
 with [@PLN178](plans/178-store-else.md) as the language's answer to a dropped write —
 each a refusal or a rule, none a fix to a wrong answer).  Two advisory CI regressions
 appeared on main the same morning and were fixed within two hours; that is the cadence
@@ -273,7 +273,7 @@ existing homes, and P2's "low priority" reads as "after the native bar", not "ne
 *The light side, and the floor under it (owner, 2026-09-28).*  During development the
 parts of a program NOT touched for a while should be compiled and optimised automatically,
 so a day's work feels fast even while the part under edit runs interpreted.  That is
-[DESIGN_DECISIONS.md § C71](DESIGN_DECISIONS.md) with its boundary moved inward: today the
+[DESIGN_DECISIONS.md § @C71](DESIGN_DECISIONS.md) with its boundary moved inward: today the
 line between native and interpreted is "published library vs the user's script", and the
 ask is to draw it by EDIT AGE instead — a function or module whose source has been stable
 for a set duration is built in the background and dispatched through the same
@@ -590,7 +590,7 @@ either conclusion.
    **closed, not merely quiet**. At one dogfooding agent a residual UAF/over-free
    surfaces occasionally; at many users + AI hitting every composition it surfaces
    constantly — and a substrate that *sometimes* corrupts invalidates the whole pitch
-   (the language carries correctness so the maker never does — DESIGN_DECISIONS C79/C80).
+   (the language carries correctness so the maker never does — DESIGN_DECISIONS @C79/@C80).
    "Closed" = pin the ONE ownership invariant at the `deps` chokepoint (Cluster C / H10,
    not symptom-by-symptom), THEN prove the class gone *by construction* — graduate the
    boundary matrices into the fuzz/sanitizer corpora (@PLN53/@PLN54, queue step 9) so the
@@ -688,7 +688,7 @@ either conclusion.
    *express* incompatibility but the version axis does not yet make a bound mean it.
    **The failure mode it prevents was live.** `hex_terrain 0.1.0` failed its own registry
    test with `0 land cells`: it used the plain-bind write-through idiom (`th = t.tr_h; th[i] = v`),
-   and loft now **copies on plain bind** (C86 H-Copy), so the heights landed in throwaway copies.
+   and loft now **copies on plain bind** (@C86 H-Copy), so the heights landed in throwaway copies.
    `graphics` hit the identical class and was migrated to `&self.data`; `hex_terrain` has since
    been fixed too and the package validates green. Both pinned `loft = ">=0.8"`, so nothing
    guarded them, and the library did not crash — it computed a plausible-looking wrong answer.
@@ -755,7 +755,7 @@ Two standing gates were RED; **both are now resolved except one external library
   failed at native-crate build (`alsa-sys` needs `libasound2-dev`; the workflow installed only
   `mold`) — a provisioning gap, now closed by mirroring the main CI Test job's Linux install
   (`libasound2-dev xvfb libgl1-mesa-dri`) into `registry-validation.yml`. The remaining red leg is
-  **`hex_terrain 0.1.0`**, a real published-library bug (the C86 plain-bind write-through idiom
+  **`hex_terrain 0.1.0`**, a real published-library bug (the @C86 plain-bind write-through idiom
   lands its heights in throwaway copies — see gate 5): it needs a **library republish in
   loft-libs-game**, out of this repo's scope, and is the motivating case for the @PLN102 compat
   promise. Not a network flake — the other ~20 pass.

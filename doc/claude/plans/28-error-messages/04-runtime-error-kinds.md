@@ -5,12 +5,12 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Phase 4 — Typed runtime errors
 
-**REFRAMED 2026-05-11 — see [DESIGN_DECISIONS.md § C66](../../DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).**
+**REFRAMED 2026-05-11 — see [DESIGN_DECISIONS.md § @C66](../../DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt).**
 The original phase-4 spec called for HALTING the loft program on
 any typed runtime fault (`State::raise` short-circuiting the
 dispatch loop via `code_pos = u32::MAX`).  This violates loft's
 fundamental "programs must not abort on user-attributable edge
-cases" rule (C66) — loft's primary deployment is interactive
+cases" rule (@C66) — loft's primary deployment is interactive
 games / scripted scenes / multiplayer servers where halt is
 strictly worse than a wrong-pixel edge case.
 
@@ -65,7 +65,7 @@ Per-site rename in the next iteration: `vec_get_or_raise` →
 Phase 4 ships the typed `RuntimeError` infrastructure + per-site
 detection in BOTH modes; the **behaviour at the fault site is
 mode-dependent** (production logs + continues, development halts +
-renders).  See [DESIGN_DECISIONS.md § C66](../../DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt)
+renders).  See [DESIGN_DECISIONS.md § @C66](../../DESIGN_DECISIONS_FAILURE.md#c66--production-loft-programs-never-abort-on-user-attributable-edge-cases-development-may-halt)
 for the rule.
 
 ### Shipped (2026-05-11) — dev-mode halt path
@@ -122,7 +122,7 @@ Sub-arc tracked in `~/.claude/plans/async-toasting-nest.md`
 3. Startup check in `main.rs` (and any embedding entry point):
    refuse to boot when production mode is requested without a
    logger attached, with a clear actionable error message naming
-   the fix path (see C66 + LOGGER.md).
+   the fix path (see @C66 + LOGGER.md).
 4. `tests/runtime_logging.rs` — production-mode test harness
    attaches a capturing Logger, asserts continue-and-log shape
    for each kind.

@@ -1,0 +1,44 @@
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 5a9d9c6a6..32baff57a 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -3205,15 +3198,7 @@ impl Parser {
+         let mut text_expr = Value::Null;
+         let tp = self.expression(&mut text_expr);
+         self.lexer.token(")");
+-        // The element is a value of the named type, in that type's own spelling: a struct is
+-        // a record, and `text`, a number or an enum is what its definition answers.  Typed as
+-        // a record whatever it named, a `vector<integer>.parse` had elements no operator
+-        // took and a `vector<text>.parse` rendered its texts quoted (loft#1985).
+-        let elem_tp = if self.data.def_type(elem_d_nr) == DefType::Struct {
+-            Type::Reference(elem_d_nr, crate::data::Deps::none())
+-        } else {
+-            self.data.def(elem_d_nr).returned().without_deps()
+-        };
++        let elem_tp = Type::Reference(elem_d_nr, crate::data::Deps::none());
+         let vec_type = Type::Vector(Box::new(elem_tp.clone()), crate::data::Deps::none());
+         if !self.first_pass {
+             if !matches!(tp, Type::Text(_)) {
+@@ -3226,13 +3211,15 @@ impl Parser {
+                 "OpCastVectorFromText",
+                 &[text_expr, Value::Int(i32::from(vec_kt))],
+             );
+-            // `@FR-H-View` — the parse answers the vector itself, the one field of the store
+-            // it minted, at that store's root: the call IS the value and whoever binds it
+-            // owns the store.  Read as field 0 of the call instead, the same address was a VIEW of a
+-            // lifted temporary that nothing recorded: a local bound to it and returned, or
+-            // bound inside a block and read after it, named a store already freed
+-            // (loft#1985).
+-            *code = parse_call;
++            // The parse returns a DbRef to the wrapper struct main_vector<T>.
++            // Extract the vector field (at position 0) so the result is directly iterable.
++            let wrapper_name = format!("main_vector<{}>", self.data.def(elem_d_nr).name());
++            let wrapper_d_nr = self.data.def_nr(&wrapper_name);
++            if wrapper_d_nr == u32::MAX {
++                *code = parse_call;
++            } else {
++                *code = self.get_field(wrapper_d_nr, 0, parse_call);
++            }
+         }
+         // Ensure the vector def exists for type resolution.
+         self.data.vector_def(&mut self.lexer, &elem_tp);

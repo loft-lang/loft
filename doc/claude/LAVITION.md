@@ -78,7 +78,7 @@ lavition's runtime is **two cooperating layers over one shared store**:
 
 **The seam between them is the store.**  Both layers read and write **one shared
 store** — the same word-addressed, schema-driven, `DbRef`-keyed substrate.  This
-is the [C71 shared-store dispatch](NATIVE.md#n9--native-library-shared-store-dispatch-c71)
+is the [@C71 shared-store dispatch](NATIVE.md#n9--native-library-shared-store-dispatch-c71)
 generalised from "a native library + its interpreted caller share a store" to
 "the host loop + the script share the game's data."  There are not two
 representations kept in sync; there is one — the Rust loop ticks the world by
@@ -162,7 +162,7 @@ too.  Editing flips a **single function** between tiers:
 ```
  baseline (always):  [ compiled libraries ]  +  [ compiled game functions ]   ← native / wasm
                                    ▲  ▲
-                      shared-store │  │ dispatch (N9 / C71)
+                      shared-store │  │ dispatch (N9 / @C71)
                                    │  ▼
  editing fn F:    F interpreted now ─▶ calls compiled libs over the store ─▶ near-native
                      └─▶ server recompiles F → wasm ─▶ F swaps back to compiled ─▶ full speed
@@ -172,7 +172,7 @@ too.  Editing flips a **single function** between tiers:
 function being edited is thin orchestration; the cycles live in the heavy library
 calls it makes — graphics, physics — which are **always compiled**.  Those calls
 cross the boundary as a **shared-store dispatch**
-([N9 / C71](NATIVE.md#n9--native-library-shared-store-dispatch-c71)): an
+([N9 / @C71](NATIVE.md#n9--native-library-shared-store-dispatch-c71)): an
 interpreted caller and a compiled callee read and write the **same records**, so
 the crossing is a dispatch, not a copy.  **This is the prime reason the
 interpreter must run against compiled libraries** — it lets you interpret the few

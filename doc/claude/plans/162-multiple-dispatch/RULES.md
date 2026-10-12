@@ -66,7 +66,7 @@ and every site that reads `n_<name>` as THE definition finds none, exactly as fo
 name.  Three consequences worth stating:
 
 - **Scope is one SOURCE, and a library's set reaches its consumers whole.**  A MAIN definition
-  under a stdlib name stays the C95 refusal, a library's names stay module-scoped (C97).  A
+  under a stdlib name stays the @C95 refusal, a library's names stay module-scoped (@C97).  A
   library's overload set is reached by every import spelling — wildcard bare, selective,
   qualified, aliased, the method spelling, the library's own calls — through its bare
   dispatcher (measured 2026-09-14: `tests/scripts/a-library-exports-an-overload-set.loft` and

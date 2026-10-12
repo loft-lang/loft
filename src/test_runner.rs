@@ -1342,7 +1342,7 @@ pub(crate) fn run_tests(
             // instead let an unrelated warning through a library's `--deny-warnings` CI
             // unseen: `regex`'s test pinned two `shadowed-by-method` warnings, and the
             // `both-receiver-deprecated` warning on its own source printed nothing and failed
-            // nothing (C123).
+            // nothing (@C123).
             let claimed = |w: &String| {
                 ann.expect_warnings.iter().any(|s| w.contains(s.as_str()))
                     || ann
@@ -2160,7 +2160,7 @@ pub(crate) fn run_tests(
                         }
                         // @P367: assert(false) / panic / divide-by-zero / OOB /
                         // null-deref set a *typed* runtime fault and halt WITHOUT
-                        // a Rust panic (the C66 path), so catch_unwind sees Ok and
+                        // a Rust panic (the @C66 path), so catch_unwind sees Ok and
                         // the test would otherwise be scored PASSED.  Surface the
                         // fault so the runner can FAIL the test — and so an
                         // intentional fault still satisfies @EXPECT_FAIL.
@@ -2354,10 +2354,13 @@ pub(crate) fn run_tests(
     // throughout, and could only find out by running the native sweep by hand.
     // The scope is not optional and not behind a flag: it rides on the default
     // path, because that is the path that was lying.
+    // @C102 — on a machine with no `rustc`, `loft test --native` cannot help: name what would.
     let (ran, missing, missing_cmd) = if native_mode {
         ("native", "the interpreter", "loft test")
-    } else {
+    } else if loft::native_lib::rustc_available() {
         ("the interpreter", "native", "loft test --native")
+    } else {
+        ("the interpreter", "native", loft::native_lib::NO_RUSTC)
     };
     // Tests that were counted but never executed on `ran` (see `total_skipped`).
     let skipped = if total_skipped > 0 {

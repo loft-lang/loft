@@ -213,7 +213,7 @@ since that lookup on every call was a quarter of a recursive function's time.
 
 An interpreted program runs the standard library's LOOPING loft functions compiled: their
 native code is built into the loft binary, so `--interpret` needs no rustc at run time
-(C71: libraries compile, scripts interpret — the standard library is a library).  It is the
+(@C71: libraries compile, scripts interpret — the standard library is a library).  It is the
 same path an installed library takes, with three differences:
 
 - **What is compiled** — `compiled_stdlib::export_set`: non-generic functions the shared-store

@@ -213,7 +213,7 @@ if h[key] { found = true; }
 elem = idx[42, "foo"];    // null if not present
 ```
 
-**All keyed-collection subscripting is by KEY, never by position (C99).** On a
+**All keyed-collection subscripting is by KEY, never by position (@C99).** On a
 `sorted` / `index` / `hash`, `coll[k]` looks up the element whose key **equals**
 `k` — not the element at position `k` — so `s[20]` finds key 20 and `s[1]`
 returns `null` when there is no key 1 (it is not position 1). On an ordered
@@ -471,7 +471,7 @@ these methods `pub` to use them across a `use` boundary.  The full rules:
   no overload takes errors (`No matching operator '-' on 'T' and 'text'`, naming the `operator`
   to declare), and so does a type with no such operator (`dt + 5` stays a compile error —
   distinct-type safety is free).  A function named `OpLt` / `OpAdd` / … is an ordinary
-  function (C132).
+  function (@C132).
 - **Scope end** — define `fn OpDrop(self: T)` and it runs when the value's OWNER dies: the
   binding's own scope exit, the early-`return`/`break` paths, reverse-declaration order within a
   scope (@PLN125 arc B), and a REASSIGNMENT of the binding, which releases the record it
@@ -481,7 +481,7 @@ these methods `pub` to use them across a `use` boundary.  The full rules:
   (`t = s`, the variable an `if` arm yields, `t = s; return t`) moves it the same way: the
   copy releases, the source does not; a copy off a PARAMETER leaves the caller as the owner
   ([INTERFACES.md § `OpDrop`](INTERFACES.md)).  Taking a value back OUT
-  (`v.remove(i)`, `v[i] = other`) does not release it.  A drop **cannot fail** (C80 — no caller
+  (`v.remove(i)`, `v[i] = other`) does not release it.  A drop **cannot fail** (@C80 — no caller
   is left to tell), so it may not return and anything whose failure matters stays an explicit
   call (`tx.commit()` answers, the closing brace does not).  It receives only `self`, whose data
   is COPIED at construction, so its effect reaches the world (I/O, a `#c` handle it owns) rather

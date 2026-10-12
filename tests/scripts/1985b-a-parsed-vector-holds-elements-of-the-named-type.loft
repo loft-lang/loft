@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1985 — the elements of a `vector<T>.parse(text)` are values of `T`, in `T`'s own
+// spelling.  Typed as records whatever `T` named, a `vector<integer>.parse` had elements no
+// operator took, a `vector<text>.parse` rendered its texts quoted, and neither could be
+// returned from a function declared to answer that vector.
+//
+// Axes it MOVES: the element type (`text`, `integer`, `float`, a plain enum, a struct-enum, a
+// struct), the use of an element (an operator, a typed local, a comparison, a `match`, a
+// format, a loop), and the path (bound in place, bound to a local and returned).  Every
+// value is hand-computed.
+//
+// @falsified-at: 5bfcbdf83 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1985b-a-parsed-vector-holds-elements-of-the-named-type.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: the EXIT — the control refuses the file at compile time, so no cell runs there.
+//   WITNESS: the control reports *Variable 'first' cannot change type from text to text* and
+//   *No matching operator '+' on 'float' and 'float'*; one shape per program, a
+//   `vector<text>.parse` prints its two elements as `"a""b"`.
+//   HOLDS: the struct, struct-enum and plain-enum vectors read in place answer the same on
+//   both trees; leak, panic and free-refusal are clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct KindItem { v: integer }
+enum KindShape { KindCircle { r: integer }, KindDot { n: integer } }
+enum KindColor { KindRed, KindGreen }
+
+fn kind_size(s: KindShape) -> integer { match s { KindCircle { r } => r, KindDot { n } => n } }
+
+fn kind_words(t: text) -> vector<text> {
+  w = vector<text>.parse(t);
+  w
+}
+
+fn kind_numbers(t: text) -> vector<integer> {
+  w = vector<integer>.parse(t);
+  w
+}
+
+fn kind_shapes(t: text) -> vector<KindShape> {
+  w = vector<KindShape>.parse(t);
+  w
+}
+
+fn main() {
+  words = vector<text>.parse(`["a","b"]`);
+  first: text = words[0];
+  assert_eq("{len(words)} {words[0]}{words[1]} {len(first)}", "2 ab 1", "texts read as texts");
+  joined = "";
+  for e in kind_words(`["x","y","z"]`) { joined += e; }
+  assert_eq(joined, "xyz", "texts returned from a function, in a loop");
+
+  numbers = kind_numbers(`[4,5]`);
+  one: integer = numbers[0];
+  assert_eq("{len(numbers)} {numbers[0] + numbers[1]} {one * 2}", "2 9 8", "integers take operators");
+  halves = vector<float>.parse(`[1.5,2.5]`);
+  assert_eq("{halves[0] + halves[1]}", "4", "floats take operators");
+
+  colors = vector<KindColor>.parse(`["KindRed","KindGreen"]`);
+  c: KindColor = colors[0];
+  assert_eq("{len(colors)} {c} {colors[1] == KindGreen}", "2 KindRed true", "a plain enum compares");
+
+  shapes = kind_shapes(`[{{"KindCircle":{{"r":2}}}},{{"KindDot":{{"n":5}}}}]`);
+  held: KindShape = shapes[0];
+  assert_eq("{len(shapes)} {kind_size(held) + kind_size(shapes[1])}", "2 7", "a struct-enum matches");
+
+  items = vector<KindItem>.parse(`[{{"v":3}}]`);
+  assert_eq("{len(items)} {items[0].v} {items}", "1 3 [{{v:3}}]", "a struct is the record it was");
+
+  println("parsed vector element kinds ok");
+}

@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A CALLEE TWIN HOLDS ITS RECORD ADDRESS LIKE THE PLAIN FUNCTION (`@FR-R-RecPtr`'s parameter
+// clause inside an `@FR-R-Inputs` twin).  A twin reads the fields its caller holds from its
+// extra parameters; the fields left over — the ones its own in-place callees write — are read
+// and written through the record address taken at the twin's head, exactly as the plain
+// function does, and a twin call nested in a twin hands the inputs on.  The address is taken
+// only when two or more of those left-over accesses stand in the body.
+//
+// Expected values by hand:
+// chain — step 10, rate 3/4, wall 7, 15, 24, 34, 45: the scaled steps are 5, 6, 7, 7, 8
+//   (carry 1, 1, 0, 2, 3), the bank 5, 11→1, 8, 15→5, 13→3: 3 whole steps, bank 3, carry 3,
+//   last wall 45 → 3*10000 + 3*100 + 3*10 + 45 = 30375.
+// elems — three clocks of step 5, 6, 7 at rate 1, pumped to 13 then 30: whole steps 2+4,
+//   2+3, 1+3 = 15, banks 0, 0, 2 → 15002.
+// rebound — a callee that rebinds its record is no twin and holds no address of it:
+//   (i + 4) * 100 + 8 + 9 + 4 over i = 0, 1, 2 → 421 + 521 + 621 = 1563.
+//
+// @falsified-at: none — the twin reads the same bytes the plain function reads; an admitted twin
+// is store-free or writes in place (`@FR-R-Callee`), so nothing in it can move the record and a
+// patch skipping the verdict is inert.  A wrong address is the defect left, and
+// `LOFT_HOIST_VERIFY=1` (every `rec_get` re-read through the store) is its falsifier.
+struct Clk { step: integer, banked: integer, num: integer, den: integer, carry: integer, at: integer }
+struct T { a: integer, b: integer, k: integer }
+fn scaled(c: Clk, e: integer) -> integer {
+  tot = c.carry + e * c.num;
+  sim = (tot / c.den) ?? 0;
+  c.carry = tot - sim * c.den;
+  sim
+}
+fn advance(c: Clk, e: integer) -> integer {
+  c.banked = c.banked + scaled(c, e);
+  w = (c.banked / c.step) ?? 0;
+  c.banked = c.banked - w * c.step;
+  w
+}
+fn pump(c: Clk, now: integer) -> integer {
+  if now <= c.at { c.at = now; return 0; }
+  dt = now - c.at;
+  c.at = now;
+  advance(c, dt)
+}
+fn rb(t: T, o: T) -> integer {
+  s = t.a + o.k;
+  t = o;
+  s * 100 + t.a + t.b + o.k
+}
+fn chain() -> integer {
+  c = Clk { step: 10, banked: 0, num: 3, den: 4, carry: 0, at: 0 };
+  n = 0;
+  steps = 0;
+  for i in 0..5 { n += 7 + i; steps += pump(c, n); }
+  steps * 10000 + c.banked * 100 + c.carry * 10 + c.at
+}
+fn elems() -> integer {
+  cs: vector<Clk> = [];
+  for j in 0..3 { cs += [Clk { step: 5 + j, banked: 0, num: 1, den: 1, carry: 0, at: 0 }]; }
+  total = 0;
+  for c in cs { total += pump(c, 13); total += pump(c, 30); }
+  total * 1000 + cs[0].banked * 100 + cs[1].banked * 10 + cs[2].banked
+}
+fn rebound() -> integer {
+  o = T { a: 8, b: 9, k: 4 };
+  r = 0;
+  for i in 0..3 { r += rb(T { a: i, b: 0, k: 0 }, o); }
+  r
+}
+fn main() {
+  assert(chain() == 30375, "a twin chain writes its left-over fields through the address");
+  assert(elems() == 15002, "a twin over a vector element writes the element in place");
+  assert(rebound() == 1563, "a callee that rebinds its record");
+}

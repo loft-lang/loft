@@ -440,7 +440,7 @@ impl Stores {
     /// Parse `text` into `result` AND file the outcome on both error surfaces.
     ///
     /// A text parse is the one-stage spelling (`Type.parse(text)`), and it used to file
-    /// its diagnostics only under `#errors` (`last_parse_errors`).  `json_errors()` reads
+    /// its diagnostics only under `#errors` (`Store::parse_errors`).  `json_errors()` reads
     /// the OTHER register, so the documented JSON pairing —
     /// `Cfg.parse(text)` then `json_errors()` — reported nothing at all on malformed input
     /// and on a schema mismatch: the program read a struct of zeros and was told the parse
@@ -452,8 +452,8 @@ impl Stores {
     /// data, and a `vector<T>.parse` reported an error naming a different type entirely.
     ///
     /// One entry point, both registers: cleared on entry, written on failure.  The two
-    /// surfaces stay separate by design (`#errors` is text and clears on read; the suite
-    /// and `STDLIB.md` both rely on that) — what they must not do is DISAGREE about
+    /// surfaces stay separate by design (`#errors` is a `vector<text>`, `json_errors()` one
+    /// text; the suite and `STDLIB.md` both rely on that) — what they must not do is DISAGREE about
     /// whether the last parse succeeded.
     fn record_text_parse(&mut self, text: &str, tp: u16, result: &DbRef) -> Option<String> {
         self.last_json_errors.clear();
@@ -509,6 +509,116 @@ impl Stores {
         // the binary path + loft CLI flags.
         let args = self.user_args.clone();
         self.text_vector(&args)
+    }
+
+    /// What `record#errors` reads: the errors of the `Type.parse(text)` call that built the
+    /// store `of` lives in, as a fresh `vector<text>` with one element per error.  Empty for a
+    /// null reference and for a store no parse built.
+    #[must_use]
+    pub fn parse_errors_vector(&mut self, of: &DbRef) -> DbRef {
+        let errors = self
+            .allocations
+            .get(of.store_nr as usize)
+            .filter(|s| !s.free)
+            .map(|s| s.parse_errors.clone())
+            .unwrap_or_default();
+        self.text_vector(&errors)
+    }
+
+    /// Record what the parse that just filled `into`'s store with a `tp` reported: `err` is
+    /// its one error, or `None` for a parse that succeeded.
+    pub fn set_parse_errors(&mut self, into: &DbRef, tp: u16, err: Option<String>) {
+        let store = &mut self.allocations[into.store_nr as usize];
+        store.parse_errors = err.into_iter().collect();
+        store.parse_type = tp;
+    }
+
+    /// @C148 — the errors of a parse belong to the VALUE it built, so a write of a whole `tp` record
+    /// into the root of another store brings the incoming value's errors with it: those of
+    /// the parse that built `data`, or none when no parse did.  A write into anything but a
+    /// store's whole root — a field, an element, a first field that only shares the root's
+    /// address — changes no store's errors.
+    pub(crate) fn deliver_parse_errors(&mut self, data: &DbRef, to: &DbRef, tp: u16) {
+        let (ds, ts) = (data.store_nr as usize, to.store_nr as usize);
+        if ds == ts || ds >= self.allocations.len() || ts >= self.allocations.len() {
+            return;
+        }
+        let dest = &self.allocations[ts];
+        let dest_root = if dest.known_type == u16::MAX {
+            dest.parse_type
+        } else {
+            dest.known_type
+        };
+        if (to.rec, to.pos) != (1, 8) || dest_root != tp {
+            return;
+        }
+        let source = &self.allocations[ds];
+        let parsed = (data.rec, data.pos) == (1, 8) && source.parse_type == tp;
+        let errors = if parsed {
+            source.parse_errors.clone()
+        } else {
+            Vec::new()
+        };
+        let dest = &mut self.allocations[ts];
+        dest.parse_errors = errors;
+        dest.parse_type = if parsed { tp } else { u16::MAX };
+    }
+
+    /// Is `db` the vector a `vector<T>.parse(text)` call built, whole, or a vector variable
+    /// that was given one?  Either is the root record of a store whose parsed type is a
+    /// vector: such a store's root holds that one vector and nothing else, so the record
+    /// number decides — the slot's offset in it is the backend's (`8` in a parse's store
+    /// and in a `--native` buffer, `12` in the interpreter's).
+    fn parsed_vector(&self, db: &DbRef) -> Option<u16> {
+        let tp = self.allocations.get(db.store_nr as usize)?.parse_type;
+        (db.rec == 1 && matches!(self.types.get(tp as usize)?.parts, Parts::Vector(_)))
+            .then_some(tp)
+    }
+
+    /// Is `db` the vector a vector VARIABLE owns, whole: the root of a store minted for one
+    /// vector (`main_vector<T>`), or of one a parse built?
+    fn vector_variable_root(&self, db: &DbRef) -> bool {
+        if db.rec != 1 {
+            return false;
+        }
+        let Some(store) = self.allocations.get(db.store_nr as usize) else {
+            return false;
+        };
+        self.parsed_vector(db).is_some()
+            || self
+                .types
+                .get(store.known_type as usize)
+                .is_some_and(|t| t.name.starts_with("main_vector<"))
+    }
+
+    /// @C148 — [`Self::deliver_parse_errors`] for a vector: `to`, a vector variable's whole value,
+    /// is being given the content of `data`.  `whole` says the write REPLACES the variable's
+    /// value (a rebind, a returned vector taken over), so `to` takes the incoming value's
+    /// errors or none.  An append is that only when it fills an empty vector no parse built
+    /// from a whole parsed one — which is how a bind of a vector to a new variable copies —
+    /// and otherwise it grows `to`, whose own errors stand.
+    pub(crate) fn deliver_vector_parse_errors(&mut self, data: &DbRef, to: &DbRef, whole: bool) {
+        if data.store_nr == to.store_nr || !self.vector_variable_root(to) {
+            return;
+        }
+        let parsed = self.parsed_vector(data);
+        let ts = to.store_nr as usize;
+        if !whole
+            && (parsed.is_none()
+                || self.allocations[ts].parse_type != u16::MAX
+                || vector::length_vector(to, &self.allocations) != 0)
+        {
+            return;
+        }
+        let errors = match parsed {
+            Some(_) => self.allocations[data.store_nr as usize]
+                .parse_errors
+                .clone(),
+            None => Vec::new(),
+        };
+        let dest = &mut self.allocations[ts];
+        dest.parse_errors = errors;
+        dest.parse_type = parsed.unwrap_or(u16::MAX);
     }
 
     /// Build a `vector<text>` from an explicit string slice.
@@ -1213,7 +1323,7 @@ impl ShowDb<'_> {
                 write!(s, "{v}").unwrap();
             }
         } else if self.known_type == 4 {
-            // 255 = @PLN17's three-state-boolean null sentinel (C73); inert for two-state.
+            // 255 = @PLN17's three-state-boolean null sentinel (@C73); inert for two-state.
             s.push_str(match self.store().get_byte(self.rec, self.pos, 0) {
                 0 => "false",
                 255 => "null",
@@ -1460,7 +1570,7 @@ impl ShowDb<'_> {
                 | Parts::Array(tp)
                 | Parts::Ordered(tp, _)
                 | Parts::Hash(tp, _)
-                | Parts::Index(tp, _, _)
+                | Parts::Index(tp, _)
                 | Parts::Radix(tp, _) => {
                     // `(F-Render)`: a null of any type renders `null`.  A collection field or
                     // local is addressed AT its slot, so its absence is the slot's
@@ -2153,7 +2263,7 @@ impl ShowDb<'_> {
             1 => write!(s, "{}l", self.store().get_long(self.rec, self.pos)).unwrap(), // long
             2 => write!(s, "{}f", self.store().get_single(self.rec, self.pos)).unwrap(), // single
             3 => write!(s, "{}", self.store().get_float(self.rec, self.pos)).unwrap(), // float
-            // 255 = @PLN17's three-state-boolean null sentinel (C73); inert for two-state.
+            // 255 = @PLN17's three-state-boolean null sentinel (@C73); inert for two-state.
             4 => s.push_str(match self.store().get_byte(self.rec, self.pos, 0) {
                 0 => "false",
                 255 => "null",
@@ -2217,7 +2327,7 @@ impl ShowDb<'_> {
             | Parts::Sorted(tp, _)
             | Parts::Array(tp)
             | Parts::Ordered(tp, _)
-            | Parts::Index(tp, _, _) => {
+            | Parts::Index(tp, _) => {
                 self.write_dump_list(s, *tp, indent);
             }
             Parts::Hash(_, _) | Parts::Radix(_, _) | Parts::Trie(_, _) => {

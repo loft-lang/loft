@@ -13,6 +13,25 @@ OPEN: **0** — `D-call-23` and `D-call-22` opened AND CLOSED 2026-09-28 (loft#1
 `D-call-7` closed 2026-09-02 and `D-call-6` was opened and closed the same day by the
 reference review of chapter 31.
 
+### D-call-30 — OPENED AND CLOSED (2026-10-12, loft#1987): a lifted call ran ahead of every operand to its left
+
+`(F-Args)` and `(E-Left)` evaluate arguments and operands left to right.  A call whose result
+is a heap value the caller must own — a stdlib function answering a `vector`, a function of
+the program answering a record — is lifted into a `__lift_N` temp by the scope pass, and the
+lift travels outward through every enclosing call to the statement, so it ran before every
+operand that stayed in the expression.  `set(j, 2) + len(j.keys()) * 10` answered 2 for 22
+(the keys read before `set` wrote them) and `c.n + made(c).v * 10` answered 11 for 10 (`c.n`
+read after `made` changed it), on both backends alike, which is why no differential check
+saw it.
+
+Closed in `Scopes::keep_operand_order` (`src/scopes/args.rs`): where an argument's
+evaluation is hoisted, each EARLIER argument that reads state or calls a function is taken
+into a temp of its own ahead of it, so the hoisted sequence is the source order.  An earlier
+argument that is a constant, a local the hoisted operations do not write, a `&` reference or
+an operator over such values stays in the call; a heap argument stays too, being read by the
+callee after both.  Measured one shape per program: the build before answers 20 of 28 cells
+wrong.  Guard `tests/scripts/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft`.
+
 ### D-call-25 — OPENED AND CLOSED (2026-09-29): a default reading an earlier parameter through a tuple read the caller's own local
 
 `(F-Default)`, written for this entry: a default fills its parameter with the earlier parameters

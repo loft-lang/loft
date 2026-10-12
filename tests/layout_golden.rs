@@ -110,7 +110,7 @@ const TYPES: &[&str] = &[
 /// alignment.  Ten rows moved and every one is a SIZE rounded up (`Item` 17→24, `Narrow`
 /// 7→8, `Scalars` 29→32, …) or an `elem_size` following it; no field position moved,
 /// because the corpus places no field after an inline record of odd size.)
-const LAYOUT_ALGO_HASH: u64 = 3_601_047_186_591_577_711;
+const LAYOUT_ALGO_HASH: u64 = 1_591_903_154_127_288_799;
 
 /// @PLN135 Q2 — `keys::key_hash` for a fixed seed over a fixed key set: the function a
 /// reader must reproduce to find an entry a writer placed. Pinned by
@@ -253,7 +253,7 @@ fn referenced(db: &Stores, kt: u16, out: &mut Vec<u16>) {
         Parts::Sorted(e, _)
         | Parts::Ordered(e, _)
         | Parts::Hash(e, _)
-        | Parts::Index(e, _, _)
+        | Parts::Index(e, _)
         | Parts::Radix(e, _) => out.push(*e),
         Parts::ChildRec(c) => out.push(*c),
         // A plain variant (no data) keeps `known_type == u16::MAX`; only
@@ -474,6 +474,8 @@ fn program_roots_are_the_user_types() {
 /// a token nobody bumped cannot refuse the resulting store. This pin is the only thing
 /// that would notice, which is why its failure message asks WHICH cause it is before
 /// anyone re-blesses it.
+///
+/// @C105 — the bucket slot it pins holds an entry index only: no cached hash, no entries.
 #[test]
 fn placement_contract_is_pinned() {
     use loft::keys::{Content, Str};

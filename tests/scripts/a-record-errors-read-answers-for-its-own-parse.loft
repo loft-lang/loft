@@ -1,0 +1,179 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C148 — `record#errors` answers for the parse that built the record it is asked through,
+// and the answer goes wherever the WHOLE record goes: bound, rebound, passed, returned from a
+// function, copied to another variable.  A record built any other way has none, and neither
+// does a part copied out of a parsed record.  One register for the whole program answered
+// for the LAST parse instead, so `a#errors` reported on `b` once `b` was parsed.
+//
+// Axes it MOVES: how many parses are live (one, two, four), their order (bad first, good
+// first), the delivery (a bind, a rebind from a parse, from a variable and from a constructor,
+// a helper's tail, a helper's local, a helper's `if` arms, two helpers deep, a parameter, a
+// `const` parameter, a `&` parameter written through, a copy, a nullable return, a `??`), the
+// value's kind (a struct, a struct-enum, a `value struct`), and the part (a view of a nested
+// record, the first field copied out, a parsed record stored into another or into a tuple).  Every value is
+// hand-computed.
+//
+// @falsified-at: 35adfb656 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-record-errors-read-answers-for-its-own-parse.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the control compiles this file and answers for the last parse.
+//   WITNESS: the control stops at the first cell, *the first parse keeps its error after a
+//   second one: got 0, want 1*.  Run one shape per program there, it misses in both
+//   directions: a helper's return, a parameter and a cast answer 0 where 1 is due, and a
+//   constructor's record after freed parses, a rebind from a good variable and a record built
+//   from a parsed one's fields answer 1 where 0 is due.
+//   HOLDS: a parse asked at once, a rebind from a parse, a loop's local and a copy asked
+//   before any other parse answer the same on both trees; leak, panic and free-refusal are
+//   clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct OwnDoc { id: integer, name: text }
+struct OwnHolder { doc: OwnDoc, n: integer }
+enum OwnShape { OwnCircle { r: integer }, OwnDot { n: integer } }
+value struct OwnPoint { v: integer }
+
+fn own_load(t: text) -> OwnDoc { OwnDoc.parse(t) }
+
+fn own_load_local(t: text) -> OwnDoc {
+  d = OwnDoc.parse(t);
+  d.name = "z";
+  d
+}
+
+fn own_pick(bad: boolean) -> OwnDoc {
+  if bad { OwnDoc.parse(`{{"id":"x","name":"n"}}`) } else { OwnDoc.parse(`{{"id":7,"name":"g"}}`) }
+}
+
+fn own_outer(t: text) -> OwnDoc {
+  r = own_load(t);
+  r
+}
+
+fn own_maybe(t: text) -> OwnDoc? { if len(t) > 0 { OwnDoc.parse(t) } else { null } }
+fn own_pair(t: text) -> (OwnDoc, integer) { (OwnDoc.parse(t), 4) }
+fn own_count(d: OwnDoc) -> integer { len(d#errors) }
+fn own_count_const(d: const OwnDoc) -> integer { len(d#errors) }
+fn own_dup(d: OwnDoc) -> OwnDoc { d }
+
+fn own_fill(d: &OwnDoc, t: text) -> integer {
+  d = OwnDoc.parse(t);
+  len(d#errors)
+}
+
+fn two_parses_each_answer_for_themselves() {
+  a = OwnDoc.parse(`{{"id":"x","name":"n"}}`);
+  b = OwnDoc.parse(`{{"id":7,"name":"g"}}`);
+  assert_eq(len(a#errors), 1, "the first parse keeps its error after a second one");
+  assert_eq(len(b#errors), 0, "the second parse has none");
+  c = OwnDoc.parse(`not json`);
+  d = OwnDoc.parse(`{{"id":8,"name":"h"}}`);
+  assert_eq("{len(a#errors)}{len(b#errors)}{len(c#errors)}{len(d#errors)}", "1010", "four live parses");
+  assert(a#errors[0].ends_with("path:id") and c#errors[0].ends_with("path:"), "each entry is its own parse's: {a#errors} / {c#errors}");
+}
+
+fn a_helper_hands_the_errors_back_with_the_record() {
+  bad = own_load(`{{"id":"x","name":"n"}}`);
+  good = own_load(`{{"id":7,"name":"g"}}`);
+  assert_eq(len(bad#errors), 1, "a helper's tail");
+  assert_eq(len(good#errors), 0, "a helper's tail, good document");
+  local = own_load_local(`{{"id":"x","name":"n"}}`);
+  assert_eq("{len(local#errors)} {local.name}", "1 z", "a helper's local, written before it returns");
+  taken = own_pick(true);
+  other = own_pick(false);
+  assert_eq("{len(taken#errors)}{len(other#errors)}", "10", "a helper's arms");
+  deep = own_outer(`nope`);
+  assert_eq(len(deep#errors), 1, "two helpers deep");
+  some = own_maybe(`nope`);
+  seen = if some != null { len(some#errors) } else { -1 };
+  assert_eq(seen, 1, "a nullable return");
+  failed = own_maybe(`nope`) ?? OwnDoc { id: 0, name: "d" };
+  absent = own_maybe(``) ?? OwnDoc { id: 0, name: "d" };
+  parsed = own_maybe(`{{"id":3,"name":"k"}}`) ?? OwnDoc { id: 0, name: "d" };
+  assert_eq("{len(failed#errors)}{len(absent#errors)}{len(parsed#errors)} {absent.name}{parsed.id}", "100 d3", "through `??`: the parse, the default, a good parse");
+}
+
+fn a_rebind_takes_the_incoming_values_errors() {
+  u = OwnDoc.parse(`{{"id":7,"name":"g"}}`);
+  first = len(u#errors);
+  u = OwnDoc.parse(`{{"id":"x","name":"n"}}`);
+  second = len(u#errors);
+  u = OwnDoc.parse(`{{"id":7,"name":"g"}}`);
+  assert_eq("{first}{second}{len(u#errors)}", "010", "rebound from three parses");
+  u = own_load(`nope`);
+  assert_eq(len(u#errors), 1, "rebound from a helper");
+  u = OwnDoc { id: 1, name: "a" };
+  assert_eq(len(u#errors), 0, "rebound from a constructor");
+  bad = OwnDoc.parse(`nope`);
+  u = bad;
+  assert_eq("{len(u#errors)}{len(bad#errors)}", "11", "rebound from a parsed variable");
+  good = OwnDoc.parse(`{{"id":7,"name":"g"}}`);
+  u = good;
+  assert_eq(len(u#errors), 0, "and from a good one");
+  out = "";
+  for doc in [`nope`, `{{"id":7,"name":"g"}}`, `{{"id":"x"}}`] {
+    r = OwnDoc.parse(doc);
+    out += "{len(r#errors)}";
+  }
+  assert_eq(out, "101", "a loop's local, parsed each round");
+}
+
+fn a_copy_and_a_parameter_carry_them() {
+  u = OwnDoc.parse(`{{"id":"x","name":"n"}}`);
+  v = u;
+  v.id = 9;
+  assert_eq("{len(v#errors)}{len(u#errors)} {v.id}", "11 9", "a copy, then written");
+  assert_eq(own_count(u) + own_count_const(u), 2, "a parameter and a const parameter");
+  whole = own_dup(u);
+  assert_eq(len(whole#errors), 1, "a whole record copied out of a parameter");
+  target = OwnDoc { id: 1, name: "a" };
+  assert_eq(own_fill(target, `nope`), 1, "a `&` parameter, inside");
+  assert_eq(len(target#errors), 1, "and at the caller it was written through to");
+  inside = own_fill(target, `{{"id":2,"name":"b"}}`);
+  assert_eq("{inside}{len(target#errors)} {target.id}", "00 2", "then a good document");
+}
+
+fn every_parsed_kind_answers() {
+  a = OwnShape.parse(`{{"OwnCircle":{{"r":"x"}}}}`);
+  b = a;
+  assert_eq("{len(a#errors)}{len(b#errors)}", "11", "a struct-enum and its copy");
+  p = OwnPoint.parse(`{{"v":"x"}}`);
+  q = OwnPoint.parse(`{{"v":3}}`);
+  assert_eq("{len(p#errors)}{len(q#errors)}", "10", "a value struct");
+  cast = `{{"id":"x","name":"n"}}` as OwnDoc;
+  assert_eq(len(cast#errors), 1, "a text cast to the record");
+}
+
+fn a_built_value_and_a_copied_part_have_none() {
+  for _ in 0..20 {
+    gone = OwnDoc.parse(`nope`);
+    assert(gone.id != 99, "the parse ran");
+  }
+  built = OwnDoc { id: 1, name: "a" };
+  assert_eq(len(built#errors), 0, "a constructor's record, after twenty failed parses were freed");
+  nothing: OwnDoc? = null;
+  assert_eq(len(nothing#errors), 0, "a null record");
+  h = OwnHolder.parse(`{{"doc":{{"id":"x","name":"n"}},"n":1}}`);
+  view = h.doc;
+  part = own_dup(h.doc);
+  assert_eq("{len(h#errors)}{len(view#errors)}{len(part#errors)}", "110", "the whole, a view of its first field, that field copied out");
+  h.doc = OwnDoc { id: 3, name: "k" };
+  assert_eq(len(h#errors), 1, "writing a field keeps the record's own errors");
+  both = own_pair(`nope`);
+  member = both.0;
+  assert_eq("{len(member#errors)} {both.1}", "0 4", "a parse stored into a tuple, and read back");
+  bad = OwnDoc.parse(`nope`);
+  into = OwnHolder { doc: OwnDoc { id: bad.id, name: bad.name }, n: 2 };
+  assert_eq("{len(into#errors)}{len(bad#errors)}", "01", "a record built from a parsed one's fields");
+}
+
+fn main() {
+  two_parses_each_answer_for_themselves();
+  a_helper_hands_the_errors_back_with_the_record();
+  a_rebind_takes_the_incoming_values_errors();
+  a_copy_and_a_parameter_carry_them();
+  every_parsed_kind_answers();
+  a_built_value_and_a_copied_part_have_none();
+  println("record#errors per record ok");
+}

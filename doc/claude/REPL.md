@@ -60,7 +60,7 @@ line that no longer parses (say, after a loft upgrade) is skipped on replay and
 never blocks the rest.
 
 Because resume re-runs your bindings, a value drawn from `random()` or `now()`
-is produced afresh — the original stream is not reproduced (set an explicit seed
+is produced afresh — the original stream is not reproduced (@C72; set an explicit seed
 if you need reproducibility). Auto-resume is interactive-only: piped or scripted
 input never reads or writes the session file, so captured output stays stable.
 

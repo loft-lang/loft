@@ -2249,7 +2249,7 @@ leaving as loft#1506's prose.
 
 `(B-View)` makes `mk_dense().h` a VIEW: a projection whose type is a STRUCT is a view, and a
 view whose base is disturbed materialises into a copy ("a plain view gets a **copy** and is told
-so"; the C86 escape rule the implementation cites at `parser/operators.rs`). The base here is a
+so"; the @C86 escape rule the implementation cites at `parser/operators.rs`). The base here is a
 call TEMP whose store dies inside the statement, so **the copy is required by rule** — a cure
 that aliased into the temp and deferred its death instead would contradict `(B-View)`.
 
@@ -2735,6 +2735,24 @@ channel (`m55,55,V56,56` here, `m55,55,V56,56,56` with the witness disabled), wh
 bisect this family on: the loft#1336 guard only reports as a hang, and a control that can only
 time out cannot say which tree moved.
 
+### D-heap-51 — OPENED AND CLOSED (2026-10-12, loft#1985): a parsed vector was an unrecorded view of a temporary store
+
+`(H-View)` makes a projection a view of the record it reads, kept alive by that record's
+owner.  `vector<T>.parse(text)` was lowered as field 0 of the parse call — the same address
+as the call's own result — so the bound local was typed an OWNED vector while it was a view
+of a lifted temp, with no dependency saying so.  The temp is freed at the end of the scope
+that made it: a local bound to the parse and returned, bound inside a block and read after
+it, or returned through `if` arms named a freed store.  The interpreter read the stale bytes
+and mostly answered right (`LOFT_STRICT_STORES=1` reports the use after free); `--native`
+answered `0 0` for the block and the nullable shapes.
+
+Closed in `Parser::parse_vector_parse`: the parse call IS the value, so whoever binds it owns
+the store, as `arguments()` is bound.  The same function typed every element as a record
+whatever the element type named; the elements are values of that type now (a
+`vector<integer>.parse` took no operator, a `vector<text>.parse` rendered its texts quoted).
+Guards `tests/scripts/1985-a-parsed-vector-is-owned-by-what-binds-it.loft` and
+`tests/scripts/1985b-a-parsed-vector-holds-elements-of-the-named-type.loft`.
+
 ### D-heap-50 — CLOSED (2026-10-10, loft#1973): a store freed under a stored reference handed its number to the next value
 
 A local's store freed at its scope end, or the old store a reassigned local dropped, went back
@@ -2837,7 +2855,7 @@ The rule before `(H-Copy-Refuse)` moved a droppable's release along with a copy 
 the owner was unclear.  Wherever both structures lived on, that left a gotcha: the release went
 with one of them, and the program closed a handle the other was still using, or closed it twice.
 The refusal was decided with the owner on 2026-09-15 from the use cases in
-`plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).  @PLN163 P5 and P6 then removed the
+`plans/163-copy-leases.md` (DESIGN_DECISIONS.md @C121).  @PLN163 P5 and P6 then removed the
 reverse hand-off for a copy of what the caller holds and the field hand-off (`OpDropAllExcept`):
 a copy the rules accept either leases or does not exist, and a read through a member of a call
 result is a view of the call's record.
@@ -2882,7 +2900,7 @@ parameter's collection or a copy into one (no fixed place to copy into at the fr
 parameters naming one record (they may be two stores of the caller, and a copy each would split
 what one write showed through both), a record holding a stored reference, a callee answering a
 local, and a refilled local's record held from two blocks.  Reclaiming a placed record when its
-reference is re-pointed (the plan's step 10) was declined (C145): a variable may still name the
+reference is re-pointed (the plan's step 10) was declined (@C145): a variable may still name the
 record (`q = h.r` is a view), so a free would need either a check on every variable read or a
 re-point counted as a disturbance of such views, and in both cases a test on every reference
 write.  Even then each re-point leaves its 8-byte removal mark.  The owner chose not to burden

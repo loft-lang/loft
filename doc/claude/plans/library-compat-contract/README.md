@@ -434,7 +434,7 @@ doing.
 **The zero-depth packages have changed their API, which is allowed.** `arguments` changed
 `Args.error_msg`, `gridmesh` changed `clear_dirty`, `random` changed `rand`, `time` changed
 `Duration.to_text`, and `regex`'s main renamed its verbs and dropped `match_groups` / `replace`
-/ `replace_all` — deliberately, to dodge the stdlib collisions C95 made fatal.
+/ `replace_all` — deliberately, to dodge the stdlib collisions @C95 made fatal.
 
 **None of that is a defect, and none of it is something to fix.** This design never tried to
 prevent library breaks; it exists so a break cannot happen *silently* or without leaving a

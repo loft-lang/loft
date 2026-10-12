@@ -4081,6 +4081,12 @@ impl Function {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].ref_home
     }
 
+    /// `@FR-H-RefHome` — does any variable of this function hold a moved-out home?
+    #[must_use]
+    pub fn has_ref_home(&self) -> bool {
+        self.variables.iter().any(|v| v.ref_home)
+    }
+
     /// `@FR-H-RefHome` — see the field's own doc.
     pub fn add_ref_evacuation(&mut self, holder: u16, fld: u16, owner: u16, tp: u16) {
         let e = [holder, fld, owner, tp];

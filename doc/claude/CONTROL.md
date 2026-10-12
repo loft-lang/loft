@@ -5,8 +5,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # CONTROL.md — where the programmer is, and is not, in control
 
-loft deliberately hides bookkeeping: ownership is internal ([C79](DESIGN_DECISIONS.md)),
-a fault degrades to null and the run continues ([C80](DESIGN_DECISIONS.md)), freeing
+loft deliberately hides bookkeeping: ownership is internal ([@C79](DESIGN_DECISIONS.md)),
+a fault degrades to null and the run continues ([@C80](DESIGN_DECISIONS.md)), freeing
 happens at owner death. That is the design, and it is not what this document is about.
 
 This document is the **census of the remainder** — the places where loft decides
@@ -35,7 +35,7 @@ program) or from the **environment / data** (not reproducible by reading it)?
 
 | # | Mechanic | Where | Note |
 |---|---|---|---|
-| 1 | **A fault erases its own cause.** null is contagious and silent by design; the value tells you where it *surfaced*, never where it *arose*. | `formal/operational.md` `(E-Uncomp-NN)`, C80, C85 | The largest single control loss, and it is now smaller by exactly one half. The SECOND half of this row — *"a non-nullable width takes the type's default instead, so the fault becomes indistinguishable from an answer"* — is closed: `@FR-E-Uncomp-Seen` makes that store testable at the site, `x += 10; if !x { … }`, with the value unchanged ([@PLN152](plans/152-validity-flag-null-model/README.md)). What survives is PROVENANCE — a null still says where it surfaced and never where it arose, which is **P1** below. loft#1296, loft#1297 |
+| 1 | **A fault erases its own cause.** null is contagious and silent by design; the value tells you where it *surfaced*, never where it *arose*. | `formal/operational.md` `(E-Uncomp-NN)`, @C80, @C85 | The largest single control loss, and it is now smaller by exactly one half. The SECOND half of this row — *"a non-nullable width takes the type's default instead, so the fault becomes indistinguishable from an answer"* — is closed: `@FR-E-Uncomp-Seen` makes that store testable at the site, `x += 10; if !x { … }`, with the value unchanged ([@PLN152](plans/152-validity-flag-null-model/README.md)). What survives is PROVENANCE — a null still says where it surfaced and never where it arose, which is **P1** below. loft#1296, loft#1297 |
 | 2 | **Native optimisations gated only by env vars** — vector-header hoist, element fuse, sibling-block store confinement. Worth ~2–3× on a loop and 4× on the store watermark; the hoist gate is an allow-list, so an op missing from it silently costs the optimisation. | `src/generation/hoist.rs`, `recover_backer` | `LOFT_NO_VECTOR_HOIST` / `LOFT_NO_ELEM_FUSE` / `LOFT_NO_CONF_RECOVER` are process-wide, not program properties. Nothing at the loop says whether it applied. |
 | 3 | **A copy can never fail a build.** `avoidable-copy` is `advice`, and advice has no deny switch by design — so *"this hot loop must not copy"* is unwritable and un-gateable in CI. | [DIAGNOSTICS.md](DIAGNOSTICS.md), [COPY_DIAGNOSTICS.md](COPY_DIAGNOSTICS.md) | |
 | 4 | **Bucket 5 hides most copies.** Copies whose source is a compiler temp route to `Internal` and leave the user report — 139 of 173 on the first 371-script survey. The promised attribution back to the user value behind the temp is not built. | `src/use_analysis.rs` | |
@@ -103,13 +103,13 @@ Routed by the lightest workflow that holds each item, not swept into one plan.
 | | item | home |
 |---|---|---|
 | **O1** | `D-op-5` — two spellings of a following null-check still report differently. The last null-specific open deviation; `types.md` is at OPEN: 0. | [formal/operational.md](formal/operational.md) |
-| ~~**O2**~~ **DONE** | Is `u32` a third case? No — deliberate, and now stated once instead of derived. Its spare code sits at the TOP, where no non-null read tests for it, so an overflow answers `0` like the other four; `IntegerSpec::non_null_reads_null` is the one home that says so, and `@PLN152` step 5 fuses `u32` with the four on that answer rather than on a variant list. C127 widened the same answer to every DECLARED range, spare code or not, so the predicate is now the whole split rather than one case in it. | [formal/types.md](formal/types.md) |
+| ~~**O2**~~ **DONE** | Is `u32` a third case? No — deliberate, and now stated once instead of derived. Its spare code sits at the TOP, where no non-null read tests for it, so an overflow answers `0` like the other four; `IntegerSpec::non_null_reads_null` is the one home that says so, and `@PLN152` step 5 fuses `u32` with the four on that answer rather than on a variant list. @C127 widened the same answer to every DECLARED range, spare code or not, so the predicate is now the whole split rather than one case in it. | [formal/types.md](formal/types.md) |
 | **O3** | No capacity control for `sorted`/`index`/`spatial`/`trie` — item 5 of the census, and the refusal message claims they have *"no capacity to set"* while their arena grows 7/3 and holds 43 % slack. | [STDLIB.md](STDLIB.md) § `reserve` |
 
 ### The one plan-sized item
 
 **P1 — null provenance.** Item 1 of the census, unchanged all session and the largest control
-gap that survives. C80 makes null contagious and silent by design, so a null tells you where it
+gap that survives. @C80 makes null contagious and silent by design, so a null tells you where it
 SURFACED and never where it AROSE; `--dev-soft-halt` names fault sites but nothing links an
 observed null back to the fault that produced it. Everything else on this page is a message, a
 row, or a doc comment — this is the one that needs a design.

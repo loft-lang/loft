@@ -1,0 +1,198 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1987, `@FR-E-Left`, `@FR-F-Args` — operands and arguments are evaluated left to right.
+// A call that answers a heap value (a `vector` from a stdlib function, a record from a
+// function of the program) is lifted into a temp ahead of the statement, so it ran BEFORE
+// every operand written to its left: `set(j, 2) + len(j.keys())` read the keys `set` had not
+// written yet, and `c.n + made(c).v` read `c.n` after `made` changed it.
+//
+// Axes it MOVES: the direction (the earlier operand writes what the lifted call reads; the
+// lifted call writes what the earlier operand reads), the earlier operand (a call, a field
+// read, a scalar local passed by `&`, a text, a nullable scalar, a boolean, a float, a
+// method call), the lifted call (a stdlib vector, a record of the program, `record#errors`,
+// a vector parse), the position (a binary operator, three levels of them, a comparison, a
+// condition, a function's arguments, nested calls, a `return`, an element of a vector
+// literal, a field write, a loop body), and how many lifted calls one statement holds.
+// Every value is hand-computed, left to right.
+//
+// HOLDS: an operand that reads no state — a constant, a local nothing in the statement
+// writes — stays in the call (`a_value_operand_is_left_in_place`), and `&&` still skips its
+// right side.
+//
+// @falsified-at: 5bfcbdf83 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the control compiles this file and evaluates out of order.
+//   WITNESS: the control stops at the first cell, *a binary operator: got 2, want 22* (the
+//   keys read before `ord_set` wrote them).  Run one shape per program there, both
+//   directions answer wrong: `c.n + ord_made(c).v * 10` gives 11 for 10.
+//   HOLDS: the cells of `a_value_operand_is_left_in_place` answer the same on both trees;
+//   leak, panic and free-refusal are clean on both.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct OrdCount { n: integer }
+struct OrdMade { v: integer }
+struct OrdDoc { id: integer }
+struct OrdHolder { c: OrdCount, k: integer }
+struct OrdWrap { j: JsonValue }
+
+fn ord_doc(n: integer) -> text {
+  out = "";
+  for i in 0..n { out += "{if i > 0 { "," } else { "" }}\"k{i}\":{i}"; }
+  "{{" + out + "}}"
+}
+
+// Gives `j` exactly `n` keys and answers `n`.
+fn ord_set(j: &JsonValue, n: integer) -> integer {
+  j = json_parse(ord_doc(n));
+  n
+}
+
+fn ord_bump(c: OrdCount) -> integer {
+  c.n += 1;
+  c.n
+}
+
+fn ord_made(c: OrdCount) -> OrdMade {
+  c.n += 1;
+  OrdMade { v: c.n }
+}
+
+fn ord_step(n: &integer) -> OrdMade {
+  n += 1;
+  OrdMade { v: n }
+}
+
+fn ord_fill(d: &OrdDoc, t: text) -> integer {
+  d = OrdDoc.parse(t);
+  7
+}
+
+fn ord_tag(j: &JsonValue) -> text {
+  j = json_parse(ord_doc(2));
+  "t"
+}
+
+fn ord_maybe(j: &JsonValue) -> integer? {
+  j = json_parse(ord_doc(2));
+  5
+}
+
+fn ord_flag(j: &JsonValue) -> boolean {
+  j = json_parse(ord_doc(2));
+  true
+}
+
+fn ord_half(j: &JsonValue) -> float {
+  j = json_parse(ord_doc(4));
+  0.5
+}
+
+fn reset(self: OrdWrap, n: integer) -> integer {
+  self.j = json_parse(ord_doc(n));
+  n
+}
+
+fn ord_pair(a: integer, keys: vector<text>) -> integer { a * 10 + len(keys) }
+fn ord_three(a: integer, keys: vector<text>, b: integer) -> integer { a * 100 + len(keys) * 10 + b }
+fn ord_join(a: text, keys: vector<text>) -> text { "{a}:{len(keys)}" }
+fn ord_weigh(c: OrdCount, v: integer) -> integer { c.n * 10 + v + 1 }
+fn ord_both(j: &JsonValue) -> integer { ord_set(j, 2) + len(j.keys()) * 10 }
+
+fn an_earlier_write_is_seen_by_the_lifted_call() {
+  j = json_parse(ord_doc(0));
+  assert_eq(ord_set(j, 2) + len(j.keys()) * 10, 22, "a binary operator");
+  j = json_parse(ord_doc(0));
+  assert_eq(ord_pair(ord_set(j, 2), j.keys()) + 1, 23, "a function's arguments");
+  j = json_parse(ord_doc(0));
+  assert_eq(ord_three(ord_set(j, 2), j.keys(), ord_set(j, 1)), 221, "a write on each side of the lifted call");
+  j = json_parse(ord_doc(0));
+  assert_eq(ord_three(ord_set(j, 2), j.keys(), ord_pair(ord_set(j, 1), j.keys()) + 1), 232, "nested calls, two lifted");
+  j = json_parse(ord_doc(0));
+  assert(ord_set(j, 2) == len(j.keys()), "a comparison");
+  j = json_parse(ord_doc(0));
+  taken = "no";
+  if ord_set(j, 2) + len(j.keys()) > 3 { taken = "yes"; }
+  assert_eq(taken, "yes", "a condition");
+  j = json_parse(ord_doc(0));
+  assert_eq(ord_both(j), 22, "a return");
+  j = json_parse(ord_doc(0));
+  all: vector<integer> = [];
+  all += [ord_set(j, 2) + len(j.keys()) - 1];
+  assert_eq(all[0], 3, "an element of a vector literal");
+  j = json_parse(ord_doc(1));
+  first = len(j.keys()) + ord_set(j, 3) * 100 + ord_pair(1, j.keys()) - 2;
+  assert_eq(first, 312, "a lifted call on each side of the write");
+  d = OrdDoc { id: 1 };
+  assert_eq(ord_fill(d, `nope`) + len(d#errors) * 10, 17, "`record#errors` after a parse through `&`");
+}
+
+fn an_earlier_read_is_not_moved_past_the_lifted_call() {
+  c = OrdCount { n: 0 };
+  assert_eq(c.n + ord_made(c).v * 10, 10, "a field read before a record-returning call");
+  c = OrdCount { n: 0 };
+  assert_eq(ord_bump(c) + ord_made(c).v * 10, 21, "a writing call before it");
+  n = 5;
+  x = n + ord_step(n).v * 10;
+  assert_eq("{x} {n}", "65 6", "a scalar local the lifted call writes through `&`");
+  c = OrdCount { n: 0 };
+  assert_eq("{ord_weigh(c, ord_made(c).v)} {c.n}", "12 1", "a heap argument is read by the callee, after both");
+  c = OrdCount { n: 0 };
+  h = OrdHolder { c: c, k: 0 };
+  h.k = ord_bump(h.c) + ord_made(h.c).v - 2;
+  assert_eq("{h.k} {h.c.n}", "1 2", "into a field write");
+  c = OrdCount { n: 0 };
+  assert_eq(ord_bump(c) + len(vector<OrdMade>.parse("[{{\"v\":{c.n}}}]")) * 10 + ord_bump(c), 13, "a vector parse between two writes");
+}
+
+fn every_kind_of_earlier_operand_keeps_its_place() {
+  j = json_parse(ord_doc(0));
+  assert_eq(ord_join(ord_tag(j), j.keys()), "t:2", "a text");
+  j = json_parse(ord_doc(0));
+  assert_eq((ord_maybe(j) ?? 0) + len(j.keys()), 7, "a nullable scalar");
+  j = json_parse(ord_doc(0));
+  assert(ord_flag(j) == (len(j.keys()) == 2), "a boolean");
+  j = json_parse(ord_doc(0));
+  assert_eq("{ord_half(j) + len(j.keys()) as float}", "4.5", "a float");
+  w = OrdWrap { j: json_parse(ord_doc(0)) };
+  assert_eq(w.reset(2) + len(w.j.keys()) * 10, 22, "a method call");
+}
+
+fn nesting_and_repetition_keep_the_order() {
+  j = json_parse(ord_doc(0));
+  c = OrdCount { n: 0 };
+  deep = ord_bump(c) * 1000 + (ord_set(j, 2) * 100 + (ord_bump(c) + 1) * len(j.keys()) * 5 + 2);
+  assert_eq(deep, 1232, "three levels of operators");
+  j = json_parse(ord_doc(0));
+  t = 0;
+  for i in 1..4 { t += ord_set(j, i) + len(j.keys()) * 10 - 1; }
+  assert_eq(t, 63, "a loop body, the temp refilled each round");
+  j = json_parse(ord_doc(0));
+  c = OrdCount { n: 0 };
+  t = 0;
+  for i in 1..4 { t += ord_bump(c) + ord_set(j, i) * len(j.keys()) + ord_made(c).v; }
+  assert_eq(t, 35, "a loop body with two kinds of lifted call");
+}
+
+fn a_value_operand_is_left_in_place() {
+  j = json_parse(ord_doc(2));
+  k = 5;
+  assert_eq(k + len(j.keys()) * 10, 25, "a local nothing writes");
+  c = OrdCount { n: 0 };
+  assert_eq(c.n + len(j.keys()) * 10, 20, "a field read beside a call that writes nothing");
+  d = OrdDoc { id: 1 };
+  quiet = len(j.keys()) > 5 && ord_fill(d, `nope`) + len(d#errors) > 0;
+  assert_eq("{quiet} {len(d#errors)}", "false 0", "`&&` skips its right side, the lifted call with it");
+  first = j.keys()[ord_set(j, 1)];
+  assert_eq("{first} {len(j.keys())}", "k1 1", "an index: the vector is read before the index writes");
+}
+
+fn main() {
+  an_earlier_write_is_seen_by_the_lifted_call();
+  an_earlier_read_is_not_moved_past_the_lifted_call();
+  every_kind_of_earlier_operand_keeps_its_place();
+  nesting_and_repetition_keep_the_order();
+  a_value_operand_is_left_in_place();
+  println("operand order ok");
+}

@@ -2546,7 +2546,7 @@ same gap is recorded in [interfaces.md](interfaces.md).
 
 OPEN: ~~0~~ (2026-07-04, superseded above) — **the ownership register was at zero.**  All five D-own
 deviations are resolved: D-own-3 (typed `Deps`) CLOSED; D-own-4 RECLASSIFIED as the
-decided edge C86 (whole-value binds copy; aliasing is a last-use elision —
+decided edge @C86 (whole-value binds copy; aliasing is a last-use elision —
 `classify_vec_bind`); D-own-5 (the `&` borrow rides `deps`) CLOSED; **D-own-2
 (O-Complete) CLOSED** (the ownership fact is total — oracle covers every value, the free
 side reads it, the inherently-runtime Join completed per-path by the `_own_store`
@@ -2586,7 +2586,7 @@ differential oracle, and the fuzzer.
   must not be tracked as owned).  So O-Derived is SATISFIED: every store-lifetime
   decision now reads the one canonical fact, not a per-site shape scan.  Validated: full
   suite + `native_scripts` + DA + `LOFT_POISON` + differential oracle green; the p462
-  conditional `?? m_none()` transition and the C86 copy-return cases all clean both
+  conditional `?? m_none()` transition and the @C86 copy-return cases all clean both
   backends.  **The D-own-2 residual is now CLOSED too** (see below): the `_ => Owned`
   tail is correct (it covers only fresh-owned / scalar / payload-less values, not a
   hole), the value-vs-bind gap is INERT for the free decision (the reassign pre-free +
@@ -2707,7 +2707,7 @@ The entry claimed the #415 struct-vector-field copy-on-bind was a stopgap contra
 reference-default.  The reversal attempt found the premise false: on BOTH backends every
 WHOLE-VALUE heap bind copies (`p = o`, `b = x`, `af = bx.v`) and only projections alias —
 the written law, not the code, was wrong.  The maker's call
-([DESIGN_DECISIONS C86](../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)):
+([DESIGN_DECISIONS @C86](../DESIGN_DECISIONS_OWNERSHIP.md#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule)):
 whole-value binds COPY by contract; `p = o` becomes an alias only when the source is
 provably dead afterwards — the rustc last-use rule, as an OPTIMIZATION
 (`use_analysis::ElidePlan` is that analysis).  `O-Borrow` scopes to projections /
@@ -2716,7 +2716,7 @@ stale.)  The implementable RESIDUAL — the copy/alias/elide decision at the bin
 derives from the ownership fact instead of the syntactic `struct_vec_field` branch —
 folds into **D-own-1**.  **Narrowed 2026-07-03:** the decision is now the pure
 `classify_vec_bind` selector (`VecBind`, parser/expressions.rs — byte-identical
-extraction over the C86 bind corpus): the verdict reads the base var's
+extraction over the @C86 bind corpus): the verdict reads the base var's
 incrementally-maintained `deps` (the same fact `ownership_of` reconstructs post-parse
 via its whole-body `Defs` walk — Owned ⇒ copy, Borrowed/Join ⇒ view; agreement
 witnessed by `LOFT_MATERIALIZE_DUMP` over the corpus), and the ELIDE half is already
@@ -3542,7 +3542,7 @@ prose there still overstates its filter.
 
 Each is the stamped phrase as it stood; the sentence it sat in remains in [ownership.md](ownership.md) without it.
 
-- `Admitted by the owner on 2026-09-15 (C122): the contract`
+- `Admitted by the owner on 2026-09-15 (@C122): the contract`
 - `A fourth home, @PLN157 § V-af (2026-09-13): a local`
-- `C79 revisited 2026-08-05). That is`
+- `@C79 revisited 2026-08-05). That is`
 - `a struct-`Enum` variable arm > was in this list until 2026-09-04, when the `@FR-B-Copy` walk gave it the copy lowering > a struct's has, `tests/`

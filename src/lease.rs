@@ -217,6 +217,8 @@ impl<'a> Frame<'a> {
     ///
     /// Every value `src` may produce is judged — each arm of a join, the tail of a block — and the
     /// copy is a move only when every one of them is.
+    ///
+    /// @C121 — the verdict that gives a copy its own lease, or refuses it.
     #[must_use]
     pub fn written_verdict(&self, src: &Value, placement: Placement) -> Lease {
         let mut followed = HashSet::new();

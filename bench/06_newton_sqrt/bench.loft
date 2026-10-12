@@ -8,7 +8,7 @@
 fn newton_sqrt(x: float) -> float {
   guess = x / 2.0;
   for _ in 0..50 {
-    // `guess` is a variable divisor, so `x / guess` is `float?` (C80) and storing it
+    // `guess` is a variable divisor, so `x / guess` is `float?` (@C80) and storing it
     // back into a non-null `float` is refused.  Discharge at the division, where the
     // null is produced: `guess` is seeded at `x / 2.0` and only ever averaged with a
     // positive quotient, so it is never zero and the default never fires (loft#859).

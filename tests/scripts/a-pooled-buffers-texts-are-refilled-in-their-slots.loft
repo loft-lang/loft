@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_LITERAL_EXIT_BUFFER — the switch leaves a literal exit unbuilt in the pooled buffer, so the sized shape grows again (3 -> 5 records), which `m1` asserts.
 //
 // `@FR-R-RefillText` — a POOLED call buffer whose type's only heap is text is refilled by the
 // callee's refill twin on `--native`: each text slot is written over the block it already owns

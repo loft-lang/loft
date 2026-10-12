@@ -108,11 +108,11 @@ pub enum RuntimeErrorKind {
     /// DEFAULT instead: the lowest value in range, or null where the type admits
     /// it.  Reported rather than silent, because the value the program computed is
     /// not the value the slot now holds — but recoverable, like every other
-    /// uncomputable: one value degrades and the run continues (C80).
+    /// uncomputable: one value degrades and the run continues (@C80).
     RangeDefaulted { value: i64, lo: i64, hi: i64 },
     /// `@FR-E-Report` — a write whose place names no record (an absent key, a null view on the
     /// path) was dropped (`@FR-H-WriteNull`), and no `else` arm owned it.  Recoverable: the
-    /// program continues and the place keeps no value (C80); an index out of range reports
+    /// program continues and the place keeps no value (@C80); an index out of range reports
     /// as `IndexOutOfBounds` where it was found instead, once.
     WriteDropped,
     /// A call would have taken the stack past `State::MAX_CALL_DEPTH` frames.
@@ -539,7 +539,7 @@ impl RuntimeError {
 /// `true` means the fault has been logged and the caller must RETURN rather than halt;
 /// `false` means production mode is off and the caller halts as it otherwise would.
 ///
-/// This is the whole of `DESIGN_DECISIONS.md § C66` — *"a single error should not bring
+/// This is the whole of @C66` — *"a single error should not bring
 /// everything down"* — and it lives here because BOTH backends have to reach the same
 /// answer.  The interpreter's `native.rs::n_panic` / `n_assert` and the bodies the native
 /// generator emits for those two are separate code that implements one documented
@@ -594,7 +594,7 @@ pub fn locked_write_advice(origin: &str) -> String {
 }
 
 /// `@FR-H-WriteLocked` in a PRODUCTION run: the write is discarded and logged, and the
-/// program continues on the store's old bytes (C80 — nothing stops a production program).
+/// program continues on the store's old bytes (@C80 — nothing stops a production program).
 /// Answers `false` outside production, where the caller halts with the report instead.
 ///
 /// Logged at the first discard and then at every doubling of the count, so a loop that
@@ -630,7 +630,7 @@ pub fn logged_in_production(
         return false;
     }
     // Routed through `log_runtime_kind` rather than `log` so the entry carries the same
-    // `[user_panic]` / `[assertion_failed]` label and the same C66 severity as every other
+    // `[user_panic]` / `[assertion_failed]` label and the same @C66 severity as every other
     // production-mode runtime event, on whichever backend produced it.
     let position = Position {
         file: crate::lexer::intern_file(file),

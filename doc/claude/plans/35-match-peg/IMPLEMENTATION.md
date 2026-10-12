@@ -223,7 +223,7 @@ slice path. Commits: `d8310875` (class-C slice miscompile), `e2742866` (A/B leak
 (spec-first rules, the `INV-Total` invariant), [SUBRULE-DESIGN.md](SUBRULE-DESIGN.md) (the
 parser-combinator keystone: `Cursor`, `P-Rule`, `INV-Static`, reporting; phases PC1–PC5),
 [EXAMPLES.md](EXAMPLES.md), plus the strict-spec edits in `doc/claude/formal/*`
-(matching/types/grammar/binding + `collections.md` scope). Decision **C89** (no tuple variants ever;
+(matching/types/grammar/binding + `collections.md` scope). Decision **@C89** (no tuple variants ever;
 matchers are opt-in + read like grammar, not regex) → [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md).
 
 **Phase 0 — DONE.** D2 architecture bet CONFIRMED on both backends
@@ -346,12 +346,12 @@ Two more facts inform the design but aren't obstacles:
 Each is my recommendation with the reasoning; flagged so they can be overridden
 before Phase 1 code lands. **D2 and D3 are the ones I'd most want a second look at.**
 
-- **D1 — Struct-variant syntax only; tuple variants are a PERMANENT non-goal ([C89](../../DESIGN_DECISIONS.md)).**
+- **D1 — Struct-variant syntax only; tuple variants are a PERMANENT non-goal ([@C89](../../DESIGN_DECISIONS.md)).**
   loft enum payloads are always named fields (F7); positional `Num(i64)` / `Ok(a)` are never
-  planned — they force match-to-read and breed a mitigation-syntax sprawl (the C89 rationale).
+  planned — they force match-to-read and breed a mitigation-syntax sprawl (the @C89 rationale).
   Every example uses `Num { v: integer }`. **Cost:** AST examples read more verbosely — accepted.
   **Corollary (D6):** the pattern surface must read like grammar notation, not regex, even at the
-  price of extra parser logic (C89) — patterns are the standardized readable parser notation
+  price of extra parser logic (@C89) — patterns are the standardized readable parser notation
   (`|`/`?`/`*`/`+` on named elements), text/regex stays a library.
 
 - **D2 — Parser desugaring, no new IR node, for L2–L3.4.** Follows F1/F2. Keep the
@@ -1116,7 +1116,7 @@ freshness-checked.
 2. Longest-partial-match error reporting — design target Phase 4, may slip.
 3. Partial-name-overlap unification in multi-pattern arms — P3 requires identical
    name sets; full overlap rule lands with P4's unify helper.
-4. Positional tuple-variant sugar — PERMANENTLY out ([C89](../../DESIGN_DECISIONS.md)), never
+4. Positional tuple-variant sugar — PERMANENTLY out ([@C89](../../DESIGN_DECISIONS.md)), never
    promoted: tuple variants force match-to-read + a mitigation-syntax sprawl; loft reads by name.
 
 ## 8. See also

@@ -85,7 +85,7 @@ which are swapped at compile time.
 
 - `par(threads: 4)` attribute is parsed and accepted but ignored — the loop runs
   sequentially.
-- `fn <name>` references (used for parallel worker functions) still work — they are
+- Function references (used for parallel worker functions) still work — they are
   called inline.
 - No runtime error or warning is emitted. Programs that use `par()` remain valid.
 

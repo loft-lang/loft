@@ -13,7 +13,7 @@ Full design + failure-path enumeration: [COPY_DIAGNOSTICS.md](../../COPY_DIAGNOS
 **The user-facing lint recipe (the bound-vs-unbound survival split, flag-gated report, staged
 to close): [unbound-copy-lint.md](unbound-copy-lint.md).** Phase-A survey + the 4 landed items:
 [survey-findings.md](survey-findings.md).
-**Phase B scope (drain the elidable copies — the C86 last-use MOVE-elision, NOT the Avoidable
+**Phase B scope (drain the elidable copies — the @C86 last-use MOVE-elision, NOT the Avoidable
 `&`-hints): [phase-b-scope.md](phase-b-scope.md).**
 **Phase B DESIGN — grounded in captured IR (the invariant · current→target IR · the one
 chokepoint read by 3 emit sites · both-generator plan · boundary matrix · failure modes ·
@@ -24,7 +24,7 @@ falsification probes · verifiable slices): [phase-b-design.md](phase-b-design.m
 
 **Phase 1 COMPLETE; phase 2 started (avoidable-vs-forced classification).**
 
-**Phase B (the C86 last-use MOVE-elision) — B1.1/B1.2 done; B1.3 RECORD + B1.3b/B1.3c CONSTRUCT
+**Phase B (the @C86 last-use MOVE-elision) — B1.1/B1.2 done; B1.3 RECORD + B1.3b/B1.3c CONSTRUCT
 LANDED.** Dead-after owned sources are now lowered by building DIRECTLY into the destination instead
 of copy-then-free — `src/scopes.rs`, pure IR rewrites (no new op, so BOTH backends from one pass),
 gated `LOFT_MOVE_ELIDE` (OFF = byte-identical). Covered: **Record** (`v[i]=e` / `o.f=src`,
@@ -61,7 +61,7 @@ real empty vector in both formattings — the fold-to-null fragility is gone; su
 TOTAL, oracle green locally). **Resolved (3):** **W2/A2 — WON'T DO** (three matrix-guarded
 prototypes proved a struct-field return **must copy** per the #415/C86 value-semantics contract; the
 copy is FORCED, not avoidable) · **W3** MOOT (rode A2) · **W9** no safe drain (remaining Avoidable
-are C86-contract-owned) · **W7** DEFERRED — the plan's final phase, correctly not-yet-active (its
+are @C86-contract-owned) · **W7** DEFERRED — the plan's final phase, correctly not-yet-active (its
 lint-silencing premise is undermined by the same A2/#415/C86 finding, and reserving `copy` is a
 design decision awaiting demonstrated need). Detail per item: [CLOSEOUT.md](CLOSEOUT.md).
 

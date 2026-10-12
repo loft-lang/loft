@@ -92,7 +92,7 @@ original on every run; Python is the original):
 | `tests/dump_ignored_tests` (584k lines through `lines()`) | 0.22 s | 3.67 s | 0.62 s | — |
 | `scripts/opl_points` (200k OPL lines through `split`) | 0.31 s | 4.13 s | 1.79 s | the per-field loop in `main` (62 %, `x = field[1..]` its top line) and the hand-written `%hex%` unescape (30 %) |
 
-The kernels' exit is the standard library compiled like any other library (C71): an
+The kernels' exit is the standard library compiled like any other library (@C71): an
 interpreted script runs a looping stdlib function's compiled loft body
 ([@PLN181](181-compiled-stdlib.md)), and `split` and `lines` were retired that way
 ([KERNELS.md § Removed](../KERNELS.md#removed)).  Next, in that order: the interpreter's per-character text

@@ -5,7 +5,7 @@
 //! `@FR-R-Range` — the RANGE an integer expression provably lies in, and the plain
 //! operator it therefore may emit.
 //!
-//! C120 declined the closure of the non-sentinel proof over `+`, `-` and `*`: an overflow
+//! @C120 declined the closure of the non-sentinel proof over `+`, `-` and `*`: an overflow
 //! mints the null sentinel on both backends, and a rewrite must leave every value as the
 //! interpreter answers it, faults included.  It named the admissible successor — *"a
 //! PROOF, not a policy: arithmetic whose operands carry ranges such that the result CANNOT
@@ -40,7 +40,7 @@
 //! - a call of a ONE-EXPRESSION user function (`fn color_a(c) -> ((c & m) >> 24) & 255`),
 //!   evaluated over the arguments' facts at the call site, three calls deep at most.
 //!
-//! NOT trusted: parameters and record/element reads (the C80 escape means a non-null
+//! NOT trusted: parameters and record/element reads (the @C80 escape means a non-null
 //! type can hold the sentinel), anything a callee with more than one statement answers,
 //! and `<<`, a shift by a variable, a remainder by a signed range.  (`^` over two
 //! non-negative ranges is bounded like `|` — `@FR-R-MaskRange`.)
@@ -57,7 +57,7 @@ pub type Range = (i64, i64);
 
 /// The facts one function's ranges are read under: each ranged VARIABLE, and each ranged
 /// record FIELD read `p.f` (by variable and byte offset) — the second only where a run-time
-/// guard proved it (`@FR-R-RangedCall`): a field is never ranged by shape (C80).
+/// guard proved it (`@FR-R-RangedCall`): a field is never ranged by shape (@C80).
 #[derive(Default, Debug, Clone)]
 pub struct Ranges {
     pub vars: HashMap<u16, Range>,
@@ -100,7 +100,7 @@ const U32_MAX: i64 = u32::MAX as i64;
 /// range FILLS its width — `u8`, `i8`, `u16`, `i16`, every user-written `limit(lo, hi)` — is
 /// one: since loft#1593 every store, call and literal into such a slot is refused unless
 /// provably in range (`(I-Narrow)`, `(I-Lit)`), a `?? d` fallback lands in range, and the one
-/// run-time arrival — the slot's own arithmetic stepping past the range (C85's overflow
+/// run-time arrival — the slot's own arithmetic stepping past the range (@C85's overflow
 /// edge) — answers the type's DEFAULT, which is in range too (`(E-Uncomp-NN)`).  So no value
 /// outside `[lo, hi]` can ever be held, whoever writes.
 ///

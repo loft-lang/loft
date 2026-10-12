@@ -857,9 +857,9 @@ pub fn group_apart_lint_enabled() -> bool {
 /// declares `f(both: τ, …)` / `f(self: τ, …)` — from a consumer that imported it, from the
 /// library's own other modules, and from the declaring file itself.
 ///
-/// The DEFINITION stays legal, which is @PLN102 C97: a library's names are module-scoped, so
+/// The DEFINITION stays legal, which is @PLN102 @C97: a library's names are module-scoped, so
 /// `mylib::f` still reaches it and the stdlib can grow without breaking a shipped library.
-/// What C97 left silent is that the bare name then belongs to the stdlib — the author writes
+/// What @C97 left silent is that the bare name then belongs to the stdlib — the author writes
 /// a function, every unqualified call goes somewhere else, and nothing says so.
 ///
 /// `warning` rather than `advice` by the tier rule: ignoring it produces a WRONG RESULT, not
@@ -1012,7 +1012,7 @@ pub fn no_fnref_borrowed_return() -> bool {
 /// validated (steps 1–4) but NOT defaulted on: step 5's copy-count measurement found the win is ~0
 /// in practice (the read-only-both field-bind pattern it targets is essentially absent in real loft
 /// code — even the ~2000-line viewer eliminates 0 copies), while defaulting on adds per-bind analysis
-/// cost (an O(n) alias scan). C86's revisit trigger ("a profiler shows bind-copies dominating a real
+/// cost (an O(n) alias scan). @C86's revisit trigger ("a profiler shows bind-copies dominating a real
 /// consumer") is NOT met, so the mechanism stays opt-in, ready for when a consumer demonstrates the
 /// win. When set, `analyze_fn` → `ElidePlan` links a copy-fill bind `a = s.v` where it is provably
 /// SAFE (`link_is_safe`) AND UNOBSERVABLE (`link_is_unobservable`, alias-aware) — the observable
@@ -1760,6 +1760,21 @@ pub fn format_append_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
 }
 
+/// `LOFT_NO_TEXT_CLEAR=1` — empty a text with a fresh `String` again (`@FR-R-TextClear` off):
+/// the first bisect step for a text that reads leftover content after `s = ""` on `--native`.
+pub fn text_clear_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TEXT_CLEAR"))
+}
+
+/// `LOFT_NO_FLAT_COPY=1` — copy a record that owns no heap through the full release-and-walk
+/// path again (`@FR-R-FlatCopy` off): the first bisect step for a wrong value or a leak after
+/// a record copy on `--native`.
+pub fn flat_copy_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FLAT_COPY"))
+}
+
 /// `LOFT_TRACE_FORMAT_APPEND=1` — name each format append written into its destination and
 /// each that keeps its buffer, with the reason.
 pub fn trace_format_append() -> bool {
@@ -2234,7 +2249,7 @@ pub fn complexity_lint_enabled() -> bool {
 /// `LOFT_LINT_STRICT_INDEX=1` (@PLN102 case D audit) — opt-in, DEFAULT OFF. The index-trust
 /// model types `v[i]` non-null for a for-loop iter var (like a constant index), trusting the
 /// loop bounds the vector. That trust is unchecked, so `for i in 0..len(v) { w[i] }` (or a
-/// mid-loop resize) types non-null yet reads C80-null on overrun. When set, this warns where a
+/// mid-loop resize) types non-null yet reads @C80-null on overrun. When set, this warns where a
 /// loop-var index is bounded by `len(<one vector>)` but indexes a DIFFERENT vector — the
 /// mismatched-vector index that is the silent-null hazard. Advisory only: the type is unchanged
 /// (tightening the trust to a proof would break the ubiquitous `for i in 0..n { v[i] }` idiom).
@@ -3243,21 +3258,6 @@ impl FastKey<'_> {
             FastKey::Str(pos, v) => (*v).cmp(s.get_str(s.get_u32_raw(rec, base + pos))),
         }
     }
-
-    /// The same key with nothing borrowed, or `None` for a text key — for a walk that
-    /// MUTATES the stores it compares against (`tree::put` rebalances as it unwinds), where
-    /// a `&str` out of a store cannot be held.
-    #[must_use]
-    pub fn detached(&self) -> Option<FastKey<'static>> {
-        Some(match *self {
-            FastKey::Int(p, v) => FastKey::Int(p, v),
-            FastKey::Long(p, v) => FastKey::Long(p, v),
-            FastKey::I32(p, v) => FastKey::I32(p, v),
-            FastKey::U32(p, v) => FastKey::U32(p, v),
-            FastKey::ShortRaw(p, st, v) => FastKey::ShortRaw(p, st, v),
-            FastKey::Str(..) => return None,
-        })
-    }
 }
 
 /// A one-field key whose ORDER test is pre-resolved: [`FastKey`] plus the key's declared
@@ -3410,17 +3410,6 @@ impl FastOrder<'_> {
     pub fn compare(&self, s: &Store, rec: u32, base: u32) -> Ordering {
         let c = self.key.order(s, rec, base);
         if self.descending { c.reverse() } else { c }
-    }
-
-    /// The same comparator with nothing borrowed, or `None` for a text key
-    /// ([`FastKey::detached`]).
-    #[must_use]
-    pub fn detached(&self) -> Option<FastOrder<'static>> {
-        Some(FastOrder {
-            key: self.key.detached()?,
-            descending: self.descending,
-            verify: self.verify,
-        })
     }
 }
 

@@ -121,7 +121,7 @@ inside a struct inside a vector releases once, at the outermost owner's death.
 
 What follows from all of this, and is worth knowing before you reach for it:
 
-- **A drop cannot fail.** loft has no runtime errors (C80) and a rollback at
+- **A drop cannot fail.** loft has no runtime errors (@C80) and a rollback at
   scope end can fail for real — the connection dropped, the server went away —
   with no caller left to tell. So `OpDrop` may not return, and the compiler
   refuses one that tries. **Anything whose failure matters stays an explicit
@@ -146,7 +146,7 @@ What follows from all of this, and is worth knowing before you reach for it:
 - **In a library, the hook may be private** — and usually should be. Nothing
   calls `OpDrop` by name, so `pub` only widens the surface. The hook is looked up
   through the source that declares the TYPE, which is what makes a private one
-  reachable: a library's symbols are module-scoped (@PLN102 C97), and both askers
+  reachable: a library's symbols are module-scoped (@PLN102 @C97), and both askers
   run after parsing, when the current source is the main program.
 
 **Three things a drop does NOT do.** Each is a deliberate boundary, not an
@@ -160,7 +160,7 @@ omission:
   invariant rests on, for a hook that by contract can neither fail nor answer. If
   you churn a collection of live resources, release the old element yourself
   before you replace it. The reasoning is
-  [DESIGN_DECISIONS.md § C111](DESIGN_DECISIONS.md).
+  [DESIGN_DECISIONS.md § @C111](DESIGN_DECISIONS.md).
 - **A keyed collection does not release its records.** A `hash` / `sorted` /
   `index` shares its records with the collection it is indexed from, so releasing
   through one would release somebody else's element. Keep droppables in a plain

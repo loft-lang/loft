@@ -1417,7 +1417,7 @@ def ratchet(counts, write):
     if grew:
         print(
             "\nERROR: a new shape test cannot see through `τ?` (@FR-N-Shape).\n"
-            "  Peel the scrutinee — `.base()`, or `.data_shape()` where a `&` may also\n"
+            "  Peel the scrutinee — `.base()`, or `.peel_link()` where a `&` may also\n"
             "  reach it — or, if the site really is asking a NULLABILITY question, spell\n"
             "  that test rather than leaving it to a missing match arm.\n"
             "  The rule and its one open exception (`is_dbref`) are in formal/types.md."

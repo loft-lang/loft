@@ -28,7 +28,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > returns:** `find`/`rfind` → `integer?`, `min_of`/`max_of` → `T?`; pure static type honesty (same
 > runtime rep), **zero caller breaks** across the full suite, strict compile-rejection guard
 > `pln102_stdlib_reachable_null_returns_are_typed_nullable` (proven non-vacuous). ✅ **Step 5 —
-> residual frozen:** [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS.md) ratifies option B and
+> residual frozen:** [DESIGN_DECISIONS.md § @C90](../../DESIGN_DECISIONS.md) ratifies option B and
 > freezes the per-type reserved-value table; golden pin `pln102-null-residual-golden.loft` (both
 > backends). **KEYSTONE COMPLETE (steps 1–5).**
 
@@ -81,7 +81,7 @@ as `__nullable<S>` already does for a struct element. A non-null scalar keeps th
   scalar's storage widens (a tag byte), the eval-stack representation changes, every op that
   produces/consumes a nullable scalar changes, native codegen changes — and it **changes the frozen
   store byte-layout** (a nullable field grows a tag; L-Null's `layout(τ)=layout(τ?)` no longer
-  holds). The zero-overhead in-band model was a deliberate loft strength (C79/C80). Confined to
+  holds). The zero-overhead in-band model was a deliberate loft strength (@C79/@C80). Confined to
   *explicitly-nullable* scalars (non-null stays zero-overhead), but still large.
 - **Conversion cost:** internal (huge); user-program (LOW — programs don't see the representation,
   and every observable change is "a silent-wrong becomes correct").
@@ -113,7 +113,7 @@ as `__nullable<S>` already does for a struct element. A non-null scalar keeps th
 
 ### The float sub-case (sharpest either way)
 Float is the worst in-band case: `NaN != NaN` breaks reflexivity, and *any* computed NaN reads as
-null. But note a computed NaN (`sqrt(-1)`) → null is actually **consistent** with the C80 spreadsheet
+null. But note a computed NaN (`sqrt(-1)`) → null is actually **consistent** with the @C80 spreadsheet
 model ("uncomputable → null"), so it is arguably *correct*, not a collision. The real float defect is
 just `null == null == false`, fixed cheaply under B by making `==` reflexive for the null-NaN
 pattern. So B handles float without a rearchitecture; the only float loss is "can't have a non-null
@@ -176,14 +176,14 @@ rewrite.**
    a revert). STDLIB.md updated. *(2026-07-11; `default/03_text.loft` + `default/01_code.loft`.)*
 5. ✅ **DESIGN_DECISIONS entry + golden tests** for the accepted residual — the one reserved value
    per nullable scalar is now a conscious, frozen decision:
-   [DESIGN_DECISIONS.md § C90](../../DESIGN_DECISIONS_VALUES.md#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen)
+   [DESIGN_DECISIONS.md § @C90](../../DESIGN_DECISIONS_VALUES.md#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen)
    (option B ratified; per-type reserved-value table part of the contract-1 freeze). Golden pin
    `tests/scripts/pln102-null-residual-golden.loft` freezes each reserved value as a boundary (the
    pattern reads null; an adjacent value does not) on both backends. *(2026-07-11.)*
 
 **Keystone COMPLETE** (steps 1–5). The null model is honest in the spec, uniform in comparison,
 guarded at every silent-collision site, honest in stdlib return types, and its accepted residual is
-a frozen design decision with a golden pin. D-op-null-1/2 CLOSED; C90 recorded.
+a frozen design decision with a golden pin. D-op-null-1/2 CLOSED; @C90 recorded.
 
 ## If A — the shape of the work (so the choice is informed)
 A new tagged runtime representation for nullable scalars (extend the `__nullable<S>` machinery to
@@ -196,4 +196,4 @@ either audit; it would be its own multi-phase plan.
 - [lib-audit.md § keystone](lib-audit.md) / [formal-audit.md § keystone](formal-audit.md) — the same
   model from the stdlib and formal/error angles.
 - [types.md](../../formal/types.md) — the null model (DN1–DN6, the representation table).
-- [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) C79/C80/C85 — the spreadsheet/zero-overhead model B preserves.
+- [DESIGN_DECISIONS.md](../../DESIGN_DECISIONS.md) @C79/@C80/@C85 — the spreadsheet/zero-overhead model B preserves.

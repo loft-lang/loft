@@ -14,7 +14,7 @@
 //! already gone:
 //!
 //! - `+`/`-`/`*`/unary `-` → the `ops::*_long_nn` family — still
-//!   `checked_*`, so overflow → `i64::MIN` (C85's decided edge) is
+//!   `checked_*`, so overflow → `i64::MIN` (@C85's decided edge) is
 //!   preserved exactly; only the operand pre-tests drop.
 //! - `&`/`|`/`^` → the plain Rust operator.  The guarded body past its MIN
 //!   tests is `sentinel_long!`, a debug-only assert — generated code builds
@@ -86,7 +86,7 @@ fn fast_form(op_name: &str, args: &[Value]) -> Option<Fast> {
         ("OpLorInt", 2) => Some(Fast::Plain("|")),
         ("OpEorInt", 2) => Some(Fast::Plain("^")),
         // The literal keeps the template's range check compile-time dead;
-        // a computed amount keeps the template (range → C85-null).
+        // a computed amount keeps the template (range → @C85-null).
         ("OpSRightInt", 2) if matches!(args[1].unspan(), Value::Int(k) if (0..64).contains(k)) => {
             Some(Fast::Plain(">>"))
         }
@@ -103,6 +103,8 @@ pub struct IntArithEmitter;
 /// zero would abort, and the probe measures speed, not that).  The `*Nullable` twins and
 /// the null test itself (`OpConvBoolFromInt`) keep their templates — they ARE the
 /// language's null semantics, not its fault protection.  `None` keeps the ordinary path.
+///
+/// @C129 — the probe's form; the shipped build keeps the checked helpers.
 fn probe_form(op_name: &str, args: &[Value]) -> Option<&'static str> {
     match (op_name, args.len()) {
         ("OpAddInt", 2) => Some("wrapping_add"),

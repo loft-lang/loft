@@ -42,7 +42,7 @@ fn main() {
   g = Cfg.parse(json_parse(`{{"name":"y","port":1}}`));
   assert(g.name == "y" && json_errors() == "", "two-stage good still clears");
 
-  // `#errors` keeps its own contract: text, and cleared by the read.
+  // `#errors` keeps its own contract: a vector<text>, one entry per error.
   h = Cfg.parse(`{{ still not json`);
-  assert(len(h#errors) > 0, "#errors still reports as text");
+  assert(len(h#errors) == 1, "#errors still reports: {h#errors}");
 }

@@ -5,7 +5,7 @@
 use super::{State, new_ref, size_ref};
 use crate::database::{Parts, ShowDb};
 use crate::keys::{Content, DbRef, Key};
-use crate::{hash, tree, vector};
+use crate::{btree, hash, vector};
 #[cfg(not(host_fs))]
 use std::fs::OpenOptions;
 #[cfg(not(host_fs))]
@@ -1222,7 +1222,7 @@ impl State {
                 // derivation is shared with the native runtime (loft#691) — the two
                 // had their own copies and drifted apart.
                 let (s_cur, f_cur) =
-                    tree::range_cursors(&data, arg, all, &keys, &from, &till, ex, reverse);
+                    btree::range_cursors(&data, all, &keys, &from, &till, ex, reverse);
                 start = s_cur;
                 finish = f_cur;
                 if trace_iter {
@@ -1301,7 +1301,7 @@ impl State {
                 // from/till are always empty, so it takes the unbounded answer.
                 //
                 // The derivation is shared with the native runtime (loft#904), the way
-                // `tree::range_cursors` is for an index: each backend had its own copy of
+                // `btree::range_cursors` is for an index: each backend had its own copy of
                 // the bounded arms, in SLOT INDICES where the stepper walks BYTE OFFSETS,
                 // and the two had already drifted apart — invisibly, because neither was
                 // ever consumed.
@@ -1384,20 +1384,23 @@ impl State {
         let cur = if data.rec == 0 || finish == u32::MAX {
             new_ref(&data, 0, 0)
         } else {
-            let store = crate::keys::store(&data, &self.database.allocations);
             match on & 63 {
                 1 => {
-                    let rec = new_ref(&data, cur, arg);
+                    // `arg` is the index type; the cursor is the record last yielded.
+                    let all = &self.database.allocations;
                     let n = if cur == 0 {
                         if reverse {
-                            tree::last(&data, arg, &self.database.allocations).rec
+                            btree::last_record(&data, all)
                         } else {
-                            tree::first(&data, arg, &self.database.allocations).rec
+                            btree::first_record(&data, all)
                         }
-                    } else if reverse {
-                        tree::previous(store, &rec)
                     } else {
-                        tree::next(store, &rec)
+                        let keys = self.database.keys(arg);
+                        if reverse {
+                            btree::previous_record(&data, all, keys, cur)
+                        } else {
+                            btree::next_record(&data, all, keys, cur)
+                        }
                     };
                     self.put_var(state_var - 8, n);
                     if std::env::var("LOFT_ITERATE_TRACE").is_ok() {
@@ -1723,6 +1726,8 @@ impl State {
             self.database.allocations[to.store_nr as usize].last_op_at = self.code_pos;
             return;
         }
+        // The exchange moved the source's parse errors with its records; a copy brings them.
+        self.database.deliver_parse_errors(&data, &to, tp);
         // `@FR-Const-Foreign` — a VECTOR read out of a foreign store (a mapped file, a library's
         // buffer) is copied element by element, as a bind of it copies (`OpAppendVector`):
         // its bytes lie outside the store's own blocks, where the record copy below would
@@ -2264,10 +2269,8 @@ impl State {
             pos: 8,
         };
         self.database.set_final_default_value(db_tp, &into);
-        self.database.last_parse_errors.clear();
-        if let Some(err) = self.database.parse(val, db_tp, &into) {
-            self.database.last_parse_errors.push(err);
-        }
+        let err = self.database.parse(val, db_tp, &into);
+        self.database.set_parse_errors(&into, db_tp, err);
         into
     }
 

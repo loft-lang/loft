@@ -98,6 +98,19 @@ longer called with a null `self` (it printed things like `Tnull`).
 `{"x":3,"y":null,"label":null}` — nested records and records in a vector too.  `Type.parse` reads
 the new form back to the same value; a test that pinned the shorter form needs the nulls added.
 
+**`record#errors` is a `vector<text>` that belongs to its own record.**  It holds one entry
+per error of the `Type.parse(text)` that built that record and is empty after a parse that
+succeeded, so `for e in user#errors { log_warn(e); }` visits each error.  Reading it changes
+nothing, and a later parse of something else leaves it alone: after `a = A.parse(x)` and
+`b = B.parse(y)`, `a#errors` still answers for `a`.  The errors go with the record when it is
+passed, returned from a function or copied to another variable; a record you build yourself
+has none.  Before, the accessor was one text for the whole program: the loop walked its
+characters, a second read answered nothing, and `a#errors` reported on whichever parse ran
+last.  Change `user#errors != ""` to `len(user#errors) > 0` (the old comparison is refused,
+naming the two types); `len(user#errors) > 0` already written keeps its meaning.
+`"{user#errors}"` prints the vector, `["line 1:1 path:"]`, where it printed the bare text:
+write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is refused.
+
 ### New
 
 **A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
@@ -120,6 +133,12 @@ program with that status, with no sentinel and no `if` for the absent case.
 fires on its `pub struct` and `pub enum` names too, wherever the package is declared — a
 sibling, the project's `lib/`, a `path =` dependency.  The type arrives imported by name, and
 its typed-format and `to_text` hooks work on it as they do after `use pkg::*;`.
+
+**loft says when this machine cannot build native — where a developer looks.**  `loft --version`
+now has a second line naming the Rust toolchain a native build would use, or saying there is
+none; the `loft test` summary names a missing `rustc` instead of suggesting `loft test
+--native`; and `loft new --native` lists it in its next steps.  Running a program stays quiet:
+it runs on the interpreter as before.
 
 **A store can say what happens when it does not land.**  `scores[7] = 70 else { missed += 1 }`
 runs the block exactly when the write did not take — an index past the end, a key the
@@ -152,6 +171,28 @@ take a foreign `self` (`text`, `integer`), so only your package can define it.
 works behind a TLS-inspecting proxy.  Installing a package, fetching a remote store or calling a
 web service checks a server against the bundled roots and the machine's own store, as curl and
 git do.
+
+### Bug fixes
+
+**Operands are evaluated left to right, also around a call that answers a vector or a
+record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and
+`c.n + made(c).v` read `c.n` after `made` had changed it, on both backends.  Each operand now
+sees exactly what the operands to its left did.
+
+**A vector parsed from text can be returned, and holds values of its own type.**  A function
+that bound `vector<T>.parse(text)` to a local and returned the local handed back a vector
+whose memory was already released; so did binding it inside an `if` block and reading it
+afterwards.  Compiled programs answered an empty vector, interpreted ones usually the right
+one.  Also, `vector<integer>.parse` and `vector<float>.parse` gave elements no operator
+accepted, and `vector<text>.parse` printed its texts with their quotes.
+
+**A struct-enum parsed from text can be returned from a function.**
+`fn load(t: text) -> Shape { Shape.parse(t) }` compiled, and its result could not be bound,
+stored in a vector or a field, or passed on: "cannot change type from Shape to Shape".
+
+**A null test narrows a nullable struct-enum.**  Inside `if s != null { area(s) }`, and on the
+else side of `if s == null`, a `Shape?` is a `Shape`: the call was reported as storing a
+nullable into a non-null parameter, where the same code over a struct was not.
 
 ---
 

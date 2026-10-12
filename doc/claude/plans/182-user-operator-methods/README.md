@@ -87,7 +87,7 @@ in-place method.
 **Q6 — null and failure.**  The form's type and value are the method's (Op-Result); a method
 answering `V?` makes the form `V?`.  An out-of-range `x[i]` is the type's answer, visible in
 `at`'s return type; the page recommends `V?`, matching the built-in collections.  No fault is
-added (C80).
+added (@C80).
 
 **Q7 — `[]` forms.**  The brackets' SHAPE picks the method: no `..` → `at` (read) or `set_at`
 (write), and element and keyed lookup are ONE rule for a user type, since the brackets hold the
@@ -157,7 +157,7 @@ for `operator equals` (`Dt` with `==` meaning "same last digit", so `Dt{1} == Dt
 
 The measured cell already shows (b)'s disagreement: one collection holding two entries for keys
 `==` calls one.  The unmeasured ones follow from it — (b) leaves a lookup answering "absent" for a key `==` says is present, with no diagnostic: a
-silent disagreement, which (E-Eq-Key) exists to forbid.  (a) refuses at compile time (C80 permits
+silent disagreement, which (E-Eq-Key) exists to forbid.  (a) refuses at compile time (@C80 permits
 that) and names the cure.  The matrix also found that ANY struct-typed key field — no `OpEq` at
 all — crashes the interpreter at its first lookup and does not compile with `--native`: loft#1845,
 filed, so the (b) lookup cells could not be run past the first.  Op-Key holds whichever way #1845

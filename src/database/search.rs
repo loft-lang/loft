@@ -7,7 +7,7 @@ use crate::database::{Parts, Stores};
 use crate::keys::{Content, DbRef};
 use crate::store::RECORD_PAYLOAD;
 use crate::vector;
-use crate::{hash, keys, tree};
+use crate::{btree, hash, keys};
 use std::cmp::Ordering;
 
 #[allow(dead_code)]
@@ -54,7 +54,7 @@ impl RemoveKind {
             Parts::Sorted(c, _) | Parts::Vector(c) => Self::Inline(*c),
             Parts::Ordered(_, _) | Parts::Array(_) => Self::ByReference,
             Parts::Hash(_, _) => Self::Hash,
-            Parts::Index(_, _, _) => Self::Index,
+            Parts::Index(_, _) => Self::Index,
             Parts::Trie(_, _) => Self::Trie,
             Parts::Radix(_, _) => Self::Radix,
             Parts::Base
@@ -80,27 +80,6 @@ impl Stores {
             key.push(self.field_content(fld, db, *k));
         }
         key
-    }
-
-    /// Byte offset within a record where an `index`'s red-black links start — what `tree`
-    /// descends from.  `u16::MAX` when `tp` is not an index.
-    ///
-    /// The field list is the one `Stores::index_owner` names, so a synth `__nullable<S>`
-    /// element reads its links out of the `Some` record the append put them in.
-    #[must_use]
-    pub fn fields(&self, tp: u16) -> u16 {
-        if let Parts::Index(c, _, f) = self.types[tp as usize].parts {
-            let c = self.index_owner(c);
-            if let Parts::Struct(fields) | Parts::EnumValue(_, fields) =
-                &self.types[c as usize].parts
-            {
-                8 + fields[f as usize].position
-            } else {
-                u16::MAX
-            }
-        } else {
-            u16::MAX
-        }
     }
 
     #[must_use]
@@ -210,7 +189,7 @@ impl Stores {
         // this the arms below dereference the reserved absent id as if it were a record
         // (`rec=4294967295`), which is out of bounds in every store: appending to a keyed
         // field left absent rather than empty panicked in `hash::find` / `vector::sorted_find`
-        // / `tree::find`, all three reached from the DEDUP lookup one line inside
+        // / `btree::find`, all three reached from the DEDUP lookup one line inside
         // `insert_keyed_copy`, on both backends.
         //
         // The same answer `Store::collection_rec` gives on the vector side, where every slot
@@ -302,22 +281,18 @@ impl Stores {
             Parts::Radix(_, _) => {
                 crate::radix_db::find(data, &self.allocations, self.keys(db), key)
             }
-            Parts::Index(_, _, _) => self.find_index(data, db, key),
+            Parts::Index(_, _) => self.find_index(data, db, key),
         }
     }
 
     pub(super) fn find_index(&self, data: &DbRef, db: u16, key: &[Content]) -> DbRef {
-        // Where the links live is [`Self::fields`]'s question, asked once: a synth
-        // `__nullable<S>` element keeps them in the `Some` record, and recomputing the
-        // offset here from the enum's own (absent) field list read `u16::MAX`.
-        let left = self.fields(db);
         // A FULL key names at most one record, so its descent stops there
-        // (`tree::find_exact`); a partial key keeps the boundary walk below, which
+        // (`btree::find_exact`); a partial key keeps the boundary walk below, which
         // answers the LOWEST of the records it matches.
         if keys::fast_order_enabled() && key.len() == self.keys(db).len() {
-            let rec = tree::find_exact(data, left, &self.allocations, self.keys(db), key);
+            let rec = btree::find_exact(data, &self.allocations, self.keys(db), key);
             if keys::keyed_verify() {
-                let walked = self.find_index_boundary(data, db, key, left).rec;
+                let walked = self.find_index_boundary(data, db, key).rec;
                 assert!(
                     walked == rec,
                     "LOFT_KEYED_VERIFY: the exact descent answers record {rec} where the \
@@ -330,32 +305,26 @@ impl Stores {
                 pos: if rec == 0 { 0 } else { 8 },
             };
         }
-        self.find_index_boundary(data, db, key, left)
+        self.find_index_boundary(data, db, key)
     }
 
-    /// [`Self::find_index`]'s general form: the boundary below `key`, one step forward,
-    /// and one comparison to say whether that record matches.
-    fn find_index_boundary(&self, data: &DbRef, db: u16, key: &[Content], left: u16) -> DbRef {
-        let rec = tree::find(data, true, left, &self.allocations, self.keys(db), key);
-        let mut result = DbRef {
+    /// [`Self::find_index`]'s general form: the first record at or above `key`, and one
+    /// comparison to say whether that record matches.
+    fn find_index_boundary(&self, data: &DbRef, db: u16, key: &[Content]) -> DbRef {
+        let below = btree::find_record(data, true, &self.allocations, self.keys(db), key);
+        let rec = if below == 0 {
+            btree::first_record(data, &self.allocations)
+        } else {
+            btree::next_record(data, &self.allocations, self.keys(db), below)
+        };
+        let result = DbRef {
             store_nr: data.store_nr,
             rec,
             pos: 8,
         };
-        result.rec = if rec == 0 {
-            tree::first(data, left, &self.allocations).rec
-        } else {
-            tree::next(
-                keys::store(&result, &self.allocations),
-                &DbRef {
-                    store_nr: result.store_nr,
-                    rec,
-                    pos: u32::from(left),
-                },
-            )
-        };
-        let cmp = keys::key_compare(key, &result, &self.allocations, self.keys(db));
-        if cmp == Ordering::Equal {
+        if rec != 0
+            && keys::key_compare(key, &result, &self.allocations, self.keys(db)) == Ordering::Equal
+        {
             result
         } else {
             DbRef {
@@ -396,7 +365,7 @@ impl Stores {
     pub(crate) fn compute_key_contents(&self, db: u16) -> Vec<u16> {
         match &self.types[db as usize].parts {
             Parts::Vector(_) | Parts::Array(_) => vec![0],
-            Parts::Sorted(c, key) | Parts::Ordered(c, key) | Parts::Index(c, key, _) => {
+            Parts::Sorted(c, key) | Parts::Ordered(c, key) | Parts::Index(c, key) => {
                 // Key content TYPES (for `read_key` to pop the right widths).  Route through
                 // the `key_field` chokepoint so a synth `__nullable<S>` element resolves the
                 // key inside the `Some` payload, and through `key_contents_for_field` so a
@@ -461,13 +430,8 @@ impl Stores {
             Parts::Hash(_, _) => {
                 hash::validate(data, &self.allocations, &self.types[db as usize].keys);
             }
-            Parts::Index(_, _, fields) => {
-                tree::validate(
-                    data,
-                    fields,
-                    &self.allocations,
-                    &self.types[db as usize].keys,
-                );
+            Parts::Index(_, _) => {
+                btree::validate(data, &self.allocations, &self.types[db as usize].keys);
             }
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 for f in fields {
@@ -517,19 +481,13 @@ impl Stores {
                     pos: 8,
                 }
             }
-            Parts::Index(_, _, _) => {
-                if *pos == i32::MAX {
-                    let n = tree::first(data, self.fields(db), &self.allocations);
-                    *pos = n.rec as i32;
-                    return n;
-                }
-                let store = keys::store(data, &self.allocations);
-                let mut rec = DbRef {
-                    store_nr: data.store_nr,
-                    rec: *pos as u32,
-                    pos: u32::from(self.fields(db)),
+            Parts::Index(_, _) => {
+                // The cursor is the RECORD, never a slot: a walk survives removals by key.
+                let n = if *pos == i32::MAX {
+                    btree::first_record(data, &self.allocations)
+                } else {
+                    btree::next_record(data, &self.allocations, self.keys(db), *pos as u32)
                 };
-                let n = tree::next(store, &rec);
                 if n == 0 {
                     return DbRef {
                         store_nr: data.store_nr,
@@ -538,9 +496,11 @@ impl Stores {
                     };
                 }
                 *pos = n as i32;
-                rec.rec = n;
-                rec.pos = 8;
-                rec
+                DbRef {
+                    store_nr: data.store_nr,
+                    rec: n,
+                    pos: 8,
+                }
             }
             Parts::Base
             | Parts::Struct(_)
@@ -604,6 +564,8 @@ impl Stores {
     /// key said.  A value that may live inside the collection (`s[5] = s[30]`) is snapshotted
     /// first: the removal and the insert below move and grow that storage.  An empty `sub`
     /// keeps the value's own key.
+    ///
+    /// @C68 — `c[k] = v` replaces the record under `k`: a keyed collection never holds two.
     pub fn set_keyed(
         &mut self,
         coll: &DbRef,
@@ -687,7 +649,7 @@ impl Stores {
         let content_tp = match self.types[db as usize].parts {
             Parts::Hash(c, _)
             | Parts::Sorted(c, _)
-            | Parts::Index(c, _, _)
+            | Parts::Index(c, _)
             | Parts::Ordered(c, _)
             | Parts::Radix(c, _)
             | Parts::Trie(c, _) => c,
@@ -857,6 +819,8 @@ impl Stores {
     /// collection (read-back nulls / `Unknown record`).  This is the
     /// `other_indexes` analogue of the @P305 `keyed_field_is_linked` update-only
     /// path already used by `OpSetKeyed`.
+    ///
+    /// @C68 — a keyed `+=` displaces the record already filed under its key.
     pub(crate) fn dedup_keyed(
         &mut self,
         data: &DbRef,
@@ -892,7 +856,7 @@ impl Stores {
 
     /// Take `existing` out of the collection for the insert that displaces it — the
     /// second half of [`Self::dedup_keyed`], for an insert that found its duplicate on
-    /// its own walk (`hash::probe_for_insert`, `tree::add`) and so never looked it up.
+    /// its own walk (`hash::probe_for_insert`, `btree::add`) and so never looked it up.
     ///
     /// Unlink first, then release: see [`Self::remove_owned`] for why that order is
     /// load-bearing.  A `secondary` index only unlinks — the primary still holds the
@@ -949,10 +913,9 @@ impl Stores {
         let (content, own_block, is_hash) = match &self.types[db as usize].parts {
             Parts::Vector(c) | Parts::Array(c) | Parts::Sorted(c, _) => (*c, false, false),
             Parts::Hash(c, _) => (*c, true, true),
-            Parts::Ordered(c, _)
-            | Parts::Radix(c, _)
-            | Parts::Trie(c, _)
-            | Parts::Index(c, _, _) => (*c, true, false),
+            Parts::Ordered(c, _) | Parts::Radix(c, _) | Parts::Trie(c, _) | Parts::Index(c, _) => {
+                (*c, true, false)
+            }
             // Not a collection: `remove` panics on these, and it stays the one
             // place that decides so.
             _ => {
@@ -974,11 +937,11 @@ impl Stores {
         let rec_nr = rec.rec;
         if own_block {
             // Unlink BEFORE releasing the claims, which is the order
-            // `dedup_keyed` uses and it is load-bearing: an `index`'s red-black
-            // links live in a FIELD of the record, so to `remove_claims` they
-            // look like owned children. Free first and it follows them into the
-            // live siblings and takes the subtree with it — the whole
-            // collection then reads back as "Item not found".
+            // `dedup_keyed` uses and it is load-bearing: the unlink finds the
+            // element by its own KEY (a hash re-hashes it, an index descends with
+            // it — nothing points back, @C145), and `remove_claims` frees a text
+            // key.  Free first and the unlink finds nothing: the collection keeps
+            // naming a freed element.
             let slot = self.unlink(data, rec, db);
             // Walk the element's owned children from the RECORD's payload
             // start, not from the position the caller navigated with (loft#718).
@@ -986,15 +949,9 @@ impl Stores {
             // A field position in `content` is an offset within the element
             // record, so it is only meaningful against that record's payload —
             // byte 8, past the size header.  Most callers already hold such a
-            // `DbRef` (a key lookup does), but an `index`'s LOOP cursor does
-            // not: its red-black links live in a field of the record, so
-            // `tree::next` navigates with `pos` set to that link's offset
-            // (`Stores::fields`).  Handing that cursor to `remove_claims` walked
-            // every field from there — for `Rec { id, n, label: text }` the
-            // `text` landed at 8+20+16 = 44 in a 40-byte record, so `#remove`
-            // in a filtered loop read past the record and corrupted the free
-            // tree, which then recursed forever in `fl_insert_node` (SIGSEGV on
-            // the interpreter, stack overflow on `--native`).
+            // `DbRef` (a key lookup does), but a reference positioned anywhere
+            // else inside the record walks every field from the wrong base: a
+            // text field read past the record end and corrupts the free tree.
             //
             // `own_block` is exactly the set whose elements HAVE their own
             // record, so the payload start is the right answer for all of them
@@ -1286,11 +1243,13 @@ impl Stores {
                 );
             }
             RemoveKind::Index => {
-                let left = self.fields(db);
-                tree::remove(
+                debug_assert_eq!(
+                    rec.store_nr, data.store_nr,
+                    "an index's records live in its store"
+                );
+                btree::remove(
                     data,
-                    rec,
-                    left,
+                    rec.rec,
                     &mut self.allocations,
                     &self.types[db as usize].keys,
                 );

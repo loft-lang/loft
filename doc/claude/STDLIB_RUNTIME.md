@@ -193,8 +193,7 @@ for f in t.fields {
 
 - **The position is CHECKED against the descriptor, never trusted.**  Only a
   field the type says BEGINS there is read.  A hand-made offset, a stale one, one
-  belonging to a different type, the interior of a wider field, or an `index`
-  element's `#left_1` bookkeeping all answer `OtherKind` with no read at all — so
+  belonging to a different type, or the interior of a wider field all answer `OtherKind` with no read at all — so
   no argument reads bytes the layout did not name.
 - **`kind` is the descriptor's answer, not yours.**  Passing the position of an
   `integer` field does not make the reading an integer; it makes it whatever that

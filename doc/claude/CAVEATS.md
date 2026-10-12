@@ -33,7 +33,7 @@ tables.
   [INTERFACES.md § `OpDrop`](INTERFACES.md); what surprises people is what it deliberately
   leaves out. **Taking a value back OUT does not release it** — `v.remove(i)` and
   `v[i] = other` leak the element that goes away, by decision
-  ([DESIGN_DECISIONS.md § C111](DESIGN_DECISIONS.md)), so release it yourself before you
+  ([DESIGN_DECISIONS.md § @C111](DESIGN_DECISIONS.md)), so release it yourself before you
   replace it. **A keyed collection does not release its records**, because a `hash`/`sorted`
   shares them with the collection it is indexed from. **Moving one droppable into TWO
   containers releases it twice**, because loft has no move checker. Two ordering rules go
@@ -108,7 +108,7 @@ A call chain deeper than `State::MAX_CALL_DEPTH` (10 000 frames) halts the progr
 `call stack overflow` report on `--interpret` and `--native`, in every build; on wasm the
 host engine's stack traps earlier (WASM.md § How deep a program can recurse).  It is the
 one runtime halt left that is not `panic` or `assert`, and it breaks the rule that nothing
-stops a running program (DESIGN_DECISIONS.md C80).
+stops a running program (DESIGN_DECISIONS.md @C80).
 
 **What replaces it — [@PLN177](plans/177-growable-stack.md):** the stack grows in blocks, so
 stack size never limits a program.  A production build has no depth limit; a development or
@@ -153,7 +153,7 @@ bytecode codegen) is **interpreter-only**: it keys on the bytecode `pc`, which
 
 - `panic("…")` renders an identical `--> file:line:col` + caret on **both**
   backends, so the loudest runtime fault a user actually meets is not affected.
-- Faults that C80 degrades — divide-by-zero, out-of-bounds read, out-of-bounds
+- Faults that @C80 degrades — divide-by-zero, out-of-bounds read, out-of-bounds
   write — print **no** runtime diagnostic on **either** backend. They yield the
   sentinel and the program continues, so there is no caret to lose.
 
@@ -161,7 +161,7 @@ Compile-time diagnostics (parser / type / suggestion) are identical on both. Wha
 remains exposed is any future non-recoverable `raise` path that reports a position:
 that one would render on `--interpret` and not on `--native`.
 
-- **Workaround:** none needed for `panic` or for C80-degraded faults. If a
+- **Workaround:** none needed for `panic` or for @C80-degraded faults. If a
   reporting `raise` is added, reproduce it under `--interpret` for the caret.
 - **Canonical home:** [NATIVE.md](NATIVE.md); a native source map would need
   codegen to thread `Position` into the generated Rust, out of @PLN28's scope.
@@ -204,10 +204,10 @@ was fine, so the axis was never the generic. It was the `par` element STRIDE for
 vector, computed from the inner element's type — fixed the same day, guard
 `tests/scripts/1033-a-par-worker-gets-the-right-nested-vector.loft`.
 
-**#1030 / #1009 / #1296 — settled, and since C127 the answer is a rule rather than a table.**
+**#1030 / #1009 / #1296 — settled, and since @C127 the answer is a rule rather than a table.**
 A width type's out-of-range `+=` no longer keeps `260`. It takes **the type's DEFAULT** —
 zero where the declared range holds it, the bound nearest zero otherwise — and it does so in
-every slot alike. The two full-integer TEMPLATES are the exception and keep C85's in-band
+every slot alike. The two full-integer TEMPLATES are the exception and keep @C85's in-band
 sentinel, answering **`null`**: `integer` and `i32` reserve a code at the BOTTOM, outside the
 range they report, which is why `i32 = -2147483648` is refused and why that code is a real
 absence rather than a number.
@@ -215,7 +215,7 @@ absence rather than a number.
 For two cycles the answer was a table, because whether a DECLARED range left a code spare
 inside its width decided it: `limit(-100, 100) size(1)` answered null and
 `limit(-128, 127) size(1)` answered `0`, two declarations one value apart, with the
-arithmetic `hi - lo + 1 < 2^(8*size)` doing the deciding and no author having done it. C127
+arithmetic `hi - lo + 1 < 2^(8*size)` doing the deciding and no author having done it. @C127
 retired that — a spare code is not a null — so `u8`, `i8`, `u16`, `i16`, `u32` and every
 `limit(lo, hi)` now answer alike whatever room their range leaves.
 
@@ -224,14 +224,14 @@ told from a computed one. Two spellings can tell: `τ?` always answers null, bec
 nullable narrow alias sacrifices an edge value to reserve one; and `x += n else { … }` runs
 its arm exactly when the step did not fit, without storing anything (`@FR-H-Write-Else`) —
 `if !x { … }` as the very next statement is the older spelling of the same question
-(`@FR-E-Uncomp-Seen`). Since C127 the step also says so — `advice[narrow-fallback]` names the
+(`@FR-E-Uncomp-Seen`). Since @C127 the step also says so — `advice[narrow-fallback]` names the
 default it took.
 
 **#1031 — `u32` is one short of its name, by construction.** The local and the field agree
 now. `u32 = 4294967295` is still refused: `default/01_code.loft` declares `u32` as
 `integer limit(0, 4294967294) size(4)`, keeping the top code back — and per the table above
 that reserved code is the one no non-null read tests for, so it buys the refusal without
-buying a null — and since C127 no declared range buys one, whichever end its spare code
+buying a null — and since @C127 no declared range buys one, whichever end its spare code
 sits at. The 2026-08 changelog line "`u32` finally holding every `u32`" overstated the
 fix, and is corrected.
 

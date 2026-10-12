@@ -613,7 +613,7 @@ impl IntegerSpec {
     /// `not_null` is NOT read.  It once was, as "the same answer reached by declaration", but
     /// every non-nullable struct field's spec carries it and `not null` itself has no effect,
     /// so on a wide template it claimed a null the bytes still hold: `s.i = a * b` overflowing
-    /// into an `i: integer` field reads null with nothing reported (C85), and the lint called
+    /// into an `i: integer` field reads null with nothing reported (@C85), and the lint called
     /// the only test that sees it always false.  The width families above are the whole answer.
     ///
     /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
@@ -2433,7 +2433,7 @@ impl Type {
     /// Yes for every kind that spells absence IN BAND — a wide integer, `boolean`, `float`,
     /// `single`, `character`, `text` and an enum: `(N-Store)` lets a null into such a slot with
     /// a warning and the slot then holds it, and an overflow reaches a plain `integer` with no
-    /// warning at all (C85).  No for a declared narrow range (C127: an unfitting value takes
+    /// warning at all (@C85).  No for a declared narrow range (C127: an unfitting value takes
     /// the default) and for a dense record or a collection, whose slot has no room for absence
     /// and reads a record or an empty collection instead.
     #[must_use]
@@ -3876,7 +3876,7 @@ pub fn element_stack_size_in(t: &Type, owned: bool) -> usize {
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
         | Type::Enum(_, true, _)
-        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (C125).
+        // `@FR-O-One-Kind` — every heap value is one `DbRef` on the stack (@C125).
         // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
         // member of one overlapped its neighbours.
         | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
@@ -5012,41 +5012,31 @@ impl Display for DefType {
 }
 
 /// A group of fields on a struct/type that belong together as a single
-/// logical unit.  Used **exclusively** for two patterns — tuple
-/// elements and index bookkeeping triples.  Do not extend for other
-/// uses without explicit user direction.
+/// logical unit.  Used **exclusively** for tuple elements.  Do not
+/// extend for other uses without explicit user direction.
 ///
 /// `Tuple` — synthetic `__tuple<T1,T2,…>` struct's element fields
 /// `_0`, `_1`, ….  One group per tuple-shape struct; `field_indices`
 /// lists every attribute in element order.  Registered by
 /// [`Data::tuple_def`].
 ///
-/// `Index` — bookkeeping triple appended to a content struct when
-/// `index<T[key]>` is registered.  One group per index instance on the
-/// struct (multiple indexes → multiple groups); `field_indices`
-/// lists exactly `[left, right, color]` in that order.  Registered by
-/// [`Stores::index`].
+/// An `index<T[key]>` once appended a red-black bookkeeping triple as a second kind; its
+/// B+tree (`btree.rs`) keeps its nodes apart and adds no field (@PLN190).
 #[derive(Clone, Debug, PartialEq)]
 pub enum LinkedFieldKind {
     Tuple,
-    Index,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LinkedFieldGroup {
     pub kind: LinkedFieldKind,
     /// 0 for Tuple (only one tuple group per synthetic struct).
-    /// 1-based index instance counter for Index (matches the `_N`
-    /// suffix on `#left_N` / `#right_N` / `#color_N`).
     pub instance: u16,
-    /// Indices into the host struct's field/attribute list.
-    /// For Tuple: element order, length = arity.
-    /// For Index: exactly `[left, right, color]`, length = 3.
+    /// Indices into the host struct's field/attribute list, in element order (length =
+    /// arity).
     pub field_indices: Vec<u16>,
     /// Alignment the GROUP must be placed at — the MAX of every
-    /// member field's alignment.  An index triple
-    /// `[int4 (align 4), int4 (align 4), bool (align 1)]` has group
-    /// alignment 4.  A tuple `(integer (align 8), byte (align 1))` has
+    /// member field's alignment.  A tuple `(integer (align 8), byte (align 1))` has
     /// group alignment 8.  Pass this to the layout routine as the
     /// alignment requirement when reserving the group's contiguous
     /// block — the routine must honour it so the int/integer members
@@ -5055,8 +5045,7 @@ pub struct LinkedFieldGroup {
     /// Total bytes the group occupies when laid out atomically — the
     /// sum of every member's size, **plus** any internal padding
     /// needed to align larger members after smaller ones in element
-    /// order.  An index triple is `4 + 4 + 1 = 9` (no internal padding,
-    /// 1-byte bool last).  A tuple `(byte, integer)` requires 7 bytes
+    /// order.  A tuple `(byte, integer)` requires 7 bytes
     /// of internal padding between them: `1 + 7 + 8 = 16`.
     pub size: u16,
 }
@@ -5365,8 +5354,7 @@ pub struct Definition {
     pub purity: Purity,
     /// Linked-field groups on this definition's attributes.
     /// Used **exclusively** for tuple elements (one group covering all
-    /// `_0`, `_1`, …) and index bookkeeping triples (one group per
-    /// index instance, covering `#left_N` / `#right_N` / `#color_N`).
+    /// `_0`, `_1`, …).
     /// Empty for ordinary user-defined structs.
     pub field_groups: Vec<LinkedFieldGroup>,
     /// Origin tag for definitions the compiler synthesises rather than
@@ -6992,7 +6980,7 @@ impl NarrowSlot {
 pub fn is_scalar(tp: &Type) -> bool {
     matches!(
         // `@FR-N-Shape` — a `τ?` scalar is stored in `τ`'s own width with an in-band sentinel
-        // (C90), so every question this answers is the same question for both.
+        // (@C90), so every question this answers is the same question for both.
         tp.base(),
         Type::Integer(_)
             | Type::Float
@@ -7073,6 +7061,8 @@ impl Write for Into {
 /// `DESIGN_DECISIONS.md`).  Every entry is a name verified to be UNDEFINED in
 /// loft; the width types that ARE legal (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`) are
 /// deliberately absent, since a legal name never reaches an unknown-type error.
+///
+/// @C103 — `int` / `str` / `bool` are suggested, never legal.
 pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     Some(match name {
         // Rust / C / Java / Go habits for the 64-bit integer loft calls `integer`.
@@ -9207,7 +9197,7 @@ impl Data {
     /// under a standard-library FREE function's name (`n_…`) says so — that name is reserved for
     /// the standard library, whatever the parameters — rather than reading as a duplicate of the
     /// program's own.  Every other collision keeps naming where the first definition is
-    /// (loft#863), a standard-library METHOD set among them: C95 refuses a free function there
+    /// (loft#863), a standard-library METHOD set among them: @C95 refuses a free function there
     /// only for the method's own first-parameter type, so "reserved whatever the parameters"
     /// would be false for it.
     fn redefinition_text(&self, lexer: &Lexer, winner: u32, fn_name: &str) -> String {
@@ -9710,14 +9700,14 @@ impl Data {
             );
             String::new()
         });
-        // @PLN102 C97 — a LIBRARY (source ≥ 2, i.e. not the stdlib prelude and not the user's
+        // @PLN102 @C97 — a LIBRARY (source ≥ 2, i.e. not the stdlib prelude and not the user's
         // MAIN program) defines its public symbols MODULE-SCOPED: they live under the library's
         // own source and are reached as `lib::name`, never injected into the global namespace.
         // So a library name that exists only in the STDLIB is NOT a redefinition — the two
         // coexist (`shapes::clamp` beside the stdlib `clamp`), which is what lets the stdlib grow
         // without breaking a shipped lib.  Only a clash within the library's OWN source is a real
         // redefinition.  The stdlib (STD_SOURCE) and the user's MAIN program keep the global-scope
-        // check (a MAIN top-level def that a stdlib method would silently shadow is a C95 error).
+        // check (a MAIN top-level def that a stdlib method would silently shadow is a @C95 error).
         let scoped = self.source != STD_SOURCE && self.source != MAIN_SOURCE;
         let own = |data: &Self, nm: &str| -> u32 {
             if scoped {
@@ -9846,15 +9836,15 @@ impl Data {
             let text = self.redefinition_text(lexer, o_nr, fn_name);
             diagnostic!(lexer, Level::Error, "{text}");
         }
-        // loft#940 — the C97 residual on the FREE-function side, and the only silent corner of
+        // loft#940 — the @C97 residual on the FREE-function side, and the only silent corner of
         // the three. `find_fn` resolves the METHOD spelling `t_<sig>_<name>` before the free
         // `n_<name>`, and it reaches that spelling through the STDLIB row from every source —
         // so a library's `fn f(x: τ, …)` is unreachable by its bare name not just from the
         // consumer that imported it, but from the library's own other modules and from the
-        // declaring file itself. C97 keeps the DEFINITION legal on purpose (module-scoped, so
+        // declaring file itself. @C97 keeps the DEFINITION legal on purpose (module-scoped, so
         // the stdlib can grow without breaking a shipped library) and `mylib::f` still reaches
         // it; what it left unsaid is that the bare name now belongs to the stdlib. The MAIN
-        // spelling of this clash is the C95 error above and the `both:`/`self` spelling is the
+        // spelling of this clash is the @C95 error above and the `both:`/`self` spelling is the
         // shared-attribute-table error below — this corner only needed a voice.
         if scoped
             && !shadows_a_method
@@ -9916,13 +9906,13 @@ impl Data {
                 }
             }
         }
-        let mut d_nr = own(self, &name); // C97: a library's mangled name is scoped to its own source
+        let mut d_nr = own(self, &name); // @C97: a library's mangled name is scoped to its own source
         // `Disp-Key` (@PLN162): a second definition of a name whose parameter types differ
         // from the incumbent's is an OVERLOAD, not a redefinition.  It is keyed by its full
         // parameter spelling, and the name's bare `Dynamic` dispatcher carries every overload
         // the way a `both` name always has.  Within ONE source only: a MAIN definition under
-        // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
-        // (C97).  The same spelling twice is the redefinition it always was.
+        // a stdlib name stays the refusal below (@C95), and a library's names stay module-scoped
+        // (@C97).  The same spelling twice is the redefinition it always was.
         let mut overload_label: Option<String> = None;
         // @PLN165 B4 — a `self` method that joins a free generic's set after registering.
         let mut join_as_method = false;
@@ -10130,9 +10120,9 @@ impl Data {
                 // both, which is where a call's argument types choose.
             } else if existing {
                 // The receiver type already carries a member of this name.  Unlike a free
-                // function (which C97 module-scopes to its library), a method lives in the
+                // function (which @C97 module-scopes to its library), a method lives in the
                 // type's SHARED, global attribute table, and `x.name(…)` can resolve to only
-                // one thing — so a colliding method can't be module-scoped (the C97 residual).
+                // one thing — so a colliding method can't be module-scoped (the @C97 residual).
                 // Name the type and point at the fix; when the clash is with the stdlib, say so.
                 let tname = self.def(type_nr).name.clone();
                 let attr_idx = self.attr(type_nr, fn_name);
@@ -11885,7 +11875,7 @@ impl Data {
     /// The lookup is keyed to the source that defines the TYPE, not to whichever source is
     /// current. `def_nr` searches `self.source` and the stdlib, and both askers run AFTER
     /// parsing — by then the current source is the main program — so a hook declared in a
-    /// library was reachable only when @PLN102 C97 had also injected it into the global
+    /// library was reachable only when @PLN102 @C97 had also injected it into the global
     /// namespace, which happens for a `pub` function and not for a private one. The effect
     /// was a hook the compiler VALIDATED (`check_drop_signature` accepts it) and then never
     /// called anywhere, including inside its own package: a `#c` handle a cursor was written
@@ -13347,7 +13337,7 @@ impl Data {
         let bind_fn_key = format!("n_{bind}");
         let found_plain = self.exported(name, lib_source);
         let found_fn = self.exported(&fn_key, lib_source);
-        // C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
+        // @C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
         // and has no bare-name definition for an import list to find.  Import every public
         // method of that name the library declares, each under its own key — exactly what a
         // wildcard `use lib::*` already brings in — so after `use lib::(twice)` both

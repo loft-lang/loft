@@ -99,7 +99,7 @@ fn probe_bytes(key: &[Content]) -> &[u8] {
 /// `hash`-bucket convention). A growing insert can relocate the tree, so the
 /// (possibly new) id is written back. This layer does not deduplicate — two records
 /// with one key land adjacent, differing in the id suffix (`r8b`) — because the
-/// collection insert displaces the record already under the key first (C68).
+/// collection insert displaces the record already under the key first (@C68).
 pub fn add(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) {
     let Some(key) = keys.first() else {
         return;
@@ -157,6 +157,19 @@ pub fn remove(coll: &DbRef, rec: &DbRef, stores: &mut [Store], keys: &[Key]) -> 
         return false;
     }
     rt::rtree_remove(store, tree, rec.rec, &TextOracle { key })
+}
+
+/// The tree's own footprint in bytes (`radix_tree::rtree_bytes`), 0 when none is allocated.
+#[must_use]
+pub fn table_bytes(coll: &DbRef, stores: &[Store]) -> u32 {
+    if coll.is_null() {
+        return 0;
+    }
+    let store = crate::keys::store(coll, stores);
+    match store.collection_rec(coll.rec, coll.pos) {
+        0 => 0,
+        tree => rt::rtree_bytes(store, tree),
+    }
 }
 
 /// Number of element records. Reads the tree's cached length word (O(1)).

@@ -19,6 +19,11 @@
 #   audit rows   QUALITY.md's `unspan` and `optional` rows against
 #                `ir_walker_audit.py`, compared exactly as doc_hygiene's
 #                `quality_*_table_matches_the_audit` compare them         ~6 s
+#   shape tests  `make optional-ratchet`'s command: the count of shape tests
+#                that cannot see through `τ?` has not grown (@FR-N-Shape).
+#                The audit row above reads the count of opaque FUNCTIONS; a
+#                new `matches!(t, Type::…)` in a body that already has one
+#                moves only the count of TESTS, which this reads            ~5 s
 #   doc drift    `scripts/check_doc_drift.sh -q`                           ~30 s
 #   stdlib       `scripts/compiled_stdlib_fresh.py` — the compiled stdlib
 #                was compiled from default/ as it is now; when it was not,
@@ -79,6 +84,7 @@ exec 3>&1
 echo "gate pre-flight (CI_NO_PREFLIGHT=1 skips it):"
 step fmt cargo fmt -- --check
 step "audit rows" audit_rows
+step "shape tests" python3 scripts/ir_walker_audit.py optional --check-ratchet
 step "doc drift" scripts/check_doc_drift.sh -q
 # A stale compiled stdlib is REGENERATED, not refused: it is a derived file whose only cure is
 # this command, and a gate on a stale one measures an interpreted stdlib (5-23x slower on text).

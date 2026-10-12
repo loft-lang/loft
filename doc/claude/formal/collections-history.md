@@ -33,7 +33,7 @@
 > record counts).
 >
 > **D-col-4 — OPENED AND CLOSED (2026-09-21, loft#1572) — a `sorted` stored by reference kept a
-> repeated key.**  `(Col-Insert)` and C68 keep one record per key, latest insert wins.  A
+> repeated key.**  `(Col-Insert)` and @C68 keep one record per key, latest insert wins.  A
 > `sorted<T[k]>` whose element type any `hash` / `index` in the program also holds is the
 > `ordered` layout, and `vector::ordered_finish` kept only the POSITION of its search, so the
 > repeated key was shifted in beside the older record: an unrelated declaration changed what
@@ -214,7 +214,7 @@ where the group would form (`Parser::refuse_mixed_nullability_group`, in the par
 either membership derivation runs, so the `Stores::field` / `Parser::collection_groups`
 agreement census is untouched).  The message names both cures.  `(Col-Group)` now states the
 layout condition rather than leaving it to be re-derived, and the declined alternative — the
-group adopting the tagged layout with tag-aware dense reads — is registered as C117 in
+group adopting the tagged layout with tag-aware dense reads — is registered as @C117 in
 DESIGN_DECISIONS.md so it is not re-derived either.  Fires in all four declaration orders.
 Guards: `1385-a-group-cannot-hold-one-element-two-ways.loft` and its controls twin
 `1385b-a-group-agreeing-on-nullability-still-forms.loft`.  `Contract: strained` — a rule gained
@@ -267,7 +267,7 @@ Closed entries moved here from the rules chapter's register (RELEASE.md § 5b), 
   `Parser::index_len`.  Guard `1915-an-index-answers-len-in-both-spellings.loft`.
 - **`D-col-19`** — opened and CLOSED 2026-10-07 (loft#1914): **`trie +=` of a held key kept both
   records**, so `len` counted the duplicate and a lookup answered whichever the tree's shape put
-  first.  `(Col-Insert)` now states the repeated-key rule C68 decided — a key names one record at
+  first.  `(Col-Insert)` now states the repeated-key rule @C68 decided — a key names one record at
   hash, sorted, index and trie; a spatial keeps every record at a point — and the trie insert
   displaces first, as a hash's does.  Guard `1914-a-trie-key-names-one-record.loft`.
 - **`D-col-18`** — opened and CLOSED 2026-10-07 (loft#1913): **a `float`, `single` or `character`

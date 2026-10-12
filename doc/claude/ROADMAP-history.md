@@ -49,7 +49,7 @@ are kept as they were, so links to their anchors still resolve.
 > **`registry-validation` is green** (since 2026-07-26; all 34 package legs pass, 08-07 through
 > 08-09 consecutively). Both faults that held it red are fixed — the workflow installs
 > `libasound2-dev` for `graphics`, and `hex_terrain` no longer fails on plain-bind write-through
-> vs C86 H-Copy. The **differential oracle is green too** — all 30 corpus programs agree across
+> vs @C86 H-Copy. The **differential oracle is green too** — all 30 corpus programs agree across
 > interpret / native / wasm at `4c80e706` (2026-08-09), with both positive controls passing, so
 > the native/wasm accept-reject divergence on a match-arm tail call is no longer reproducing.
 > It runs `--ignored`, outside the per-PR set, so it needs re-running to stay current.
@@ -427,7 +427,7 @@ For per-phase status (what's shipped, what's in flight, what's blocked) **read t
 | [`plans/31-collection-validation/`](plans/31-collection-validation) | M | **✅ CLOSED 2026-07-09 (superseded)** | Motivating panic gone; hash/sorted/index validated cross-mode; spatial folds into @PLN48 |
 | [`plans/47-binary-io-validation/`](plans/47-binary-io-validation) | M | **✅ CLOSED 2026-07-09 (delivered)** | Value type × format × access-pattern matrix; absorbs @P289 — scalar/struct/char/bool/narrow-int round-trip shipped; variable-width-field compile-time rejection; 32-cell `tests/binary_io_matrix.rs` harness |
 | [`plans/53-program-level-fuzzing/`](plans/53-program-level-fuzzing) | H | **✅ CLOSED 2026-07-10 (harness shipped)** | Harness delivered + merged (#542): F1 raw-source fuzzer + oracle, F2 keyed-container generator, F3 interp≡native differential, F4 arena-poison cleared — all gated by in-process `cargo test`, both backends.  Continuous at-scale runs (F1.4/F2.5) + OSS-Fuzz onboarding (F5) closed-by-decision (appetite-gated, no concrete trigger); `F5-DESIGN.md` kept for a future re-open |
-| [`plans/54-sanitizer-coverage-expansion/`](plans/54-sanitizer-coverage-expansion) | M | **✅ CLOSED 2026-07-10 (sanitizer stack shipped)** | S1 macOS-ARM leg · S2 TSan · S3 `LOFT_POISON` · S5 Miri store-unit + debug-asserts · S6 native-ASan · S7 notifier all green on `main`; S4 LSan `detect_leaks=1` unblocked + green (@PLN85 fixed its leak); S8 MSan deferred (one-line reason).  Only S9 (mixed-boundary C71 cdylib ASan) open — toolchain-blocked (curve25519 `E0463`), spun out to @PLN11 N5 / its own plan |
+| [`plans/54-sanitizer-coverage-expansion/`](plans/54-sanitizer-coverage-expansion) | M | **✅ CLOSED 2026-07-10 (sanitizer stack shipped)** | S1 macOS-ARM leg · S2 TSan · S3 `LOFT_POISON` · S5 Miri store-unit + debug-asserts · S6 native-ASan · S7 notifier all green on `main`; S4 LSan `detect_leaks=1` unblocked + green (@PLN85 fixed its leak); S8 MSan deferred (one-line reason).  Only S9 (mixed-boundary @C71 cdylib ASan) open — toolchain-blocked (curve25519 `E0463`), spun out to @PLN11 N5 / its own plan |
 
 ### G — Goal-enabling
 
