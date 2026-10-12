@@ -506,8 +506,8 @@ fn release(store: &mut Store, arena: Arena, n: u32) {
 
 /// Add record `rec`, which carries its key, to the index at `data`.
 ///
-/// Answers 0 when the record went in, and otherwise the record that already carries its
-/// key — the tree is then UNCHANGED, so the caller can displace that record and add again
+/// Answers 0 when the record went in (or was already in), and otherwise the record that
+/// already carries its key — the tree is then UNCHANGED, so the caller can displace that record and add again
 /// (@FR-Col-Insert), exactly as `tree::add` answers.
 pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
     let st = data.store_nr as usize;
@@ -519,7 +519,10 @@ pub fn add(data: &DbRef, rec: u32, stores: &mut [Store], keys: &[Key]) -> u32 {
     let path = descend(arena, stores, st, keys, &probe, true);
     let (slot, equal) = leaf_slot(arena, stores, st, keys, path.leaf, &probe, false);
     if equal {
-        return arena.rec(&stores[st], path.leaf, slot);
+        // The record itself is already filed: nothing to add and nothing displaced, as
+        // `tree::add` answered.
+        let held = arena.rec(&stores[st], path.leaf, slot);
+        return if held == rec { 0 } else { held };
     }
     let part = probe.part.unwrap_or_default();
     let store = &mut stores[st];
@@ -973,6 +976,117 @@ pub fn position(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
     match leaf_slot(arena, stores, st, keys, path.leaf, &probe, false) {
         (slot, true) if arena.rec(&stores[st], path.leaf, slot) == rec => path.leaf * FANOUT + slot,
         _ => 0,
+    }
+}
+
+// The RECORD-level surface the runtime walks with.  A walk holds a record, never a
+// position: a loop body may remove records by key while the walk is under way (it cannot
+// append — `iteration.md`, I-For), and a removal shifts slots and merges leaves under any
+// held position.  A record stays itself; its slot is found again by its key.
+
+/// The first record, or 0 for an empty index.
+#[must_use]
+pub fn first_record(data: &DbRef, stores: &[Store]) -> u32 {
+    record(data, stores, first(data, stores))
+}
+
+/// The last record, or 0 for an empty index.
+#[must_use]
+pub fn last_record(data: &DbRef, stores: &[Store]) -> u32 {
+    record(data, stores, last(data, stores))
+}
+
+/// The record after `rec` in key order, or 0 past the last (or when `rec` is not in the
+/// index).
+#[must_use]
+pub fn next_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
+    match position(data, stores, keys, rec) {
+        0 => 0,
+        p => record(data, stores, next(data, stores, p)),
+    }
+}
+
+/// The record before `rec` in key order, or 0 before the first.
+#[must_use]
+pub fn previous_record(data: &DbRef, stores: &[Store], keys: &[Key], rec: u32) -> u32 {
+    match position(data, stores, keys, rec) {
+        0 => 0,
+        p => record(data, stores, previous(data, stores, p)),
+    }
+}
+
+/// [`find`] as a record: with `before` the last record strictly below `key`, otherwise
+/// the first strictly above it; 0 when there is none.
+#[must_use]
+pub fn find_record(
+    data: &DbRef,
+    before: bool,
+    stores: &[Store],
+    keys: &[Key],
+    key: &[Content],
+) -> u32 {
+    record(data, stores, find(data, before, stores, keys, key))
+}
+
+/// Every record in key order.
+#[must_use]
+pub fn records(data: &DbRef, stores: &[Store]) -> Vec<u32> {
+    let mut out = Vec::with_capacity(count(data, stores) as usize);
+    let mut p = first(data, stores);
+    while p != 0 {
+        out.push(record(data, stores, p));
+        p = next(data, stores, p);
+    }
+    out
+}
+
+/// The arena record the index's nodes live in — its whole spine, which a teardown frees
+/// beside the element records — or 0 when the index has none yet.
+#[must_use]
+pub fn arena(data: &DbRef, stores: &[Store]) -> u32 {
+    arena_of(data, stores).map_or(0, |a| a.0)
+}
+
+/// The `(start, finish)` cursor pair a walk of `from ..(=) till` starts from — the contract
+/// `State::iterate` and `codegen_runtime::OpIterate` share, in RECORDS (@FR-Col-Order-Sign:
+/// a descending key reverses in the comparator, never here).
+///
+/// * forward — `start` the record before the lowest in range (0 = from the first: the
+///   step yields what follows `start`), `finish` the highest, which the step yields and
+///   then stops on;
+/// * reverse — `start` the record after the highest, `finish` the lowest.
+///
+/// An ABSENT bound keeps `start`/`finish` at 0 rather than a concrete record, because a
+/// `#remove` during the walk can remove that record.  An EMPTY range is `(0, u32::MAX)`,
+/// which the step refuses outright.
+#[must_use]
+pub fn range_cursors(
+    data: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+    from: &[Content],
+    till: &[Content],
+    ex: bool,
+    reverse: bool,
+) -> (u32, u32) {
+    let Some((low, high)) = range(data, stores, keys, from, till, ex) else {
+        return (0, u32::MAX);
+    };
+    let rec = |p| record(data, stores, p);
+    if reverse {
+        let start = if till.is_empty() {
+            0
+        } else {
+            rec(next(data, stores, high))
+        };
+        (start, if from.is_empty() { 0 } else { rec(low) })
+    } else {
+        let start = if from.is_empty() {
+            0
+        } else {
+            rec(previous(data, stores, low))
+        };
+        (start, if till.is_empty() { 0 } else { rec(high) })
     }
 }
 

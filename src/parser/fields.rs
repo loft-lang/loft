@@ -3734,8 +3734,10 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let mut elem_tp = u16::MAX;
         match self.database.types[known as usize].parts {
             Parts::Index(_, _, _) => {
+                // The index TYPE: its walk steps by record and finds each record's slot
+                // by key, so the stepper needs the keys, not a link offset.
                 on = 1;
-                arg = self.database.fields(known);
+                arg = known;
             }
             Parts::Sorted(tp, _) => {
                 on = 2;
@@ -3787,8 +3789,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         ls.push(Value::Int(i32::from(on)));
         ls.push(Value::Int(i32::from(arg)));
         // What `OpRemove` is handed, which is NOT always `arg`:
-        //  - Index (on 1): the COLLECTION type, so it can reach `fields()` and
-        //    `remove_owned(..., tp)`;
+        //  - Index (on 1): the COLLECTION type, which is `arg` itself;
         //  - Sorted / Ordered (on 2 / 3): the ELEMENT type, because removing an
         //    element has to free what it owns and a width cannot say what that is
         //    (loft#903).  `arg` stays the STRIDE the stepper needs.

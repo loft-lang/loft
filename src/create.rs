@@ -231,12 +231,12 @@ pub fn generate_code_into(data: &Data, into: &mut dyn Write) -> std::io::Result<
 #![allow(clippy::inline_always)]
 #![allow(unused_parens)]
 
+use crate::btree;
 use crate::codegen_runtime;
 use crate::hash;
 use crate::keys::{{DbRef, Str}};
 use crate::ops;
 use crate::state::{{Hot, Regs, State}};
-use crate::tree;
 use crate::vector;
 
 pub static OPERATORS: &[fn(&mut State)] = &["

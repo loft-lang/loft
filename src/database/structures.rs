@@ -35,7 +35,7 @@ fn vadd_trace_enabled() -> bool {
 use crate::keys::DbRef;
 use crate::store::{RECORD_PAYLOAD, Store};
 use crate::vector;
-use crate::{hash, keys, tree};
+use crate::{btree, hash, keys};
 
 /// @PLN174 F5 — one cdylib bridge call's heap-typed arguments as the bridge is handed
 /// them ([`Stores::bridge_args`]): the store the bridge allocates in, whether that store
@@ -1032,9 +1032,9 @@ impl Stores {
         );
     }
 
-    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `tree::add` reports, taken BEFORE the
+    /// `LOFT_KEYED_VERIFY`'s check of the duplicate `btree::add` reports, taken BEFORE the
     /// add on a throwaway descent: the record `dedup_keyed`'s lookup names, or none.
-    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16, left: u16) {
+    fn verify_tree_duplicate(&self, data: &DbRef, rec: &DbRef, tp: u16) {
         let key = keys::get_key(rec, &self.allocations, &self.types[tp as usize].keys);
         let looked = self.find(data, tp, &key);
         let looked = if looked.rec != 0 && looked.rec != rec.rec {
@@ -1042,13 +1042,8 @@ impl Stores {
         } else {
             0
         };
-        let walked = tree::find_exact(
-            data,
-            left,
-            &self.allocations,
-            &self.types[tp as usize].keys,
-            &key,
-        );
+        let walked =
+            btree::find_exact(data, &self.allocations, &self.types[tp as usize].keys, &key);
         let walked = if walked == rec.rec { 0 } else { walked };
         assert!(
             walked == looked,
@@ -1178,30 +1173,31 @@ impl Stores {
             }
             InsertKind::Index(c) => {
                 // @P306, @FR-Col-Insert — replace any existing record with this key
-                // (dedup); tree::add otherwise rejects the duplicate and keeps the old.
-                let left = self.fields(tp);
+                // (dedup); `btree::add` otherwise refuses the duplicate and keeps the old.
+                debug_assert_eq!(
+                    rec.store_nr, data.store_nr,
+                    "an index's records live in its store"
+                );
                 if !keys::fast_order_enabled() {
                     let gone = self.dedup_keyed(data, rec, tp, c, secondary);
-                    tree::add(
+                    btree::add(
                         data,
-                        rec,
-                        left,
+                        rec.rec,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
                     return if secondary { gone } else { None };
                 }
-                // The insert's OWN descent finds the duplicate: a refused `tree::add`
+                // The insert's OWN descent finds the duplicate: a refused `btree::add`
                 // names it and leaves the tree as it was, so the lookup that used to run
                 // first — a second full descent per insert — is only ever the rare
                 // displacement's.
                 if keys::keyed_verify() {
-                    self.verify_tree_duplicate(data, rec, tp, left);
+                    self.verify_tree_duplicate(data, rec, tp);
                 }
-                let duplicate = tree::add(
+                let duplicate = btree::add(
                     data,
-                    rec,
-                    left,
+                    rec.rec,
                     &mut self.allocations,
                     &self.types[tp as usize].keys,
                 );
@@ -1213,10 +1209,9 @@ impl Stores {
                     };
                     self.displace_keyed(data, &existing, tp, c, secondary);
                     displaced = Some(existing);
-                    tree::add(
+                    btree::add(
                         data,
-                        rec,
-                        left,
+                        rec.rec,
                         &mut self.allocations,
                         &self.types[tp as usize].keys,
                     );
