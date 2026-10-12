@@ -11,7 +11,7 @@ The runtime data layer is split across multiple source files that together imple
 - Stores — Type Schema + Multi-Store Manager (`src/database/`) — [DATABASE_STORES.md](DATABASE_STORES.md)
 - [DbRef, Key, Content — Universal Pointer and Key Types (`src/keys.rs`)](#dbref-key-content--universal-pointer-and-key-types-srckeysrs)
 - [Vector Operations (`src/vector.rs`)](#vector-operations-srcvectorrs)
-- Red-Black Tree, Open-Addressing Hash Table, Spatial Index, Text Trie — [DATABASE_INDEXES.md](DATABASE_INDEXES.md)
+- B+tree, Open-Addressing Hash Table, Spatial Index, Text Trie — [DATABASE_INDEXES.md](DATABASE_INDEXES.md)
 - [How the Layers Fit Together](#how-the-layers-fit-together)
 
 ---
@@ -28,7 +28,7 @@ The runtime data layer is split across multiple source files that together imple
 | `src/database/format.rs` | Display/formatting: `show`, `dump`, `rec`, `path` |
 | `src/keys.rs` | Universal store pointer (`DbRef`), key descriptors, compare/hash |
 | `src/vector.rs` | Dynamic arrays: by-value (Vector), by-reference (Array/Ordered) |
-| `src/tree.rs` | Left-leaning red-black tree for `sorted<T>` / `index<T>` |
+| `src/btree.rs` | B+tree arena for `index<T>` |
 | `src/hash.rs` | Open-addressing hash table for `hash<T>` / `index<T>` by hash |
 | `src/radix_tree.rs` | Store-backed binary PATRICIA/radix tree over an abstract bit-key oracle (backs `spatial<T>`) |
 | `src/radix_db.rs` | DB↔tree bridge: Morton/Z-order key interleaving + range/proximity primitives for `spatial<T>` |
@@ -530,16 +530,13 @@ once and compare with a read:
 |---|---|---|
 | `fast_key(keys, key) -> Option<FastKey>` | equal or not (`matches`) | the `hash::find` probe loop (@PLN135 arc B) |
 | `fast_key_of(rec, stores, keys)` | the same, for a RECORD's own key | `hash::probe_for_insert` |
-| `fast_order(keys, key) -> Option<FastOrder>` | how it ORDERS (`compare`), direction applied once (@FR-Col-Order-Sign) | `tree::find`, `tree::find_exact`, `vector::sorted_find`, `vector::ordered_find` |
-| `fast_order_of(rec, stores, keys)` | the same, for a record's own key | `tree::add`, `sorted_finish`, `ordered_finish` |
+| `fast_order(keys, key) -> Option<FastOrder>` | how it ORDERS (`compare`), direction applied once (@FR-Col-Order-Sign) | `btree::find`, `btree::find_exact`, `vector::sorted_find`, `vector::ordered_find` |
+| `fast_order_of(rec, stores, keys)` | the same, for a record's own key | `btree::add`, `sorted_finish`, `ordered_finish` |
 
 All four answer `None` for a compound or partial key and for a width they do not list
 (`u8`, `u16`, `single`, `float`), and the search then takes the general comparator
 unchanged.  Every search calls ONE of `keys::order_key` / `keys::order_record`, which is
-also where `LOFT_KEYED_VERIFY=1` checks the fast answer against the general one.  A text
-key cannot be held across `tree::put` (it rebalances the store the text lives in), so
-`FastOrder::detached` drops it there and a text-keyed `index` INSERT orders generally.
-`LOFT_NO_FAST_ORDER=1` makes the order forms answer `None` everywhere.
+also where `LOFT_KEYED_VERIFY=1` checks the fast answer against the general one.  `LOFT_NO_FAST_ORDER=1` makes the order forms answer `None` everywhere.
 
 ---
 
@@ -647,7 +644,7 @@ Stores 4-byte record references (offsets into a separate store) rather than inli
 
 ---
 
-**Red-black tree, hash table, spatial index, text trie** — see [DATABASE_INDEXES.md](DATABASE_INDEXES.md).
+**B+tree, hash table, spatial index, text trie** — see [DATABASE_INDEXES.md](DATABASE_INDEXES.md).
 
 ---
 
@@ -665,16 +662,15 @@ loft runtime value
                     └── Parts::Sorted / Hash / Vector / Struct / ...
                             │
                             ├── Vector layout   → src/vector.rs
-                            ├── Sorted/Index    → src/tree.rs  (+ src/vector.rs for Ordered)
+                            ├── Index           → src/btree.rs (Sorted/Ordered: src/vector.rs)
                             ├── Hash            → src/hash.rs
                             ├── Radix           → src/radix_tree.rs + src/radix_db.rs
                             ├── Trie            → src/radix_tree.rs + src/trie_db.rs
                             └── Key comparison  → src/keys.rs
 ```
 
-- A `sorted<MyStruct>` is a red-black tree in one `Store`; the node records also contain the user data fields (the tree fields are appended after the user fields at offset `fields`).
 - A `hash<MyStruct>` is a hash-table record in one `Store` pointing to element records in another (or the same) `Store`.
-- An `index<MyStruct>` combines both: the same element records are simultaneously in a red-black tree (for range queries and ordered iteration) and a hash table (for O(1) lookup by key).
+- An `index<MyStruct>` is a B+tree whose nodes are one arena record in the collection's store, holding key parts and the numbers of the element records: O(log n) lookup by key, range queries and ordered iteration.
 - A `vector<T>` is a single record with inline elements; a `sorted<T>` by value uses the same layout but maintains sort order via insertion sort on add.
 - All cross-record pointers are `u32` rec offsets within the same `Store`; cross-store references use the full `DbRef`.
 

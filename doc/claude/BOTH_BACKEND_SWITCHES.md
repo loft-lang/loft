@@ -536,7 +536,7 @@ that ORDERS — an `index` descent, a `sorted` / `ordered` binary search — com
 general `key_compare` / `compare` again, an exact `index` lookup take the boundary descent,
 and an `index` insert look its duplicate up before it descends — with it off, the key is
 resolved once per search (`keys::FastOrder`), a full-key lookup stops at the equal node
-(`tree::find_exact`), and a refused `tree::add` names the duplicate its own descent met
+(`btree::find_exact`), and a refused `btree::add` names the duplicate its own descent met
 (`index` fill-and-find −33 %) — and is the first bisect step for a wrong element, order or
 lookup out of a `sorted`, `ordered` or `index`.  It also sorts a `for e in hash` walk through
 `keys::compare` again, where with it off a single key, or a compound key of two to four
@@ -566,7 +566,7 @@ per-element form for every slice, this one included.
 **`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
 exact lookup and every one-probe insert is checked against the general form as it is made,
 and a disagreement panics naming both answers — run the keyed cells or the script corpus
-under it after touching `keys.rs`, `hash.rs`, `tree.rs` or the `sorted` searches.  Two more
+under it after touching `keys.rs`, `hash.rs`, `btree.rs` or the `sorted` searches.  Two more
 levers of the same pass carry no switch because they have no second answer to bisect to: a
 miss on a collection with no lazy binding answers at once (`Stores::lazy_bound`, a lookup
 loop that misses half the time −20 %), and a whole word fed to the hasher on a word boundary

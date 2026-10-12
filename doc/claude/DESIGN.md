@@ -19,7 +19,7 @@ Complexity estimates use O-notation over the number of IR nodes (N), variables (
 - [9. Field Layout Calculator](#9-field-layout-calculator)
 - [10. Word-Addressed Heap Allocator (Store)](#10-word-addressed-heap-allocator-store)
 - [11. Type Schema & Multi-Store Manager (Stores)](#11-type-schema--multi-store-manager-stores)
-- [12. Red-Black Tree (Sorted / Index Collections)](#12-red-black-tree-sorted--index-collections)
+- [12. B+tree (Index Collections)](#12-btree-index-collections)
 - [13. Open-Addressing Hash Table](#13-open-addressing-hash-table)
 - [14. Dynamic Arrays (Vector)](#14-dynamic-arrays-vector)
 - [15. Radix Tree (Spatial Index)](#15-radix-tree-spatial-index)
@@ -363,32 +363,25 @@ LLRB free-space tree provides O(log F) allocation for most cases. `validate()` a
 
 ---
 
-## 12. Red-Black Tree (Sorted / Index Collections)
+## 12. B+tree (Index Collections)
 
-**Goal.** Provide a balanced BST for `Sorted` and `Index` collection types. Supports ordered iteration, predecessor/successor queries, and O(log N) insert/find.
+**Goal.** Provide an ordered, balanced key structure for `index` collections. Supports ordered iteration, predecessor/successor queries, and O(log N) insert/find/remove; `len` is O(1).
 
 **Functions.**
 
 | Function | File | Role |
 |---|---|---|
-| `find(data, before, fields, stores, keys, key)` | `src/tree.rs` | O(log N) key lookup |
-| `add(data, record, fields, stores, keys)` | `src/tree.rs` | Insert + rebalance |
-| `put(depth, rec, new_rec, ...)` | `src/tree.rs` | Recursive insert with rotations |
-| `next()` / `previous()` | `src/tree.rs` | In-order traversal |
+| `find` / `find_exact` | `src/btree.rs` | O(log N) boundary and point lookup |
+| `add` | `src/btree.rs` | Insert; answers the record already carrying the key |
+| `remove` | `src/btree.rs` | Delete a record, found by its own key |
+| `count` | `src/btree.rs` | O(1) length from the header |
+| `next_record` / `previous_record` | `src/btree.rs` | In-order traversal by hint, verified |
 
-**Complexity.** O(log N) for find, insert. O(N) for full traversal. Maximum tree depth: 30 (enforced by `RB_MAX_DEPTH`). ~680 lines.
+**Complexity.** O(log N) for find, insert, remove. O(N) for full traversal.
 
-**Reducibility.** Red-black trees are inherently complex. The implementation is a standard recursive formulation. The negative-value encoding for back-links is non-obvious; a separate back-link field or an explicit parent pointer would be clearer but would cost one extra word per node.
+**Layout.** Nodes of 16 slots in one arena record of the collection's store; a slot holds an 8-byte key part (the first key field, order-preserving) and a record number. The element record carries no tree fields. Layout: [DATABASE_INDEXES.md](DATABASE_INDEXES.md).
 
-**Code quality.** Fair. The bit-packing trick (negative values = back-links) is a correctness hazard — easy to confuse a negative left-child pointer with a back-link. Constants `RB_LEFT`, `RB_RIGHT`, `RB_FLAG` at fixed offsets are fine. The depth limit is a hard safety guard. Invariant comments (every path has same black height, no two consecutive reds) are absent.
-
-**Debuggability.** Hard. Red-black tree invariant violations are subtle. The `validate()` function (if present) should check both the BST property and the colour invariants. Bugs in rotation logic manifest as incorrect traversal order or silent data loss.
-
-**Enhancement opportunities.**
-- Add a `validate_rbtree()` function that checks both BST ordering and red-black colour invariants for use in tests.
-- Document the negative-value back-link encoding with a comment block explaining the layout.
-- Consider a B-tree instead (wider nodes, better cache behaviour for large collections).
-- Add a `remove()` operation (currently not implemented or not called).
+**Debuggability.** `tests/btree.rs` checks the tree against a sorted model for every key kind, including walks under concurrent removal.
 
 ---
 
@@ -642,7 +635,7 @@ LLRB free-space tree provides O(log F) allocation for most cases. `validate()` a
 | 9 | Field layout | calc.rs | 78 | O(F²) | No | Good | Easy |
 | 10 | Heap allocator | store.rs | 1 126 | O(log F) claim | No | Good | Medium |
 | 11 | Type schema + stores | ~~database.rs~~ → **src/database/** (7 modules) | 3 931 | O(T·F) | ~~**Yes**~~ **Done 2026-03-15** | Good | Medium |
-| 12 | Red-black tree | tree.rs | 680 | O(log N) | No | Fair | Hard |
+| 12 | B+tree | btree.rs | 1 651 | O(log N) | No | Good | Medium |
 | 13 | Hash table | hash.rs | 190 | O(1) avg | No | Good | Medium |
 | 14 | Dynamic arrays | vector.rs | 433 | O(1) / O(N) | No | Good | Easy |
 | 15 | Radix tree | radix_tree.rs | 288 | O(K) | No | Incomplete | Hard |
