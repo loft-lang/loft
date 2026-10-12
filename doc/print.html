@@ -4487,6 +4487,10 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const <span class="ty">hash</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — <code>elms</code> slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
 </div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const <span class="ty">index</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The byte footprint of an index: its B+tree's node arena, room included. Allocation-local, as <code>size</code> of a hash: the element records live in separate allocations and are not counted.  Grows in steps as the arena doubles.  0 for an empty (unallocated) index.</p>
+</div>
 <h2 id="stdlib-output-and-diagnostics">Output and Diagnostics</h2>
 <div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(test: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, message: <span class="ty"><a href="stdlib-types.html">text</a></span>, <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>: <span class="ty"><a href="stdlib-types.html">text</a></span>, line: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
@@ -4537,8 +4541,16 @@ Walkable     fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Number of elements in a spatial (radix / Morton tree) collection.</p>
 </div>
 <div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const spatial) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The byte footprint of a spatial index: its tree's node array, room included. Allocation-local, as <code>size</code> of a hash: the element records are not counted.  0 for an empty (unallocated) one.</p>
+</div>
+<div class="item">
 <pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(self: const trie) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
 <p>Number of elements in the trie.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-text.html">size</a></span>(self: const trie) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>The byte footprint of a trie: its tree's node array, room included. Allocation-local, as <code>size</code> of a hash: the element records are not counted.  0 for an empty (unallocated) one.</p>
 </div>
 <h2 id="stdlib-vector-aggregates">Vector aggregates</h2>
 <div class="item">
