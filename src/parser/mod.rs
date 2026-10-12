@@ -7860,11 +7860,8 @@ impl Parser {
             && named_args.is_empty()
             && matches!(recv.peel_optional().0, Type::Index(_, _, _))
         {
-            // P192: `len(ix)` for `ix: index<T[key]>`.  Dispatched
-            // here (not via stdlib overload) because the runtime
-            // helper `tree::count` needs the per-record bookkeeping
-            // byte offset, which is `database.fields(tp)` — only
-            // computable at parse time once the type is registered.
+            // P192: `len(ix)` for `ix: index<T[key]>`, dispatched here to
+            // `OpLengthIndex` (`btree::count`, the header's length).
             //
             // Strict arity / named-arg gates: `len(ix, x)` or
             // `len(ix, key: 1)` should NOT route here — they would
@@ -7874,7 +7871,7 @@ impl Parser {
             //
             // Through the `?` as every other keyed `len` goes: an `index<…>?` answered
             // "Unknown function len".  This route bypasses `convert`, so it asks
-            // `@FR-N-Store` itself, and the absent index counts 0 (`tree::count`).
+            // `@FR-N-Store` itself, and the absent index counts 0 (`btree::count`).
             if let Some(tp) = self.index_len(code, recv, list.to_vec(), arg_pos.first()) {
                 return tp;
             }
@@ -8032,10 +8029,8 @@ impl Parser {
                 Type::Index(_, _, _) | Type::Radix(_, _, _) | Type::Trie(_, _, _)
             )
         {
-            // @PLN110 1d: an `index` (red-black tree) / `spatial` (radix/Morton tree)
-            // keeps its ordering as bookkeeping embedded IN each element record —
-            // there is NO separate structure allocation to sum, so `size` reports a
-            // SINGLE node record's size (a compile-time constant), reusing the
+            // @PLN110 1d: `size` of an `index` / `spatial` / `trie` reports a SINGLE
+            // element record's size (a compile-time constant), reusing the
             // struct-record path.  The arg is evaluated; only its element type feeds
             // the const record size.
             let elem_kt = match recv {

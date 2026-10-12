@@ -3258,21 +3258,6 @@ impl FastKey<'_> {
             FastKey::Str(pos, v) => (*v).cmp(s.get_str(s.get_u32_raw(rec, base + pos))),
         }
     }
-
-    /// The same key with nothing borrowed, or `None` for a text key — for a walk that
-    /// MUTATES the stores it compares against (`tree::put` rebalances as it unwinds), where
-    /// a `&str` out of a store cannot be held.
-    #[must_use]
-    pub fn detached(&self) -> Option<FastKey<'static>> {
-        Some(match *self {
-            FastKey::Int(p, v) => FastKey::Int(p, v),
-            FastKey::Long(p, v) => FastKey::Long(p, v),
-            FastKey::I32(p, v) => FastKey::I32(p, v),
-            FastKey::U32(p, v) => FastKey::U32(p, v),
-            FastKey::ShortRaw(p, st, v) => FastKey::ShortRaw(p, st, v),
-            FastKey::Str(..) => return None,
-        })
-    }
 }
 
 /// A one-field key whose ORDER test is pre-resolved: [`FastKey`] plus the key's declared
@@ -3425,17 +3410,6 @@ impl FastOrder<'_> {
     pub fn compare(&self, s: &Store, rec: u32, base: u32) -> Ordering {
         let c = self.key.order(s, rec, base);
         if self.descending { c.reverse() } else { c }
-    }
-
-    /// The same comparator with nothing borrowed, or `None` for a text key
-    /// ([`FastKey::detached`]).
-    #[must_use]
-    pub fn detached(&self) -> Option<FastOrder<'static>> {
-        Some(FastOrder {
-            key: self.key.detached()?,
-            descending: self.descending,
-            verify: self.verify,
-        })
     }
 }
 

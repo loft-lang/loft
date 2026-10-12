@@ -129,15 +129,11 @@ pub fn calculate_positions(
 /// its in-group offset.  Non-group fields use the same gap-tracker
 /// as `calculate_positions`.
 ///
-/// **Why**: the index bookkeeping triple `[#left_N, #right_N,
-/// #color_N]` and tuple element fields `[_0, _1, …, _N]` must stay
-/// CONTIGUOUS so consumers (`tree::add` for index, tuple-as-arg
-/// inflation for tuples) can use simple offset arithmetic.  Without
-/// group-awareness, `calculate_positions` packs fields individually
-/// (largest-first by alignment) and a 1-byte `bool` member of an
-/// index group can be pulled to the trailing 1-byte fill region of
-/// the host struct — breaking `tree::add`'s `color = left + 8`
-/// expectation.
+/// **Why**: tuple element fields `[_0, _1, …, _N]` must stay
+/// CONTIGUOUS so tuple-as-arg inflation can use simple offset
+/// arithmetic.  Without group-awareness, `calculate_positions` packs
+/// fields individually (largest-first by alignment) and a small member
+/// can be pulled into a fill gap elsewhere in the host struct.
 ///
 /// **Args**:
 /// - `fields[i] = (size, alignment)` per host field, in original

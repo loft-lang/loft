@@ -189,7 +189,7 @@ impl Stores {
         // this the arms below dereference the reserved absent id as if it were a record
         // (`rec=4294967295`), which is out of bounds in every store: appending to a keyed
         // field left absent rather than empty panicked in `hash::find` / `vector::sorted_find`
-        // / `tree::find`, all three reached from the DEDUP lookup one line inside
+        // / `btree::find`, all three reached from the DEDUP lookup one line inside
         // `insert_keyed_copy`, on both backends.
         //
         // The same answer `Store::collection_rec` gives on the vector side, where every slot
@@ -856,7 +856,7 @@ impl Stores {
 
     /// Take `existing` out of the collection for the insert that displaces it — the
     /// second half of [`Self::dedup_keyed`], for an insert that found its duplicate on
-    /// its own walk (`hash::probe_for_insert`, `tree::add`) and so never looked it up.
+    /// its own walk (`hash::probe_for_insert`, `btree::add`) and so never looked it up.
     ///
     /// Unlink first, then release: see [`Self::remove_owned`] for why that order is
     /// load-bearing.  A `secondary` index only unlinks — the primary still holds the
@@ -937,11 +937,11 @@ impl Stores {
         let rec_nr = rec.rec;
         if own_block {
             // Unlink BEFORE releasing the claims, which is the order
-            // `dedup_keyed` uses and it is load-bearing: an `index`'s red-black
-            // links live in a FIELD of the record, so to `remove_claims` they
-            // look like owned children. Free first and it follows them into the
-            // live siblings and takes the subtree with it — the whole
-            // collection then reads back as "Item not found".
+            // `dedup_keyed` uses and it is load-bearing: the unlink finds the
+            // element by its own KEY (a hash re-hashes it, an index descends with
+            // it — nothing points back, @C145), and `remove_claims` frees a text
+            // key.  Free first and the unlink finds nothing: the collection keeps
+            // naming a freed element.
             let slot = self.unlink(data, rec, db);
             // Walk the element's owned children from the RECORD's payload
             // start, not from the position the caller navigated with (loft#718).
@@ -949,15 +949,9 @@ impl Stores {
             // A field position in `content` is an offset within the element
             // record, so it is only meaningful against that record's payload —
             // byte 8, past the size header.  Most callers already hold such a
-            // `DbRef` (a key lookup does), but an `index`'s LOOP cursor does
-            // not: its red-black links live in a field of the record, so
-            // `tree::next` navigates with `pos` set to that link's offset
-            // (`Stores::fields`).  Handing that cursor to `remove_claims` walked
-            // every field from there — for `Rec { id, n, label: text }` the
-            // `text` landed at 8+20+16 = 44 in a 40-byte record, so `#remove`
-            // in a filtered loop read past the record and corrupted the free
-            // tree, which then recursed forever in `fl_insert_node` (SIGSEGV on
-            // the interpreter, stack overflow on `--native`).
+            // `DbRef` (a key lookup does), but a reference positioned anywhere
+            // else inside the record walks every field from the wrong base: a
+            // text field read past the record end and corrupts the free tree.
             //
             // `own_block` is exactly the set whose elements HAVE their own
             // record, so the payload start is the right answer for all of them

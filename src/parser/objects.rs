@@ -6981,7 +6981,7 @@ impl Parser {
     // `list` / `sinks`, of which `sinks` is itself the bundle for the literal-level
     // accumulators).  There is exactly ONE call site, so a further struct would be packed
     // once and unpacked once and name nothing that these parameters do not — the same trade
-    // `tree::range_cursors` records for its own list.
+    // `btree::range_cursors` records for its own list.
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn handle_field(

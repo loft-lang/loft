@@ -4501,7 +4501,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         // loft#703 — a KEYED destination keeps its own type.  The elements are added
         // THROUGH it: `new_record` reads the local's type to pick `hash::add` /
-        // `sorted_new` / `tree::add`, which is how `h += [K { … }]` already builds one.
+        // `sorted_new` / `btree::add`, which is how `h += [K { … }]` already builds one.
         // Retyping it to `vector<K>` here is what made `h: hash<K[k]> = [K { … }]`
         // report a type change, so loft had no way to write a non-empty keyed
         // collection as a VALUE at all — only through a keyed destination that already
@@ -4968,7 +4968,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// loft#703 — is this literal being built straight into a KEYED accumulator?
     ///
     /// Such a variable owns a keyed store of its own (`hash::add` / `sorted_new` /
-    /// `tree::add` add through it), so none of the vector backing applies: no `__vdb_N`
+    /// `btree::add` add through it), so none of the vector backing applies: no `__vdb_N`
     /// store, no capacity pre-allocation, no `vector<T>` retype.  Asked in one place so
     /// the build and the type agree — a literal built as a vector under a variable still
     /// typed keyed reads its elements back through the wrong container.
@@ -5066,7 +5066,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
 
     /// The registered database type for a KEYED collection type — the id that makes
     /// `record_new` / `record_finish` dispatch to `hash::add` / `sorted_new` /
-    /// `tree::add` / the spatial index rather than to `vector_append`.
+    /// `btree::add` / the spatial index rather than to `vector_append`.
     ///
     /// Registration is idempotent (the same call the typedef walker makes), so asking
     /// is also how the type comes to exist.  `None` for a non-keyed type, or one whose
@@ -6541,7 +6541,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // P188: when the LHS local is a keyed collection
         // (sorted/hash/index/spatial<T[key]>), the container type id
         // must be the keyed-collection's own known_type so OpNewRecord
-        // dispatches to sorted_new / hash::add / tree::add / etc.
+        // dispatches to sorted_new / hash::add / btree::add / etc.
         // Falling back to `vector_of(in_t)` returns the wrap-`vector<T>`
         // id which would route through `Parts::Vector` → vector_append
         // and crash with index 65535.
@@ -6554,7 +6554,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // record_finish dispatched through `Parts::Vector` instead of
         // `Parts::Hash`/`Parts::Index` — producing 6 records for 3
         // adds (vector_finish appends without dedup) and bypassing
-        // tree::add entirely (1 record for 2 adds).  Fix: register
+        // btree::add entirely (1 record for 2 adds).  Fix: register
         // the keyed-collection db type directly (idempotent — same
         // call as gen_set_first_keyed_null and the typedef walker).
         // @PLN93 (#511): the keyed-collection type that drives the record-kind dispatch

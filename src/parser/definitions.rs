@@ -5831,18 +5831,8 @@ impl Parser {
     /// Refuse a SECOND `index` field over the same element type and the same key
     /// in one structure (loft#902).
     ///
-    /// Every other collection kind keeps its own storage, so two of them over one
-    /// element type are two routes to a shared record set — the linked-collection
-    /// group loft#843 built. An `index` cannot be: a red-black tree keeps its
-    /// links in FIELDS OF THE ELEMENT RECORD, and the field triple is allocated
-    /// per index TYPE (`#left_N / #right_N / #color_N`). Two fields whose declared
-    /// type is identical resolve to that one type, so they name one set of links —
-    /// not two trees, but ONE tree reached through two roots.
-    ///
-    /// That is why the FILL looked right and only removal fell over: both roots
-    /// walked the same structure, so lengths and iteration agreed, and the first
-    /// removal rebalanced through one root and left the other stale — a panic in
-    /// `tree.rs` on the next walk, which "no runtime errors, ever" does not allow.
+    /// Two keyed fields over one element type in one structure are two routes to
+    /// ONE record set — the linked-collection group loft#843 built (@C113).
     ///
     /// It is refused rather than made to work because there is nothing to make
     /// work: a second index with the SAME key answers exactly what the first

@@ -95,7 +95,7 @@ const BASELINE: &str = "1";
 /// what this token buys, and the reason it shipped before H rather than with it.
 pub const HASH: &str = "2";
 
-/// `index<T[k]>` — the B+tree in `crate::btree` (@PLN190): the collection's slot names
+/// `index<T[k]>` — the B+tree in `crate::btree` (@C147): the collection's slot names
 /// an ARENA record whose node 0 is the header and whose nodes hold 8-byte key parts beside
 /// record numbers, descended by part and broken by the record's key.
 ///
