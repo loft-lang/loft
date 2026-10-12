@@ -86,11 +86,10 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     let Value::Block(body) = def.code().unspan() else {
         return;
     };
-    let Some(guard) = crate::exit_vector::exit_guard(def.code(), rb, data) else {
-        return;
-    };
     let function = def.variables();
     let mut plans = Vec::new();
+    // Built at the first candidate: most functions with a return buffer mint no record local.
+    let mut guard: Option<Value> = None;
     for (idx, stmt) in body.operators.iter().enumerate() {
         let Value::Call(opd, args) = stmt.unspan() else {
             continue;
@@ -105,6 +104,12 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
         let Ok(tp) = u16::try_from(*tp) else {
             continue;
         };
+        if guard.is_none() {
+            guard = crate::exit_vector::exit_guard(def.code(), rb, data);
+            if guard.is_none() {
+                return;
+            }
+        }
         match admit(
             data,
             database,
@@ -143,10 +148,9 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
             }
         }
     }
-    if plans.is_empty() {
-        return;
+    if let (false, Some(guard)) = (plans.is_empty(), guard) {
+        apply(data, d_nr, &plans, rb, &guard, &ops);
     }
-    apply(data, d_nr, &plans, rb, &guard, &ops);
 }
 
 /// Each admitted local becomes a view of its field: the mint the buffer's ensure, the bind of
