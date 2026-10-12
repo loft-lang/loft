@@ -4863,3 +4863,23 @@ against the red-black tree's 6–9; the verified hint brought it to 9.  Text key
 eight bytes — which is what the node prefix answers.  C113's rationale was restated the same day:
 its storage argument went with the link triple.
 
+## C148 — one structural limit, 300, for every count a program has — a function's variables included
+
+Decided 2026-10-12 by the owner.  PR #1967 had replaced four separate bounds (256, 128 in a
+sandbox, 499, 999) by one, 300, and with it a function's variables were counted for the first
+time.  The consumer-main-health nightly then went red on crawler: `sim_new_gen_s` in
+`src/sim.loft`, one function of 1436 lines binding more than 340 names, had compiled before.
+The question put to the owner was whether to drop the count for variables, on the ground that a
+variable costs no recursion depth and the 64 KiB frame cap already bounds what is unsafe.
+
+The answer: *"keep the count for variables"*; *"I want a clean number for programmers here, it
+should be so low we do not suddenly get into the frame cap unreliably"*; *"I want the same
+number in all cases so a programmer can know what the limit is"*; and of the consumer, *"when
+the crawler has put all their code in a single function that is their fault"*.
+
+Measured the same day, on both backends, at the limit of 300 bound variables: 300 `text`
+parameters with 300 `text` variables fit the frame; 299 struct, vector and
+`(text, integer, float)` variables fit; 299 tuples of 27 integers fit and 299 of 28 are the
+frame refusal — 65536 / 300 is 218 bytes a variable.  The count therefore arrives before the
+frame cap for every ordinary variable, which is the property the entry states and
+`the-variable-limit-arrives-before-the-frame-cap.loft` holds.

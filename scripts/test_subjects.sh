@@ -118,7 +118,7 @@ subject_patterns() {
 # a cell pointed at a deleted path stops measuring the pattern instead of failing.
 subject_paths() {
   case "$1" in
-    (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/' ;;
+    (parser)   echo '^src/parser/|^src/lexer\.rs|^src/typedef\.rs|^src/variables/|^src/limits\.rs' ;;
     (scopes)   echo '^src/scopes\.rs|^src/scopes/|^src/use_analysis\.rs|^src/ownership_cfg\.rs|^src/copy_manifest\.rs|^src/const_fn\.rs|^src/compact\.rs|^src/repeat_run\.rs|^src/byte_copy\.rs|^src/vec_copy\.rs|^src/text_run\.rs|^src/pure_reuse\.rs|^src/forward_result\.rs|^src/literal_append\.rs' ;;
     (codegen)  echo '^src/generation/|^src/compile\.rs|^src/value_record\.rs|^src/leaf_inline\.rs|^src/forward_walk\.rs|^src/same_read\.rs|^src/in_range\.rs|^src/single_use\.rs|^src/discharge_into\.rs|^src/state/codegen\.rs|^src/codegen_runtime\.rs|^src/fill\.rs|^src/stack\.rs|^src/slot_alias\.rs' ;;
     (runtime)  echo '^src/state/|^src/parallel\.rs|^src/fill\.rs|^src/timeout\.rs|^src/native\.rs|^src/crash_report\.rs' ;;

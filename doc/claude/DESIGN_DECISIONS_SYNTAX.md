@@ -5,7 +5,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Design decisions — syntax, names and calls
 
-The entries of the [decision register](DESIGN_DECISIONS.md) about the surface grammar, how a name resolves (imports, methods, shadowing) and how generics are written.  Each states
+The entries of the [decision register](DESIGN_DECISIONS.md) about the surface grammar, how a name resolves (imports, methods, shadowing), how generics are written and how large a program's parts may be.  Each states
 the decision, its reason and what would reopen it; its **record** link opens the question, the
 trade-offs and the evidence in [DESIGN_DECISIONS-history.md](DESIGN_DECISIONS-history.md).
 
@@ -305,3 +305,27 @@ Decided 2026-10-06 (owner) — [record](DESIGN_DECISIONS-history.md#c140--privat
 **Holds at:** `@C140` — `./scripts/idx tag:@C140`: `tests/pub_visibility.rs`; every refusal
 holds on every build.
 **Catalogue:** @F2 / modules.  Extends [@C98](#c98--use-lib-binds-only-the-lib-namespace-unqualified-access-is-an-explicit-use-lib--use-lib-where-the-imported-name-wins) (`pub` items) to fields, literals and variants.
+
+## C148 — one structural limit, 300, for every count a program has — a function's variables included
+
+**Decision.** One number bounds a program's structure: an expression nests 300 levels deep, a
+struct declares 300 fields, a function takes 300 parameters and binds 300 variables of its own,
+a tuple holds 300 elements.  Each works at 300 on both backends, and the 301st is refused at
+compile time with a message naming the limit (`crate::limits::LIMIT`).  No count has a number of
+its own, and the variable count is not lifted for a function that happens to fit its frame.
+**Why.** A programmer can know the limit only if it is the same number everywhere.  And the
+count has to be the limit a programmer meets: the other bound on a function, its 64 KiB frame,
+depends on what each variable holds, so a function that reached it first would be refused at a
+size nobody can predict from the source.  At 300 the count arrives first for every ordinary
+variable — 300 `text` parameters beside 300 `text` variables fit, as do 300 three-element
+tuples — and the frame is met only where every variable is a tuple of 28 integers or more
+(65536 / 300 is 218 bytes a variable).  A function past the count is split by its author; that
+is the supported path and the message says so.
+
+**Revisit when.** A function that cannot be split meets the count — generated code, or a
+table-shaped initialiser — or a slot grows until 300 ordinary variables no longer fit the frame.
+Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c148--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included).
+**Holds at:** `tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft` (the margin),
+`the-counts-within-the-limit-compile.loft` beside `a-count-past-the-limit-is-refused.loft` (the
+count itself).
+**Catalogue:** [LOFT.md § Limits](LOFT.md#limits) · [COMPATIBILITY.md](COMPATIBILITY.md) (the consumer function it refuses).

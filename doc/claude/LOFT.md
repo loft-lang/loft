@@ -865,7 +865,7 @@ Polymorphism, generic functions and structs, best practices, interfaces and boun
 
 ## Limits
 
-One number bounds a program's structure: **300**.  At 300 everything works, on both backends;
+One number bounds a program's structure: **300** (@C148).  At 300 everything works, on both backends;
 the 301st is refused at compile time with a message naming the limit.
 
 - an expression nested 300 levels deep — each bracket, call argument, block, branch, vector
@@ -883,8 +883,12 @@ files are not limited.  Two technical caps stand apart:
   while they run — holds at most 64 KiB.  Only large tuples reach it; a struct or a vector
   lives in a store and does not count.
 
+A function at the count fits its frame whatever its variables hold, short of 300 tuples of 28
+integers each, so the count is the limit a function meets.
+
 Guards: `tests/scripts/a-nesting-within-the-bound-compiles.loft`,
-`the-counts-within-the-limit-compile.loft` and their refused twins, `tests/limits.rs`.
+`the-counts-within-the-limit-compile.loft` and their refused twins,
+`the-variable-limit-arrives-before-the-frame-cap.loft`, `tests/limits.rs`.
 
 ## See also
 - [STDLIB.md](STDLIB.md) — Standard library API (math, text, collections, file I/O, logging, parallel)

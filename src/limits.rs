@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I58 — Parser (two-pass recursive descent to IR): the structural limits it enforces
 
-//! The one number loft's structural limits share: 300.
+//! The one number loft's structural limits share: 300 (@C148).
 //!
 //! A program may nest an expression 300 levels deep, declare 300 fields in a struct, take 300
 //! parameters, bind 300 variables in a function and hold 300 elements in a tuple.  Every one of
