@@ -199,10 +199,10 @@ marked LIVE.
 | element lives | order | why |
 |---|---|---|
 | **inline** (`vector`, `sorted`) | claims → unlink | the successor is shifted on top of it, so the fields must be read while they are still its own |
-| **own block** (`hash`, `index`, `radix`) | unlink → claims → free block | an `index`'s red-black links live in a FIELD, so before the unlink they look to `remove_claims` like owned children — free first and it follows them into the live siblings and takes the subtree with it |
+| **own block** (`hash`, `index`, `radix`) | unlink → claims → free block | the unlink finds the element by its own KEY — a hash re-hashes it, an index descends with it (@C145: nothing points back) — so it runs while the key is still the element's; `remove_claims` frees a text key |
 
-Getting that backwards is not subtle in its symptom: the whole collection reads
-back as `Item not found` from `tree::remove_iter`.
+Getting that backwards is not subtle in its symptom: the unlink finds nothing, the
+collection keeps naming a freed element, and lookups through it read freed bytes.
 
 `Array` / `Ordered` are excluded from the block free — they hold separate
 records too, but their removal path reads `rec` as an inline index and was wrong

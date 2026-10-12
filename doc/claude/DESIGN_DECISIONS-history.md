@@ -4837,3 +4837,18 @@ claiming `2·room − 1` words (38, 78, … slots) and a `reserve` sized it to t
 exactly.  For a power of two `digest % count` is `digest & (count − 1)`, so the formula and every
 stored entry stay where they are.
 
+## C147 — An `index` is a B+tree of key parts and record numbers, kept apart from the records
+
+Decided 2026-10-12 by the owner (@PLN190) while the keyed rows of the release cut were priced:
+`index_fill_find` stood at 5.6× its Rust twin, with the red-black tree's `put` and `balance` 45 %
+of it.  Asked whether a B-tree would be quicker *"because the records in the B-tree are already
+there with their keys"*, Rust stand-ins priced three node layouts (key inline, ref only, an 8-byte
+key part + ref); the part won on text keys and matched inline on integers.  The owner said *"build
+your recommendation"*.  A probe over loft's own `Store` measured 3.0–3.6× over the red-black tree;
+the built tree measured, ns per key fill · find, integer 5k 154·80 → 69·43 and 1M 250·131 →
+87·61, text 1M 418·236 → 158·118.  The first walk by record re-descended each step at 52–70 ns
+against the red-black tree's 6–9; the verified hint brought it to 9.  Text keys of the shape
+`key_<digits>` at 1M first measured 0.9× the red-black lookup — every level tied on the leading
+eight bytes — which is what the node prefix answers.  C113's rationale was restated the same day:
+its storage argument went with the link triple.
+

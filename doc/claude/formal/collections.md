@@ -49,9 +49,10 @@ reaches the generic scalar-range branch). This split is the doc's spine.
   (Col-Hash)    hash<T[k…]>                   O(1) point lookup by key; iterates in KEY order (Col-Order);
                                               no range slice.
   (Col-Sorted)  sorted<T[k…]>                 a sorted vector of records; KEY-ORDERED iteration + range slices.
-  (Col-Index)   index<T[k…]>                  a red-black tree linked through the records themselves:
-                                              O(log n) lookup, KEY-ORDERED iteration + range slices, and no
-                                              copy of a record on insert or removal.
+  (Col-Index)   index<T[k…]>                  a B+tree of key parts and record numbers in an arena of its
+                                              own (@C147): O(log n) lookup, KEY-ORDERED iteration + range
+                                              slices, O(1) len, no copy of a record on insert or removal,
+                                              and nothing written into the record (@C145).
   (Col-Spatial) spatial<T[a]> / [a,b] / [a,b,c]   1–3 coordinate axes (MAX_AXES=3), Morton/Z-order radix tree;
                                               the runtime Parts variant is `Radix`.  integer-not-null coord keys;
                                               negative coords via offset-binary (signed axes order like sorted).
@@ -298,12 +299,12 @@ down (loft#1437).
                   hash    → KEY order, via the ordered snapshot the walk builds for it
                             (its `par` walk is the UNSORTED one — concurrency.md C-Order)
                   sorted  → key order
-                  index   → key order (its tree side)
+                  index   → key order (its leaf chain)
                   spatial → Morton / Z-order
                   trie    → key order (lexicographic over the text key)
 
   (Col-Order-Sign)  a `-` on a key field is applied by the COMPARATOR and by nothing else, so
-                    exactly once.  The stored form (a red-black tree, a sorted vector) is
+                    exactly once.  The stored form (a B+tree, a sorted vector) is
                     therefore already in the declared order, and every reader walks it FORWARD:
                     no consumer of an ordered collection re-reads `keys[i].type_nr` to decide a
                     direction, and the iterator's reverse bit carries one fact only — did the
@@ -469,8 +470,9 @@ tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS
 ### 1.8 Storage & whole-value copy — `Col-Store` / `Col-Copy` (cross-link [heap.md](heap.md))
 
 ```
-  (Col-Store)   a collection is store-backed (Parts::{Vector,Hash,Sorted,Radix,Trie}); index = tree+hash over
-                one record set; addressed by DbRef.  (Layout/format ⟶ layout.md; steps ⟶ heap.md.)
+  (Col-Store)   a collection is store-backed (Parts::{Vector,Hash,Sorted,Index,Radix,Trie}), its records and
+                its own structure (a hash's buckets, an index's node arena) in the same store; addressed by
+                DbRef.  (Layout/format ⟶ layout.md; steps ⟶ heap.md.)
   (Col-Copy)    a keyed whole-value bind COPIES (g = h; g += … leaves len(h)) — heap.md H-Copy for keyed.
   (Col-Bucket)  (@C146) a hash table's bucket count is a POWER OF TWO: it is created at 16, grows by
                 doubling and is reserved to the next power of two past the load trigger.  A key's home
@@ -691,7 +693,7 @@ VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
    types.md = the former, collections.md = operations + order).
 2. **Exact vector-slice clamp** — hand-verify the partial-OOB and fully-OOB values on both backends
    (plans/25 says partial → in-range part, fully-OOB → `[]`); pin the boundary.
-3. **sorted vs index slice** — do they differ observably (index has both tree+hash)? Confirm both expose
+3. **sorted vs index slice** — do they differ observably? Confirm both expose
    the same `Slice-KeyedIter` iterator; is a `hash` range slice a clean reject (no order)?
 4. ~~**`:n` cap semantics** — exact count guarantee for `[(x,y)..:n]` (≤ n? exactly n if available?)~~
    **ANSWERED 2026-08-19 (loft#1002): exactly n when the collection holds n, from any origin.**

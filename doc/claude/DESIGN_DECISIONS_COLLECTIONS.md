@@ -69,10 +69,10 @@ table's width changes for another reason.  Decided 2026-08-10 — [record](DESIG
 **Decision.** A second `index` field with the same element type and key in one struct (or enum
 variant) is a compile error at the declaration (`Parser::reject_duplicate_index`), naming the cures:
 another kind (`hash` or `sorted`) over the same records, or another key; a different key, struct or
-kind stays legal.  **Why.** An index keeps its tree links in the element record, allocated per index
-TYPE, so two same-key fields are one tree through two roots and the first removal corrupts it.
-Separate storage needs a schema id per field across four layers, and buys nothing: a second same-key
-index answers what the first does.
+kind stays legal.  **Why.** Two keyed fields over one element type in one struct are two routes to ONE
+record set (`(Col-Group)`), so a second `index` on the same key answers exactly what the first does
+and costs a second tree to keep in step.  (Each index now keeps its tree in its own arena, @C147, so
+the refusal no longer guards storage; it stands on this ground alone.)
 
 **Revisit when.** A consumer needs two same-key indexes with genuinely different behaviour; a
 filtered index would arrive as its own kind.  Decided 2026-08-14 — [record](DESIGN_DECISIONS-history.md#c113--two-index-collections-over-one-element-type-and-key-are-refused-not-made-to-work).
@@ -134,3 +134,27 @@ then the division's fallback for older tables can go with it.  Decided 2026-10-1
 paged reader's two placements (`src/paged_reader.rs`), `formal/collections.md` `(Col-Bucket)`,
 guard `tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft`.
 **Catalogue:** BOTH_BACKEND_SWITCHES.md `LOFT_NO_POW2_BUCKETS`.
+
+## C147 — An `index` is a B+tree of key parts and record numbers, kept apart from the records
+
+**Decision.** `index<T[k…]>` is a B+tree in an arena record of its own (`src/btree.rs`).  A node
+holds 16 slots, each an 8-byte KEY PART (the first key field as an order-preserving integer: the
+integer, a float's total-order bits, a text's leading bytes) beside a record number; a part tie
+reads the record.  A text index's node whose parts commonly tie keeps its keys' shared prefix (up
+to 24 bytes) and takes its parts past it.  The element record carries nothing for the index.
+**Why.** The owner's point: the records are already there with their keys, so the tree needs only
+enough of each key to steer — and a node of parts is a few cache lines a descent scans, where a
+tree threaded through the records reads a different record per level.  It made fill and lookup
+2–3.6× faster than the red-black tree it replaced (integer keys within 1.1–1.8× of Rust's
+`BTreeMap`; text keys sharing long prefixes at or below it), `len` O(1), and every indexed record
+9 bytes smaller.  A copy of the whole key in the node was priced and gave no gain over the part;
+a walk that holds a slot position instead of a record was declined (a loop body may remove other
+records by key mid-walk, which moves slots): it holds the record and takes a verified per-thread
+hint, at the red-black tree's walk speed.
+**Revisit when.** A walk costs a routine more than its lookups (the position cursor, guarded by a
+structural version, is the alternative), or text keys share more than 24 bytes in bulk.  Decided
+2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c147--an-index-is-a-btree-of-key-parts-and-record-numbers-kept-apart-from-the-records).
+**Holds at:** `@C147` — `src/btree.rs` (`record_part`, `fit_text`, `step_record`),
+`placement::INDEX` = 2 (`src/placement.rs`), `formal/collections.md` `(Col-Index)`, guard
+`tests/btree.rs` (the tree against a sorted model; a walk under removals).
+**Catalogue:** @F9 (`index<T[keys]>`) · @PLN190.

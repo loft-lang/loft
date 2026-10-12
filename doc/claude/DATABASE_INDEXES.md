@@ -1,56 +1,59 @@
-# Database — tree, hash, spatial index and text trie
+# Database — B+tree, hash, spatial index and text trie
 
-The keyed and indexed collection layers: red-black tree, open-addressing hash, spatial (radix) index, text trie.  Part of [DATABASE.md](DATABASE.md), which holds the overview, the raw `Store` heap, `DbRef` and vectors.
+The keyed and indexed collection layers: B+tree, open-addressing hash, spatial (radix) index, text trie.  Part of [DATABASE.md](DATABASE.md), which holds the overview, the raw `Store` heap, `DbRef` and vectors.
 
-## Red-Black Tree (`src/tree.rs`)
+## B+tree (`src/btree.rs`)
 
-Used for `sorted<T>` and `index<T>` collections that need O(log n) insert/delete/find with O(1) iteration via backward links.
+Used for `index<T[k]>`: O(log n) insert, remove and find, and an ordered walk.  `sorted<T>` is not a tree (see `src/vector.rs`).
 
 ### Node Layout
 
-Each node is a record in a `Store`. The tree-management fields are stored at a fixed offset (`fields`) within the record, after any user data fields:
+The nodes live in ONE arena record in the collection's own store.  The collection's 4-byte slot names that arena record; 0 means no arena yet, an empty index.  Node `n` starts at byte `8 + n * NODE`.  Node 0 is the header: root node, height, length, nodes used, free list, capacity, first leaf, last leaf.  Nodes are numbered, never addressed by record.  The arena doubles when full and may MOVE; the slot is rewritten then.
 
-```
-offset fields+0: LEFT  (i32) — positive = left child rec, negative = backward link to parent
-offset fields+4: RIGHT (i32) — positive = right child rec, negative = backward link to parent
-offset fields+8: FLAG  (i32) — 1 = red, 0 = black
-```
+A node has 16 slots (`FANOUT`):
 
-User data fields occupy bytes 0 .. `fields-1`.
+* A leaf slot is an 8-byte key part and a record number.  Leaves are chained both ways.
+* An internal slot `i >= 1` is a key part, the record that is the MINIMUM of child `i` (its separator), and the child node.  Slot 0 carries only child 0.
 
-### Backward Links
+The element record carries no tree bookkeeping.  No record points at its node: a removal finds its slot by descending with the record's own key, so the key fields must not change while the record is in the index (@C145).
 
-Negative values in LEFT/RIGHT are backward links to the parent node (stored as the negated rec value). This enables O(1) `next` and `previous` without a stack or parent pointer field:
+### Key Part
 
-- From any node, follow backward links up until you come from a left child → that ancestor is `next`.
-- `previous` is symmetric (came from a right child).
-- This is the key structural invariant: the tree simultaneously encodes the parent relationship for traversal without extra memory.
+The part is the FIRST key field as an order-preserving i64:
 
-### Limits
+* an integer is itself;
+* a float is its total-order bits (-0.0 = 0.0);
+* a text is its first 8 bytes, big-endian;
+* a descending field is bitwise-negated.
 
-```rust
-const RB_MAX_DEPTH: usize = 30;
-```
+A part tie reads the record and compares with `keys::compare` / `keys::key_compare`, the collection's defined order.  For a one-field non-text key a part tie IS equality, so no record is read.
 
-Maximum tree depth of 30 is sufficient for up to ~2^15 nodes in a balanced red-black tree.
+A text index's node whose parts commonly tie (a quarter of its slots) keeps the keys' shared PREFIX, up to 24 bytes.  Its length is in the node header and the bytes are at the node's end.  The node's parts are the 8 bytes past the prefix, and a probe compares its own prefix first.
 
 ### Key Functions
 
 | Function | Description |
 |---|---|
-| `find(data, before, fields, stores, keys, key) -> u32` | The BOUNDARY below / above `key`: never stops at an equal key, so it serves a range's ends and a partial key |
-| `find_exact(data, fields, stores, keys, key) -> u32` | The point lookup for a FULL key: the descent stops at the equal node (a full key matches at most one record — an insert displaces its duplicate) |
-| `add(data, rec, fields, stores, keys) -> u32` | Insert `rec` and rebalance; answers 0, or the record that already carries `rec`'s key with the tree UNCHANGED — so the caller displaces it and adds again, and no insert looks its key up first |
-| `remove(store, root, rec, keys) -> u32` | Delete `rec`; rebalances; returns new root |
-| `first(store, root) -> u32` | Leftmost node (minimum key) |
-| `last(store, root) -> u32` | Rightmost node (maximum key) |
-| `next(store, rec) -> u32` | In-order successor via backward links; 0 if none |
-| `previous(store, rec) -> u32` | In-order predecessor via backward links; 0 if none |
-| `validate(store, root, keys)` | Debug: verify RB invariants and backward-link consistency |
+| `find` | The BOUNDARY below / above `key`: never stops at an equal key, so it serves a range's ends and a partial key |
+| `find_exact` | The point lookup for a FULL key (a full key matches at most one record) |
+| `add` | Insert a record; answers 0, or the record that already carries the key with the tree UNCHANGED, so the caller displaces it and adds again (@FR-Col-Insert).  Re-adding a record already present answers 0 |
+| `remove` | Delete a record, found by its own key |
+| `count` | The length, kept in the header: `len(ix)` is O(1) |
+| `next_record` / `previous_record` | The in-order neighbour of a record |
 
-### Rebalancing
+### Walks
 
-Standard left-leaning red-black tree rotations and color-flips. `add` performs a top-down split on the way down then a bottom-up fixup on the way back up. `remove` uses the standard delete-and-recolor approach, delegating to a helper for the six deletion cases.
+`State::iterate` / `step` (`src/state/io.rs`) and `OpIterate` / `OpStep` (`src/codegen_runtime.rs`) keep the packed cursor `finish << 32 | cur`.  `cur` is the RECORD last yielded; `finish` is the last record to yield (0 = open bound, `u32::MAX` = done).  Both ops receive the index TYPE as `arg`.
+
+Each step finds the held record's slot again by key, because a loop body may remove records by key mid-walk.  The slot found last is kept as a per-thread HINT, taken only when that slot of the current arena still holds that record, so a stale hint costs a descent and never a wrong slot.  A walk writes nothing to the store: locked stores and `par` readers are unaffected.  `#remove` during a walk goes through `Stores::remove_during_tree_iteration`.
+
+### Ownership and persistence
+
+The arena is the index's SPINE.  The owned walk frees it beside the element records; a secondary view in a linked group frees only the arena.  Deep copy (`copy_claims_index_body`) re-inserts each copied record into a fresh tree.
+
+`placement::INDEX` is "2".  A store written with another index layout is REFUSED with the layout message, never misread; stores without an index are untouched.
+
+Tests: `tests/btree.rs` checks the tree against a model (records sorted by `keys::compare`) for integer, descending, float, text and compound keys, and walks under concurrent removal.  `tests/btree_probe.rs` measures ns per key against Rust's `BTreeMap`.
 
 ---
 
@@ -214,10 +217,9 @@ per-field opt-out would be a second way to spell the same declaration. If you wa
 apart, say so in the TYPES, where the reader can see it.
 
 Every combination of kinds is a valid group
-except **two `index` members with the same key**, which is refused where it is declared: an index keeps its tree links in a
-field of the element record, so a second one has nowhere to put them (loft#902, and
-[DESIGN_DECISIONS.md § C113](DESIGN_DECISIONS.md) for why it is refused rather than
-given its own storage). **The records belong to exactly one member.** `types.rs` decides which when it
+except **two `index` members with the same key**, which is refused where it is declared: it answers exactly what the first answers, so it is refused
+rather than given its own storage (loft#902, and
+[DESIGN_DECISIONS.md § C113](DESIGN_DECISIONS.md)). **The records belong to exactly one member.** `types.rs` decides which when it
 builds the group: the first-declared member is the PRIMARY, and every later one gets a
 leading `u16::MAX` on its `other_indexes` marking it a VIEW. That marker is the only place
 the ownership fact lives, and three readers now share it — the JSON default-init, the
@@ -234,7 +236,7 @@ Each member therefore releases only what it owns:
 
 | Member | What it contributes to a clear |
 |---|---|
-| a VIEW | its own SPINE — the hash table record, the `Ordered` slot list, or (for `index`) nothing at all, since a b-tree's nodes ARE the element records and zeroing the root is the whole teardown. Never a record. |
+| a VIEW | its own SPINE — the hash table record, the `Ordered` slot list, or (for `index`) its node arena. Never a record. |
 | the PRIMARY | the records, once. |
 
 **A clear spelled through ANY member empties the group**: every view's spine is reset and
@@ -399,17 +401,7 @@ and a linked `array` yield the record a slot names). `Parser::loop_group_remove`
 one `CLEAR_KEYED_VIEW` unlink per other member from it, then the spelled member's
 `OpRemove` frees.
 
-**Two `index` members are refused (loft#902).** An `index` keeps its red-black links in
-FIELDS of the element record, and that `#left_N / #right_N / #color_N` triple is
-allocated per index TYPE — so two fields whose declared type is identical name one set of
-links: not two trees, but ONE tree reached through two roots. The fill therefore looked
-right (both roots walked the same structure) and the first removal rebalanced through one
-root, left the other stale, and panicked in `tree.rs` on the next walk. There is nothing
-to make work — a second index with the SAME key answers exactly what the first answers,
-in the same order — so `Parser::reject_duplicate_index` refuses it where the field is
-declared, naming the workaround: give the second route a different KIND, or a different
-key. A different key is a different type name and so its own link triple, and two
-`index<E[k]>` fields in different structs hold different records; both stay legal.
+**Two `index` members with the same key are refused (loft#902).**  A second index with the SAME key answers exactly what the first answers, in the same order, so there is nothing to make work.  `Parser::reject_duplicate_index` refuses it where the field is declared, naming the workaround: give the second route a different KIND, or a different key.  Two `index<E[k]>` fields in different structs hold different records; both stay legal.
 
 ### Constructing a group with a literal (loft#924)
 
@@ -485,7 +477,7 @@ An element at `idx` with ideal slot `ideal` moves to `hole` when `d_hole < d_idx
 
 ### `database::remove()` for Index
 
-`database::remove()` routes to `tree::remove()` for `Parts::Index`. The `fields` argument passed to `tree::remove` must be the **byte offset** of the tree node pointers within the record (= `8 + struct_field[left_field_index].position`), not the raw field index. This is computed via `self.fields(db)` (same helper used by `tree::add`).
+`database::remove()` routes to `btree::remove` for `Parts::Index(content, keys)`.
 
 ---
 

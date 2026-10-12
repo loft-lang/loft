@@ -77,10 +77,10 @@ names each capture and each use.  The all-zero fast path (`zero_range`) stays in
 | `Short(i32, bool)` | 16-bit integer; `bool` = signed |
 | `Vector(u16)` | Dynamic by-value array of element type `u16` |
 | `Array(u16)` | Dynamic by-reference array of element type `u16` |
-| `Sorted(u16, Vec<(u16,bool)>)` | Red-black tree ordered by key fields; `bool` = ascending |
+| `Sorted(u16, Vec<(u16,bool)>)` | By-value vector ordered by key fields; `bool` = ascending |
 | `Ordered(u16, Vec<(u16,bool)>)` | Ordered array (binary search) by key fields |
 | `Hash(u16, Vec<u16>)` | Open-addressing hash table; field indices as hash keys |
-| `Index(u16, Vec<(u16,bool)>, u16)` | Combo: sorted tree + hash table for a single collection |
+| `Index(u16, Vec<(u16,bool)>)` | B+tree over the element records (content type nr, key fields); the nodes are one arena record in the collection's store |
 | `Radix(u16, Vec<u16>)` | Spatial index for `spatial<T[x,y]>` / `spatial<T[x,y,z]>` — Morton/Z-order radix tree, 1–3 coordinate axes (renamed from `Spatial`) |
 | `Trie(u16, u16)` | Text index for `trie<T[k]>` — the SAME radix tree over ONE text key; content type nr + the key field index |
 

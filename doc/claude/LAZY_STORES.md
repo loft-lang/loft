@@ -108,14 +108,8 @@ The pieces join exactly:
 record, so the key field is the field whose `position` matches. Nothing is
 declared twice and nothing is matched by guessing a name.
 
-Two things the descriptor carries that a reader of the type would not expect:
+One thing the descriptor carries that a reader of the type would not expect:
 
-- **An `index` element record carries its own tree links** — `#left_1`,
-  `#right_1`, `#color_1` after the declared fields, the red-black bookkeeping
-  stored inside the element. `#color_1` is an ordinary boolean, so a column filter
-  written on field TYPE selects it and the SELECT names a column no table has.
-  The predicate to use is `LayoutField::is_data`, shared with
-  `read_via_descriptor` and the browser delivery.
 - **A key is an index into the FULL field list**, synthetic fields included, so
   the key list and the column list are numbered in the same space. Do not re-base
   keys on the filtered columns.
