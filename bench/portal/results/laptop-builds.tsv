@@ -1,18 +1,58 @@
 # host=laptop
 # arch=x86_64-linux
-# date=2026-09-29
-# commit=c8ec0efba
+# date=2026-10-12
+# commit=f7f23c5b5
 # dirty=no
 # rustc=rustc 1.97.0 (2d8144b78 2026-07-07)
 # samples=7
 # target_ms=400.0
 # ref_flags=-O
 # pinned=yes
-# measure_jobs=3
+# measure_jobs=1
 bench	step	wall_s	cpu_s	peak_mb	jobs	commit	date
-11_par	native-emit	0.07	0.06	19	5	c8ec0efba	2026-09-29
-11_par	native-rustc	1.45	1.27	219	5	c8ec0efba	2026-09-29
-11_par	rust-rustc	0.33	0.44	127	5	c8ec0efba	2026-09-29
+11_par	native-emit	0.04	0.04	24	5	f7f23c5b5	2026-10-12
+11_par	native-rustc	1.38	1.38	223	5	f7f23c5b5	2026-10-12
+11_par	rust-rustc	0.40	0.51	131	5	f7f23c5b5	2026-10-12
+15_stdlib_keyed	native-emit	0.05	0.05	25	5	f7f23c5b5	2026-10-12
+15_stdlib_keyed	native-rustc	1.25	1.35	227	5	f7f23c5b5	2026-10-12
+15_stdlib_keyed	rust-rustc	0.48	1.01	149	5	f7f23c5b5	2026-10-12
+16_consumer_shapes	native-emit	0.06	0.06	22	5	f7f23c5b5	2026-10-12
+16_consumer_shapes	native-rustc	2.49	2.60	261	5	f7f23c5b5	2026-10-12
+16_consumer_shapes	rust-rustc	0.52	0.79	146	5	f7f23c5b5	2026-10-12
+17_consumer_moros_dryopea	native-emit	0.08	0.08	25	5	f7f23c5b5	2026-10-12
+17_consumer_moros_dryopea	native-rustc	3.73	3.83	286	5	f7f23c5b5	2026-10-12
+17_consumer_moros_dryopea	rust-rustc	1.66	2.12	171	5	f7f23c5b5	2026-10-12
+18_consumer_crawler	native-emit	0.07	0.07	23	5	f7f23c5b5	2026-10-12
+18_consumer_crawler	native-rustc	2.88	3.00	267	5	f7f23c5b5	2026-10-12
+18_consumer_crawler	rust-rustc	0.73	1.11	151	5	f7f23c5b5	2026-10-12
 19_stdlib_par	native-emit	0.07	0.07	20	5	c8ec0efba	2026-09-29
 19_stdlib_par	native-rustc	2.17	2.18	232	5	c8ec0efba	2026-09-29
 19_stdlib_par	rust-rustc	0.52	1.10	143	5	c8ec0efba	2026-09-29
+arguments	native-release	0.06	0.06	20	5	f7f23c5b5	2026-10-12
+arguments	rust-rustc	0.48	0.59	135	5	f7f23c5b5	2026-10-12
+cbor	native-release	0.05	0.05	20	5	f7f23c5b5	2026-10-12
+cbor	rust-rustc	0.48	0.66	136	5	f7f23c5b5	2026-10-12
+fixstep	native-release	2.38	2.41	220	5	f7f23c5b5	2026-10-12
+fixstep	rust-rustc	0.38	0.38	123	5	f7f23c5b5	2026-10-12
+gridmesh	native-release	0.25	0.25	76	5	f7f23c5b5	2026-10-12
+gridmesh	rust-rustc	0.55	0.98	142	5	f7f23c5b5	2026-10-12
+hex_body	native-release	0.12	0.12	20	5	f7f23c5b5	2026-10-12
+hex_body	rust-rustc	0.48	0.65	138	5	f7f23c5b5	2026-10-12
+hex_edge	native-release	7.23	7.35	277	5	f7f23c5b5	2026-10-12
+hex_edge	rust-rustc	0.43	0.44	123	5	f7f23c5b5	2026-10-12
+hex_field	native-release	4.79	4.85	279	5	f7f23c5b5	2026-10-12
+hex_field	rust-rustc	0.75	0.85	138	5	f7f23c5b5	2026-10-12
+hex_fit	native-release	32.14	28.81	279	5	f7f23c5b5	2026-10-12
+hex_fit	rust-rustc	0.53	0.55	124	5	f7f23c5b5	2026-10-12
+hex_place	native-release	18.20	9.63	277	5	f7f23c5b5	2026-10-12
+hex_place	rust-rustc	0.42	0.42	124	5	f7f23c5b5	2026-10-12
+hex_recover	native-release	0.16	0.15	36	5	f7f23c5b5	2026-10-12
+hex_recover	rust-rustc	0.61	0.86	145	5	f7f23c5b5	2026-10-12
+markdown	native-release	0.05	0.05	20	5	f7f23c5b5	2026-10-12
+markdown	rust-rustc	0.88	1.07	144	5	f7f23c5b5	2026-10-12
+mesh3d	native-release	2.44	2.51	226	5	f7f23c5b5	2026-10-12
+mesh3d	rust-rustc	0.41	0.42	126	5	f7f23c5b5	2026-10-12
+pluginabi	native-release	0.11	0.11	24	5	f7f23c5b5	2026-10-12
+pluginabi	rust-rustc	0.53	0.83	141	5	f7f23c5b5	2026-10-12
+zttext	native-release	0.17	0.17	29	5	f7f23c5b5	2026-10-12
+zttext	rust-rustc	0.74	1.00	142	5	f7f23c5b5	2026-10-12
