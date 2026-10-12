@@ -37,3 +37,26 @@ fn regen_compiled_stdlib() {
     fa::write("src/compiled_stdlib_gen.rs", generated()).expect("write the generated file");
     println!("src/compiled_stdlib_gen.rs regenerated");
 }
+
+/// What a module declares for the rest of the crate: each `pub(crate)` item, up to its value.
+fn exports(source: &str) -> Vec<String> {
+    let mut items: Vec<String> = source
+        .lines()
+        .filter(|l| l.starts_with("pub(crate) "))
+        .map(|l| l.split(" = ").next().unwrap_or(l).to_string())
+        .collect();
+    items.sort();
+    items
+}
+
+/// The stub a falsification control starts from (`scripts/falsify.sh`, GUARDS.md § The patch
+/// receipt) declares exactly what the generated file exports, so a crate that builds with one
+/// builds with the other.
+#[test]
+fn the_control_stub_declares_what_the_generated_file_exports() {
+    let stub = fa::read_to_string("scripts/compiled_stdlib_stub.rs").expect("read the stub");
+    let current =
+        fa::read_to_string("src/compiled_stdlib_gen.rs").expect("read src/compiled_stdlib_gen.rs");
+    assert!(!exports(&stub).is_empty(), "the stub declares nothing");
+    assert_eq!(exports(&stub), exports(&current));
+}
