@@ -1785,6 +1785,7 @@ impl Output<'_> {
                 .enumerate()
                 .filter(|(_, a)| {
                     a.hidden
+                        && !a.work_buffer
                         && matches!(
                             a.typedef,
                             Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
@@ -1811,8 +1812,35 @@ impl Output<'_> {
             let mut synthetic: Vec<Value> = Vec::with_capacity(candidate_def.attributes.len());
             let mut user_idx = 0_usize;
             let mut text_buf_used = false;
+            // Per wrapper type, how many of this candidate's work buffers came before.
+            let mut lent: Vec<(u16, u32)> = Vec::new();
             for a in &candidate_def.attributes {
-                if a.hidden
+                if a.hidden && a.work_buffer {
+                    // `@FR-R-WorkBuffer`'s function-value clause — a work buffer is NOT the
+                    // return buffer: handed that store, the candidate's scratch vector and
+                    // its result were one vector record (loft#2001).  It takes a store of
+                    // the frame's own, the k-th of its wrapper type (`FnRefWork`); where the
+                    // frame lends none, the null sentinel, and the candidate mints its own.
+                    let tp = match a.typedef.base() {
+                        Type::Vector(elm, _) if self.fnref_work => {
+                            let name = format!("main_vector<{}>", elm.name(self.data));
+                            self.data.name_type(&name, 0)
+                        }
+                        _ => u16::MAX,
+                    };
+                    if tp == u16::MAX {
+                        synthetic.push(Value::RawExpr("loft::keys::DbRef::NULL".to_string()));
+                    } else {
+                        let at = lent.iter().position(|(t, _)| *t == tp);
+                        let k = at.map_or(0, |i| lent[i].1);
+                        match at {
+                            Some(i) => lent[i].1 += 1,
+                            None => lent.push((tp, 1)),
+                        }
+                        crate::rewrite_census::fired("R-WorkBuffer/lent", 1);
+                        synthetic.push(Value::RawExpr(format!("__fwb.lend({tp}_i32, {k}_u32)")));
+                    }
+                } else if a.hidden
                     && matches!(
                         a.typedef,
                         Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)

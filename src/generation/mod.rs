@@ -1319,6 +1319,17 @@ pub struct Output<'a> {
     /// (`cr_call_site`), which is what `stack_trace()` reports as the callee's `line`
     /// (loft#1753): a frameless function writing a site would write its caller's slot.
     pub named_frame: bool,
+    /// The function now being emitted declares `__fwb` (`codegen_runtime::FnRefWork`): a
+    /// dispatch arm in it lends a candidate's work buffers from that, and anywhere else
+    /// hands the null sentinel, which sends the candidate down its own null road.
+    pub fnref_work: bool,
+    /// `LOFT_NO_FNREF_WORK_BUFFER=1` — a dispatch arm hands a candidate's work buffer the
+    /// null sentinel again, so the candidate mints its own on every call.  The bisect step
+    /// for a stale or shared scratch vector in a function reached through a function value.
+    pub fnref_work_disabled: bool,
+    /// Does any definition of the program take a work buffer (`Attribute::work_buffer`)?
+    /// Asked once: a program with none lends nothing.
+    any_work_buffer: std::cell::OnceCell<bool>,
     /// `LOFT_NO_LEAF_PRELUDE=1` — emit the frame push on leaves too, as
     /// before N4.  The bisect switch for a diagnostic that lost its
     /// innermost frame, same contract as `LOFT_NO_VECTOR_HOIST`.
@@ -2550,6 +2561,9 @@ impl<'a> Output<'a> {
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
             named_frame: false,
+            fnref_work: false,
+            fnref_work_disabled: std::env::var("LOFT_NO_FNREF_WORK_BUFFER").is_ok_and(|v| v != "0"),
+            any_work_buffer: std::cell::OnceCell::new(),
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
             guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
@@ -6849,6 +6863,42 @@ impl Output<'_> {
         });
         self.registers_cache.insert(def_nr, registers);
         registers
+    }
+
+    /// Does `def` call through a function value that can reach a function taking a work
+    /// buffer — an arm of one of its dispatches (`fnref::dispatch_arms`, the list the arm
+    /// emitter walks)?  A frame whose function values reach none declares no lender; a
+    /// `false` here that an arm contradicts hands that arm the null sentinel, which is the
+    /// candidate's own null road.
+    fn calls_a_work_buffer_candidate(&self, def: &crate::data::Definition) -> bool {
+        let vars = def.variables();
+        def.code().any_node(&mut |n| {
+            let Value::CallRef(v, args) = n else {
+                return false;
+            };
+            if *v >= vars.count() {
+                return false;
+            }
+            fnref::dispatch_arms(self.data, &self.reachable, vars.tp(*v), args.len()).is_some_and(
+                |arms| {
+                    arms.iter().any(|arm| {
+                        self.data
+                            .def(arm.d_nr)
+                            .attributes()
+                            .iter()
+                            .any(|a| a.work_buffer)
+                    })
+                },
+            )
+        })
+    }
+
+    /// Does any definition take a work buffer?  (`fnref_work`'s program-wide half.)
+    fn any_work_buffer(&self) -> bool {
+        *self.any_work_buffer.get_or_init(|| {
+            (0..self.data.definitions.len() as u32)
+                .any(|d| self.data.def(d).attributes().iter().any(|a| a.work_buffer))
+        })
     }
 
     /// Is NOTHING that registers a fn-ref buffer reachable from this definition — over the
@@ -11260,6 +11310,18 @@ extern crate loft;"
                     fnref_guard
                 };
                 self.named_frame = !leaf && !self.lean;
+                // `@FR-R-WorkBuffer`'s function-value clause — a frame that calls through
+                // a function value lends the candidates' work buffers (`FnRefWork`).
+                self.fnref_work = !self.fnref_work_disabled
+                    && self.any_work_buffer()
+                    && self.calls_a_work_buffer_candidate(def);
+                let fnref_guard = if self.fnref_work {
+                    format!(
+                        "{fnref_guard}\n  let mut __fwb = codegen_runtime::FnRefWork::new(cell);"
+                    )
+                } else {
+                    fnref_guard
+                };
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
@@ -11291,6 +11353,7 @@ extern crate loft;"
                 self.pop_twin_frames();
                 self.call_stack_prefix = None;
                 self.named_frame = false;
+                self.fnref_work = false;
             } else {
                 // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
                 // derivation from the UnsafeCell parameter for templates / inner calls.

@@ -2753,7 +2753,8 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  in a literal, a tuple, a link or a capture, a second assignment, a copy
                  into a local that is then not so used; an element type that is a
                  record or a text; a body that suspends or forks; `main`; a generic, a
-                 synthetic, a lambda, a function whose address is taken; a `par` worker.
+                 synthetic, a lambda, a function a `FnRef` node names (a capturing
+                 closure, a function value an iterator yields); a `par` worker.
                  TRANSITIVELY: a caller's work-ref minted for such a buffer, whose only
                  mentions are its entry null-init and work-buffer argument positions, is
                  itself a local that never leaves the frame and becomes a hidden
@@ -2764,9 +2765,41 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  road unchanged.  Declined where the callee reaches back to the caller
                  through direct calls: a recursion wants a buffer per activation, which
                  the ref already is, and each round would only mint the next.  A call
-                 through a function value needs no such edge — its target's address is
-                 taken, so that frame mints its own buffers and the chain stops there.
+                 through a function value needs no such edge — the calling frame hands
+                 a buffer of its own (the function-value clause), and the chain stops
+                 there.
 ```
+
+```
+  (R-WorkBuffer), the function-value clause: a function passed BY NAME — as an
+                 argument, to a local, into a field or an element — is promoted like
+                 any other, and a call through a function value hands each work
+                 buffer of the function it reaches a store that is NEITHER the
+                 return buffer's NOR another work buffer's of that call.  On the
+                 interpreter the call mints one per hidden parameter and releases
+                 it after the call.  On `--native` the calling frame LENDS it: one
+                 store per (wrapper type, k) — the k-th work buffer of that type in
+                 one candidate — minted the first time an arm asks and released
+                 when the frame ends, shared by every candidate and every call of
+                 the frame, because calls from a frame never overlap and a callee
+                 clears or refills its buffer on entry.  A frame that declares no
+                 lender — one emitted without the instrumented prologue — hands the
+                 null sentinel, and the function takes its null road.
+```
+
+**In words.**  Which function a function value holds is not known where it is called, so no
+caller's buffer can be named in the IR and the transitive clause has nothing to climb.  What
+the call site still owes is the rule's own contract, a buffer nothing else is using: handed
+the return buffer's store, the function's scratch vector and its result are one vector record
+— a wrong answer, or a scratch value read as a record number.  Lending from the
+frame is the pool read once more: a forwarder with a loop of its own, reached through a
+function value and handed the sentinel, runs every leaf call down the null road, a store per
+call; lent one, it mints one, as its direct call does.  The buffers do not climb: a
+function value called once per activation of its frame mints once per activation, as the
+null road did.  Switch `LOFT_NO_FNREF_WORK_BUFFER=1` (the sentinel again); sites
+`codegen_runtime::FnRefWork`, the dispatch arm in `generation/emit.rs`, `Output::fnref_work`.
+Guard `tests/scripts/2001-a-work-buffer-through-a-function-value-is-its-own-store.loft`; pin
+`tests/work_buffer.rs`.
 
 ```
   (R-WorkBuffer), the result clause: a work-ref `b` a function mints for a callee's

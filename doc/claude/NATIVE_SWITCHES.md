@@ -715,6 +715,16 @@ them (one holder per path per frame, no mover on a held path, a twin handed only
 holders) — run it on any emission that looks wrong before running the program.
 PERFORMANCE-history.md § Design: P2, NATIVE.md.
 
+**`LOFT_NO_FNREF_WORK_BUFFER=1`** (`@FR-R-WorkBuffer`'s function-value clause, default-ON)
+makes a call through a function value hand the function it reaches the null sentinel for
+each of its work buffers again, so the function mints a store of its own at every call.  By
+default the calling frame LENDS them (`codegen_runtime::FnRefWork`, the `__fwb` local of a
+frame that calls through a function value): one store per wrapper type and position, minted
+at the first arm that asks, shared by every candidate and every call of that frame, released
+when the frame ends.  The first bisect step for a stale or shared scratch vector in a
+function reached through a function value.  Either way a work buffer is never handed the
+return buffer's store.
+
 ## Null-discharge buffers and filling loops
 
 **A null-discharge buffer does not block the hoist (@PLN157 § V-ad, `--native`, generation

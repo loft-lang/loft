@@ -554,7 +554,10 @@ impl Parser {
 
 /// Every definition some `FnRef` names — promoting one changes the signature every function
 /// value of it was typed against (the targeted `__tret` promotion defers them for the same
-/// reason) — and every `par(…)` WORKER: the parallel builtins take the worker as a bare
+/// reason).  That node is how a capturing closure and a function value an iterator yields
+/// are spelled; a function passed BY NAME is a bare definition number, is not found here and
+/// IS promoted — its call through the function value is handed a buffer by the call site
+/// (`@FR-R-WorkBuffer`'s function-value clause).  And every `par(…)` WORKER: the parallel builtins take the worker as a bare
 /// definition number (their last operand), and the scalar-returning worker route builds the
 /// frame from the element alone.
 fn address_taken_defs(data: &Data) -> HashSet<u32> {
