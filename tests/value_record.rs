@@ -402,3 +402,73 @@ fn a_nullable_record_returns_its_tuple_and_presence_word_where_predicted() {
     let _ = fa::remove_file(&out);
     let _ = fa::remove_file(&off);
 }
+
+/// `(N-Road)` over `(R-ValueRecord)` (loft#1990): a `-> S?` whose result JOINS a dense leaf
+/// with a nullable one — a view beside a build, a `-> S` call beside `null`, a local bound on
+/// two paths — returns `(fields…, bool)`, as its all-`S` twin returns the tuple.  The two
+/// makers that must decline keep their buffer.
+const JOIN_CELLS: &str =
+    "tests/scripts/1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft";
+const JOIN_EXPECTED: &[(&str, Option<&str>)] = &[
+    ("n_j1", Some("(i64, bool)")), // an element view beside a build (the issue)
+    ("n_j2", Some("(i64, bool)")), // a nullable view handed back
+    ("n_j3", Some("(i64, bool)")), // a nullable view beside a build
+    ("n_j4", Some("(i64, bool)")), // a nullable view beside `null`
+    ("n_j5", Some("(i64, bool)")), // a `-> S` call beside a build
+    ("n_j6", Some("(i64, bool)")), // a `-> S` call beside `null`
+    ("n_j7", Some("(i64, bool)")), // a `-> S` call beside a `-> S?` call
+    ("n_j8", Some("(i64, bool)")), // a dense local beside a build
+    ("n_j9", Some("(i64, bool)")), // nested: a parameter, a call, `null`
+    ("n_j10", Some("(i64, bool)")), // three arms
+    ("n_j11", Some("(i64, bool)")), // a local bound on two paths
+    ("n_j12", Some("(i64, bool)")), // a copy of a nullable parameter
+    ("n_j13", Some("(i64, bool)")), // `null` beside a join of a view and a build
+    ("n_j14", Some("(i64, f64, bool, i64, bool)")), // four fields
+    ("n_j15", Some("(i64, bool)")), // a nullable view beside a `-> S` call
+    ("n_j20", Some("(i64, bool)")), // a view local of a vector element
+    ("n_j21", Some("(i64, i64, bool)")), // a view local of a keyed lookup
+    ("n_d1", None),                // an owned local at an arm: the record road
+    ("n_d2", None),                // a record that owns heap
+];
+
+#[test]
+fn a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple() {
+    let out = std::env::temp_dir().join("loft_value_record_join.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOIN_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in JOIN_EXPECTED {
+        assert_eq!(
+            tuple_type(&rust, name).as_deref(),
+            *want,
+            "{name}: the tuple it returns"
+        );
+    }
+    // A local of a function that returns no record, bound from a `-> S` call on one path
+    // and a `-> S?` call on another, holds the nullable tuple; the dense bind is widened.
+    for name in ["n_j16", "n_j17"] {
+        let body = rust
+            .split(&format!("\nfn {name}("))
+            .nth(1)
+            .unwrap_or_else(|| panic!("{name} was not emitted"));
+        let body = body.split("\nfn ").next().unwrap_or(body);
+        assert!(
+            body.contains("var_h: (i64, bool)"),
+            "{name}: its local `h` holds the nullable tuple"
+        );
+        assert!(
+            body.contains("let __wd = n_g(cell"),
+            "{name}: the dense bind is widened where it stands"
+        );
+    }
+    let off = std::env::temp_dir().join("loft_value_record_join_off.rs");
+    let rust = emit(&src, &off, &[("LOFT_NO_NULLABLE_VALUE_RECORD", "1")]);
+    for (name, _) in JOIN_EXPECTED {
+        assert_eq!(
+            tuple_type(&rust, name),
+            None,
+            "{name}: LOFT_NO_NULLABLE_VALUE_RECORD=1 must restore its return buffer"
+        );
+    }
+    let _ = fa::remove_file(&out);
+    let _ = fa::remove_file(&off);
+}

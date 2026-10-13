@@ -2849,7 +2849,12 @@ impl Output<'_> {
                 &self.value_records.fns,
                 &self.value_record_locals,
             );
-            self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
+            self.value_leaves = hoist::value_leaves(
+                self.data,
+                def_nr,
+                &self.value_records,
+                &self.value_record_locals,
+            );
             if self.value_records.fns.contains_key(&def_nr) {
                 let def = self.data.def(def_nr);
                 self.value_phantom = hoist::ret_buffer_attr(def)

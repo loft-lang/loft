@@ -529,7 +529,9 @@ default-ON, generation time, `--native` only) — set, it keeps every `-> S?` on
 every `S?` local a `DbRef`, leaving the dense road untouched — the first bisect step for a
 wrong field or a wrong presence test (`if x`, `x == null`) out of a nullable record-returning
 call.  With it on (the default) such a function returns `(fields…, bool)`, the last element
-the presence word.
+the presence word.  A dense tuple that stands where a nullable one is expected — an arm of a
+branch, a bind of a `S?` local, a `return` — is widened where it stands; a view's presence
+word is whether its reference names a record.
 **`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON, generation
 time, `--native` only) keeps every by-value record PARAMETER a `DbRef` again — with it
 off, a parameter of a plain no-heap record of ≤6 scalars is received as the TUPLE of its

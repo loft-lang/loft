@@ -10,6 +10,32 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A `-> S?` that joins a dense leaf returns in registers (loft#1990, `@FR-N-Road`, 2026-10-13)
+
+- **Layouts join.**  `hoist::join_layout` answers the key two value shapes carry together:
+  the same key, or — a dense key beside the nullable key of the same record — the nullable
+  one.  `value_shape`'s branch arm and `bind_shapes` both ask it, so the arms of a value
+  branch and the binds of one local may mix a `τ` tuple with a `τ?` tuple.
+- **A view is a leaf of a `-> S?` body**, under the layout its own type names; a view of
+  `S?` only there.
+- **Widening is per leaf.**  `hoist::widen_marks` walks a position that expects a nullable
+  tuple down to its leaves — through a block's last statement, a discharged-view copy's
+  source, a `return`'s operand and both arms of a branch — and marks each one whose own
+  tuple is dense; `ValueLeaves::widen` maps the leaf to the key it is widened to, in any
+  function, admitted or not.  The emitter appends `true` for a dense tuple and
+  `<view>.rec != 0` for a view.
+- **The discharged-view block as a value.**  Where a result can be absent the parser copies
+  arm by arm, and the copying arm is the block ending in the buffer instead of a `return` of
+  it (`hoist::mv_block_buffer`); it is the leaf its source is when the buffer is the body's
+  own return buffer.
+- **A statement list as the copy's source is a block** (loft#1992): the emitter bound
+  `let __mv = <Insert>` bare, so a dense `-> S` whose `if` arm holds a slice `match` did not
+  compile.
+- Pins: `tests/value_record.rs::a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple`.
+  Seven pairs join `make nullable-road`; two are `@OPEN` on loft#1993 (a `p: S?` parameter is
+  passed by reference).  loft#1994 records that a null stored into a dense tuple reads back
+  present once the tuple is widened.
+
 ### `τ` and `τ?` take one lowering at three more sites (loft#1989, `@FR-N-Road`, 2026-10-12)
 
 - **The native live-reload entry check.**  `Generator::live_entry_check` reads each

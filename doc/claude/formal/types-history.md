@@ -1343,6 +1343,52 @@ Three pairs were rewritten so that `??` stands on a plain read with a scalar def
 `??` over a lifted call, or with a record or vector default, mints and frees on channels the
 report cannot tell from a road.
 
+## The `(N-Road)` walk of 2026-10-13 (loft#1990)
+
+`D-types-32` named one shape: a `-> S?` whose result joins a built record with a dense view
+kept its return buffer where its `-> S` twin returned in registers.  The matrix beside it (42
+programs: each leaf kind — a build, `null`, a view of `S` and of `S?`, a `-> S` and a `-> S?`
+call, a dense and a nullable value local — alone and at a join, every nullable half against
+its all-`S` twin, value and presence hand-computed, run interpreted and compiled) put the
+boundary elsewhere.  Seven twin pairs differed, and what they shared was not the build beside
+the view:
+
+1. **A view had no layout in a `-> S?` body.**  `hoist::value_shape` compared the view's
+   record type with the body's nullable key, which never matches, so neither a view of `S`
+   nor a view of `S?` was a leaf there.
+2. **A join asked for one key.**  A `-> S` call beside a build, beside `null`, or beside a
+   `-> S?` call declined the whole function; so did a local bound from a dense tuple on one
+   path and a nullable one on another, in any function.
+3. **A copy under a presence test was no leaf.**  Where a result can be absent the parser
+   copies arm by arm, and each copying arm is the discharged-view block used as a value; the
+   gate read that block only where it ended in a `return`.
+
+One home answers all three now: `hoist::join_layout` (a dense key beside the nullable key of
+the same record is the nullable one) and `hoist::widen_marks` (the leaves the emitter widens
+where they stand).  A view's presence word is read off its reference, so a null `S?` handed
+in comes back absent.
+
+Three things the walk found beside it:
+
+- **A dense function did not compile** (loft#1992): a record returned from an `if` whose arm
+  holds a slice `match` reached the emitter with a statement list as the copy's source, which
+  it bound bare.  Fixed with it.
+- **A `p: S?` parameter is passed by reference** where `p: S` crosses as its fields.  The
+  pairs written for the result showed it once the result took one road.  Open as
+  `D-types-33`.
+- **A null stored into a dense tuple reads back present** when that tuple is widened.  It
+  predates the walk (`fn whole(p: S) -> S? { p }` with `whole(null)`), and the walk's joins
+  widen at more positions.  Open as `D-types-34`.
+
+Closed by it:
+
+* **D-types-32** *(opened 2026-10-12, CLOSED 2026-10-13; loft#1990)* — `(N-Road)`: the native
+  register return admitted a `-> S?` only where every result position carried the nullable
+  tuple or was one node that widened to it.  Guards
+  `1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft` (values and
+  presence, both backends), `tests/value_record.rs` (which makers are admitted) and the pair
+  gate `make nullable-road ARGS=--check`.
+
 ## Deviations carried by types.md until 2026-10-06
 
 Opened and closed in the same change; the chapter's `OPEN:` count never carried them.

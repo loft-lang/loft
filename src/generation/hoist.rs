@@ -14930,28 +14930,41 @@ pub fn object_own_return(bl: &Block) -> Option<u16> {
 /// literal.  The value form returns that source's tuple and drops the mint, the copy and
 /// the buffer's return; the block's other statements (the discharge buffer's frees) stay.
 /// `None` for any other block.
+///
+/// The block has a second spelling ([`mv_block_buffer`]): where a result can be ABSENT the
+/// parser copies arm by arm (`Parser::materialize_return_into`), and each copying arm is this
+/// block used as a VALUE — it ends in the buffer, not in a `return` of it.  The source is the
+/// leaf of both.
 pub fn mv_return_source<'a>(bl: &'a Block, data: &Data) -> Option<&'a Value> {
-    if bl.name != "materialized_view_return" && bl.name != "materialized_view_return_armed" {
-        return None;
-    }
+    let (rb, _) = mv_block_buffer(bl)?;
     let copy_nr = data.def_nr("OpCopyRecord");
-    let last = bl.operators.last()?.unspan();
-    let Value::Return(ret) = last else {
-        return None;
-    };
-    let Value::Var(rb) = ret.unspan() else {
-        return None;
-    };
     bl.operators.iter().find_map(|op| match op.unspan() {
         Value::Call(d, args)
             if *d == copy_nr
                 && args.len() == 3
-                && matches!(args[1].unspan(), Value::Var(dst) if dst == rb) =>
+                && matches!(args[1].unspan(), Value::Var(dst) if *dst == rb) =>
         {
             Some(&args[0])
         }
         _ => None,
     })
+}
+
+/// The buffer a `materialized_view_return` block delivers, and whether the block RETURNS it
+/// (`…; return rb`) or is the buffer as a value (`…; rb`, an arm of a result that may be
+/// absent).
+fn mv_block_buffer(bl: &Block) -> Option<(u16, bool)> {
+    if bl.name != "materialized_view_return" && bl.name != "materialized_view_return_armed" {
+        return None;
+    }
+    match bl.operators.last()?.unspan() {
+        Value::Return(ret) => match ret.unspan() {
+            Value::Var(rb) => Some((*rb, true)),
+            _ => None,
+        },
+        Value::Var(rb) => Some((*rb, false)),
+        _ => None,
+    }
 }
 
 /// Is `v` the bare `null` record sentinel, `OpNullRefSentinel()` ([`is_null_record`])?
@@ -15015,13 +15028,20 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             let rec = own_record(ctx)?;
             (plain_record_type(ctx.data, &bl.result) == Some(layout_record(rec))).then_some(rec)
         }
-        // A discharged view returned through the buffer: the leaf is the copy's source.  A
-        // nullable layout has no view leaf, so this is a dense body's only.
+        // A discharged view returned through the buffer: the leaf is the copy's source,
+        // which carries the body's layout or widens to it ([`fits`]).
+        // As a VALUE the block is that leaf only when the buffer it fills is the body's own
+        // return buffer, the one mint the value form has no use for.
         Value::Block(bl) if mv_return_source(bl, ctx.data).is_some() => {
             ctx.own?;
             let src = mv_return_source(bl, ctx.data)?;
+            if let Some((rb, false)) = mv_block_buffer(bl)
+                && own_retbuf(ctx.data, ctx.own) != Some(rb)
+            {
+                return None;
+            }
             let rec = own_record(ctx)?;
-            (value_shape(src, ctx) == Some(rec)).then_some(rec)
+            fits(src, ctx, rec).then_some(rec)
         }
         Value::Block(bl) => {
             if matches!(bl.result.base(), Type::Void) {
@@ -15029,11 +15049,10 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             }
             value_shape(bl.operators.last()?, ctx)
         }
-        // Both arms carry ONE layout: a dense arm beside a nullable one would hand the join
-        // two tuple types.
+        // The arms JOIN ([`join_layout`]): one layout, or a dense arm beside a nullable one
+        // of the same record, which is the nullable layout once the dense arm is widened.
         Value::If(_, then_v, else_v) => {
-            let callee = value_shape(then_v, ctx)?;
-            (value_shape(else_v, ctx)? == callee).then_some(callee)
+            join_layout(value_shape(then_v, ctx)?, value_shape(else_v, ctx)?)
         }
         Value::Insert(ops) => value_shape(ops.last()?, ctx),
         Value::Return(x) => value_shape(x, ctx),
@@ -15072,21 +15091,50 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             {
                 return None;
             }
-            // A nullable key matches no `plain_record_type`, so a `-> S?` body has no view
-            // leaf (its absence would be a reported null, [`ValueTuple::absent`]).
+            // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
+            // dense one in a `-> S` and a `-> S?` body alike, a view of `S?` the nullable one.
+            // A nullable view is a leaf of a `-> S?` body only, where that layout exists.
+            let (inner, optional) = tp.peel_optional();
+            let view = plain_record_type(ctx.data, inner).filter(|t| *t == layout_record(rec));
+            let key = if optional {
+                view.filter(|_| is_nullable_layout(rec)).map(|_| rec)
+            } else {
+                view
+            };
             // A VIEW by the ownership oracle (`@FR-O-Oracle`), not by the dep list: then_v
             // `__ret_N` typed `ref(P)["then_v"]` holds the parameter's store on one arm and then_v
             // minted default on the other (`Own::Join`), and reading it as then_v tuple would
             // leave that mint nobody's.  Only then_v value the frame never owns is read as one.
-            (plain_record_type(ctx.data, tp) == Some(rec)
-                && matches!(
+            key.filter(|_| {
+                matches!(
                     crate::use_analysis::ownership_of(ctx.data, ctx.def_nr, node),
                     crate::use_analysis::Own::Borrowed { .. }
-                ))
-            .then_some(rec)
+                )
+            })
         }
         _ => None,
     }
+}
+
+/// The layout two value shapes JOIN to — the arms of a value branch, the binds of one local.
+/// The same key is itself.  A DENSE key beside the NULLABLE key of the same record is the
+/// nullable one (`@FR-N-Road`): the dense side is the present tuple once its leaves are
+/// widened ([`widen_marks`]), so a `τ?` result that joins a `τ` with a `τ?` takes the road
+/// its all-`τ` twin takes.  Two records have no join.
+fn join_layout(a: u16, b: u16) -> Option<u16> {
+    if a == b {
+        Some(a)
+    } else if layout_record(a) == layout_record(b) {
+        nullable_layout(layout_record(a))
+    } else {
+        None
+    }
+}
+
+/// Does `node` stand for layout `key` — carry it, or carry the DENSE layout of a nullable
+/// `key`'s record, which widens to it?
+fn fits(node: &Value, c: &ShapeCtx, key: u16) -> bool {
+    value_shape(node, c).is_some_and(|k| join_layout(k, key) == Some(key))
 }
 
 /// The leaf NODES of a function's value positions, by address — what the emitter
@@ -15112,9 +15160,10 @@ pub struct ValueLeaves {
     /// `-> S?` body, by both addresses: each emits the ABSENT tuple
     /// ([`ValueTuple::absent`]).
     pub nulls: HashSet<usize>,
-    /// The dense leaves at a result position of a `-> S?` body ([`widened_leaves`]), by
-    /// both addresses: each emits its tuple with the presence word `true` appended.
-    pub widen: HashSet<usize>,
+    /// The leaves whose own tuple is DENSE and that stand where a nullable one is expected
+    /// ([`widened_leaves`]), by both addresses, with the nullable key: each emits its tuple
+    /// with the presence word appended.
+    pub widen: HashMap<usize, u16>,
 }
 
 fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool, data: &Data) -> ValueLeaves {
@@ -15218,11 +15267,11 @@ fn value_body(
         fnref,
     };
     let body = def.code();
-    // Every result position carries THIS function's layout, or WIDENS to it
-    // ([`result_fit`]): a dense leaf anywhere else in a `-> S?` body is the shorter tuple,
-    // which the signature does not promise.
+    // Every result position carries THIS function's layout, or WIDENS to it ([`fits`]): a
+    // dense leaf of a `-> S?` body is the shorter tuple until the emitter appends the presence
+    // word ([`widen_marks`]).
     let key = admitted.get(&d_nr).copied();
-    if result_fit(body, &c, key).is_none() {
+    if !key.is_some_and(|k| fits(body, &c, k)) {
         return Some("the tail is not a value leaf");
     }
     // An `Object` that returns the record it builds is the leaf; its own `return`, the
@@ -15249,7 +15298,7 @@ fn value_body(
     body.any_node(&mut |n| {
         if let Value::Return(x) = n
             && !own_returns.contains(&(std::ptr::from_ref(n) as usize))
-            && result_fit(x, &c, key).is_none()
+            && !key.is_some_and(|k| fits(x, &c, k))
         {
             ok = false;
             return true;
@@ -15270,80 +15319,116 @@ fn value_body(
     (!retbuf_uses_ok(body, rb, &c, &leaves.objects)).then_some("the return buffer is used")
 }
 
-/// Does RESULT position `node` of an admitted body whose layout is `key` carry that layout?
-/// `Some(false)`: exactly.  `Some(true)`: WIDENED — `@FR-R-ValueRecord`'s nullable clause,
-/// `@FR-N-Road`: a `-> S?` body may answer a DENSE tuple of `S` (a `-> S` call forwarded, a
-/// tuple parameter returned whole), which is the present `S?` tuple once the presence word
-/// is appended; the emitter appends it at the leaf ([`result_leaf`], `ValueLeaves::widen`).
-/// Only a leaf that is one NODE widens — a `Var` or a call; a dense `if` arm beside a
-/// nullable one is declined by [`value_shape`]'s one-layout join, not widened.  `None`: the
-/// position carries no value leaf, or another layout.
-fn result_fit(node: &Value, c: &ShapeCtx, key: Option<u16>) -> Option<bool> {
-    let k = value_shape(node, c)?;
-    if Some(k) == key {
-        return Some(false);
-    }
-    let key = key?;
-    (is_nullable_layout(key)
-        && layout_record(key) == k
-        && matches!(
-            result_leaf(node).unspan(),
-            Value::Var(_) | Value::Call(..) | Value::CallRef(..)
-        ))
-    .then_some(true)
-}
-
-/// The one NODE a result position delivers: through a value block's last statement, an
-/// `Insert`'s last and a `return`'s operand.  An `Object` block is a leaf of its own.
-fn result_leaf(v: &Value) -> &Value {
-    match v.unspan() {
-        Value::Block(bl) if bl.name != "Object" && !matches!(bl.result.base(), Type::Void) => {
-            bl.operators.last().map_or(v, result_leaf)
+/// The WIDENED leaves under `node`, which stands where the NULLABLE layout `key` is expected
+/// (`@FR-R-ValueRecord`'s nullable clause, `@FR-N-Road`): every leaf whose own tuple is the
+/// DENSE one — a `-> S` call, a dense value local, and a VIEW, whose tuple is its field reads
+/// whatever its type — by both addresses.  The walk is [`value_shape`]'s own: through a value
+/// block's last statement, a discharged-view return's copy source, an `Insert`'s last, a
+/// `return`'s operand and BOTH arms of a branch, so a dense arm beside a nullable one is
+/// widened where it stands.  An `Object` build and a `null` exit emit the nullable tuple
+/// themselves, and a nullable call or local already is one.
+fn widen_marks(node: &Value, c: &ShapeCtx, key: u16, out: &mut HashMap<usize, u16>) {
+    let mut mark = |leaf: &Value| {
+        out.insert(std::ptr::from_ref(leaf) as usize, key);
+        out.insert(std::ptr::from_ref(leaf.unspan()) as usize, key);
+    };
+    match node.unspan() {
+        Value::Block(bl) if bl.name == "Object" => {}
+        Value::Block(bl) if mv_return_source(bl, c.data).is_some() => {
+            if let Some(src) = mv_return_source(bl, c.data) {
+                widen_marks(src, c, key, out);
+            }
         }
-        Value::Insert(ops) => ops.last().map_or(v, result_leaf),
-        Value::Return(x) => result_leaf(x),
-        _ => v,
+        Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => {
+            if let Some(last) = bl.operators.last() {
+                widen_marks(last, c, key, out);
+            }
+        }
+        Value::Insert(ops) => {
+            if let Some(last) = ops.last() {
+                widen_marks(last, c, key, out);
+            }
+        }
+        Value::Return(x) => widen_marks(x, c, key, out),
+        Value::If(_, then_v, else_v) => {
+            widen_marks(then_v, c, key, out);
+            widen_marks(else_v, c, key, out);
+        }
+        // A view reads its fields and nothing else, so it is widened whatever key its type
+        // names; a value local is widened when it holds the dense tuple.
+        Value::Var(v) => {
+            if c.locals.get(v).is_none_or(|k| !is_nullable_layout(*k)) && fits(node, c, key) {
+                mark(node);
+            }
+        }
+        Value::Call(..) | Value::CallRef(..) => {
+            if value_shape(node, c) == Some(layout_record(key)) {
+                mark(node);
+            }
+        }
+        _ => {}
     }
 }
 
-/// The WIDENED leaves of admitted body `d_nr` ([`result_fit`]), by both addresses: the
-/// tail and every `return` operand whose dense tuple the emitter extends with the presence
-/// word.  Empty for a dense body.
+/// Every leaf of `d_nr` the emitter widens ([`widen_marks`]), with the nullable key it is
+/// widened to: under each result position of an admitted `-> S?` body, and under the right
+/// of every `τ?` value local of any function.  A result an `Object` or a discharged-view
+/// block returns itself is reached through the block, never through its own `return`.
 fn widened_leaves(
     data: &Data,
     d_nr: u32,
     vr: &ValueRecords,
     locals: &HashMap<u16, u16>,
-) -> HashSet<usize> {
-    let mut out = HashSet::new();
-    let key = vr.fns.get(&d_nr).copied();
-    if !key.is_some_and(is_nullable_layout) {
-        return out;
-    }
+) -> HashMap<usize, u16> {
+    let mut out = HashMap::new();
+    let own = vr.fns.contains_key(&d_nr).then_some(d_nr);
     let c = ShapeCtx {
         data,
         def_nr: d_nr,
         admitted: &vr.fns,
         params: &vr.params,
         locals,
-        own: Some(d_nr),
+        own,
         fnref: &vr.fnref_sites,
     };
-    let mut add = |node: &Value| {
-        if result_fit(node, &c, key) == Some(true) {
-            let leaf = result_leaf(node);
-            out.insert(std::ptr::from_ref(leaf) as usize);
-            out.insert(std::ptr::from_ref(leaf.unspan()) as usize);
-        }
-    };
     let body = data.def(d_nr).code();
-    add(body);
+    let key = vr
+        .fns
+        .get(&d_nr)
+        .copied()
+        .filter(|k| is_nullable_layout(*k));
+    let mut own_returns: HashSet<usize> = HashSet::new();
     body.any_node(&mut |n| {
-        if let Value::Return(x) = n {
-            add(x);
+        match n {
+            Value::Block(bl)
+                if own.is_some()
+                    && (object_own_return(bl).is_some()
+                        || mv_return_source(bl, data).is_some()) =>
+            {
+                if let Some(k) = key {
+                    widen_marks(n, &c, k, &mut out);
+                }
+                if let Some(last) = bl.operators.last() {
+                    own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+                }
+            }
+            Value::Return(x) if !own_returns.contains(&(std::ptr::from_ref(n) as usize)) => {
+                if let Some(k) = key {
+                    widen_marks(x, &c, k, &mut out);
+                }
+            }
+            Value::Set(w, rhs) => {
+                if let Some(k) = locals.get(w).copied().filter(|k| is_nullable_layout(*k)) {
+                    widen_marks(rhs, &c, k, &mut out);
+                }
+            }
+            _ => {}
         }
         false
     });
+    if let Some(k) = key {
+        widen_marks(body, &c, k, &mut out);
+    }
     out
 }
 
@@ -15369,6 +15454,8 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
                     true
                 }
                 Value::Return(x) if matches!(x.unspan(), Value::Var(w) if *w == rb) => true,
+                // The block as a VALUE ends in the buffer it filled ([`mv_block_buffer`]).
+                Value::Var(w) if *w == rb => true,
                 other => retbuf_uses_ok(other, rb, c, objects),
             })
         }
@@ -15414,9 +15501,10 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
 }
 
 /// Per local of `body`, the layout key its binds carry under `c`'s value locals — or `None`
-/// once ANY bind is not a value shape or carries another layout (the declaration's `null`
-/// aside).  Every assignment carries ONE layout: a local bound from a `-> S` call and from a
-/// `-> S?` call has no single tuple type.
+/// once ANY bind is not a value shape or carries another record (the declaration's `null`
+/// aside).  The binds JOIN as the arms of a branch do ([`join_layout`]): a local bound from a
+/// `-> S` call on one path and a `-> S?` call on another holds the nullable tuple, and the
+/// dense bind is widened where it stands.
 ///
 /// `@FR-R-ValueRecord`'s nullable clause (@C144) — a bind of the bare `null` sentinel
 /// (`w: S? = null`) is the ABSENT tuple of whatever layout the local's other binds carry, so
@@ -15438,11 +15526,7 @@ fn bind_shapes(body: &Value, c: &ShapeCtx) -> HashMap<u16, Option<u16>> {
             let s = value_shape(rhs, c);
             shapes
                 .entry(*v)
-                .and_modify(|e| {
-                    if *e != s {
-                        *e = None;
-                    }
-                })
+                .and_modify(|e| *e = e.zip(s).and_then(|(a, b)| join_layout(a, b)))
                 .or_insert(s);
         }
         false
@@ -16319,23 +16403,23 @@ pub fn dead_buffers(data: &Data, def_nr: u32, vr: &ValueRecords) -> HashSet<u16>
     out
 }
 
-/// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]): empty for a function
-/// that is not admitted, since only an admitted body converts a view or an `Object`.
+/// The value leaves of `def_nr` for the emitter ([`ValueLeaves`]), over its value locals
+/// `locals` ([`value_locals_in`]).  A function that is not admitted has only the WIDENED
+/// ones: only an admitted body converts a view or an `Object`, and any function may bind a
+/// `τ?` value local from a dense tuple.
 #[must_use]
-pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves {
-    if !vr.fns.contains_key(&def_nr) {
-        return ValueLeaves::default();
-    }
-    let locals = value_locals_in(
-        data,
-        def_nr,
-        &vr.fns,
-        &vr.params,
-        &vr.view_offs,
-        &vr.fnref_sites,
-    );
-    let mut leaves = collect_leaves(data.def(def_nr).code(), &locals, true, data);
-    leaves.widen = widened_leaves(data, def_nr, vr, &locals);
+pub fn value_leaves(
+    data: &Data,
+    def_nr: u32,
+    vr: &ValueRecords,
+    locals: &HashMap<u16, u16>,
+) -> ValueLeaves {
+    let mut leaves = if vr.fns.contains_key(&def_nr) {
+        collect_leaves(data.def(def_nr).code(), locals, true, data)
+    } else {
+        ValueLeaves::default()
+    };
+    leaves.widen = widened_leaves(data, def_nr, vr, locals);
     leaves
 }
 
