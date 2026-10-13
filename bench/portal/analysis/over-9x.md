@@ -132,8 +132,11 @@ per `resolve`); `default_resolver` 16 % — the fn-ref answers a DbRef, so the t
 entry clear a store reset), F alone is −20 %, A alone −8 % and A+F −31 % (26.74 → 18.52 M,
 three interleaved runs, hash unchanged; edits `over-9x/zttext_flow_layout_full/price_keep.py`).
 F is built as `(R-RefillText)`'s collection clause: 26.0 → 22.7 M (12.35×), the difference
-from its price being each kept slot still going through the append.  A is the next unit
-(worklist S1c).
+from its price being each kept slot still going through the append.  A is built as
+`(R-WorkBuffer)`'s result clause (worklist S1c), re-priced first on the emission with B in
+it (−19 %, one static buffer in `token_width`): 14.35 → 11.26 ms on one core, 7.92× → 6.23×
+in its lane, hash `eb888d85` unchanged.  It is wider than the price — `place_line`'s three
+run buffers are held the same way.
 
 F is load-bearing, and it is the mechanism `msg_ping`, `decode` and `check_request` were
 priced against too: build it first, then B (reaches every fn-ref API), then A, C, D.  The
