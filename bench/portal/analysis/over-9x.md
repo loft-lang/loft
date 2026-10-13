@@ -225,11 +225,10 @@ the program as emitted today.
 ## Tooling found on the way
 
 `bench/portal/hand_price.sh` picked the OLDEST of several `libloft_ffi-*.rlib` generations
-(`ls | head -1`; rustc refuses with "colliding StableCrateId") — fixed to the newest.  It
-still links no package native library, so a bench whose library ships a cdylib (`server`,
-`pluginabi` via crypto, `web`, `ssh`) needs `-L native=~/.loft/build-cache/<pkg>-<ver>/release
--l dylib=loft_<pkg>` and an rpath by hand; the `hp.sh` beside each of those two reports is the
-fix shape, not yet in the script.
+(`ls | head -1`; rustc refuses with "colliding StableCrateId") — fixed to the newest.  A
+bench whose library ships a cdylib (`server`, `pluginabi` via crypto, `web`, `ssh`) needs
+`-L native=~/.loft/build-cache/<pkg>-<ver>/release -l dylib=loft_<pkg>` and an rpath; the
+script takes them from the package's own compile (worklist.md § Tooling).
 
 ## The three rows still over 9× (2026-10-07, after `(R-Destination)`)
 
