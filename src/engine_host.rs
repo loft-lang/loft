@@ -2475,7 +2475,7 @@ pub mod browser {
 
     /// `kernel_client_pump() -> integer` — drain browser-queued frames into
     /// the SAME machinery the native connector uses; fire kind-0 + flush the
-    /// outbox once the socket opens.
+    /// outbox once the socket opens, and kind-2 once it has closed.
     pub fn n_kernel_client_pump(stores: &mut Stores, stack: &mut DbRef) {
         let n = with_client(|c| {
             let mut added = 0i64;
@@ -2511,6 +2511,20 @@ pub mod browser {
                     cid: 0,
                     kind: 1,
                     payload,
+                    status: 0,
+                });
+                added += 1;
+            }
+            // The server connection closed: what it sent before closing is queued
+            // above, the kind-2 event follows it, and `run_client` returns after this
+            // turn has delivered both — the native connector's `FrameRead::Closed`.
+            // A local kernel has no socket (`ws` is -1) and nothing to lose.
+            if c.alive && c.opened && c.ws >= 0 && !host_ws_ready(c.ws) {
+                c.alive = false;
+                c.events.push_back(Event {
+                    cid: 0,
+                    kind: 2,
+                    payload: String::new(),
                     status: 0,
                 });
                 added += 1;

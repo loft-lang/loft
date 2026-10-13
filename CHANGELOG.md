@@ -174,6 +174,12 @@ git do.
 
 ### Bug fixes
 
+**A program in a browser page learns that its server is gone.**  `engine_host::run_client`
+returns once the server connection closes, after the disconnect event (`kind` 2) has reached
+`on_event`.  It did so in a desktop program and never in a browser page: a page whose server
+had stopped kept running, received no event and printed nothing.  A page that could not reach
+its server in the first place is still not told.
+
 **Installing a package no longer fails for a few minutes after the registry is updated.**
 `loft install`, `loft update`, `loft search` and a program's first `use` of a registry
 package could stop with *registry index signature INVALID* right after any library was

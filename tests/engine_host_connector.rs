@@ -810,15 +810,16 @@ fn browser_kernel_one_script_differential() {
         format!(
             r#"
 use engine_host::*;
-struct W {{ tick: integer not null }}
+struct W {{ tick: integer not null, greeted: boolean not null }}
 fn main() {{
   engine_host::sync_class(2);
-  w = W {{ tick: 0 }};
+  w = W {{ tick: 0, greeted: false }};
   engine_host::run({port}, 50000,
     fn(ev: engine_host::Event) {{
-      if ev.kind == 1 {{ println("s:connected"); engine_host::send(ev.cid, "7:hi"); }}
+      if ev.kind == 1 {{ println("s:connected"); engine_host::send(ev.cid, "7:hi"); w.greeted = true; }}
     }},
     fn() {{
+      if !w.greeted {{ return; }}
       w.tick = w.tick + 1;
       engine_host::broadcast("2:{{w.tick}}");
     }});
@@ -827,6 +828,11 @@ fn main() {{
         ),
     )
     .unwrap();
+    // The server broadcasts only once it has GREETED the client: the transcript both legs
+    // must print puts `t:event 7:hi` before `t:sync-ok`, and a server that ticks from the
+    // start leaves that order to whether a 50 ms tick falls between the connect and the
+    // client's hello.
+    //
     // The SAME client source as the page's template (port substituted the
     // same way) — the one-script invariant, asserted by construction.
     let client_src = format!(
@@ -958,10 +964,18 @@ fn main() {{
         std::thread::sleep(Duration::from_secs(1));
         drop(_server);
     });
+    // The page's verdict is its own `DIFFERENTIAL-OK` line, and the harness is told to wait
+    // for it.  A page that is silent when the wait ends has thrown nothing, so "no error"
+    // alone passes a page that never connected, never ran the client and never compared.
+    // The wait is polled — it ends on the line or on the first failure the page reports —
+    // so its ceiling is the driver's own: the connect deadline above, the second the server
+    // is then left alive, and the page's comparison.
+    let page_budget_ms = (12 * common::deadline_scale() + 4) * 1000;
     let out = loft::platform::process::harness_command("node")
         .arg(&harness)
         .arg(&url)
-        .args(["--wait-ms", "9000"])
+        .args(["--wait-ms", &page_budget_ms.to_string()])
+        .args(["--expect-log", "DIFFERENTIAL-OK"])
         .args(["--port", "18107"])
         .output()
         .expect("node harness");

@@ -58,7 +58,9 @@ while (result.running) {
   await new Promise(r => setTimeout(r, 5));
   result = JSON.parse(resume_frame());
   if (result.error) throw new Error('DIFFERENTIAL-CRASH ' + result.error);
-  if (!result.running) output += result.output || '';
+  // Every frame carries what the program printed DURING it, and reading clears it: the
+  // transcript is the sum, not the last frame's share.
+  output += result.output || '';
 }
 const lines = output.split('\n').filter(l => l.startsWith('t:'));
 if (JSON.stringify(lines) !== JSON.stringify(EXPECT)) {

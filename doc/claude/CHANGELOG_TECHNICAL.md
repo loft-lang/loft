@@ -10,6 +10,38 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The browser client reports a closed connection (loft#2000, 2026-10-13)
+
+- `engine_host::browser::n_kernel_client_pump` ends the client when its WebSocket was
+  open and is no longer ready: the frames already queued are delivered, a `kind: 2` event
+  follows them, and `alive` goes false, so `client_loop` returns after that turn — the
+  native connector's `FrameRead::Closed`.  A local kernel (`ws` is -1) is exempt.
+- Not covered: a socket that never opens.  `kernel_connect` answers true as soon as the
+  WebSocket object exists, and `ws_ready` cannot tell "still connecting" from "refused".
+- `doc/pkg` is rebuilt (`make wasm`), `doc/pkg-src.stamp` with it.
+- `doc/kernel-differential.html` appends each frame's output.  `resume_frame` hands over
+  what was printed during that frame and clears it; the page kept the last frame's share.
+- `browser_kernel_one_script_differential` requires the page's `DIFFERENTIAL-OK` line.
+  It asserted only that the page reported no error within 9 s, and a page that never
+  finished reported none.  Its server now broadcasts only after it has greeted the client:
+  with a server that ticked from the start, two of nine runs printed `t:sync-ok` before
+  `t:event 7:hi`.
+
+### The browser harness: one load, a required verdict, an optional GPU (loft#1998, loft#1999, 2026-10-13)
+
+- `tools/html_render_check.mjs` opens its tab blank and navigates once.  Opened on the URL,
+  every gate's page ran twice and `--wait-ms` counted from the second run.
+  `html_render::the_harness_loads_the_page_once` guards it.  The second run was also a warm
+  one: a gate's budget now covers the cold load of its page.
+- `--expect-log SUBSTRING` waits, polled, for a console line and fails with `log.missing`
+  when it never comes; it ends early on a failure the page reports.
+- `--no-gpu` starts Chrome with `--disable-gpu`.  The font gates use it: they measure on a
+  2D canvas, and the first GPU-drawn frame of a fresh browser held the bridge's WebGL
+  context and the `document.fonts.load` await past the gates' budgets under load.
+- `gl_instancing` polls for the probe's verdict in `#out` and asserts it, as
+  `audio_bridge` does.  With a flat wait and no assertion, a page that had not reached its
+  checks passed.
+
 ### The signed index pair is read from one commit (loft#1991, 2026-10-13)
 
 - `registry_index::fetch_index` resolves a

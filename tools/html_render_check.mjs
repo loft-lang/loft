@@ -19,6 +19,14 @@
 //                                          [--canvas-min-colors N]
 //                                          [--device-scale-factor N]
 //                                          [--assert EXPR] [--no-gpu]
+//                                          [--expect-log SUBSTRING]
+//
+// `--expect-log SUBSTRING` is for a page that states its own verdict: a console
+// line on success, a `console.error` or an exception on failure.  The harness
+// polls until a console line contains SUBSTRING, a failure is reported, or
+// `--wait-ms` runs out, and fails with `log.missing` when the line never came.
+// Without it such a page passes by saying nothing — when it is still loading
+// as the wait ends, there is no error to report and no success to miss.
 //
 // `--no-gpu` starts Chrome with `--disable-gpu`, for a page whose claim needs
 // neither WebGL nor a GPU-drawn frame.  The first such frame of a fresh browser
@@ -79,7 +87,7 @@ import process from 'node:process';
 // difference live in the header — this note is only why these two pair up.
 const args = process.argv.slice(2);
 if (args.length < 1) {
-  console.error('usage: html_render_check.mjs <url> [--wait-ms N] [--ready EXPR] [--screenshot PATH] [--port N] [--allow SUBSTRING] [--canvas SELECTOR] [--canvas-min-colors N] [--device-scale-factor N] [--assert EXPR]');
+  console.error('usage: html_render_check.mjs <url> [--wait-ms N] [--ready EXPR] [--screenshot PATH] [--port N] [--allow SUBSTRING] [--canvas SELECTOR] [--canvas-min-colors N] [--device-scale-factor N] [--assert EXPR] [--no-gpu] [--expect-log SUBSTRING]');
   process.exit(64);
 }
 const URL_ARG = args[0];
@@ -87,6 +95,7 @@ const opts = {
   waitMs: 8000, screenshot: null, port: 9222, allow: [],
   canvasSelector: null, canvasMinColors: 20,
   deviceScaleFactor: null, assertExpr: null, readyExpr: null, noGpu: false,
+  expectLog: null,
 };
 for (let i = 1; i < args.length; i++) {
   if (args[i] === '--wait-ms') opts.waitMs = parseInt(args[++i], 10);
@@ -102,6 +111,7 @@ for (let i = 1; i < args.length; i++) {
   else if (args[i] === '--assert') opts.assertExpr = args[++i];
   else if (args[i] === '--ready') opts.readyExpr = args[++i];
   else if (args[i] === '--no-gpu') opts.noGpu = true;
+  else if (args[i] === '--expect-log') opts.expectLog = args[++i];
   else { console.error('unknown flag: ' + args[i]); process.exit(64); }
 }
 
@@ -172,6 +182,46 @@ async function waitFor(check, maxTries = 50) {
     await new Promise(r => setTimeout(r, 100));
   }
   throw new Error('timeout waiting for ' + check.toString().slice(0, 80));
+}
+
+// ── What the page reported ─────────────────────────────────────────
+function consoleText(e) {
+  return e.params.args.map(a => a.value ?? a.description ?? '').join(' ');
+}
+// Has any console line so far contained `text`?
+function consoleSaid(events, text) {
+  return events.some(e => e.method === 'Runtime.consoleAPICalled' && consoleText(e).includes(text));
+}
+// The failures the page itself reported: a `console.error`, an uncaught exception, a
+// browser error log entry — each unless `--allow` names it.
+function eventFailures(events) {
+  const failures = [];
+  for (const e of events) {
+    if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') {
+      const text = consoleText(e);
+      if (!opts.allow.some(s => text.includes(s))) {
+        failures.push({ kind: 'console.error', text });
+      }
+    } else if (e.method === 'Runtime.exceptionThrown') {
+      const text = e.params.exceptionDetails.exception?.description ||
+                   e.params.exceptionDetails.text || 'unknown exception';
+      if (!opts.allow.some(s => text.includes(s))) {
+        failures.push({ kind: 'exception', text });
+      }
+    } else if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error') {
+      const text = e.params.entry.text;
+      // Browser-side resource 404s (favicon, etc.) are noise unless
+      // they hit a file we intentionally load.  Filter the generic
+      // "Failed to load resource" pattern unless --allow excludes it.
+      if (/Failed to load resource/.test(text) && !opts.allow.some(s => text.includes(s))) {
+        continue;
+      }
+      if (!opts.allow.some(s => text.includes(s))) {
+        failures.push({ kind: 'log.error', text });
+      }
+    }
+  }
+  return failures;
 }
 
 // ── WebSocket (minimal RFC6455 client) ─────────────────────────────
@@ -384,20 +434,33 @@ function decodePngRgb(pngBuf) {
     // `--ready EXPR` polls for the observation to EXIST, up to the same budget, and reports
     // its own failure kind when it never does.  That keeps the two shapes apart: `ready.timeout`
     // means the page did not get there, `assert` means it did and the claim is false.
+    //
+    // `--expect-log` is the same wait for a page whose verdict is a console line, and it
+    // ends early on a reported failure: the verdict is then in, and it is not the line.
     let readyReport = null;
-    if (opts.readyExpr) {
+    let logReport = null;
+    if (opts.readyExpr || opts.expectLog) {
       const deadline = Date.now() + opts.waitMs;
       let last = null;
       for (;;) {
-        const ev = await send('Runtime.evaluate', {
-          expression: `(() => { try { return JSON.stringify(!!(${opts.readyExpr})); }
-                                catch (e) { return 'ERR ' + e.message; } })()`,
-          returnByValue: true,
-        });
-        last = ev.result.value;
-        if (last === 'true') break;
-        if (Date.now() >= deadline) {
-          readyReport = { expr: opts.readyExpr, value: last, waited: opts.waitMs };
+        let ready = true;
+        if (opts.readyExpr) {
+          const ev = await send('Runtime.evaluate', {
+            expression: `(() => { try { return JSON.stringify(!!(${opts.readyExpr})); }
+                                  catch (e) { return 'ERR ' + e.message; } })()`,
+            returnByValue: true,
+          });
+          last = ev.result.value;
+          ready = last === 'true';
+        }
+        const said = !opts.expectLog || consoleSaid(events, opts.expectLog);
+        if (ready && said) break;
+        const over = Date.now() >= deadline;
+        if (over || (opts.expectLog && eventFailures(events).length > 0)) {
+          if (!ready && over) {
+            readyReport = { expr: opts.readyExpr, value: last, waited: opts.waitMs };
+          }
+          if (!said) logReport = { text: opts.expectLog, waited: opts.waitMs, over };
           break;
         }
         await new Promise(r => setTimeout(r, 50));
@@ -493,6 +556,15 @@ function decodePngRgb(pngBuf) {
           + `about, so nothing was observed`,
       });
     }
+    if (logReport) {
+      failures.push({
+        kind: 'log.missing',
+        text: `--expect-log: no console line containing ${JSON.stringify(logReport.text)} `
+          + (logReport.over
+            ? `within ${logReport.waited}ms — the page did not reach its verdict`
+            : `before the page reported a failure`),
+      });
+    }
     if (assertReport) {
       if (assertReport.error || assertReport.value !== 'true') {
         failures.push({
@@ -510,31 +582,7 @@ function decodePngRgb(pngBuf) {
         text: `canvas has only ${canvasReport.distinctColors} distinct colors (threshold ${opts.canvasMinColors})`,
       });
     }
-    for (const e of events) {
-      if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') {
-        const text = e.params.args.map(a => a.value ?? a.description ?? '').join(' ');
-        if (!opts.allow.some(s => text.includes(s))) {
-          failures.push({ kind: 'console.error', text });
-        }
-      } else if (e.method === 'Runtime.exceptionThrown') {
-        const text = e.params.exceptionDetails.exception?.description ||
-                     e.params.exceptionDetails.text || 'unknown exception';
-        if (!opts.allow.some(s => text.includes(s))) {
-          failures.push({ kind: 'exception', text });
-        }
-      } else if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error') {
-        const text = e.params.entry.text;
-        // Browser-side resource 404s (favicon, etc.) are noise unless
-        // they hit a file we intentionally load.  Filter the generic
-        // "Failed to load resource" pattern unless --allow excludes it.
-        if (/Failed to load resource/.test(text) && !opts.allow.some(s => text.includes(s))) {
-          continue;
-        }
-        if (!opts.allow.some(s => text.includes(s))) {
-          failures.push({ kind: 'log.error', text });
-        }
-      }
-    }
+    failures.push(...eventFailures(events));
 
     if (failures.length > 0) {
       console.error(JSON.stringify({ ok: false, url: URL_ARG, failures, canvas: canvasReport }, null, 2));
