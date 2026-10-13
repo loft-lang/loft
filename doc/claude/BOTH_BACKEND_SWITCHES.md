@@ -724,6 +724,17 @@ it off, that walk is skipped, as the record arm already skips a record that owns
 First bisect step for a copied record whose vector reads the source's data; guard
 `tests/scripts/157-a-heap-free-vector-copies-in-one-block.loft`.
 
+**`LOFT_NO_PLAIN_VECTOR_RECORDS=1`** (runtime, BOTH backends) sends a record that owns plain
+vectors and nothing else — every field that owns heap a `vector<E>` whose elements own none —
+through the walk of its type again when it is copied or released.  With it off, such a record
+is copied and released by the list of those fields (`Stores::plain_vectors_of`, at most eight;
+one bit of the type's facts says whether a type has the list): each vector's block is claimed
+and copied as one piece, or freed and its field cleared, with no descent through the fields'
+types.  A field holding anything but an empty handle or a block that fits its store sends the
+release back to the walk, which reports it.  First bisect step for a copied record whose vector
+reads its source's data, or a store that grows across rebinds of such a record; guard
+`tests/scripts/157-a-record-of-plain-vectors-copies-and-releases-by-its-fields.loft`.
+
 **A removed record a stored reference named leaves a tombstone (default-ON, both backends,
 `@FR-H-Removed`):** `OpSetDbRef` marks the record a stored reference names; `Store::delete`
 keeps such a record's header word as a one-word block that no claim reuses and frees the rest,

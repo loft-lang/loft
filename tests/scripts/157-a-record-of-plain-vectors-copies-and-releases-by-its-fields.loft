@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record that owns plain vectors and nothing else — every field that owns heap is a
+// `vector<E>` whose elements own none — is copied and released by the list of those fields:
+// each vector's block is claimed and copied as one piece, or freed and its field cleared.
+// That is what the walk of the record's type does for it, so a copy owns its own blocks, a
+// source changed or dropped afterwards changes nothing in it, an empty or absent vector
+// stays what it was, and nothing is left behind.  A record with any other owner (a text, a
+// vector of texts, a nested vector) still takes the walk.
+//
+// Axes it MOVES: the vectors in the record (one, two, nine — past the list's eight), what a
+// vector holds (elements, nothing, absent), where the copy goes (a vector's element, an
+// element of the same vector, a field of another record, a rebind over a filled one), what happens to the source
+// (changed, grown, dropped, kept), and the record's other owners (none, a text, a nested
+// vector).  Every value is hand-computed.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// @falsified-by: tests/falsified/157-a-record-of-plain-vectors-copies-and-releases-by-its-fields.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the patch writes the SOURCE's block into the copy's field.
+//   WITNESS: the control stops at the first cell, *the element after its source changed:
+//   2000* where 2108 is due (the element reads the vectors its source emptied).
+//   HOLDS: every cell also holds under `LOFT_NO_PLAIN_VECTOR_RECORDS=1` (the walk), and
+//   under LOFT_POISON=1, LOFT_POISON_CLAIM=1, LOFT_STRICT_STORES=1 and
+//   LOFT_NATIVE_LEAK_CHECK=1, on both backends; leak, panic and free-refusal are clean.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct Pd57 { q: integer, r: integer }
+struct Md57 { q: integer, on: boolean }
+struct Stroke57 { painted: vector<Pd57>, n: integer, markers: vector<Md57> }
+struct Maybe57 { a: integer, v: vector<Pd57>? }
+struct Named57 { painted: vector<Pd57>, name: text }
+struct Grid57 { rows: vector<vector<integer>>, flat: vector<integer> }
+struct Nine57 {
+  v0: vector<integer>, v1: vector<integer>, v2: vector<integer>, v3: vector<integer>, v4: vector<integer>,
+  v5: vector<integer>, v6: vector<integer>, v7: vector<integer>, v8: vector<integer>
+}
+struct Board57 { top: Stroke57, k: integer }
+
+fn stroke(base: integer, count: integer) -> Stroke57 {
+  s = Stroke57 { painted: [], n: base, markers: [] };
+  for i in 0..count { s.painted += [Pd57 { q: base + i, r: i }]; }
+  s.markers += [Md57 { q: base, on: base % 2 == 0 }];
+  s
+}
+
+// 1000*n + Σ (10*q + r) + 7 * Σ marker.q, plus 1 per marker that is on.
+fn weigh(s: const Stroke57) -> integer {
+  t = s.n * 1000;
+  for p in s.painted { t += p.q * 10 + p.r; }
+  for m in s.markers { t += m.q * 7; if m.on { t += 1; } }
+  t
+}
+
+fn a_copy_owns_its_own_blocks() {
+  timeline: vector<Stroke57> = [];
+  s = stroke(2, 3);
+  // n 2; painted (2,0) (3,1) (4,2) -> 20 + 31 + 42 = 93; marker q 2, on -> 15.  2108.
+  assert(weigh(s) == 2108, "the source: {weigh(s)}");
+  timeline += [s];
+  s.painted += [Pd57 { q: 9, r: 9 }];
+  s.markers = [];
+  s.n = 50;
+  assert(weigh(timeline[0]?) == 2108, "the element after its source changed: {weigh(timeline[0]?)}");
+  // 50000 + 93 + 99 = 50192.
+  assert(weigh(s) == 50192, "the changed source: {weigh(s)}");
+  // A second element copied from the first, then the first written through.
+  timeline += [timeline[0]?];
+  timeline[0].painted[0].q = 100;
+  // The first painted is (100,0) now: 2108 - 20 + 1000 = 3088.
+  assert(weigh(timeline[0]?) == 3088, "the element written through: {weigh(timeline[0]?)}");
+  assert(weigh(timeline[1]?) == 2108, "the element copied from it before: {weigh(timeline[1]?)}");
+}
+
+fn a_timeline_keeps_and_drops_whole_strokes() {
+  // The shape `history_push` has: push, and past five entries drop the oldest.
+  timeline: vector<Stroke57> = [];
+  for k in 0..40 {
+    e = stroke(k, 2);
+    timeline += [e];
+    if len(timeline) > 5 {
+      kept: vector<Stroke57> = [];
+      for i in 1..len(timeline) { kept += [timeline[i]?]; }
+      timeline = kept;
+    }
+  }
+  assert(len(timeline) == 5, "entries kept: {len(timeline)}");
+  // Strokes 35..39.  stroke(k, 2): 1000k + (10k + 0) + (10(k+1) + 1) + 7k + (k even ? 1 : 0)
+  //   = 1027k + 11 (+1 when k is even).  Σ k = 185 -> 189995 + 55 + 2 (36, 38) = 190052.
+  total = 0;
+  for s in timeline { total += weigh(s); }
+  assert(total == 190052, "the five kept strokes: {total}");
+}
+
+fn an_empty_and_an_absent_vector_stay_what_they_were() {
+  empty = Stroke57 { painted: [], n: 4, markers: [] };
+  box: vector<Stroke57> = [];
+  box += [empty];
+  assert(weigh(box[0]?) == 4000 && len(box[0].painted) == 0, "an empty stroke copied: {weigh(box[0]?)}");
+  absent = Maybe57 { a: 3, v: null };
+  filled = Maybe57 { a: 5, v: [Pd57 { q: 1, r: 2 }] };
+  held: vector<Maybe57> = [];
+  held += [absent];
+  held += [filled];
+  held += [absent];
+  assert(held[0].v == null && held[2].v == null, "an absent vector copied as one");
+  assert(len(held[1].v?) == 1 && held[1].v[0].r == 2, "the filled one between them");
+  // A rebind over a filled record releases what it held.
+  filled = absent;
+  assert(filled.v == null && filled.a == 3, "a filled record rebound to an absent one");
+  assert(len(held[1].v?) == 1, "the element copied from it before keeps its vector");
+}
+
+fn a_record_with_another_owner_takes_the_walk() {
+  named = Named57 { painted: [Pd57 { q: 1, r: 2 }], name: "first" };
+  names: vector<Named57> = [];
+  names += [named];
+  named.name = "second";
+  named.painted[0].q = 8;
+  assert(names[0].name == "first" && names[0].painted[0].q == 1, "a text beside the vector: {names[0].name}");
+  grid = Grid57 { rows: [[1, 2], [3]], flat: [4, 5] };
+  grids: vector<Grid57> = [];
+  grids += [grid];
+  grid.rows[0][0] = 70;
+  grid.flat[0] = 90;
+  assert(grids[0].rows[0][0] == 1 && grids[0].flat[0] == 4, "a nested vector beside the plain one");
+  // Nine vectors: one more than the list holds.
+  nine = Nine57 { v0: [0], v1: [1], v2: [2], v3: [3], v4: [4], v5: [5], v6: [6], v7: [7], v8: [8] };
+  nines: vector<Nine57> = [];
+  nines += [nine];
+  nine.v0[0] = 100;
+  nine.v8[0] = 100;
+  got = nines[0].v0[0] + nines[0].v1[0] + nines[0].v4[0] + nines[0].v7[0] + nines[0].v8[0];
+  assert(got == 20, "nine vectors copied: {got}");
+}
+
+fn a_record_inside_a_record_is_copied_with_it() {
+  board = Board57 { top: stroke(3, 2), k: 6 };
+  boards: vector<Board57> = [];
+  boards += [board];
+  board.top.painted[1].r = 50;
+  board.top = stroke(1, 1);
+  // stroke(3, 2): 3000 + 30 + 41 + 21 = 3092.
+  assert(weigh(boards[0].top) == 3092 && boards[0].k == 6, "the inner stroke: {weigh(boards[0].top)}");
+  // stroke(1, 1): 1000 + 10 + 7 = 1017.
+  assert(weigh(board.top) == 1017, "the source's new inner stroke: {weigh(board.top)}");
+}
+
+fn main() {
+  a_copy_owns_its_own_blocks();
+  a_timeline_keeps_and_drops_whole_strokes();
+  an_empty_and_an_absent_vector_stay_what_they_were();
+  a_record_with_another_owner_takes_the_walk();
+  a_record_inside_a_record_is_copied_with_it();
+}
