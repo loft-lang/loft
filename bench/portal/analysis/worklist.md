@@ -73,7 +73,7 @@ format decision (§ 6).
 | row | × | known lever | lands at |
 |---|--:|---|---|
 | `check_request` | 7.95 | `(R-DecodeView)` (decided, C141) | ≈ 5.5× — still over |
-| `flow_layout_full` | 7.00 | S1c (−8 % alone; S1b is built) and a fused `character` element read | re-price on today's code |
+| `flow_layout_full` | 7.00 | S1b and S1c are built (S1c after this host's run: −21 % on x86-64); a fused `character` element read | re-measure, then re-price |
 | `invert` | 5.82 | `(R-Compact)`'s prepend form, `(R-Rebind)` for a chain exit | unpriced |
 | `sphere` | 5.72 | none named (vector growth, the two `add_triangle` writes); 5.97 → 5.72 with the deep window | unpriced |
 | `decode` | 5.61 | C1 D4′ RE-PRICED: the resolve clause already serves its byte reads, and a base held from entry (the reads all precede the first growth) is −5.5 % on `read_value__d` and `__rg`, the same with all 12 sites held; the −21 % priced before predates the resolve clause.  And `(R-Base)` never proves a parameter apart from the return buffer, so the held form needs a prefix clause (the base valid up to the first statement that may grow).  Then C2 | ≈ 5.3×, then C2 |
@@ -94,47 +94,48 @@ format decision (§ 6).
    clause (`locate`) are built, and the deep window took `mesh_to_floats` under the bar;
    re-measure `fill_polygon`.
 3. The priced units: C1 + C2 (`decode`), C8 (`doc_read`), `(R-DecodeView)`
-   (`check_request`), S1c re-priced (`flow_layout_full`).
+   (`check_request`); `flow_layout_full` re-measured with S1c built.
 4. The three decisions, the keyed store format first (most of B), then `(R-ViewReturn)`
    (`anim_of`, `check_request`) and relational range facts (`fill_rect`).
 5. Price the rest: `invert`, `sphere`, `map_json`, `arguments/parse`, `rand_indices`.
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Sixteen rows read over 5× in `results/laptop.tsv` (seventeen at `f7f23c5b5`; `map_json` left the cut with X6 built, 2.68× now).  Where each one's time
+Sixteen rows read over 5× in `results/laptop.tsv`; `map_json` (2.68×) and `insert_text`
+(4.84×) have left the cut.  Where each one's time
 goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
 for the row at its figure, and a figure marked *est.* was read off a profile and never
 hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 7.92 | `flow_layout_full` | S1c, X2, X3 | ≈ 5× (*est.*) |
-| 7.85 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
+| 7.75 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
 | 7.54 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
 | 7.42 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.18 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
+| 7.09 | `binary_read` (7.72 measured alone; the Rust lane is noisy beside others) | X8 | no figure |
 | 6.93 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
-| 6.83 | `binary_read` (7.72 measured alone; the Rust lane is noisy beside others) | X8 | no figure |
-| 6.81 | cbor `encode` | X2, X9 | ≈ 5× (*est.*) |
 | 6.75 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
-| 6.35 | `invert` | X10 | ≈ 4× (*est.*) |
+| 6.74 | cbor `encode` | X2, X9 | ≈ 5× (*est.*) |
+| 6.67 | `invert` | X10 | ≈ 4× (*est.*) |
+| 6.23 | `flow_layout_full` (7.92 before S1c) | X2, X3 | ≈ 5× (*est.*) |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
 | 6.03 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
 | 5.83 | `slope_path_with_undo` (noisy) | § 5's record-build row names what is left | no figure |
+| 5.6 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43 ms) | X9 | no figure |
 | 5.51 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
-| 5.40 | `forms_upto` | X12 | no figure |
-| 5.32 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
+| 5.15 | `forms_upto` | X12 | no figure |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
-Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`); the
-others land between 3.5× and 6.9×.
+One row reaches 3× with everything here built (`rig_world_frame3`); the others land
+between 3.5× and 6.9×.
 
 | | step | rows it moves (share of the row) | state | first action |
 |---|---|---|---|---|
 | X1 | BUILT, in the runtime and for one family of records: a record that owns plain vectors and nothing else is copied and released by the list of those fields (`Stores::plain_vectors_of`), where `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` asked each field's type what it is.  Both backends; a record with any other owner (a text, a vector of records that own heap) still takes the walk | `truncate_to` (8.17× → 6.03×, −26 %); `panel_build` is level — its records own texts | measured | nothing more of this kind on `panel_build`: its release driven by the type's flattened heap slots (texts deleted in a loop, a collection's own walk called per slot) priced at −3 % of the row and was dropped — the walk's descent is not where that row's release spends |
-| S1c | § 3 | `flow_layout_full` (−8 %) | priced | build |
+| S1c | BUILT — `(R-WorkBuffer)`'s result clause: a call's vector result that a function only reads is filled into the caller's buffer, so `token_width`'s runs buffer (and `place_line`'s three) outlive the call and `slice_runs` refills kept elements | `flow_layout_full` (7.92× → 6.23×, −21 %; priced −19 % on the emission before it); a switch A/B of lanes 16 and 18, where the clause also fires, is level | measured | X2 next on this row |
 | X2 | vector headers held across a write the loop makes to ANOTHER store.  `(R-Alias)`'s versioned clause runs a copy of the loop under a run-time test that the return buffer's store is not a parameter's; the same test over any pair of stores the loop names admits these | `rig_world_frame3` (26 %), cbor `encode` (23 %), `arguments/parse` (19 %), `flow_layout_full` (16 %) | a widening of a built rule, no price | hand-price on cbor `encode`'s emit loop (the callee writes `buf`; the loop reads `ranks`, `koff`, `klen` out of line) |
-| X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
+| X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 % before S1c) | *est.* only | after X2: re-profile, then price |
 | X4 | BUILT — `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | `check_request` is profiled (rustc-vs-twin.md § Re-profiled: claims 32 %, spread); `(R-DecodeView)` (decided, C141) next, S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
 | X6 | BUILT — `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4), token offsets from the lexer (J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8), each token written where it is kept (J10); over-9x.md § moros `map_json` | `map_json` | measured: 7.44× → 2.68× (J4 −2 %, J8 −12.6 %, J6 and J7 −17 %, J9 −33 %, J5 and J10 −22 %) | the row is under 5× and has left this list; over-9x.md § What is left |
@@ -142,7 +143,7 @@ others land between 3.5× and 6.9×.
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
 | X8 | a file's handle and cursor held in locals across a read loop | `binary_read` (the whole row is the emitted loop) | no price; the typed read is built | hand-price |
 | X9 | cbor's byte runs copied as a block; `read_value__d` (17 % of `encode`'s row) | cbor `encode` | *est.* ~10 % | after X2 |
-| X10 | a record whose source is dead is moved, not deep-copied: `(R-Compact)`'s prepend and identity forms, `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | `insert_text` (**60 %**), `invert` (36 %) | named in § 4, no price | hand-price on `insert_text`.  The largest single share on this list; it stands here by its row's ratio, as the cut is ordered |
+| X10 | a record whose source is dead is moved, not deep-copied: `(R-Compact)`'s prepend and identity forms, `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | `insert_text` (**60 %**; 4.84× now, under the cut), `invert` (36 %) | named in § 4, no price | hand-price on `insert_text`.  The largest single share on this list; it stands here by its row's ratio, as the cut is ordered |
 | X11 | `graphics`, `drawing`, `text2d`, `stage` and `assets` build on this box again: they resolve dependencies (`mesh3d` 0.1.2 through `drawing`'s lock file, `shapes`) that lack the `pub` fields @C140 requires, and `main`'s own compiler refuses them the same way | `fill_polygon`, and those five libraries' census rows | library work | bump the pins, then re-measure the lane |
 | S2, S3 | § 3 | `rig_world_frame3` → 2.75×, `mat4_mul` (4.54× here) → 0.63× | priced | build, S2 first |
 | X12 | `forms_upto`'s remaining claims attributed (`(R-CtorLiteral)` and the refill clause are built) | `forms_upto` (claim and release 24 %) | no step | read `forms_upto__rg` and `form_closes` by line |
@@ -154,10 +155,11 @@ before it; the slowest row goes first; a step with no price is priced before it 
    cannot be measured on this box until the five libraries' pins are bumped.
 2. **`truncate_to`** — X1 is built for a record of plain vectors (8.17× → 6.03×).  It did
    not move `panel_build`, whose records own texts.
-3. **`flow_layout_full` (7.92×)** — build S1c (priced).  Price X2, then build it: the same
-   step moves `arguments/parse` (7.18×), cbor `encode` (6.81×) and `rig_world_frame3`
-   (5.51×), which is why it stands here and not at their rows.  Then price X3 on what is left.
-4. **`check_request` (7.85×)** — profiled: a flat row, a third of it claims and releases.
+3. **`flow_layout_full` (6.23×)** — S1c is built (7.92× before it).  Price X2, then build
+   it: the same step moves `arguments/parse` (7.18×), cbor `encode` (6.74×) and
+   `rig_world_frame3` (5.51×), which is why it stands here and not at their rows.  Then
+   re-profile the row and price X3 on what is left.
+4. **`check_request` (7.75×)** — profiled: a flat row, a third of it claims and releases.
    Build `(R-DecodeView)`; S8 after its decision (§ 6).
 5. **`field_add_cell` (7.54×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
@@ -166,14 +168,15 @@ before it; the slowest row goes first; a step with no price is priced before it 
 7. **`arguments/parse` (7.18×)** — X7, on what X2 left of the row.
 8. **`mapfile_to_painted` (6.93×), `reload_and_record` (6.75×)** — X5 d: P3 first, P4 with
    its range proof.
-9. **`binary_read` (6.83×)** — price X8, build.
-10. **cbor `encode` (6.81×)** — X9, on what X2 left of the row.
-11. **`invert` (6.35×), `insert_text` (5.32×)** — price X10 on `insert_text`, build.
+9. **`binary_read` (7.09×)** — price X8, build.
+10. **cbor `encode` (6.74×)** — X9, on what X2 left of the row.
+11. **`invert` (6.67×)** — price X10 on `insert_text` (4.84×, the row with the largest
+    share of it), build.
 12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
     row is now the pushes themselves (the generated loop 15 %, two claims and two frees per
     push) and § 5's record-build row names what is left of the other.
 13. **`rig_world_frame3` (5.51×)** — S2, then S3.
-14. **`forms_upto` (5.40×)** — X12.
+14. **`forms_upto` (5.15×)** — X12.
 
 After each item, measure the rows it names (M5) and read this order again: a row under 5×
 leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
@@ -234,7 +237,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 |---|---|---|---|---|
 | S1 | BUILT — `(R-RefillText)`: a pooled call buffer's texts refilled in their slots through the callee's refill twin (`formal/rewrites.md` § A pooled buffer's texts are refilled in their slots) | M | `msg_ping` 7.55× → 2.05× on x86-64 (the price), hash unchanged; the collection clause after it carries `flow_layout_full`, `check_request`, `decode` | under-10x.md § Status |
 | S1b | BUILT — `(R-RefillText)`'s collection clause: a refilling callee keeps its vector's elements and refills their texts | M | `flow_layout_full` 14.15× → 12.35× on x86-64 (−12.7 %), hash unchanged; priced −20 %, the rest is each kept slot still taking the append | over-9x.md § zttext |
-| S1c | the pooled clause — the return buffer whose elements are kept survives its caller's activation (`token_width` per token), lifted as `(R-WorkBuffer)` lifts a work buffer | M | `flow_layout_full` −8 % alone, −31 % with S1b (priced on today's emission) | over-9x.md § zttext |
+| S1c | BUILT — `(R-WorkBuffer)`'s result clause: the buffer of a call's vector result that its function only reads is the caller's, so a return buffer whose elements are kept survives its caller's activation (`token_width` per token) | M | `flow_layout_full` 7.92× → 6.23× on x86-64 (−21 %), hash unchanged | over-9x.md § zttext |
 | S2 | `(R-Apart)` instance 2 — a fixed-length vector field inside a value record, across admitted calls | new gate over the IR | `mat4_mul` → 0.63× | apart.md |
 | S3 | `(R-Apart)` instance 3 — an inline buffer with a spill, never a bare `Vec` | after S2, same gate | `rig_world_frame3` → 2.75×; `draw_bezier`'s two stacks → 2.3× | apart.md |
 | S4 | BUILT — `(R-Destination)` with its chain clause: a child built in its element, a map entry's key and value in its two halves (D7).  The pooled buffer's release (D6's target) and the move (D2) went with it | M | `decode` 13.5 → 7.89 ms on one core (−41 %), hash unchanged, the hand price exactly; D5 (no one-element reserve) measured +3 % and dropped.  In its lane: `decode` 8.6× → 4.0×, `check_request` 12.0× → 9.4× (3.87 → 3.11 ms on one core, −20 %).  What is left on `decode`: the twin's body 35 %, the element append machinery ~40 % (`vector_append`, `vector_finish`, the element prefill, `record_new`, the reservation) — the push window held across the recursive call is the next step | over-9x.md, under-10x.md § cbor |
@@ -268,7 +271,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 |---|--:|---|
 | `header` | 3.6–4.3× | "twin-shaped" remainder, no further lever named |
 | `decode` | 3.6–3.8× | no further lever named |
-| `flow_layout_full` | 7.3× on x86-64 (7.92× with S1b and S5 built, S1c −8 %); the 3.6× priced earlier counted both as still to come | X2 and X3 (§ 0, the x86-64 cut), neither priced |
+| `flow_layout_full` | 6.23× on x86-64 with S1b, S5 and S1c built; the 3.6× priced earlier counted all three as still to come | X2 and X3 (§ 0, the x86-64 cut), neither priced |
 | `draw_bezier` | 3.66× measured on x86-64 (graphics 0.9.8 with the keep-range clause) | under the bar only through S3 (2.3×) |
 | `check_request` | ≈ 5.5×, ≈ 17× aligned | decided (C141): `(R-DecodeView)` — the copy loops are already one copy each (`(R-ByteCopy)`'s vector clause, `(R-TextRun)`, built); a slice spelled as a field value (`CBytes { value: bytes[a..b] }`) mints a store and copies twice (+94 % hand-measured), a gap of its own — ceiling with no text or byte string built: 3.95 → 2.54 ms (−36 %), formal/rewrites.md |
 | `build_walls` | ≈ 3.3× | no further lever named |
@@ -284,7 +287,7 @@ Each is named in an analysis as the row's next step; none has a hand price for t
 | `insert_text`, `invert` | `(R-Compact)`'s filter, prepend and identity forms; `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | rules.md, libraries-wide.md |
 | `mesh_to_floats` | BUILT (bf4cd8088): `(R-Alias)`'s versioned clause now treats the result local that adopts `__retbuf` as the buffer, and `(R-RecPtr)` reads a view's null test as a read rather than a rebind, so the copy that runs when the buffer's store is not the mesh's holds `mf_tri` and `mf_v`.  `perf_check`: 8.23× → 5.53× (−33 %); `pack_instances`, holding `n` the same way, 7.55× → 4.84× (−36 %).  Next: re-analyse both rows from the current code | records.md |
 | `map_json` | PRICED: 86 % is `Map.parse` — the source lexer stepping through JSON 67 %, the `Parsed` tree written into the store 19 % — and `"{m:j}"` 6 %.  The lexer's per-token `Arc<str>` reference count (`Position.file`) was ~21 % of cycles: BUILT as `FileName` (an interned name, identity-first equality), −15 % cycles, same hash.  Next: the `Parsed` → store walk (two passes where the twin parses straight into structs) and the lexer's per-character stepping; a separate JSON byte scanner is ruled out (@PLN109: one lexer).  The parser's own allocations (string compares, key clones) priced at −0.8 % — not worth a change | profiled 2026-10-06 |
-| `flow_layout_full` | lever B is built (S5); S1c is next.  The bench itself works around fn-ref records not freed until a plain-value frame ends (`zttext/bench/bench.loft` `flow_op`) — a leak to file or fix | over-9x.md |
+| `flow_layout_full` | levers B (S5) and A (S1c) are built; X2 and X3 are next (§ 0).  The bench itself works around fn-ref records not freed until a plain-value frame ends (`zttext/bench/bench.loft` `flow_op`) — a leak to file or fix | over-9x.md |
 | `truncate_to` | NOT the move through a by-value parameter: hand-priced (`e` placed in the timeline's store, `history_push`'s copy a shallow move) it costs +16 %, because the pooled `e` already keeps its vectors across pushes and the placed one claims them anew.  `drop_oldest` is already in place (`keep_vector_range`).  The row is claim-for-claim the twin's malloc-for-malloc (two each per push); what differs is each one's price: `OpCopyRecord` 36 % and the release walk 27 % go through `copy_claims` / `owned_walk` / `remove_struct_claims` for a `Stroke` whose layout the emitter knows.  Next: a copy and a release specialised to the static type (unpriced).  Profiled alone: `Store::claim` is 18–20 %, and it is `claim_scan` — the timeline's store stays in `@FR-H-LazyFree`'s phase for good (each push frees what the next claims, so the untracked words never reach the bound), the freed vectors merge with their neighbours (8 + 13 → 21 words), and every miss walks the chain from the store's first block (480 walks per call).  Measured and dropped: ending the phase once the walks cost a sweep (+3 %: the free tree then costs what the walks did) and exact-size lists of lazily freed blocks (+5 %: 55 hits in 1866 claims, the merged sizes never match).  The walk itself is gone: `(H-ScanIndex)` reads the first fit off the lazily freed blocks' index (8.58× → 8.17× on x86-64).  X1 is built for it (§ 0): 8.17× → 6.03×.  What is left is spread: the generated loop 15 %, the copy 11 %, the claims and frees themselves ~25 %, vector appends ~19 % | records.md § Order item 4 |
 | `panel_build` | the "bound null" window of `(R-RecPtr)`; a heap-owning tree's stores reused across a rebind (a rule that does not exist) | rules.md, records.md § Order item 5 |
 
