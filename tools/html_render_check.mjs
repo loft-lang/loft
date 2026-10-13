@@ -331,7 +331,12 @@ function decodePngRgb(pngBuf) {
     process.exit(2);
   }
   try {
-    const tab = await putJson('/json/new?' + encodeURIComponent(URL_ARG));
+    // The tab opens BLANK and is navigated once, below, after the domains are enabled:
+    // the page loads once and all of it is observed.  Opened on the URL it runs twice —
+    // once with nothing listening, then again for the navigate — and `--wait-ms` counts
+    // from the second load while the first is still running in the same renderer and
+    // against the same server.
+    const tab = await putJson('/json/new?about:blank');
     const wsState = await openWebSocket(tab.webSocketDebuggerUrl);
     let { sock } = wsState;
     let buf = wsState.buf;
