@@ -8,7 +8,7 @@
 
 use crate::diagnostics::{Diagnostics, Fix, FixKind, Level, diagnostic_format};
 use crate::fxhash::FxHashSet as HashSet;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
@@ -362,6 +362,18 @@ impl LineCursor {
         (&self.line[self.at..self.at + len], len - continuation)
     }
 
+    /// The word at the cursor: its letters, digits and underscores, all ASCII.  Empty
+    /// where the cursor is on anything else.
+    #[inline]
+    fn word(&self) -> &str {
+        let bytes = &self.line.as_bytes()[self.at..];
+        let len = bytes
+            .iter()
+            .position(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'))
+            .unwrap_or(bytes.len());
+        &self.line[self.at..self.at + len]
+    }
+
     /// The decimal digits at the cursor, and the byte that follows them.
     #[inline]
     fn digits(&self) -> (&[u8], Option<u8>) {
@@ -422,6 +434,14 @@ pub struct Lexer {
     parse_snapshot: std::collections::HashMap<String, String>,
     iter: LineCursor,
     peek: LexResult,
+    /// Byte offset, in the text this lexer reads, of the line the cursor is in and of the
+    /// line after it.  Exact where the text is handed over whole ([`Self::from_str_with`]);
+    /// a file's lines arrive without their line ends, so there it counts one byte for each.
+    line_at: usize,
+    next_line_at: usize,
+    /// Byte offset of the place the token in `peek` was read at — where its `position`
+    /// stands — or `usize::MAX` for a token served from the replay buffer.
+    token_at: usize,
     /// The byte length of the token in `peek` as it is written in the source, when it was
     /// written plainly: a number of decimal digits alone, a `"…"` literal (the length is
     /// its content's) with no escape, no control character and no hole.  What such a
@@ -434,7 +454,7 @@ pub struct Lexer {
     /// the source is scanned again: while a token is replayed, the cursor is the one it had.
     replay_return: Option<(u32, u32)>,
     /// Keep track of the number of currently in use links
-    links: Rc<RefCell<u32>>,
+    links: Rc<Cell<u32>>,
     /// Keep track of where we are in the current memory structure
     link: usize,
     position: Position,
@@ -500,6 +520,16 @@ pub struct Lexer {
     /// again with nothing of its own to remember.
     backtick_strip: Vec<Option<usize>>,
     diagnostics: Diagnostics,
+}
+
+/// What one step of the scan found ([`Lexer::scan_once`]).
+enum Scanned {
+    /// A token, now in `peek`.
+    Token,
+    /// The end of the input; `peek` is untouched.
+    End,
+    /// A comment, skipped; `peek` is untouched.
+    Comment,
 }
 
 /// The lexer's string-interpolation state as it stood after a token was scanned: what a
@@ -679,13 +709,13 @@ impl LexConfig {
 
 #[derive(Debug)]
 pub struct Link {
-    links: Rc<RefCell<u32>>,
+    links: Rc<Cell<u32>>,
     pos: usize,
 }
 
 impl Drop for Link {
     fn drop(&mut self) {
-        *self.links.borrow_mut() -= 1;
+        self.links.set(self.links.get() - 1);
     }
 }
 
@@ -755,9 +785,12 @@ impl Default for Lexer {
             memory: Vec::new(),
             replay_return: None,
             link: 0,
-            links: Rc::new(RefCell::new(0)),
+            links: Rc::new(Cell::new(0)),
             seek_return: None,
             iter: LineCursor::default(),
+            line_at: 0,
+            next_line_at: 0,
+            token_at: 0,
             plain: None,
             tok1: token_tables(&cfg.tokens).0,
             tok2: token_tables(&cfg.tokens).1,
@@ -828,9 +861,12 @@ impl Lexer {
             memory: Vec::new(),
             replay_return: None,
             link: 0,
-            links: Rc::new(RefCell::new(0)),
+            links: Rc::new(Cell::new(0)),
             seek_return: None,
             iter: LineCursor::default(),
+            line_at: 0,
+            next_line_at: 0,
+            token_at: 0,
             plain: None,
             tok1: token_tables(&config.tokens).0,
             tok2: token_tables(&config.tokens).1,
@@ -890,11 +926,26 @@ impl Lexer {
         }
     }
 
+    /// Read the next token into `peek`: from the replay buffer while a look-ahead is being
+    /// served again, from the source otherwise.  `false` at the end of the input, with
+    /// `peek` as it was.
+    fn scan(&mut self) -> bool {
+        loop {
+            match self.scan_once() {
+                Scanned::Token => return true,
+                Scanned::End => return false,
+                Scanned::Comment => {}
+            }
+        }
+    }
+
+    /// One step of [`Self::scan`]: a token put in `peek`, the end of the input, or a
+    /// comment skipped — after which the scan starts over, `peek` still the token before it.
     #[expect(
         clippy::too_many_lines,
         reason = "the lexer's one dispatch on the next character"
     )]
-    fn next(&mut self) -> Option<LexResult> {
+    fn scan_once(&mut self) -> Scanned {
         self.plain = None;
         if self.link < self.memory.len() {
             let n = self.memory[self.link].clone();
@@ -909,7 +960,8 @@ impl Lexer {
                 n.cursor.0,
                 n.cursor.1
             ));
-            return Some(self.replay(n));
+            self.peek = self.replay(n);
+            return Scanned::Token;
         }
         // Scanning fresh source after a replay: the cursor the replay moved is the scan's
         // own again — and a seek made during the replay moved a replayed cursor, not it.
@@ -947,9 +999,10 @@ impl Lexer {
                             // line above the one the editor shows (@PLN179 finding 007).
                             if self.position.line == 0 && ln.starts_with("#!/") {
                                 self.position.line += 1;
+                                self.next_line_at += ln.len() + 1;
                                 continue;
                             }
-                            self.iter = LineCursor::new(ln);
+                            self.enter_line(ln);
                             self.position.line += 1;
                             self.position.pos = 1;
                         }
@@ -970,16 +1023,21 @@ impl Lexer {
                 }
             }
         }
-        let pos = self.position;
+        let pos = self.token_start();
         if let Some(&c) = self.iter.peek() {
-            Some(match c {
+            match c {
                 '0'..='9' => self.number(),
                 '"' => {
                     self.next_char();
                     if self.in_format_expr {
                         self.string_nested(false, false)
                     } else {
-                        self.string()
+                        // The literal starts after its quote: `pos` stepped once, not
+                        // the position read back.
+                        self.string(Position {
+                            pos: pos.pos + 1,
+                            ..pos
+                        })
                     }
                 }
                 '`' => {
@@ -996,7 +1054,7 @@ impl Lexer {
                 }
                 ' ' | '\t' => {
                     self.next_char();
-                    LexResult::new(LexItem::Token(" "), pos)
+                    self.put(LexItem::Token(" "), pos);
                 }
                 _ => {
                     // Both candidates are spelled in a stack buffer and looked up: the token
@@ -1015,7 +1073,7 @@ impl Lexer {
                     if let Some(single) = found {
                         self.next_char();
                         let may_pair = !c.is_ascii() || self.tok2[c as usize];
-                        if let Some(&d) = self.iter.peek() {
+                        let token = if let Some(&d) = self.iter.peek() {
                             // Spelled only where the first character can begin a pair.
                             let double = if may_pair {
                                 d.encode_utf8(&mut spelled[one..]);
@@ -1027,61 +1085,83 @@ impl Lexer {
                             };
                             if let Some(double) = double {
                                 self.next_char();
-                                LexResult::new(LexItem::Token(double), pos)
+                                double
                             } else if self.mode == Mode::Formatting && single == "}" {
-                                self.resume_string()
+                                self.resume_string();
+                                return Scanned::Token;
                             } else {
-                                LexResult::new(LexItem::Token(single), pos)
+                                single
                             }
                         } else {
-                            LexResult::new(LexItem::Token(single), pos)
+                            single
+                        };
+                        if token == self.comment {
+                            // The marker and the rest of its line are not a token.
+                            while self.iter.peek().is_some() {
+                                self.iter.next();
+                            }
+                            return Scanned::Comment;
                         }
+                        self.put(LexItem::Token(token), pos);
                     } else if c == '\\' && self.in_format_expr {
                         // `\"` inside a format expression opens a nested string literal.
                         self.next_char(); // consume '\'
                         if let Some(&nc) = self.iter.peek() {
                             if nc == '"' {
                                 self.next_char(); // consume '"'
-                                self.string_nested(true, false)
+                                self.string_nested(true, false);
                             } else {
                                 self.err(
                                     Level::Error,
                                     &format!("Escape '\\{nc}' is not allowed inside a {{...}} format expression — \
                                      use {{{{ to get a literal '{{' that won't start an expression"),
                                 );
-                                Lexer::none()
+                                self.put_none();
                             }
                         } else {
                             self.err(Level::Error, "Unexpected end of input after '\\'");
-                            Lexer::none()
+                            self.put_none();
                         }
                     } else {
-                        let ident = self.get_identifier();
-                        if ident.is_empty() {
+                        // A word is looked up as it stands in the line: a keyword names
+                        // the lexicon's own text, and only an identifier is copied out.
+                        let run = self.iter.word();
+                        let len = run.len();
+                        if len == 0 {
                             // An unrecognized character: not a known token, not a
                             // number/string/identifier start (e.g. a stray '\' in
-                            // code).  `get_identifier` consumed nothing, so we must
-                            // consume the offending char here — without this the
-                            // lexer re-reads the same position forever, hanging the
-                            // parser instead of reporting a clean error.
+                            // code).  Nothing was consumed, so the offending char is
+                            // consumed here — without this the lexer re-reads the same
+                            // position forever, hanging the parser instead of reporting a
+                            // clean error.
                             self.err(Level::Error, &format!("Unexpected character {c:?}"));
                             self.next_char();
-                            Lexer::none()
-                        } else if let Some(&keyword) = self.keywords.get(ident.as_str()) {
-                            LexResult::new(LexItem::Token(keyword), pos)
+                            self.put_none();
                         } else {
-                            LexResult::new(LexItem::Identifier(ident), pos)
+                            let word = self
+                                .keywords
+                                .get(run)
+                                .copied()
+                                .ok_or_else(|| String::from(run));
+                            self.iter.step_over(len);
+                            self.position.pos += len as u32;
+                            match word {
+                                Ok(keyword) => self.put(LexItem::Token(keyword), pos),
+                                Err(ident) => self.put_identifier(ident, pos),
+                            }
                         }
                     }
                 }
-            })
+            }
+            Scanned::Token
         } else if let Some(line_result) = self.lines.next() {
             match line_result {
                 Ok(ln) => {
-                    self.iter = LineCursor::new(ln);
+                    self.enter_line(ln);
                     self.position.line += 1;
                     self.position.pos = 1;
-                    Some(LexResult::new(LexItem::None, self.position))
+                    self.put(LexItem::None, self.position);
+                    Scanned::Token
                 }
                 Err(e) => {
                     self.position.line += 1;
@@ -1092,12 +1172,65 @@ impl Lexer {
                             self.position.line, e
                         ),
                     );
-                    None
+                    Scanned::End
                 }
             }
         } else {
-            None
+            Scanned::End
         }
+    }
+
+    /// Make `line` the line the cursor reads.
+    fn enter_line(&mut self, line: String) {
+        self.line_at = self.next_line_at;
+        self.next_line_at += line.len() + 1;
+        self.iter = LineCursor::new(line);
+    }
+
+    /// The position a token starts at — the cursor's — noted as a byte offset too
+    /// ([`Self::peek_offset`]).
+    #[inline]
+    fn token_start(&mut self) -> Position {
+        self.token_at = self.line_at + self.iter.at;
+        self.position
+    }
+
+    /// Make `has`, read at `position`, the token [`peek`](Self::peek) answers.  Every scan
+    /// ends here: the token is built where it is kept, not handed back through its callers.
+    ///
+    /// The token before it is released FIRST.  Assigned in one statement, the new token
+    /// is built in a temporary, the old one's text freed, and the temporary copied in —
+    /// a copy read back before its own writes have settled, which was half of what a
+    /// token cost in [`Self::cont`].
+    #[inline]
+    fn put(&mut self, has: LexItem, position: Position) {
+        self.peek.has = LexItem::None;
+        self.peek = LexResult { has, position };
+    }
+
+    /// [`Self::put`] for a literal's text: `text` is moved into the token where it is kept.
+    #[inline]
+    fn put_string(&mut self, text: String, position: Position) {
+        self.peek.has = LexItem::None;
+        self.peek = LexResult {
+            has: LexItem::CString(text),
+            position,
+        };
+    }
+
+    /// [`Self::put`] for an identifier's name.
+    #[inline]
+    fn put_identifier(&mut self, name: String, position: Position) {
+        self.peek.has = LexItem::None;
+        self.peek = LexResult {
+            has: LexItem::Identifier(name),
+            position,
+        };
+    }
+
+    /// [`Self::put`] for a scan that found no token — after its diagnostic.
+    fn put_none(&mut self) {
+        self.peek = Lexer::none();
     }
 
     pub fn pos(&self) -> &Position {
@@ -1267,13 +1400,13 @@ impl Lexer {
     ///
     /// An empty stack means the `}` closed a hole nothing recorded — a plain
     /// string is the pre-existing behaviour and the safe answer.
-    fn resume_string(&mut self) -> LexResult {
+    fn resume_string(&mut self) {
         self.plain = None;
         self.in_format_expr = false;
         match self.open_strings.pop() {
             Some(StrKind::Backtick(nested)) => self.backtick_string_resume(nested),
             Some(StrKind::Nested(escaped_delim)) => self.string_nested(escaped_delim, true),
-            _ => self.string(),
+            _ => self.string(self.position),
         }
     }
 
@@ -1307,7 +1440,7 @@ impl Lexer {
                 self.link += 1;
                 self.peek = self.replay(n);
             } else {
-                self.peek = self.resume_string();
+                self.resume_string();
                 if self.link == self.memory.len() && self.count_links() > 0 {
                     let rest = self.recorded(&self.peek);
                     self.memory.push(rest);
@@ -1345,6 +1478,7 @@ impl Lexer {
     /// end of the source consumed before it, and its mode.
     fn replay(&mut self, n: Recorded) -> LexResult {
         self.plain = None;
+        self.token_at = usize::MAX;
         if self.replay_return.is_none() {
             self.replay_return = Some(
                 self.seek_return
@@ -1396,25 +1530,23 @@ impl Lexer {
     }
 
     /// Parse a character constant for the lexer.
-    fn char(&mut self) -> LexResult {
-        let pos = self.position;
+    fn char(&mut self) {
+        let pos = self.token_start();
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '\'' {
                 self.next_char();
                 let mut chars = res.chars();
-                return LexResult::new(
-                    LexItem::Character(if let Some(ch) = chars.next() {
-                        if chars.next().is_some() {
-                            self.err(Level::Error, "Expected only one character in constant");
-                        }
-                        ch as u32
-                    } else {
-                        self.err(Level::Error, "Expected a character in constant");
-                        0
-                    }),
-                    pos,
-                );
+                let code = if let Some(ch) = chars.next() {
+                    if chars.next().is_some() {
+                        self.err(Level::Error, "Expected only one character in constant");
+                    }
+                    ch as u32
+                } else {
+                    self.err(Level::Error, "Expected a character in constant");
+                    0
+                };
+                return self.put(LexItem::Character(code), pos);
             }
             if c == '\\' {
                 self.next_char();
@@ -1429,7 +1561,7 @@ impl Lexer {
             self.next_char();
         }
         self.err(Level::Fatal, "Character not correctly terminated");
-        Lexer::none()
+        self.put_none()
     }
 
     fn escape_seq(&mut self, res: &mut String) -> bool {
@@ -1640,8 +1772,8 @@ impl Lexer {
     }
 
     /// Parse a string for the lexer.
-    fn string(&mut self) -> LexResult {
-        let pos = self.position;
+    fn string(&mut self, pos: Position) {
+        self.token_at = self.line_at + self.iter.at;
         let mut res = String::new();
         // Whether everything read so far was one run of plain text — `Self::plain`.
         let mut plain = true;
@@ -1656,7 +1788,7 @@ impl Lexer {
                 if plain {
                     self.plain = u32::try_from(res.len()).ok();
                 }
-                return LexResult::new(LexItem::CString(res), pos);
+                return self.put_string(res, pos);
             }
             plain = false;
             if c == '\\' {
@@ -1690,7 +1822,7 @@ impl Lexer {
                     self.mode = Mode::Formatting;
                     self.in_format_expr = true;
                     self.open_strings.push(StrKind::Plain);
-                    return LexResult::new(LexItem::CString(res), pos);
+                    return self.put_string(res, pos);
                 }
             } else if c == '}' && self.interpolate_strings {
                 self.next_char();
@@ -1706,7 +1838,7 @@ impl Lexer {
             self.next_char();
         }
         self.err(Level::Fatal, "String not correctly terminated");
-        Lexer::none()
+        self.put_none()
     }
 
     /// Scan a string literal that appears as an expression inside a `{...}` format slot.
@@ -1738,31 +1870,25 @@ impl Lexer {
     /// a nested literal rather than close something. Resetting to `Code`
     /// unconditionally is what made a backtick unusable inside an interpolation
     /// at all — even `` "{`abc`}" ``, with no hole of its own (loft#767).
-    fn close_backtick(
-        &mut self,
-        res: String,
-        pos: Position,
-        nested: bool,
-        resumed: bool,
-    ) -> LexResult {
+    fn close_backtick(&mut self, res: String, pos: Position, nested: bool, resumed: bool) {
         self.backtick_strip.pop();
         if nested {
             return self.close_nested(res, pos, resumed);
         }
         self.mode = Mode::Code;
-        LexResult::new(LexItem::CString(res), pos)
+        self.put_string(res, pos)
     }
 
-    fn close_nested(&mut self, res: String, pos: Position, resumed: bool) -> LexResult {
+    fn close_nested(&mut self, res: String, pos: Position, resumed: bool) {
         if resumed {
             self.mode = Mode::Code;
         }
         self.in_format_expr = true;
-        LexResult::new(LexItem::CString(res), pos)
+        self.put_string(res, pos)
     }
 
-    fn string_nested(&mut self, escaped_delim: bool, resumed: bool) -> LexResult {
-        let pos = self.position;
+    fn string_nested(&mut self, escaped_delim: bool, resumed: bool) {
+        let pos = self.token_start();
         let mut res = String::new();
         while let Some(&c) = self.iter.peek() {
             if c == '"' {
@@ -1799,7 +1925,7 @@ impl Lexer {
                     self.mode = Mode::Formatting;
                     self.in_format_expr = true;
                     self.open_strings.push(StrKind::Nested(escaped_delim));
-                    return LexResult::new(LexItem::CString(res), pos);
+                    return self.put_string(res, pos);
                 }
             } else if c == '}' && self.interpolate_strings {
                 self.next_char();
@@ -1819,7 +1945,7 @@ impl Lexer {
             Level::Fatal,
             "Nested string literal not correctly terminated",
         );
-        Lexer::none()
+        self.put_none()
     }
 
     /// Advance to the next source line inside a multi-line backtick string.
@@ -1828,7 +1954,7 @@ impl Lexer {
         if let Some(line_result) = self.lines.next() {
             match line_result {
                 Ok(ln) => {
-                    self.iter = LineCursor::new(ln);
+                    self.enter_line(ln);
                     self.position.line += 1;
                     self.position.pos = 1;
                     true
@@ -1912,8 +2038,8 @@ impl Lexer {
     /// [`backtick_line_start`](Lexer::backtick_line_start) applies it, one line at a
     /// time as the line is entered — which is what lets a literal with an
     /// interpolation in it be dedented at all (loft#990).
-    fn backtick_string(&mut self, nested: bool) -> LexResult {
-        let pos = self.position;
+    fn backtick_string(&mut self, nested: bool) {
+        let pos = self.token_start();
         let mut lines: Vec<String> = Vec::new();
         let mut cur = String::new();
 
@@ -1970,7 +2096,7 @@ impl Lexer {
                         self.mode = Mode::Formatting;
                         self.in_format_expr = true;
                         self.open_strings.push(StrKind::Backtick(nested));
-                        return LexResult::new(LexItem::CString(result), pos);
+                        return self.put_string(result, pos);
                     }
                 }
                 Some(&'}') => {
@@ -1986,7 +2112,7 @@ impl Lexer {
                     if !self.escape_seq(&mut cur) {
                         self.backtick_strip.pop();
                         self.err(Level::Fatal, "Backtick string not correctly terminated");
-                        return Lexer::none();
+                        return self.put_none();
                     }
                 }
                 Some(&c) => {
@@ -1998,7 +2124,7 @@ impl Lexer {
                     if !self.advance_line() {
                         self.backtick_strip.pop();
                         self.err(Level::Fatal, "Backtick string not correctly terminated");
-                        return Lexer::none();
+                        return self.put_none();
                     }
                     // The dedent comes off here, at the line start, where the leading
                     // spaces are — not at the close, which a hole never reaches.
@@ -2020,8 +2146,8 @@ impl Lexer {
     /// Resume a backtick string after a `}` closes a format expression.
     /// Called from the `}` token handler when the backtick string owns the
     /// format context.
-    fn backtick_string_resume(&mut self, nested: bool) -> LexResult {
-        let pos = self.position;
+    fn backtick_string_resume(&mut self, nested: bool) {
+        let pos = self.token_start();
         let mut cur = String::new();
         loop {
             match self.iter.peek() {
@@ -2044,7 +2170,7 @@ impl Lexer {
                         self.mode = Mode::Formatting;
                         self.in_format_expr = true;
                         self.open_strings.push(StrKind::Backtick(nested));
-                        return LexResult::new(LexItem::CString(cur), pos);
+                        return self.put_string(cur, pos);
                     }
                 }
                 Some(&'}') => {
@@ -2060,7 +2186,7 @@ impl Lexer {
                     if !self.escape_seq(&mut cur) {
                         self.backtick_strip.pop();
                         self.err(Level::Fatal, "Backtick string not correctly terminated");
-                        return Lexer::none();
+                        return self.put_none();
                     }
                 }
                 Some(&c) => {
@@ -2071,7 +2197,7 @@ impl Lexer {
                     if !self.advance_line() {
                         self.backtick_strip.pop();
                         self.err(Level::Fatal, "Backtick string not correctly terminated");
-                        return Lexer::none();
+                        return self.put_none();
                     }
                     // Same dedent, same place: a segment after a hole is still made of
                     // the literal's own lines.
@@ -2103,47 +2229,38 @@ impl Lexer {
     }
 
     /// A number written as decimal digits alone — the usual one — read off the line
-    /// without building its text.  `None`, with nothing consumed, when something follows
+    /// without building its text.  `false`, with nothing consumed, when something follows
     /// the digits that could belong to the literal (a fraction, an exponent, a separator,
     /// a base marker, a suffix) or when the value is out of range: [`Self::number`] then
     /// reads it in full and says what is wrong with it.
-    fn decimal(&mut self, pos: Position) -> Option<LexResult> {
+    fn decimal(&mut self, pos: Position) -> bool {
         let (digits, after) = self.iter.digits();
         if matches!(after, Some(b'.' | b'_' | b'a'..=b'z' | b'A'..=b'Z')) {
-            return None;
+            return false;
         }
-        let start_zero = *digits.first()? == b'0';
+        let Some(&first) = digits.first() else {
+            return false;
+        };
+        let start_zero = first == b'0';
         let len = digits.len();
         let mut value: u64 = 0;
         for &digit in digits {
-            value = value
-                .checked_mul(10)?
-                .checked_add(u64::from(digit - b'0'))?;
+            let Some(next) = value
+                .checked_mul(10)
+                .and_then(|v| v.checked_add(u64::from(digit - b'0')))
+            else {
+                return false;
+            };
+            value = next;
         }
         if value > i64::MAX as u64 {
-            return None;
+            return false;
         }
         self.iter.step_over(len);
         self.position.pos += len as u32;
         self.plain = u32::try_from(len).ok();
-        Some(self.ret_number(value, pos, start_zero))
-    }
-
-    fn get_identifier(&mut self) -> String {
-        let mut string = String::new();
-        while let Some(&ident) = self.iter.peek() {
-            if ident.is_ascii_lowercase()
-                || ident.is_ascii_uppercase()
-                || ident.is_ascii_digit()
-                || ident == '_'
-            {
-                string.push(ident);
-                self.next_char();
-            } else {
-                break;
-            }
-        }
-        string
+        self.ret_number(value, pos, start_zero);
+        true
     }
 
     /// Scan a run of digits and return the digit string (with any `_`
@@ -2210,10 +2327,10 @@ impl Lexer {
 
     /// Parse a number for the lexer.
     #[expect(clippy::too_many_lines, reason = "inherited")]
-    fn number(&mut self) -> LexResult {
-        let pos = self.position;
-        if let Some(plain) = self.decimal(pos) {
-            return plain;
+    fn number(&mut self) {
+        let pos = self.token_start();
+        if self.decimal(pos) {
+            return;
         }
         let (mut val, int_groups) = self.get_number();
         // L11 thousands-grouping lint: warn (but still accept) when decimal `_`
@@ -2317,7 +2434,7 @@ impl Lexer {
             let (part, _) = self.get_number();
             if part.is_empty() {
                 self.err(Level::Error, "Problem parsing float");
-                return Lexer::none();
+                return self.put_none();
             }
             val += &part;
         }
@@ -2336,7 +2453,7 @@ impl Lexer {
             let (exp, _) = self.get_number();
             if exp.is_empty() {
                 self.err(Level::Error, "Problem parsing float");
-                return Lexer::none();
+                return self.put_none();
             }
             val += &exp;
         }
@@ -2371,16 +2488,16 @@ impl Lexer {
             if let Some('f') = self.iter.peek() {
                 self.next_char();
                 if let Ok(r) = val.parse::<f32>() {
-                    LexResult::new(LexItem::Single(r), pos)
+                    self.put(LexItem::Single(r), pos)
                 } else {
                     self.err(Level::Error, "Problem parsing single float");
-                    LexResult::new(LexItem::Single(0.0), pos)
+                    self.put(LexItem::Single(0.0), pos)
                 }
             } else if let Ok(r) = val.parse::<f64>() {
-                LexResult::new(LexItem::Float(r, val.starts_with('0')), pos)
+                self.put(LexItem::Float(r, val.starts_with('0')), pos)
             } else {
                 self.err(Level::Error, "Problem parsing float");
-                LexResult::new(LexItem::Float(0.0, val.starts_with('0')), pos)
+                self.put(LexItem::Float(0.0, val.starts_with('0')), pos)
             }
         } else if let Some(short) = val.strip_prefix("0x") {
             let res = if let Some(r) = hex_parse(short) {
@@ -2443,7 +2560,7 @@ impl Lexer {
         }
     }
 
-    fn ret_number(&mut self, r: u64, p: Position, start_zero: bool) -> LexResult {
+    fn ret_number(&mut self, r: u64, p: Position, start_zero: bool) {
         // Post-2c round 10c: `integer` is 8 bytes.  Values > i64::MAX
         // (impossible to represent in i64) are rejected; values up to
         // i32::MAX are emitted as LexItem::Integer, larger values as
@@ -2458,11 +2575,11 @@ impl Lexer {
                 Level::Error,
                 "Integer literal out of range (exceeds i64::MAX)",
             );
-            LexResult::new(LexItem::Integer(0, start_zero), p)
+            self.put(LexItem::Integer(0, start_zero), p)
         } else if r > i32_max {
-            LexResult::new(LexItem::Long(r), p)
+            self.put(LexItem::Long(r), p)
         } else {
-            LexResult::new(LexItem::Integer(r as u32, start_zero), p)
+            self.put(LexItem::Integer(r as u32, start_zero), p)
         }
     }
 
@@ -2581,8 +2698,10 @@ impl Lexer {
         self.memory.clear();
         self.replay_return = None;
         self.link = 0;
-        self.links = Rc::new(RefCell::new(0));
+        self.links = Rc::new(Cell::new(0));
         self.iter = LineCursor::default();
+        self.line_at = 0;
+        self.next_line_at = 0;
         self.mode = Mode::Code;
         self.cont();
     }
@@ -2746,7 +2865,7 @@ impl Lexer {
 
     /// Debug feature to check the amount of currently in use links
     pub fn count_links(&self) -> u32 {
-        *self.links.borrow()
+        self.links.get()
     }
 
     /// Return the currently found lexer element.
@@ -2772,6 +2891,15 @@ impl Lexer {
         self.plain.map(|len| len as usize)
     }
 
+    /// Byte offset, in the text this lexer reads, of the place the token
+    /// [`peek`](Self::peek) answers was read at: where its `position` stands (for a
+    /// `"…"` literal, its first content byte).  Meaningful for a token read from the
+    /// source of a text handed over whole; a look-ahead's replay has none.
+    #[must_use]
+    pub fn peek_offset(&self) -> usize {
+        self.token_at
+    }
+
     fn end(&mut self) {
         self.peek = LexResult {
             has: LexItem::None,
@@ -2782,7 +2910,7 @@ impl Lexer {
     /// Continue the lexer to the next step.
     pub fn cont(&mut self) {
         // Are we at the live edge (scanning fresh) rather than replaying the memory
-        // buffer?  Capture it BEFORE `next()`, because `next()` bumps `self.link` when
+        // buffer?  Capture it BEFORE the scan, because the scan bumps `self.link` when
         // it replays — so testing `link == memory.len()` afterwards cannot tell a
         // freshly-scanned token (append it to the buffer) apart from a replay of the
         // LAST buffered token (already in the buffer).  Conflating them re-appended a
@@ -2792,20 +2920,9 @@ impl Lexer {
         // Where the source the parser has consumed stops, captured before the cursor
         // runs on to the next token — see `report_pos`.
         self.prev_end = self.position;
-        let Some(n) = self.next() else {
+        if !self.scan() {
             self.end();
             return;
-        };
-        let mut res = n;
-        while matches!(&res.has, LexItem::Token(t) if *t == self.comment) {
-            while self.iter.peek().is_some() {
-                self.iter.next();
-            }
-            let Some(n) = self.next() else {
-                self.end();
-                return;
-            };
-            res = n;
         }
         // Remember a token freshly scanned at the edge.  A replay (`at_edge` was false)
         // is already in the buffer and must not be appended twice — two look-aheads
@@ -2813,16 +2930,17 @@ impl Lexer {
         // (`link_revert_repeatable_same_region`).
         if at_edge && self.link == self.memory.len() {
             if self.count_links() > 0 {
-                self.memory.push(self.recorded(&res));
+                let read = self.recorded(&self.peek);
+                self.memory.push(read);
                 self.link += 1;
-            } else {
+            } else if !self.memory.is_empty() {
                 self.memory.clear();
                 self.link = 0;
             }
         } else if at_edge && self.link < self.memory.len() {
             // A mid-scan QUEUE: reading `1..` or `n.v.0.0`, the number lexer emits two
             // tokens from one scan — it pushes the follow-up (`..` / `.`) into the buffer
-            // and returns the NUMBER as the live token.  So the number is the one token
+            // and leaves the NUMBER as the live token.  So the number is the one token
             // the buffer does not hold, and a revert to any point before it replays the
             // follow-up alone: `i + 1..` came back as `i`, `+`, `..`, and the `+` was left
             // with one operand (loft#1164).
@@ -2832,17 +2950,16 @@ impl Lexer {
             // makes the buffer say what was actually read.  Whether or not a link is open:
             // a link taken ON the number reads its position from this record, and without
             // it a revert resumed after the follow-up (`x: 2..=5` came back as `= 5`).
-            self.memory.insert(self.link, self.recorded(&res));
+            let read = self.recorded(&self.peek);
+            self.memory.insert(self.link, read);
             self.link += 1;
         }
-        self.peek = res;
     }
 
     /// Create a link to the current lexer position, it can be used to revert to
     /// this position later.
     pub fn link(&mut self) -> Link {
-        let cur: u32 = *self.links.borrow();
-        self.links.replace(cur + 1);
+        self.links.set(self.links.get() + 1);
         if self.memory.is_empty() {
             self.memory.push(self.recorded(&self.peek));
             self.link += 1;
@@ -3317,8 +3434,8 @@ mod test {
     fn array(lexer: &mut Lexer) -> Vec<LexItem> {
         let mut rest = Vec::new();
         rest.push(lexer.peek().has.clone());
-        while let Some(res) = lexer.next() {
-            rest.push(res.has);
+        while lexer.scan() {
+            rest.push(lexer.peek().has.clone());
         }
         rest
     }
@@ -3383,6 +3500,63 @@ mod test {
             .peek()
             .has
             .clone()
+    }
+
+    /// A comment is not a token: the scan steps over it, however many lines of it there
+    /// are, and the token before it stays the one a number asks about.
+    #[test]
+    fn a_comment_is_stepped_over_where_it_is_scanned() {
+        // `x.` then a comment, then `0.5`: still the field `0` of `x`, then `.5`.
+        validate_cont(
+            "x. // note\n0.5 // tail\n// a whole line\ny",
+            &[
+                LexItem::Identifier("x".to_string()),
+                LexItem::Token("."),
+                LexItem::Integer(0, true),
+                LexItem::Token("."),
+                LexItem::Integer(5, false),
+                LexItem::Identifier("y".to_string()),
+            ],
+        );
+        // Fifty thousand comment lines are fifty thousand steps of one loop.
+        let long = "// c\n".repeat(50_000) + "z";
+        let l = Lexer::from_str(&long, "long");
+        assert_eq!(l.peek().has, LexItem::Identifier("z".to_string()));
+        assert_eq!(l.peek().position.line, 50_001);
+        // A lexicon's own marker, and a lexicon without one.
+        let cfg = Lexer::from_str_with("a # b c\nd", "cfg", LexConfig::config(&["="], "#"));
+        assert_eq!(cfg.peek().has, LexItem::Identifier("a".to_string()));
+        let mut cfg = cfg;
+        cfg.cont();
+        assert_eq!(cfg.peek().has, LexItem::Identifier("d".to_string()));
+    }
+
+    /// [`Lexer::peek_offset`] is where the token stands in the text, in BYTES: after a
+    /// multi-byte character, on a later line, and for a literal at its first content byte.
+    #[test]
+    fn a_token_reports_the_byte_it_was_read_at() {
+        // `{` 0 · `"é"` 1-4, content at 2 · `:` 5 · `12` 7 · `,` 9 · line 2 starts at 11 ·
+        // `"k"` 13-15, content at 14 · `:` 17 · `true` 18 · `}` 22.
+        let mut l = Lexer::from_str_with("{\"é\": 12,\n  \"k\" :true}", "json", LexConfig::json());
+        let mut read = Vec::new();
+        while l.peek().has != LexItem::None {
+            read.push((l.peek().has.clone(), l.peek_offset()));
+            l.cont();
+        }
+        assert_eq!(
+            read,
+            vec![
+                (LexItem::Token("{"), 0),
+                (LexItem::CString("é".to_string()), 2),
+                (LexItem::Token(":"), 5),
+                (LexItem::Integer(12, false), 7),
+                (LexItem::Token(","), 9),
+                (LexItem::CString("k".to_string()), 14),
+                (LexItem::Token(":"), 17),
+                (LexItem::Identifier("true".to_string()), 18),
+                (LexItem::Token("}"), 22),
+            ]
+        );
     }
 
     /// [`Lexer::peek_plain`] answers a token's source length exactly when the source spells

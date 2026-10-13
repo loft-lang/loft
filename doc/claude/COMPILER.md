@@ -144,6 +144,14 @@ Special case: `1..4` tokenises as `Integer(1)`, `Token("..")`, `Integer(4)` — 
 
 **That case emits TWO tokens from ONE scan**, and it is the only place that does. Having read `1..`, the number lexer cannot return both, so it returns the `Integer` as the live token and QUEUES the `..` in the replay buffer. A number that ends at a field dot (`n.v.0.0`, `r.0.x`) does the same with a `.`. Both tokens must reach the buffer — see the invariant under Backtracking below.
 
+### The lookahead slot
+
+The lexer runs one token ahead: `peek` holds the next token and `cont()` replaces it. Every scanner — `number`, `string`, the token and word paths of `scan_once` — ends by writing its token into `peek` itself (`put`, `put_string`, `put_identifier`); none hands a `LexResult` back through its callers. The token before is released first, so the new one is built where it is kept. A scanner that hands its token back by value costs two more copies of it, each read back before its own writes have settled — measurably the largest part of a token's cost (`bench/portal/analysis/over-9x.md`, J10).
+
+A word is looked up as a keyword while it is still a slice of the line (`LineCursor::word`); a keyword names the lexicon's own text and only an identifier is copied out. The comment marker is recognised where a token is: the scan skips the rest of the line and starts over (`Scanned::Comment`), with `peek` unchanged — so the token a number asks about (`x.0` is a field, `0.5` is not) is still the one before the comment, and a long comment block is a loop, not a recursion.
+
+`Lexer::peek_offset()` answers the byte offset the peeked token was read at, in the text the lexer reads: exact for a text handed over whole (`Lexer::from_str_with`), which is what the JSON reader reports its error offsets from. A token served from the replay buffer has none. Guards: `lexer::test::a_comment_is_stepped_over_where_it_is_scanned`, `lexer::test::a_token_reports_the_byte_it_was_read_at`.
+
 ### Plain tokens
 
 A literal of plain text and a number of decimal digits alone are the usual spellings, and the lexer reads each in one piece. A literal's text up to the first quote, backslash, control character or — where strings interpolate — brace is copied as one slice (`LineCursor::plain_run`); decimal digits are folded straight off the line (`Lexer::decimal`). Every other spelling takes the general path (the per-character branches of `string`, and `number`), which owns every diagnostic: `decimal` consumes nothing when a fraction, an exponent, a separator, a base marker or a suffix follows the digits, or when the value is out of range.
