@@ -518,15 +518,44 @@ impl Output<'_> {
         {
             // A fn-ref dispatch's arm is handed `_farg_N`, which the dispatch already bound to
             // the tuple (`@FR-R-FnRefValue`).
-            if matches!(v.unspan(), Value::RawExpr(_))
-                || super::hoist::tuple_arg_ready(
-                    v,
-                    tp,
-                    &self.value_records.fns,
-                    &self.value_record_locals,
-                )
-            {
+            if matches!(v.unspan(), Value::RawExpr(_)) {
                 return self.output_code_inner(w, v);
+            }
+            // `@FR-N-Road` — a NULLABLE tuple parameter takes the fields and then whether the
+            // argument is there (`@FR-N-Store`: a null handed in is absent in the callee).
+            let presence = self
+                .value_records
+                .types
+                .get(&tp)
+                .and_then(super::hoist::ValueTuple::presence);
+            // A `null` argument — written, or a parameter's default — is the absent tuple:
+            // every field's null, and for a nullable parameter the presence word `false`.
+            if (matches!(v.unspan(), Value::Null) || super::hoist::is_null_sentinel(self.data, v))
+                && let Some(layout) = self.value_records.types.get(&tp)
+            {
+                let absent = layout.absent();
+                return write!(w, "{absent}");
+            }
+            match super::hoist::arg_tuple_form(
+                self.data,
+                self.def_nr,
+                &self.value_records,
+                &self.value_record_locals,
+                v,
+                tp,
+            ) {
+                Some(false) => return self.output_code_inner(w, v),
+                // A surely present dense tuple, widened.
+                Some(true) => {
+                    write!(w, "{{ let __wd = ")?;
+                    self.output_code_inner(w, v)?;
+                    write!(w, "; (")?;
+                    for i in 0..presence.unwrap_or(0) {
+                        write!(w, "__wd.{i}, ")?;
+                    }
+                    return write!(w, "true) }}");
+                }
+                None => {}
             }
             // A record VARIABLE is read field by field as the variable — so a `(R-RecPtr)`
             // view reads through its held address, as the callee's own reads would have.
@@ -536,11 +565,31 @@ impl Output<'_> {
                 || super::hoist::sub_record(self.data, v)
                     .is_some_and(|(root, _, _)| self.value_record_locals.contains_key(&root))
             {
-                return self.output_record_tuple(w, tp, v);
+                let Some(n) = presence else {
+                    return self.output_record_tuple(w, tp, v);
+                };
+                write!(w, "{{ let __wd = ")?;
+                self.output_record_tuple(w, tp, v)?;
+                write!(w, "; (")?;
+                for i in 0..n {
+                    write!(w, "__wd.{i}, ")?;
+                }
+                write!(w, "(")?;
+                self.output_code_inner(w, v)?;
+                return write!(w, ").rec != 0) }}");
             }
             write!(w, "{{ let __tp: DbRef = ")?;
             self.output_code_inner(w, v)?;
             write!(w, "; ")?;
+            if let Some(n) = presence {
+                write!(w, "let __wd = ")?;
+                self.output_record_tuple(w, tp, &Value::RawExpr("__tp".to_string()))?;
+                write!(w, "; (")?;
+                for i in 0..n {
+                    write!(w, "__wd.{i}, ")?;
+                }
+                return write!(w, "__tp.rec != 0) }}");
+            }
             self.output_record_tuple(w, tp, &Value::RawExpr("__tp".to_string()))?;
             return write!(w, " }}");
         }

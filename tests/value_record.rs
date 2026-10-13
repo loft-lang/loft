@@ -471,3 +471,132 @@ fn a_nullable_result_that_joins_a_dense_leaf_returns_its_tuple() {
     let _ = fa::remove_file(&out);
     let _ = fa::remove_file(&off);
 }
+
+/// The signature `rust` declares for `name`: the parameters after `cell`, then the return
+/// type, as one line.
+fn signature(rust: &str, name: &str) -> String {
+    let line = rust
+        .lines()
+        .find(|l| l.starts_with(&format!("fn {name}(")))
+        .unwrap_or_else(|| panic!("{name} was not emitted"));
+    let sig = line.split(" {").next().unwrap_or(line);
+    sig.replace("cell: &std::cell::UnsafeCell<Stores>, ", "")
+        .replace("mut var_", "")
+        .replacen(&format!("fn {name}"), "", 1)
+}
+
+/// `(N-Road)` over `(R-ValueLocal)` (loft#1993): a `p: S?` of a small no-heap record crosses
+/// a call as `(fields…, bool)`, the presence word last, as `p: S` crosses as the tuple — and
+/// a parameter the tuple cannot serve keeps its reference, as a dense one does.
+const PARAM_CELLS: &str =
+    "tests/scripts/1993-a-nullable-record-parameter-crosses-as-its-fields.loft";
+const PARAM_EXPECTED: &[(&str, &str)] = &[
+    ("n_q1", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_q2", "(p: (i64, bool)) -> i64"),
+    ("n_q3", "(p: (i64, bool)) -> i64"),
+    ("n_q4i", "(q: (i64, bool)) -> i64"),
+    ("n_q4", "(p: (i64, bool), k: i64) -> i64"),
+    ("n_q5", "(p: (i64, bool)) -> i64"),
+    ("n_q6", "(p: (i64, bool)) -> (i64, bool)"),
+    (
+        "n_q7",
+        "(p: (i64, f64, bool, i64, bool), __work_1: &mut String) -> Str",
+    ),
+    ("n_q8", "(p: (i64, bool), q: (i64, bool)) -> i64"),
+    (
+        "n_q9",
+        "(p: (i64, f64, i64, bool), __work_1: &mut String) -> Str",
+    ),
+    ("t_1S_add", "(self: (i64,), o: (i64, bool)) -> i64"),
+    ("n_q11", "(a: (i64, bool)) -> (i64, bool)"),
+    (
+        "n_q12",
+        "(p: (i64, bool), q: (i64, bool), c: u8) -> (i64, bool)",
+    ),
+    ("n_q13", "(p: (i64, i64, bool)) -> i64"),
+    // The body writes a record of the parameter's type.
+    ("n_d1", "(p: DbRef, w: DbRef) -> i64"),
+    // The record owns heap.
+    ("n_d2", "(p: DbRef, ___acc_1: &mut String) -> Str"),
+    // Arms of a fn-ref dispatch.
+    ("n_d3a", "(p: DbRef, f: f64) -> f64"),
+    ("n_d3b", "(p: DbRef, f: f64) -> f64"),
+];
+
+#[test]
+fn a_nullable_record_parameter_crosses_as_its_fields_and_presence_word() {
+    let out = std::env::temp_dir().join("loft_value_record_param.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(PARAM_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in PARAM_EXPECTED {
+        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+    }
+    // A record argument is read with whether it is there, and `null` is the absent tuple.
+    assert!(
+        rust.contains(".rec != 0) })") && rust.contains("n_q2(cell, (i64::MIN, false))"),
+        "a call site hands a nullable parameter its presence"
+    );
+    // The switch keeps every nullable parameter a reference.
+    let off = std::env::temp_dir().join("loft_value_record_param_off.rs");
+    let rust = emit(&src, &off, &[("LOFT_NO_NULLABLE_VALUE_RECORD", "1")]);
+    for (name, want) in PARAM_EXPECTED {
+        assert!(
+            !signature(&rust, name).contains("bool)"),
+            "{name}: LOFT_NO_NULLABLE_VALUE_RECORD=1 must keep `{want}` off the presence word"
+        );
+    }
+    let _ = fa::remove_file(&out);
+    let _ = fa::remove_file(&off);
+}
+
+/// `(N-Store)` over the register road (loft#1994): a dense slot whose value can reach a `S?`
+/// carries its presence — the parameter handed back, the `-> S` that returns its parameter
+/// or a view — and a dense parameter that is only read stays the dense tuple.
+const STORE_CELLS: &str =
+    "tests/scripts/1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft";
+const STORE_EXPECTED: &[(&str, &str)] = &[
+    ("n_w1", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_id2", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_w2", "(k: i64) -> (i64, bool)"),
+    ("n_id3", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_w3", "(c: u8) -> (i64, bool)"),
+    ("n_w4", "(p: (i64, bool), c: u8) -> (i64, bool)"),
+    ("n_w5", "(p: (i64, bool), n: i64) -> (i64, bool)"),
+    ("n_w6", "(p: (i64, bool), c: u8) -> (i64, bool)"),
+    ("n_id7", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_twice", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_w7", "(c: u8) -> (i64, bool)"),
+    ("n_head", "(v: DbRef) -> (i64, bool)"),
+    ("n_w8", "(v: DbRef, c: u8) -> (i64, bool)"),
+    ("n_w9", "(p: (i64, bool)) -> i64"),
+    ("n_w10i", "(q: (i64, bool)) -> u8"),
+    ("n_w10", "(p: (i64, bool)) -> u8"),
+    // Control: read only, so the dense tuple.
+    ("n_w11", "(p: (i64,)) -> i64"),
+    ("n_id12", "(p: (i64, bool)) -> (i64, bool)"),
+    ("n_add2", "(p: (i64, bool), q: (i64, bool)) -> i64"),
+    ("n_w12", "(c: u8) -> (i64, bool)"),
+    // Control: a build is surely present, so its maker keeps the dense tuple.
+    ("n_g", "(n: i64) -> (i64,)"),
+];
+
+#[test]
+fn a_dense_slot_that_can_reach_a_nullable_carries_its_presence() {
+    let out = std::env::temp_dir().join("loft_value_record_store.rs");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(STORE_CELLS);
+    let rust = emit(&src, &out, &[]);
+    for (name, want) in STORE_EXPECTED {
+        assert_eq!(signature(&rust, name), *want, "{name}: its signature");
+    }
+    // The one dense tuple that is widened with the constant word is a surely present one —
+    // the lifted result of a build's maker — and a `null` argument is the absent tuple.
+    assert!(
+        rust.contains("n_id2(cell, { let __wd = var___lift_1; (__wd.0, true) })"),
+        "a build's maker is widened where it is handed on"
+    );
+    assert!(
+        rust.contains("n_id2(cell, (i64::MIN, false))"),
+        "a `null` argument is the absent tuple"
+    );
+    let _ = fa::remove_file(&out);
+}

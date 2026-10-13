@@ -702,21 +702,14 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 1.**
 
-- **D-types-33** (open; the tracking issue is loft#1993) — violates `(N-Road)`: τ and τ? take the same lowering.  On <!-- doc-lint: ok -->
-  `--native` a small no-heap record handed BY VALUE crosses the call as its fields when the
-  parameter is `p: S` and as a reference when it is `p: S?`: `(R-ValueLocal)` declines a
-  nullable parameter (`generation/hoist.rs::tuple_param_candidates`).  The pairs are
-  `nullable-param-back` and `nullable-param-copied`, marked `@OPEN`.  The values agree on both
-  backends.
-- **D-types-34** (open; the tracking issue is loft#1994) — violates `(N-Store)`: a stored null reads back as null.  On <!-- doc-lint: ok -->
-  `--native` a `null` stored into a dense record slot that crosses a call as a tuple (a
-  by-value parameter, a `-> S` register return) is PRESENT once that tuple is widened to a
-  `S?`: a dense tuple has no absent spelling, and the widening appends `true`
-  (`fn whole(p: S) -> S? { p }` called `whole(null)` answers `== null` false on `--native`
-  and true on the interpreter).  A VIEW widened at the same position reads its presence off
-  the reference and is exact.
+- **D-types-35** (open; the tracking issue is loft#1997) — violates `(N-Store)`: a stored null reads back as null.  A <!-- doc-lint: ok -->
+  whole-record COPY of a dense record slot that holds null (`fn f(p: S) -> S? { x = p; x }`
+  called `f(null)`) is a PRESENT record of zeros on the interpreter and on `--native`'s record
+  road: the bind mints its destination and copies unconditionally, where a `S?` source is
+  copied under a presence test.  `--native`'s register road carries the parameter's presence
+  and answers null, so the backends differ on that program.
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,

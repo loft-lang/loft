@@ -3581,8 +3581,13 @@ impl Output<'_> {
                 }
             }
             // `@FR-R-ValueRecord`'s nullable clause — a `-> S?` body's build is PRESENT: the
-            // presence word follows the fields.
-            let nullable = super::hoist::is_nullable_layout(tp);
+            // presence word follows the fields.  So is a build of a dense body that stands
+            // where a nullable tuple is expected (`hoist::widen_marks`).
+            let nullable = super::hoist::is_nullable_layout(tp)
+                || self
+                    .value_leaves
+                    .widen
+                    .contains_key(&(std::ptr::from_ref(bl) as usize));
             if nullable {
                 write!(w, ", true")?;
             }

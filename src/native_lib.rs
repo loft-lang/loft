@@ -844,13 +844,14 @@ fn shared_bridge_wrapper(
                 let _ = writeln!(body, "    let {var}: {ty} = {read};");
                 slot += 1;
                 // `(R-ValueLocal)` — a TUPLE PARAMETER: the C boundary hands a record, the
-                // inner fn takes its fields (`hoist::tuple_reads`, the live arm's spelling).
+                // inner fn takes its fields (`hoist::layout_reads`, the live arm's spelling)
+                // and, for a nullable layout, whether the record is there.
                 if let Some(layout) = value_rec
                     .param_type(d_nr, i)
                     .and_then(|tp| value_rec.types.get(&tp))
                 {
-                    let reads = crate::generation::hoist::tuple_reads(
-                        &layout.fields,
+                    let reads = crate::generation::hoist::layout_reads(
+                        layout,
                         &var,
                         "unsafe { &*cell.get() }",
                     );

@@ -1,0 +1,261 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULLABLE RECORD PARAMETER CROSSES A CALL AS ITS FIELDS (`@FR-N-Road`, `@FR-R-ValueLocal`,
+// @C144, loft#1993).  On `--native` a small no-heap record handed by value to a `p: S?` is
+// received as the tuple of its fields followed by a PRESENCE word, exactly as a `p: S` is
+// received as the tuple alone: the call site reads the fields and whether the argument names
+// a record, and the callee reads the parameter as a `S?` value local.
+//
+// The interpreter keeps the record and is the VALUES oracle: every cell asserts a
+// hand-computed value, so a native answer that differs fails on native alone.
+// tests/value_record.rs pins which parameters are received as tuples.
+//
+// @falsified-at: none — receipt recorded below once derived
+
+struct S { a: integer }
+struct M { a: integer, x: float, ok: boolean, b: integer }
+struct In { x: integer, y: float }
+struct O { i: In, k: integer }
+struct W { inner: S, k: integer }
+struct T { a: integer, name: text }
+struct K { a: integer, v: integer }
+struct Db { all: hash<K[a]> }
+
+fn g(n: integer) -> S {
+  S { a: n }
+}
+
+fn gn(n: integer) -> S? {
+  if n < 0 {
+    null
+  } else {
+    S { a: n }
+  }
+}
+
+// q1 — handed straight back.
+fn q1(p: S?) -> S? {
+  p
+}
+
+// q2 — read under a discharge.
+fn q2(p: S?) -> integer {
+  p.a ?? 40
+}
+
+// q3 — both presence tests.
+fn q3(p: S?) -> integer {
+  r = 0;
+  if p == null {
+    r += 1;
+  }
+  if p {
+    r += 10;
+  }
+  r
+}
+
+// q4 — handed on to another `S?` parameter.
+fn q4i(q: S?) -> integer {
+  q.a ?? -7
+}
+
+fn q4(p: S?, k: integer) -> integer {
+  q4i(p) + k
+}
+
+// q5 — every spelling of the argument (the calls are in `main`).
+fn q5(p: S?) -> integer {
+  if p == null {
+    -5
+  } else {
+    p.a ?? -9
+  }
+}
+
+// q6 — copied into a local, the local returned.
+fn q6(p: S?) -> S? {
+  x = p;
+  x
+}
+
+// q7 — four fields: every tuple index, and the absent tuple's nulls.
+fn q7(p: M?) -> text {
+  "{p.a ?? -1} {p.x ?? -1.0} {p.ok ?? false} {p.b ?? -1} {p == null}"
+}
+
+// q8 — two nullable parameters handed the same record.
+fn q8(p: S?, q: S?) -> integer {
+  (p.a ?? 1) * 100 + (q.a ?? 2)
+}
+
+// q9 — a nested inline record.
+fn q9(p: O?) -> text {
+  "{p.i.x ?? -1} {p.i.y ?? -1.0} {p.k ?? -1} {p == null}"
+}
+
+// q10 — a dense receiver beside a nullable parameter.
+fn add(self: S, o: S?) -> integer {
+  self.a + (o.a ?? 1000)
+}
+
+// q11 — a defaulted parameter, discharged with a record literal.
+fn q11(a: S? = null) -> S {
+  a ?? S { a: 7 }
+}
+
+// q12 — selected between two nullable parameters.
+fn q12(p: S?, q: S?, c: boolean) -> S? {
+  if c {
+    p
+  } else {
+    q
+  }
+}
+
+// q13 — a keyed record.
+fn q13(p: K?) -> integer {
+  p.v ?? -1
+}
+
+// q14 — a local of a function that returns `S`, joined from a build and the nullable
+// parameter.
+fn q14(self: S, o: S?) -> S {
+  d = if o == null {
+    S { a: 0 }
+  } else {
+    o
+  };
+  S { a: self.a - d.a }
+}
+
+// q15 — a callee that hands back a VIEW of its first parameter, bound to a record local of
+// a function whose own parameters are tuples.
+fn left(p: S, _o: S?) -> S {
+  p
+}
+
+fn q15(a: S, b: S) -> integer {
+  r = left(a, b);
+  r.a = r.a + 1;
+  r.a * 100 + a.a
+}
+
+// d1 — must stay a reference: the body writes a record of the parameter's type, which the
+// parameter may view.
+fn d1(p: S?, w: S) -> integer {
+  w.a = 9;
+  p.a ?? -1
+}
+
+// d2 — must stay a reference: the record owns heap.
+fn d2(p: T?) -> text {
+  p.name ?? "none"
+}
+
+// d3 — must stay a reference: reached through a fn-ref, whose arms share one argument list.
+// The signature is this cell's alone (a `float` beside the record), so the dispatch reaches
+// no other maker.
+fn d3a(p: S?, f: float) -> float {
+  (p.a ?? 40) as float + f
+}
+
+fn d3b(p: S?, f: float) -> float {
+  (p.a ?? 50) as float - f
+}
+
+fn d3(r: fn(S?, float) -> float, p: S?) -> float {
+  r(p, 0.5)
+}
+
+fn main() {
+  x = S { a: 41 };
+  y = S { a: 42 };
+
+  a1 = q1(x);
+  b1 = q1(null);
+  assert((a1.a ?? -1) == 41 && a1 != null, "q1 present {a1.a ?? -1}");
+  assert((b1.a ?? -1) == -1 && b1 == null, "q1 absent {b1.a ?? -1}");
+  // The result is a copy: a write through it leaves the argument alone.
+  a1.a = 70;
+  assert(x.a == 41, "q1 copy {x.a}");
+
+  assert(q2(x) == 41 && q2(null) == 40, "q2 {q2(x)} {q2(null)}");
+  assert(q3(x) == 10 && q3(null) == 1, "q3 {q3(x)} {q3(null)}");
+  assert(q4(x, 100) == 141 && q4(null, 100) == 93, "q4 {q4(x, 100)} {q4(null, 100)}");
+
+  // q5: a record local, `null`, two `S?` record locals, a nullable call's result present and
+  // absent, a dense call's result, the three calls written in place, a field, an element and
+  // an element past the end.
+  n: S? = null;
+  m: S? = S { a: 43 };
+  h = gn(3);
+  z = gn(-1);
+  d = g(4);
+  w = W { inner: S { a: 21 }, k: 2 };
+  v: vector<S> = [S { a: 7 }];
+  assert(q5(x) == 41 && q5(null) == -5 && q5(n) == -5 && q5(m) == 43, "q5 records");
+  assert(q5(h) == 3 && q5(z) == -5 && q5(d) == 4, "q5 locals {q5(h)} {q5(z)} {q5(d)}");
+  assert(q5(g(5)) == 5 && q5(gn(6)) == 6 && q5(gn(-1)) == -5, "q5 calls");
+  assert(q5(w.inner) == 21 && q5(v[0]) == 7 && q5(v[9]) == -5, "q5 places {q5(w.inner)}");
+
+  a6 = q6(x);
+  b6 = q6(null);
+  assert((a6.a ?? -1) == 41 && a6 != null && b6 == null, "q6 {a6.a ?? -1}");
+
+  mm = M { a: 7, x: 0.25, ok: true, b: 8 };
+  assert(q7(mm) == "7 0.25 true 8 false", "q7 present {q7(mm)}");
+  assert(q7(null) == "-1 -1 false -1 true", "q7 absent {q7(null)}");
+
+  assert(q8(x, x) == 4141 && q8(null, x) == 141, "q8 {q8(x, x)} {q8(null, x)}");
+  assert(q8(x, null) == 4102 && q8(null, null) == 102, "q8 absent {q8(x, null)}");
+
+  o = O { i: In { x: 4, y: 2.5 }, k: 12 };
+  assert(q9(o) == "4 2.5 12 false" && q9(null) == "-1 -1 -1 true", "q9 {q9(o)} {q9(null)}");
+
+  assert(x.add(y) == 83 && x.add(null) == 1041, "q10 {x.add(y)} {x.add(null)}");
+
+  e0 = q11();
+  e1 = q11(x);
+  assert(e0.a == 7 && e1.a == 41, "q11 {e0.a} {e1.a}");
+
+  a12 = q12(x, y, true);
+  b12 = q12(x, null, false);
+  c12 = q12(null, y, false);
+  assert((a12.a ?? -1) == 41 && b12 == null && (c12.a ?? -1) == 42, "q12 {a12.a ?? -1}");
+
+  db = Db { all: [K { a: 3, v: 30 }, K { a: 9, v: 90 }] };
+  assert(q13(db.all[9]) == 90 && q13(db.all[4]) == -1, "q13 {q13(db.all[9])}");
+
+  a14 = x.q14(y);
+  b14 = x.q14(null);
+  assert(a14.a == -1 && b14.a == 41, "q14 {a14.a} {b14.a}");
+
+  // q15: `r` is a copy of `a` — 41 + 1 — and the write through it leaves `a` alone.
+  assert(q15(x, y) == 4241 && x.a == 41, "q15 {q15(x, y)} {x.a}");
+
+  // 3000 calls, a third of them absent: 2000 * 7 present, 1000 * 1 absent.
+  total = 0;
+  for i in 0..3000 {
+    c: S? = null;
+    if i % 3 != 0 {
+      c = v[0];
+    }
+    total += if c == null { 1 } else { q2(c) };
+  }
+  assert(total == 15000, "loop {total}");
+
+  // d1: the write through `w` is seen through `p` when both name one record.
+  assert(d1(x, y) == 41 && y.a == 9, "d1 apart {y.a}");
+  assert(d1(x, x) == 9 && x.a == 9, "d1 aliased {x.a}");
+
+  u = T { a: 1, name: "nm" };
+  assert(d2(u) == "nm" && d2(null) == "none", "d2");
+
+  f = S { a: 42 };
+  assert(d3(d3a, f) == 42.5 && d3(d3a, null) == 40.5, "d3a {d3(d3a, f)}");
+  assert(d3(d3b, f) == 41.5 && d3(d3b, null) == 49.5, "d3b {d3(d3b, f)}");
+
+  println("ok");
+}

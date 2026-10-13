@@ -1343,6 +1343,50 @@ Three pairs were rewritten so that `??` stands on a plain read with a scalar def
 `??` over a lifted call, or with a record or vector default, mints and frees on channels the
 report cannot tell from a road.
 
+## The presence walk of 2026-10-13 (loft#1993, loft#1994)
+
+Two entries the `(N-Road)` walk below left open closed on one mechanism.
+
+`D-types-34` was the wrong answer: a dense tuple has no absent spelling, so a null stored
+into a dense parameter was gone once the call site read the record into the tuple, and the
+callee that handed it back as `S?` appended a constant `true`.  The matrix (38 programs,
+value and presence hand-computed, both backends) found the eight shapes that answered
+"present" for a null: the parameter handed back, at an arm, at a `return`, in a `match`, a
+`S?` local or a nullable call as the argument, and two hops through `-> S` functions.
+
+`D-types-33` was the road: a `p: S?` kept its reference where `p: S` crossed as fields.
+
+The fix for the first is the mechanism of the second.  A parameter can carry the nullable
+layout — its call sites read whether the argument names a record — so a dense parameter
+whose value can reach a `S?` takes that layout too, and so does a `-> S` function whose
+result is not surely present.  Nothing is widened with a constant except a tuple that is
+surely present: a build, or what is made only of builds
+(`hoist::surely_present`, `hoist::promote_presence`).
+
+The corpus run over the 47 files whose native code the change touches found one defect the
+walk below had shipped and its gate had not seen: in a function that returns `S`, a local
+joined from a record literal and a `-> S?` call took the nullable layout while the literal's
+arm was emitted as the body's own dense tuple, so the function did not compile on `--native`.
+Every cell of that walk's matrix stood in a `-> S?` body.  A build that stands where a
+nullable tuple is expected is widened now, whatever its body returns
+(`1990-…loft` cell `j22`).
+
+Found beside it and open: a whole-record COPY of a dense slot that holds null is a present
+record of zeros on the interpreter and on the record road (`D-types-35`, loft#1997).  The
+two cells of the matrix that copy such a slot answer null on the register road and zeros on
+the interpreter.
+
+Closed by it:
+
+* **D-types-33** *(opened 2026-10-13, CLOSED 2026-10-13; loft#1993)* — `(N-Road)`: a `p: S?`
+  record parameter was passed by reference where `p: S` crossed the call as its fields.
+  Guard `1993-a-nullable-record-parameter-crosses-as-its-fields.loft`; pairs
+  `nullable-param-back`, `nullable-param-read`, `nullable-param-copied`.
+* **D-types-34** *(opened 2026-10-13, CLOSED 2026-10-13; loft#1994)* — `(N-Store)`: a null
+  stored into a dense record slot read back PRESENT on `--native` once the tuple it crossed
+  as was widened to a `S?`.  Guard
+  `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft`.
+
 ## The `(N-Road)` walk of 2026-10-13 (loft#1990)
 
 `D-types-32` named one shape: a `-> S?` whose result joins a built record with a dense view
