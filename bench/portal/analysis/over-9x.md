@@ -286,6 +286,17 @@ they are measured on the front-end allocation pins as well as on this row.
 The tree's share (J9) is the found-field set, the walk, the field-list clone, the tree's drop
 and most of what is left of the allocator's.
 
+**How a change to the lexer or the JSON reader is checked.**  Two byte-for-byte comparisons
+of the build before against the build after, neither of which a unit test replaces.  For the
+compiler: `loft introspect` (IR, bytecode, diagnostics) of every file under `tests/scripts`,
+`tests/docs`, `tests/comparisons` and every `bench/*/bench.loft`, both binaries run from one
+directory — the dump prints the stdlib's path.  For `T.parse`: a Rust program over
+`loft::json::parse_with` that prints the whole result (`{:?}`) for each of a set of seed
+documents and a few thousand mutations of each, drawn from a fixed generator, in both
+dialects; it is compiled with `hand_price.sh` against each build's `libloft.rlib`.  Most of
+the mutations are refused, which is the point: the messages and byte offsets `x#errors`
+reports are the part of the contract no bench row reads.
+
 **What J4 taught.**  `Lexer::next` and `cont` were read as the cost of the character iterator;
 they are the cost per TOKEN.  With the cursor in, their shares are what they were, and their
 hottest instructions are the token's `String` being built and the result moved — J8.  The
