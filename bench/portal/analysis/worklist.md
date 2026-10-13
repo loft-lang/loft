@@ -117,7 +117,6 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 7.33 | `binary_read` | X8 | no figure |
 | 7.32 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.16 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
-| 6.70 | cbor `encode` | X2 (priced −20 %), X9 | ≈ 5.4×, then X9 |
 | 6.69 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.28 | `invert` | X10 | ≈ 4× (*est.*) |
 | 6.14 | `flow_layout_full` (7.92 before S1c) | X2, X3 | ≈ 5× (*est.*) |
@@ -125,8 +124,9 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.92 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43–0.44 ms) | X9 | no figure |
 | 5.85 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
 | 5.70 | `slope_path_with_undo` | § 5's record-build row names what is left | no figure |
+| 5.52 | cbor `encode` (6.70 before X2's owned-store half) | X9 | ≈ 5× (*est.*) |
 | 5.40 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
-| 5.17 | `mat4_mul` (unstable: 5.6–7.3 ms on one emission and one instruction count, across builds and launches) | S2 | **0.63×**, priced |
+| 5.17 | `mat4_mul` (unstable: 5.6–7.3 ms on one emission and one instruction count, across builds and launches; zttext `materialise` swings the same way, 189–230 µs, and is not on this list) | S2 | **0.63×**, priced |
 | 5.11 | `forms_upto` | X12 | no figure |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
@@ -171,7 +171,7 @@ before it; the slowest row goes first; a step with no price is priced before it 
 8. **`mapfile_to_painted` (7.16×), `reload_and_record` (6.69×)** — X5 d: P3 first, P4 with
    its range proof.
 9. **`binary_read` (7.33×)** — price X8, build.
-10. **cbor `encode` (6.70×)** — X9, on what X2 left of the row.
+10. **cbor `encode` (5.52×)** — X9, on what X2 left of the row.
 11. **`invert` (6.28×)** — price X10 on `insert_text` (4.84×, the row with the largest
     share of it), build.
 12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
