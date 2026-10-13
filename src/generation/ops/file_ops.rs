@@ -23,13 +23,19 @@ pub struct ReadFileEmitter;
 
 impl OpEmitter for ReadFileEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        let shape = crate::keys::typed_read_enabled()
-            .then(|| int_read_shape(ctx.output, args))
-            .flatten();
-        let Some((width, signed)) = shape else {
+        let Some((width, signed)) = typed_read(ctx.output, args) else {
             return DefaultEmitter.emit(ctx, args);
         };
         crate::rewrite_census::fired("R-TypedRead", 1);
+        // `@FR-R-FileHold` — inside a loop that holds this file's cursor, the guard reads.
+        let guard = match args.first().map(Value::unspan) {
+            Some(Value::Var(f)) => ctx.output.file_hold(*f).map(str::to_owned),
+            _ => None,
+        };
+        let callee_text = match &guard {
+            Some(guard) => format!("{guard}.read::<{width}, {signed}>("),
+            None => format!("OpReadFileInt::<{width}, {signed}>("),
+        };
         let mut buf: Vec<u8> = Vec::new();
         DefaultEmitter.emit(
             &mut EmitCtx {
@@ -44,13 +50,25 @@ impl OpEmitter for ReadFileEmitter {
         match call.find(callee) {
             Some(at) => write!(
                 ctx.w,
-                "{}OpReadFileInt::<{width}, {signed}>({}",
+                "{}{callee_text}{}",
                 &call[..at],
                 &call[at + callee.len()..]
             ),
+            // A read the guard does not serve would move the record behind the hold.
+            None if guard.is_some() => Err(io::Error::other(
+                "a held file's read was not emitted as a call of OpReadFile",
+            )),
             None => ctx.w.write_all(&buf),
         }
     }
+}
+
+/// [`int_read_shape`] under the rule's switch: the one question the emitter and
+/// `@FR-R-FileHold`'s gate (`file_hold::held_file`) both ask of a read.
+pub(crate) fn typed_read(out: &Output, args: &[Value]) -> Option<(usize, bool)> {
+    crate::keys::typed_read_enabled()
+        .then(|| int_read_shape(out, args))
+        .flatten()
 }
 
 /// `(width, signed)` when the read lands a fixed-width integer whole in an `i64` local, else

@@ -2377,6 +2377,46 @@ generic one's, arm for arm, so the answer cannot differ; what moved is when it i
 **BUILT** (`src/generation/ops/file_ops.rs`, runtime `OpReadFileInt`, `LOFT_NO_TYPED_READ`;
 guard `tests/scripts/a-fixed-width-integer-read-is-typed-at-its-site.loft`).
 
+### A loop that alone sees its file holds the cursor
+
+```
+  (R-FileHold)   In a loop L and a variable f of type `File`: when f is the ONE variable
+                 named in L whose type can hold a `File` — the type itself, a record with a
+                 `File` field at any depth, a collection or tuple of one, a function value,
+                 an iterator, a struct-enum — and every mention of f in L is the file
+                 operand of an `(R-TypedRead)` read, and L holds no call through a function
+                 value, no function value built, no `yield` and no parallel body, then the
+                 reads of f in L move `#index` and `#next` in two locals, and f's record is
+                 given both when L is left: at its end, a `break`, a `return` out of it and
+                 an unwinding panic alike.  Each read decodes as `(R-TypedRead)` does; a
+                 short read leaves its local unchanged and `#next` where it was.  While f's
+                 record names no open handle or no position — a file not read yet, an
+                 absent one, a directory — nothing is held: the read goes through the
+                 record, which opens the handle, and the hold begins after it.  A loop
+                 inside L reads through L's hold.  Native only.
+```
+
+**In words.**  A read moves the cursor in the `File` record: it resolves the record's store,
+reads its format, handle and `#next`, and writes `#index` and `#next` back, per value.  What
+makes those writes necessary is somebody else looking at the record between two reads, and
+that is a question about TYPES: a `File` record is reached through a value whose type holds a
+`File`, and a call reaches only what its arguments reach.  So when f is the only such value the
+loop names, and the loop names it only to read, nothing in the loop — a callee included — can
+ask for the cursor, seek, write or close the file, or free the record; the record is observed
+again at the earliest when the loop is left, and it is correct there.  The gate counts, it does
+not search: a second `File` variable declines even when it is another file, since two
+parameters may name one record.  The holder is a guard value whose drop writes the record, so
+no way out of the loop is a case the generator enumerates.
+
+**BUILT** (`generation::file_hold::held_file` the gate, `Output::begin_file_hold` /
+`end_file_hold` the loop's block, `ops::file_ops::ReadFileEmitter` the read, runtime
+`codegen_runtime::FileCursor`; `LOFT_NO_FILE_HOLD=1`).  The falsifier is
+`LOFT_HOIST_VERIFY=1`: every held read and the drop assert that the record still says what
+it said when the hold began.  The reader that stands behind a one-statement helper
+(`read_one(bf)`) is in the loop by `(R-InlineLeaf)`'s reader clause, on the builds that run
+the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, pins
+`tests/file_hold.rs`.
+
 ### A walk of a scalar literal builds no vector
 
 ```
@@ -4776,6 +4816,28 @@ build is checked by `tests/leaf_inline.rs`.  Built: gridmesh `emit_segment` 17.5
 (8.25× → 3.40× its Rust twin, native), the probe of four parallel appends 15 → 6 ms.
 `LOFT_NO_INLINE_APPENDER=1` keeps every appender's calls.  Guard:
 `tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft`.
+
+### `(R-InlineLeaf)` takes a reader
+
+```
+  (R-InlineLeaf) + A leaf with a scalar or scalar-tuple result may take `File` parameters,
+                 when its body names each only as the file operand of a read into one of
+                 its own scalar locals (`OpReadFile(f, OpCreateStack(t), n, τ)` as a
+                 statement of a block).  At a call whose file arguments are plain
+                 variables holding the record and whose arguments call no user code, it is
+                 replaced by its body with each file read in place; any other call stays.
+                 A local a read writes through its address carries no range into the
+                 body's reductions.
+```
+
+**In words.** Applied by: `leaf_inline::variables` (the `File` parameters), `read` (the
+statement), `file_uses` (nothing but reads), `appender_site` (the call) and `expand` (the
+file in place).  Why it pays: behind a call the file is an argument, and a loop that hands
+its file to a call cannot hold the cursor (`(R-FileHold)`); inlined, the read is the loop's
+own.  A leaf that asks its file for anything else — `bf#next`, a seek, a text read — keeps
+its call.  The call-site restriction is the appender clause's, for the same reason.
+`LOFT_NO_INLINE_READER=1` keeps every reader's calls.  Guard:
+`tests/scripts/a-file-read-loop-holds-its-cursor.loft`, pins `tests/leaf_inline.rs`.
 
 ### A text discharge that assigns a local is read straight into it
 

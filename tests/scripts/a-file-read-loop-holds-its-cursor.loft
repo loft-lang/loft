@@ -1,0 +1,384 @@
+// `@FR-R-FileHold` — a loop that reads scalars from one `File`, and in which nothing else
+// can see that `File`'s record, moves the cursor in locals and gives the record `#index` and
+// `#next` back when the loop is left.  Every cell reads a file of sixteen little-endian i16
+// values `3 * i - 50` (bytes CE FF D1 FF D4 FF D7 FF …; sum -440) and asserts the VALUES it
+// read and the CURSOR the record shows afterwards — the cursor is what a hold that missed
+// an exit, or held a file something else could see, gets wrong.
+//
+// Predictions: h1–h5, h10, h11, h13 (inner loop), h16–h18, h20 and h23 (inner loop) hold;
+// h6 (`f#next` read in the loop), h7 (a seek in it), h8 (a second name for the file), h9 (a
+// call handed the file), h12 (two files), h15 (a structure with a file in it, written in
+// the loop) and h24 (a `return` in the loop that releases the file) do not; h25's inner loop,
+// in a generator, holds.  The
+// interpreter holds nothing and is the oracle.  `LOFT_NO_FILE_HOLD=1` and
+// `LOFT_HOIST_VERIFY=1` must answer identically; a reader behind a helper (h1, h4, h18) is
+// held where the helper is inlined, which plain `--native` does not do — `tests/file_hold.rs`
+// runs these cells on the release build.
+
+const N = 16;
+
+fn path(tag: text) -> text { "{temp_dir() ?? "/tmp"}/loft_file_hold_{tag}.bin" }
+
+/// `N` values `3 * i + base` as little-endian i16.
+fn write_i16(p: text, base: integer) {
+  w = file(p);
+  w.set_file_size(0);
+  w#format = LittleEndian;
+  for i in 0..N { w += ((3 * i + base) as i16?) ?? (0 as i16); }
+}
+
+fn open(tag: text) -> File {
+  p = path(tag);
+  write_i16(p, -50);
+  f = file(p);
+  f#format = LittleEndian;
+  f
+}
+
+fn total(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v { s += x; }
+  s
+}
+
+fn read_one(bf: File) -> integer { bf#read(2) as i16 as integer }
+
+fn read_all(bf: File, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  while i < n { out += [read_one(bf)]; i = i + 1; }
+  out
+}
+
+// h1 — the reader behind a helper, in a `while`: five values, the cursor after them.
+fn h1() {
+  f = open("h1");
+  v = read_all(f, 5);
+  println("h1 {v} {f#next ?? -1} {f#index ?? -1}");
+  assert("{v}" == "[-50,-47,-44,-41,-38]" && f#next == 10 && f#index == 8, "h1");
+}
+
+// h2 — the read written in a counted loop: all sixteen, the cursor at the end of the file.
+fn h2() {
+  f = open("h2");
+  out: vector<integer> = [];
+  for _i in 0..N { out += [f#read(2) as i16 as integer]; }
+  println("h2 {len(out)} {total(out)} {f#next ?? -1} {f#index ?? -1}");
+  assert(len(out) == 16 && total(out) == -440 && f#next == 32 && f#index == 30, "h2");
+}
+
+// h3 — a `break` leaves the loop after the fifth read; the next read is the sixth value.
+fn h3() {
+  f = open("h3");
+  s = 0;
+  for _i in 0..N {
+    x = f#read(2) as i16 as integer;
+    s += x;
+    if x > -40 { break; }
+  }
+  at = f#next ?? -1;
+  was = f#index ?? -1;
+  y = f#read(2) as i16 as integer;
+  println("h3 {s} {at} {was} {y} {f#next ?? -1}");
+  assert(s == -220 && at == 10 && was == 8 && y == -35 && f#next == 12, "h3");
+}
+
+fn first_over(bf: File, limit: integer) -> integer {
+  for _i in 0..N {
+    x = bf#read(2) as i16 as integer;
+    if x > limit { return x; }
+  }
+  0
+}
+
+// h4 — a `return` from inside the loop: the caller sees the cursor after the third read.
+fn h4() {
+  f = open("h4");
+  x = first_over(f, -45);
+  at = f#next ?? -1;
+  was = f#index ?? -1;
+  y = read_one(f);
+  println("h4 {x} {at} {was} {y}");
+  assert(x == -44 && at == 6 && was == 4 && y == -41, "h4");
+}
+
+// h5 — twenty reads of sixteen values: four nulls, and the cursor stays at the end, where
+// the last read started.
+fn h5() {
+  f = open("h5");
+  s = 0;
+  nulls = 0;
+  for _i in 0..20 {
+    x = f#read(2) as i16;
+    if x == null { nulls += 1; } else { s += x as integer; }
+  }
+  println("h5 {s} {nulls} {f#next ?? -1} {f#index ?? -1}");
+  assert(s == -440 && nulls == 4 && f#next == 32 && f#index == 32, "h5");
+}
+
+// h6 — the cursor read inside the loop that moves it: 2 4 6 8.
+fn h6() {
+  f = open("h6");
+  s = 0;
+  at: vector<integer> = [];
+  for _i in 0..4 {
+    s += f#read(2) as i16 as integer;
+    at += [f#next ?? -1];
+  }
+  println("h6 {s} {at}");
+  assert(s == -182 && "{at}" == "[2,4,6,8]", "h6");
+}
+
+// h7 — a seek inside the loop: the values at bytes 0, 8, 16 and 24.
+fn h7() {
+  f = open("h7");
+  out: vector<integer> = [];
+  for k in 0..4 {
+    f#next = k * 8;
+    out += [f#read(2) as i16 as integer];
+  }
+  println("h7 {out} {f#next ?? -1} {f#index ?? -1}");
+  assert("{out}" == "[-50,-38,-26,-14]" && f#next == 26 && f#index == 24, "h7");
+}
+
+/// `a` and `b` name ONE file record when the caller passes the same file twice.
+fn read_and_ask(a: File, b: File) -> text {
+  s = 0;
+  at: vector<integer> = [];
+  for _i in 0..3 {
+    s += a#read(2) as i16 as integer;
+    at += [b#next ?? -1];
+  }
+  "{s} {at}"
+}
+
+// h8 — a second name for the same file record, asked for the cursor inside the loop.
+fn h8() {
+  f = open("h8");
+  r = read_and_ask(f, f);
+  println("h8 {r}");
+  assert(r == "-141 [2,4,6]", "h8");
+}
+
+fn where_is(bf: const File) -> integer { bf#next ?? -1 }
+
+// h9 — a call handed the file inside the loop sees the cursor after each read.
+fn h9() {
+  f = open("h9");
+  s = 0;
+  at: vector<integer> = [];
+  for _i in 0..3 {
+    s += f#read(2) as i16 as integer;
+    at += [where_is(f)];
+  }
+  println("h9 {s} {at}");
+  assert(s == -141 && "{at}" == "[2,4,6]", "h9");
+}
+
+// h10 — the file already open when the loop starts: one read before it, four in it.
+fn h10() {
+  f = open("h10");
+  x = f#read(2) as i16 as integer;
+  out: vector<integer> = [];
+  for _i in 0..4 { out += [f#read(2) as i16 as integer]; }
+  println("h10 {x} {out} {f#next ?? -1} {f#index ?? -1}");
+  assert(x == -50 && "{out}" == "[-47,-44,-41,-38]" && f#next == 10 && f#index == 8, "h10");
+}
+
+// h11 — every width and sign, and the other byte order, each in its own loop over the
+// first bytes CE FF D1 FF D4 FF D7 FF …
+fn h11() {
+  a = open("h11a");
+  u8s: vector<integer> = [];
+  for _i in 0..4 { u8s += [a#read(1) as u8 as integer]; }
+  b = open("h11b");
+  i8s: vector<integer> = [];
+  for _i in 0..4 { i8s += [b#read(1) as i8 as integer]; }
+  c = open("h11c");
+  u16s: vector<integer> = [];
+  for _i in 0..2 { u16s += [c#read(2) as u16 as integer]; }
+  d = open("h11d");
+  d#format = BigEndian;
+  be: vector<integer> = [];
+  for _i in 0..2 { be += [d#read(2) as i16 as integer]; }
+  e = open("h11e");
+  i32s: vector<integer> = [];
+  for _i in 0..2 { i32s += [e#read(4) as i32 as integer]; }
+  g = open("h11g");
+  i64s: vector<integer> = [];
+  for _i in 0..2 { i64s += [g#read(8) as integer]; }
+  println("h11 {u8s} {i8s} {u16s} {be} {i32s} {i64s}");
+  println("h11 {a#next ?? -1} {b#next ?? -1} {c#next ?? -1} {d#next ?? -1} {e#next ?? -1} {g#next ?? -1} {g#index ?? -1}");
+  assert("{u8s}" == "[206,255,209,255]" && "{i8s}" == "[-50,-1,-47,-1]", "h11 bytes");
+  assert("{u16s}" == "[65486,65489]" && "{be}" == "[-12545,-11777]", "h11 shorts");
+  assert("{i32s}" == "[-3014706,-2621484]", "h11 i32");
+  assert("{i64s}" == "[-11259183755034674,-7881432494112806]", "h11 i64");
+  assert(a#next == 4 && b#next == 4 && c#next == 4 && d#next == 4 && e#next == 8, "h11 cursors");
+  assert(g#next == 16 && g#index == 8, "h11 i64 cursor");
+}
+
+// h12 — two files read in one loop: each keeps its own cursor.
+fn h12() {
+  f = open("h12a");
+  pb = path("h12b");
+  write_i16(pb, 100);
+  g = file(pb);
+  g#format = LittleEndian;
+  s = 0;
+  t = 0;
+  for _i in 0..3 {
+    s += f#read(2) as i16 as integer;
+    t += g#read(2) as i16 as integer;
+  }
+  x = g#read(2) as i16 as integer;
+  println("h12 {s} {t} {x} {f#next ?? -1} {g#next ?? -1}");
+  assert(s == -141 && t == 309 && x == 109 && f#next == 6 && g#next == 8, "h12");
+}
+
+// h13 — an inner loop reads two values a row; the outer loop asks for the cursor after it.
+fn h13() {
+  f = open("h13");
+  rows: vector<integer> = [];
+  at: vector<integer> = [];
+  for _r in 0..3 {
+    s = 0;
+    for _c in 0..2 { s += f#read(2) as i16 as integer; }
+    rows += [s];
+    at += [f#next ?? -1];
+  }
+  println("h13 {rows} {at}");
+  assert("{rows}" == "[-97,-85,-73]" && "{at}" == "[4,8,12]", "h13");
+}
+
+struct Source {
+  input: File,
+  count: integer
+}
+
+// h15 — the file a field of a structure the loop also writes: read through a local name.
+fn h15() {
+  p = path("h15");
+  write_i16(p, -50);
+  src = Source { input: file(p), count: 0 };
+  g = src.input;
+  g#format = LittleEndian;
+  s = 0;
+  for _i in 0..5 {
+    s += g#read(2) as i16 as integer;
+    src.count += 1;
+  }
+  println("h15 {s} {src.count} {g#next ?? -1}");
+  assert(s == -220 && src.count == 5 && g#next == 10, "h15");
+}
+
+// h16 — two widths in one loop: an i16 then an i32, twice.
+fn h16() {
+  f = open("h16");
+  out: vector<integer> = [];
+  for _i in 0..2 {
+    out += [f#read(2) as i16 as integer];
+    out += [f#read(4) as i32 as integer];
+  }
+  println("h16 {out} {f#next ?? -1} {f#index ?? -1}");
+  assert("{out}" == "[-50,-2818095,-41,-2228262]" && f#next == 12 && f#index == 8, "h16");
+}
+
+// h17 — a loop that runs no pass: a file never read has no position, an open one keeps its.
+fn h17() {
+  f = open("h17");
+  n = 0;
+  s = 0;
+  for _i in 0..n { s += f#read(2) as i16 as integer; }
+  fresh = f#next ?? -1;
+  x = f#read(2) as i16 as integer;
+  for _i in 0..n { s += f#read(2) as i16 as integer; }
+  println("h17 {s} {fresh} {x} {f#next ?? -1} {f#index ?? -1}");
+  assert(s == 0 && fresh == -1 && x == -50 && f#next == 2 && f#index == 0, "h17");
+}
+
+// h18 — the helper's value masked where it is read: CE D1 D4 D7.
+fn h18() {
+  f = open("h18");
+  s = 0;
+  for _i in 0..4 { s += read_one(f) & 255; }
+  println("h18 {s} {f#next ?? -1}");
+  assert(s == 842 && f#next == 8, "h18");
+}
+
+// h20 — a `continue` past the odd values of the first eight.
+fn h20() {
+  f = open("h20");
+  s = 0;
+  for _i in 0..8 {
+    x = f#read(2) as i16 as integer;
+    if x % 2 != 0 { continue; }
+    s += x;
+  }
+  println("h20 {s} {f#next ?? -1} {f#index ?? -1}");
+  assert(s == -164 && f#next == 16 && f#index == 14, "h20");
+}
+
+// h23 — the variable names another file on each outer pass; the inner loop reads two.
+fn h23() {
+  pa = path("h23a");
+  write_i16(pa, -50);
+  pb = path("h23b");
+  write_i16(pb, 100);
+  s = 0;
+  ends: vector<integer> = [];
+  for p in [pa, pb] {
+    f = file(p);
+    f#format = LittleEndian;
+    for _i in 0..2 { s += f#read(2) as i16 as integer; }
+    ends += [f#next ?? -1];
+  }
+  println("h23 {s} {ends}");
+  assert(s == 106 && "{ends}" == "[4,4]", "h23");
+}
+
+fn own_first_over(p: text, limit: integer) -> integer {
+  f = file(p);
+  f#format = LittleEndian;
+  for _i in 0..N {
+    x = f#read(2) as i16 as integer;
+    if x > limit { return x; }
+  }
+  0
+}
+
+// h24 — the function owns the file and returns from inside the loop: the return releases
+// the file, which is a use of it in the loop.  Limits -45, -42, … find -44, -41, -38, -35, -32.
+fn h24() {
+  p = path("h24");
+  write_i16(p, -50);
+  s = 0;
+  for k in 0..5 { s += own_first_over(p, -45 + k * 3); }
+  println("h24 {s}");
+  assert(s == -190, "h24");
+}
+
+fn row_sums(p: text) -> iterator<integer> {
+  f = file(p);
+  f#format = LittleEndian;
+  for _r in 0..3 {
+    s = 0;
+    for _c in 0..2 { s += f#read(2) as i16 as integer; }
+    yield s;
+  }
+}
+
+// h25 — a generator reads two values a step, in a loop of its own between two yields.
+fn h25() {
+  p = path("h25");
+  write_i16(p, -50);
+  out: vector<integer> = [];
+  for s in row_sums(p) { out += [s]; }
+  println("h25 {out}");
+  assert("{out}" == "[-97,-85,-73]", "h25");
+}
+
+fn main() {
+  h1(); h2(); h3(); h4(); h5(); h6(); h7(); h8(); h9(); h10(); h11(); h12(); h13();
+  h15(); h16(); h17(); h18(); h20(); h23(); h24(); h25();
+  println("ok");
+}

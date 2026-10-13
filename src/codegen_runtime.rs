@@ -2849,6 +2849,183 @@ pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(
     st.set_long(file.rec, file.pos + 16, next_pos + nread as i64);
 }
 
+/// `@FR-R-FileHold` — one `File`'s cursor held across a loop that reads it and lets nothing
+/// else see its record.  [`OpReadFileInt`] reads the record's format, handle and `#next` and
+/// writes `#index` and `#next` back for every value; held, a value is its bytes off the
+/// buffered handle and two locals moved, and the record gets both fields when the guard
+/// drops — at every way out of the loop, a `break`, a `return` and an unwinding panic alike.
+///
+/// Nothing is held (`handle` is `i32::MIN`) while the record names no open handle or no
+/// position — a file not read yet, an absent one, a directory: each read then goes through
+/// [`OpReadFileInt`], which opens the handle, and the guard looks again.  `CHECK` is the
+/// falsifier (`LOFT_HOIST_VERIFY=1`): every read and the drop assert that the record still
+/// says what it said when the hold began, so a loop that moved the cursor behind the guard
+/// stops there and not at a wrong value later.
+#[cfg(not(host_fs))]
+pub struct FileCursor<'c, const CHECK: bool> {
+    cell: &'c std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+    handle: i32,
+    little_endian: bool,
+    /// Where the last read started: the record's `#index`.
+    last: i64,
+    /// Where the next read lands: the record's `#next`.
+    next: i64,
+    /// What the record said when the hold began, for `CHECK`.
+    seen: (i64, i64),
+}
+
+#[cfg(not(host_fs))]
+impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
+    #[must_use]
+    #[inline]
+    pub fn hold(cell: &'c std::cell::UnsafeCell<Stores>, file: DbRef) -> Self {
+        let mut held = FileCursor {
+            cell,
+            file,
+            handle: i32::MIN,
+            little_endian: false,
+            last: 0,
+            next: 0,
+            seen: (0, 0),
+        };
+        held.take();
+        held
+    }
+
+    /// Read the record into the guard, when it names an open handle and a position.
+    #[inline]
+    fn take(&mut self) {
+        self.handle = i32::MIN;
+        if self.file.rec == 0 {
+            return;
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store(&self.file);
+        let format = st.get_byte(self.file.rec, self.file.pos + 32, 0);
+        let open_ref = st.get_i32_raw(self.file.rec, self.file.pos + 28);
+        let next = st.get_long(self.file.rec, self.file.pos + 16);
+        if open_ref == i32::MIN
+            || next == i64::MIN
+            || (format != 1 && format != 2 && format != 3 && format != 5)
+        {
+            return;
+        }
+        self.little_endian = format == 2;
+        self.last = st.get_long(self.file.rec, self.file.pos + 8);
+        self.next = next;
+        self.seen = (self.last, next);
+        self.handle = open_ref;
+    }
+
+    /// The record must still say what the hold read from it.
+    #[cold]
+    #[inline(never)]
+    fn check(&self) {
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store(&self.file);
+        let now = (
+            st.get_long(self.file.rec, self.file.pos + 8),
+            st.get_long(self.file.rec, self.file.pos + 16),
+        );
+        let handle = st.get_i32_raw(self.file.rec, self.file.pos + 28);
+        assert!(
+            now == self.seen && handle == self.handle,
+            "LOFT_HOIST_VERIFY: a held file cursor moved behind its hold (#index, #next were {:?}, now {:?}; handle was {}, now {handle})",
+            self.seen,
+            now,
+            self.handle,
+        );
+    }
+
+    /// [`OpReadFileInt`] with its own parameters, so the generator only renames the callee;
+    /// the guard's own cell and file are the ones read.
+    #[inline]
+    pub fn read<const W: usize, const SIGNED: bool>(
+        &mut self,
+        _cell: &std::cell::UnsafeCell<Stores>,
+        _file: DbRef,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        if self.handle == i32::MIN {
+            self.through::<W, SIGNED>(val, bytes, db_tp);
+            return;
+        }
+        if CHECK {
+            self.check();
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        self.last = self.next;
+        if let Some(b) = stores
+            .files
+            .get_mut(self.handle as usize)
+            .and_then(|x| x.as_mut())
+            .and_then(loft_file_take::<W>)
+        {
+            *val = decode_int::<W, SIGNED>(&b, self.little_endian);
+            self.next += W as i64;
+        }
+    }
+
+    /// A read with nothing held: through the record, which is then looked at again.
+    #[cold]
+    #[inline(never)]
+    fn through<const W: usize, const SIGNED: bool>(
+        &mut self,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        OpReadFileInt::<W, SIGNED>(self.cell, self.file, val, bytes, db_tp);
+        self.take();
+    }
+}
+
+#[cfg(not(host_fs))]
+impl<const CHECK: bool> Drop for FileCursor<'_, CHECK> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.handle == i32::MIN {
+            return;
+        }
+        if CHECK {
+            self.check();
+        }
+        let stores: &mut Stores = unsafe { &mut *self.cell.get() };
+        let st = stores.store_mut(&self.file);
+        st.set_long(self.file.rec, self.file.pos + 8, self.last);
+        st.set_long(self.file.rec, self.file.pos + 16, self.next);
+    }
+}
+
+/// The host-bridge build holds nothing: every read goes through [`OpReadFileInt`].
+#[cfg(host_fs)]
+pub struct FileCursor<'c, const CHECK: bool> {
+    cell: &'c std::cell::UnsafeCell<Stores>,
+    file: DbRef,
+}
+
+#[cfg(host_fs)]
+impl<'c, const CHECK: bool> FileCursor<'c, CHECK> {
+    #[must_use]
+    pub fn hold(cell: &'c std::cell::UnsafeCell<Stores>, file: DbRef) -> Self {
+        FileCursor { cell, file }
+    }
+
+    pub fn read<const W: usize, const SIGNED: bool>(
+        &mut self,
+        _cell: &std::cell::UnsafeCell<Stores>,
+        _file: DbRef,
+        val: &mut i64,
+        bytes: i64,
+        db_tp: i32,
+    ) {
+        OpReadFileInt::<W, SIGNED>(self.cell, self.file, val, bytes, db_tp);
+    }
+}
+
 /// The host-bridge build reads through [`OpReadFile`]; the specialisation is the native file's.
 #[cfg(host_fs)]
 pub fn OpReadFileInt<const W: usize, const SIGNED: bool>(

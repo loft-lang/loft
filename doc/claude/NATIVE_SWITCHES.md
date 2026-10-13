@@ -395,6 +395,16 @@ fixed-width integer whole in an `integer` local (`f#read(2) as i16`) calls
 from the file's buffer (`binary_read` 2.54 → 1.91 ms).  The first bisect step for a wrong
 value or a wrong `#next` out of such a read; the interpreter's read is the reference.
 
+**`LOFT_NO_FILE_HOLD=1`** (`@FR-R-FileHold`, default-ON, generation time, `--native` only)
+sends every scalar file read through the `File` record again — with it off, a loop that
+reads one file and names nothing else that can hold a `File` moves `#index` and `#next` in a
+guard local (`codegen_runtime::FileCursor`) and writes the record when the loop is left.  The
+first bisect step for a wrong `f#next` or `f#index` after a loop that reads `f`, or a value
+read from the wrong offset inside one.  `LOFT_HOIST_VERIFY=1` is its falsifier: every held
+read and the guard's drop assert that the record still says what it said when the hold began.
+A reader behind a one-statement helper is held only where the helper is inlined
+(`LOFT_NO_INLINE_READER`, [BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md)).
+
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that

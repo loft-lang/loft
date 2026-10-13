@@ -892,6 +892,7 @@ impl Output<'_> {
             Value::Loop(lp) => {
                 // A loop nested inside this one is asked anew (`distinct_version`).
                 self.in_distinct_copy = false;
+                let file_held = self.begin_file_hold(w, lp)?;
                 let hoisted = self.begin_vector_hoist(w, lp)?;
                 // `@FR-R-LoopRecord` — a record local declared inside this loop is declared
                 // here instead, so its store survives the iteration: the per-pass mint takes
@@ -1059,6 +1060,7 @@ impl Output<'_> {
                     write!(w, "}} /*@FR-R-CharWalk*/")?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
+                self.end_file_hold(w, file_held)?;
             }
             Value::Set(var, to) => self.output_set(w, *var, to)?,
             Value::If(test, true_v, false_v) => self.output_if(w, test, true_v, false_v)?,

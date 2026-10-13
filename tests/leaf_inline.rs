@@ -40,12 +40,13 @@ const FIRES: &[(&str, usize, usize, usize, usize)] = &[
     ("n_test_a_tuple_result", 4, 0, 0, 0),
 ];
 
-const SWITCHES: [&str; 5] = [
+const SWITCHES: [&str; 6] = [
     "LOFT_NO_INLINE_LEAF",
     "LOFT_NO_MASK_RANGE",
     "LOFT_NO_SINGLE_USE",
     "LOFT_NO_SCALE_FOLD",
     "LOFT_NO_INLINE_APPENDER",
+    "LOFT_NO_INLINE_READER",
 ];
 
 fn loft(args: &[&str], file: &Path, env: &[(&str, &str)]) -> (String, String, bool) {
@@ -148,6 +149,45 @@ fn the_appender_clause_fires_where_its_cells_say_and_holds_on_the_release_build(
             "--native-release, LOFT_NO_INLINE_APPENDER={off}:\n{out}\n{err}"
         );
     }
+}
+
+const READER_CELLS: &str = "tests/scripts/a-file-read-loop-holds-its-cursor.loft";
+
+/// `@FR-R-InlineLeaf`'s reader clause: where it fires, read off the trace, and that the
+/// interpreter answers the same with the clause off.  What the inlined read is FOR — a
+/// held cursor on the release build — is `tests/file_hold.rs`.
+#[test]
+fn the_reader_clause_fires_where_its_cells_say() {
+    let cells = Path::new(env!("CARGO_MANIFEST_DIR")).join(READER_CELLS);
+    let (out, err, ok) = loft(&["--interpret"], &cells, &[("LOFT_TRACE_INLINE_LEAF", "1")]);
+    assert!(
+        ok && out.trim_end().ends_with("ok"),
+        "the reader cells failed:\n{out}\n{err}"
+    );
+    // `read_one` in `read_all`'s loop, after `first_over` in h4, and under the mask in h18.
+    let fired = err
+        .lines()
+        .filter(|l| l.starts_with("inline-leaf: n_read_one into "))
+        .count();
+    assert_eq!(fired, 3, "n_read_one inlined at {fired} sites:\n{err}");
+    assert!(
+        err.lines()
+            .any(|l| l.starts_with("inline-leaf: n_where_is declined: a reader that uses")),
+        "a body asking its file for the cursor is declined:\n{err}"
+    );
+    let (off, err, ok) = loft(
+        &["--interpret"],
+        &cells,
+        &[
+            ("LOFT_NO_INLINE_READER", "1"),
+            ("LOFT_TRACE_INLINE_LEAF", "1"),
+        ],
+    );
+    assert!(ok && off == out, "LOFT_NO_INLINE_READER=1:\n{off}\n{err}");
+    assert!(
+        !err.contains("inline-leaf: n_read_one into "),
+        "LOFT_NO_INLINE_READER=1 keeps the call:\n{err}"
+    );
 }
 
 #[test]

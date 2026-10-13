@@ -15,6 +15,7 @@ mod coroutine;
 pub mod destination;
 mod dispatch;
 mod emit;
+pub mod file_hold;
 pub mod fnref;
 pub mod hoist;
 pub mod keyed_place;
@@ -1328,6 +1329,9 @@ pub struct Output<'a> {
     /// null sentinel again, so the candidate mints its own on every call.  The bisect step
     /// for a stale or shared scratch vector in a function reached through a function value.
     pub fnref_work_disabled: bool,
+    /// `@FR-R-FileHold` — the files whose cursor an enclosing loop holds, innermost last,
+    /// each with the guard local that holds it.
+    pub file_holds: Vec<(u16, String)>,
     /// Does any definition of the program take a work buffer (`Attribute::work_buffer`)?
     /// Asked once: a program with none lends nothing.
     any_work_buffer: std::cell::OnceCell<bool>,
@@ -2564,6 +2568,7 @@ impl<'a> Output<'a> {
             named_frame: false,
             fnref_work: false,
             fnref_work_disabled: std::env::var("LOFT_NO_FNREF_WORK_BUFFER").is_ok_and(|v| v != "0"),
+            file_holds: Vec::new(),
             any_work_buffer: std::cell::OnceCell::new(),
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
@@ -4980,6 +4985,63 @@ impl Output<'_> {
         self.push_headers.push(push_frame);
         self.mint_push_headers.push(mint_frame);
         Ok(opened)
+    }
+
+    /// `@FR-R-FileHold` — before the loop `lp` is written: when it may read one `File`
+    /// through a held cursor ([`file_hold::held_file`]) and no enclosing loop holds that file
+    /// already, open a block, bind the guard in it and remember it for the reads.  Answers
+    /// whether a block was opened; [`Self::end_file_hold`] closes it after the loop, which is
+    /// where the guard drops and the record gets its cursor back.
+    pub(super) fn begin_file_hold(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<bool> {
+        if self.hoist_disabled || !crate::keys::file_hold_enabled() {
+            return Ok(false);
+        }
+        let typed = |args: &[Value]| ops::file_ops::typed_read(self, args).is_some();
+        let Some(f) = file_hold::held_file(lp, self.data, self.def_nr, &typed) else {
+            return Ok(false);
+        };
+        if self.file_holds.iter().any(|(held, _)| *held == f) {
+            return Ok(false);
+        }
+        self.hoist_counter += 1;
+        let name = format!("__fc_{}", self.hoist_counter);
+        let operand = self.expr_string(&Value::Var(f))?;
+        let check = if self.hoist_verify { "true" } else { "false" };
+        writeln!(
+            w,
+            "{{ //@FR-R-FileHold the file's cursor, held across the loop"
+        )?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {name} = codegen_runtime::FileCursor::<{check}>::hold(cell, {operand});"
+        )?;
+        self.indent(w)?;
+        crate::rewrite_census::fired("R-FileHold", 1);
+        self.file_holds.push((f, name));
+        Ok(true)
+    }
+
+    /// Close what [`Self::begin_file_hold`] opened.
+    pub(super) fn end_file_hold(&mut self, w: &mut dyn Write, opened: bool) -> std::io::Result<()> {
+        if opened {
+            self.file_holds.pop();
+            write!(w, " }}")?;
+        }
+        Ok(())
+    }
+
+    /// The guard that holds `f`'s cursor here, if a loop around this point holds it.
+    pub(crate) fn file_hold(&self, f: u16) -> Option<&str> {
+        self.file_holds
+            .iter()
+            .rev()
+            .find(|(held, _)| *held == f)
+            .map(|(_, name)| name.as_str())
     }
 
     /// Close what [`Self::begin_vector_hoist`] opened.

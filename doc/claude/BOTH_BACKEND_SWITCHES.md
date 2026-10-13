@@ -365,7 +365,10 @@ again keeps the calls (`Data::open_world`).  **`LOFT_NO_INLINE_LEAF=1`** keeps e
 is the first bisect step for a wrong answer out of a small scalar function on either backend;
 **`LOFT_NO_MASK_RANGE=1`**, **`LOFT_NO_SINGLE_USE=1`** and **`LOFT_NO_SCALE_FOLD=1`** keep one
 reduction each; **`LOFT_NO_INLINE_APPENDER=1`** keeps the calls of a void leaf that appends to a
-record parameter's vector fields (the appender clause); **`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
+record parameter's vector fields (the appender clause); **`LOFT_NO_INLINE_READER=1`** keeps
+the calls of a leaf that reads scalars from a `File` parameter (the reader clause — the first
+bisect step for a wrong value or cursor out of a small function that reads a file);
+**`LOFT_TRACE_INLINE_LEAF=1`** names every inlined call, every declined leaf
 and every reduction, per function.
 
 **A constructor's call is its literal (`@FR-R-CtorLiteral`, default-ON, both backends, after

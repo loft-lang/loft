@@ -115,7 +115,6 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 7.55 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
 | 7.44 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.38 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
-| 7.31 | `binary_read` | X8 (priced −43 %) | ≈ 4.2× |
 | 7.01 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
 | 6.67 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.67 | `invert` | X10 | ≈ 4× (*est.*) |
@@ -145,7 +144,8 @@ between 3.5× and 6.9×.
 | X6 | BUILT — `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4), token offsets from the lexer (J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8), each token written where it is kept (J10); over-9x.md § moros `map_json` | `map_json` | measured: 7.44× → 2.68× (J4 −2 %, J8 −12.6 %, J6 and J7 −17 %, J9 −33 %, J5 and J10 −22 %) | the row is under 5× and has left this list; over-9x.md § What is left |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
-| X8 | a file's handle and cursor held in locals across a read loop: the per-value read resolves the File record's store twice, reads three of its fields and writes two; held, a value is two bytes off the buffered file, and the cursor is written back once at the loop's exit | `binary_read` (the whole row is the emitted loop) | PRICED ([x8/price_binary_read.py](x8/price_binary_read.py)): **−43 %** (1.47 → 0.84 ms, 7.31× → ≈ 4.2×), hash unchanged | build: the read stands behind a one-statement callee (`read_one_i16(bf)`), so the rule reads it as `(R-InlineLeaf)` does; the cursor goes back at EVERY exit and before anything that can see the File record (a call handed the file, `f#next`); a short read mid-loop ends the hold |
+| X8 | BUILT — `(R-FileHold)`: a loop that names one `File` and nothing else that can hold one, and names it only to read scalars, moves the cursor in a guard local and writes the record when the loop is left; `(R-InlineLeaf)`'s reader clause puts a one-statement reader (`read_one_i16(bf)`) in the loop | `binary_read` | 1.47 → 0.84 ms, the hand price ([x8/price_binary_read.py](x8/price_binary_read.py)), hash unchanged | [formal/rewrites.md](../../../doc/claude/formal/rewrites.md) |
+| X13 | the cursor kept in the HANDLE while one is open, the record's `#index` and `#next` asked of it: every scalar read on both backends, no gate | every binary read outside a held loop; closes loft#2005 | PRICED: `binary_read` 1.47 → 1.01 ms without the hold; ≈ −17 % is what the hold then adds | a change of the cursor's model — two parser forms, the stdlib's `position` and `seek`, the runtime's cursor sites on both backends and the host bridge |
 | X9 | cbor's byte runs copied as a block; `read_value__d` (17 % of `encode`'s row) | cbor `encode` | *est.* ~10 % | after X2 |
 | X10 | a record whose source is dead is moved, not deep-copied: `(R-Compact)`'s prepend and identity forms, `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | `insert_text` (**60 %**; 4.84× now, under the cut), `invert` (36 %) | named in § 4, no price | hand-price on `insert_text`.  The largest single share on this list; it stands here by its row's ratio, as the cut is ordered |
 | X11 | `graphics`, `drawing`, `text2d`, `stage` and `assets` build on this box again: they resolve dependencies (`mesh3d` 0.1.2 through `drawing`'s lock file, `shapes`) that lack the `pub` fields @C140 requires, and `main`'s own compiler refuses them the same way | `fill_polygon`, and those five libraries' census rows | library work | bump the pins, then re-measure the lane |
@@ -173,8 +173,8 @@ before it; the slowest row goes first; a step with no price is priced before it 
 7. **`arguments/parse` (7.38×)** — X7: read `find_long_opt`, `classify` and `parse` by line.
 8. **`mapfile_to_painted` (7.01×), `reload_and_record` (6.67×)** — X5 d: P3 first, P4 with
    its range proof.
-9. **`binary_read` (7.31×)** — X8 is priced (−43 %): build it.  The largest priced step on
-   the list, so it goes ahead of items 4–8, none of which has a price over 10 %.
+9. **`binary_read`** — X8 is built (1.47 → 0.84 ms).  X13 is what is left for reads outside
+   a held loop.
 10. **cbor `encode` (5.57×)** — X9, on what X2 left of the row.
 11. **`invert` (6.67×)** — price X10 on `insert_text` (4.84×, the row with the largest
     share of it), build.
