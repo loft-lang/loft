@@ -101,33 +101,34 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Seventeen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
-this box); `map_json` (2.68×) and `insert_text` (4.87×) have left the cut, and `mat4_mul`
-reads on the line.  The three `tuple_link_*` rows the file still carries are of routines the
-bench no longer has.  Where each one's time
+Eighteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
+this box); `map_json` (2.68×) has left the cut, and `insert_text` and `mat4_mul` read on
+either side of the line from one run to the next.  The three `tuple_link_*` rows the file
+still carries are of routines the bench no longer has.  Where each one's time
 goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
 for the row at its figure, and a figure marked *est.* was read off a profile and never
 hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 7.60 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
-| 7.54 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
-| 7.48 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
-| 7.33 | `binary_read` | X8 | no figure |
-| 7.32 | `panel_build` | S9 | ≈ 5× (*est.*) |
-| 7.16 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
-| 6.69 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
-| 6.28 | `invert` | X10 | ≈ 4× (*est.*) |
-| 6.14 | `flow_layout_full` (7.92 before S1c) | X2, X3 | ≈ 5× (*est.*) |
+| 7.68 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
+| 7.55 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
+| 7.44 | `panel_build` | S9 | ≈ 5× (*est.*) |
+| 7.38 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
+| 7.31 | `binary_read` | X8 | no figure |
+| 7.01 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
+| 6.67 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
+| 6.67 | `invert` | X10 | ≈ 4× (*est.*) |
+| 6.26 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
-| 5.92 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43–0.44 ms) | X9 | no figure |
-| 5.85 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
-| 5.70 | `slope_path_with_undo` | § 5's record-build row names what is left | no figure |
-| 5.52 | cbor `encode` (6.70 before X2's owned-store half) | X9 | ≈ 5× (*est.*) |
-| 5.40 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
-| 5.17 | `mat4_mul` (unstable: 5.6–7.3 ms on one emission and one instruction count, across builds and launches; zttext `materialise` swings the same way, 189–230 µs, and is not on this list) | S2 | **0.63×**, priced |
-| 5.11 | `forms_upto` | X12 | no figure |
+| 5.79 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43–0.44 ms) | X9 | no figure |
+| 5.75 | `slope_path_with_undo` | § 5's record-build row names what is left | no figure |
+| 5.57 | cbor `encode` (6.70 before X2's owned-store half) | X9 | ≈ 5× (*est.*) |
+| 5.57 | `flow_layout_full` (7.92 before S1c, 6.14 before the text view's own `to_string`) | X3 | ≈ 4.5× (*est.*) |
+| 5.33 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
+| 5.33 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
+| 5.26 | `mat4_mul` (unstable: 5.6–7.3 ms on one emission and one instruction count, across builds and launches; zttext `materialise` swings the same way, 189–230 µs, and is not on this list) | S2 | **0.63×**, priced |
+| 5.15 | `forms_upto` | X12 | no figure |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 One row reaches 3× with everything here built (`rig_world_frame3`); the others land
@@ -158,26 +159,29 @@ before it; the slowest row goes first; a step with no price is priced before it 
    cannot be measured on this box until the five libraries' pins are bumped.
 2. **`truncate_to`** — X1 is built for a record of plain vectors (8.17× → 6.03×).  It did
    not move `panel_build`, whose records own texts.
-3. **`flow_layout_full` (6.14×)** — S1c and X2's owned-store half are built; X2 took cbor
-   `encode` and left this row level.  Re-profile the row and price X3 on what is left.
-4. **`check_request` (7.54×)** — profiled: a flat row, a third of it claims and releases.
+3. **`flow_layout_full` (5.57×)** — S1c and X2's owned-store half are built; X2 took cbor
+   `encode` and left this row level.  Re-profiled: generated 43 % (`slice_runs` 22 %), claim
+   and release 26 %, vector runtime 18 %; the 14 % that was text formatting is gone
+   (`Str::to_string`, § 3 S13).  The run's text borrowed from its call's buffer, never copied
+   to a local, prices at −3.4 % and is dropped.  Next: price X3.
+4. **`check_request` (7.55×)** — profiled: a flat row, a third of it claims and releases.
    Build `(R-DecodeView)`; S8 after its decision (§ 6).
-5. **`field_add_cell` (7.60×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
+5. **`field_add_cell` (7.68×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
    move with it.
-6. **`panel_build` (7.32×)** — size S9 on the row as item 2 left it, then build.
-7. **`arguments/parse` (7.48×)** — X7: read `find_long_opt`, `classify` and `parse` by line.
-8. **`mapfile_to_painted` (7.16×), `reload_and_record` (6.69×)** — X5 d: P3 first, P4 with
+6. **`panel_build` (7.44×)** — size S9 on the row as item 2 left it, then build.
+7. **`arguments/parse` (7.38×)** — X7: read `find_long_opt`, `classify` and `parse` by line.
+8. **`mapfile_to_painted` (7.01×), `reload_and_record` (6.67×)** — X5 d: P3 first, P4 with
    its range proof.
-9. **`binary_read` (7.33×)** — price X8, build.
-10. **cbor `encode` (5.52×)** — X9, on what X2 left of the row.
-11. **`invert` (6.28×)** — price X10 on `insert_text` (4.84×, the row with the largest
+9. **`binary_read` (7.31×)** — price X8, build.
+10. **cbor `encode` (5.57×)** — X9, on what X2 left of the row.
+11. **`invert` (6.67×)** — price X10 on `insert_text` (4.84×, the row with the largest
     share of it), build.
 12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
     row is now the pushes themselves (the generated loop 15 %, two claims and two frees per
     push) and § 5's record-build row names what is left of the other.
 13. **`rig_world_frame3` (5.51×)** — S2, then S3.
-14. **`forms_upto` (5.11×)** — X12.
+14. **`forms_upto` (5.15×)** — X12.
 
 After each item, measure the rows it names (M5) and read this order again: a row under 5×
 leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
@@ -265,6 +269,7 @@ Sizes are the analysis files' own (XS–M); "→" is the hand price, a ceiling f
 
 | S11 | BUILT — an emptied text keeps its buffer: `s = ""` on a declared text local or a `&text` parameter emits `s.clear()`, not a fresh `String` | XS | `materialise` 500 → 206 µs (−59 %), `seg` 950 → 665 µs (−30 %) on arm64 macOS, hashes unchanged | this file |
 | S12 | BUILT — `(R-TextBorrow)`'s format clause: a local bound to a format string borrows the format's own work text | S | `render_inline` 7.5 → 3.7–3.9 ms (7.45× → ≈ 3.8×) on arm64 macOS, hash unchanged | formal/rewrites.md § The format clause |
+| S13 | BUILT, in the runtime — a text view (`keys::Str`) becomes an owned text by one allocation and one copy: `x.to_string()` in emitted code was the blanket `ToString` over `Display`, a `Formatter` and a `String` grown as it is written | XS | zttext `flow_layout_full` 6.12× → 5.57×, `time/format_iso` 3.31× → 2.88×, `markdown/html_escape` −10 %, `time/parse` −9 %; instructions −1.9 % over the whole zttext and html lanes | this file |
 | S10 | BUILT — `(R-ElemFirst)`'s comprehension clause: a row built by a comprehension and appended as a whole element is built in that element | M | `grid` 58.8 → 31.3 µs on one core (−47 %, the price), hash unchanged | this file |
 
 ### Where the priced path stops
@@ -361,6 +366,15 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
 `make rewrite-census` and a timing of the rows it names (M5; PERFORMANCE.md steps 6–7).
 
 ## Tooling the pass keeps tripping over
+
+- A row's TIME moves up to 10 % between two builds whose code for that row is the same: a
+  runtime rebuilt with one function changed shifted `mesh_emit`, which converts no text, by
+  +9.9 %, and the same emitted source linked by `hand_price.sh` and by `loft` ran `mat4_mul`
+  18 % apart.  Under 10 %, compare INSTRUCTIONS (`perf stat -e instructions:u`, the
+  `cpu_core` line), which do not depend on where the code landed, and A/B a runtime change
+  on one emitted source against both runtimes (a second worktree holds the old one).
+- Two binaries are never timed side by side: `paste <(a) <(b)` runs both at once on the
+  pinned core, and read a row +15 % slower whose code was unchanged.  Run one, then the other.
 
 - `bench/portal/hand_price.sh` links a package's native libraries by replaying the
   arguments of the package's own compile (`LOFT_NATIVE_RUSTC_ARGS`; the script's header has
