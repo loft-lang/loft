@@ -108,11 +108,10 @@ hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 8.17 | `truncate_to` | X1 | ≈ 6× with X1's whole share gone (*est.*) |
 | 7.92 | `flow_layout_full` | S1c, X2, X3 | ≈ 5× (*est.*) |
 | 7.85 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
 | 7.54 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
-| 7.43 | `panel_build` | S9, X1 | ≈ 5× (*est.*) |
+| 7.43 | `panel_build` | S9, X1's list widened to texts | ≈ 5× (*est.*) |
 | 7.18 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
 | 6.93 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
 | 6.83 | `binary_read` (7.72 measured alone; the Rust lane is noisy beside others) | X8 | no figure |
@@ -120,6 +119,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 6.75 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.35 | `invert` | X10 | ≈ 4× (*est.*) |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
+| 6.03 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
 | 5.83 | `slope_path_with_undo` (noisy) | § 5's record-build row names what is left | no figure |
 | 5.51 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
 | 5.40 | `forms_upto` | X12 | no figure |
@@ -131,7 +131,7 @@ others land between 3.5× and 6.9×.
 
 | | step | rows it moves (share of the row) | state | first action |
 |---|---|---|---|---|
-| X1 | a record's copy and its release written for the static type: `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` walk at run time a layout the emitter knows | `truncate_to` (walks ~15 %, copy 10 %), `panel_build` (~16 %) | named in § 4, no price | hand-price on `truncate_to`'s `history_push` |
+| X1 | BUILT, in the runtime and for one family of records: a record that owns plain vectors and nothing else is copied and released by the list of those fields (`Stores::plain_vectors_of`), where `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` asked each field's type what it is.  Both backends; a record with any other owner (a text, a vector of records that own heap) still takes the walk | `truncate_to` (8.17× → 6.03×, −26 %); `panel_build` is level — its records own texts | measured | the same list for a record that owns texts, and for a vector of such records, is what `panel_build`'s release walk (~16 %) would need: price it on that row |
 | S1c | § 3 | `flow_layout_full` (−8 %) | priced | build |
 | X2 | vector headers held across a write the loop makes to ANOTHER store.  `(R-Alias)`'s versioned clause runs a copy of the loop under a run-time test that the return buffer's store is not a parameter's; the same test over any pair of stores the loop names admits these | `rig_world_frame3` (26 %), cbor `encode` (23 %), `arguments/parse` (19 %), `flow_layout_full` (16 %) | a widening of a built rule, no price | hand-price on cbor `encode`'s emit loop (the callee writes `buf`; the loop reads `ranks`, `koff`, `klen` out of line) |
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
@@ -152,8 +152,8 @@ before it; the slowest row goes first; a step with no price is priced before it 
 
 1. **Unblock** — X4 is built (`check_request` can be profiled).  X11 is open: `fill_polygon`
    cannot be measured on this box until the five libraries' pins are bumped.
-2. **`truncate_to` (8.17×)** — price X1 on `history_push`, build it if the price holds.  It
-   also moves `panel_build`, so item 6 is sized on the profile X1 leaves.
+2. **`truncate_to`** — X1 is built for a record of plain vectors (8.17× → 6.03×).  It did
+   not move `panel_build`, whose records own texts.
 3. **`flow_layout_full` (7.92×)** — build S1c (priced).  Price X2, then build it: the same
    step moves `arguments/parse` (7.18×), cbor `encode` (6.81×) and `rig_world_frame3`
    (5.51×), which is why it stands here and not at their rows.  Then price X3 on what is left.
@@ -169,7 +169,9 @@ before it; the slowest row goes first; a step with no price is priced before it 
 9. **`binary_read` (6.83×)** — price X8, build.
 10. **cbor `encode` (6.81×)** — X9, on what X2 left of the row.
 11. **`invert` (6.35×), `insert_text` (5.32×)** — price X10 on `insert_text`, build.
-12. **`slope_path_with_undo` (5.83×)** — re-profile; § 5's record-build row names what is left.
+12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
+    row is now the pushes themselves (the generated loop 15 %, two claims and two frees per
+    push) and § 5's record-build row names what is left of the other.
 13. **`rig_world_frame3` (5.51×)** — S2, then S3.
 14. **`forms_upto` (5.40×)** — X12.
 
@@ -283,7 +285,7 @@ Each is named in an analysis as the row's next step; none has a hand price for t
 | `mesh_to_floats` | BUILT (bf4cd8088): `(R-Alias)`'s versioned clause now treats the result local that adopts `__retbuf` as the buffer, and `(R-RecPtr)` reads a view's null test as a read rather than a rebind, so the copy that runs when the buffer's store is not the mesh's holds `mf_tri` and `mf_v`.  `perf_check`: 8.23× → 5.53× (−33 %); `pack_instances`, holding `n` the same way, 7.55× → 4.84× (−36 %).  Next: re-analyse both rows from the current code | records.md |
 | `map_json` | PRICED: 86 % is `Map.parse` — the source lexer stepping through JSON 67 %, the `Parsed` tree written into the store 19 % — and `"{m:j}"` 6 %.  The lexer's per-token `Arc<str>` reference count (`Position.file`) was ~21 % of cycles: BUILT as `FileName` (an interned name, identity-first equality), −15 % cycles, same hash.  Next: the `Parsed` → store walk (two passes where the twin parses straight into structs) and the lexer's per-character stepping; a separate JSON byte scanner is ruled out (@PLN109: one lexer).  The parser's own allocations (string compares, key clones) priced at −0.8 % — not worth a change | profiled 2026-10-06 |
 | `flow_layout_full` | lever B is built (S5); S1c is next.  The bench itself works around fn-ref records not freed until a plain-value frame ends (`zttext/bench/bench.loft` `flow_op`) — a leak to file or fix | over-9x.md |
-| `truncate_to` | NOT the move through a by-value parameter: hand-priced (`e` placed in the timeline's store, `history_push`'s copy a shallow move) it costs +16 %, because the pooled `e` already keeps its vectors across pushes and the placed one claims them anew.  `drop_oldest` is already in place (`keep_vector_range`).  The row is claim-for-claim the twin's malloc-for-malloc (two each per push); what differs is each one's price: `OpCopyRecord` 36 % and the release walk 27 % go through `copy_claims` / `owned_walk` / `remove_struct_claims` for a `Stroke` whose layout the emitter knows.  Next: a copy and a release specialised to the static type (unpriced).  Profiled alone: `Store::claim` is 18–20 %, and it is `claim_scan` — the timeline's store stays in `@FR-H-LazyFree`'s phase for good (each push frees what the next claims, so the untracked words never reach the bound), the freed vectors merge with their neighbours (8 + 13 → 21 words), and every miss walks the chain from the store's first block (480 walks per call).  Measured and dropped: ending the phase once the walks cost a sweep (+3 %: the free tree then costs what the walks did) and exact-size lists of lazily freed blocks (+5 %: 55 hits in 1866 claims, the merged sizes never match).  The walk itself is gone: `(H-ScanIndex)` reads the first fit off the lazily freed blocks' index (8.58× → 8.17× on x86-64).  Next: X1 (§ 0) | records.md § Order item 4 |
+| `truncate_to` | NOT the move through a by-value parameter: hand-priced (`e` placed in the timeline's store, `history_push`'s copy a shallow move) it costs +16 %, because the pooled `e` already keeps its vectors across pushes and the placed one claims them anew.  `drop_oldest` is already in place (`keep_vector_range`).  The row is claim-for-claim the twin's malloc-for-malloc (two each per push); what differs is each one's price: `OpCopyRecord` 36 % and the release walk 27 % go through `copy_claims` / `owned_walk` / `remove_struct_claims` for a `Stroke` whose layout the emitter knows.  Next: a copy and a release specialised to the static type (unpriced).  Profiled alone: `Store::claim` is 18–20 %, and it is `claim_scan` — the timeline's store stays in `@FR-H-LazyFree`'s phase for good (each push frees what the next claims, so the untracked words never reach the bound), the freed vectors merge with their neighbours (8 + 13 → 21 words), and every miss walks the chain from the store's first block (480 walks per call).  Measured and dropped: ending the phase once the walks cost a sweep (+3 %: the free tree then costs what the walks did) and exact-size lists of lazily freed blocks (+5 %: 55 hits in 1866 claims, the merged sizes never match).  The walk itself is gone: `(H-ScanIndex)` reads the first fit off the lazily freed blocks' index (8.58× → 8.17× on x86-64).  X1 is built for it (§ 0): 8.17× → 6.03×.  What is left is spread: the generated loop 15 %, the copy 11 %, the claims and frees themselves ~25 %, vector appends ~19 % | records.md § Order item 4 |
 | `panel_build` | the "bound null" window of `(R-RecPtr)`; a heap-owning tree's stores reused across a rebind (a rule that does not exist) | rules.md, records.md § Order item 5 |
 
 ## 5. Rows with no price — the pricing pass

@@ -2236,6 +2236,7 @@ impl Stores {
             t.facts.forget();
             t.prefill.forget();
             t.heap_slots.forget();
+            t.plain_vectors.forget();
             t.parents.retain(|&p| p < keep);
         }
         self.names.retain(|_, &mut nr| nr < keep);
@@ -3297,6 +3298,8 @@ const FACTS_OWNS_HEAP: u8 = 2;
 const FACTS_ZERO_DEFAULT: u8 = 4;
 const FILE_KNOWN: u8 = 8;
 const HOLDS_FILE: u8 = 16;
+const PLAIN_KNOWN: u8 = 32;
+const PLAIN_VECTORS: u8 = 64;
 
 impl TypeFacts {
     /// `(owns_heap, zero_default)` when derived already.
@@ -3323,6 +3326,19 @@ impl TypeFacts {
 
     pub(super) fn set_holds_file(&self, holds: bool) {
         let bits = FILE_KNOWN | if holds { HOLDS_FILE } else { 0 };
+        self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether a record of the type owns plain vectors and nothing else
+    /// ([`PlainVectors`]), when derived already.
+    #[inline]
+    pub(super) fn plain_vectors(&self) -> Option<bool> {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        (bits & PLAIN_KNOWN != 0).then_some(bits & PLAIN_VECTORS != 0)
+    }
+
+    pub(super) fn set_plain_vectors(&self, plain: bool) {
+        let bits = PLAIN_KNOWN | if plain { PLAIN_VECTORS } else { 0 };
         self.0.fetch_or(bits, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -3463,6 +3479,46 @@ impl std::fmt::Debug for HeapSlots {
     }
 }
 
+/// The PLAIN VECTORS of a record of this type — `(offset, element bytes)` of each field
+/// that owns heap, when every such field is a `vector<E>` whose elements own none and
+/// are not linked; `None` inside for any other owner.  A record like that is copied and
+/// released by this list alone ([`Stores::plain_vectors_of`](super::Stores)), where the
+/// walk asks each field's type what it is.  Derived, like [`HeapSlots`].
+#[derive(Default, Clone)]
+pub struct PlainVectors(std::sync::OnceLock<Option<Box<[(u32, u32)]>>>);
+
+impl PlainVectors {
+    #[inline]
+    pub(super) fn get(&self) -> Option<&Option<Box<[(u32, u32)]>>> {
+        self.0.get()
+    }
+
+    pub(super) fn set(&self, plan: Option<Box<[(u32, u32)]>>) {
+        let _ = self.0.set(plan);
+    }
+
+    pub(super) fn forget(&mut self) {
+        self.0.take();
+    }
+}
+
+/// Derived from `parts`, so two rows with equal parts have equal plans.
+impl PartialEq for PlainVectors {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for PlainVectors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.get() {
+            Some(Some(s)) => write!(f, "PlainVectors({})", s.len()),
+            Some(None) => f.write_str("PlainVectors(walk)"),
+            None => f.write_str("PlainVectors(?)"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Type {
     pub name: String,
@@ -3489,6 +3545,7 @@ pub struct Type {
     pub(super) facts: TypeFacts,
     pub(super) prefill: PrefillImage,
     pub(super) heap_slots: HeapSlots,
+    pub(super) plain_vectors: PlainVectors,
 }
 
 impl Type {
@@ -3546,6 +3603,7 @@ impl Type {
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
             heap_slots: HeapSlots::default(),
+            plain_vectors: PlainVectors::default(),
         }
     }
 
@@ -3620,6 +3678,7 @@ impl Type {
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
             heap_slots: HeapSlots::default(),
+            plain_vectors: PlainVectors::default(),
         }
     }
 
@@ -3639,6 +3698,7 @@ impl Type {
             facts: TypeFacts::default(),
             prefill: PrefillImage::default(),
             heap_slots: HeapSlots::default(),
+            plain_vectors: PlainVectors::default(),
         }
     }
 

@@ -492,6 +492,7 @@ fn type_from(p: &Parsed) -> Result<Type, SchemaDecodeError> {
         facts: super::types::TypeFacts::default(),
         prefill: super::types::PrefillImage::default(),
         heap_slots: super::types::HeapSlots::default(),
+        plain_vectors: super::types::PlainVectors::default(),
     })
 }
 
