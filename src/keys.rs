@@ -241,6 +241,24 @@ impl Str {
     }
 }
 
+impl Str {
+    /// The text as an owned `String`: one allocation of the exact size and one copy.
+    ///
+    /// Inherent on purpose.  Emitted code writes `x.to_string()` wherever a text view
+    /// becomes an owned text, and without this that call is the blanket `ToString` over
+    /// [`Display`](std::fmt::Display): a `Formatter`, `fmt::write`, and a `String` that grows
+    /// as it is written.  The result is the same bytes either way.
+    #[must_use]
+    #[inline]
+    #[expect(
+        clippy::inherent_to_string_shadow_display,
+        reason = "the same text as Display writes, without the formatting machinery"
+    )]
+    pub fn to_string(&self) -> String {
+        self.str().to_owned()
+    }
+}
+
 impl std::ops::Deref for Str {
     type Target = str;
     fn deref(&self) -> &str {
@@ -3887,7 +3905,28 @@ pub fn max_ops() -> u64 {
 }
 
 #[cfg(test)]
+mod text_view_owned {
+    /// `Str::to_string` is one copy of what `Display` writes — the same bytes for plain,
+    /// multi-byte, empty and null texts, and for a view that points nowhere.
+    #[test]
+    fn a_text_view_owned_is_what_display_writes() {
+        for text in ["plain", "héllo wörld ✓", "", "\0", "a\0b"] {
+            let view = super::Str::new(text);
+            assert_eq!(view.to_string(), format!("{view}"), "{text:?}");
+            assert_eq!(view.to_string(), text, "{text:?}");
+        }
+        let nowhere = super::Str {
+            ptr: std::ptr::null(),
+            len: 7,
+        };
+        assert_eq!(nowhere.to_string(), format!("{nowhere}"));
+        assert_eq!(nowhere.to_string(), "");
+    }
+}
+
+#[cfg(test)]
 mod p355_large_str {
+
     use super::Str;
 
     /// @P355: `Str::str()` must NOT silently truncate a legitimately-large
