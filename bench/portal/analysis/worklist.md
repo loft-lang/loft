@@ -113,7 +113,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 |--:|---|---|---|
 | 7.60 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
 | 7.54 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
-| 7.48 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
+| 7.48 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
 | 7.33 | `binary_read` | X8 | no figure |
 | 7.32 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.16 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
@@ -137,7 +137,7 @@ between 3.5× and 6.9×.
 |---|---|---|---|---|
 | X1 | BUILT, in the runtime and for one family of records: a record that owns plain vectors and nothing else is copied and released by the list of those fields (`Stores::plain_vectors_of`), where `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` asked each field's type what it is.  Both backends; a record with any other owner (a text, a vector of records that own heap) still takes the walk | `truncate_to` (8.17× → 6.03×, −26 %); `panel_build` is level — its records own texts | measured | nothing more of this kind on `panel_build`: its release driven by the type's flattened heap slots (texts deleted in a loop, a collection's own walk called per slot) priced at −3 % of the row and was dropped — the walk's descent is not where that row's release spends |
 | S1c | BUILT — `(R-WorkBuffer)`'s result clause: a call's vector result that a function only reads is filled into the caller's buffer, so `token_width`'s runs buffer (and `place_line`'s three) outlive the call and `slice_runs` refills kept elements | `flow_layout_full` (7.92× → 6.23×, −21 %; priced −19 % on the emission before it); a switch A/B of lanes 16 and 18, where the clause also fires, is level | measured | X2 next on this row |
-| X2 | BUILT for a store the frame owns — `(R-Header)`'s apart clause: a vector the loop only reads, in a store this activation minted or a work buffer the caller lends, and which nothing in the loop is handed, keeps its header and base whatever the loop calls (no callee verdict is asked).  NOT built: the same for a PARAMETER's vectors, which a callee can be handed by another route — `(R-Alias)`'s versioned clause with a run-time test | cbor `encode` (−20 %, the hand price: `ranks`, `koff`, `klen`, `keybuf`); `flow_layout_full` level (its headers were held already or root in a parameter); `arguments/parse` and `rig_world_frame3` unmoved — their unheld vectors are fields of a parameter record | measured | profile `arguments/parse` again and price the parameter half on it |
+| X2 | BUILT for a store the frame owns — `(R-Header)`'s apart clause: a vector the loop only reads, in a store this activation minted or a work buffer the caller lends, and which nothing in the loop is handed, keeps its header and base whatever the loop calls (no callee verdict is asked).  NOT built: the same for a PARAMETER's vectors, which a callee can be handed by another route — `(R-Alias)`'s versioned clause with a run-time test | cbor `encode` (−20 %, the hand price: `ranks`, `koff`, `klen`, `keybuf`); `flow_layout_full` level (its headers were held already or root in a parameter); `arguments/parse` and `rig_world_frame3` unmoved — their unheld vectors are fields of a parameter record | measured | nothing more on `arguments/parse`: PRICED and dropped.  Its declines are a text set through an existing address (`self.results[i] = word`, `OpSetTextReplace`) and a free on an exit path; with the gate admitting both — a ceiling, since neither is sound as the gate's other readers stand — the row moves −5.3 % (25.45 → 24.10 ms, 21 → 15 unheld reads), the text set alone −4.5 %.  What is left of its vector runtime is single reads outside any loop |
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 % before S1c) | *est.* only | after X2: re-profile, then price |
 | X4 | BUILT — `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | `check_request` is profiled (rustc-vs-twin.md § Re-profiled: claims 32 %, spread); `(R-DecodeView)` (decided, C141) next, S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
@@ -159,15 +159,14 @@ before it; the slowest row goes first; a step with no price is priced before it 
 2. **`truncate_to`** — X1 is built for a record of plain vectors (8.17× → 6.03×).  It did
    not move `panel_build`, whose records own texts.
 3. **`flow_layout_full` (6.14×)** — S1c and X2's owned-store half are built; X2 took cbor
-   `encode` and left this row level.  Re-profile the row and price X3 on what is left; the
-   parameter half of X2 is priced on `arguments/parse` (7.48×), where it is the 19 %.
+   `encode` and left this row level.  Re-profile the row and price X3 on what is left.
 4. **`check_request` (7.54×)** — profiled: a flat row, a third of it claims and releases.
    Build `(R-DecodeView)`; S8 after its decision (§ 6).
 5. **`field_add_cell` (7.60×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
    move with it.
 6. **`panel_build` (7.32×)** — size S9 on the row as item 2 left it, then build.
-7. **`arguments/parse` (7.48×)** — X7, on what X2 left of the row.
+7. **`arguments/parse` (7.48×)** — X7: read `find_long_opt`, `classify` and `parse` by line.
 8. **`mapfile_to_painted` (7.16×), `reload_and_record` (6.69×)** — X5 d: P3 first, P4 with
    its range proof.
 9. **`binary_read` (7.33×)** — price X8, build.
