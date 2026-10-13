@@ -45,6 +45,11 @@ tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP`
 (a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
 whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 
+`HERE` is measured on this tree as it stands, so a commit that reads as here is picked all the
+same when an earlier pending commit of its source changes one of its files.  A partial revert
+is the case: this tree never had what it removes, and skipping it leaves the reverted change
+in.  A commit that really is here comes out empty when picked, and `apply` drops it.
+
 `apply` resolves a conflict itself only in a derived artefact (either side, re-derived later)
 and in an append-only changelog (both sides); a conflict in anything else STOPS with the file
 named, and `apply` resumes after your `git cherry-pick --continue`.  `rederive` reads its list
