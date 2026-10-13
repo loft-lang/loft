@@ -302,17 +302,18 @@ of some tens of thousands of generated documents as each of nine types — recor
 collections, enums with a payload, nullable elements, narrow integers — and prints the
 value both ways with its `#errors`; the documents are shaped after the types with a share
 of wrong shapes, unknown and repeated keys, and a fifth of them damaged.  Both builds run
-it under `LOFT_POISON_CLAIM=1`: a record left half-read by a value that does not fit holds
-bytes nothing wrote (below), and without the switch those differ between two runs of ONE
-build.
+it under `LOFT_POISON_CLAIM=1`, so that a byte nothing wrote reads the same in both builds
+instead of whatever an earlier parse left there.
 
-**A read can leave bytes nothing wrote** — found by that comparison, and the same on both
-forms of the parse.  A variant named by its bare tag (`Shape.parse("Circle")`) sets the
-tag and leaves the payload as the store's block held it, with no error; a record whose
-member does not fit leaves the fields after it unwritten where nothing prefilled them (an
-enum's payload, a nullable record).  The count is exact and cheap to take: the lines that
-differ between a `LOFT_POISON_CLAIM=1` and a `LOFT_ZERO_CLAIM=1` run of the program above
-— 372 of 270,670 results on its first seed, 30 of them with no error reported.
+**A read writes every byte it makes reachable** (`@FR-H-Claim`, loft#1995) — the defect
+that comparison found, on both forms of the parse.  Two records are written by no prefill,
+only by the members that name their fields: an enum's payload and a nullable record.  A
+variant named by its bare tag (`Shape.parse("Circle")`) answered the previous parse's
+payload with no error, and either record left by a member that did not fit kept the
+earlier value's fields, a collection's handle among them.  Both take their fields'
+defaults before their members are read now (`Stores::write_absent_fields`).  The count is
+exact and cheap to take again: the results that differ between a `LOFT_POISON_CLAIM=1` and
+a `LOFT_ZERO_CLAIM=1` run of the program above — none of 270,000, where 360 did.
 
 **What J4 taught.**  `Lexer::next` and `cont` were read as the cost of the character iterator;
 they are the cost per TOKEN.  With the cursor in, their shares are what they were, and their
