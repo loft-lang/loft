@@ -553,6 +553,44 @@ it unallocated); switch `LOFT_NO_DISTINCT_VERSION`; guards
                  table (@C150).
 ```
 
+```
+  (R-Header), the apart clause: where the gate declines a loop — a call that may
+                 write a store this analysis cannot type, a `CallRef`, a mover whose
+                 root is not provably its own — a vector reached by a BARE variable
+                 still holds its header and its element base for that loop when (a)
+                 the end of its dep chain OWNS its store alone: a store this
+                 activation minted (R-Alias's exclusive root, its `__vdb` witness)
+                 or a work buffer the caller lends (R-WorkBuffer); (b) no variable
+                 that may name that store — every one whose dep chain reaches the
+                 owner, each branch followed — is captured by a closure or is a `&`
+                 link; and (c) every mention of such a variable in the loop body is
+                 a READ in place: the vector as the first operand of a length, a
+                 null test or an element address; an element address as the first
+                 operand of a scalar or text getter or of a null test, or bound to
+                 a local that borrows from the same store; a text value read out
+                 of it anywhere.  The owner set in the body, a mention this does
+                 not name, a `yield` or a `par` in the body: no header for that
+                 store.  Nothing else of the loop is hoisted — no push header, no
+                 scalar, no callee input: those rest on the gate's verdict about
+                 the whole body.
+```
+
+**The apart clause, in words.**  The gate answers for a loop, and one statement it cannot
+type costs every vector of the loop its header.  That is right for a vector the statement
+can reach and a cost for one it cannot: a store named by nothing but this frame's own
+variables cannot be moved or grown by a statement that mentions none of them, whatever that
+statement is — a callee that grows the buffer it is handed, a recursion, a call through a
+function value.  So the clause asks nothing of the callee; the mention test IS the proof, as
+it is for a work buffer.  A header's record and length are the vector's own, and a base is
+the store's memory, which only a growth of THAT store reallocates (the table of stores may
+grow under it: a store's buffer is its own allocation).  Switch `LOFT_NO_APART_HEADERS=1`;
+`LOFT_TRACE_HOIST_DECLINE=1` names each loop's kept vectors beside what declined it;
+falsifier `LOFT_HOIST_VERIFY=1`.  Sites: `generation::apart` (`apart_headers`, `ApartWalk`),
+`hoist::apart_hoist` (the three whole-loop declines of `hoist::hoistable`).  Guard
+`tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft`; pin
+`tests/apart_headers.rs`.  cbor `encode` (x86-64): 10.52 → 8.42 ms, hash unchanged — its
+emit loop reads `ranks`, `koff`, `klen` and `keybuf` and calls the recursive `encode`.
+
 **In words.** loft#885 stage 1 (the header) and stage 2 (the element read fused onto
 it), with @PLN157 P4d's path key (`lay.px` is `(lay, [32])`) and the hoisted loop
 bound (`len(P)` served by the header, queue item 1).  The path is pure, so evaluating

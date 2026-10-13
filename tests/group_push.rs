@@ -298,8 +298,16 @@ fn each_switch_restores_its_clause_alone() {
         "g1 is untouched by the heap switch"
     );
 
-    // The rebound-mover loops decline whole again; the groups inside them stay.
-    let rust = emit("no_rebound", &[("LOFT_NO_REBOUND_MOVER", "1")]);
+    // The rebound-mover loops decline whole again; the groups inside them stay.  Read with
+    // `@FR-R-Header`'s apart clause off: a declined loop keeps the header of a vector it only
+    // reads, and this pin counts what the mover's own clause holds.
+    let rust = emit(
+        "no_rebound",
+        &[
+            ("LOFT_NO_REBOUND_MOVER", "1"),
+            ("LOFT_NO_APART_HEADERS", "1"),
+        ],
+    );
     let got = counts(&rust);
     for name in ["n_g2_build", "n_g8_build", "n_g10_build"] {
         let row = got[name];

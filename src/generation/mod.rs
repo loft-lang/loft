@@ -8,6 +8,7 @@ use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
+pub mod apart;
 pub mod append_twin;
 mod calls;
 mod coroutine;

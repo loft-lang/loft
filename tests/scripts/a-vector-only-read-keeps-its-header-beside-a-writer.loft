@@ -1,0 +1,249 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Header`'s apart clause — a loop that calls a function which grows a vector, or
+// grows one itself that it cannot prove its own, held no header at all on `--native`.  A
+// vector the loop only READS, in a store this activation minted (or a work buffer the
+// caller lends) and hands to nothing in the loop, cannot be moved or grown by anything
+// the loop runs, so it keeps its header and its element base.  The interpreter holds no
+// header and is the oracle; every value below is computed by hand.
+//
+// What can go wrong is a header kept for a vector the loop CAN reach: handed to the writer
+// (c5), reached through a closure (c6), through one of its elements (c7), appended to by
+// the loop itself (c8), minted anew in every pass (c9), or read across a suspension (c10).
+// Each of those reads a length or an element that the write between two reads changed, so
+// a stale header answers wrong.  c2 grows the table of stores under a held base and text
+// span.  `LOFT_NO_APART_HEADERS=1`, `LOFT_HOIST_VERIFY=1` (every read re-derives its
+// header and base), `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and `LOFT_STRICT_STORES=1` must
+// answer identically.
+//
+// @falsified-at: none — written with the rewrite it guards; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-vector-only-read-keeps-its-header-beside-a-writer.patch
+//   — a store with a captured name in its alias set kept: the closure of c6 pushes to the
+//   vector whose header the loop holds.
+//   CHANNEL: an assertion, on --native.
+//   WITNESS: `c6 303` where the file says 622 (the lengths read 1, 1, 1).
+//   HOLDS: --interpret green on both trees; every other cell green on the control.
+
+struct Item { id: integer, name: text }
+
+// The writer: it grows the buffer it answers through.  grown(s, n) = [s, s + 1, …].
+fn grown(seed: integer, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [seed + i]; }
+  out
+}
+
+// c1 — scalar elements and the length.  v = [0, 3, 6, 9, 12]; per pass v[i] + 1000 ·
+// (i % 4) + 5: 5, 1008, 2011, 3014, 17.
+fn c1(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 3]; }
+  t = 0;
+  for i in 0..n {
+    g = grown(i, i % 4);
+    t += (v[i] ?? 0) + len(g) * 1000 + len(v);
+  }
+  t
+}
+
+// c2 — text elements, while the callee holds hundreds of stores alive at once (the table
+// of stores grows under the held base and text span).  deep(d) = d; names are two bytes
+// each: (30000 + 2 + 3) + (30100 + 2 + 3) + (30200 + 2 + 3).
+fn deep(d: integer) -> integer {
+  w: vector<Item> = [];
+  w += [Item { id: d, name: "x" }];
+  if d <= 0 { return 0 }
+  deep(d - 1) + len(w)
+}
+fn c2(n: integer) -> integer {
+  names: vector<text> = [];
+  for i in 0..n { names += ["n{i}"]; }
+  t = 0;
+  for i in 0..n {
+    t += deep(300 + i) * 100;
+    t += size(names[i] ?? "") + len(names);
+  }
+  t
+}
+
+// c3 — record elements read through a local: id · 10 + 3 + (id + 1) for ids 1, 2, 3.
+fn c3(n: integer) -> integer {
+  items: vector<Item> = [];
+  for i in 0..n { items += [Item { id: i + 1, name: "it{i}" }]; }
+  t = 0;
+  for i in 0..n {
+    it = items[i];
+    g = grown(it.id, 2);
+    t += it.id * 10 + size(it.name) + (g[1] ?? 0);
+  }
+  t
+}
+
+// c4 — the vector is a work buffer the caller lends: c4w(n) = Σ (i + 1) · i = 0, 0, 2, 8.
+fn c4w(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i + 1]; }
+  t = 0;
+  for i in 0..n {
+    g = grown(i, 1);
+    t += (v[i] ?? 0) * (g[0] ?? 0);
+  }
+  t
+}
+fn c4() -> integer {
+  t = 0;
+  for k in 0..4 { t = t * 10 + c4w(k); }
+  t
+}
+
+// c5 — the vector is HANDED to the writer: lengths 1, 2, 3 and last elements 1, 10, 11.
+fn push_one(v: &vector<integer>, x: integer) { v += [x]; }
+fn c5(n: integer) -> integer {
+  v: vector<integer> = [1];
+  t = 0;
+  for i in 0..n {
+    t += len(v) * 100 + (v[len(v) - 1] ?? 0);
+    push_one(v, i + 10);
+  }
+  t
+}
+
+// c6 — the writer reaches the vector through a closure: the same figures as c5.
+fn c6(n: integer) -> integer {
+  v: vector<integer> = [1];
+  add = fn(x: integer) { v += [x]; };
+  t = 0;
+  for i in 0..n {
+    t += len(v) * 100 + (v[len(v) - 1] ?? 0);
+    add(i + 10);
+  }
+  t
+}
+
+// c7 — an ELEMENT is handed to a writer that grows the vector's store: each name becomes
+// 32 bytes, and the vector holds 3.
+fn rename(it: Item, s: text) { it.name = s; }
+fn c7(n: integer) -> integer {
+  items: vector<Item> = [];
+  for i in 0..n { items += [Item { id: i, name: "a" }]; }
+  t = 0;
+  for i in 0..n {
+    rename(items[i], "a much longer name than before {i}");
+    t += size(items[i].name) + len(items);
+  }
+  t
+}
+
+// c8 — the loop appends to the vector it reads: [5] → [5, 5, 6, 8], lengths 2 + 3 + 4.
+fn c8(n: integer) -> integer {
+  v: vector<integer> = [5];
+  t = 0;
+  for i in 0..n {
+    g = grown(i, 1);
+    v += [(g[0] ?? 0) + (v[i] ?? 0)];
+    t += len(v);
+  }
+  t * 1000 + (v[n] ?? 0)
+}
+
+// c9 — the vector is declared inside the loop: [0], [1, 2], [2, 3, 4] plus i per element.
+fn c9(n: integer) -> integer {
+  t = 0;
+  for i in 0..n {
+    v: vector<integer> = [];
+    for j in 0..i + 1 { v += [j + i]; }
+    g = grown(i, 2);
+    for j in 0..len(v) { t += (v[j] ?? 0) + (g[0] ?? 0); }
+  }
+  t
+}
+
+// c10 — a generator suspends between the reads: 0 + 0 + 3, 2 + 1 + 3, 4 + 2 + 3.
+fn steps(n: integer) -> iterator<integer> {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 2]; }
+  for i in 0..n {
+    g = grown(i, 1);
+    yield (v[i] ?? 0) + (g[0] ?? 0) + len(v);
+  }
+}
+fn c10() -> integer {
+  t = 0;
+  for x in steps(3) { t = t * 100 + x; }
+  t
+}
+
+// c11 — the reads stand in a nested loop: b[i] + (i + 2) for i = 0, 1, 2.
+fn c11(n: integer) -> integer {
+  a: vector<integer> = [];
+  b: vector<integer> = [];
+  for i in 0..n { a += [i]; b += [10 * i]; }
+  t = 0;
+  for i in 0..n {
+    g = grown(i, 3);
+    for j in 0..n {
+      if (a[j] ?? 0) == i { t += (b[j] ?? 0) + (g[2] ?? 0); }
+    }
+  }
+  t
+}
+
+// c12 — an exit from inside the loop: v = [1, 2, 3, 4]; stopping at 3 answers 4 · 10 + 4,
+// never stopping 1 + 3 + 5 + 7.
+fn c12(n: integer, stop: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i + 1]; }
+  t = 0;
+  for i in 0..n {
+    g = grown(i, 1);
+    if (v[i] ?? 0) == stop { return t * 10 + len(v); }
+    t += (v[i] ?? 0) + (g[0] ?? 0);
+  }
+  t
+}
+
+// c13 — the writer is the function itself, each activation with a vector of its own:
+// 3, 3 · 3 + 33, 3 · 42 + 63.
+fn c13(d: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..3 { v += [d * 10 + i]; }
+  t = 0;
+  for i in 0..3 {
+    if d > 0 { t += c13(d - 1); }
+    t += v[i] ?? 0;
+  }
+  t
+}
+
+// c14 — the writer is called through a function value: v = [2, 3, 4], 11 · each.
+fn c14(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i + 2]; }
+  f = grown;
+  t = 0;
+  for i in 0..n {
+    g = f(i, v[i] ?? 0);
+    t += len(g) * 10 + (v[i] ?? 0);
+  }
+  t
+}
+
+fn main() {
+  assert(c1(5) == 6055, "c1 {c1(5)}");
+  assert(c2(3) == 90315, "c2 {c2(3)}");
+  assert(c3(3) == 78, "c3 {c3(3)}");
+  assert(c4() == 28, "c4 {c4()}");
+  assert(c5(3) == 622, "c5 {c5(3)}");
+  assert(c6(3) == 622, "c6 {c6(3)}");
+  assert(c7(3) == 105, "c7 {c7(3)}");
+  assert(c8(3) == 9008, "c8 {c8(3)}");
+  assert(c9(3) == 20, "c9 {c9(3)}");
+  assert(c10() == 30609, "c10 {c10()}");
+  assert(c11(3) == 39, "c11 {c11(3)}");
+  assert(c12(4, 3) == 44 && c12(4, 9) == 16, "c12 {c12(4, 3)} {c12(4, 9)}");
+  assert(c13(0) == 3 && c13(1) == 42 && c13(2) == 189, "c13 {c13(2)}");
+  assert(c14(3) == 99, "c14 {c14(3)}");
+  println("done");
+}

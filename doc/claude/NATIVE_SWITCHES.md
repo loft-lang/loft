@@ -120,6 +120,17 @@ loop's header hold again — with it off, a loop that appends records with text 
 reading another vector keeps that vector's header.  First bisect step for a wrong element read
 in such a loop; `LOFT_HOIST_VERIFY=1` is the falsifier.
 
+**`LOFT_NO_APART_HEADERS=1`** (`@FR-R-Header`'s apart clause, default-ON) makes a loop the
+header gate declines hold no header at all again.  By default such a loop still keeps the
+header and element base of each vector it only READS — its length, its elements, their
+fields — whose store this activation minted (or a work buffer the caller lends) and which
+nothing in the loop is handed: a writer that cannot name the store cannot move or grow it.
+A vector handed to a call, captured by a closure, linked by a `&`, appended to, declared
+inside the loop, or read in a generator's loop keeps the per-access form.  The first bisect
+step for a stale element or length read from a vector the loop only reads, beside a call
+that writes or a push to another vector; `LOFT_HOIST_VERIFY=1` re-derives every such header
+at every read, and `LOFT_TRACE_HOIST_DECLINE=1` names the vectors each declined loop keeps.
+
 ## Text walks
 
 **`LOFT_NO_LAZY_SPLIT=1`** (`@FR-R-LazySplit`, default-ON, generation time, `--native`

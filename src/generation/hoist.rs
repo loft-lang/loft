@@ -1046,7 +1046,7 @@ pub struct StoreFacts<'a> {
 
 impl StoreFacts<'_> {
     /// The end of `x`'s dep chain; `None` when the chain forks, loops or leaves the table.
-    fn terminal(&self, x: u16) -> Option<u16> {
+    pub(super) fn terminal(&self, x: u16) -> Option<u16> {
         let mut cur = x;
         let mut seen: HashSet<u16> = HashSet::new();
         loop {
@@ -1090,6 +1090,12 @@ impl StoreFacts<'_> {
             && !vars.is_compiler_generated(t)
             && !matches!(vars.tp(t).base(), Type::RefVar(_))
             && crate::data::is_dbref(vars.tp(t).base())
+    }
+
+    /// Is `t` the owner of a store nothing outside this activation can name — `fresh`,
+    /// asked by `@FR-R-Header`'s apart clause.
+    pub(super) fn owns_alone(&self, t: u16) -> bool {
+        self.fresh(t)
     }
 
     /// Do `a`'s and `b`'s records provably live in different stores?
@@ -1166,6 +1172,43 @@ fn mover_roots(
     out
 }
 
+/// `@FR-R-Header`'s apart clause — what a loop the gate DECLINES still holds: the header
+/// and the element base of each vector it only reads in a store nothing in it is handed
+/// (`apart::apart_headers`).  No push header, no scalar, no callee input: those rest on the
+/// gate's verdict about the whole body, and this rests on the one store's mentions alone.
+fn apart_hoist(body: &Block, data: &Data, def_nr: u32, facts: Option<&StoreFacts>) -> LoopHoist {
+    let Some(facts) = facts.filter(|_| crate::keys::apart_headers_enabled()) else {
+        return LoopHoist::default();
+    };
+    let vectors = super::apart::apart_headers(
+        body,
+        data,
+        facts,
+        &|t| work_buffer_arg(data, def_nr, t),
+        vector_candidates(body, data, def_nr),
+    );
+    crate::rewrite_census::fired("R-Header/apart", vectors.len());
+    if !vectors.is_empty() && std::env::var("LOFT_TRACE_HOIST_DECLINE").is_ok() {
+        let vars = data.def(def_nr).variables();
+        eprintln!(
+            "hoist: {} loop {} keeps {} header(s) apart from what declined it: {:?}",
+            data.def(def_nr).name(),
+            body.scope,
+            vectors.len(),
+            vectors
+                .iter()
+                .map(|(p, _)| vars.name(p.0))
+                .collect::<Vec<_>>()
+        );
+    }
+    LoopHoist {
+        // The loop grows no store these headers live in, so each carries its base.
+        growth_free: !vectors.is_empty(),
+        vectors,
+        ..LoopHoist::default()
+    }
+}
+
 /// The vector headers and the record scalars `body` may derive once up front.
 ///
 /// The gate is [`hoistable_vectors`]' gate; a body it declines hoists nothing.  Under it
@@ -1198,7 +1241,7 @@ pub fn hoistable(
     facts: Option<&StoreFacts>,
 ) -> LoopHoist {
     if body_blocks_hoist(body, data, Some(stores), def_nr, cache, tiers, owned) {
-        return LoopHoist::default();
+        return apart_hoist(body, data, def_nr, facts);
     }
     let mut out = LoopHoist {
         vectors: vector_candidates(body, data, def_nr),
@@ -1402,7 +1445,7 @@ pub fn hoistable(
                     .iter()
                     .all(|r| rebinds_alias_free(body, *r, data, owned))
             {
-                return LoopHoist::default();
+                return apart_hoist(body, data, def_nr, facts);
             }
             dropped_mover = true;
             pushes.retain(|(p, _)| !rebound_movers.contains(&p.0));
@@ -1418,7 +1461,7 @@ pub fn hoistable(
             if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
                 owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
             }) {
-                return LoopHoist::default();
+                return apart_hoist(body, data, def_nr, facts);
             }
             let any_retbuf = pushes
                 .iter()
