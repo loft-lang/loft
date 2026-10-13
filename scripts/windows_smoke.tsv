@@ -1,5 +1,6 @@
 # @PLN184 D4 — each script's cheapest invocation, run nightly on windows-latest (.github/workflows/windows-scripts.yml).
 # A script not listed is counted by src/platform_census.rs (only falls).  Format: <script><TAB><arguments>
+bench/portal/analysis/x2/price_cbor_encode.py	--help
 bench/stats.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/grammar_gen.py	--help
 doc/claude/plans/85-store-lifetime-retirement/fuzz/ownership_fuzz.py	--help
