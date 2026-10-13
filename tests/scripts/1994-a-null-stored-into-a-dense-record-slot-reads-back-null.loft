@@ -17,7 +17,13 @@
 // of zeros for it, loft#1997.
 //
 // @EXPECT_WARNING: is stored into parameter
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/1994-a-null-stored-into-a-dense-record-slot-reads-back-null.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — the patch widens every dense tuple with the constant `true`
+//   and carries no presence, which is the register road as it stood.
+// WITNESS: on the patched tree `--native` stops at `w1 null -1`: the `null` handed to a dense
+//   parameter comes back with its field null and `== null` false.  The interpreter prints
+//   `ok`.
+// HOLDS: the interpreter's output, and every cell whose argument names a record.
 
 struct S { a: integer }
 

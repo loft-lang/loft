@@ -1,0 +1,23 @@
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 31b08faa1..c21c21229 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -12797,7 +12797,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
+         // `@FR-N-Store` — first, carry the presence wherever a dense tuple would otherwise
+         // be widened without it.  Every round, because a decline can leave a new leaf at a
+         // nullable position; it only ever turns a dense key into a nullable one, so it ends.
+-        if !nullable_value_record_disabled() {
++        if false {
+             loop {
+                 let sp = surely_present_fns(data, &cand, &params, &sites);
+                 if !promote_presence(
+@@ -15570,6 +15570,9 @@ fn local_surely_present(v: u16, c: &ShapeCtx, seen: &mut HashSet<u16>) -> bool {
+ /// do; a DENSE tuple — a `-> S` call, a dense value local, a tuple parameter — only where it
+ /// is [`surely_present`].  The walk is [`widen_marks`]' own.
+ fn widens(node: &Value, c: &ShapeCtx) -> bool {
++    if c.sp.len() < usize::MAX {
++        return true;
++    }
+     match node.unspan() {
+         Value::Block(bl) if bl.name == "Object" => true,
+         Value::Block(bl) if mv_return_source(bl, c.data).is_some() => {

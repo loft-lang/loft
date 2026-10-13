@@ -58,12 +58,13 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_pt12", true),       // t12: delivered into a field / element through a `__lift_`
     // temp — a value local since `(R-ValueLocal)` made call-bound lifts eligible
     // (2026-09-25); the copy FROM it materialises the tuple into the destination
-    ("n_pt13", false), // t13: its result is passed as an argument (`disc(given)`)
-    ("n_disc", false), // t13: a JOIN tail — a view on one arm, a mint on the other
+    ("n_pt13", true), // t13: its result is handed to `disc`'s nullable tuple parameter
+    ("n_disc", true), // t13: a nullable tuple parameter discharged with a build — no view is
+    // read and no store minted, so the join the record form made is two tuples (loft#1993)
     ("i_2Pt_n_gpick", true), // t14: a generic instance's statement-join selecting tail
     ("i_4Coin_n_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
-    ("n_sel15", true), // t15: a lifted selecting tail over by-value parameters
-    ("n_sel15c", true), // t15: the same over `const` parameters
+    ("n_sel15", true),       // t15: a lifted selecting tail over by-value parameters
+    ("n_sel15c", true),      // t15: the same over `const` parameters
 ];
 
 /// The § V-an chains (`bytecode-comparisons/V-an-chain-cells.loft`): the parser's
