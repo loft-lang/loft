@@ -1744,6 +1744,15 @@ pub fn work_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_WORK_BUFFER"))
 }
 
+/// `LOFT_NO_RESULT_BUFFER=1` — a call's vector result that is only read where it stands
+/// keeps the buffer its frame mints (`@FR-R-WorkBuffer`'s result clause off).  The bisect
+/// step between `LOFT_NO_WORK_BUFFER` and the rest of the rule: a stale or leaked element of
+/// a vector a call answered, in a function that only reads it.
+pub fn result_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_RESULT_BUFFER"))
+}
+
 /// `LOFT_TRACE_WORK_BUFFER=1` — name each local promoted to a caller buffer and each declined
 /// with the reason.
 pub fn trace_work_buffer() -> bool {

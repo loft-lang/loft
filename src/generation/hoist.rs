@@ -8193,7 +8193,7 @@ pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
 /// The buffer and the separator of a call that is the standard library's `split` with a
 /// constant, non-null separator and a hidden return buffer — the call both
 /// `(R-LazySplit)` and `(R-SplitTable)` replace — or why it is not one.
-fn split_call(
+pub(crate) fn split_call(
     call: &Value,
     data: &Data,
     vars: &crate::variables::Function,
@@ -8959,6 +8959,10 @@ pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
                     && let Some(Value::Var(w)) = gargs.first().map(Value::unspan)
                     && (*w as usize) < vars.count() as usize
                     && vars.name(*w).starts_with("__vdb")
+                    // A PARAMETER bound to a backing is a work buffer taking its null
+                    // road (`@FR-R-WorkBuffer`), never the result local: skipped, so the
+                    // first bind found is the first a local could be adopted through.
+                    && !vars.is_argument(*sv)
                     && init.is_none()
                 {
                     init = Some((*sv, *w));

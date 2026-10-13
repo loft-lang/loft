@@ -534,3 +534,36 @@ m7, `complete_write` c4, `copy_in_place` c4, `enum_record` e3); each cell answer
 the clause on and off under `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1` and `LOFT_POISON_CLAIM=1`
 before its prediction moved.
 
+## 2026-10-13 — `(R-WorkBuffer)`'s result clause
+
+The unit the worklist carried as S1c, proposed here as "the pooled clause, for
+`(R-RefillText)`'s collection clause": a return buffer whose elements the callee keeps is only
+kept across calls the caller's buffer survives, and zttext's `token_width` — called per token
+— minted it per activation.  Re-priced on the emission of `40baa214d` with one static buffer in
+`token_width`: `flow_layout_full` 14.36 → 11.60 ms (−19 %; the −8 % priced before predates
+`(R-FnRefValue)`).  Built as a clause of `(R-WorkBuffer)` and not of `(R-RefillText)`: what the
+caller holds is a buffer whatever the callee does with it, and the rule's transitive clause and
+pool already carry one up the call tree.  Built: 14.35 → 11.26 ms on a performance core (−21.5 %),
+25.3 → 20.4 ms on an efficiency core, hash `eb888d85` unchanged; `place_line`'s three run buffers
+went with it.  Every other row of the lane is level and its functions are emitted byte for byte
+as before.
+
+Three things the build measured.  The null road's backing is minted from the ELEMENT type
+(`vector_db` takes it): minted from the vector type it registered a second wrapper type per
+buffer, and `(R-RefillBuffer)`'s live test then never matched.  A view bound inside the value
+that yields it (`r = runs[i]?` binds its temporary inside the block whose value it is) is found
+one round after the bind that needs it, so a round that found a view is run again whatever it
+answered.  And without the runs-again condition a reader called once from `main` parked its
+result's store there for the whole run — sound, paid for by nothing, and not where the source
+ends the value; clause (d) is that measurement.
+
+Two rules met the clause in the census (`make rewrite-census`), and both were settled where
+they stand.  `(R-RetAdopt)` read "the first local bound to a `__vdb` backing" as the result
+local's own bind; a work buffer's null road binds a PARAMETER to a backing ahead of it, so a
+function with one lost its adoption (markdown `extract_headings` under this clause — and
+12_drawing's `lock_ribbons` before it, whose four work buffers had kept it from adopting since
+the rule shipped).  The gate skips a parameter's bind (`hoist::ret_adopt`; pin
+`tests/retbuf_adopt.rs` `n_tagged`).  And a constant `split` whose vector the native build
+never makes was handed a caller's buffer nothing fills, minted once per caller where the
+function had minted none: the clause declines it (`hoist::split_call`).
+
