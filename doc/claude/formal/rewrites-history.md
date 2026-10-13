@@ -585,3 +585,24 @@ variant.  The first probe of that shape answered right by accident: its scratch 
 the record field it overwrote.  Built: the frame lends (`FnRefWork`); the by-value forwarder runs
 0.11 s.
 
+## 2026-10-13 — `(R-Header)`'s apart clause
+
+The worklist's X2, priced first by hand on cbor `encode_map`'s emit loop (−20 %: −16 % from
+`ranks`, `koff`, `klen`, −6.5 % from `keybuf`).  The plan was a write set for a callee that
+grows its vector return buffer, taken by fixpoint over a recursion, and a store-identity test
+for `keybuf`.  Reading `(R-Header)`'s function clause — "growth of OTHER stores is no concern of
+a header" — gave the smaller statement: a store nothing in the loop is handed cannot be
+reached by what the loop calls, so no callee needs a verdict.  Built: 10.52 → 8.42 ms, the
+hand price exactly, all four vectors.
+
+The first build kept a header for a vector a CLOSURE pushed to (`c6 303` where the file says
+622; the verifier named the two lengths): the chain end of a local vector is its `__vdb`
+witness, which `StoreFacts::fresh` takes as its own before asking whether anything is
+captured, and the capture is recorded on the local.  The clause now drops a store when ANY
+name in its alias set is captured or a `&` link.  A text value read from an element is no
+handle on the store and is not counted as a mention (`size(names[i] ?? "")` binds one).
+
+Measured wrong on the way: two binaries run side by side on one core through
+`paste <(a) <(b)` read a row +15 % slower whose code was byte for byte the same; run one
+after the other the row is level.
+

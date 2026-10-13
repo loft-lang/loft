@@ -86,7 +86,15 @@ fn a_loop_calling_an_in_place_setter_hoists_and_a_grower_blocks() {
 #[test]
 fn the_switch_restores_the_unhoisted_form() {
     let src = write_probe("off");
-    let dump = introspect(&src, &[("LOFT_NO_INPLACE_CALLEE_HOIST", "1")]);
+    // `@FR-R-Header`'s apart clause off too: it keeps the header of a vector the declined
+    // loop only reads, which is not what this switch restores.
+    let dump = introspect(
+        &src,
+        &[
+            ("LOFT_NO_INPLACE_CALLEE_HOIST", "1"),
+            ("LOFT_NO_APART_HEADERS", "1"),
+        ],
+    );
     let setter = rust_of(&dump, "n_c_setter");
     assert_eq!(
         headers(setter),

@@ -1744,6 +1744,15 @@ pub fn work_buffer_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_WORK_BUFFER"))
 }
 
+/// `LOFT_NO_APART_HEADERS=1` — a loop the header gate declines holds no header at all
+/// (`@FR-R-Header`'s apart clause off): the first bisect step for a stale element or length
+/// read from a vector the loop only reads, in a loop that also calls a writer or grows
+/// another vector.
+pub fn apart_headers_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_APART_HEADERS"))
+}
+
 /// `LOFT_NO_RESULT_BUFFER=1` — a call's vector result that is only read where it stands
 /// keeps the buffer its frame mints (`@FR-R-WorkBuffer`'s result clause off).  The bisect
 /// step between `LOFT_NO_WORK_BUFFER` and the rest of the rule: a stale or leaked element of
