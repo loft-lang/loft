@@ -268,6 +268,19 @@ paths even as the matrix cells change. The @PLN85 D-own-1 `block_result` collaps
 the worked example — the corpus stayed byte-identical step by step, and the two
 leaks it surfaced (#448 c5 and its mirror) were closed under the matrix.
 
+### When the change is MEANT to move emission — the corpus census
+
+A rule added to a walk that runs over every function fires in every KIND of function, and a
+matrix whose cells all stand in one kind of body leaves the others unmeasured.  Before
+pushing a change that admits a new shape, emit the whole corpus with the old binary and the
+new one (`loft --native-emit <out.rs> <file>` over `tests/scripts` and `tests/docs`, run from a
+scratch copy of `tests/`), list the files whose emission differs, and run exactly those on
+both backends — a `fn main` file through `--interpret` and `--native`, a `fn test_*` file
+through `loft --tests <file>` and `loft --tests --native <file>`.  The list is the change's
+real reach, it costs minutes, and it finds the shapes no cell crossed: a build joined with a
+nullable value inside a function that returns a dense record, for one, which no corpus file
+contained and the full gate therefore passed.  Then add a cell for every shape it finds.
+
 ## Diff against the proven sibling — when your new path misbehaves
 
 > This is the codegen instance of a **general** design method — *when the answer

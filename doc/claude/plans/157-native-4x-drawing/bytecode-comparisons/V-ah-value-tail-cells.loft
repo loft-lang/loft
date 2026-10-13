@@ -176,9 +176,9 @@ fn t12() {
   println("t12 {h.hp.ptx} {h.hp.pty} {p1.ptx} {p1.pty} {h.hn}");
 }
 
-// t13 — a JOIN of a parameter's view and a minted default (`a ?? Pt {..}`): typed as a view,
-// but the discharge arm mints, so the tail is `Own::Join` and the function DECLINES (read as
-// a tuple, the mint would be nobody's — the leak check is the channel that sees it).
+// t13 — a nullable parameter discharged with a build (`a ?? Pt {..}`).  The parameter is a
+// tuple with its presence word (`@FR-N-Road`), so the join is two tuples: nothing is viewed
+// and nothing minted.  The leak check is the channel that would see a mint left behind.
 fn pt13(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
 fn disc(a: Pt? = null) -> Pt { a ?? Pt { ptx: 7.0, pty: 8.0 } }
 fn t13() {

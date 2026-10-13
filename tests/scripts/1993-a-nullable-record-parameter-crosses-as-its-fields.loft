@@ -11,7 +11,13 @@
 // hand-computed value, so a native answer that differs fails on native alone.
 // tests/value_record.rs pins which parameters are received as tuples.
 //
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/1993-a-nullable-record-parameter-crosses-as-its-fields.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — the patch hands a record argument's presence as the constant
+//   `true`: the obvious wrong spelling of "the argument is there".
+// WITNESS: on the patched tree `--native` stops at `q5 places 21`: an element past the end
+//   of the vector (`v[9]`) arrives present, so the callee answers its discharge default (-9)
+//   where it should answer its null arm (-5).  The interpreter prints `ok`.
+// HOLDS: the interpreter's output, and every call whose argument names a record.
 
 struct S { a: integer }
 struct M { a: integer, x: float, ok: boolean, b: integer }
