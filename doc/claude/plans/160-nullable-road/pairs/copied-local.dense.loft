@@ -1,0 +1,4 @@
+// A local COPY of a record parameter, returned.  Dense half.
+struct S { a: integer }
+fn f(p: S) -> S { x = p; x }
+fn main() { x = S { a: 41 }; t = f(x); println("{t.a}"); }

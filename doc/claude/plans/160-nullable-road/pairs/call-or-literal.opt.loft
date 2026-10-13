@@ -1,0 +1,5 @@
+// An `if` whose arms are a call that returns a record and a literal.  Nullable half.
+struct S { a: integer }
+fn g(n: integer) -> S { S { a: n } }
+fn f(c: boolean) -> S? { if c { g(11) } else { S { a: 5 } } }
+fn main() { t = f(true); u = f(false); println("{t.a ?? -1} {u.a ?? -1}"); }

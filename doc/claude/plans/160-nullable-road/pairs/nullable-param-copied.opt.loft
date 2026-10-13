@@ -1,0 +1,5 @@
+// A local COPY of a record parameter, returned.  Nullable half: the parameter and the result are `S?`.
+// @OPEN: loft#1993 — native passes `p: S?` by reference where `p: S` crosses as its fields
+struct S { a: integer }
+fn f(p: S?) -> S? { x = p; x }
+fn main() { x = S { a: 41 }; t = f(x); println("{t.a ?? -1}"); }

@@ -46,16 +46,22 @@ impl Output<'_> {
         {
             return self.emit_invariant_use(w, &memo);
         }
-        // `@FR-R-ValueRecord`'s nullable clause — a DENSE leaf at a result position of a
-        // `-> S?` body (`hoist::widened_leaves`) is the present tuple: its own tuple, then
-        // the presence word.  The leaf is emitted once, as itself, inside the widening.
+        // `@FR-R-ValueRecord`'s nullable clause — a leaf whose tuple is DENSE, standing where
+        // a nullable one is expected (`hoist::widened_leaves`), is its own tuple followed by
+        // the presence word.  The leaf is emitted once, as itself, inside the widening.  A
+        // dense tuple is present; a VIEW is present when its reference names a record, which
+        // is what the record form's null test reads off the same reference.
         if !self.value_leaves.widen.is_empty() {
             let at = std::ptr::from_ref(code) as usize;
-            if self.value_leaves.widen.contains(&at)
-                && self.widening != Some(at)
-                && let Some(layout) = self.value_records.fn_layout(self.def_nr)
+            if self.widening != Some(at)
+                && let Some(key) = self.value_leaves.widen.get(&at).copied()
+                && let Some(layout) = self.value_records.types.get(&key)
             {
                 let n = layout.fields.len();
+                let view = match code.unspan() {
+                    Value::Var(v) if self.value_leaves.views.contains(&at) => Some(*v),
+                    _ => None,
+                };
                 let saved = self.widening.replace(at);
                 write!(w, "{{ let __wd = ")?;
                 let r = self.output_code_inner(w, code);
@@ -65,7 +71,12 @@ impl Output<'_> {
                 for i in 0..n {
                     write!(w, "__wd.{i}, ")?;
                 }
-                return write!(w, "true) }}");
+                let Some(v) = view else {
+                    return write!(w, "true) }}");
+                };
+                write!(w, "(")?;
+                self.output_code_inner(w, &Value::Var(v))?;
+                return write!(w, ").rec != 0) }}");
             }
         }
         // `@FR-R-ValueRecord`'s nullable clause — a `null` exit of a `-> S?` body admitted to
@@ -3449,25 +3460,27 @@ impl Output<'_> {
         {
             let copy_nr = self.data.def_nr("OpCopyRecord");
             let db_nr = self.data.def_nr("OpDatabase");
+            // A source that is a statement LIST — the hoisted declarations of a `match` an
+            // arm holds, then the branch — is a block, whose value is its last statement.
+            let braces = matches!(src.unspan(), Value::Insert(_));
             self.indent(w)?;
-            write!(w, "let __mv = ")?;
+            write!(w, "let __mv = {}", if braces { "{ " } else { "" })?;
             self.output_code_inner(w, src)?;
-            writeln!(w, ";")?;
-            for op in &bl.operators {
-                let dropped = match op.unspan() {
-                    Value::Call(d, _) if *d == copy_nr || *d == db_nr => true,
-                    Value::Return(_) => true,
-                    _ => false,
-                };
-                if dropped {
+            writeln!(w, "{};", if braces { " }" } else { "" })?;
+            // The block's last statement delivers the buffer — `return rb`, or `rb` where the
+            // block is a VALUE (an arm of a result that may be absent) — and goes with it.
+            let (delivery, body) = bl.operators.split_last().unwrap_or((&Value::Null, &[]));
+            for op in body {
+                if matches!(op.unspan(), Value::Call(d, _) if *d == copy_nr || *d == db_nr) {
                     continue;
                 }
                 self.indent(w)?;
                 self.output_code_inner(w, op)?;
                 writeln!(w, ";")?;
             }
+            let returns = matches!(delivery.unspan(), Value::Return(_));
             self.indent(w)?;
-            writeln!(w, "return __mv")?;
+            writeln!(w, "{}__mv", if returns { "return " } else { "" })?;
             self.indent(w)?;
             return write!(w, "}} /*{}_{}: value return*/", bl.name, bl.scope);
         }

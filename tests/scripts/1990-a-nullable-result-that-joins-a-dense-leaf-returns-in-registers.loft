@@ -1,0 +1,412 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NULLABLE RESULT THAT JOINS A DENSE LEAF RETURNS IN REGISTERS (`@FR-N-Road`,
+// `@FR-R-ValueRecord`'s nullable clause, @C144, loft#1990).  A `-> S?` body takes the road its
+// `-> S` twin takes: every result leaf carries the nullable tuple or is WIDENED to it where it
+// stands — an arm of a branch, a bind of a local, a `return` — so a build beside a view, a
+// `-> S` call beside a `null`, and a local bound on two paths all return `(fields…, present)`.
+// A VIEW is present exactly when its reference names a record, so a null `S?` handed in comes
+// back absent.
+//
+// The interpreter keeps the record and is the VALUES oracle: every cell asserts a
+// hand-computed value AND its presence, so a native answer that differs fails on native alone.
+// tests/value_record.rs pins which of these makers the emission admits.
+//
+// One maker per cell: a site that consumes a record declines its maker for the whole program.
+//
+// @falsified-at: none — receipt recorded below once derived
+
+struct S { a: integer }
+struct M { a: integer, x: float, ok: boolean, b: integer }
+struct T { a: integer, name: text }
+struct O { inner: S, k: integer }
+struct K { a: integer, v: integer }
+struct Db { all: hash<K[a]> }
+
+fn g(n: integer) -> S {
+  S { a: n }
+}
+
+fn gn(n: integer) -> S? {
+  if n < 0 {
+    null
+  } else {
+    S { a: n }
+  }
+}
+
+fn mk(n: integer) -> M {
+  M { a: n, x: 1.5, ok: true, b: n + 1 }
+}
+
+// j1 — the issue: an element VIEW beside a build.
+fn j1(p: vector<S>) -> S? {
+  match p {
+    [a, ..] => a,
+    _ => S { a: 5 }
+  }
+}
+
+// j2 — a nullable view handed straight back.
+fn j2(p: S?) -> S? {
+  p
+}
+
+// j3 — a nullable view beside a build.
+fn j3(p: S?, c: boolean) -> S? {
+  if c {
+    p
+  } else {
+    S { a: 5 }
+  }
+}
+
+// j4 — a nullable view beside `null`.
+fn j4(p: S?, c: boolean) -> S? {
+  if c {
+    p
+  } else {
+    null
+  }
+}
+
+// j5 — a `-> S` call beside a build.
+fn j5(c: boolean) -> S? {
+  if c {
+    g(11)
+  } else {
+    S { a: 5 }
+  }
+}
+
+// j6 — a `-> S` call beside `null`.
+fn j6(c: boolean) -> S? {
+  if c {
+    g(11)
+  } else {
+    null
+  }
+}
+
+// j7 — a `-> S` call beside a `-> S?` call.
+fn j7(n: integer) -> S? {
+  if n > 100 {
+    g(n)
+  } else {
+    gn(n)
+  }
+}
+
+// j8 — a dense local beside a build.
+fn j8(c: boolean) -> S? {
+  h = g(11);
+  if c {
+    h
+  } else {
+    S { a: 5 }
+  }
+}
+
+// j9 — nested: a parameter, a `-> S` call and `null`.
+fn j9(p: S, k: integer) -> S? {
+  if k > 0 {
+    if k == 1 {
+      p
+    } else {
+      g(11)
+    }
+  } else {
+    null
+  }
+}
+
+// j10 — three arms: a parameter, a build, a `-> S` call.
+fn j10(p: S, n: integer) -> S? {
+  match n {
+    1 => p,
+    2 => S { a: 5 },
+    _ => g(11)
+  }
+}
+
+// j11 — a local bound on two paths, dense on one and built on the other.
+fn j11(c: boolean) -> S? {
+  h: S? = if c {
+    g(11)
+  } else {
+    S { a: 5 }
+  };
+  h
+}
+
+// j12 — a copy of a nullable parameter, returned.
+fn j12(p: S?) -> S? {
+  x = p;
+  x
+}
+
+// j13 — `null` beside a branch that joins a view with a build.
+fn j13(p: vector<S>, c: integer) -> S? {
+  if c % 3 == 0 {
+    null
+  } else {
+    match p {
+      [a, ..] => a,
+      _ => S { a: 5 }
+    }
+  }
+}
+
+// j14 — every tuple index of a four-field record, through a view, a build, a call and `null`.
+fn j14(v: vector<M>, k: integer) -> M? {
+  if k == 0 {
+    match v {
+      [e, ..] => e,
+      _ => M { a: 5, x: 2.5, ok: false, b: 6 }
+    }
+  } else if k == 1 {
+    mk(30)
+  } else {
+    null
+  }
+}
+
+// j15 — a nullable view beside a `-> S` call.
+fn j15(p: S?, c: boolean) -> S? {
+  if c {
+    p
+  } else {
+    g(11)
+  }
+}
+
+// j16 — a local of a function that returns no record, bound dense and then nullable.
+fn j16(c: boolean) -> integer {
+  h: S? = g(11);
+  if c {
+    h = gn(-2);
+  }
+  if h == null {
+    -1
+  } else {
+    h.a ?? -9
+  }
+}
+
+// j17 — the same local bound by one branch.
+fn j17(c: boolean) -> integer {
+  h = if c {
+    g(11)
+  } else {
+    gn(-2)
+  };
+  if h == null {
+    -1
+  } else {
+    h.a ?? -9
+  }
+}
+
+// j20 — a nullable view LOCAL of a vector element beside a build.
+fn j20(v: vector<S>, i: integer) -> S? {
+  e = v[i];
+  if i == 99 {
+    S { a: 5 }
+  } else {
+    e
+  }
+}
+
+// j21 — a nullable view local of a keyed lookup beside `null`.
+fn j21(d: Db, k: integer) -> K? {
+  e = d.all[k];
+  if k < 0 {
+    null
+  } else {
+    e
+  }
+}
+
+// d1 — must DECLINE: an arm that is an OWNED local, written after its build.
+fn d1(p: S, c: boolean) -> S? {
+  x = S { a: 3 };
+  x.a = x.a + p.a;
+  if c {
+    x
+  } else {
+    null
+  }
+}
+
+// d2 — must DECLINE: a record that owns heap.
+fn d2(v: vector<T>, c: boolean) -> T? {
+  if c {
+    match v {
+      [e, ..] => e,
+      _ => T { a: 5, name: "dflt" }
+    }
+  } else {
+    null
+  }
+}
+
+fn main() {
+  x = S { a: 41 };
+  q: vector<S> = [S { a: 7 }];
+  e: vector<S> = [];
+
+  a1 = j1(q);
+  b1 = j1(e);
+  assert((a1.a ?? -1) == 7 && a1 != null, "j1 view {a1.a ?? -1}");
+  assert((b1.a ?? -1) == 5 && b1 != null, "j1 build {b1.a ?? -1}");
+  // The result is a copy: a write through it leaves the vector's element alone.
+  a1.a = 70;
+  assert(q[0].a == 7 && (a1.a ?? -1) == 70, "j1 copy {q[0].a}");
+
+  a2 = j2(x);
+  b2 = j2(null);
+  assert((a2.a ?? -1) == 41 && a2 != null, "j2 present {a2.a ?? -1}");
+  assert((b2.a ?? -1) == -1 && b2 == null, "j2 absent {b2.a ?? -1}");
+
+  a3 = j3(x, true);
+  b3 = j3(null, true);
+  c3 = j3(x, false);
+  assert((a3.a ?? -1) == 41 && a3 != null, "j3 view {a3.a ?? -1}");
+  assert((b3.a ?? -1) == -1 && b3 == null, "j3 absent view {b3.a ?? -1}");
+  assert((c3.a ?? -1) == 5 && c3 != null, "j3 build {c3.a ?? -1}");
+
+  a4 = j4(x, true);
+  b4 = j4(null, true);
+  c4 = j4(x, false);
+  assert((a4.a ?? -1) == 41 && a4 != null, "j4 view {a4.a ?? -1}");
+  assert(b4 == null && c4 == null, "j4 absent");
+
+  a5 = j5(true);
+  b5 = j5(false);
+  assert((a5.a ?? -1) == 11 && a5 != null, "j5 call {a5.a ?? -1}");
+  assert((b5.a ?? -1) == 5 && b5 != null, "j5 build {b5.a ?? -1}");
+
+  a6 = j6(true);
+  b6 = j6(false);
+  assert((a6.a ?? -1) == 11 && a6 != null, "j6 call {a6.a ?? -1}");
+  assert((b6.a ?? -1) == -1 && b6 == null, "j6 null {b6.a ?? -1}");
+
+  a7 = j7(200);
+  b7 = j7(7);
+  c7 = j7(-3);
+  assert((a7.a ?? -1) == 200 && a7 != null, "j7 dense {a7.a ?? -1}");
+  assert((b7.a ?? -1) == 7 && b7 != null, "j7 nullable {b7.a ?? -1}");
+  assert((c7.a ?? -1) == -1 && c7 == null, "j7 absent {c7.a ?? -1}");
+
+  a8 = j8(true);
+  b8 = j8(false);
+  assert((a8.a ?? -1) == 11 && a8 != null, "j8 local {a8.a ?? -1}");
+  assert((b8.a ?? -1) == 5 && b8 != null, "j8 build {b8.a ?? -1}");
+
+  a9 = j9(x, 1);
+  b9 = j9(x, 2);
+  c9 = j9(x, 0);
+  assert((a9.a ?? -1) == 41 && a9 != null, "j9 parameter {a9.a ?? -1}");
+  assert((b9.a ?? -1) == 11 && b9 != null, "j9 call {b9.a ?? -1}");
+  assert((c9.a ?? -1) == -1 && c9 == null, "j9 null {c9.a ?? -1}");
+
+  a10 = j10(x, 1);
+  b10 = j10(x, 2);
+  c10 = j10(x, 3);
+  assert((a10.a ?? -1) == 41 && a10 != null, "j10 parameter {a10.a ?? -1}");
+  assert((b10.a ?? -1) == 5 && b10 != null, "j10 build {b10.a ?? -1}");
+  assert((c10.a ?? -1) == 11 && c10 != null, "j10 call {c10.a ?? -1}");
+
+  a11 = j11(true);
+  b11 = j11(false);
+  assert((a11.a ?? -1) == 11 && a11 != null, "j11 call {a11.a ?? -1}");
+  assert((b11.a ?? -1) == 5 && b11 != null, "j11 build {b11.a ?? -1}");
+
+  a12 = j12(x);
+  b12 = j12(null);
+  assert((a12.a ?? -1) == 41 && a12 != null, "j12 present {a12.a ?? -1}");
+  assert((b12.a ?? -1) == -1 && b12 == null, "j12 absent {b12.a ?? -1}");
+
+  // j13: i in 0..3000 — 1000 multiples of 3 are absent; of the other 2000, the 1000 even
+  // ones read the vector's 7 and the 1000 odd ones the empty vector's default 5.
+  total = 0;
+  absent = 0;
+  for i in 0..3000 {
+    h = j13(if i % 2 == 0 { q } else { e }, i);
+    if h == null {
+      absent += 1;
+    } else {
+      total += h.a ?? 100;
+    }
+  }
+  assert(total == 12000 && absent == 1000, "j13 {total} {absent}");
+
+  ms: vector<M> = [M { a: 7, x: 0.25, ok: true, b: 8 }];
+  me: vector<M> = [];
+  a14 = j14(ms, 0);
+  b14 = j14(me, 0);
+  c14 = j14(ms, 1);
+  d14 = j14(ms, 2);
+  assert((a14.a ?? -1) == 7 && (a14.x ?? -1.0) == 0.25 && a14.ok && (a14.b ?? -1) == 8, "j14 view");
+  assert((b14.a ?? -1) == 5 && (b14.x ?? -1.0) == 2.5 && !b14.ok && (b14.b ?? -1) == 6, "j14 build");
+  assert((c14.a ?? -1) == 30 && (c14.x ?? -1.0) == 1.5 && c14.ok && (c14.b ?? -1) == 31, "j14 call");
+  assert(a14 != null && b14 != null && c14 != null, "j14 present");
+  assert(d14 == null && (d14.a ?? -1) == -1 && (d14.x ?? -1.0) == -1.0 && !d14.ok, "j14 absent");
+  assert((d14.b ?? -1) == -1, "j14 absent last field");
+
+  a15 = j15(x, true);
+  b15 = j15(null, true);
+  c15 = j15(x, false);
+  assert((a15.a ?? -1) == 41 && a15 != null, "j15 view {a15.a ?? -1}");
+  assert((b15.a ?? -1) == -1 && b15 == null, "j15 absent view {b15.a ?? -1}");
+  assert((c15.a ?? -1) == 11 && c15 != null, "j15 call {c15.a ?? -1}");
+
+  assert(j16(true) == -1 && j16(false) == 11, "j16 {j16(true)} {j16(false)}");
+  assert(j17(true) == 11 && j17(false) == -1, "j17 {j17(true)} {j17(false)}");
+
+  a20 = j20(q, 0);
+  b20 = j20(q, 3);
+  c20 = j20(q, 99);
+  assert((a20.a ?? -1) == 7 && a20 != null, "j20 element {a20.a ?? -1}");
+  assert((b20.a ?? -1) == -1 && b20 == null, "j20 past the end {b20.a ?? -1}");
+  assert((c20.a ?? -1) == 5 && c20 != null, "j20 build {c20.a ?? -1}");
+
+  db = Db { all: [K { a: 3, v: 30 }, K { a: 9, v: 90 }] };
+  a21 = j21(db, 9);
+  b21 = j21(db, 4);
+  c21 = j21(db, -1);
+  assert((a21.a ?? -1) == 9 && (a21.v ?? -1) == 90 && a21 != null, "j21 found {a21.v ?? -1}");
+  assert(b21 == null && c21 == null, "j21 absent");
+
+  // The argument in its other spellings: a field, an element, an element past the end.
+  o = O { inner: S { a: 21 }, k: 2 };
+  f0 = j15(o.inner, true);
+  f1 = j15(q[0], true);
+  f2 = j15(q[5], true);
+  assert((f0.a ?? -1) == 21 && (f1.a ?? -1) == 7, "j15 field and element {f0.a ?? -1} {f1.a ?? -1}");
+  assert((f2.a ?? -1) == -1 && f2 == null, "j15 element past the end");
+  // The presence word as a condition.
+  seen = 0;
+  if j15(q[0], false) {
+    seen += 1;
+  }
+  if j15(q[5], true) {
+    seen += 10;
+  }
+  assert(seen == 1, "presence as a condition {seen}");
+
+  a16 = d1(x, true);
+  b16 = d1(x, false);
+  assert((a16.a ?? -1) == 44 && a16 != null && b16 == null, "d1 {a16.a ?? -1}");
+
+  ts: vector<T> = [T { a: 7, name: "seven" }];
+  a17 = d2(ts, true);
+  b17 = d2(ts, false);
+  assert((a17.a ?? -1) == 7 && (a17.name ?? "none") == "seven" && a17 != null, "d2 present");
+  assert(b17 == null && (b17.name ?? "none") == "none", "d2 absent");
+
+  // The sources are untouched by every call above.
+  assert(x.a == 41 && q[0].a == 7 && len(e) == 0 && ms[0].b == 8, "sources");
+  println("ok");
+}

@@ -222,6 +222,18 @@ function ended on one build path and now releases it on every path.
 else side of `if s == null`, a `Shape?` is a `Shape`: the call was reported as storing a
 nullable into a non-null parameter, where the same code over a struct was not.
 
+**A function that returns a record from an `if` with a `match` inside compiles with
+`--native`.**  `fn pick(p: vector<S>, c: integer) -> S { if c == 0 { S { a: 1 } } else { match p
+{ [a, ..] => a, _ => S { a: 5 } } } }` ran on the interpreter and stopped the native build
+with a Rust type error.
+
+**A function returning `S?` is as fast as one returning `S`, in more shapes.**  This is
+visible only as speed, under `--native`.  A function that returns a small record without
+text or collections hands its fields back directly.  A `-> S?` did that only when every way
+out built the record or answered `null`; one that also handed back an element of a vector, a
+parameter, or the result of a `-> S` function went through a buffer, with a copy and a release
+per call.  It now takes the direct route its `-> S` twin takes.
+
 ---
 
 ## 2026-10
