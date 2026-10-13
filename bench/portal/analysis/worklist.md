@@ -101,7 +101,7 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Eighteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
+Seventeen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
 this box); `map_json` (2.68×) has left the cut, and `insert_text` and `mat4_mul` read on
 either side of the line from one run to the next.  The three `tuple_link_*` rows the file
 still carries are of routines the bench no longer has.  Where each one's time
@@ -291,7 +291,7 @@ Each is named in an analysis as the row's next step; none has a hand price for t
 | row | step | named in |
 |---|---|---|
 | `field_add_cell` | re-analyse: the built bucket replace bought −27 % of the −42 % priced; `rehash_into` re-hashes from records; the library looks the bucket up twice | under-10x.md |
-| `binary_read` | NOT the counted `while` (`while` and `for _ in 0..n` emit the same work).  The read specialised to the site's static type is BUILT (`(R-TypedRead)`, with the File record's store resolved once per side): the row is 99 % in the emitted loop.  Next: the handle and cursor held across the loop (X8, § 0) | rustc-vs-twin.md § Re-profiled |
+| `binary_read` | NOT the counted `while` (`while` and `for _ in 0..n` emit the same work).  The read specialised to the site's static type is BUILT (`(R-TypedRead)`, with the File record's store resolved once per side): the row is 99 % in the emitted loop, and the handle and cursor are held across it (`(R-FileHold)`, X8): 4.14×.  What is left is the push and the buffered take per value; X13 (§ 0) is for reads outside a held loop | rustc-vs-twin.md § Re-profiled |
 | `insert_text`, `invert` | `(R-Compact)`'s filter, prepend and identity forms; `(R-Rebind)` for a chain exit and for the return buffer passed as a parameter | rules.md, libraries-wide.md |
 | `mesh_to_floats` | BUILT (bf4cd8088): `(R-Alias)`'s versioned clause now treats the result local that adopts `__retbuf` as the buffer, and `(R-RecPtr)` reads a view's null test as a read rather than a rebind, so the copy that runs when the buffer's store is not the mesh's holds `mf_tri` and `mf_v`.  `perf_check`: 8.23× → 5.53× (−33 %); `pack_instances`, holding `n` the same way, 7.55× → 4.84× (−36 %).  Next: re-analyse both rows from the current code | records.md |
 | `map_json` | PRICED: 86 % is `Map.parse` — the source lexer stepping through JSON 67 %, the `Parsed` tree written into the store 19 % — and `"{m:j}"` 6 %.  The lexer's per-token `Arc<str>` reference count (`Position.file`) was ~21 % of cycles: BUILT as `FileName` (an interned name, identity-first equality), −15 % cycles, same hash.  Next: the `Parsed` → store walk (two passes where the twin parses straight into structs) and the lexer's per-character stepping; a separate JSON byte scanner is ruled out (@PLN109: one lexer).  The parser's own allocations (string compares, key clones) priced at −0.8 % — not worth a change | profiled 2026-10-06 |
