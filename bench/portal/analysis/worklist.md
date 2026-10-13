@@ -374,6 +374,12 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
   18 % apart.  Under 10 %, compare INSTRUCTIONS (`perf stat -e instructions:u`, the
   `cpu_core` line), which do not depend on where the code landed, and A/B a runtime change
   on one emitted source against both runtimes (a second worktree holds the old one).
+- A rewrite the census counts inside a LIBRARY function is not in that library's bench run:
+  the bench loads the library's prebuilt native code, and the census emits its loft source
+  (`LOFT_NO_NATIVE_LIBS=1`).  To check such a site, run the bench — or the library's own
+  `loft test --native` — under `LOFT_NO_NATIVE_LIBS=1`, and name the function that holds it
+  from an emission made the same way; an on/off comparison of a run that never reaches the
+  site agrees for no reason.
 - Two binaries are never timed side by side: `paste <(a) <(b)` runs both at once on the
   pinned core, and read a row +15 % slower whose code was unchanged.  Run one, then the other.
 
