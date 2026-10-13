@@ -18,7 +18,13 @@
 //                                          [--canvas SELECTOR]
 //                                          [--canvas-min-colors N]
 //                                          [--device-scale-factor N]
-//                                          [--assert EXPR]
+//                                          [--assert EXPR] [--no-gpu]
+//
+// `--no-gpu` starts Chrome with `--disable-gpu`, for a page whose claim needs
+// neither WebGL nor a GPU-drawn frame.  The first such frame of a fresh browser
+// can take seconds on a loaded machine, and everything a page does that waits
+// for a frame waits with it — a WebGL context, a `document.fonts.load` promise
+// — inside `--wait-ms`, the budget the caller sized for the page's own work.
 //
 // `--ready EXPR` and `--assert EXPR` are the page-state pair, and they do NOT
 // coerce alike.  `--ready` evaluates `!!(EXPR)` and POLLS every 50 ms until it
@@ -80,7 +86,7 @@ const URL_ARG = args[0];
 const opts = {
   waitMs: 8000, screenshot: null, port: 9222, allow: [],
   canvasSelector: null, canvasMinColors: 20,
-  deviceScaleFactor: null, assertExpr: null, readyExpr: null,
+  deviceScaleFactor: null, assertExpr: null, readyExpr: null, noGpu: false,
 };
 for (let i = 1; i < args.length; i++) {
   if (args[i] === '--wait-ms') opts.waitMs = parseInt(args[++i], 10);
@@ -95,6 +101,7 @@ for (let i = 1; i < args.length; i++) {
   else if (args[i] === '--device-scale-factor') opts.deviceScaleFactor = parseFloat(args[++i]);
   else if (args[i] === '--assert') opts.assertExpr = args[++i];
   else if (args[i] === '--ready') opts.readyExpr = args[++i];
+  else if (args[i] === '--no-gpu') opts.noGpu = true;
   else { console.error('unknown flag: ' + args[i]); process.exit(64); }
 }
 
@@ -123,9 +130,9 @@ const chrome = spawn(CHROME, [
   ...(opts.deviceScaleFactor
     ? ['--force-device-scale-factor=' + opts.deviceScaleFactor]
     : []),
-  '--enable-unsafe-swiftshader',
-  '--use-gl=angle',
-  '--use-angle=swiftshader',
+  ...(opts.noGpu
+    ? ['--disable-gpu']
+    : ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader']),
   '--mute-audio',
   '--hide-scrollbars',
   'about:blank',

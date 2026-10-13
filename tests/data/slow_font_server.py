@@ -11,12 +11,17 @@ a race.
 Everything else — the page, the script, the stylesheet — is served at once, so
 the delay is on the one thing under test.
 
+Each connection is answered on its own thread.  Served one at a time, a browser
+connection that sends nothing holds every other request until it closes, and two
+delayed fonts wait one after the other — both are time the page under test is
+charged for and did not spend.
+
   python3 tests/data/slow_font_server.py <dir> <port> <delay-ms>
 """
 import os
 import sys
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT, PORT, DELAY_MS = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 ROOT_REAL = os.path.realpath(ROOT)
@@ -68,4 +73,4 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
