@@ -2319,10 +2319,12 @@ impl Stores {
             (Some(c), _, Opening::Array) => {
                 return self.read_array(rd, failed, tp, c, rec_tp, field, to, at);
             }
-            (_, true, Opening::Object) => return self.read_struct(rd, failed, tp, to),
+            (_, true, Opening::Object) => {
+                return self.read_struct(rd, failed, tp, rec_tp, field, to);
+            }
             (_, true, Opening::Word) => match rd.word() {
                 // The tag is informational for a record: its type is the schema's.
-                (_, _, true) => return self.read_struct(rd, failed, tp, to),
+                (_, _, true) => return self.read_struct(rd, failed, tp, rec_tp, field, to),
                 (word, _, _) => self.walk_parsed_into(&word, tp, rec_tp, field, to, &mut path, at),
             },
             _ => {
@@ -2381,9 +2383,14 @@ impl Stores {
         rd: &mut crate::json::JParser,
         failed: &mut Option<WalkErr>,
         tp: u16,
+        rec_tp: u16,
+        field: u16,
         to: &DbRef,
     ) -> Result<(), crate::json::Fault> {
         let (start, mut more) = rd.open_object();
+        if self.unfilled_record(rec_tp, field) {
+            self.write_absent_fields(tp, to, 0, &[]);
+        }
         let fld = if to.rec == 0 { 0 } else { to.pos };
         let rec = if to.rec == 0 {
             let size = self.types[tp as usize].size;
@@ -2434,28 +2441,12 @@ impl Stores {
         if failed.is_some() {
             return Ok(());
         }
-        for f_nr in 0..self.record_fields(tp).len() as u16 {
-            let f = &self.record_fields(tp)[f_nr as usize];
-            let named = if f_nr < 64 {
-                found & (1 << f_nr) != 0
-            } else {
-                found_more.contains(&f_nr)
-            };
-            if (f.other_indexes.is_empty() || f.other_indexes[0] != u16::MAX)
-                && !named
-                && f.name != "enum"
-            {
-                let (f_content, position) = (f.content, f.position);
-                let slot = DbRef {
-                    store_nr: to.store_nr,
-                    rec,
-                    pos: fld + u32::from(position),
-                };
-                // A key the JSON simply omits is the same question as one written
-                // `null`, and gets the same answer (loft#870).
-                self.write_absent_value(f_content, tp, f_nr, &slot);
-            }
-        }
+        let base = DbRef {
+            store_nr: to.store_nr,
+            rec,
+            pos: fld,
+        };
+        self.write_absent_fields(tp, &base, found, &found_more);
         Ok(())
     }
 
@@ -2485,6 +2476,12 @@ impl Stores {
     /// Together they form the only `text → struct` path in the
     /// crate; the legacy hand-rolled scanner was removed when
     /// every Parts arm gained walker coverage.
+    ///
+    /// `@FR-H-Claim` — a claimed block holds whatever it held last, so a record this walk
+    /// makes reachable has every field written before a member can fail to fit: the root
+    /// by its caller's prefill, and the two records no prefill reaches — an enum's payload
+    /// and a nullable record — by this walk, before their members are read
+    /// ([`Self::write_absent_fields`]).  A program never reads what an earlier value left.
     #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // arg-count is intrinsic to the dispatch
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn walk_parsed_into(
@@ -2502,18 +2499,7 @@ impl Stores {
         // default is the FIELD's question, not the type's, and
         // [`Self::write_absent_value`] is where that question is answered.
         if matches!(parsed, crate::json::Parsed::Null) {
-            // A COLLECTION field arrives with `to` at the struct BASE and its index in
-            // `field` (`walk_parsed_struct`'s `else` arm, as the non-null path below feeds
-            // `record_new`), so its absent marker belongs at the field's own slot.  Written
-            // at `to` it landed on the FIRST field: `{"p":{"x":1},"v":null}` read `p.x`
-            // back as 4294967295 (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a
-            // record with a null collection field once null fields are written (@C143).
-            let slot = if self.content(tp) == u16::MAX {
-                *to
-            } else {
-                self.field_ref(to, rec_tp, field)
-            };
-            self.write_absent_value(tp, rec_tp, field, &slot);
+            self.write_absent_at(tp, rec_tp, field, to);
             return Ok(());
         }
         let mismatch = || WalkErr {
@@ -2580,6 +2566,11 @@ impl Stores {
                     crate::json::Parsed::Constructor(_tag, _, inner) => inner.as_ref(),
                     other => other,
                 };
+                if matches!(body, crate::json::Parsed::Object(_))
+                    && self.unfilled_record(rec_tp, field)
+                {
+                    self.write_absent_fields(tp, to, 0, &[]);
+                }
                 self.walk_parsed_struct(body, tp, to, &object, path, at)
             }
             Parts::Enum(fields) => {
@@ -2676,12 +2667,15 @@ impl Stores {
                     return Ok(());
                 }
                 // Variant-with-payload (hand-written struct-enum): recurse so the payload
-                // fields land in the same slot as the discriminant byte.
-                if let Some(body) = payload
-                    && enum_tp != u16::MAX
-                    && self.types[enum_tp as usize].size > 1
-                {
-                    return self.walk_parsed_into(body, enum_tp, rec_tp, field, to, path, at);
+                // fields land in the same slot as the discriminant byte.  The variant is
+                // chosen by now and nothing has prefilled its fields, so they are written
+                // first: a tag alone (`Circle`) answers what `Circle{}` answers, and a
+                // payload that stops at a member leaves the rest absent.
+                if enum_tp != u16::MAX && self.types[enum_tp as usize].size > 1 {
+                    self.write_absent_fields(enum_tp, to, 0, &[]);
+                    if let Some(body) = payload {
+                        return self.walk_parsed_into(body, enum_tp, rec_tp, field, to, path, at);
+                    }
                 }
                 Ok(())
             }
@@ -2706,6 +2700,23 @@ impl Stores {
             // restriction as DbRef.
             Parts::ChildRec(_) => Err(mismatch()),
         }
+    }
+
+    /// The absent value of the `tp` that `(to, rec_tp, field)` names, written to its slot.
+    ///
+    /// A COLLECTION field arrives with `to` at the struct BASE and its index in `field`
+    /// (`walk_parsed_struct`'s `else` arm, as the non-null path feeds `record_new`), so
+    /// its absent marker belongs at the field's own slot.  Written at `to` it landed on
+    /// the FIRST field: `{"p":{"x":1},"v":null}` read `p.x` back as 4294967295
+    /// (`DbRef::ABSENT_REC`) — reachable from every `{r:j}` of a record with a null
+    /// collection field once null fields are written (@C143).
+    fn write_absent_at(&mut self, tp: u16, rec_tp: u16, field: u16, to: &DbRef) {
+        let slot = if self.content(tp) == u16::MAX {
+            *to
+        } else {
+            self.field_ref(to, rec_tp, field)
+        };
+        self.write_absent_value(tp, rec_tp, field, &slot);
     }
 
     /// Schema-driven struct fill from a [`crate::json::Parsed::Object`].
@@ -2737,14 +2748,15 @@ impl Stores {
         } else {
             to.rec
         };
-        // Fx, not the default SipHash: a per-object set of field names, never adversarial input
-        // to a hash table that outlives the call — SipHash was 7 % of a JSON-parse row.
-        let mut found_fields: crate::fxhash::FxHashSet<&str> = crate::fxhash::FxHashSet::default();
+        // The fields a member named, by field number ([`Self::write_absent_fields`]).
+        let mut found = 0u64;
+        let mut found_more: Vec<u16> = Vec::new();
         for (name, key_at, value) in entries {
-            let mut matched = false;
+            // @P366: a key no field has matches nothing here and is skipped, not refused —
+            // as the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing
+            // it emptied a whole `vector<Struct>` whenever its text carried one extra key.
             for (f_nr, f) in object.iter().enumerate() {
                 if f.name == *name {
-                    matched = true;
                     let res = if self.content(f.content) == u16::MAX {
                         let slot = DbRef {
                             store_nr: to.store_nr,
@@ -2763,6 +2775,11 @@ impl Stores {
                     } else {
                         self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                     };
+                    if f_nr < 64 {
+                        found |= 1 << f_nr;
+                    } else {
+                        found_more.push(f_nr as u16);
+                    }
                     // The key's segment joins the error's path as it unwinds (see the array arm).
                     res.map_err(|mut e| {
                         e.path.insert(0, name.clone());
@@ -2771,36 +2788,49 @@ impl Stores {
                     break;
                 }
             }
-            if !matched {
-                // @P366: an unknown JSON key has no matching struct field.
-                // Skip it (lenient-ignore) rather than aborting the element /
-                // the whole array.  This matches the dynamic `JsonValue` walker
-                // (`populate_struct_from_jsonvalue`), which only visits declared
-                // fields and silently tolerates extra keys.  Previously this
-                // returned a `WalkErr`, and the array loop's `?` aborted the
-                // entire parse → `text as vector<Struct>` returned a silently
-                // empty vector (`len == 0`) whenever the JSON carried any field
-                // the struct did not declare.
-                continue;
-            }
-            found_fields.insert(name.as_str());
         }
-        for (f_nr, f) in object.iter().enumerate() {
+        let base = DbRef {
+            store_nr: to.store_nr,
+            rec,
+            pos: fld,
+        };
+        self.write_absent_fields(tp, &base, found, &found_more);
+        Ok(())
+    }
+
+    /// Is the record that field `field` of `rec_tp` holds one nothing has written yet?
+    /// A nullable record is: the prefill of the record around it writes its absence, not
+    /// its fields.
+    fn unfilled_record(&self, rec_tp: u16, field: u16) -> bool {
+        field != u16::MAX && self.field_declared_nullable(rec_tp, field)
+    }
+
+    /// Write the absent value of every field of record type `tp` at `base` that no member
+    /// named: `found` holds a bit per field number below 64, `found_more` the numbers
+    /// from 64 up.  A key the text simply omits is the same question as one written
+    /// `null`, and gets the same answer (loft#870).  With nothing named it is the prefill
+    /// of a record no caller prefilled (`@FR-H-Claim`).
+    fn write_absent_fields(&mut self, tp: u16, base: &DbRef, found: u64, found_more: &[u16]) {
+        for f_nr in 0..self.record_fields(tp).len() as u16 {
+            let f = &self.record_fields(tp)[f_nr as usize];
+            let named = if f_nr < 64 {
+                found & (1 << f_nr) != 0
+            } else {
+                found_more.contains(&f_nr)
+            };
             if (f.other_indexes.is_empty() || f.other_indexes[0] != u16::MAX)
-                && !found_fields.contains(f.name.as_str())
+                && !named
                 && f.name != "enum"
             {
+                let (f_content, position) = (f.content, f.position);
                 let slot = DbRef {
-                    store_nr: to.store_nr,
-                    rec,
-                    pos: fld + u32::from(f.position),
+                    store_nr: base.store_nr,
+                    rec: base.rec,
+                    pos: base.pos + u32::from(position),
                 };
-                // A key the JSON simply omits is the same question as one written
-                // `null`, and gets the same answer (loft#870).
-                self.write_absent_value(f.content, tp, f_nr as u16, &slot);
+                self.write_absent_value(f_content, tp, f_nr, &slot);
             }
         }
-        Ok(())
     }
 
     /// Schema-driven primitive write.  `tp` is one of the
