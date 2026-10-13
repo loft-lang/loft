@@ -29,7 +29,8 @@
 //              wait on rAF alone reaches the marker.
 //
 // Exit 0 if `#out` contains the expected substring, 1 if not (prints the
-// captured `#out`), 2 = SKIP (no chrome binary).
+// captured `#out`), 2 = SKIP (no chrome binary, or one that never answered its
+// debugging port).
 //
 // The file is served over http://localhost so a snap-confined Chromium (which
 // cannot read /tmp via file://) can load it.
@@ -123,12 +124,28 @@ function encodeFrame(text) {
 
 let exitCode = 0;
 (async () => {
+  // REACHING the browser is a precondition, not a measurement, so a chrome that is
+  // installed and never answers its debugging port is the same answer as not having
+  // one: SKIP (exit 2), as `html_render_check.mjs` gives.  Exit 3 here is read by the
+  // caller as "the page did not resume", about a page that was never loaded.
+  //
+  // Everything AFTER this point keeps its failure codes: once the browser answers, a
+  // page that does not reach the marker is a real result and must stay red.
+  let tab;
   try {
     await waitFor(() => getJson('/json/version'));
-    const tab = await waitFor(async () => {
+    tab = await waitFor(async () => {
       const tabs = await getJson('/json');
       return tabs.find(t => t.type === 'page');
     });
+  } catch (e) {
+    console.error('SKIP: chrome is installed but never answered its debugging port ('
+      + e.message + ')');
+    if (chromeErr) console.error('chrome stderr (last 400):\n' + chromeErr.slice(-400));
+    chrome.kill();
+    process.exit(2);
+  }
+  try {
     const u = tab.webSocketDebuggerUrl.match(/^ws:\/\/([^:]+):(\d+)(\/.*)$/);
     const sock = net.createConnection(parseInt(u[2], 10), u[1]);
     await new Promise((res, rej) => { sock.once('connect', res); sock.once('error', rej); });
