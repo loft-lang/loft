@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator
 //! `@FR-R-Header`'s apart clause — a vector the loop only READS, in a store nothing in the
 //! loop is handed, keeps its header and its element base whatever else the loop does.
 //!
