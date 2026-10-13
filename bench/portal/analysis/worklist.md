@@ -135,7 +135,7 @@ others land between 3.5× and 6.9×.
 | S1c | § 3 | `flow_layout_full` (−8 %) | priced | build |
 | X2 | vector headers held across a write the loop makes to ANOTHER store.  `(R-Alias)`'s versioned clause runs a copy of the loop under a run-time test that the return buffer's store is not a parameter's; the same test over any pair of stores the loop names admits these | `rig_world_frame3` (26 %), cbor `encode` (23 %), `arguments/parse` (19 %), `flow_layout_full` (16 %) | a widening of a built rule, no price | hand-price on cbor `encode`'s emit loop (the callee writes `buf`; the loop reads `ranks`, `koff`, `klen` out of line) |
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
-| X4 | `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | first — `check_request` cannot be profiled with symbols without it; then `(R-DecodeView)` (decided, C141) and S8 after its decision |
+| X4 | BUILT — `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | profile `check_request`, then `(R-DecodeView)` (decided, C141) and S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
 | X6 | BUILT — `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4), token offsets from the lexer (J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8), each token written where it is kept (J10); over-9x.md § moros `map_json` | `map_json` | measured: 7.44× → 2.68× (J4 −2 %, J8 −12.6 %, J6 and J7 −17 %, J9 −33 %, J5 and J10 −22 %) | the row is under 5× and has left this list; over-9x.md § What is left |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
@@ -150,9 +150,8 @@ others land between 3.5× and 6.9×.
 **Order.**  Three rules, applied in this order: a step another step or a row WAITS on goes
 before it; the slowest row goes first; a step with no price is priced before it is built.
 
-1. **Unblock** — small, and a row waits on each (X6's decision is taken, § 6).  X4:
-   `check_request`, the third slowest row, has no profile without it.  X11: `fill_polygon`
-   cannot be measured on this box until then.
+1. **Unblock** — X4 is built (`check_request` can be profiled).  X11 is open: `fill_polygon`
+   cannot be measured on this box until the five libraries' pins are bumped.
 2. **`truncate_to` (8.17×)** — price X1 on `history_push`, build it if the price holds.  It
    also moves `panel_build`, so item 6 is sized on the profile X1 leaves.
 3. **`flow_layout_full` (7.92×)** — build S1c (priced).  Price X2, then build it: the same
@@ -356,9 +355,10 @@ Each unit lands with a guard of hand-computed cells on both backends, its switch
 
 ## Tooling the pass keeps tripping over
 
-- `bench/portal/hand_price.sh` links no package native library: a bench whose library ships
-  a cdylib (`server`, `pluginabi` through crypto, `web`, `ssh`) needs the `-L native=…` and
-  rpath lines by hand (over-9x.md § Tooling).
+- `bench/portal/hand_price.sh` links a package's native libraries by replaying the
+  arguments of the package's own compile (`LOFT_NATIVE_RUSTC_ARGS`; the script's header has
+  the commands).  Needed by every bench whose library ships a cdylib (`server`, `pluginabi`
+  through crypto, `web`, `ssh`).
 - No script attributes a profile's samples to one routine of a lane (rules.md § Change 6).
   On Linux the method is `perf` samples windowed by time (rustc-vs-twin.md § Method notes).
   On macOS, `sample <pid>` over a `--native-release --names` build gives the call tree;
