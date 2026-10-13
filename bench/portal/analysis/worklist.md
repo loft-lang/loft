@@ -111,7 +111,7 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 7.92 | `flow_layout_full` | S1c, X2, X3 | ≈ 5× (*est.*) |
 | 7.85 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
 | 7.54 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
-| 7.43 | `panel_build` | S9, X1's list widened to texts | ≈ 5× (*est.*) |
+| 7.42 | `panel_build` | S9 | ≈ 5× (*est.*) |
 | 7.18 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
 | 6.93 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
 | 6.83 | `binary_read` (7.72 measured alone; the Rust lane is noisy beside others) | X8 | no figure |
@@ -131,7 +131,7 @@ others land between 3.5× and 6.9×.
 
 | | step | rows it moves (share of the row) | state | first action |
 |---|---|---|---|---|
-| X1 | BUILT, in the runtime and for one family of records: a record that owns plain vectors and nothing else is copied and released by the list of those fields (`Stores::plain_vectors_of`), where `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` asked each field's type what it is.  Both backends; a record with any other owner (a text, a vector of records that own heap) still takes the walk | `truncate_to` (8.17× → 6.03×, −26 %); `panel_build` is level — its records own texts | measured | the same list for a record that owns texts, and for a vector of such records, is what `panel_build`'s release walk (~16 %) would need: price it on that row |
+| X1 | BUILT, in the runtime and for one family of records: a record that owns plain vectors and nothing else is copied and released by the list of those fields (`Stores::plain_vectors_of`), where `copy_claims`, `owned_walk`, `remove_struct_claims`, `holds_no_heap` and `remove_claims_mode` asked each field's type what it is.  Both backends; a record with any other owner (a text, a vector of records that own heap) still takes the walk | `truncate_to` (8.17× → 6.03×, −26 %); `panel_build` is level — its records own texts | measured | nothing more of this kind on `panel_build`: its release driven by the type's flattened heap slots (texts deleted in a loop, a collection's own walk called per slot) priced at −3 % of the row and was dropped — the walk's descent is not where that row's release spends |
 | S1c | § 3 | `flow_layout_full` (−8 %) | priced | build |
 | X2 | vector headers held across a write the loop makes to ANOTHER store.  `(R-Alias)`'s versioned clause runs a copy of the loop under a run-time test that the return buffer's store is not a parameter's; the same test over any pair of stores the loop names admits these | `rig_world_frame3` (26 %), cbor `encode` (23 %), `arguments/parse` (19 %), `flow_layout_full` (16 %) | a widening of a built rule, no price | hand-price on cbor `encode`'s emit loop (the callee writes `buf`; the loop reads `ranks`, `koff`, `klen` out of line) |
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
