@@ -440,6 +440,22 @@ only hands such a buffer down is promoted in its turn (the trace's `ref=… PROM
 so the buffer is minted by the outermost frame that is not; a callee that reaches back to its
 caller declines that (`stays a local`), and the same switch turns both halves off.
 
+**`LOFT_NO_RESULT_BUFFER=1`** (`@FR-R-WorkBuffer`'s result clause, default-ON, after pass 2,
+BOTH backends) keeps the buffer of a call's vector result in the frame that binds it.  With
+it off, a function that binds `x = f(…)` — `f` answering a `vector<τ>` through its hidden
+buffer — and only READS `x` (its length, its elements, their fields; `for e in x` included)
+takes that buffer as a hidden work-buffer parameter, provided the function runs again (a
+call of it stands in a loop, or in a function that does or that calls itself): the caller's
+frame keeps the store across the calls, and a callee that refills a live buffer finds the
+previous result's elements in it.  Handed no buffer — a call through a function value, a
+`par` worker's frame — the function mints its own at entry and releases it at its exit.  A
+result written, appended to, copied whole, stored, handed on or returned keeps the mint, as
+do a function answering a text and a constant `split` (the native build reads that one
+without a vector, `@FR-R-SplitTable`).  The bisect step between `LOFT_NO_WORK_BUFFER` (which turns
+this off too) and the rest of that rule: a stale element or length in a vector a call
+answered, in a function that only reads it.  `LOFT_TRACE_WORK_BUFFER=1` names each ref
+(`result=… PROMOTED to a caller buffer`, `keeps its mint: <why>`).
+
 **`LOFT_NO_WORK_BUFFER_POOL=1`** (loft#1697, default-ON, with `@FR-R-WorkBuffer`) gives every
 call site a work buffer of its own again.  By default a frame POOLS them: the k-th work buffer
 of element type τ in one call takes the frame's buffer `(τ, k)`, shared by every call site,

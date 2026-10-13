@@ -1,0 +1,416 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-WorkBuffer`'s result clause — a function that binds a call's `vector<τ>` result and
+// only READS it where it stands (its length, its elements, their fields) does not own the
+// buffer the call fills: it is a hidden work-buffer parameter, and the caller's frame keeps
+// the store across the function's activations.  Every value below is computed by hand.
+//
+// What can go wrong is a buffer shared by two results that are alive together (c6, c10,
+// c16), an element or a length left from the previous activation (every loop here runs the
+// result longer, shorter and empty in turn), a text read from an element that still points
+// into the buffer after the next call wrote it (c8), a function that does more than read
+// its result taking the clause (c12), and a store per call left alive (m1).  So m1 counts
+// the live records of every store after 10 and after 1 000 calls.
+// `LOFT_NO_RESULT_BUFFER=1`, `LOFT_NO_WORK_BUFFER=1`, `LOFT_NO_WORK_BUFFER_POOL=1`,
+// `LOFT_WORK_BUFFER_NULL=1`, `LOFT_POISON=1`, `LOFT_POISON_CLAIM=1` and
+// `LOFT_STRICT_STORES=1` must answer identically, on both backends.
+//
+// @falsified-at: none — written with the rewrite it guards; the planted defect is recorded
+//   with `@falsified-by:` below.
+// @falsified-by: tests/falsified/a-result-read-in-place-is-a-caller-buffer.patch
+//   — the entry witness never stashed, so a reader's exit releases the buffer its caller
+//   handed it.
+//   CHANNEL: an assertion on --interpret, a panic on --native.
+//   WITNESS: `c6 66,138,138,3,` where the file says `69,132,0,3,` (two results alive
+//   together, in stores the previous exit released); `panicked at src/store.rs` on --native.
+//   HOLDS: both backends green here, and the control green under `LOFT_NO_RESULT_BUFFER=1`.
+
+struct Run { str: text, style: integer }
+struct Bag { items: vector<Run>, n: integer }
+struct Keep { last: text, n: integer }
+
+// The four texts the runs cycle through: 1, 22, 0 and 3 bytes.
+fn word(j: integer) -> text {
+  if j % 4 == 0 { return "a" }
+  if j % 4 == 1 { return "a longer word than two" }
+  if j % 4 == 2 { return "" }
+  "mid"
+}
+
+// The callee: an early return of the empty result, then one append per step.
+fn runs_of(shift: integer, k: integer) -> vector<Run> {
+  runs: vector<Run> = [];
+  if k <= 0 { return runs; }
+  for i in 0..k {
+    runs += [Run { str: word(i + shift), style: i }];
+  }
+  return runs;
+}
+
+fn words_of(shift: integer, k: integer) -> vector<text> {
+  out: vector<text> = [];
+  for i in 0..k { out += [word(i + shift)]; }
+  out
+}
+
+fn evens(n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [2 * i]; }
+  out
+}
+
+fn ks(c: integer) -> integer {
+  if c == 0 { return 3 }
+  if c == 1 { return 1 }
+  if c == 2 { return 4 }
+  if c == 3 { return 0 }
+  if c == 4 { return 2 }
+  4
+}
+
+// The reader: 1000·length + 10·Σsize + Σstyle.
+fn weigh(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  t = 1000 * len(rs);
+  for i in 0..len(rs) {
+    r = rs[i];
+    t += 10 * size(r.str) + r.style;
+  }
+  t
+}
+
+// c1: call c reads ks(c) = 3, 1, 4, 0, 2, 4 runs whose texts start at word(c).  Sizes
+// 1 + 22 + 0, 22, 0 + 3 + 1 + 22, —, 1 + 22, 22 + 0 + 3 + 1 and styles 3, 0, 6, —, 1, 6.
+fn c1() -> text {
+  out = "";
+  for c in 0..6 { out += "{weigh(c, ks(c))},"; }
+  out
+}
+
+// c2: the `?` read, whose fallback record is another buffer of the frame: 10·Σsize + Σstyle
+// over the same six calls = 233 + 220 + 266 + 0 + 231 + 266.
+fn weigh_q(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  t = 0;
+  for i in 0..len(rs) {
+    r = rs[i]?;
+    t += 10 * size(r.str) + r.style;
+  }
+  t
+}
+fn c2() -> integer {
+  t = 0;
+  for c in 0..6 { t += weigh_q(c, ks(c)); }
+  t
+}
+
+// c3: the result walked by a `for`: Σsize = 23 + 22 + 26 + 0 + 23 + 26.
+fn sizes(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  t = 0;
+  for r in rs { t += size(r.str); }
+  t
+}
+fn c3() -> integer {
+  t = 0;
+  for c in 0..6 { t += sizes(c, ks(c)); }
+  t
+}
+
+// c4: text elements: 100·length + Σsize per call.
+fn heavy(shift: integer, k: integer) -> integer {
+  ws = words_of(shift, k);
+  t = 100 * len(ws);
+  for w in ws { t += size(w); }
+  t
+}
+fn c4() -> text {
+  out = "";
+  for c in 0..6 { out += "{heavy(c, ks(c))},"; }
+  out
+}
+
+// c5: scalar elements: Σ 2i for i < n = n·(n − 1), for n = 3, 1, 4, 0, 2, 4.
+fn sum_evens(n: integer) -> integer {
+  es = evens(n);
+  t = 0;
+  for i in 0..len(es) { t += es[i]; }
+  t
+}
+fn c5() -> text {
+  out = "";
+  for c in 0..6 { out += "{sum_evens(ks(c))},"; }
+  out
+}
+
+// c6: two results of one callee alive together: Σ size(a) · Σ (style(b) + 1).
+// (0, 3 | 1, 2): 23 · (1 + 2) = 69;  (1, 2 | 0, 3): 22 · (1 + 2 + 3) = 132;
+// (2, 0 | 0, 3): 0;  (3, 1 | 3, 1): 3 · 1 = 3.
+fn cross(s1: integer, k1: integer, s2: integer, k2: integer) -> integer {
+  a = runs_of(s1, k1);
+  b = runs_of(s2, k2);
+  t = 0;
+  for i in 0..len(a) {
+    for j in 0..len(b) {
+      t += size(a[i].str) * (b[j].style + 1);
+    }
+  }
+  t
+}
+fn c6() -> text {
+  k1 = [3, 2, 0, 1];
+  s2 = [1, 0, 0, 3];
+  k2 = [2, 3, 3, 1];
+  out = "";
+  for c in 0..4 { out += "{cross(c, k1[c], s2[c], k2[c])},"; }
+  out
+}
+
+// c7: two readers of the same element type called in turn from one frame, which holds one
+// buffer for both.  styles(k) spells the styles + 1 as digits: 4 → 1234, 2 → 12, 0 → 0, 1 → 1,
+// 3 → 123.  weigh(c, ks(c)) + styles(c, ks(5 − c)):
+// 3233 + 1234, 1220 + 12, 4266 + 0, 0 + 1234, 2231 + 1, 4266 + 123.
+fn styles(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  t = 0;
+  for r in rs { t = t * 10 + r.style + 1; }
+  t
+}
+fn c7() -> text {
+  out = "";
+  for c in 0..6 { out += "{weigh(c, ks(c)) + styles(c, ks(5 - c))},"; }
+  out
+}
+
+// c8: a text read from an element is the function's answer, and outlives the next call.
+// (A function answering a text keeps its mint: its text buffer is numbered after the ref.)
+fn first_word(shift: integer, k: integer) -> text {
+  rs = runs_of(shift, k);
+  if len(rs) == 0 { return "-" }
+  rs[0].str
+}
+fn c8() -> text {
+  a = first_word(1, 2);
+  out = "";
+  for c in 0..2 { out += "{first_word(3 * (1 - c), 1 - c)}|"; }
+  "{a}|{out}{a}"
+}
+
+// c8b: a text read from an element is stored in the caller's record, and outlives the next
+// call into the same buffer: word(1) and 2 runs, then "mid" and 1 run, then nothing.
+fn note(k: Keep, shift: integer, n: integer) {
+  rs = runs_of(shift, n);
+  if len(rs) > 0 { k.last = rs[0].str; }
+  k.n += len(rs);
+}
+fn c8b() -> text {
+  k1 = Keep { last: "", n: 0 };
+  k2 = Keep { last: "", n: 0 };
+  for c in 0..3 {
+    if c == 0 { note(k1, 1, 2); } else { note(k2, 3 * (2 - c), 2 - c); }
+  }
+  "{k1.last}|{k1.n}|{k2.last}|{k2.n}"
+}
+
+// c9: the buffer climbs two frames.  total(6) = 3233 + 1220 + 4266 + 0 + 2231 + 4266 = 15216;
+// calls 6..11 read words from 6, 7, 8, 9, 10, 11: 3043 + 1030 + 4266 + 0 + 2031 + 4266 =
+// 14636, so total(12) = 29852 and both together 45068.
+fn total(n: integer) -> integer {
+  t = 0;
+  for c in 0..n { t += weigh(c, ks(c % 6)); }
+  t
+}
+fn c9() -> integer { total(6) + total(12) }
+
+// c10: a reader that calls itself between the call and the read: each activation's result
+// is alive across the inner ones.  deep(n) = n + n·(n − 1)/2 + deep(n − 1): 1, 4, 10, 20.
+fn deep(n: integer) -> integer {
+  if n <= 0 { return 0 }
+  rs = runs_of(n, n);
+  t = len(rs);
+  t += deep(n - 1);
+  for r in rs { t += r.style; }
+  t
+}
+
+// c11: a reader called through a function value is handed no buffer: it mints its own and
+// releases it at its exit.
+fn apply(f: fn(integer, integer) -> integer, a: integer, b: integer) -> integer { f(a, b) }
+fn c11() -> text { "{apply(weigh, 0, 3)},{apply(weigh, 1, 1)},{apply(weigh, 3, 0)}" }
+
+// c12: functions that do more than read their result keep the buffer in their frame.
+// a — the result is the answer.
+fn pass(shift: integer, k: integer) -> vector<Run> {
+  rs = runs_of(shift, k);
+  rs
+}
+// b — the result is appended to: sizes 23 + styles 3, then "zz" and 7 → 35; from nothing, 9.
+fn grown(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  rs += [Run { str: "zz", style: 7 }];
+  t = 0;
+  for r in rs { t += size(r.str) + r.style; }
+  t
+}
+// c — the result is stored whole in a record that is the answer.
+fn bag(shift: integer, k: integer) -> Bag {
+  rs = runs_of(shift, k);
+  Bag { items: rs, n: len(rs) }
+}
+// d — the result is handed to a callee: 3 · 10 + 3.
+fn count(rs: vector<Run>) -> integer { len(rs) }
+fn via(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  count(rs) * 10 + len(rs)
+}
+// e — an element is written: styles 9 + 1 + 2.
+fn bump(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  if len(rs) > 0 { rs[0].style = 9; }
+  t = 0;
+  for r in rs { t += r.style; }
+  t
+}
+// Each is called in a loop, so it is what the function does with its result that decides.
+fn c12() -> text {
+  out = "";
+  for c in 0..2 {
+    p = pass(0, 3);
+    b1 = bag(0, 3);
+    b2 = bag(3, 1);
+    out = "{c}:{len(p)}{p[1].style}|{grown(0, 3)},{grown(3, 0)}|{b1.n}:{b1.items[1].str}|{b2.n}:{b2.items[0].str}|{via(0, 3)}|{bump(0, 3)},{bump(0, 0)}";
+  }
+  out
+}
+
+// c13: an exit before the call.
+fn guarded(skip: boolean, shift: integer, k: integer) -> integer {
+  if skip { return -1 }
+  rs = runs_of(shift, k);
+  t = 1000 * len(rs);
+  for r in rs { t += 10 * size(r.str) + r.style; }
+  t
+}
+fn c13() -> text {
+  out = "";
+  for c in 0..4 { out += "{guarded(c % 2 == 0, c / 2, 3 - 2 * (c / 2))},"; }
+  out
+}
+
+// c13b: a reader no loop reaches keeps the buffer in its own frame: its result ends where
+// the source ends it.
+fn once(shift: integer, k: integer) -> integer {
+  rs = runs_of(shift, k);
+  t = 0;
+  for r in rs { t += size(r.str); }
+  t
+}
+
+// c14: a `par` worker reads a result: a worker's frame is built from the element alone, so
+// it mints for the reader it calls.  weigh(a, a) for a = 1, 2, 3: sizes 22, 0 + 3,
+// 3 + 1 + 22 and styles 0, 1, 3 → 1220 + 2031 + 3263 = 6514.
+fn c14w(x: integer) -> integer { weigh(x, x) }
+fn c14() -> integer {
+  items = [1, 2, 3];
+  s = 0;
+  for a in items par(b = c14w(a), 2) { s += b; }
+  s
+}
+
+// c15: a generator reads a result per step: 3233 % 1000, 1220 % 1000, 4266 % 1000.
+fn steps(n: integer) -> iterator<integer> {
+  for c in 0..n {
+    yield weigh(c, ks(c)) % 1000;
+  }
+}
+fn c15() -> integer {
+  t = 0;
+  for v in steps(3) { t = t * 1000 + v; }
+  t
+}
+
+// c16: a frame's own result alive across a call that reads another: weigh % 1000 over calls
+// 0..3 = 233 + 220 + 266 + 0, and each pass adds 2 · 7 + 1.
+// c16 runs it twice: 779 + 2 · 779.
+fn mix() -> integer {
+  t = 0;
+  for c in 0..4 {
+    own = runs_of(c, 2);
+    t += weigh(c, ks(c)) % 1000;
+    t += len(own) * 7 + own[1].style;
+  }
+  t
+}
+
+fn c16() -> integer {
+  t = 0;
+  for p in 0..2 { t += mix() * (p + 1); }
+  t
+}
+
+fn census_records() -> integer {
+  cr_t = store_memory();
+  cr_i = cr_t.find("records ");
+  if !cr_i { return -1 }
+  cr_j = cr_i + 8;
+  cr_n = 0;
+  while cr_j < len(cr_t) && cr_t[cr_j] >= '0' && cr_t[cr_j] <= '9' {
+    cr_n = cr_n * 10 + (cr_t[cr_j] as integer - '0' as integer);
+    cr_j += 1;
+  }
+  cr_n
+}
+
+// m1 — the live records after 1 000 calls equal those after 10: call 9 and call 999 both
+// end on the empty result.
+fn m1_weigh(n: integer) -> integer {
+  t = 0;
+  for c in 0..n { t += weigh(c, ks(c % 6)) + 1; }
+  assert(t > 0, "m1_weigh ran");
+  census_records()
+}
+fn m1_heavy(n: integer) -> integer {
+  t = 0;
+  for c in 0..n { t += heavy(c, ks(c % 6)) + sum_evens(ks(c % 6)) + 1; }
+  assert(t > 0, "m1_heavy ran");
+  census_records()
+}
+// One call site per shape, each run once before it is measured: without the frame's pool a
+// buffer belongs to a site, and a buffer holds its vector from the first call that fills it.
+fn m1() {
+  assert(census_records() >= 0, "m1: the census answers");
+  w = [0, 0, 0];
+  h = [0, 0, 0];
+  for p in 0..3 {
+    n = 10;
+    if p == 2 { n = 1000 }
+    w[p] = m1_weigh(n);
+    h[p] = m1_heavy(n);
+  }
+  assert(w[1] == w[2], "m1 weigh grows: {w[1]} -> {w[2]} records");
+  assert(h[1] == h[2], "m1 heavy grows: {h[1]} -> {h[2]} records");
+}
+
+fn main() {
+  assert(c1() == "3233,1220,4266,0,2231,4266,", "c1 {c1()}");
+  assert(c2() == 1216, "c2 {c2()}");
+  assert(c3() == 120, "c3 {c3()}");
+  assert(c4() == "323,122,426,0,223,426,", "c4 {c4()}");
+  assert(c5() == "6,0,12,0,2,12,", "c5 {c5()}");
+  assert(c6() == "69,132,0,3,", "c6 {c6()}");
+  assert(c7() == "4467,1232,4266,1234,2232,4389,", "c7 {c7()}");
+  assert(c8() == "a longer word than two|mid|-|a longer word than two", "c8 {c8()}");
+  assert(c8b() == "a longer word than two|2|mid|1", "c8b {c8b()}");
+  assert(c9() == 45068, "c9 {c9()}");
+  assert(deep(1) == 1 && deep(2) == 4 && deep(3) == 10 && deep(4) == 20, "c10 {deep(1)} {deep(2)} {deep(3)} {deep(4)}");
+  assert(c11() == "3233,1220,0", "c11 {c11()}");
+  assert(c12() == "1:31|35,9|3:a longer word than two|1:mid|33|12,0", "c12 {c12()}");
+  assert(c13() == "-1,3233,-1,1220,", "c13 {c13()}");
+  assert(once(0, 3) == 23, "c13b {once(0, 3)}");
+  assert(c14() == 6514, "c14 {c14()}");
+  assert(c15() == 233220266, "c15 {c15()}");
+  assert(c16() == 2337, "c16 {c16()}");
+  m1();
+  println("done");
+}

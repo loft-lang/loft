@@ -2768,6 +2768,54 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  taken, so that frame mints its own buffers and the chain stops there.
 ```
 
+```
+  (R-WorkBuffer), the result clause: a work-ref `b` a function mints for a callee's
+                 hidden `vector<τ>` RETURN buffer — any τ — is a hidden work-buffer
+                 parameter of that function where (a) `b` is named once, at the buffer
+                 position of ONE call of a loft-bodied callee that cannot reach back
+                 to the function through direct calls; (b) that call is the whole
+                 value of the one bind of a plain local `x`, a view of `b` and of
+                 nothing else, and no `for` iterates the call itself; (c) `x`, every
+                 local whose type borrows from it and every element read from it is
+                 only READ where it stands: the vector as the first operand of a
+                 length, a null test or an element read; an element as the first
+                 operand of a scalar or text getter or of a null test, or bound to a
+                 local that borrows — and a value that may yield one (a block's last
+                 statement, an `if` arm) only where it is so bound; and (d) the
+                 function RUNS AGAIN: a direct call of it stands in a loop, or in a
+                 function that itself runs again or calls itself.  Handed the null
+                 sentinel the function takes the rebound-parameter road: an entry
+                 witness, a store of its own minted in front of the top-level
+                 statement that makes the call, released at every exit against the
+                 witness.  Declines, keeping the mint: a constant `split`, which
+                 (R-LazySplit) and (R-SplitTable) read without its vector, leaving
+                 the buffer unminted; any other mention of a
+                 view — a write, an append, a removal, a whole copy into a local that
+                 borrows nothing, a field, an argument, a return, a tuple, a capture;
+                 a buffer handed to two calls; a result local bound twice or
+                 nullable; a function answering a text, whose text buffer is numbered
+                 after the ref; and every function the rule's own list declines.
+```
+
+**In words.**  `fn width(…) { runs = slice(…); for r in runs { … } }` never owns the value
+`slice` builds in any way the source can see: it reads it and returns.  The store it is built
+in was minted and freed per call of `width` all the same, and a callee that refills a live
+buffer (`(R-RefillBuffer)`, `(R-RefillText)`'s collection clause) found an empty one every
+time.  As the caller's buffer the store lives across the calls, and the transitive clause
+carries it on.  The read walk IS the escape proof, as the mention test is for a local: a
+view that is only read cannot be copied, moved, adopted or returned, so nothing of the store
+outlives the activation, and a text or a scalar read out of it is a value.  The same callee
+is handed the buffer whatever it last held — a longer result, a shorter one, another
+callee's of the same element type through the frame's pool — which is the state the second
+pass of a loop already hands it, so no callee needs a condition.  (d) is where the gain is
+paid back and where the model is kept: a function entered once per activation of everything
+above it would park its result in a frame that never uses it again, past the scope the
+source ends it in.  Both backends.  Switch `LOFT_NO_RESULT_BUFFER=1`;
+`LOFT_TRACE_WORK_BUFFER=1` names each ref promoted and each declined (`result=`).  Sites:
+`src/parser/result_buffer.rs` (`promote_result_refs_in`, `admit_result_ref`, `ReadWalk`,
+`runs_again`).  Guard `tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft`, with a
+planted defect under `tests/falsified/`; pin `tests/work_buffer.rs`.
+
 **In words.**  The overview's largest language-side bucket is a value Rust keeps on the
 stack and loft mints as a STORE: a vector made fresh per call and freed at its end, 67 ns on
 the smallest such function against ~20 ns for a `Vec` created and dropped, and the whole cbor
@@ -5093,14 +5141,6 @@ trace and falsifiers apply, plus the cells named here.  Priced in
   borrows an element for an iteration; this borrows a field for an arm under the same
   value-only reading.  Cells: an arm that appends to the subject's vector after reading the
   binding (declines); one that stores the binding into another record (copies).
-- **The pooled clause, for `(R-RefillText)`'s collection clause.**  A return buffer whose
-  elements the callee keeps is only kept across calls the CALLER's buffer survives: a
-  caller that mints it per activation and is itself called per token (zttext's
-  `token_width`) hands a fresh store each time.  Lifting that work-ref into the caller's
-  caller, as `(R-WorkBuffer)`'s transitive clause lifts a work buffer, is the next unit:
-  priced −8 % alone and −31 % with the collection clause on `flow_layout_full`.
-  `check_request` and `decode` build their vectors by other operations than appends and are
-  not admitted.
 - **Text-bearing elements and the work text, for `(R-WorkBuffer)`.**  `vector<τ>` with τ a
   record of scalars and texts is admitted under the mention test unchanged PROVIDED the
   callee refills it under the text clause (otherwise the per-call release is what the pool

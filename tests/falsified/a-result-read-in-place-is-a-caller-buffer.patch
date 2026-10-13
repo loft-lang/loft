@@ -1,0 +1,12 @@
+diff --git a/src/parser/result_buffer.rs b/src/parser/result_buffer.rs
+--- a/src/parser/result_buffer.rs
++++ b/src/parser/result_buffer.rs
+@@ -279,7 +279,7 @@
+                 .unwrap_or(at);
+             bl.operators
+                 .insert(call_at, v_if(is_null, Value::Insert(mint), Value::Null));
+-            bl.operators.insert(at, stash);
++            let _ = stash;
+         }
+     }
+ }

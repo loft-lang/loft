@@ -56,6 +56,16 @@ fn deep(d: integer, seed: integer) -> vector<R2> {
   return out;
 }
 
+// A caller's work buffer declared ahead of the result local (`@FR-R-WorkBuffer`): one id
+// is seen, so the second fill is mkr(1, seed + 1).
+fn tagged(seed: integer) -> vector<R2> {
+  ids: vector<integer> = [];
+  out: vector<R2> = [];
+  for r in mkr(1, seed) { ids += [r.id]; out += [r]; }
+  for r in mkr(1, seed + len(ids)) { out += [r]; }
+  out
+}
+
 fn sum_r2(v: const vector<R2>) -> integer {
   s = 0;
   for r in v { s += r.id; for x in r.ins { s += x.a; } }
@@ -73,6 +83,12 @@ fn main() {
   // Recursion with reuse across an enclosing loop, composed with the § V-j move.
   r = deep(2, 1);
   assert(len(r) == 8 && sum_r2(r) == 46648, "recursion through adopted buffers keeps every element");
+
+  // A work buffer beside the adopted result: 550 + 660, then 770 + 880 into the same buffer.
+  t = tagged(5);
+  assert(len(t) == 2 && sum_r2(t) == 1210, "a result beside a work buffer delivers exact elements");
+  u = tagged(7);
+  assert(len(u) == 2 && sum_r2(u) == 1650, "and its reused buffer holds exactly the new result");
 
   println("retbuf adopt ok");
 }
