@@ -3055,7 +3055,12 @@ line in `Output::output_function`'s prelude.
                  (the record type, and the record type with `NULLABLE_LAYOUT`), so a
                  site, a leaf, a local and a parameter agree on a key or decline: a
                  nullable tuple is never handed where a dense one is expected (a dense
-                 tuple parameter, a fn-ref hand-off, a copy into a record).  Leaves of
+                 tuple parameter, a fn-ref hand-off).  A copy FROM a nullable tuple
+                 into a record is the copy of a value that may be absent: present, one
+                 typed write per field; absent, the record copy's own null arm — a
+                 destination just created is written absent, an existing one keeps
+                 what it held (`@C137`).  A copy from a DENSE tuple is that write only
+                 where the tuple is surely present.  Leaves of
                  a `-> S?` body: its own `Object` build (present), the bare `null`
                  sentinel (absent), a `-> S?` call or `τ?` value local, and a leaf
                  whose own tuple is DENSE — a `-> S` call, a dense value local, and a
@@ -3074,7 +3079,12 @@ line in `Output::output_function`'s prelude.
                  presence: a dense tuple parameter takes the nullable layout (the call
                  site reads whether its argument names a record), a dense function
                  returns it, and a dense parameter handed such a tuple takes it too —
-                 the layout follows the value, the source type does not change.  A
+                 the layout follows the value, the source type does not change.  The
+                 positions that ask are a result of a function that returns the
+                 nullable layout, an argument of a nullable tuple parameter, the
+                 source of a whole-record copy, a `null` among a dense function's
+                 results, and — for parameters — a bind of a `τ?` local.  A
+                 presence test of a surely present dense tuple is the constant.  A
                  function reached through a fn-ref keeps its ABI, and what cannot
                  carry its presence keeps the record.  Layouts JOIN: the arms of a value
                  branch, and the binds of one local, carry one key, or the dense and
@@ -3093,8 +3103,9 @@ line in `Output::output_function`'s prelude.
                  `LOFT_NO_NULLABLE_VALUE_RECORD=1`; guards
                  `a-nullable-record-returns-its-fields-in-registers.loft`,
                  `1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft`,
-                 `1993-a-nullable-record-parameter-crosses-as-its-fields.loft` and
-                 `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft`.
+                 `1993-a-nullable-record-parameter-crosses-as-its-fields.loft`,
+                 `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft` and
+                 `1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a

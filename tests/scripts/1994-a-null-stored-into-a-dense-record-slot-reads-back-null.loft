@@ -147,9 +147,15 @@ fn w10(p: S) -> boolean {
   w10i(p)
 }
 
-// w11 — control: a dense parameter that is only read stays the dense tuple.
+// w11 — a dense parameter that is only read, handed `null`: its fields read null.
 fn w11(p: S) -> integer {
   p.a ?? -3
+}
+
+// w13 — control: a dense parameter that is only read and never handed `null` stays the dense
+// tuple.
+fn w13(p: S) -> integer {
+  p.a + 1
 }
 
 // w12 — a function whose result carries its presence, used where a dense tuple is wanted:
@@ -228,6 +234,7 @@ fn main() {
   assert(w9(null) == 1 && w9(x) == 0, "w9 {w9(null)} {w9(x)}");
   assert(w10(null) && !w10(x), "w10");
   assert(w11(null) == -3 && w11(x) == 41, "w11 {w11(null)} {w11(x)}");
+  assert(w13(x) == 42, "w13 {w13(x)}");
 
   d12 = id12(x);
   e12 = id12(g(1));

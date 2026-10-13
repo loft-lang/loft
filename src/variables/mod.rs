@@ -3914,23 +3914,17 @@ impl Function {
         self.variables[var_nr as usize].argument = false;
     }
 
-    /// May the record bind `var = src` carry ABSENCE — is either side typed `τ?`?
-    ///
-    /// The one question both backends' record-bind emitters ask before choosing the
-    /// null-aware bind over the plain allocate-then-copy (`state/codegen.rs`
-    /// `gen_set_first_ref_var_copy`, `generation/dispatch.rs` the whole-value record bind).
-    /// A copy of an absent value is absent: `OpCopyRecord` from `nullref` reads nothing
-    /// and leaves the destination holding the record allocated for it, PRESENT where its
-    /// source was absent.  The destination's type is asked as well as the source's because
-    /// a source typed non-null can hold `nullref` — a keyed lookup and an element read
-    /// trusted by contract are typed bare views, and a miss or an overrun answers the one
-    /// value spelling of absence (`DbRef::or_null`, @FR-L-Null); asked of the source alone,
-    /// `x = t.h[k]; y: S? = x` on a miss read `y == null` false where `x == null` read
-    /// true, on both backends.  A dense destination keeps the plain copy: `(N-Store)` has
-    /// already reported that it cannot hold absence.
     /// The record a whole-value bind `v = src` COPIES (`@FR-B-Copy`), or `None` where it copies
     /// no whole record.  The one question both emitters' record-copy arms and their ownership
     /// screens ask, so the copy and the free that owns it cannot disagree.
+    ///
+    /// The copy it answers is of the VALUE, and the value may be absent whatever the two are
+    /// typed (`@FR-N-Store`, `@FR-N-Road`): a source typed non-null can hold `nullref` — a keyed
+    /// miss or an element overrun answers it (`DbRef::or_null`, @FR-L-Null), and a `null` handed
+    /// to a dense record parameter is held by it.  `OpCopyRecord` from `nullref` reads nothing
+    /// and would leave the destination holding the record allocated for it, emptiness standing
+    /// in for absence, so both emitters TEST the source and bind an absent one as the null it
+    /// is; the `?` is a compile-time marker and does not select the copy.
     ///
     /// A `&S` source reads as its `S` (`@FR-C-Ref`), so `v = e` with `e = &z` copies `z`'s
     /// record — but only into a destination that OWNS what it holds.  `@FR-O-Proxy` asks copy:
@@ -3971,10 +3965,6 @@ impl Function {
         }
     }
 
-    #[must_use]
-    pub fn bind_admits_absence(&self, var: u16, src: u16) -> bool {
-        matches!(self.tp(src), Type::Optional(_)) || matches!(self.tp(var), Type::Optional(_))
-    }
     /// `var_nr` stops being a parameter: the definition dropped the attribute it received
     /// (`value_record::rewrite_program` removing a return buffer the function no longer
     /// writes).  It stays in the table as a local nothing mentions.

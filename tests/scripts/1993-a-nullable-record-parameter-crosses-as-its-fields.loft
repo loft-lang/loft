@@ -136,8 +136,8 @@ fn q14(self: S, o: S?) -> S {
   S { a: self.a - d.a }
 }
 
-// q15 — a callee that hands back a VIEW of its first parameter, bound to a record local of
-// a function whose own parameters are tuples.
+// q15 — a callee that hands back a VIEW of its first parameter, bound to a record local and
+// written through: the copy is the caller's own.
 fn left(p: S, _o: S?) -> S {
   p
 }

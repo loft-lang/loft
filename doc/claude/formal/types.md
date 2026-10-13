@@ -497,15 +497,15 @@ old auto-`τ?` reading. Design record:
             itself: `@FR-F-Ret` for a return, the store-lifetime rules for a free.  Reading the ordinary
             spelling as correct because it is the ordinary one is how loft#1468 closed on a
             premise that was false (calls-history.md D-call-17/18).
-            ⚠ ONE exception, in two places: READING a `τ?` owes a test for its absence, and
-            there is no way to read one without it.  The `??` operator is the first: its
-            `__ncc_` ops are the OPERATOR's road and not the TYPE's.  The second is a delivery
-            that COPIES a `τ?` value into a buffer: it copies only where the value is present
-            and hands the absence up as it is — a `null` arm left `null`, a nullable local
-            copied under a presence test (`Parser::materialize_return_into`).  A dense record
-            local cannot be given an absence — the store is refused at compile time — so its
-            copy has no such test to take.  Nothing else is excepted: which buffer, which owner, which
-            free and which temporary are the same for both spellings.
+            ⚠ ONE exception: READING a `τ?` owes a test for its absence, and there is no way
+            to read one without it.  The `??` operator is that read: its `__ncc_` ops are the
+            OPERATOR's road and not the TYPE's.  A `null` ARM is the other thing only a `τ?`
+            can write, and a delivery leaves it `null`.  A COPY is not excepted: a whole-record
+            copy tests its source whatever the source is typed — a bind, a rebind, the copy a
+            `return` makes of a local (`Parser::materialize_return_into`) — because a slot typed
+            dense can hold the null `(N-Store)` let into it, and a copy of nothing is nothing.
+            Nothing else is excepted: which buffer, which owner, which free and which temporary
+            are the same for both spellings.
             Home: none single — a lowering is chosen per site, so the rule is enforced at each
             delivery selector and each ownership mechanism, and the way it is BROKEN is a shape
             test naming `Type::Reference` (or any bare former) where `Optional(Reference)` also
@@ -702,14 +702,7 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1.**
-
-- **D-types-35** (open; the tracking issue is loft#1997) — violates `(N-Store)`: a stored null reads back as null.  A <!-- doc-lint: ok -->
-  whole-record COPY of a dense record slot that holds null (`fn f(p: S) -> S? { x = p; x }`
-  called `f(null)`) is a PRESENT record of zeros on the interpreter and on `--native`'s record
-  road: the bind mints its destination and copies unconditionally, where a `S?` source is
-  copied under a presence test.  `--native`'s register road carries the parameter's presence
-  and answers null, so the backends differ on that program.
+**OPEN: 0.**
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,

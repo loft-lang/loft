@@ -16670,8 +16670,12 @@ impl Parser {
         // A stored `reference<T>?` read (`h.link`, loft#1977) is the same: absent when the
         // field holds null, so a `-> S?` copies it only where present.  The read is pure, so
         // the test re-reads it.
+        // A local typed DENSE can hold nothing too (`@FR-N-Store`: a `null` handed to a dense
+        // parameter is held by it, and a bind of that parameter copies the null), so the
+        // copy tests every local it is of, whatever the local and the function are typed
+        // (`@FR-N-Road`).
         let absent_guard = match orig.unspan() {
-            Value::Var(v) if matches!(self.vars.tp(*v), Type::Optional(_)) => Some(Value::Var(*v)),
+            Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
             Value::Call(d, _)
                 if *d == self.data.def_nr("OpGetDbRef")
                     && matches!(self.data.def(self.context).returned(), Type::Optional(_)) =>
@@ -16807,6 +16811,36 @@ impl Parser {
         }
     }
 
+    /// May record local `v` hold nothing when a return copies it?  A local typed `τ?` may.
+    /// One typed dense may too (`@FR-N-Store`), where a null can have reached it: a record
+    /// PARAMETER holds the `null` it was handed; an OWNED local (no dep) is a copy of some
+    /// value or the result of a call, either of which may be nothing; and a local that views
+    /// another RECORD is what that record is.  A local that views a COLLECTION is a bound
+    /// element, which is there; a literal's own buffer is asked by nobody
+    /// ([`Self::branch_has_nullable_leaf`] and the copy stop at an `Object` block).  A local
+    /// typed by a template's TYPE VARIABLE is asked only where it is written `T?`: its
+    /// instance may be a tuple, whose test is not the record's.
+    fn record_local_may_be_absent(&self, v: u16) -> bool {
+        fn asks(p: &Parser, v: u16, seen: &mut Vec<u16>) -> bool {
+            let tp = p.vars.tp(v);
+            if matches!(tp, Type::Optional(_)) {
+                return true;
+            }
+            let record = matches!(tp.base(), Type::Reference(d, _)
+                if !p.data.is_type_var_placeholder(*d) && tp.heap_def_nr().is_some());
+            if !record || seen.contains(&v) {
+                return false;
+            }
+            seen.push(v);
+            if p.vars.is_argument(v) {
+                return true;
+            }
+            let deps = tp.depend();
+            deps.is_empty() || deps.iter().any(|d| asks(p, *d, seen))
+        }
+        asks(self, v, &mut Vec::new())
+    }
+
     /// Is `v` a BRANCH (or a block) one of whose arms ends in a local typed `τ?` — a leaf that
     /// may hold nothing at run time though it is no `null` literal?  A bare local is not asked
     /// (its own copy guards it); the arms of an `if` / `match` are, through their block and
@@ -16814,7 +16848,11 @@ impl Parser {
     fn branch_has_nullable_leaf(&self, v: &Value) -> bool {
         fn leaf(p: &Parser, v: &Value) -> bool {
             match v.unspan() {
-                Value::Var(x) => matches!(p.vars.tp(*x), Type::Optional(_)),
+                // A record local is such a leaf whatever its type: a dense one can hold the
+                // `null` its parameter was handed (`@FR-N-Store`).
+                Value::Var(x) => p.record_local_may_be_absent(*x),
+                // A literal's block ends in the buffer it just built, which is there.
+                Value::Block(bl) if bl.name == "Object" => false,
                 Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(p, x)),
                 Value::Insert(ops) => ops.last().is_some_and(|x| leaf(p, x)),
                 Value::If(_, t, f) => leaf(p, t) || leaf(p, f),
@@ -16826,6 +16864,7 @@ impl Parser {
         // test it (a guard around the whole block would read it before the assignment).
         match v.unspan() {
             Value::If(_, t, f) => leaf(self, t) || leaf(self, f),
+            Value::Block(bl) if bl.name == "Object" => false,
             Value::Block(bl) => bl.operators.last().is_some_and(|x| leaf(self, x)),
             Value::Insert(ops) => ops.last().is_some_and(|x| leaf(self, x)),
             _ => false,

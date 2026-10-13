@@ -1856,12 +1856,11 @@ impl Output<'_> {
             // Allocating first and copying second would be worse than the panic — it leaves
             // the destination holding the record allocated for it, PRESENT where its source
             // was absent.  Same shape and same predicate as the element-read arm above
-            // (loft#823): `rec == 0` is the absence test every store accessor uses.  WHICH
-            // binds may carry absence is `Variables::bind_admits_absence`'s question, asked of
-            // BOTH sides and shared with the interpreter's record bind — a source typed
-            // non-null can still hold `nullref`, and a nullable destination has to receive it
-            // as absence.
-            if variables.bind_admits_absence(var, *src) {
+            // (loft#823): `rec == 0` is the absence test every store accessor uses.  EVERY
+            // record bind takes it, as the interpreter's does (`@FR-N-Store`, `@FR-N-Road`):
+            // the type of neither side says the source is there — a source typed non-null
+            // can hold `nullref` (`Variables::record_copy_source`).
+            {
                 // On the absent arm the placeholder must go back: writing `DbRef::NULL`
                 // DISPLACES whatever the destination held, and nothing downstream releases
                 // it.  At a FIRST bind that is the `null_named` store allocated just above.
@@ -1907,19 +1906,6 @@ impl Output<'_> {
                 );
                 return Ok(());
             }
-            let target = copy_target(&format!("var_{name}"), first_bind);
-            writeln!(w, "var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32);")?;
-            self.indent(w)?;
-            write!(w, "OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32)")?;
-            // @PLN130 — native's whole-record bind deep-copies unconditionally (it has no
-            // last-use move; that asymmetry with the interpreter is @PLN130 cluster V).
-            crate::copy_manifest::record(
-                self.def_nr,
-                var,
-                tp_nr,
-                crate::copy_manifest::Origin::NativeRecordBind,
-            );
-            return Ok(());
         }
         // For text/reference block assignments, pre-declare the variable so that
         // any drop(@var) inside the block (e.g., on break) can reference it.

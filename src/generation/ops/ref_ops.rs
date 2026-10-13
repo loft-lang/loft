@@ -510,6 +510,57 @@ impl OpEmitter for OpPutRefEmitter {
 /// `args`: `[src, dst, tp]` → `OpCopyRecord(cell, <src>, <dst>, <tp>_i32)`.
 pub struct OpCopyRecordEmitter;
 
+impl OpCopyRecordEmitter {
+    /// A copy FROM value local `v` (layout `d`) into `dst`: the tuple written field by field.
+    ///
+    /// `@FR-N-Store` — a NULLABLE tuple that is ABSENT is a copy from the null record, and
+    /// takes that copy's own arm (`Stores::copy_null_into`, `@C137`) with the copy's own type
+    /// operand `tp_val`: a destination just created is written absent, an existing one keeps
+    /// what it held.
+    fn materialise_local(
+        ctx: &mut EmitCtx<'_, '_>,
+        v: u16,
+        d: u16,
+        dst: &Value,
+        tp_val: &Value,
+    ) -> io::Result<()> {
+        let name =
+            super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
+        let presence = ctx
+            .output
+            .value_records
+            .types
+            .get(&d)
+            .and_then(super::super::hoist::ValueTuple::presence);
+        // A destination that is a plain VARIABLE is named as itself, so a setter that holds
+        // its record address (`@FR-R-RecPtr`: a minted element inside its window) writes
+        // through it.  Any other destination is derived ONCE: an element reached through an
+        // index re-resolved per field cost seven lookups for one record (`map_set_hex`).
+        let plain = matches!(dst.unspan(), Value::Var(_));
+        let held = Value::RawExpr("__cd".to_string());
+        write!(ctx.w, "{{ ")?;
+        if !plain {
+            write!(ctx.w, "let __cd: DbRef = ")?;
+            ctx.emit(dst)?;
+            write!(ctx.w, "; ")?;
+        }
+        let to = if plain { dst } else { &held };
+        if let Some(at) = presence {
+            write!(ctx.w, "if var_{name}.{at} {{ ")?;
+        }
+        ctx.output
+            .write_tuple_fields(ctx.w, d, to, &format!("var_{name}"))?;
+        if presence.is_some() {
+            write!(ctx.w, "}} else {{ stores.copy_null_into(&(")?;
+            ctx.emit(to)?;
+            write!(ctx.w, "), (")?;
+            ctx.emit(tp_val)?;
+            write!(ctx.w, ") as u16); }} ")?;
+        }
+        write!(ctx.w, "}}")
+    }
+}
+
 impl OpEmitter for OpCopyRecordEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [src, dst, tp_val] = args {
@@ -522,30 +573,7 @@ impl OpEmitter for OpCopyRecordEmitter {
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
                 && ctx.output.value_records.types.contains_key(&d)
             {
-                let name = super::super::sanitize(
-                    ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
-                );
-                // A destination that is a plain VARIABLE is named as itself, so a setter
-                // that holds its record address (`@FR-R-RecPtr`: a minted element inside
-                // its window) writes through it.  Any other destination is derived ONCE:
-                // an element reached through an index re-resolved per field cost seven
-                // lookups for one record (`map_set_hex`).
-                if matches!(dst.unspan(), Value::Var(_)) {
-                    write!(ctx.w, "{{ ")?;
-                    ctx.output
-                        .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
-                    return write!(ctx.w, "}}");
-                }
-                write!(ctx.w, "{{ let __cd: DbRef = ")?;
-                ctx.emit(dst)?;
-                write!(ctx.w, "; ")?;
-                ctx.output.write_tuple_fields(
-                    ctx.w,
-                    d,
-                    &Value::RawExpr("__cd".to_string()),
-                    &format!("var_{name}"),
-                )?;
-                return write!(ctx.w, "}}");
+                return Self::materialise_local(ctx, *v, d, dst, tp_val);
             }
             // A copy FROM a SUB-RECORD of a value local (`Vtx { pos: w.pos, … }`): the
             // range of the tuple the sub-record is, materialised through the same typed
@@ -725,8 +753,8 @@ impl OpEmitter for OpRefAliasEmitter {
 /// `@FR-R-ValueRecord` nullable clause (@C144): a `τ?` VALUE LOCAL is a tuple whose last element is
 /// the presence word (`hoist::ValueTuple::presence`), so `if x` reads it and `x == null`
 /// negates it.  The gate accounts exactly these two tests against a nullable value local
-/// (`hoist::local_uses_ok`); a dense one never reaches here, its presence tests decline it.
-/// Every other operand takes its template.
+/// (`hoist::local_uses_ok`), and against a DENSE one only where it is surely present, which
+/// answers a constant.  Every other operand takes its template.
 pub struct PresenceEmitter {
     /// `true` for `OpRefIsNull` (answers ABSENCE), `false` for `OpConvBoolFromRef`.
     pub absent: bool,
@@ -747,6 +775,14 @@ impl OpEmitter for PresenceEmitter {
             let place = ctx.output.var_place(*v);
             let not = if self.absent { "!" } else { "" };
             return write!(ctx.w, "({not}{place}.{at})");
+        }
+        // A DENSE value local the gate served this test for is surely present
+        // (`hoist::surely_present`): the answer is a constant — never absent.
+        if let [arg] = args
+            && let Value::Var(v) = arg.unspan()
+            && ctx.output.value_record_locals.contains_key(v)
+        {
+            return write!(ctx.w, "({})", !self.absent);
         }
         super::default::DefaultEmitter.emit(ctx, args)
     }

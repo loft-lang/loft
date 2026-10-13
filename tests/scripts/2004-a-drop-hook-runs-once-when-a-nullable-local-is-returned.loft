@@ -1,0 +1,173 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A DROP HOOK RUNS ONCE WHEN A NULLABLE LOCAL IS RETURNED (`@FR-H-Move`, `@FR-H-Drop`,
+// `@FR-N-Road`, loft#2004).  `(H-Move)` moves what a `return` answers to the caller: one
+// lease, one release.  A return that copies a local which may be absent delivers it under a
+// presence test, and the scope pass reads the copy THROUGH that test, as it reads the copy of
+// a local that cannot be absent bare: the release the copy takes over leaves the frame in
+// both spellings.  Read bare only, the hook stayed with the frame as well and ran twice —
+// first inside the callee, before the caller read the result.
+//
+// Every cell's trace is exact and hand-computed: `m` a mint, `G` the caller's read, `d` the
+// hook, each with the record's id.  A doubled release reads `m2,d7,G7,d7`.
+//
+// @falsified-at: none — receipt recorded below once derived
+
+struct H { id: integer }
+struct SN { h: H? }
+
+fn OpDrop(self: H) {
+  note("d{self.id}");
+}
+
+fn mk(id: integer) -> H {
+  note("m{id}");
+  return H { id: id };
+}
+
+fn trace_path() -> text {
+  return "loft_2004_drop_trace.tmp";
+}
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" {
+    cur += ",";
+  }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur {
+    bytes += [c as u8 ?? 0];
+  }
+  if !write_bytes(trace_path(), bytes) {
+    println("trace write failed");
+  }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) {
+    println("trace clear failed");
+  }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// r1 — a `H?` local returned from a `-> H?`.
+fn r1() -> H? {
+  s = SN { h: null };
+  b = mk(2);
+  x: H? = s.h ?? b;
+  x.id = 7;
+  return x;
+}
+
+// r2 — a `H` local returned from a `-> H?`.
+fn r2() -> H? {
+  s = SN { h: null };
+  b = mk(2);
+  x: H = s.h ?? b;
+  x.id = 7;
+  return x;
+}
+
+// r3 — the dense twin: a `H` local returned from a `-> H`.
+fn r3() -> H {
+  s = SN { h: null };
+  b = mk(2);
+  x: H = s.h ?? b;
+  x.id = 7;
+  return x;
+}
+
+// r4 — the `H?` local is absent: nothing is handed out, and the record it did not take keeps
+// its own release.
+fn r4(take: boolean) -> H? {
+  b = mk(2);
+  x: H? = null;
+  if take {
+    x = b;
+  }
+  return x;
+}
+
+// r5 — two exits, the nullable local on one and a mint on the other.
+fn r5(k: integer) -> H? {
+  s = SN { h: null };
+  b = mk(2);
+  x: H? = s.h ?? b;
+  x.id = 7;
+  if k > 5 {
+    return mk(9);
+  }
+  return x;
+}
+
+fn c1() {
+  y = r1();
+  note("G{y.id ?? -1}");
+}
+
+fn c2() {
+  y = r2();
+  note("G{y.id ?? -1}");
+}
+
+fn c3() {
+  y = r3();
+  note("G{y.id}");
+}
+
+fn c4() {
+  y = r4(false);
+  note("G{y.id ?? -1}");
+}
+
+fn c5() {
+  y = r5(1);
+  note("G{y.id ?? -1}");
+}
+
+fn c6() {
+  y = r5(9);
+  note("G{y.id ?? -1}");
+}
+
+fn c7() {
+  for _ in 0..2 {
+    y = r1();
+    note("G{y.id ?? -1}");
+  }
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) {
+    println("trace clear failed");
+  }
+
+  c1();
+  ok("c1 nullable local, nullable result", drain(), "m2,G7,d7");
+  c2();
+  ok("c2 dense local, nullable result   ", drain(), "m2,G7,d7");
+  c3();
+  ok("c3 dense local, dense result      ", drain(), "m2,G7,d7");
+  c4();
+  ok("c4 the local is absent            ", drain(), "m2,d2,G-1");
+  c5();
+  ok("c5 two exits, the local taken     ", drain(), "m2,G7,d7");
+  c6();
+  ok("c6 two exits, the mint taken      ", drain(), "m2,m9,d7,G9,d9");
+  c7();
+  ok("c7 in a loop, twice               ", drain(), "m2,G7,d7,m2,G7,d7");
+
+  delete(trace_path());
+  println("ok");
+}

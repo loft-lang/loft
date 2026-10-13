@@ -13140,6 +13140,16 @@ impl PresenceWalk<'_> {
                         self.demand(rhs, &mut HashSet::new(), want_params, &mut HashSet::new());
                     }
                 }
+                // A whole-record copy FROM a tuple writes its fields into the destination,
+                // so the tuple must say whether there is anything to write.
+                Value::Call(callee, args)
+                    if (*callee as usize) < data.definitions.len()
+                        && data.def(*callee).name() == "OpCopyRecord" =>
+                {
+                    if let Some(src) = args.first() {
+                        self.demand(src, &mut HashSet::new(), want_params, want_fns);
+                    }
+                }
                 Value::Call(callee, args) => {
                     for (i, key) in self.params.get(callee).into_iter().flatten() {
                         let Some(arg) = args.get(*i) else { continue };
@@ -13267,6 +13277,8 @@ impl PresenceWalk<'_> {
                 self.binds(*v, &mut |rhs| any = any || self.carries_presence(rhs, seen));
                 any
             }
+            // A `null` exit is the absent tuple, which only the nullable layout spells.
+            Value::Call(g, args) if args.is_empty() && is_null_record(self.data, *g) => true,
             Value::Call(g, _) => self.cand.get(g).is_some_and(|k| is_nullable_layout(*k)),
             _ => false,
         }
@@ -16376,9 +16388,16 @@ fn local_uses_ok(
                 // is a reference, and materialising it would be a vector copy the value
                 // path does not emit.  So a view-leaf record declines a copy site
                 // (@PLN164 C5); the record form stands there.
-                // A nullable tuple declines it too: an absent one would have to leave the
-                // destination as a null copy does, which no write per field spells.
-                let copies = name == "OpCopyRecord" && (!view_offs.is_empty() || nullable);
+                // A NULLABLE tuple materialises under its presence word — an absent one
+                // writes nothing, which is what a copy from the null record does — and a
+                // DENSE one only where it is surely present (`@FR-N-Store`): a tuple that
+                // may have been read off a null record would write that record's field
+                // nulls where the record form copies nothing.
+                let copies = name == "OpCopyRecord"
+                    && (!view_offs.is_empty()
+                        || (!nullable
+                            && arg_is_v(0)
+                            && !local_surely_present(v, c, &mut HashSet::new())));
                 // The copy inside a discharged-view return is dropped with the block and
                 // its source stands as a LEAF read, accounted above as served — so that
                 // one mention is not counted here a second time (a bare mint beside it
@@ -16450,11 +16469,13 @@ fn handoffs_and_presence(
     let arg_is_v =
         |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
     let nullable = key.is_some_and(is_nullable_layout);
+    // A presence test reads the presence word of a nullable tuple, and is the constant
+    // "present" for a dense one that is surely so; any other dense tuple cannot answer it.
     let mut uses = u32::from(
-        nullable
-            && arg_is_v(0)
+        arg_is_v(0)
             && args.len() == 1
-            && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull"),
+            && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull")
+            && (nullable || (key.is_some() && present())),
     );
     let Some(ps) = params.get(&d) else {
         return uses;
