@@ -268,15 +268,23 @@ their allocations, the JSON parser's 17 %, the tree and its walk about 10 %, and
 |---|---|---|
 | J4 | BUILT (`lexer::LineCursor`) — a line was decoded into a `Vec<char>` the scan walked through a `Peekable`; the cursor reads the line's own text at a byte offset.  The `String` per line that `Lexer::from_str_with` cuts is still made | measured: the row −2 % (instructions −1.0 %, cycles −1.2 % on the lane), the `Vec<char>` share exactly; a cold compile −0.6 % instructions, cycles level; the cold stdlib parse 293,580 → 267,472 allocations |
 | J5 | `ByteMapper::byte` maps each token's character position back to a byte offset — already arithmetic on an ASCII line, so its share is how OFTEN it is asked (`peek_pos`, `take_string`, `parse_number`, every step of `advance_past`), not the mapping.  Ask once per token | `byte_of` 3.6 % |
-| J6 | a number is scanned twice: the lexer's `get_number` builds a `String` of the digits loft's grammar accepts, `JParser::scan_number` reads the raw bytes again by JSON's grammar, and `advance_past` steps the lexer until it has caught up | `parse_number` 2.4 %, `get_number` 1.9 %, `scan_number` 1.3 % |
-| J7 | a string is scanned twice and copied once more: `Lexer::string` builds it, `json_string_validate` walks the raw bytes again, and `take_string` clones the token's text where it could take it | `string` 7.7 %, `json_string_validate` 2.5 %, the clone 1.4 % |
+| J6 | BUILT (`Lexer::decimal`) — a number was scanned twice: the lexer's `get_number` built a `String` of the digits loft's grammar accepts (and a `Vec` of group sizes), `JParser::scan_number` read the raw bytes again by JSON's grammar, and `advance_past` stepped the lexer until it had caught up.  Decimal digits alone are folded straight off the line with nothing allocated, and the JSON reader takes the token's value where JSON reads the same digits as one integer — no leading zero, directly after its sign; every other spelling is read from the raw text as it was | measured with J7 |
+| J7 | BUILT (`LineCursor::plain_run`, `Lexer::peek_plain`) — a string was scanned twice and copied once more: `Lexer::string` pushed it a character at a time, `json_string_validate` walked the raw bytes again, and `take_string` cloned the token's text.  A literal's plain text is copied as one slice into one allocation, the lexer says when a token is its source text (`peek_plain`) so a plain string is not validated again, and its text is taken from the token | measured, J6 and J7 together: the row 9.54 → 7.89 ms (−17 %, 6.18× → 5.11×) on the fastest core and 17.60 → 13.38 ms (−24 %) on an efficiency core; the lane's instructions −11.5 %; the cold stdlib parse 231,077 → 228,369 allocations, the medium corpus 664,019 → 660,253 |
 | J8 | BUILT — `LexItem::Token` names the lexicon's own text (`&'static str`) where it owned a `String` built per token: a one-character ASCII token is read off a table (`Lexer::tok1`), a longer one and a keyword off the set, and nothing is allocated, copied or freed for it | measured: the row 11.06 → 9.67 ms (−12.6 %; the lane's instructions −4.7 %, cycles −5.9 %); a cold compile −0.7 % instructions and cycles; the cold stdlib parse 267,472 → 231,077 allocations, the medium corpus 699,885 → 664,019 |
 | J9 | the `Parsed` tree itself (decided: no intermediate format — worklist.md § 6): a key matched against the type's field names as it is read, a value written to its field | `walk_parsed_into` 3 %, the found-field set 4 %, the type's field list cloned per value 1.3 %, the tree's drop 1 %, and its part of the 24 % |
 
-J4 makes J6 and J7 cheap to do: a number or a string the parser reads itself is skipped by
-moving the cursor, and a string's plain run can be taken as one slice.  J4 and J8 change the
-lexer every compile runs, so they are measured on the front-end allocation pins and a cold
-compile as well as on this row.
+J6 and J7 rest on J4: a plain run is a slice of the line the cursor stands in.  Neither moved
+a scan into the JSON reader — the lexer still reads every string and every number, and
+JSON's grammar still owns every refusal; the reader only skips its second look where the
+lexer's token is the source text.  J4, J6, J7 and J8 change the lexer every compile runs, so
+they are measured on the front-end allocation pins as well as on this row.
+
+**What is left after J6 and J7** (the row alone at 5.11×, self time): `Lexer::cont` 12 % and
+`next` 10 % — per token: the result moved into `peek`, the comment test, the link count —
+`string` 7 %, `malloc` / `free` about 16 %, the found-field set 6.5 %, `parse_object` 5 %,
+`walk_parsed_into` 4.5 %, `byte_of` 2.8 % (J5), the type's field list cloned per value 1.7 %.
+The tree's share (J9) is the found-field set, the walk, the field-list clone, the tree's drop
+and most of what is left of the allocator's.
 
 **What J4 taught.**  `Lexer::next` and `cont` were read as the cost of the character iterator;
 they are the cost per TOKEN.  With the cursor in, their shares are what they were, and their

@@ -337,6 +337,48 @@ impl LineCursor {
     fn rest(&self) -> Peekable<std::str::Chars<'_>> {
         self.line[self.at..].chars().peekable()
     }
+
+    /// The text from the cursor up to the first byte a string scan has to decide about —
+    /// the closing quote, a backslash, a control character and, where a string
+    /// interpolates (`braces`), a brace — with the number of characters in it.  All of it
+    /// is literal content, so the scan copies it as one piece.
+    #[inline]
+    fn plain_run(&self, braces: bool) -> (&str, usize) {
+        let bytes = &self.line.as_bytes()[self.at..];
+        let mut len = 0;
+        let mut continuation = 0;
+        for &byte in bytes {
+            if byte == b'"'
+                || byte == b'\\'
+                || byte < 0x20
+                || (braces && (byte == b'{' || byte == b'}'))
+            {
+                break;
+            }
+            continuation += usize::from(byte & 0xC0 == 0x80);
+            len += 1;
+        }
+        // Every byte the run stops at is ASCII, so it ends between two characters.
+        (&self.line[self.at..self.at + len], len - continuation)
+    }
+
+    /// The decimal digits at the cursor, and the byte that follows them.
+    #[inline]
+    fn digits(&self) -> (&[u8], Option<u8>) {
+        let bytes = &self.line.as_bytes()[self.at..];
+        let len = bytes
+            .iter()
+            .position(|byte| !byte.is_ascii_digit())
+            .unwrap_or(bytes.len());
+        (&bytes[..len], bytes.get(len).copied())
+    }
+
+    /// Step over `bytes` bytes that were read as a slice; they end between two characters.
+    #[inline]
+    fn step_over(&mut self, bytes: usize) {
+        self.at += bytes;
+        self.cur = self.decode();
+    }
 }
 
 impl Iterator for LineCursor {
@@ -380,6 +422,12 @@ pub struct Lexer {
     parse_snapshot: std::collections::HashMap<String, String>,
     iter: LineCursor,
     peek: LexResult,
+    /// The byte length of the token in `peek` as it is written in the source, when it was
+    /// written plainly: a number of decimal digits alone, a `"…"` literal (the length is
+    /// its content's) with no escape, no control character and no hole.  What such a
+    /// token says is its source text, so a reader with a stricter grammar than loft's — the
+    /// JSON reader — has nothing to check in the source and knows where the token ends.
+    plain: Option<u32>,
     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
     memory: Vec<Recorded>,
     /// The scan cursor a replay from [`memory`](Self#structfield.memory) left, restored when
@@ -710,6 +758,7 @@ impl Default for Lexer {
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
             iter: LineCursor::default(),
+            plain: None,
             tok1: token_tables(&cfg.tokens).0,
             tok2: token_tables(&cfg.tokens).1,
             tokens: cfg.tokens,
@@ -782,6 +831,7 @@ impl Lexer {
             links: Rc::new(RefCell::new(0)),
             seek_return: None,
             iter: LineCursor::default(),
+            plain: None,
             tok1: token_tables(&config.tokens).0,
             tok2: token_tables(&config.tokens).1,
             tokens: config.tokens,
@@ -845,6 +895,7 @@ impl Lexer {
         reason = "the lexer's one dispatch on the next character"
     )]
     fn next(&mut self) -> Option<LexResult> {
+        self.plain = None;
         if self.link < self.memory.len() {
             let n = self.memory[self.link].clone();
             self.link += 1;
@@ -965,10 +1016,16 @@ impl Lexer {
                         self.next_char();
                         let may_pair = !c.is_ascii() || self.tok2[c as usize];
                         if let Some(&d) = self.iter.peek() {
-                            d.encode_utf8(&mut spelled[one..]);
-                            let double = std::str::from_utf8(&spelled[..one + d.len_utf8()])
-                                .unwrap_or_default();
-                            if may_pair && let Some(&double) = self.tokens.get(double) {
+                            // Spelled only where the first character can begin a pair.
+                            let double = if may_pair {
+                                d.encode_utf8(&mut spelled[one..]);
+                                std::str::from_utf8(&spelled[..one + d.len_utf8()])
+                                    .ok()
+                                    .and_then(|double| self.tokens.get(double).copied())
+                            } else {
+                                None
+                            };
+                            if let Some(double) = double {
                                 self.next_char();
                                 LexResult::new(LexItem::Token(double), pos)
                             } else if self.mode == Mode::Formatting && single == "}" {
@@ -1211,6 +1268,7 @@ impl Lexer {
     /// An empty stack means the `}` closed a hole nothing recorded — a plain
     /// string is the pre-existing behaviour and the safe answer.
     fn resume_string(&mut self) -> LexResult {
+        self.plain = None;
         self.in_format_expr = false;
         match self.open_strings.pop() {
             Some(StrKind::Backtick(nested)) => self.backtick_string_resume(nested),
@@ -1286,6 +1344,7 @@ impl Lexer {
     /// Serve a recorded token as the read that scanned it left the lexer: its cursor, the
     /// end of the source consumed before it, and its mode.
     fn replay(&mut self, n: Recorded) -> LexResult {
+        self.plain = None;
         if self.replay_return.is_none() {
             self.replay_return = Some(
                 self.seek_return
@@ -1584,12 +1643,22 @@ impl Lexer {
     fn string(&mut self) -> LexResult {
         let pos = self.position;
         let mut res = String::new();
-        while let Some(&c) = self.iter.peek() {
+        // Whether everything read so far was one run of plain text — `Self::plain`.
+        let mut plain = true;
+        loop {
+            self.take_run(&mut res);
+            let Some(&c) = self.iter.peek() else {
+                break;
+            };
             if c == '"' {
                 self.mode = Mode::Code;
                 self.next_char();
+                if plain {
+                    self.plain = u32::try_from(res.len()).ok();
+                }
                 return LexResult::new(LexItem::CString(res), pos);
             }
+            plain = false;
             if c == '\\' {
                 self.next_char();
                 if !self.escape_seq(&mut res) {
@@ -1631,8 +1700,7 @@ impl Lexer {
                     self.unescaped_brace();
                 }
             } else {
-                // With interpolation off (configs), `{` / `}` fall here as literal
-                // string content.
+                // A control character: the one kind of literal content a run stops at.
                 res.push(c);
             }
             self.next_char();
@@ -2020,6 +2088,47 @@ impl Lexer {
         self.position.pos += 1;
     }
 
+    /// Move the plain text at the cursor into `res` — [`LineCursor::plain_run`].  A literal
+    /// is usually one such run and its closing quote, and is then read with one copy into
+    /// one allocation of its own size.
+    #[inline]
+    fn take_run(&mut self, res: &mut String) {
+        let (run, chars) = self.iter.plain_run(self.interpolate_strings);
+        let bytes = run.len();
+        if bytes > 0 {
+            res.push_str(run);
+            self.iter.step_over(bytes);
+            self.position.pos += chars as u32;
+        }
+    }
+
+    /// A number written as decimal digits alone — the usual one — read off the line
+    /// without building its text.  `None`, with nothing consumed, when something follows
+    /// the digits that could belong to the literal (a fraction, an exponent, a separator,
+    /// a base marker, a suffix) or when the value is out of range: [`Self::number`] then
+    /// reads it in full and says what is wrong with it.
+    fn decimal(&mut self, pos: Position) -> Option<LexResult> {
+        let (digits, after) = self.iter.digits();
+        if matches!(after, Some(b'.' | b'_' | b'a'..=b'z' | b'A'..=b'Z')) {
+            return None;
+        }
+        let start_zero = *digits.first()? == b'0';
+        let len = digits.len();
+        let mut value: u64 = 0;
+        for &digit in digits {
+            value = value
+                .checked_mul(10)?
+                .checked_add(u64::from(digit - b'0'))?;
+        }
+        if value > i64::MAX as u64 {
+            return None;
+        }
+        self.iter.step_over(len);
+        self.position.pos += len as u32;
+        self.plain = u32::try_from(len).ok();
+        Some(self.ret_number(value, pos, start_zero))
+    }
+
     fn get_identifier(&mut self) -> String {
         let mut string = String::new();
         while let Some(&ident) = self.iter.peek() {
@@ -2103,6 +2212,9 @@ impl Lexer {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn number(&mut self) -> LexResult {
         let pos = self.position;
+        if let Some(plain) = self.decimal(pos) {
+            return plain;
+        }
         let (mut val, int_groups) = self.get_number();
         // L11 thousands-grouping lint: warn (but still accept) when decimal `_`
         // separators don't carve standard 3-digit groups — the leftmost group
@@ -2652,6 +2764,14 @@ impl Lexer {
         matches!(&self.peek.has, LexItem::Token(t) if *t == token)
     }
 
+    /// The byte length of the token [`peek`](Self::peek) answers as the source spells it,
+    /// when it was written plainly — see [`plain`](Self#structfield.plain) — and `None` for
+    /// every other token.
+    #[must_use]
+    pub fn peek_plain(&self) -> Option<usize> {
+        self.plain.map(|len| len as usize)
+    }
+
     fn end(&mut self) {
         self.peek = LexResult {
             has: LexItem::None,
@@ -3064,8 +3184,10 @@ impl Lexer {
 
     /// Shorthand test if the current element is a constant string and skip it if found.
     pub fn has_cstring(&mut self) -> Option<String> {
-        if let LexItem::CString(n) = &self.peek.has {
-            let n = n.clone();
+        if let LexItem::CString(n) = &mut self.peek.has {
+            // Taken, not copied: the token is replaced by the next one here, and a link
+            // that can return to it holds its own record of it.
+            let n = std::mem::take(n);
             self.cont();
             Some(n)
         } else {
@@ -3261,6 +3383,78 @@ mod test {
             .peek()
             .has
             .clone()
+    }
+
+    /// [`Lexer::peek_plain`] answers a token's source length exactly when the source spells
+    /// it plainly, and nothing for any other spelling — the JSON reader takes a plain
+    /// token's value without reading the source again, so a wrong `Some` is a wrong parse.
+    #[test]
+    fn a_plainly_written_token_reports_its_source_length() {
+        let json = |s: &str| Lexer::from_str_with(s, "json", LexConfig::json()).peek_plain();
+        // Decimal digits alone, leading zeros counted: the length is the source's.
+        assert_eq!(json("42"), Some(2));
+        assert_eq!(json("0"), Some(1));
+        assert_eq!(json("007"), Some(3));
+        assert_eq!(json("42,"), Some(2));
+        assert_eq!(json("9223372036854775807"), Some(19));
+        for other in [
+            "9223372036854775808",
+            "1.5",
+            "1e5",
+            "1E5",
+            "1_000",
+            "0x1f",
+            "0b11",
+            "12abc",
+            "1..2",
+            "5.x",
+        ] {
+            assert_eq!(json(other), None, "{other}");
+        }
+        // A literal of plain text: the bytes of its content.
+        assert_eq!(json("\"abc\""), Some(3));
+        assert_eq!(json("\"\""), Some(0));
+        assert_eq!(json("\"é{}\" ,"), Some(4));
+        for other in [
+            "\"a\\nb\"",
+            "\"a\\\\\"",
+            "\"a\tb\"",
+            "\"a\rb\"",
+            "\"abc",
+            "abc",
+            "[",
+            "-",
+            "",
+        ] {
+            assert_eq!(json(other), None, "{other:?}");
+        }
+        // In loft a brace is not plain text: it opens a hole or stands for one brace.
+        let loft = |s: &str| Lexer::from_str(s, "loft").peek_plain();
+        assert_eq!(loft("\"abc\""), Some(3));
+        assert_eq!(loft("\"a{b}c\""), None);
+        assert_eq!(loft("\"a{{b\""), None);
+        assert_eq!(loft("\"a}}b\""), None);
+        // The next token replaces the answer.
+        let mut two = Lexer::from_str_with("42 [", "json", LexConfig::json());
+        assert_eq!(two.peek_plain(), Some(2));
+        two.cont();
+        assert_eq!(two.peek_plain(), None);
+    }
+
+    /// A literal is read in runs of plain text with whatever interrupts them in between,
+    /// and the position after it counts characters, not bytes.
+    #[test]
+    fn a_string_read_in_runs_is_the_string_read_by_character() {
+        assert_eq!(json_str("\"plain\""), "plain");
+        assert_eq!(json_str("\"a\\nb\\tc\""), "a\nb\tc");
+        assert_eq!(json_str("\"é\\u00e9é{x}}\""), "ééé{x}}");
+        assert_eq!(json_str("\"a\tb\""), "a\tb");
+        assert_eq!(loft_str("\"a{{b}}c\""), "a{b}c");
+        let mut l = Lexer::from_str_with("\"é中\" 7", "json", LexConfig::json());
+        l.cont();
+        assert_eq!(l.peek().has, LexItem::Integer(7, false));
+        // `"é中" 7`: the quote, two characters, the quote, a space — the `7` is sixth.
+        assert_eq!(l.peek().position.pos, 6);
     }
 
     /// @PLN109 Phase 1c — loft's lexer already distinguishes integer-shaped from
