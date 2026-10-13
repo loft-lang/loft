@@ -10,7 +10,12 @@
 //
 // The interpreter is the VALUES oracle: every cell asserts a hand-computed value.
 //
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/1992-a-record-returned-from-a-branch-that-holds-a-match-compiles.patch — native exit 1 -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native exit — the patch emits the copy's source bare, as the emitter did.
+// WITNESS: on the patched tree `--native` does not build: `error[E0308]: mismatched types`
+//   at `return __mv`, expected the tuple, found `()`, for `m1`, `m2` and `m3`.  The
+//   interpreter prints `ok`.
+// HOLDS: the interpreter's output.
 
 struct S { a: integer }
 

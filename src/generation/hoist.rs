@@ -15356,15 +15356,15 @@ fn widen_marks(node: &Value, c: &ShapeCtx, key: u16, out: &mut HashMap<usize, u1
         }
         // A view reads its fields and nothing else, so it is widened whatever key its type
         // names; a value local is widened when it holds the dense tuple.
-        Value::Var(v) => {
-            if c.locals.get(v).is_none_or(|k| !is_nullable_layout(*k)) && fits(node, c, key) {
-                mark(node);
-            }
+        Value::Var(v)
+            if c.locals.get(v).is_none_or(|k| !is_nullable_layout(*k)) && fits(node, c, key) =>
+        {
+            mark(node);
         }
-        Value::Call(..) | Value::CallRef(..) => {
-            if value_shape(node, c) == Some(layout_record(key)) {
-                mark(node);
-            }
+        Value::Call(..) | Value::CallRef(..)
+            if value_shape(node, c) == Some(layout_record(key)) =>
+        {
+            mark(node);
         }
         _ => {}
     }

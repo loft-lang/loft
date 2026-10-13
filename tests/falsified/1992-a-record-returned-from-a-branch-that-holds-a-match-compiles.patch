@@ -1,0 +1,13 @@
+diff --git a/src/generation/emit.rs b/src/generation/emit.rs
+index 0d1270915..b72f0a330 100644
+--- a/src/generation/emit.rs
++++ b/src/generation/emit.rs
+@@ -3434,7 +3434,7 @@ impl Output<'_> {
+             let db_nr = self.data.def_nr("OpDatabase");
+             // A source that is a statement LIST — the hoisted declarations of a `match` an
+             // arm holds, then the branch — is a block, whose value is its last statement.
+-            let braces = matches!(src.unspan(), Value::Insert(_));
++            let braces = false;
+             self.indent(w)?;
+             write!(w, "let __mv = {}", if braces { "{ " } else { "" })?;
+             self.output_code_inner(w, src)?;

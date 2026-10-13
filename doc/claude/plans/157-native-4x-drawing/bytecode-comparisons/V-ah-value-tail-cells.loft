@@ -137,8 +137,9 @@ fn t9() {
   println("t9 {o.ptx} {o.pty}");
 }
 
-// t10 — a NULLABLE result declines (the tuple has no null), and the discharge's builder
-// arm is a mixed-arm join, so `pt10` declines with it.  Values unchanged.
+// t10 — a NULLABLE result that joins a `-> Pt` call with `null` is the nullable tuple
+// (`@FR-N-Road`), and a discharge whose default is that call binds it too: the dense arm is
+// widened where it stands.  Values unchanged.
 fn pt10(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
 fn maybe(i: integer) -> Pt? { if i > 0 { pt10(1.0, 1.0) } else { null } }
 fn t10() {
