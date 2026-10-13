@@ -384,6 +384,19 @@ consumer's machine.  Layout:
   only AFTER its signature is checked: writing first and checking after leaves
   a refused feed on disk, where the next run reads it against the previous
   still-valid signature and fails the same way, with no retry able to clear it.
+- **One commit, both files.**  The fetch resolves the registry branch to
+  the commit it is at and reads the index and its signature under that
+  commit id, so the pair it verifies is the pair that was signed
+  ([PKG_REGISTRY_TRUST.md](PKG_REGISTRY_TRUST.md), client step 4).  When no
+  commit can be named, a pair that does not verify is reported as two
+  downloads that may be from different moments, with "run the command again
+  shortly" — a pair read from one commit that does not verify is reported
+  with that commit.
+- **A signature that failed to download is a failed fetch.**  Only a host
+  that answers "not there" (403, 404, 410) leaves the signature absent,
+  which sends the client to the signature it has cached.  A timeout or a
+  server error on the `.sig` stops the fetch with that error: the cached
+  signature belongs to the previous index and would refuse a new one.
 - **Atomic refresh, and a reader that waits one out.**  Each of
   `index.json` and its `.sig` is written beside itself and renamed into
   place, so a concurrent reader gets the whole old file or the whole new

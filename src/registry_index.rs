@@ -1412,6 +1412,11 @@ pub fn trigger_owners(index: &RegistryIndex) -> BTreeMap<String, String> {
 pub struct FetchedIndex {
     pub content: Vec<u8>,
     pub signature: Vec<u8>,
+    /// The commit BOTH files were read from, when the URL names a branch that could be
+    /// resolved to one.  `None` means they were two reads through a moving address, which
+    /// a host may serve from different moments — a pair that fails to verify may then be a
+    /// new index beside the previous signature, or the reverse.
+    pub commit: Option<String>,
 }
 
 /// Fetch `index.json` + `index.json.sig` from the given URL prefix.
@@ -1419,16 +1424,148 @@ pub struct FetchedIndex {
 /// The URL passed in points at the `index.json` itself; the signature
 /// is fetched from the same URL with `.sig` appended.
 ///
+/// The two files are one signed PAIR, so they are read from one commit wherever the
+/// URL allows it ([`pin_to_commit`]).  A branch address is cached per file by the host,
+/// and after each push to the registry it served a new index beside the old signature
+/// for minutes: every refreshing command then stopped on a signature that was valid at
+/// the commit (loft#1991).
+///
+/// A signature the host says it does not have is answered EMPTY, and the caller decides
+/// what an unsigned index is worth.  A signature whose download FAILED is an error: read
+/// as absent it would be checked against the cached signature — the previous index's —
+/// and a new, validly signed index would then be refused as INVALID.
+///
 /// # Errors
 ///
-/// Returns a `String` error on HTTP failure, non-200 status, or
-/// missing signature file (the latter is only an error when
-/// signature verification is required; the caller decides).
+/// Returns a `String` error when the index cannot be fetched, and when the signature
+/// request got no usable answer ([`Miss::Failed`]).
 pub fn fetch_index(url: &str) -> Result<FetchedIndex, String> {
-    let content = http_get_bytes(url).map_err(|e| format!("fetching {url}: {e}"))?;
-    let sig_url = format!("{url}.sig");
-    let signature = http_get_bytes(&sig_url).unwrap_or_default();
-    Ok(FetchedIndex { content, signature })
+    fetch_index_through(url, &mut |u| {
+        if u.ends_with(REF_ADVERTISEMENT) {
+            // Asked only to learn which commit to read.  When the host is unreachable
+            // the fetch below still works through the branch address, so this must not
+            // hold a command for the full download bounds.
+            http_get_within(
+                u,
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(15),
+            )
+        } else {
+            http_get_within(u, CONNECT_BOUND, DOWNLOAD_BOUND)
+        }
+    })
+}
+
+/// [`fetch_index`] over any transport, so the pair's consistency can be tested against a
+/// host that answers each address from a different moment.
+fn fetch_index_through(
+    url: &str,
+    get: &mut dyn FnMut(&str) -> Result<Vec<u8>, Miss>,
+) -> Result<FetchedIndex, String> {
+    let (from, commit) = match pin_to_commit(url, get) {
+        Some((pinned, commit)) => (pinned, Some(commit)),
+        None => (url.to_string(), None),
+    };
+    // The error names the address the caller asked for: the pinned one is this
+    // function's own business, and a file missing at the commit is missing at the branch.
+    let content = get(&from).map_err(|miss| format!("fetching {url}: {}", miss.message()))?;
+    let signature = match get(&format!("{from}.sig")) {
+        Ok(signature) => signature,
+        Err(Miss::Absent(_)) => Vec::new(),
+        Err(Miss::Failed(why)) => return Err(format!("fetching {url}.sig: {why}")),
+    };
+    Ok(FetchedIndex {
+        content,
+        signature,
+        commit,
+    })
+}
+
+/// The host that serves a repository's files by address, and the query that asks the
+/// repository itself which commit each branch is at.
+const RAW_HOST: &str = "https://raw.githubusercontent.com/";
+const REF_ADVERTISEMENT: &str = "/info/refs?service=git-upload-pack";
+
+/// Rewrite a branch address into the address of the same file at the commit the branch
+/// is at NOW, returning it with that commit.
+///
+/// `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>` is the only shape
+/// rewritten: its host caches each file apart, while the same file under a commit id never
+/// changes, so two reads under one commit are one consistent pair.  The commit comes from
+/// the repository's own ref advertisement, which is not cached.
+///
+/// An address that already names a commit is answered as it is, with no request made.
+/// `None` — the caller then reads through the address as given — for any other URL
+/// (`file://`, a mirror), and when the advertisement cannot be fetched or does not list
+/// the branch.  Nothing here is trusted: the signature check that follows is the same
+/// whichever address the bytes came from.
+fn pin_to_commit(
+    url: &str,
+    get: &mut dyn FnMut(&str) -> Result<Vec<u8>, Miss>,
+) -> Option<(String, String)> {
+    let mut parts = url.strip_prefix(RAW_HOST)?.splitn(3, '/');
+    let (owner, repo, tail) = (parts.next()?, parts.next()?, parts.next()?);
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    if let Some(commit) = tail.split('/').next().filter(|first| is_commit_id(first)) {
+        return Some((url.to_string(), commit.to_string()));
+    }
+    let tail = tail.strip_prefix("refs/heads/").unwrap_or(tail);
+    let advertisement = get(&format!(
+        "https://github.com/{owner}/{repo}.git{REF_ADVERTISEMENT}"
+    ))
+    .ok()?;
+    let (commit, path) = branch_commit(&advertisement, tail)?;
+    Some((format!("{RAW_HOST}{owner}/{repo}/{commit}/{path}"), commit))
+}
+
+/// A full commit id: 40 hex digits, or 64 in a SHA-256 repository.
+fn is_commit_id(s: &str) -> bool {
+    matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Split `tail` (`<branch>/<path>`) at the branch a ref advertisement lists, answering
+/// that branch's commit and the path below it.
+///
+/// A branch name may itself hold `/`, so the split is not at the first one: the LONGEST
+/// listed branch that `tail` starts with wins.  The advertisement is git's pkt-line
+/// format — four hex digits of length, then `<commit> <refname>`, the first ref followed
+/// by a NUL and the capability list.  `None` when no listed branch fits, and for any
+/// line that is not what the format says, because a half-read advertisement must not
+/// pick a commit.
+fn branch_commit(advertisement: &[u8], tail: &str) -> Option<(String, String)> {
+    let mut best: Option<(&str, &str)> = None;
+    let mut at = 0;
+    while at < advertisement.len() {
+        let len = advertisement
+            .get(at..at + 4)
+            .and_then(|d| std::str::from_utf8(d).ok())
+            .and_then(|d| usize::from_str_radix(d, 16).ok())?;
+        if len == 0 {
+            at += 4; // a flush packet: the end of a section
+            continue;
+        }
+        let line = advertisement.get(at + 4..at + len)?;
+        at += len;
+        let line = line.split(|b| *b == 0).next()?;
+        let line = std::str::from_utf8(line).ok()?.trim_end_matches('\n');
+        if line.starts_with('#') {
+            continue;
+        }
+        let (commit, name) = line.split_once(' ')?;
+        let Some(branch) = name.strip_prefix("refs/heads/") else {
+            continue;
+        };
+        let fits = tail
+            .strip_prefix(branch)
+            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('/'));
+        if fits && is_commit_id(commit) && best.is_none_or(|(_, b)| branch.len() > b.len()) {
+            best = Some((commit, branch));
+        }
+    }
+    let (commit, branch) = best?;
+    Some((commit.to_string(), tail[branch.len() + 1..].to_string()))
 }
 
 /// Download `url` to the local path `dest`, returning the bytes
@@ -1524,25 +1661,63 @@ fn read_capped(reader: impl std::io::Read, limit: u64) -> Result<Vec<u8>, String
 /// subject to the download ceiling — nothing about a local mirror is unbounded in
 /// the way a remote response is.
 pub(crate) fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
+    http_get_within(url, CONNECT_BOUND, DOWNLOAD_BOUND).map_err(Miss::message)
+}
+
+/// How long a download may take to connect, and to finish.
+const CONNECT_BOUND: std::time::Duration = std::time::Duration::from_secs(15);
+const DOWNLOAD_BOUND: std::time::Duration = std::time::Duration::from_mins(1);
+
+/// Why a request answered no bytes.  Only one of the two says anything about the file:
+/// a host that answers "not there" has spoken for it, a request that got no usable
+/// answer has not.
+#[derive(Debug)]
+enum Miss {
+    /// The host answered that it does not serve this address (403, 404, 410), or a
+    /// `file://` path could not be read.
+    Absent(String),
+    /// No connection, a timeout, any other status, or a body over the download ceiling.
+    Failed(String),
+}
+
+impl Miss {
+    fn message(self) -> String {
+        match self {
+            Miss::Absent(why) | Miss::Failed(why) => why,
+        }
+    }
+}
+
+/// [`http_get_bytes`] with the caller's own bounds on connecting and on the whole
+/// exchange, telling a file the host does not have from a request that failed.
+fn http_get_within(
+    url: &str,
+    connect: std::time::Duration,
+    whole: std::time::Duration,
+) -> Result<Vec<u8>, Miss> {
     // @PLAN12 Phase 6.11 — support `file://` URLs for offline
     // mirrors + bundle-import-served indexes.  Same contract as the
     // HTTP path: return the raw bytes at the URL.
     if let Some(path) = url.strip_prefix("file://") {
-        return file_access::read(path).map_err(|e| format!("file:// read error for {e}"));
+        return file_access::read(path)
+            .map_err(|e| Miss::Absent(format!("file:// read error for {e}")));
     }
     let agent = crate::tls::agent_builder()
-        .timeout_connect(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_mins(1))
+        .timeout_connect(connect)
+        .timeout(whole)
         .build();
-    let response = agent
-        .get(url)
-        .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let response = agent.get(url).call().map_err(|e| {
+        let why = format!("HTTP error: {e}");
+        match e {
+            ureq::Error::Status(403 | 404 | 410, _) => Miss::Absent(why),
+            _ => Miss::Failed(why),
+        }
+    })?;
     let status = response.status();
     if !(200..300).contains(&status) {
-        return Err(format!("HTTP {status} for {url}"));
+        return Err(Miss::Failed(format!("HTTP {status} for {url}")));
     }
-    read_capped(response.into_reader(), max_download_bytes())
+    read_capped(response.into_reader(), max_download_bytes()).map_err(Miss::Failed)
 }
 
 // ── Tarball extraction ────────────────────────────────────────────
@@ -2522,6 +2697,338 @@ mod tests {
     fn extract_dir_format() {
         let p = extract_dir("crypto", "0.1.0");
         assert!(p.ends_with("crypto-0.1.0"));
+    }
+
+    // ── The signed pair is read from one commit (loft#1991) ─────────────────
+
+    const COMMIT_A: &str = "244a89024ed9dc929c7905aa0d422d5bfb0d29b6";
+    const COMMIT_B: &str = "a5607a6d12c81137e109f19348a7a0e0fc87a73b";
+    const COMMIT_C: &str = "d8c6f40ad84e9b52f544d8e1f88ab2f28b9e4802";
+
+    /// One pkt-line: four hex digits counting themselves, then the payload.
+    fn pkt(payload: &str) -> Vec<u8> {
+        format!("{:04x}{payload}", payload.len() + 4).into_bytes()
+    }
+
+    /// A ref advertisement in the shape the host sends: the service line, a flush, the
+    /// first ref carrying the capability list after a NUL, the rest, a flush.
+    fn advertisement(refs: &[(&str, &str)]) -> Vec<u8> {
+        let mut out = pkt("# service=git-upload-pack\n");
+        out.extend_from_slice(b"0000");
+        for (i, (commit, name)) in refs.iter().enumerate() {
+            let caps = if i == 0 {
+                "\0multi_ack thin-pack side-band"
+            } else {
+                ""
+            };
+            out.extend(pkt(&format!("{commit} {name}{caps}\n")));
+        }
+        out.extend_from_slice(b"0000");
+        out
+    }
+
+    fn found(commit: &str, path: &str) -> (String, String) {
+        (commit.to_string(), path.to_string())
+    }
+
+    #[test]
+    fn a_branch_address_splits_at_the_branch_the_advertisement_lists() {
+        let ad = advertisement(&[
+            (COMMIT_A, "HEAD"),
+            (COMMIT_A, "refs/heads/main"),
+            (COMMIT_B, "refs/heads/submit-script-0.1.0"),
+            (COMMIT_C, "refs/pull/1/head"),
+        ]);
+        assert_eq!(
+            branch_commit(&ad, "main/index.json"),
+            Some(found(COMMIT_A, "index.json"))
+        );
+        assert_eq!(
+            branch_commit(&ad, "submit-script-0.1.0/submissions/s.json"),
+            Some(found(COMMIT_B, "submissions/s.json"))
+        );
+        // Not a branch: a pull ref, a name nothing lists, and a branch with no file below.
+        assert_eq!(branch_commit(&ad, "pull/1/head/index.json"), None);
+        assert_eq!(branch_commit(&ad, "release/index.json"), None);
+        assert_eq!(branch_commit(&ad, "main"), None);
+        assert_eq!(branch_commit(&ad, "main/"), None);
+    }
+
+    #[test]
+    fn a_branch_named_with_a_slash_wins_over_its_own_prefix() {
+        let ad = advertisement(&[
+            (COMMIT_A, "refs/heads/feature"),
+            (COMMIT_B, "refs/heads/feature/x"),
+            (COMMIT_C, "refs/heads/ma"),
+        ]);
+        assert_eq!(
+            branch_commit(&ad, "feature/x/index.json"),
+            Some(found(COMMIT_B, "index.json"))
+        );
+        assert_eq!(
+            branch_commit(&ad, "feature/y/index.json"),
+            Some(found(COMMIT_A, "y/index.json"))
+        );
+        // `ma` is the start of `main/…` and not a path component of it.
+        assert_eq!(branch_commit(&ad, "main/index.json"), None);
+    }
+
+    #[test]
+    fn a_tag_or_a_malformed_commit_is_never_the_branch() {
+        let sha256 = "a".repeat(64);
+        let ad = advertisement(&[
+            (COMMIT_A, "refs/tags/main"),
+            ("not-a-commit-id", "refs/heads/main"),
+            (&sha256, "refs/heads/wide"),
+        ]);
+        assert_eq!(branch_commit(&ad, "main/index.json"), None);
+        assert_eq!(
+            branch_commit(&ad, "wide/index.json"),
+            Some(found(&sha256, "index.json"))
+        );
+    }
+
+    #[test]
+    fn a_half_read_advertisement_picks_no_commit() {
+        let whole = advertisement(&[(COMMIT_A, "refs/heads/main"), (COMMIT_B, "refs/heads/next")]);
+        assert_eq!(
+            branch_commit(&whole, "main/index.json"),
+            Some(found(COMMIT_A, "index.json"))
+        );
+        // Cut inside the second ref: its length says more bytes than there are.  The
+        // first ref is intact and still must not be believed.
+        let cut = &whole[..whole.len() - 12];
+        assert_eq!(branch_commit(cut, "main/index.json"), None);
+        // A length that is not hex, and one too short to hold its own digits.
+        let mut bad = pkt(&format!("{COMMIT_A} refs/heads/main\n"));
+        bad.extend_from_slice(b"zzzz");
+        assert_eq!(branch_commit(&bad, "main/index.json"), None);
+        let mut short = pkt(&format!("{COMMIT_A} refs/heads/main\n"));
+        short.extend_from_slice(b"0002");
+        assert_eq!(branch_commit(&short, "main/index.json"), None);
+        assert_eq!(branch_commit(b"", "main/index.json"), None);
+    }
+
+    const BRANCH_URL: &str = "https://raw.githubusercontent.com/loft-lang/registry/main/index.json";
+    const ADVERT_URL: &str =
+        "https://github.com/loft-lang/registry.git/info/refs?service=git-upload-pack";
+
+    /// A host that answers each address from its own table and records what was asked.
+    /// An address it does not have is ABSENT; one listed in `down` gets no answer.
+    struct Host {
+        files: Vec<(String, Vec<u8>)>,
+        down: Vec<String>,
+        asked: Vec<String>,
+    }
+
+    impl Host {
+        fn new(files: &[(&str, &[u8])]) -> Host {
+            Host {
+                files: files
+                    .iter()
+                    .map(|(u, b)| ((*u).to_string(), b.to_vec()))
+                    .collect(),
+                down: Vec::new(),
+                asked: Vec::new(),
+            }
+        }
+
+        fn fetch(&mut self, url: &str) -> Result<FetchedIndex, String> {
+            let Host { files, down, asked } = self;
+            fetch_index_through(url, &mut |u| {
+                asked.push(u.to_string());
+                if down.iter().any(|d| d == u) {
+                    return Err(Miss::Failed(format!("timed out reading {u}")));
+                }
+                files
+                    .iter()
+                    .find(|(have, _)| have == u)
+                    .map(|(_, bytes)| bytes.clone())
+                    .ok_or_else(|| Miss::Absent(format!("HTTP 404 for {u}")))
+            })
+        }
+    }
+
+    /// The host mid-update: the branch address serves the OLD index beside the NEW
+    /// signature, while the commit the branch is at holds the new pair.
+    fn host_mid_update(with_advertisement: bool) -> Host {
+        let at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        let ad = advertisement(&[(COMMIT_A, "HEAD"), (COMMIT_A, "refs/heads/main")]);
+        let mut host = Host::new(&[
+            (BRANCH_URL, b"old index"),
+            (&format!("{BRANCH_URL}.sig"), b"new signature"),
+            (&at_commit, b"new index"),
+            (&format!("{at_commit}.sig"), b"new signature"),
+        ]);
+        if with_advertisement {
+            host.files.push((ADVERT_URL.to_string(), ad));
+        }
+        host
+    }
+
+    #[test]
+    fn the_pair_is_read_from_the_commit_the_branch_is_at() {
+        let mut host = host_mid_update(true);
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.signature, b"new signature");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+        // Three requests, and neither of them through the branch address.
+        assert_eq!(host.asked.len(), 3, "asked: {:?}", host.asked);
+        assert_eq!(host.asked[0], ADVERT_URL);
+        assert!(
+            host.asked[1..].iter().all(|u| u.contains(COMMIT_A)),
+            "asked: {:?}",
+            host.asked
+        );
+    }
+
+    /// The control for the test above: with no commit to name, the same host hands out
+    /// the two files from different moments, and the result says it could not pin them.
+    #[test]
+    fn without_the_advertisement_the_pair_is_two_reads_and_says_so() {
+        let mut host = host_mid_update(false);
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"old index");
+        assert_eq!(fetched.signature, b"new signature");
+        assert_eq!(fetched.commit, None);
+    }
+
+    #[test]
+    fn a_branch_the_advertisement_does_not_list_is_read_as_given() {
+        let mut host = host_mid_update(true);
+        host.files.retain(|(u, _)| u != ADVERT_URL);
+        host.files.push((
+            ADVERT_URL.to_string(),
+            advertisement(&[(COMMIT_B, "refs/heads/other")]),
+        ));
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"old index");
+        assert_eq!(fetched.commit, None);
+    }
+
+    #[test]
+    fn the_long_branch_spelling_pins_the_same_commit() {
+        let mut host = host_mid_update(true);
+        let fetched = host
+            .fetch(
+                "https://raw.githubusercontent.com/loft-lang/registry/refs/heads/main/index.json",
+            )
+            .expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+    }
+
+    #[test]
+    fn an_address_that_names_a_commit_asks_for_no_advertisement() {
+        let mut host = host_mid_update(true);
+        let at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        let fetched = host.fetch(&at_commit).expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+        assert_eq!(
+            host.asked,
+            vec![at_commit.clone(), format!("{at_commit}.sig")]
+        );
+    }
+
+    #[test]
+    fn a_mirror_or_a_local_file_is_read_as_given() {
+        for url in [
+            "https://mirror.example.org/registry/main/index.json",
+            "file:///srv/registry/index.json",
+            "https://raw.githubusercontent.com/loft-lang",
+        ] {
+            let mut host = Host::new(&[(url, b"index"), (&format!("{url}.sig"), b"signature")]);
+            let fetched = host.fetch(url).expect("fetch");
+            assert_eq!(fetched.content, b"index", "{url}");
+            assert_eq!(fetched.commit, None, "{url}");
+            assert_eq!(
+                host.asked,
+                vec![url.to_string(), format!("{url}.sig")],
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_missing_at_the_commit_is_an_error_about_the_address_asked_for() {
+        let mut host = host_mid_update(true);
+        let index_at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        host.files.retain(|(u, _)| *u != index_at_commit);
+        let err = host
+            .fetch(BRANCH_URL)
+            .err()
+            .expect("the index is not at the commit");
+        assert!(
+            err.starts_with(&format!("fetching {BRANCH_URL}: ")),
+            "{err}"
+        );
+        // Missing at the commit is missing at the branch: the stale branch copy is not
+        // read in its place.
+        assert!(
+            !host.asked.iter().any(|u| u == BRANCH_URL),
+            "asked: {:?}",
+            host.asked
+        );
+    }
+
+    #[test]
+    fn a_signature_absent_at_the_commit_is_an_empty_one() {
+        let mut host = host_mid_update(true);
+        let signature_at_commit = format!(
+            "https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json.sig"
+        );
+        host.files.retain(|(u, _)| *u != signature_at_commit);
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"new index");
+        assert_eq!(fetched.signature, b"");
+        assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
+    }
+
+    /// A signature whose download failed is not an absent one: answered empty, the
+    /// caller would check the new index against the signature it has cached.
+    #[test]
+    fn a_signature_that_could_not_be_fetched_fails_the_fetch() {
+        let at_commit =
+            format!("https://raw.githubusercontent.com/loft-lang/registry/{COMMIT_A}/index.json");
+        for (with_advertisement, signature_url) in [
+            (true, format!("{at_commit}.sig")),
+            (false, format!("{BRANCH_URL}.sig")),
+        ] {
+            let mut host = host_mid_update(with_advertisement);
+            host.down.push(signature_url.clone());
+            let err = host
+                .fetch(BRANCH_URL)
+                .err()
+                .expect("no signature came back");
+            assert_eq!(
+                err,
+                format!("fetching {BRANCH_URL}.sig: timed out reading {signature_url}")
+            );
+        }
+    }
+
+    /// An advertisement that got no answer leaves the address as given, as an absent
+    /// one does: it only ever chooses where to read from.
+    #[test]
+    fn an_advertisement_that_could_not_be_fetched_reads_the_address_as_given() {
+        let mut host = host_mid_update(true);
+        host.down.push(ADVERT_URL.to_string());
+        let fetched = host.fetch(BRANCH_URL).expect("fetch");
+        assert_eq!(fetched.content, b"old index");
+        assert_eq!(fetched.commit, None);
+        assert_eq!(
+            host.asked,
+            vec![
+                ADVERT_URL.to_string(),
+                BRANCH_URL.to_string(),
+                format!("{BRANCH_URL}.sig")
+            ]
+        );
     }
 
     #[test]

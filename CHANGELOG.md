@@ -174,6 +174,15 @@ git do.
 
 ### Bug fixes
 
+**Installing a package no longer fails for a few minutes after the registry is updated.**
+`loft install`, `loft update`, `loft search` and a program's first `use` of a registry
+package could stop with *registry index signature INVALID* right after any library was
+published, and work again a few minutes later.  The package list and its signature were two
+downloads, and the host could serve a new list beside the previous signature.  Both are now
+read from one fixed state of the registry.  With a mirror (`LOFT_REGISTRY_URL`) that offers no
+such state, the message says the two files may be from different moments and to run the
+command again.
+
 **Operands are evaluated left to right, also around a call that answers a vector or a
 record.**  `set(j, 2) + len(j.keys())` read the keys before `set` had written them, and
 `c.n + made(c).v` read `c.n` after `made` had changed it, on both backends.  Each operand now

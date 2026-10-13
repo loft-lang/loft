@@ -10,6 +10,33 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The signed index pair is read from one commit (loft#1991, 2026-10-13)
+
+- `registry_index::fetch_index` resolves a
+  `raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>` URL to the commit the branch
+  is at — the repository's ref advertisement, `…/<repo>.git/info/refs?service=git-upload-pack`,
+  bounded at 5 s to connect and 15 s in all — and reads `<path>` and `<path>.sig` under
+  that commit id (`pin_to_commit`, `branch_commit`).  The branch address is cached per
+  file: after each of five signed pushes on 2026-10-13 it served a new index beside the
+  old signature, or the reverse, for up to about two minutes, and a refreshing install
+  failed *registry index signature INVALID* on a pair that verified at the commit.
+- The advisories feed takes the same route, because it reads through `fetch_index`.
+- `FetchedIndex::commit` records the commit, or `None` for two reads through a moving
+  address.  `install::fetched_pair_verdict` uses it: an INVALID pair read through a
+  branch address says the two files may be from different moments and to run the command
+  again; one read from a commit names the commit.
+- No fallback from the commit to the branch: a file missing at the commit is missing at
+  the branch, and reading the cached branch copy in its place is the defect.
+- A signature whose download FAILED is no longer read as absent.  `http_get_within`
+  answers a `Miss`: `Absent` when the host says the file is not there (403, 404, 410, or
+  an unreadable `file://` path), `Failed` for no connection, a timeout, any other status
+  or a body over the ceiling.  Only `Absent` leaves `FetchedIndex::signature` empty, which
+  is what sends the caller to its cached signature; `Failed` is a fetch error.  Read as
+  absent, a timeout on the `.sig` checked a new index against the previous index's
+  signature — the same INVALID verdict on a validly signed registry.
+- `fetched_pair_verdict` adds nothing when the fetch brought no signature: the one that
+  failed came from the cache, so neither "two downloads" nor "both from commit X" is true.
+
 ### `τ` and `τ?` take one lowering at three more sites (loft#1989, `@FR-N-Road`, 2026-10-12)
 
 - **The native live-reload entry check.**  `Generator::live_entry_check` reads each
