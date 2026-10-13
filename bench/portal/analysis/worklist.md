@@ -101,30 +101,33 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Sixteen rows read over 5× in `results/laptop.tsv`; `map_json` (2.68×) and `insert_text`
-(4.84×) have left the cut.  Where each one's time
+Seventeen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
+this box); `map_json` (2.68×) and `insert_text` (4.87×) have left the cut, and `mat4_mul`
+reads on the line.  The three `tuple_link_*` rows the file still carries are of routines the
+bench no longer has.  Where each one's time
 goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
 for the row at its figure, and a figure marked *est.* was read off a profile and never
 hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 7.75 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
-| 7.54 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
-| 7.42 | `panel_build` | S9 | ≈ 5× (*est.*) |
-| 7.18 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
-| 7.09 | `binary_read` (7.72 measured alone; the Rust lane is noisy beside others) | X8 | no figure |
-| 6.93 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
-| 6.75 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
-| 6.74 | cbor `encode` | X2, X9 | ≈ 5× (*est.*) |
-| 6.67 | `invert` | X10 | ≈ 4× (*est.*) |
-| 6.23 | `flow_layout_full` (7.92 before S1c) | X2, X3 | ≈ 5× (*est.*) |
+| 7.60 | `field_add_cell` | X5 a, c | ≈ 6.9× with the priced part |
+| 7.54 | `check_request` | X4, then `(R-DecodeView)` and S8 | ≈ 5.5× |
+| 7.48 | `arguments/parse` | X2, X7 | ≈ 6× (*est.*) |
+| 7.33 | `binary_read` | X8 | no figure |
+| 7.32 | `panel_build` | S9 | ≈ 5× (*est.*) |
+| 7.16 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
+| 6.70 | cbor `encode` | X2 (priced −20 %), X9 | ≈ 5.4×, then X9 |
+| 6.69 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
+| 6.28 | `invert` | X10 | ≈ 4× (*est.*) |
+| 6.14 | `flow_layout_full` (7.92 before S1c) | X2, X3 | ≈ 5× (*est.*) |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
-| 6.03 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
-| 5.83 | `slope_path_with_undo` (noisy) | § 5's record-build row names what is left | no figure |
-| 5.6 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43 ms) | X9 | no figure |
-| 5.51 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
-| 5.15 | `forms_upto` | X12 | no figure |
+| 5.92 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43–0.44 ms) | X9 | no figure |
+| 5.85 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
+| 5.70 | `slope_path_with_undo` | § 5's record-build row names what is left | no figure |
+| 5.40 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
+| 5.17 | `mat4_mul` (unstable: 5.6–7.3 ms on one emission and one instruction count, across builds and launches) | S2 | **0.63×**, priced |
+| 5.11 | `forms_upto` | X12 | no figure |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 One row reaches 3× with everything here built (`rig_world_frame3`); the others land
@@ -155,29 +158,29 @@ before it; the slowest row goes first; a step with no price is priced before it 
    cannot be measured on this box until the five libraries' pins are bumped.
 2. **`truncate_to`** — X1 is built for a record of plain vectors (8.17× → 6.03×).  It did
    not move `panel_build`, whose records own texts.
-3. **`flow_layout_full` (6.23×)** — S1c is built (7.92× before it).  X2 is priced on cbor
+3. **`flow_layout_full` (6.14×)** — S1c is built (7.92× before it).  X2 is priced on cbor
    `encode` (−20 %): build its first step, then re-measure the four rows it names —
-   `arguments/parse` (7.18×), cbor `encode` (6.74×), `flow_layout_full` and
-   `rig_world_frame3` (5.51×) — which is why it stands here and not at their rows.  Then
+   `arguments/parse` (7.48×), cbor `encode` (6.70×), `flow_layout_full` and
+   `rig_world_frame3` (5.40×) — which is why it stands here and not at their rows.  Then
    re-profile this row and price X3 on what is left.
-4. **`check_request` (7.75×)** — profiled: a flat row, a third of it claims and releases.
+4. **`check_request` (7.54×)** — profiled: a flat row, a third of it claims and releases.
    Build `(R-DecodeView)`; S8 after its decision (§ 6).
-5. **`field_add_cell` (7.54×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
+5. **`field_add_cell` (7.60×)** — X5 a (a library edit) and X5 b, both priced; price X5 c
    on `build_index` and build it.  `build_index` (4.21×) and `collect_dirty_inputs` (4.09×)
    move with it.
-6. **`panel_build` (7.43×)** — size S9 on the row as item 2 left it, then build.
-7. **`arguments/parse` (7.18×)** — X7, on what X2 left of the row.
-8. **`mapfile_to_painted` (6.93×), `reload_and_record` (6.75×)** — X5 d: P3 first, P4 with
+6. **`panel_build` (7.32×)** — size S9 on the row as item 2 left it, then build.
+7. **`arguments/parse` (7.48×)** — X7, on what X2 left of the row.
+8. **`mapfile_to_painted` (7.16×), `reload_and_record` (6.69×)** — X5 d: P3 first, P4 with
    its range proof.
-9. **`binary_read` (7.09×)** — price X8, build.
-10. **cbor `encode` (6.74×)** — X9, on what X2 left of the row.
-11. **`invert` (6.67×)** — price X10 on `insert_text` (4.84×, the row with the largest
+9. **`binary_read` (7.33×)** — price X8, build.
+10. **cbor `encode` (6.70×)** — X9, on what X2 left of the row.
+11. **`invert` (6.28×)** — price X10 on `insert_text` (4.84×, the row with the largest
     share of it), build.
 12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
     row is now the pushes themselves (the generated loop 15 %, two claims and two frees per
     push) and § 5's record-build row names what is left of the other.
 13. **`rig_world_frame3` (5.51×)** — S2, then S3.
-14. **`forms_upto` (5.15×)** — X12.
+14. **`forms_upto` (5.11×)** — X12.
 
 After each item, measure the rows it names (M5) and read this order again: a row under 5×
 leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
@@ -220,6 +223,7 @@ time against the row measured at `7df5a4f4b`:
 |---|---|---|
 | x86-64 laptop | `index_write` (+61 % with the lock test gone), `time/parse` +28 %, `keys_near` +16 %, `collect_dirty_inputs` +15 %, `remove_front` +13 %, `mapfile_to_painted` +13 %, `hash_text_keys`, `hash_find` and `hash_update` +10–12 % | not attributed; the lock test is ruled out for `index_write`'s remainder, `grid`, `remove_front`, `indices`, `hash_update` and `mesh_aabb` |
 | arm64 macOS | `clock_pump` 4.44× → 5.95×, `boundary_loops` 1.94× → 2.40× | not attributed |
+| x86-64 laptop, native time against the row at `0c4f9fd33`, Rust lanes level | `html/escape_html_blob` +43 % (2.03 → 2.90 ms, 1.58× → 2.40×), `14_stdlib_vector/comprehension` +24 %, `13_stdlib_text/join` +21 %, `13_stdlib_text/parse_num` and `15_stdlib_keyed/hash_fill` +10 % — each re-measured alone | not attributed.  Not `(R-WorkBuffer)`'s result or function-value clause: each lane's emission is byte for byte the same with both off.  `make perf-trend ARGS="--routine <name>"` gives the commits each point sits between |
 | x86-64 laptop | `06_newton_sqrt` +14 % (28.2 → 32.8 ms, Rust lane level) | ATTRIBUTED: `(R-RangedCall)`'s twin `n_roots__rg` is lean enough that LLVM inlines the LOOPING callee `n_newton_sqrt` into the caller's loop; out of line (`#[inline(never)]` on the emitted Rust) the row is 28.0 ms, better than before.  The same effect as the blanket `#[inline]` experiment on this row.  A general rule — no inlining of a looping callee into a loop — changes inlining everywhere and is judged on a full run, not this row.  `mesh_emit` is not a regression (native 125.5 → 94.8 µs since 09-29, its Rust lane moved); `byte_walk` swings 3.6–6.0 µs between runs on this box |
 | x86-64 laptop | random `indices` 7.61× | FIXED: the shuffle loop calls `get`, whose one inferred-range local inserts `OpRangeDefault`; its `const` bounds read as a store write, so every loop calling `get` declined the hoist.  Named store-free beside `atan2`'s dispatchers: `indices` 19.0 → 6.6 ms (2.63×), `get` 20.2 → 14.5 ms (2.57×) |
 | x86-64 laptop | `mesh_aabb` +34 % (21.0 → 28.3 µs) | not in its emission or runtime (byte-identical twin since `70079f138`, `rec_get` unchanged), most likely layout — and the row is now 17.0 µs (2.23×) through `(R-RecPtr)`'s non-null address, which also took `entity_tick` −19 % |
