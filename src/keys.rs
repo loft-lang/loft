@@ -242,12 +242,15 @@ impl Str {
 }
 
 impl Str {
-    /// The text as an owned `String`: one allocation of the exact size and one copy.
+    /// The text as an owned `String`: one allocation and one copy.
     ///
     /// Inherent on purpose.  Emitted code writes `x.to_string()` wherever a text view
     /// becomes an owned text, and without this that call is the blanket `ToString` over
     /// [`Display`](std::fmt::Display): a `Formatter`, `fmt::write`, and a `String` that grows
-    /// as it is written.  The result is the same bytes either way.
+    /// as it is written.  The result is the same bytes either way — and the same CAPACITY:
+    /// that path reserved at least eight bytes for a text that is not empty, and a text
+    /// built from a short one and then appended to (a character, then the rest) reallocated
+    /// at its first append when this allocated the exact size.
     #[must_use]
     #[inline]
     #[expect(
@@ -255,7 +258,13 @@ impl Str {
         reason = "the same text as Display writes, without the formatting machinery"
     )]
     pub fn to_string(&self) -> String {
-        self.str().to_owned()
+        let text = self.str();
+        if text.is_empty() {
+            return String::new();
+        }
+        let mut owned = String::with_capacity(text.len().max(8));
+        owned.push_str(text);
+        owned
     }
 }
 
