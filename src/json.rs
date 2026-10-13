@@ -259,101 +259,11 @@ fn skip_ws(bytes: &[u8], mut i: usize) -> usize {
 // Numbers are read from the raw lexeme (loft's number lexer overflows above
 // i64::MAX and drops the raw text), and string *errors* are detected by a
 // syntactic scan (`json_string_validate`) that reproduces the old scanner's
-// messages/offsets without re-decoding.  Byte offsets (Option 1) are recovered
-// from the lexer's (line, char-col) `Position` via `ByteMapper`.  Phase 2 keeps
-// integers as `Number(f64)` (byte-identical to the old scanner, H5 rounding
-// included); the `Parsed::Int` flip is Phase 3.
+// messages/offsets without re-decoding.  Byte offsets are the lexer's own: it
+// reports where it read each token (`Lexer::peek_offset`).
 // ============================================================================
 
-use crate::lexer::{LexConfig, LexItem, Lexer, Position};
-
-/// Maps the lexer's 1-based `(line, char-column)` back to the absolute byte
-/// offset the old byte-scanner reported (Option 1 — keep the byte-offset model).
-///
-/// ⚠⚠ THIS IS A HOT PATH, AND THE OBVIOUS IMPLEMENTATION IS QUADRATIC.  `byte()` is
-/// called once per token, and the naive form walks `col - 1` chars from the START of the
-/// line every time.  On a multi-line file that is short; on a **single-line** file — which
-/// a serialiser produces by default, including our own `data_to_json` — `col` IS the
-/// offset, so the walk is O(n) per token and O(n²) over the parse.  Measured 2026-08-21:
-/// the 1 MB single-line stdlib snapshot took **124 s** to parse, ~8 KB/s.
-///
-/// A huge single-line document is a normal input, not an edge case, so both routes below
-/// are O(1)-amortised rather than only the tidy one:
-///
-///   * **ASCII line** — a char column IS a byte column, so the answer is arithmetic.
-///     `line_ascii` is computed in the same pass that finds the line starts, so it costs
-///     nothing extra.
-///   * **Non-ASCII line** — a forward CURSOR.  Positions arrive in lexing order, so the
-///     walk resumes from the previous answer instead of restarting; total work across the
-///     parse is O(n), not O(n²).  A backwards or foreign request falls back to the walk
-///     from the line start, which is still correct, just not amortised.
-struct ByteMapper {
-    /// Byte offset of the start of each 1-based line (`line_starts[0]` = 0).
-    line_starts: Vec<usize>,
-    /// Per line: does it contain only ASCII?  Then char column == byte column.
-    line_ascii: Vec<bool>,
-    /// Memo for the non-ASCII path: the last `(line_index, chars_consumed, byte_offset)`
-    /// answered, so an in-order request continues from there.
-    cursor: std::cell::Cell<(usize, usize, usize)>,
-}
-
-impl ByteMapper {
-    fn new(input: &str) -> Self {
-        let mut line_starts = vec![0usize];
-        let mut line_ascii = Vec::new();
-        let mut ascii = true;
-        for (i, b) in input.bytes().enumerate() {
-            if b == b'\n' {
-                line_starts.push(i + 1);
-                line_ascii.push(ascii);
-                ascii = true;
-            } else if !b.is_ascii() {
-                ascii = false;
-            }
-        }
-        line_ascii.push(ascii); // the final line, which has no terminating newline
-        ByteMapper {
-            line_starts,
-            line_ascii,
-            cursor: std::cell::Cell::new((usize::MAX, 0, 0)),
-        }
-    }
-
-    /// Absolute byte offset of `(line, col)`.  `col` is a 1-based char column, so
-    /// the byte offset walks `col - 1` chars from the line start summing UTF-8
-    /// widths — exact for non-ASCII lines.
-    fn byte(&self, input: &str, line: u32, col: u32) -> usize {
-        let li = (line.max(1) as usize) - 1;
-        let start = self.line_starts.get(li).copied().unwrap_or(input.len());
-        if start >= input.len() {
-            return input.len();
-        }
-        let want = col.saturating_sub(1) as usize; // chars into the line
-
-        // ASCII line: a char column IS a byte column.  No walk at all.
-        if self.line_ascii.get(li).copied().unwrap_or(false) {
-            return (start + want).min(input.len());
-        }
-
-        // Non-ASCII: resume from the cursor when this request is at or after it on the
-        // SAME line, which is what in-order lexing produces.  Otherwise restart.
-        let (c_li, c_chars, c_off) = self.cursor.get();
-        let (mut off, mut done) = if c_li == li && c_chars <= want {
-            (c_off, c_chars)
-        } else {
-            (start, 0)
-        };
-        for ch in input[off..].chars() {
-            if done >= want {
-                break;
-            }
-            off += ch.len_utf8();
-            done += 1;
-        }
-        self.cursor.set((li, done, off));
-        off.min(input.len())
-    }
-}
+use crate::lexer::{LexConfig, LexItem, Lexer};
 
 /// Scan a bare identifier in value position (`Dialect::Lenient`) from `start`,
 /// returning `(name, end)`.  Consumes `[A-Za-z0-9_]` and `.`-joined segments — a
@@ -442,9 +352,7 @@ pub(crate) type Fault = (String, usize);
 /// store as it is read — one grammar, whichever asks.
 pub(crate) struct JParser<'a> {
     lx: Lexer,
-    input: &'a str,
     bytes: &'a [u8],
-    map: ByteMapper,
     dialect: Dialect,
     /// The JSON pointer of a failing value, built only while the error unwinds: each
     /// array or object level adds its own segment, innermost first.  Kept on the success
@@ -462,9 +370,7 @@ impl<'a> JParser<'a> {
     fn new(input: &'a str, dialect: Dialect) -> Self {
         JParser {
             lx: Lexer::from_str_with(input, "json", LexConfig::json()),
-            input,
             bytes: input.as_bytes(),
-            map: ByteMapper::new(input),
             dialect,
             err_path: Vec::new(),
             value_end: 0,
@@ -523,12 +429,14 @@ impl<'a> JParser<'a> {
         if r.has == LexItem::None {
             self.bytes.len()
         } else {
-            self.byte_of(&r.position)
+            self.at_token()
         }
     }
 
-    fn byte_of(&self, p: &Position) -> usize {
-        self.map.byte(self.input, p.line, p.pos)
+    /// Byte offset of the lexer's current token, as the lexer read it
+    /// ([`Lexer::peek_offset`]).  Every offset this reader reports is one.
+    fn at_token(&self) -> usize {
+        self.lx.peek_offset().min(self.bytes.len())
     }
 
     /// Advance the lexer until its next token starts at or after `end` (or EOF).
@@ -536,7 +444,7 @@ impl<'a> JParser<'a> {
     fn advance_past(&mut self, end: usize) {
         loop {
             let r = self.lx.peek();
-            if r.has == LexItem::None || self.byte_of(&r.position) >= end {
+            if r.has == LexItem::None || self.at_token() >= end {
                 break;
             }
             self.lx.cont();
@@ -584,13 +492,12 @@ impl<'a> JParser<'a> {
             }
             LexItem::Identifier(name) => {
                 let name = name.clone();
-                let pos = r.position;
-                self.parse_identifier_value(&name, &pos)
+                self.parse_identifier_value(&name)
             }
             _ => {
                 // An unexpected structural token (`}`, `]`, `,`, `:`) in value
                 // position — the old scanner's "unexpected byte 0xNN at offset N".
-                let off = self.byte_of(&r.position);
+                let off = self.at_token();
                 let b = self.bytes.get(off).copied().unwrap_or(0);
                 Err((format!("unexpected byte {b:#x} at offset {off}"), off))
             }
@@ -607,7 +514,7 @@ impl<'a> JParser<'a> {
     fn take_string(&mut self) -> Result<String, (String, usize)> {
         // A `CString` token's position is the first *content* char; the opening
         // quote is one byte before it.
-        let quote = self.byte_of(&self.lx.peek().position).saturating_sub(1);
+        let quote = self.at_token().saturating_sub(1);
         self.value_end = match self.lx.peek_plain() {
             Some(len) => quote + len + 2,
             None => json_string_validate(self.bytes, quote)?,
@@ -626,7 +533,7 @@ impl<'a> JParser<'a> {
     /// JSON refuses — is read from the raw text by [`Self::scan_number`], which owns
     /// JSON's number grammar and its errors.
     fn parse_number(&mut self) -> Result<Parsed, (String, usize)> {
-        let start = self.byte_of(&self.lx.peek().position);
+        let start = self.at_token();
         let negative = self.lx.peek_token("-");
         if negative {
             self.lx.cont();
@@ -643,7 +550,7 @@ impl<'a> JParser<'a> {
             // As many digits as the value has: no leading zero, which JSON refuses.
             && v.checked_ilog10().map_or(1, |d| d as usize + 1) == len
             // Directly after its sign: `- 5` is not a number.
-            && (!negative || self.byte_of(&token.position) == digits)
+            && (!negative || self.at_token() == digits)
         {
             self.lx.cont();
             self.value_end = digits + len;
@@ -717,11 +624,7 @@ impl<'a> JParser<'a> {
     /// An identifier in value position: `null`/`true`/`false` in either dialect,
     /// or (Lenient only) a bare identifier / `Tag{…}` constructor.  In Strict, a
     /// non-literal identifier is the old scanner's "unexpected byte" / bad-literal.
-    fn parse_identifier_value(
-        &mut self,
-        name: &str,
-        pos: &Position,
-    ) -> Result<Parsed, (String, usize)> {
+    fn parse_identifier_value(&mut self, name: &str) -> Result<Parsed, Fault> {
         if self.dialect == Dialect::Lenient {
             let _ = name;
             return match self.word() {
@@ -730,7 +633,7 @@ impl<'a> JParser<'a> {
                 (value, _, _) => Ok(value),
             };
         }
-        let off = self.byte_of(pos);
+        let off = self.at_token();
         // Strict: only n/t/f open a literal; anything else is an unexpected byte.
         let b = self.bytes.get(off).copied().unwrap_or(0);
         match b {
@@ -757,7 +660,7 @@ impl<'a> JParser<'a> {
     /// `{` follows an `Ident`, which makes it the tag of a `Tag{…}` constructor whose
     /// object is now at the lexer.
     pub(crate) fn word(&mut self) -> (Parsed, usize, bool) {
-        let off = self.byte_of(&self.lx.peek().position);
+        let off = self.at_token();
         // Raw-scan the FULL bare identifier — including `.`-joined segments for a
         // qualified enum tag (`Category.Daily`) — since the lexer tokenises the
         // dots separately.  Then re-sync the token stream past the whole thing.
@@ -784,7 +687,7 @@ impl<'a> JParser<'a> {
     /// Step into the array at the lexer's `[`: the array's own offset, and the offset its
     /// first element is expected at — `None` for `[]`, which is then read in full.
     pub(crate) fn open_array(&mut self) -> (usize, Option<usize>) {
-        let start = self.byte_of(&self.lx.peek().position); // the `[`
+        let start = self.at_token(); // the `[`
         self.lx.cont();
         if self.lx.peek_token("]") {
             self.lx.cont();
@@ -837,7 +740,7 @@ impl<'a> JParser<'a> {
     /// Step into the object at the lexer's `{`: the object's own offset, and whether it
     /// has a member — `false` for `{}`, which is then read in full.
     pub(crate) fn open_object(&mut self) -> (usize, bool) {
-        let start = self.byte_of(&self.lx.peek().position); // the `{`
+        let start = self.at_token(); // the `{`
         self.lx.cont();
         if self.lx.peek_token("}") {
             self.lx.cont();
@@ -856,11 +759,11 @@ impl<'a> JParser<'a> {
             let off = if colon.has == LexItem::None {
                 self.bytes.len()
             } else {
-                self.byte_of(&colon.position)
+                self.at_token()
             };
             return Err(("expected `:` after object key".to_string(), off));
         }
-        let colon = self.byte_of(&colon.position);
+        let colon = self.at_token();
         self.lx.cont(); // consume `:`
         Ok((name, key_at, skip_ws(self.bytes, colon + 1)))
     }
@@ -911,19 +814,19 @@ impl<'a> JParser<'a> {
         match &r.has {
             LexItem::None => Err(("expected object key".to_string(), self.bytes.len())),
             LexItem::CString(_) => {
-                let quote = self.byte_of(&r.position).saturating_sub(1);
+                let quote = self.at_token().saturating_sub(1);
                 let name = self.take_string()?;
                 Ok((name, quote))
             }
             LexItem::Identifier(name) if self.dialect == Dialect::Lenient => {
                 let name = name.clone();
-                let off = self.byte_of(&r.position);
+                let off = self.at_token();
                 self.lx.cont();
                 Ok((name, off))
             }
             _ => {
                 let _ = obj_start;
-                let off = self.byte_of(&r.position);
+                let off = self.at_token();
                 Err(("expected string key in object".to_string(), off))
             }
         }
@@ -1033,19 +936,17 @@ fn write_json_string(out: &mut String, s: &str) {
 }
 
 #[cfg(test)]
-mod bytemapper_tests {
+mod offset_tests {
     use super::{Dialect, parse, parse_with};
 
-    // ⚠ `byte()` maps a CHAR column back to a BYTE offset, and it has two routes: an
-    // arithmetic fast path for an all-ASCII line, and a resumable walk otherwise.  The
-    // golden corpus covers non-ASCII as VALUES but never reports an error offset AFTER a
-    // multi-byte char on the same line — which is precisely where the fast path would be
-    // wrong if it were applied to a non-ASCII line.
+    // An error's offset is a BYTE offset, and the lexer counts its columns in CHARACTERS:
+    // the two differ after a multi-byte character on the same line, which the golden
+    // corpus holds as values but never reports an error behind.
     //
     // Asserted as a PROPERTY, not a pinned number, so it does not encode this parser's
     // choice of which token to blame: wherever it points, the offset must be a real char
-    // boundary and must land on the text it means.  Under an ASCII-only assumption the
-    // offset comes out 2 bytes short here (the width of `é`) and lands mid-token.
+    // boundary and must land on the text it means.  Counted in characters it comes out 2
+    // bytes short here (the width of `é`) and lands mid-token.
     #[test]
     fn an_error_offset_after_a_multibyte_char_is_a_byte_offset() {
         let input = "{\"k\":\"é\",\"bad\" 1}";
