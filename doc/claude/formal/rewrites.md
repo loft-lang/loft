@@ -3234,8 +3234,9 @@ line in `Output::output_function`'s prelude.
                  declared absent and a bind of `null` makes it absent again.  Declined,
                  costing the rewrite only: a nullable record that owns heap (a view
                  leaf's null is a REPORTED one, which the absent tuple does not spell),
-                 a `??` with a record default, and the IR pass above (the interpreter
-                 keeps the record).  A cdylib bridge writes a present tuple into its destination
+                 a `??` whose default is a record LITERAL outside an admitted body (a
+                 default that is a `-> S` call is a dense leaf, widened), and the IR
+                 pass above (the interpreter keeps the record).  A cdylib bridge writes a present tuple into its destination
                  and answers the null record for an absent one.  Switch
                  `LOFT_NO_NULLABLE_VALUE_RECORD=1`; guards
                  `a-nullable-record-returns-its-fields-in-registers.loft` and

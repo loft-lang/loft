@@ -15,7 +15,13 @@
 //
 // One maker per cell: a site that consumes a record declines its maker for the whole program.
 //
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: native assertions — the patch widens a VIEW as it widens a dense tuple, with the
+//   presence word `true`: the obvious wrong spelling of "present".
+// WITNESS: on the patched tree `--native` stops at `j2 absent -1`: a null `S?` handed in
+//   comes back with every field null and `== null` false.  The interpreter, which keeps the
+//   record, prints `ok`.
+// HOLDS: the interpreter's output, and every cell whose view names a record.
 
 struct S { a: integer }
 struct M { a: integer, x: float, ok: boolean, b: integer }

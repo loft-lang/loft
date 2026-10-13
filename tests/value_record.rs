@@ -51,12 +51,11 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
     ("n_ctrl", true),       // t7: a selecting tail with an early return
     ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
     ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
-    ("n_pt10", false),      // t10: a discharge arm joined with a variable
-    ("n_maybe", false),     // t10: its `??` takes a RECORD default, a site that consumes the
-    // record (a nullable result is a tuple everywhere else, C144)
-    ("n_ping", true), // t11: a branch of two admitted calls, mutually recursive
-    ("n_pong", true), // t11: the forwarding half of the pair
-    ("n_pt12", true), // t12: delivered into a field / element through a `__lift_`
+    ("n_pt10", true),       // t10: a discharge's default, widened beside the nullable tuple
+    ("n_maybe", true),      // t10: a `-> Pt` call joined with `null` (`@FR-N-Road`)
+    ("n_ping", true),       // t11: a branch of two admitted calls, mutually recursive
+    ("n_pong", true),       // t11: the forwarding half of the pair
+    ("n_pt12", true),       // t12: delivered into a field / element through a `__lift_`
     // temp — a value local since `(R-ValueLocal)` made call-bound lifts eligible
     // (2026-09-25); the copy FROM it materialises the tuple into the destination
     ("n_pt13", false), // t13: its result is passed as an argument (`disc(given)`)
