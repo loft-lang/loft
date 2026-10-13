@@ -83,7 +83,7 @@ format decision (§ 6).
 | row | × | known lever | lands at |
 |---|--:|---|---|
 | `doc_read` | 6.56 → 5.27 | C8 is BUILT (`OpReadFileInt`: one store resolve, a buffered take, two cursor writes).  Profiled at the current tree: `edgeset_new` 22 % — two vectors built side by side, which `(R-PushFill)`'s several-paths clause reserved but pushed element by element.  BUILT: a window per path (`push_windows_ok`), 2.20 → 1.84 ms, hash unchanged.  Left: `hz_index__inv` 13 %, the u8 and i32 reads 10 % and 9 %, `store_mut` 9 %, `hexset_set__inv` 8 %, the float reads through the generic `OpReadFile` 8 % | ≈ 5.3× |
-| `map_json` | 6.64 | none priced: `Map.parse` is 86 % — the `Parsed` → store walk, the lexer's per-character step | unpriced |
+| `map_json` | 6.64 → 3.41 | BUILT (X6, § 0): `T.parse` writes the store as it reads, on the one lexer made cheaper | over-9x.md § moros `map_json` has what is left |
 | `arguments/parse` | 5.69 | none named: the option walk reads its vector out of line (16 %), `len(name) > 0` counts characters (4 %), text copies (~10 %) | unpriced |
 | `fill_rect` | 5.50 | C9, no bounds test where the index is proved in range | the range-facts decision |
 | `rand_indices` | 5.35 | none — unprofiled: `hand_price.sh` cannot link a package with a cdylib (§ Tooling) | fix the tooling, then price |
@@ -101,7 +101,7 @@ format decision (§ 6).
 
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
-Seventeen rows read over 5× in `results/laptop.tsv` at `f7f23c5b5`.  Where each one's time
+Sixteen rows read over 5× in `results/laptop.tsv` (seventeen at `f7f23c5b5`; `map_json` left the cut at 3.41× with X6 built).  Where each one's time
 goes is [rustc-vs-twin.md](rustc-vs-twin.md) § Re-profiled; "lands at" applies every step named
 for the row at its figure, and a figure marked *est.* was read off a profile and never
 hand-priced (such a figure has paid about two thirds, same section).
@@ -124,7 +124,6 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 5.51 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
 | 5.40 | `forms_upto` | X12 | no figure |
 | 5.32 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
-| 5.11 | `map_json` (7.44 before J4, J6, J7 and J8) | X6 | ≈ 3.5–4× with the tree gone (*est.*, not priced) |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`); the
@@ -138,7 +137,7 @@ others land between 3.5× and 6.9×.
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
 | X4 | `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | first — `check_request` cannot be profiled with symbols without it; then `(R-DecodeView)` (decided, C141) and S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
-| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4, J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` (the lexer's functions 31 %, the JSON parser's 17 %, the tree and its walk ~10 %, `malloc` / `free` 24 % between them) | decided (§ 6); built: J4 (the row −2 %), J8 (−12.6 %), J6 and J7 (−17 % together); J5 and J9 not priced | J9 (the tree), then the per-token cost of `Lexer::cont` / `next` (22 % of what is left) and J5; over-9x.md § What is left after J6 and J7 |
+| X6 | BUILT — `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` | measured: 7.44× → 3.41× (J4 −2 %, J8 −12.6 %, J6 and J7 −17 %, J9 −33 %) | the row is under 5× and leaves this list; what the lexer still pays per token (`cont` / `next` 31 % of the row) and J5 are in over-9x.md § What is left |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
 | X8 | a file's handle and cursor held in locals across a read loop | `binary_read` (the whole row is the emitted loop) | no price; the typed read is built | hand-price |
@@ -174,8 +173,6 @@ before it; the slowest row goes first; a step with no price is priced before it 
 12. **`slope_path_with_undo` (5.83×)** — re-profile; § 5's record-build row names what is left.
 13. **`rig_world_frame3` (5.51×)** — S2, then S3.
 14. **`forms_upto` (5.40×)** — X12.
-15. **`map_json` (5.11×)** — X6: J4, J6, J7 and J8 are built; J9 (the tree) next, on the
-    lexer they leave.
 
 After each item, measure the rows it names (M5) and read this order again: a row under 5×
 leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
@@ -330,12 +327,14 @@ CLASS, not a row; the visible reason is a hypothesis until priced.
 - **A checked expression computed once where the program spells it twice**: DECIDED (owner,
   2026-10-11) — an overflow must be reported, not reported as often as it was spelled.
   `(R-SameRead)`'s guard clause (`locate`) rests on it.
-- **`map_json`'s parse** (X6, § 0): DECIDED (owner, 2026-10-12) — `T.parse` needs no
-  intermediate format: it writes the store as it reads, and the `Parsed` tree goes.  The
-  one lexer stays the reader (@PLN109) and is made cheaper rather than joined by a second.
-  What a program can observe stays: the fields, the defaults of absent ones, the last of a
-  repeated key, and `x#errors` (@C148) — a document that fails half way leaves what the
-  tree form left.
+- **`map_json`'s parse** (X6, § 0): DECIDED and built — `T.parse` needs no intermediate
+  format: it writes the store as it reads (`Stores::read_into`).  The one lexer stays the
+  reader (@PLN109) and is made cheaper rather than joined by a second.  What a program can
+  observe stays: the fields, the defaults of absent ones, the last of a repeated key, and
+  `x#errors` (@C148).  A text that is not well-formed answers the type's defaults however
+  much of it was read: its half-written store is released (`Stores::record_from_text`).  A
+  value under an enum, and a value whose shape its type does not have, is still read as a
+  `Parsed` and written by the walk that says what each type accepts.
 - **Keyed store format**: DECIDED and built — a hash's bucket count is a power of two (@C146);
   `index` is a B+tree of key parts and record numbers (@C147).  `sorted`'s random insert stays
   as it is (declined).

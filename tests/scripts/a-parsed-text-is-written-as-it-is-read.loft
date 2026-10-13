@@ -1,0 +1,126 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `T.parse(text)` writes its record while it reads the text — nothing is built between the
+// two — and a program sees exactly what it saw when the whole text was read first:
+//
+//   - a text that is not a well-formed document answers the type's defaults, however much
+//     of it was read (and written) before the fault;
+//   - a fault in the text's form outranks a value that does not fit its field, wherever
+//     the two stand;
+//   - a value that does not fit keeps what was read before it and nothing after: an element
+//     being read is not appended, a field not yet reached keeps its default;
+//   - the last of a repeated key stands, for a value and for a collection; a key the type
+//     does not have is read and dropped, whatever it holds;
+//   - a field no member names takes its default, in a record of more than 64 fields too.
+//
+// Axes it MOVES: the fault (none, form, fit, both in either order), where it stands (the
+// root, a member, an element, an element's member), the root (a record, a vector), the
+// spelling (JSON, the loft literal with a type tag), the record's width (4 fields, 70).
+// Every value and every error position is hand-computed.
+//
+// @falsified-at: none — it guards a rewrite no earlier build has, so no control fails it.
+// @falsified-by: tests/falsified/a-parsed-text-is-written-as-it-is-read.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the ASSERTIONS — the patch leaves a malformed text's record as the read left it.
+//   WITNESS: the control stops at the first cell, *a malformed text kept a name: abc*.
+//   HOLDS: leak, panic and free-refusal are clean on both trees.
+//   Three more planted defects were scored by hand, one cell each: a named field past the
+//   64th not remembered (*the named fields: 1 63 0 0*), the form's fault not looked for
+//   after a value that does not fit (*["line 1:15 path:pts.n"]* where the stray byte is
+//   due), and a member still matched to its field after one (*path:tags.n*).
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct Pt9 { x: integer, y: integer }
+struct Row9 { name: text, n: integer, pts: vector<Pt9>, tags: vector<text> }
+struct Wide9 { f0: integer, f1: integer, f2: integer, f3: integer, f4: integer, f5: integer, f6: integer, f7: integer, f8: integer, f9: integer, f10: integer, f11: integer, f12: integer, f13: integer, f14: integer, f15: integer, f16: integer, f17: integer, f18: integer, f19: integer, f20: integer, f21: integer, f22: integer, f23: integer, f24: integer, f25: integer, f26: integer, f27: integer, f28: integer, f29: integer, f30: integer, f31: integer, f32: integer, f33: integer, f34: integer, f35: integer, f36: integer, f37: integer, f38: integer, f39: integer, f40: integer, f41: integer, f42: integer, f43: integer, f44: integer, f45: integer, f46: integer, f47: integer, f48: integer, f49: integer, f50: integer, f51: integer, f52: integer, f53: integer, f54: integer, f55: integer, f56: integer, f57: integer, f58: integer, f59: integer, f60: integer, f61: integer, f62: integer, f63: integer, f64: integer, f65: integer, f66: integer, f67: integer, f68: integer, f69: integer }
+
+fn a_malformed_text_answers_the_defaults() {
+  // The closing brace is missing: everything before it was read.
+  a = Row9.parse("{{\"name\":\"abc\",\"n\":5,\"pts\":[{{\"x\":1,\"y\":2}},{{\"x\":3,\"y\":4}}],\"tags\":[\"p\"]");
+  assert(a.name == "", "a malformed text kept a name: {a.name}");
+  assert(a.n == 0, "a malformed text kept a number: {a.n}");
+  assert(len(a.pts) == 0, "a malformed text kept {len(a.pts)} elements");
+  assert(len(a.tags) == 0, "a malformed text kept {len(a.tags)} tags");
+  assert(len(a#errors) == 1, "a malformed text reports one error: {a#errors}");
+  assert(a#errors[0] == "line 1:1 path:", "the unclosed record is reported at its start: {a#errors}");
+  // A stray byte after a complete, fitting document.
+  b = Row9.parse("{{\"name\":\"abc\",\"n\":5}} x");
+  assert(b.name == "" && b.n == 0, "a trailing byte left the record written: {b}");
+  assert(b#errors[0] == "line 1:22 path:", "the trailing byte is reported where it is: {b#errors}");
+  // A vector at the root, cut off inside its third element.
+  v = vector<Pt9>.parse("[{{\"x\":1,\"y\":2}},{{\"x\":3,\"y\":4}},{{\"x\":5");
+  assert(len(v) == 0, "a malformed vector kept {len(v)} elements");
+  assert(len(v#errors) == 1, "a malformed vector reports one error: {v#errors}");
+}
+
+fn a_fault_of_form_outranks_a_value_that_does_not_fit() {
+  // `n` does not fit at byte 14; the stray `x` is at byte 35.
+  a = Row9.parse("{{\"name\":\"abc\",\"n\":\"five\",\"pts\":[]}} x");
+  assert(a#errors[0] == "line 1:36 path:", "the form's fault is the one reported: {a#errors}");
+  assert(a.name == "", "the name read before both faults was kept: {a.name}");
+  // The same two faults inside an element.
+  v = vector<Pt9>.parse("[{{\"x\":1,\"y\":2}},{{\"x\":true,\"y\":4}},{{\"x\":5,\"y\":6}}");
+  assert(len(v) == 0, "a malformed vector kept {len(v)} elements");
+  assert(v#errors[0] == "line 1:1 path:", "the unclosed vector is the one reported: {v#errors}");
+}
+
+fn a_value_that_does_not_fit_keeps_what_came_before() {
+  a = Row9.parse("{{\"name\":\"abc\",\"n\":\"five\",\"tags\":[\"p\"]}}");
+  assert(a.name == "abc", "the name before the fault: {a.name}");
+  assert(a.n == 0, "the field that did not fit: {a.n}");
+  assert(len(a.tags) == 0, "the tags after the fault were read: {a.tags}");
+  assert(a#errors[0] == "line 1:15 path:n", "the fault names its key: {a#errors}");
+  // In the second element: the first is in the vector, the second and third are not, and
+  // the member after the vector is not read.
+  b = Row9.parse("{{\"pts\":[{{\"x\":1,\"y\":2}},{{\"x\":true,\"y\":4}},{{\"x\":5,\"y\":6}}],\"n\":7}}");
+  assert(len(b.pts) == 1, "elements kept: {len(b.pts)}");
+  assert(b.pts[0].x == 1 && b.pts[0].y == 2, "the element before the fault: {b.pts}");
+  assert(b.n == 0, "the member after the fault was read: {b.n}");
+  assert(b#errors[0] == "line 1:24 path:pts[1].x", "the fault names its path: {b#errors}");
+  // A vector at the root: an element's fault is reported at the vector.
+  v = vector<Pt9>.parse("[{{\"x\":1,\"y\":2}},7,{{\"x\":3,\"y\":4}}]");
+  assert(len(v) == 1 && v[0].y == 2, "elements kept: {v}");
+  assert(v#errors[0] == "line 1:1 path:[1]", "the fault names its element: {v#errors}");
+}
+
+fn the_last_of_a_repeated_key_stands() {
+  a = Row9.parse("{{\"n\":1,\"zzz\":{{\"n\":99,\"deep\":[1,[2,{{\"n\":3}}]]}},\"n\":2,\"name\":\"k\"}}");
+  assert(a.n == 2, "the last `n`: {a.n}");
+  assert(a.name == "k", "the member after an unknown key: {a.name}");
+  assert(len(a#errors) == 0, "an unknown key is not an error: {a#errors}");
+  b = Row9.parse("{{\"tags\":[\"a\",\"b\"],\"tags\":[\"c\"]}}");
+  assert(len(b.tags) == 1 && b.tags[0] == "c", "the last `tags`: {b.tags}");
+  // `null` and an absent member are the same answer.
+  c = Row9.parse("{{\"name\":null,\"n\":null,\"pts\":null}}");
+  assert(c.name == "" && c.n == 0 && len(c.pts) == 0, "null members: {c}");
+  assert(len(c#errors) == 0, "a null member is not an error: {c#errors}");
+}
+
+fn a_wide_record_takes_each_member_and_each_default() {
+  w = Wide9.parse("{{\"f69\":69,\"f0\":1,\"f64\":64,\"f63\":63,\"f65\":0}}");
+  assert(w.f0 == 1 && w.f63 == 63 && w.f64 == 64 && w.f69 == 69, "the named fields: {w.f0} {w.f63} {w.f64} {w.f69}");
+  assert(w.f1 == 0 && w.f62 == 0 && w.f65 == 0 && w.f66 == 0 && w.f68 == 0, "the fields no member names");
+  assert(w.f0 + w.f1 + w.f2 + w.f3 + w.f4 + w.f5 + w.f6 + w.f7 + w.f8 + w.f9 + w.f10 + w.f11 + w.f12 + w.f13 + w.f14 + w.f15 + w.f16 + w.f17 + w.f18 + w.f19 + w.f20 + w.f21 + w.f22 + w.f23 + w.f24 + w.f25 + w.f26 + w.f27 + w.f28 + w.f29 + w.f30 + w.f31 + w.f32 + w.f33 + w.f34 + w.f35 + w.f36 + w.f37 + w.f38 + w.f39 + w.f40 + w.f41 + w.f42 + w.f43 + w.f44 + w.f45 + w.f46 + w.f47 + w.f48 + w.f49 + w.f50 + w.f51 + w.f52 + w.f53 + w.f54 + w.f55 + w.f56 + w.f57 + w.f58 + w.f59 + w.f60 + w.f61 + w.f62 + w.f63 + w.f64 + w.f65 + w.f66 + w.f67 + w.f68 + w.f69 == 197, "every other field is its default");
+  assert(len(w#errors) == 0, "a wide record reads clean: {w#errors}");
+}
+
+fn the_loft_literal_reads_as_the_json_does() {
+  a = Row9.parse("Row9 {{ name: \"t\", n: 3, pts: [ Pt9 {{ x: 1, y: 2 }}, {{ y: 4 }} ] }}");
+  assert(a.name == "t" && a.n == 3, "the tagged record: {a}");
+  assert(len(a.pts) == 2 && a.pts[0].y == 2 && a.pts[1].x == 0 && a.pts[1].y == 4, "its elements: {a.pts}");
+  assert(len(a#errors) == 0, "the literal reads clean: {a#errors}");
+  b = Row9.parse("{{}}");
+  assert(b.name == "" && b.n == 0 && len(b.pts) == 0 && len(b#errors) == 0, "the empty record: {b}");
+  v = vector<Pt9>.parse(" [ ] ");
+  assert(len(v) == 0 && len(v#errors) == 0, "the empty vector: {v}");
+}
+
+fn main() {
+  a_malformed_text_answers_the_defaults();
+  a_fault_of_form_outranks_a_value_that_does_not_fit();
+  a_value_that_does_not_fit_keeps_what_came_before();
+  the_last_of_a_repeated_key_stands();
+  a_wide_record_takes_each_member_and_each_default();
+  the_loft_literal_reads_as_the_json_does();
+}

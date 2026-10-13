@@ -2272,6 +2272,201 @@ impl Stores {
         store.set_u32_raw(vec_rec, 4, length + adding);
     }
 
+    /// `T.parse`: read the value at `rd` into the `tp` at `to`, writing it as it is read.
+    ///
+    /// A collection is filled from an array element by element and a record from an object
+    /// member by member, with nothing built between the text and the store.  A value that
+    /// is one piece — a number, a text, a bare word — and any value under an enum is read
+    /// as a [`crate::json::Parsed`] and written by [`Self::walk_parsed_into`], which is
+    /// where each target type says what it accepts; so is a value whose shape its type
+    /// does not have, which that walk refuses.
+    ///
+    /// `value_at` is where the value is expected in the text, `at` the offset an error in
+    /// it reports (its field's key, [`Self::walk_parsed_into`]).  The first value that
+    /// does not fit lands in `failed` and nothing is written after it — but the rest of
+    /// the document is still read, because a document that is not well-formed is refused
+    /// whole (`Err`), wherever the fault is.
+    #[allow(clippy::too_many_arguments)] // the walk's dispatch, as `walk_parsed_into`
+    pub(super) fn read_into(
+        &mut self,
+        rd: &mut crate::json::JParser,
+        failed: &mut Option<WalkErr>,
+        value_at: usize,
+        tp: u16,
+        rec_tp: u16,
+        field: u16,
+        to: &DbRef,
+        at: usize,
+    ) -> Result<(), crate::json::Fault> {
+        use crate::json::Opening;
+        if failed.is_some() {
+            return rd.parse_value(value_at).map(drop);
+        }
+        let (content, record) = match &self.types[tp as usize].parts {
+            Parts::Sorted(c, _)
+            | Parts::Vector(c)
+            | Parts::Array(c)
+            | Parts::Ordered(c, _)
+            | Parts::Hash(c, _)
+            | Parts::Radix(c, _)
+            | Parts::Trie(c, _)
+            | Parts::Index(c, _) => (Some(*c), false),
+            Parts::Struct(_) | Parts::EnumValue(..) => (None, true),
+            _ => (None, false),
+        };
+        let mut path = Vec::new();
+        let walked = match (content, record, rd.opening()) {
+            (Some(c), _, Opening::Array) => {
+                return self.read_array(rd, failed, tp, c, rec_tp, field, to, at);
+            }
+            (_, true, Opening::Object) => return self.read_struct(rd, failed, tp, to),
+            (_, true, Opening::Word) => match rd.word() {
+                // The tag is informational for a record: its type is the schema's.
+                (_, _, true) => return self.read_struct(rd, failed, tp, to),
+                (word, _, _) => self.walk_parsed_into(&word, tp, rec_tp, field, to, &mut path, at),
+            },
+            _ => {
+                let value = rd.parse_value(value_at)?;
+                self.walk_parsed_into(&value, tp, rec_tp, field, to, &mut path, at)
+            }
+        };
+        *failed = walked.err();
+        Ok(())
+    }
+
+    /// [`Self::read_into`] for a collection: the `[` is at `rd`.  The steps are the array
+    /// arm's of [`Self::walk_parsed_into`], taken as each element is read.
+    #[allow(clippy::too_many_arguments)] // the walk's dispatch, as `walk_parsed_into`
+    fn read_array(
+        &mut self,
+        rd: &mut crate::json::JParser,
+        failed: &mut Option<WalkErr>,
+        tp: u16,
+        content: u16,
+        rec_tp: u16,
+        field: u16,
+        to: &DbRef,
+        at: usize,
+    ) -> Result<(), crate::json::Fault> {
+        let (start, mut next) = rd.open_array();
+        // Written empty before any element is appended — see the array arm of
+        // `walk_parsed_into` for why, and for which slot.
+        let slot = self.field_ref(to, rec_tp, field);
+        self.set_default_value(tp, &slot);
+        let mut idx = 0usize;
+        while let Some(value_at) = next {
+            if failed.is_some() {
+                rd.parse_value(value_at)?;
+            } else {
+                let res = self.record_new(to, rec_tp, field);
+                self.read_into(rd, failed, value_at, content, content, u16::MAX, &res, at)?;
+                match failed {
+                    Some(e) => e.path.insert(0, format!("[{idx}]")),
+                    None => self.record_finish(to, &res, rec_tp, field),
+                }
+            }
+            next = rd.next_item(start)?;
+            idx += 1;
+        }
+        Ok(())
+    }
+
+    /// [`Self::read_into`] for a record: the `{` is at `rd`.  The steps are
+    /// [`Self::walk_parsed_struct`]'s, taken as each member is read: a member is matched to
+    /// its field by name and read into it, a key the type does not have is read and
+    /// dropped (@P366), the last of a repeated key stands, and a field no member named
+    /// takes its absent value.
+    fn read_struct(
+        &mut self,
+        rd: &mut crate::json::JParser,
+        failed: &mut Option<WalkErr>,
+        tp: u16,
+        to: &DbRef,
+    ) -> Result<(), crate::json::Fault> {
+        let (start, mut more) = rd.open_object();
+        let fld = if to.rec == 0 { 0 } else { to.pos };
+        let rec = if to.rec == 0 {
+            let size = self.types[tp as usize].size;
+            self.store_mut(to).claim(u32::from(size).div_ceil(8))
+        } else {
+            to.rec
+        };
+        // The fields a member named, by field number: a word for the first 64, and a
+        // vector only for a record with more.
+        let mut found = 0u64;
+        let mut found_more: Vec<u16> = Vec::new();
+        while more {
+            let (name, key_at, value_at) = rd.member(start)?;
+            let hit = if failed.is_some() {
+                None
+            } else {
+                self.record_fields(tp)
+                    .iter()
+                    .position(|f| f.name == name)
+                    .map(|f_nr| {
+                        let f = &self.record_fields(tp)[f_nr];
+                        (f_nr as u16, f.content, f.position)
+                    })
+            };
+            if let Some((f_nr, f_content, position)) = hit {
+                // A collection field is reached through the record and its field number
+                // (`record_new`); any other through its own slot.
+                let target = if self.content(f_content) == u16::MAX {
+                    DbRef {
+                        store_nr: to.store_nr,
+                        rec,
+                        pos: fld + u32::from(position),
+                    }
+                } else {
+                    *to
+                };
+                self.read_into(rd, failed, value_at, f_content, tp, f_nr, &target, key_at)?;
+                match failed {
+                    Some(e) => e.path.insert(0, name),
+                    None if f_nr < 64 => found |= 1 << f_nr,
+                    None => found_more.push(f_nr),
+                }
+            } else {
+                rd.parse_value(value_at)?;
+            }
+            more = rd.next_member(start)?;
+        }
+        if failed.is_some() {
+            return Ok(());
+        }
+        for f_nr in 0..self.record_fields(tp).len() as u16 {
+            let f = &self.record_fields(tp)[f_nr as usize];
+            let named = if f_nr < 64 {
+                found & (1 << f_nr) != 0
+            } else {
+                found_more.contains(&f_nr)
+            };
+            if (f.other_indexes.is_empty() || f.other_indexes[0] != u16::MAX)
+                && !named
+                && f.name != "enum"
+            {
+                let (f_content, position) = (f.content, f.position);
+                let slot = DbRef {
+                    store_nr: to.store_nr,
+                    rec,
+                    pos: fld + u32::from(position),
+                };
+                // A key the JSON simply omits is the same question as one written
+                // `null`, and gets the same answer (loft#870).
+                self.write_absent_value(f_content, tp, f_nr, &slot);
+            }
+        }
+        Ok(())
+    }
+
+    /// The fields of record type `tp`; none for a type that is not a record.
+    fn record_fields(&self, tp: u16) -> &[Field] {
+        match &self.types[tp as usize].parts {
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields,
+            _ => &[],
+        }
+    }
+
     /// Walk a [`crate::json::Parsed`] tree into the record at
     /// `to`, dispatching on the target type's [`Parts`] variant.
     /// Returns `Ok(())` on success, `Err(WalkErr)` with byte offset
