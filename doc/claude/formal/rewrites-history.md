@@ -567,3 +567,21 @@ the rule shipped).  The gate skips a parameter's bind (`hoist::ret_adopt`; pin
 never makes was handed a caller's buffer nothing fills, minted once per caller where the
 function had minted none: the clause declines it (`hoist::split_call`).
 
+## 2026-10-13 — `(R-WorkBuffer)`'s function-value clause (loft#2001)
+
+Asked what could go wrong if the rule said what the code did — a function passed by name is
+promoted, although the decline list read "a function whose address is taken" — the routes were
+probed: by name, a local, a record field, a vector element; a leaf, a forwarder, a value-record
+answer, a work buffer beside a return buffer.  Three things came out.  The address test sees a
+`FnRef` node only, and a function passed by name is a bare definition number.  The backends
+differed in what the call hands: the interpreter one store per hidden parameter per call,
+`--native` the null sentinel — so a forwarder with a loop, reached by value, minted a store per
+leaf call (4 million leaf calls: 0.38 s by value against 0.11 s direct, 0.35 s with the whole
+rule off).  And where the function value's signature answers a vector, the dispatch handed
+every hidden vector parameter the return buffer's store, a work buffer included: `tagged`'s
+scratch `ids` and its result were one vector record — `3:5/1005|0/0|1010/2|` for
+`2:5/10|1005/1|` with no diagnostic, a panic on a scratch value read as a record number in a
+variant.  The first probe of that shape answered right by accident: its scratch element equalled
+the record field it overwrote.  Built: the frame lends (`FnRefWork`); the by-value forwarder runs
+0.11 s.
+

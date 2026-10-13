@@ -371,3 +371,94 @@ fn a_reader_handed_no_buffer_answers_the_same_and_leaks_nothing() {
         "a store leaked on the null road:\n{stderr}"
     );
 }
+
+// ── the function-value clause ──────────────────────────────────────────────────────────
+
+const FNREF_CELLS: &str =
+    "tests/scripts/2001-a-work-buffer-through-a-function-value-is-its-own-store.loft";
+
+fn fnref_emit(env: &[(&str, &str)], tag: &str) -> String {
+    let out = std::env::temp_dir().join(format!("loft_fnref_work_{tag}.rs"));
+    let mut cmd = loft();
+    cmd.arg("--native-emit")
+        .arg(&out)
+        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(FNREF_CELLS))
+        .env_remove("LOFT_NO_FNREF_WORK_BUFFER");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let res = cmd.output().expect("spawn loft --native-emit");
+    let rust = loft::file_access::read_to_string(&out).unwrap_or_else(|_| {
+        panic!(
+            "no Rust emitted (exit {:?}): {}",
+            res.status,
+            String::from_utf8_lossy(&res.stderr)
+        )
+    });
+    let _ = loft::file_access::remove_file(&out);
+    rust
+}
+
+/// A dispatch arm hands a candidate's work buffer a store the frame lends, and never the
+/// return buffer's (loft#2001); the frames that lend are the ones that call through a
+/// function value.
+#[test]
+fn a_function_value_call_lends_each_work_buffer_its_own_store() {
+    let rust = fnref_emit(&[], "on");
+    assert!(
+        !rust.contains("__vc_hbuf, __vc_hbuf"),
+        "a work buffer was handed the return buffer's store"
+    );
+    for (arm, lends) in [
+        ("n_summed(cell, _farg_0, __vc_hbuf, __fwb.lend(", 1),
+        ("n_tagged(cell, _farg_0, __vc_hbuf, __fwb.lend(", 1),
+        ("n_tally(cell, _farg_0, __fwb.lend(", 1),
+    ] {
+        assert!(
+            rust.matches(arm).count() >= lends,
+            "no dispatch arm lends as `{arm}…`"
+        );
+    }
+    // `two` takes two work buffers of two element types: two wrapper types, position 0 each.
+    let two = rust
+        .lines()
+        .find(|l| l.contains("=> n_two(cell, _farg_0, __fwb.lend("))
+        .expect("the arm for `two`");
+    let arm = &two[two.find("=> n_two(").unwrap_or(0) + 3..];
+    let arm = &arm[..arm.find(" => ").unwrap_or(arm.len())];
+    assert_eq!(arm.matches("__fwb.lend(").count(), 2, "{arm}");
+    assert_eq!(arm.matches("_i32, 0_u32)").count(), 2, "{arm}");
+    for name in ["n_apply", "n_show_s", "n_show_r", "n_pick"] {
+        let body = &rust[rust
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("{name} was not emitted"))..];
+        let body = &body[..body[1..].find("\nfn ").map_or(body.len(), |i| i + 1)];
+        assert!(
+            body.contains("let mut __fwb = codegen_runtime::FnRefWork::new(cell);"),
+            "{name} calls through a function value and declares no lender"
+        );
+    }
+    let tally = &rust[rust.find("fn n_tally(").expect("n_tally")..];
+    let tally = &tally[..tally[1..].find("\nfn ").map_or(tally.len(), |i| i + 1)];
+    assert!(
+        !tally.contains("__fwb"),
+        "n_tally calls through no function value and must declare no lender"
+    );
+}
+
+#[test]
+fn the_function_value_switch_hands_the_sentinel() {
+    let rust = fnref_emit(&[("LOFT_NO_FNREF_WORK_BUFFER", "1")], "off");
+    assert!(
+        !rust.contains("__fwb"),
+        "LOFT_NO_FNREF_WORK_BUFFER=1 must lend nothing"
+    );
+    assert!(
+        !rust.contains("__vc_hbuf, __vc_hbuf"),
+        "a work buffer was handed the return buffer's store"
+    );
+    assert!(
+        rust.contains("n_summed(cell, _farg_0, __vc_hbuf, loft::keys::DbRef::NULL)"),
+        "with the switch a work buffer takes the null sentinel"
+    );
+}

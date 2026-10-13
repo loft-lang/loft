@@ -6419,6 +6419,69 @@ impl Drop for RefillKeepGuard {
     }
 }
 
+/// The work buffers a frame LENDS to the functions it calls through a function value
+/// (`@FR-R-WorkBuffer`'s function-value clause).
+///
+/// A direct call hands a work-buffer parameter the frame's pooled buffer; a call through a
+/// function value cannot name one in the IR, because which function runs is not known
+/// there.  So the frame keeps one store per `(wrapper type, k)` — the k-th work buffer of
+/// that type in one candidate — minted the first time a dispatch arm asks for it and
+/// released when the frame ends.  Calls from a frame never overlap and a callee clears or
+/// refills its buffer on entry, so one slot serves every candidate and every call, as the
+/// pool does for direct calls.  A function that lends nothing never mints: an empty list
+/// allocates nothing.
+pub struct FnRefWork {
+    cell: *const std::cell::UnsafeCell<Stores>,
+    bufs: Vec<(i32, u32, DbRef)>,
+}
+
+impl FnRefWork {
+    #[must_use]
+    #[inline]
+    pub fn new(cell: &std::cell::UnsafeCell<Stores>) -> Self {
+        Self {
+            cell: std::ptr::from_ref(cell),
+            bufs: Vec::new(),
+        }
+    }
+
+    /// The frame's buffer for the `k`-th work buffer of wrapper type `tp`, minted on its
+    /// first use.
+    #[inline]
+    pub fn lend(&mut self, tp: i32, k: u32) -> DbRef {
+        for (t, n, buf) in &self.bufs {
+            if *t == tp && *n == k {
+                return *buf;
+            }
+        }
+        self.mint(tp, k)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn mint(&mut self, tp: i32, k: u32) -> DbRef {
+        // SAFETY: the pointer is the `cell` argument of the frame this value is a local of.
+        let cell = unsafe { &*self.cell };
+        let buf = OpDatabase(cell, DbRef::NULL, tp);
+        self.bufs.push((tp, k, buf));
+        buf
+    }
+}
+
+impl Drop for FnRefWork {
+    #[inline]
+    fn drop(&mut self) {
+        if self.bufs.is_empty() {
+            return;
+        }
+        // SAFETY: as in `mint` — the frame outlives its own local.
+        let cell = unsafe { &*self.cell };
+        for (_, _, buf) in self.bufs.drain(..) {
+            OpFreeRef(cell, buf, "__fnref_work");
+        }
+    }
+}
+
 /// Releases the fn-ref return buffers a frame delivered into, when that frame ends.
 ///
 /// The `--native` counterpart of `State::release_fnref_bufs`, and it answers the same
