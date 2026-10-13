@@ -10,8 +10,11 @@ replaces.  Emit and build as bench/portal/hand_price.sh describes for a package.
                                             another STORE (a local the callee is never handed)
     price_cbor_encode.py in.rs out.rs RK    both"""
 import sys, re
+if len(sys.argv) != 4 or sys.argv[1] in ("-h", "--help"):
+    print(__doc__)
+    sys.exit(0 if "--help" in sys.argv or "-h" in sys.argv else 2)
 src, dst, mode = sys.argv[1:4]
-L = open(src).read().split('\n')
+L = open(src, encoding="utf-8").read().split('\n')
 n_fn = 0
 for name in ('fn n_encode_map(', 'fn n_encode_map__ap('):
     i = next(k for k, l in enumerate(L) if l.startswith(name))
@@ -48,4 +51,4 @@ for name in ('fn n_encode_map(', 'fn n_encode_map__ap('):
     L[a] = L[a] + '\n' + '\n'.join(hdr)
     n_fn += 1
 assert n_fn == 2
-open(dst, 'w').write('\n'.join(L))
+open(dst, 'w', encoding="utf-8").write('\n'.join(L))
