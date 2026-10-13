@@ -86,6 +86,33 @@ All notable changes to the loft language and interpreter.
   signature — the same INVALID verdict on a validly signed registry.
 - `fetched_pair_verdict` adds nothing when the fetch brought no signature: the one that
   failed came from the cache, so neither "two downloads" nor "both from commit X" is true.
+### Every whole-record copy tests its source (loft#1997, loft#2004, 2026-10-13)
+
+- **One answer for three decoders** (`@FR-N-Store`, `@FR-B-Copy`, `@FR-N-Road`).
+  `Variables::bind_admits_absence` is gone, with the dense arm it selected: the
+  interpreter's first bind (`gen_set_first_ref_var_copy`) and its rebind both emit
+  `OpBindOrCopy` for every record source, and the native record bind
+  (`generation/dispatch.rs`) always takes the `rec == 0` arm.  The rebind had asked the
+  source's type in its own words.  `Parser::materialize_return_into` guards the copy of every
+  record local (`record_local_may_be_absent`) and splits a branch whose arm is one, in a
+  `-> S` function as in a `-> S?`; a local typed by a template's type variable keeps the bare
+  copy unless it is written `T?`.
+- **The scope pass reads the return copy through its presence test** (loft#2004).
+  `scopes/returns.rs::return_tail` and `materialised_join_mut`'s walk descend
+  `if <absent> { null } else { materialized_view_return }` (`is_presence_tested_copy`), so
+  `return_copied_local`, `return_copies_whole_local` and the hook move see the copy in both
+  spellings.  Read bare only, the nullable spelling kept the frame's hook beside the copy's
+  and released one record twice.
+- **A tuple written into a record** (`OpCopyRecordEmitter`).  A nullable tuple's absent arm
+  calls `Stores::copy_null_into` with the copy's own type operand, so `COPY_FRESH_DEST`
+  decides it exactly as the runtime copy's null-source branch does; a dense tuple is accounted
+  as a copy source only where it is surely present (`hoist::local_uses_ok`), and a copy's
+  source is a position `promote_presence` asks.  A presence test of a surely present dense
+  tuple is a constant (`PresenceEmitter`), and a `null` leaf in a dense function's result
+  promotes the function.
+- 253 corpus files change native code; the interpreter's output is identical on all 2350
+  that ran, and every one of the 253 answers the same on both backends.
+
 ### A dense tuple carries its presence where a null can reach a `S?` (loft#1993, loft#1994, 2026-10-13)
 
 - **Nullable tuple parameters** (`@FR-N-Road`, loft#1993).  `hoist::tuple_param_candidates`

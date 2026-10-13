@@ -3232,31 +3232,13 @@ impl State {
                     let slot_offset = stack.var_pos(v);
                     stack.add_op("OpInitRef", self);
                     self.code_add(slot_offset);
-                    // A `&S?` link is as nullable as an `S?` local: the `?` sits under the `&`.
-                    let (outer, src_nullable) = stack.function.tp(*src).peel_optional();
-                    let src_nullable = src_nullable
-                        || matches!(outer, Type::RefVar(inner) if inner.peel_optional().1);
-                    if src_nullable {
-                        self.generate(&Value::Var(*src), stack, false);
-                        self.push_copy_witness(stack, *src);
-                        stack.add_op("OpBindOrCopy", self);
-                        self.code_add(stack.var_pos(v));
-                        self.code_add(tp_nr);
-                    } else {
-                        stack.add_op("OpDatabase", self);
-                        self.code_add(slot_offset);
-                        self.code_add(tp_nr);
-                        let copy_nr = stack.data.def_nr("OpCopyRecord");
-                        let copy_val = Value::Call(
-                            copy_nr,
-                            vec![
-                                Value::Var(*src),
-                                Value::Var(v),
-                                Value::Int(i32::from(tp_nr)),
-                            ],
-                        );
-                        self.generate(&copy_val, stack, false);
-                    }
+                    // The source is tested whatever it is typed, as the first bind tests it
+                    // (`@FR-N-Store`: a dense slot can hold the null it was handed).
+                    self.generate(&Value::Var(*src), stack, false);
+                    self.push_copy_witness(stack, *src);
+                    stack.add_op("OpBindOrCopy", self);
+                    self.code_add(stack.var_pos(v));
+                    self.code_add(tp_nr);
                     // @PLN130 — reassignment `v = src`, both same-struct References (#306).
                     crate::copy_manifest::record(
                         stack.def_nr,
@@ -4017,28 +3999,16 @@ impl State {
         // sentinel and leaves the destination null.  It allocates on the arm that needs it,
         // so no `OpDatabase` is emitted ahead of it.
         //
-        // Asked of both sides through the one predicate the native record bind asks
-        // (`Variables::bind_admits_absence`): a source typed non-null can still hold
-        // `nullref`, and a nullable destination has to receive it as absence.
-        if stack.function.bind_admits_absence(v, src) {
-            self.generate(&Value::Var(src), stack, false);
-            // The slot the opcode POPS into is taken after, at the post-pop position.  Same
-            // order as the `Join` emission in `generate_set`.
-            self.push_copy_witness(stack, src);
-            stack.add_op("OpBindOrCopy", self);
-            self.code_add(stack.var_pos(v));
-            self.code_add(tp_nr);
-        } else {
-            stack.add_op("OpDatabase", self);
-            self.code_add(slot_offset);
-            self.code_add(tp_nr);
-            let copy_nr = stack.data.def_nr("OpCopyRecord");
-            let copy_val = Value::Call(
-                copy_nr,
-                vec![Value::Var(src), Value::Var(v), Value::Int(i32::from(tp_nr))],
-            );
-            self.generate(&copy_val, stack, false);
-        }
+        // Every record bind takes it (`@FR-N-Store`, `@FR-N-Road`): the type of neither side
+        // says the source is there — a source typed non-null can hold `nullref`
+        // (`Variables::record_copy_source`).
+        self.generate(&Value::Var(src), stack, false);
+        // The slot the opcode POPS into is taken after, at the post-pop position.  Same
+        // order as the `Join` emission in `generate_set`.
+        self.push_copy_witness(stack, src);
+        stack.add_op("OpBindOrCopy", self);
+        self.code_add(stack.var_pos(v));
+        self.code_add(tp_nr);
         // @PLN130 — recorded HERE, past the last-use-move return above, so the manifest
         // claims a copy only where one is actually written.
         crate::copy_manifest::record(

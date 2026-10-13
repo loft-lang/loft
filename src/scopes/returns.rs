@@ -283,6 +283,23 @@ fn inject_per_arm(
     inject_before_arm_value(value, &ops);
 }
 
+/// Is `if <test> { absent } else { copy }` the copy of a local that may hold nothing — the
+/// parser's present-only delivery (`Parser::materialize_return_into`): a bare null on one
+/// arm, the `materialized_view_return` block on the other?  The copy is then the SAME return
+/// copy a local that cannot be absent takes bare, so every reader of that shape reads through
+/// the test (`@FR-N-Road`): read bare only, a hook the copy had taken over stayed with the
+/// frame as well and the record it handed out was released twice.
+fn is_presence_tested_copy(absent: &Value, copy: &Value) -> bool {
+    let null_leaf = match absent.unspan() {
+        Value::Null => true,
+        Value::Call(_, args) => args.is_empty(),
+        _ => false,
+    };
+    null_leaf
+        && matches!(copy.unspan(), Value::Block(bl)
+            if bl.name == "materialized_view_return" || bl.name == ARMED_VIEW_RETURN)
+}
+
 /// The name a `materialized_view_return` block takes once its join's hooks have been moved
 /// into the arms.
 ///
@@ -302,6 +319,7 @@ fn materialised_join_mut(expr: &mut Value, copy_nr: u32) -> Option<(&mut Value, 
         match v {
             Value::Span(_) | Value::Return(_) => {}
             Value::Insert(ops) if !ops.is_empty() => {}
+            Value::If(_, absent, copy) if is_presence_tested_copy(absent, copy) => {}
             _ => return v,
         }
         match v {
@@ -311,6 +329,7 @@ fn materialised_join_mut(expr: &mut Value, copy_nr: u32) -> Option<(&mut Value, 
                 let i = ops.len() - 1;
                 tail(&mut ops[i])
             }
+            Value::If(_, _, copy) => tail(copy),
             other => other,
         }
     }
@@ -556,6 +575,7 @@ fn return_tail(v: &Value) -> &Value {
         Value::Span(b) => return_tail(&b.1),
         Value::Return(inner) => return_tail(inner),
         Value::Insert(ops) if !ops.is_empty() => return_tail(&ops[ops.len() - 1]),
+        Value::If(_, absent, copy) if is_presence_tested_copy(absent, copy) => return_tail(copy),
         other => other,
     }
 }

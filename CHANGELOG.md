@@ -234,6 +234,17 @@ compiled program, and `null` in an interpreted one.  The same happened when the 
 one arm of an `if` or a `match`, and when it went through a second function first.  Both now
 answer `null`.
 
+**A copy of a `null` is `null`.**  A `null` handed to a non-nullable record parameter (which
+the compiler warns about) and then copied — `q = p`, or returned through a local — became a
+record whose fields were all zero, in both interpreted and compiled programs.  The copy is now
+`null`, as the parameter is.  A vector element or an inline field cannot be `null`: storing
+such a value into one still writes nothing.
+
+**A drop hook runs once when a function returns a nullable local.**  With `fn OpDrop` defined
+for `H`, a function declared `-> H?` that returned a local declared `H?` ran the hook twice
+for one record: once inside the function, before the caller had read the result, and once
+when the caller let go of it.  The same function written with `H` ran it once; both do now.
+
 **A parameter of type `S?` is passed as fast as one of type `S`.**  This is visible only as
 speed, under `--native`: a small record without text or collections crosses a call as its
 fields, and a `p: S?` now does so too, with one extra flag that says whether it is there.

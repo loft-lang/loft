@@ -572,8 +572,10 @@ const STORE_EXPECTED: &[(&str, &str)] = &[
     ("n_w9", "(p: (i64, bool)) -> i64"),
     ("n_w10i", "(q: (i64, bool)) -> u8"),
     ("n_w10", "(p: (i64, bool)) -> u8"),
-    // Control: read only, so the dense tuple.
-    ("n_w11", "(p: (i64,)) -> i64"),
+    // Handed a `null` literal, so it carries its presence.
+    ("n_w11", "(p: (i64, bool)) -> i64"),
+    // Control: read only and never handed `null`, so the dense tuple.
+    ("n_w13", "(p: (i64,)) -> i64"),
     ("n_id12", "(p: (i64, bool)) -> (i64, bool)"),
     ("n_add2", "(p: (i64, bool), q: (i64, bool)) -> i64"),
     ("n_w12", "(c: u8) -> (i64, bool)"),

@@ -1343,6 +1343,43 @@ Three pairs were rewritten so that `??` stands on a plain read with a scalar def
 `??` over a lifted call, or with a record or vector default, mints and frees on channels the
 report cannot tell from a road.
 
+## The copy walk of 2026-10-13 (loft#1997, loft#2004)
+
+`D-types-35` was a copy that made something out of nothing: a whole-record bind minted its
+destination and copied unconditionally when both sides were typed dense, so a dense
+parameter that held the `null` `(N-Store)` let into it was copied into a PRESENT record of
+zeros.  The matrix (15 programs; value and presence hand-computed; the interpreter, the
+native record road and the native register road) had thirteen cells that answered zeros.
+
+One question had three decoders.  `Variables::bind_admits_absence` asked whether either side
+was typed `τ?` for the first bind on both backends; the interpreter's rebind asked the source
+alone, in its own words; and the parser's return copy asked the local's type.  All three now
+test the source, whatever it is typed: the predicate and both dense arms are gone, and
+`(N-Road)`'s exception for a copy with them.
+
+Three things the walk found beside it:
+
+- **A drop hook ran twice** (loft#2004) — on `main`, in the nullable spelling: a `-> H?` that
+  returned a `H?` local of a record with a hook released it in the callee and again at the
+  caller.  The scope pass moved the release into the return copy only where the return's tail
+  WAS the copy block; under the presence test it is one level down.  Giving the dense
+  spelling the same test would have doubled its release too (two corpus guards said so), so
+  the scope pass reads the copy through the test.  Fixed with it.
+- **A tuple written into a record** on the register road wrote an absent value's field nulls
+  where the record road copies nothing.  A nullable tuple now takes the copy's own null arm
+  (`Stores::copy_null_into`: a destination just created is written absent, an existing one
+  keeps what it held), and a dense one is written only where it is surely present.
+- **A generic's local** typed by a type variable is copied without the test unless it is
+  written `T?`: its instance may be a tuple, whose test is not the record's.
+
+Closed by it:
+
+* **D-types-35** *(opened 2026-10-13, CLOSED 2026-10-13; loft#1997)* — `(N-Store)`: a
+  whole-record copy of a dense slot that holds null was a present record of zeros on the
+  interpreter and the record road.  Guards
+  `1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft` and
+  `2004-a-drop-hook-runs-once-when-a-nullable-local-is-returned.loft`.
+
 ## The presence walk of 2026-10-13 (loft#1993, loft#1994)
 
 Two entries the `(N-Road)` walk below left open closed on one mechanism.
