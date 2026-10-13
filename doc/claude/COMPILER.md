@@ -144,6 +144,12 @@ Special case: `1..4` tokenises as `Integer(1)`, `Token("..")`, `Integer(4)` — 
 
 **That case emits TWO tokens from ONE scan**, and it is the only place that does. Having read `1..`, the number lexer cannot return both, so it returns the `Integer` as the live token and QUEUES the `..` in the replay buffer. A number that ends at a field dot (`n.v.0.0`, `r.0.x`) does the same with a `.`. Both tokens must reach the buffer — see the invariant under Backtracking below.
 
+### Plain tokens
+
+A literal of plain text and a number of decimal digits alone are the usual spellings, and the lexer reads each in one piece. A literal's text up to the first quote, backslash, control character or — where strings interpolate — brace is copied as one slice (`LineCursor::plain_run`); decimal digits are folded straight off the line (`Lexer::decimal`). Every other spelling takes the general path (the per-character branches of `string`, and `number`), which owns every diagnostic: `decimal` consumes nothing when a fraction, an exponent, a separator, a base marker or a suffix follows the digits, or when the value is out of range.
+
+`Lexer::peek_plain()` answers the source length in bytes of the peeked token when it was read that way — for a literal, the length of its content — and `None` for any other token. What a plain token says is its source text, so a reader with a stricter grammar than loft's need not read the source again. The JSON reader (`src/json.rs`) takes a plain literal without validating it a second time, and plain digits as an integer only where JSON reads them as one (no leading zero, directly after a sign); every other spelling it reads from the raw text as before. Guards: `lexer::test::a_plainly_written_token_reports_its_source_length`, `json::tests::plain_digits_are_an_integer_only_as_json_writes_one`, `json::tests::a_plain_string_ends_after_its_closing_quote`.
+
 ### Backtracking with `Link` / `revert`
 
 The lexer supports arbitrary lookahead through a memory buffer:

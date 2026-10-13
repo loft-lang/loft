@@ -540,21 +540,58 @@ impl<'a> JParser<'a> {
 
     /// Consume the current `CString` token, validating it against the old
     /// scanner's error semantics first (the lexer decodes leniently).
+    ///
+    /// A string the lexer read as plain text ([`Lexer::peek_plain`]) holds no escape and no
+    /// control character and has its closing quote: the stricter grammar has nothing to
+    /// refuse in it, and its end follows from its length.  Only a string with an escape
+    /// or a control character in it is read a second time.
     fn take_string(&mut self) -> Result<String, (String, usize)> {
         // A `CString` token's position is the first *content* char; the opening
         // quote is one byte before it.
         let quote = self.byte_of(&self.lx.peek().position).saturating_sub(1);
-        self.value_end = json_string_validate(self.bytes, quote)?;
-        let LexItem::CString(s) = &self.lx.peek().has else {
-            unreachable!("take_string called off a CString");
+        self.value_end = match self.lx.peek_plain() {
+            Some(len) => quote + len + 2,
+            None => json_string_validate(self.bytes, quote)?,
         };
-        let s = s.clone();
-        self.lx.cont();
-        Ok(s)
+        Ok(self
+            .lx
+            .has_cstring()
+            .unwrap_or_else(|| unreachable!("take_string called off a CString")))
     }
 
+    /// A JSON number at the lexer's token: a `-` or the number itself.
+    ///
+    /// The usual number is decimal digits alone, and the lexer has read those
+    /// ([`Lexer::peek_plain`]): written without a leading zero they are a JSON integer, and
+    /// the value is the token's.  Every other spelling — a fraction, an exponent, a form
+    /// JSON refuses — is read from the raw text by [`Self::scan_number`], which owns
+    /// JSON's number grammar and its errors.
     fn parse_number(&mut self) -> Result<Parsed, (String, usize)> {
         let start = self.byte_of(&self.lx.peek().position);
+        let negative = self.lx.peek_token("-");
+        if negative {
+            self.lx.cont();
+        }
+        let digits = start + usize::from(negative);
+        let token = self.lx.peek();
+        let value = match token.has {
+            LexItem::Integer(v, _) => Some(u64::from(v)),
+            LexItem::Long(v) => Some(v),
+            _ => None,
+        };
+        if let Some(v) = value
+            && let Some(len) = self.lx.peek_plain()
+            // As many digits as the value has: no leading zero, which JSON refuses.
+            && v.checked_ilog10().map_or(1, |d| d as usize + 1) == len
+            // Directly after its sign: `- 5` is not a number.
+            && (!negative || self.byte_of(&token.position) == digits)
+        {
+            self.lx.cont();
+            self.value_end = digits + len;
+            // The lexer answers no integer above `i64::MAX`.
+            let v = v as i64;
+            return Ok(Parsed::Int(if negative { -v } else { v }));
+        }
         let (value, end) = self.scan_number(start)?;
         self.value_end = end;
         self.advance_past(end);
@@ -1041,6 +1078,112 @@ mod tests {
         assert!(
             matches!(parse("1.5e3").unwrap(), Parsed::Number(v) if (v - 1500.0).abs() < f64::EPSILON)
         );
+    }
+
+    /// The error a document earns: its message and byte offset.
+    fn refused(input: &str) -> (String, usize) {
+        let err = parse(input).expect_err(input);
+        (err.message, err.byte_offset)
+    }
+
+    /// A number written as plain digits is taken from the lexer's token, and only where
+    /// JSON's own grammar reads the same digits as one integer: no leading zero, directly
+    /// after its sign, inside `i64`.
+    #[test]
+    fn plain_digits_are_an_integer_only_as_json_writes_one() {
+        assert!(matches!(parse("7").unwrap(), Parsed::Int(7)));
+        assert!(matches!(parse("-7").unwrap(), Parsed::Int(-7)));
+        assert!(matches!(parse("-0").unwrap(), Parsed::Int(0)));
+        assert!(matches!(
+            parse(" 2147483648 ").unwrap(),
+            Parsed::Int(2_147_483_648)
+        ));
+        assert!(matches!(
+            parse("9223372036854775807").unwrap(),
+            Parsed::Int(i64::MAX)
+        ));
+        assert!(matches!(parse("-9223372036854775807").unwrap(), Parsed::Int(v) if v == -i64::MAX));
+        assert!(matches!(
+            parse("-9223372036854775808").unwrap(),
+            Parsed::Int(i64::MIN)
+        ));
+        assert!(
+            matches!(parse("9223372036854775808").unwrap(), Parsed::Number(v) if v.to_bits() == 2f64.powi(63).to_bits())
+        );
+        let Parsed::Array(items) = parse("[12 ,-3\t, 0]").unwrap() else {
+            panic!("expected array");
+        };
+        assert!(matches!(
+            items[..],
+            [Parsed::Int(12), Parsed::Int(-3), Parsed::Int(0)]
+        ));
+        // A leading zero ends the number after the zero; what follows is not a delimiter.
+        assert_eq!(
+            refused("007"),
+            ("unexpected trailing byte at offset 1".to_string(), 1)
+        );
+        assert_eq!(
+            refused("[007]"),
+            ("expected `,` or `]` in array, got 0x30".to_string(), 2)
+        );
+        assert_eq!(
+            refused("[-00]"),
+            ("expected `,` or `]` in array, got 0x30".to_string(), 3)
+        );
+        // A sign and its digits are one lexeme.
+        assert_eq!(refused("- 5"), ("expected digit in number".to_string(), 1));
+        assert_eq!(
+            refused("[-\n5]"),
+            ("expected digit in number".to_string(), 2)
+        );
+        // The number ends where its digits end.
+        assert_eq!(
+            refused("[5 5]"),
+            ("expected `,` or `]` in array, got 0x35".to_string(), 3)
+        );
+        assert_eq!(
+            refused("12 x"),
+            ("unexpected trailing byte at offset 3".to_string(), 3)
+        );
+    }
+
+    /// A string of plain text ends after its closing quote — counted in bytes — and one
+    /// with an escape or a control character is still checked by JSON's grammar.
+    #[test]
+    fn a_plain_string_ends_after_its_closing_quote() {
+        assert_eq!(
+            refused(r#"["ab" 1]"#),
+            ("expected `,` or `]` in array, got 0x31".to_string(), 6)
+        );
+        // `é` is two bytes: the `1` is at byte 6, character 5.
+        assert_eq!(
+            refused(r#"["é" 1]"#),
+            ("expected `,` or `]` in array, got 0x31".to_string(), 6)
+        );
+        assert_eq!(
+            refused(r#""ab"x"#),
+            ("unexpected trailing byte at offset 4".to_string(), 4)
+        );
+        assert_eq!(
+            refused(r#""" ""#),
+            ("unexpected trailing byte at offset 3".to_string(), 3)
+        );
+        assert_eq!(
+            refused("\"a\tb\""),
+            ("raw control byte 0x9 in string".to_string(), 2)
+        );
+        assert_eq!(refused(r#""a\x""#), ("invalid escape \\x".to_string(), 3));
+        assert_eq!(
+            refused(r#"{"k" 1}"#),
+            ("expected `:` after object key".to_string(), 5)
+        );
+        let Parsed::Object(fields) = parse(r#"{"k{}":"é", "":""}"#).unwrap() else {
+            panic!("expected object");
+        };
+        assert_eq!(fields[0].0, "k{}");
+        assert!(matches!(fields[0].2, Parsed::Str(ref s) if s == "é"));
+        assert_eq!((fields[1].0.as_str(), fields[1].1), ("", 13));
+        assert!(matches!(fields[1].2, Parsed::Str(ref s) if s.is_empty()));
     }
 
     #[test]

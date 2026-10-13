@@ -119,12 +119,12 @@ hand-priced (such a figure has paid about two thirds, same section).
 | 6.81 | cbor `encode` | X2, X9 | ≈ 5× (*est.*) |
 | 6.75 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
 | 6.35 | `invert` | X10 | ≈ 4× (*est.*) |
-| 6.28 | `map_json` (7.44 before J4 and J8) | X6 | ≈ 3.5–4.5× with the tree gone and the lexer's five levers in (*est.*, none priced) |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
 | 5.83 | `slope_path_with_undo` (noisy) | § 5's record-build row names what is left | no figure |
 | 5.51 | `rig_world_frame3` | S2, S3 | **2.75×**, priced |
 | 5.40 | `forms_upto` | X12 | no figure |
 | 5.32 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
+| 5.11 | `map_json` (7.44 before J4, J6, J7 and J8) | X6 | ≈ 3.5–4× with the tree gone (*est.*, not priced) |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 Two rows reach 3× with everything here built (`rig_world_frame3`, `insert_text`); the
@@ -138,7 +138,7 @@ others land between 3.5× and 6.9×.
 | X3 | flow's runs as views of the buffer they are cut from | `flow_layout_full` (claim and release 25 %) | *est.* only | after S1c and X2: re-profile, then price |
 | X4 | `hand_price.sh` links a package's native library (§ Tooling) | `check_request`, `pluginabi/request`, `rand_indices` | tooling | first — `check_request` cannot be profiled with symbols without it; then `(R-DecodeView)` (decided, C141) and S8 after its decision |
 | X5 | keyed inserts and walks: **a** the library's one bucket lookup where it does two (−8 %, priced); **b** C7; **c** the record claimed per entry — the arena's bookkeeping on insert (`arena::alloc`, `index_of`, the zeroing; `index_of` goes if the mint hands its index to the finish) and a typed keyed append (keyed.md § What is left); **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (a 8 %, c 26 % of the row), `build_index` (b 8 %, c 30 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, b priced; c an instruction ledger, ~17 % of an insert; d unpriced, and P4 needs a range proof | price c on `build_index`; a is a library edit |
-| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4, J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` (the lexer's functions 31 %, the JSON parser's 17 %, the tree and its walk ~10 %, `malloc` / `free` 24 % between them) | decided (§ 6); J4 built (the row −2 %) and J8 built (−12.6 %); J5–J7 and J9 not priced | J7 and J6 on the cursor (a string and a number scanned once), then J9; re-profile first — the row's shares have moved |
+| X6 | `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4, J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8); over-9x.md § moros `map_json` | `map_json` (the lexer's functions 31 %, the JSON parser's 17 %, the tree and its walk ~10 %, `malloc` / `free` 24 % between them) | decided (§ 6); built: J4 (the row −2 %), J8 (−12.6 %), J6 and J7 (−17 % together); J5 and J9 not priced | J9 (the tree), then the per-token cost of `Lexer::cont` / `next` (22 % of what is left) and J5; over-9x.md § What is left after J6 and J7 |
 | S9 | § 3 — not sized | `panel_build` (claim and release 45 %) | not sized | size it on `panel_build`.  Not an allocator change: two were measured on `truncate_to` and dropped (§ 4), and a claim removed is the form @C125 asks for |
 | X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
 | X8 | a file's handle and cursor held in locals across a read loop | `binary_read` (the whole row is the emitted loop) | no price; the typed read is built | hand-price |
@@ -171,11 +171,11 @@ before it; the slowest row goes first; a step with no price is priced before it 
 9. **`binary_read` (6.83×)** — price X8, build.
 10. **cbor `encode` (6.81×)** — X9, on what X2 left of the row.
 11. **`invert` (6.35×), `insert_text` (5.32×)** — price X10 on `insert_text`, build.
-12. **`map_json` (6.28×)** — X6: J4 and J8 are built; re-profile, then J7 and J6, then J9 on
-    the lexer they leave.
-13. **`slope_path_with_undo` (5.83×)** — re-profile; § 5's record-build row names what is left.
-14. **`rig_world_frame3` (5.51×)** — S2, then S3.
-15. **`forms_upto` (5.40×)** — X12.
+12. **`slope_path_with_undo` (5.83×)** — re-profile; § 5's record-build row names what is left.
+13. **`rig_world_frame3` (5.51×)** — S2, then S3.
+14. **`forms_upto` (5.40×)** — X12.
+15. **`map_json` (5.11×)** — X6: J4, J6, J7 and J8 are built; J9 (the tree) next, on the
+    lexer they leave.
 
 After each item, measure the rows it names (M5) and read this order again: a row under 5×
 leaves it, a step that prices under 5 % of its row is dropped for the row's next one, and a
