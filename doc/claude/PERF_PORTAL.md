@@ -352,17 +352,17 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 
 ## laptop · x86_64-linux · 2026-10-13
 
-Commit `80d5faa5e`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, pinned to the fastest core.
+Commit `b3a119a49`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, pinned to the fastest core.
 
 ### Where we stand
 
 | population | routines | median | within 2× | 2–3× | over 3× |
 |---|---:|---:|---:|---:|---:|
-| every measured routine | 205 | **2.27×** | 89 | 52 | 64 |
+| every measured routine | 205 | **2.27×** | 89 | 53 | 63 |
 | shipped routines — stdlib + libraries (the `(Perf-Weight)` population) | 162 | **2.26×** | 70 | 41 | 51 |
 | stdlib | 36 | **1.54×** | 23 | 5 | 8 |
 | libraries | 126 | **2.49×** | 47 | 36 | 43 |
-| consumer shapes — hot loops of real programs, modelled | 30 | **2.31×** | 12 | 8 | 10 |
+| consumer shapes — hot loops of real programs, modelled | 30 | **2.31×** | 12 | 9 | 9 |
 | engine programs (informational) | 13 | **1.81×** | 7 | 3 | 3 |
 
 ### By class — which KINDS of routine are slow
@@ -383,7 +383,7 @@ class points at one part of the compiler or runtime rather than at one program.
 | **record-field** | reading and writing fields of records reached through a vector | 16 | **2.29×** | 1.09× | 6.81× `encode` | 7 | 6 |
 | **vector-read** | indexed reads of scalar vectors, and reductions over them | 17 | **1.86×** | 1.03× | 3.71× `draw_quads` | 10 | 2 |
 | **float-kernel** | float arithmetic in loops: the operators, libm calls, the null (NaN) handling | 18 | **1.84×** | 0.99× | 5.51× `rig_world_frame3` | 11 | 3 |
-| **text-build** | making text: format, replace, join, lowercase, trim, the collected pieces of a split | 22 | **1.83×** | 1.01× | 4.14× `char_roundtrip` | 12 | 3 |
+| **text-build** | making text: format, replace, join, lowercase, trim, the collected pieces of a split | 22 | **1.83×** | 1.01× | 4.14× `char_roundtrip` | 12 | 2 |
 | **int-loop** | scalar integer arithmetic in loops: the checked operators and the loop counter | 8 | **1.80×** | 1.01× | 3.27× `clock_advance` | 5 | 1 |
 | **vector-write** | element writes and fills of scalar vectors, in place | 20 | **1.65×** | 0.67× | 3.42× `canvas` | 14 | 1 |
 | **text-parse** | numbers parsed out of text | 1 | **0.93×** | 0.93× | 0.93× `parse_num` | 1 | 0 |
@@ -615,8 +615,8 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 |---|---|---|---:|---|---:|---:|---|---|
 | `char_roundtrip` | 18_consumer_crawler | consumer:crawler | **4.14** | 4.09–4.16 †0c4f9fd33 | 6.57 ms | 1.59 ms | **over 3x** | per character a code changed and formatted back as a character |
 | `format_iso` | time | library:time | **3.62** | 3.60–3.63 †0c4f9fd33 | 4.57 ms | 1.26 ms | **over 3x** | three zero-padded interpolations through two helpers |
-| `map_json` | 17_consumer_moros_dryopea | consumer:moros | **3.40** | 3.39–3.42 | 5.30 ms | 1.56 ms | **over 3x** | a whole map serialised with {m:j} and parsed back with Map.parse |
 | `form_write` | hex_form | library:hex_form | **2.83** | 2.56–2.85 (noisy) †0c4f9fd33 | 1.98 ms | 700.4 µs | over 2x | interpolation and `+=` per side, called once per proposal in the recovery enumeration |
+| `map_json` | 17_consumer_moros_dryopea | consumer:moros | **2.69** | 2.68–2.70 | 4.15 ms | 1.54 ms | over 2x | a whole map serialised with {m:j} and parsed back with Map.parse |
 | `render` | markdown | library:markdown | **2.63** | 2.59–2.64 †0c4f9fd33 | 3.50 ms | 1.33 ms | over 2x | the block state machine over a 107 KiB document |
 | `materialise` | zttext | library:zttext | **2.62** | 2.59–2.62 †f7f23c5b5 | 238.9 µs | 91.2 µs | over 2x | every piece span concatenated ONE character at a time (`out += "{ch}"`) |
 | `render_inline` | markdown | library:markdown | **2.61** | 2.60–2.62 †f7f23c5b5 | 4.29 ms | 1.65 ms | over 2x | a 1-character text built and appended per character, recursing per span |
@@ -682,7 +682,7 @@ Why it is slow, priced, and what to build: [analysis/vector-write.md](../../benc
 |---|---|---|---:|---|---:|---:|---|---|
 | `parse_num` | 13_stdlib_text | stdlib | **0.93** | 0.92–0.94 †0c4f9fd33 | 39.5 µs | 42.3 µs | ok | `as float?` over 2,000 tokens |
 
-† measured at an earlier commit than `80d5faa5e` (a partial run re-measures only what it names); the commit follows the mark.
+† measured at an earlier commit than `b3a119a49` (a partial run re-measures only what it names); the commit follows the mark.
 
 #### UNCLASSIFIED — a lane prints these and `routines.tsv` lacks them
 
