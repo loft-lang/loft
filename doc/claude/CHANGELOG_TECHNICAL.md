@@ -86,6 +86,37 @@ All notable changes to the loft language and interpreter.
   signature — the same INVALID verdict on a validly signed registry.
 - `fetched_pair_verdict` adds nothing when the fetch brought no signature: the one that
   failed came from the cache, so neither "two downloads" nor "both from commit X" is true.
+### A dense tuple carries its presence where a null can reach a `S?` (loft#1993, loft#1994, 2026-10-13)
+
+- **Nullable tuple parameters** (`@FR-N-Road`, loft#1993).  `hoist::tuple_param_candidates`
+  admits a `p: S?` with the nullable layout key.  `Output::emit_call_arg` builds the tuple
+  at the site: a record's field reads followed by `<record>.rec != 0`, the absent tuple for
+  a `null` argument or default, a tuple that carries the layout as it is, and a surely
+  present dense tuple widened (`hoist::arg_tuple_form`, the question the site gate asks
+  through `tuple_arg_form`).  The live-reload arm materialises an absent tuple as the null
+  record and a library bridge reads the presence off the record it is handed
+  (`hoist::layout_reads`).  A function a fn-ref dispatch reaches keeps a reference.
+- **Surely present** (`@FR-N-Store`, loft#1994).  `hoist::surely_present` answers whether a
+  dense tuple can have come off a null record: a build cannot, a call to a function in
+  `ValueRecords::sp` cannot, a local bound only from those cannot; a view read in a dense
+  body, a tuple parameter and anything else can.  `hoist::widens` asks it at every join of a
+  dense key with a nullable one — a branch's arms, a local's binds, a result position — so a
+  tuple that is not surely present is never widened with the constant word.
+- **Promotion.**  `hoist::promote_presence` runs at the head of every round of the admission
+  fixpoint and turns a dense key into a nullable one where the value can reach a nullable
+  position: a dense tuple parameter (its sites then read the presence), a dense function
+  whose result is not surely present, a dense function that returns such a function's result
+  or such a parameter, and a dense parameter handed a tuple that carries the layout.  The
+  positions are read from the source types.  A bind of a `τ?` local promotes parameters
+  only: a local bound from dense tuples alone holds the dense tuple and widens nothing, and
+  a promoted function loses its registers at every site a nullable tuple does not serve (a
+  copy into a record).
+- Pins: `tests/value_record.rs::a_nullable_record_parameter_crosses_as_its_fields_and_presence_word`
+  and `::a_dense_slot_that_can_reach_a_nullable_carries_its_presence`.  `make nullable-road`
+  reads 0 roads and 0 open.
+- Open, found by the walk: loft#1997 — a whole-record copy of a dense slot that holds null
+  is a record of zeros on the interpreter and the record road.
+
 ### A `-> S?` that joins a dense leaf returns in registers (loft#1990, `@FR-N-Road`, 2026-10-13)
 
 - **Layouts join.**  `hoist::join_layout` answers the key two value shapes carry together:

@@ -227,6 +227,17 @@ nullable into a non-null parameter, where the same code over a struct was not.
 { [a, ..] => a, _ => S { a: 5 } } } }` ran on the interpreter and stopped the native build
 with a Rust type error.
 
+**A `null` handed to a non-nullable record parameter is still `null` when it comes back,
+under `--native`.**  `fn keep(p: Point) -> Point? { p }` called as `keep(null)` — which the
+compiler warns about — answered a `Point` that was not `null`, with every field null, in a
+compiled program, and `null` in an interpreted one.  The same happened when the parameter was
+one arm of an `if` or a `match`, and when it went through a second function first.  Both now
+answer `null`.
+
+**A parameter of type `S?` is passed as fast as one of type `S`.**  This is visible only as
+speed, under `--native`: a small record without text or collections crosses a call as its
+fields, and a `p: S?` now does so too, with one extra flag that says whether it is there.
+
 **A function returning `S?` is as fast as one returning `S`, in more shapes.**  This is
 visible only as speed, under `--native`.  A function that returns a small record without
 text or collections hands its fields back directly.  A `-> S?` did that only when every way

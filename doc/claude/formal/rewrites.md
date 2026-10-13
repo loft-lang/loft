@@ -3216,15 +3216,29 @@ line in `Output::output_function`'s prelude.
                  the setter's `rec == 0` arm does.  The two layouts are two KEYS
                  (the record type, and the record type with `NULLABLE_LAYOUT`), so a
                  site, a leaf, a local and a parameter agree on a key or decline: a
-                 nullable tuple is never handed where a dense one is expected (a tuple
-                 parameter, a fn-ref hand-off, a copy into a record).  Leaves of a
-                 `-> S?` body: its own `Object` build (present), the bare `null`
+                 nullable tuple is never handed where a dense one is expected (a dense
+                 tuple parameter, a fn-ref hand-off, a copy into a record).  Leaves of
+                 a `-> S?` body: its own `Object` build (present), the bare `null`
                  sentinel (absent), a `-> S?` call or `τ?` value local, and a leaf
-                 whose own tuple is DENSE — a `-> S` call, a dense value local, a tuple
-                 parameter, and a VIEW of the record, `S` or `S?` — WIDENED where it
-                 stands by appending the presence word: `true` for a dense tuple, and
-                 for a view whether its reference names a record, which is what the
-                 record form's null test reads.  Layouts JOIN: the arms of a value
+                 whose own tuple is DENSE — a `-> S` call, a dense value local, and a
+                 VIEW of the record, `S` or `S?` — WIDENED where it stands by
+                 appending the presence word: for a view whether its reference names a
+                 record, which is what the record form's null test reads, and `true`
+                 for a dense tuple that is SURELY PRESENT.  PRESENCE CLAUSE
+                 (`(N-Store)`): a dense tuple has no absent spelling, so a `null` a
+                 program stored into a dense slot is gone once that slot is read into
+                 one, and a constant `true` would answer "present" for it.  A dense
+                 tuple is surely present when it is a build, the result of a function
+                 whose every result is surely present, or a local bound only from
+                 those; a view read in a dense body, a tuple parameter and the result
+                 of a function that returns either are not.  What stands where a
+                 nullable tuple is expected and is not surely present CARRIES its
+                 presence: a dense tuple parameter takes the nullable layout (the call
+                 site reads whether its argument names a record), a dense function
+                 returns it, and a dense parameter handed such a tuple takes it too —
+                 the layout follows the value, the source type does not change.  A
+                 function reached through a fn-ref keeps its ABI, and what cannot
+                 carry its presence keeps the record.  Layouts JOIN: the arms of a value
                  branch, and the binds of one local, carry one key, or the dense and
                  the nullable key of one record, which is the nullable one — so a
                  `-> S?` that joins a `τ` with a `τ?` is admitted wherever its all-`τ`
@@ -3239,8 +3253,10 @@ line in `Output::output_function`'s prelude.
                  pass above (the interpreter keeps the record).  A cdylib bridge writes a present tuple into its destination
                  and answers the null record for an absent one.  Switch
                  `LOFT_NO_NULLABLE_VALUE_RECORD=1`; guards
-                 `a-nullable-record-returns-its-fields-in-registers.loft` and
-                 `1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft`.
+                 `a-nullable-record-returns-its-fields-in-registers.loft`,
+                 `1990-a-nullable-result-that-joins-a-dense-leaf-returns-in-registers.loft`,
+                 `1993-a-nullable-record-parameter-crosses-as-its-fields.loft` and
+                 `1994-a-null-stored-into-a-dense-record-slot-reads-back-null.loft`.
 
   (R-Cold)       a runtime helper on the per-element fast path — an element read or
                  write through a holder, a length, a bounds test, a fault note, a
@@ -3679,8 +3695,15 @@ answered here rather than decided in the code.
                  no store minted, no copy at the caller.  The record is materialised at
                  the one place a representation is owed — a store into a field or an
                  element, a return from a function R-ValueRecord declines, a library's
-                 exported API (R-Escape) — and nowhere else.  Declines: a `&` link to
-                 the local; the local handed to a fn-ref; a nullable binding.
+                 exported API (R-Escape) — and nowhere else.  A `p: S?` PARAMETER
+                 (`(N-Road)`) is received as the fields followed by the PRESENCE word
+                 of `(R-ValueRecord)`'s nullable clause: the call site reads the
+                 fields and whether the argument names a record, a `null` argument is
+                 the absent tuple, a tuple that already carries the layout crosses as
+                 it is, and a surely present dense tuple is widened; the callee reads
+                 it as a `τ?` value local.  Declines: a `&` link to the local; the
+                 local handed to a fn-ref; a nullable parameter of a function a fn-ref
+                 dispatch reaches.
 ```
 
 **The nested clause** (cells `tests/scripts/158-nested-value-record.loft` n1–n14,

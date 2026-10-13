@@ -552,7 +552,10 @@ wrong field or a wrong presence test (`if x`, `x == null`) out of a nullable rec
 call.  With it on (the default) such a function returns `(fields…, bool)`, the last element
 the presence word.  A dense tuple that stands where a nullable one is expected — an arm of a
 branch, a bind of a `S?` local, a `return` — is widened where it stands; a view's presence
-word is whether its reference names a record.
+word is whether its reference names a record.  A `p: S?` parameter crosses the same way, and
+so does a dense parameter or a `-> S` result whose value can reach a `S?` without being
+surely present (`@FR-N-Store`): the switch puts all of them back on the reference, and
+`LOFT_TRACE_VALUEREC=1` names each one ("carries its presence").
 **`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON, generation
 time, `--native` only) keeps every by-value record PARAMETER a `DbRef` again — with it
 off, a parameter of a plain no-heap record of ≤6 scalars is received as the TUPLE of its

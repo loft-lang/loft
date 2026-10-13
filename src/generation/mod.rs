@@ -2857,6 +2857,7 @@ impl Output<'_> {
                 &self.value_records.params,
                 &self.value_records.view_offs,
                 &self.value_records.fnref_sites,
+                &self.value_records.sp,
             );
             self.forward_sites = hoist::forward_sites(
                 self.data,
@@ -7050,6 +7051,48 @@ impl Output<'_> {
         )
     }
 
+    /// The live-reload arm's record for tuple parameter `i` (`var_<name>`, layout `tp`): the
+    /// parked call takes a record, so the tuple is written into one (`pre`) and that record
+    /// released after the answer is read (`post`).  A nullable tuple that is ABSENT is the
+    /// null record again, which nothing releases.
+    fn live_tuple_param(
+        i: usize,
+        name: &str,
+        tp: u16,
+        layout: &hoist::ValueTuple,
+        pre: &mut String,
+        post: &mut String,
+    ) {
+        use std::fmt::Write as _;
+        let presence = layout.presence();
+        if let Some(k) = presence {
+            let _ = write!(
+                pre,
+                " let __lp_{i}: DbRef = if !var_{name}.{k} {{ DbRef::NULL }} else"
+            );
+        } else {
+            let _ = write!(pre, " let __lp_{i}: DbRef =");
+        }
+        let _ = write!(
+            pre,
+            " {{ let __d = OpDatabase(cell, DbRef::NULL, {rec}_i32); let __s = unsafe {{ &mut *cell.get() }};",
+            rec = hoist::layout_record(tp)
+        );
+        for (k, (off, rt)) in layout.fields.iter().enumerate() {
+            let setter = hoist::tuple_field_setter(*off, rt, "__d", &format!("var_{name}.{k}"));
+            let _ = write!(pre, " __s.store_mut(&__d).{setter};");
+        }
+        let _ = write!(pre, " __d }};");
+        if presence.is_some() {
+            let _ = write!(
+                post,
+                " if __lp_{i}.rec != 0 {{ OpFreeRef(cell, __lp_{i}, \"__lp_{i}\"); }}"
+            );
+        } else {
+            let _ = write!(post, " OpFreeRef(cell, __lp_{i}, \"__lp_{i}\");");
+        }
+    }
+
     fn live_entry_check(&mut self, def: &crate::data::Definition) -> Option<String> {
         if def.name() == "n_main" {
             return None;
@@ -7089,20 +7132,8 @@ impl Output<'_> {
             if let Some(tp) = self.value_records.param_type(self.def_nr, i)
                 && let Some(layout) = self.value_records.types.get(&tp)
             {
-                let name = sanitize(&a.name);
-                let _ = write!(
-                    pre,
-                    " let __lp_{i}: DbRef = {{ let __d = OpDatabase(cell, DbRef::NULL, {rec}_i32); let __s = unsafe {{ &mut *cell.get() }};",
-                    rec = hoist::layout_record(tp)
-                );
-                for (k, (off, rt)) in layout.fields.iter().enumerate() {
-                    let setter =
-                        hoist::tuple_field_setter(*off, rt, "__d", &format!("var_{name}.{k}"));
-                    let _ = write!(pre, " __s.store_mut(&__d).{setter};");
-                }
-                let _ = write!(pre, " __d }};");
+                Self::live_tuple_param(i, &sanitize(&a.name), tp, layout, &mut pre, &mut post);
                 let _ = write!(pushes, " st.put_stack(__lp_{i});");
-                let _ = write!(post, " OpFreeRef(cell, __lp_{i}, \"__lp_{i}\");");
                 continue;
             }
             // `@FR-N-Road` — a `τ?` parameter is pushed as its `τ` is: one slot, one layout.

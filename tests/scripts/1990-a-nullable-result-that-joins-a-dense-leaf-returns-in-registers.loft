@@ -234,6 +234,16 @@ fn j21(d: Db, k: integer) -> K? {
   }
 }
 
+// j22 — a local of a function that returns `S`, joined from a build and a `-> S?` call.
+fn j22(c: boolean) -> S {
+  h = if c {
+    S { a: 1 }
+  } else {
+    gn(2)
+  };
+  S { a: (h.a ?? 0) + 10 }
+}
+
 // d1 — must DECLINE: an arm that is an OWNED local, written after its build.
 fn d1(p: S, c: boolean) -> S? {
   x = S { a: 3 };
@@ -401,6 +411,8 @@ fn main() {
     seen += 10;
   }
   assert(seen == 1, "presence as a condition {seen}");
+
+  assert(j22(true).a == 11 && j22(false).a == 12, "j22 {j22(true).a} {j22(false).a}");
 
   a16 = d1(x, true);
   b16 = d1(x, false);

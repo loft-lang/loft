@@ -1384,9 +1384,13 @@ impl Output<'_> {
             // Only a borrowed-view return needs the bracket; every other call keeps its
             // previous emit byte-for-byte.
             let bracket: Vec<String> = if is_borrowed_view {
+                // An argument this frame holds as a TUPLE (`@FR-R-ValueLocal`) names no
+                // store: the callee received its fields, and nothing it frees is the
+                // argument's.
                 crate::use_analysis::protectable_ref_args(self.data, self.def_nr, to)
                     .0
                     .iter()
+                    .filter(|av| !self.value_record_locals.contains_key(av))
                     .map(|&av| format!("var_{}", sanitize(variables.name(av))))
                     .collect()
             } else {

@@ -1,0 +1,6 @@
+// A small record PARAMETER read by the callee and handed on.  Nullable half: both parameters
+// are `S?`.
+struct S { a: integer }
+fn inner(q: S?) -> integer { (q.a ?? 0) + 1 }
+fn f(p: S?) -> integer { inner(p) + (p.a ?? 0) }
+fn main() { x = S { a: 41 }; println("{f(x)}"); }
