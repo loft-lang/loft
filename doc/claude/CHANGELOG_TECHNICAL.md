@@ -10,14 +10,32 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The browser client reports a server that is not there (loft#2003, 2026-10-13)
+
+- The rule that settled it: one client script, any kernel
+  (`plans/18-engine-host/07-browser-kernel.md`).  A native connect blocks and answers
+  false, `run_client` prints `engine_host: cannot connect to <host>:<port>` and returns —
+  no event, no tick — so the browser kernel does the same.
+- `engine_host::browser::n_kernel_client_pump`: a socket that closed without opening ends
+  the client and pushes that line to the program's output.  The text is the one
+  `run_client` prints in `lib/engine_host/src/engine_host.loft`; the gate below compares
+  both against one expectation.
+- `n_kernel_client_tick_due` (browser) answers false until the socket has opened.  The
+  first call was always due, so `on_tick` ran in the loop's first turn, ahead of the
+  kind-0 event.
+- Host bridge: `ws_closed(id)` in `doc/loft-rt.js`, `wasm::host_ws_closed`.  A host
+  without it answers false and a refused connect goes unnoticed, as before.
+- `doc/kernel-differential.html?refused` runs the same script against a port nothing
+  listens on; `a_refused_connect_reads_the_same_on_a_seat_and_in_a_page` is its gate, both
+  legs.  `doc/pkg` rebuilt.
+
 ### The browser client reports a closed connection (loft#2000, 2026-10-13)
 
 - `engine_host::browser::n_kernel_client_pump` ends the client when its WebSocket was
   open and is no longer ready: the frames already queued are delivered, a `kind: 2` event
   follows them, and `alive` goes false, so `client_loop` returns after that turn — the
   native connector's `FrameRead::Closed`.  A local kernel (`ws` is -1) is exempt.
-- Not covered: a socket that never opens.  `kernel_connect` answers true as soon as the
-  WebSocket object exists, and `ws_ready` cannot tell "still connecting" from "refused".
+- A socket that never opens is loft#2003, the entry above.
 - `doc/pkg` is rebuilt (`make wasm`), `doc/pkg-src.stamp` with it.
 - `doc/kernel-differential.html` appends each frame's output.  `resume_frame` hands over
   what was printed during that frame and clears it; the page kept the last frame's share.

@@ -580,6 +580,12 @@ export function createHost(tree = { '/': {} }, options = {}) {
     const slot = wsConns[id];
     return slot && slot.socket.readyState === 1 ? 1 : 0;
   };
+  // Is the socket closing or closed?  Asked of a socket that never became ready, it
+  // is how the browser kernel tells "still connecting" from "nothing answered".
+  host.ws_closed = (id) => {
+    const slot = wsConns[id];
+    return slot && slot.socket.readyState >= 2 ? 1 : 0;
+  };
   // The serving origin's host — engine_host::default_host() on a phone is
   // the cabinet that served the page.
   host.origin_host = () => (globalThis.location && location.hostname) || "127.0.0.1";

@@ -605,6 +605,8 @@ pub fn host_log_write(line: &str) {
 //
 // Host-side counterparts on `globalThis.loftHost`:
 //   ws_connect(url) → integer (slot id, -1 on bad url)
+//   ws_ready(id)  → 0 / 1   (1 = the socket is open)
+//   ws_closed(id) → 0 / 1   (1 = the socket is closing or closed)
 //   ws_send(id, msg, binary) → 0 / 1
 //   ws_recv(id) → 0 / 1   (1 = a message landed; read via ws_last_message)
 //   ws_last_message() → text
@@ -641,6 +643,25 @@ pub fn host_ws_ready(id: i32) -> bool {
     {
         let args = js_sys::Array::of1(&id.into());
         host_call("ws_ready", &args)
+            .as_f64()
+            .is_some_and(|n| n as i32 == 1)
+    }
+    #[cfg(not(feature = "wasm"))]
+    {
+        let _ = id;
+        false
+    }
+}
+
+/// Is slot `id` closing or closed?  With [`host_ws_ready`] this tells a socket that is
+/// still connecting from one that will never open.  A host without the method answers
+/// false, and a refused connect is then not noticed.
+#[allow(dead_code)]
+pub fn host_ws_closed(id: i32) -> bool {
+    #[cfg(feature = "wasm")]
+    {
+        let args = js_sys::Array::of1(&id.into());
+        host_call("ws_closed", &args)
             .as_f64()
             .is_some_and(|n| n as i32 == 1)
     }

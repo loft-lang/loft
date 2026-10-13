@@ -767,6 +767,43 @@ fn main() {{
     let _ = fa::remove_file(&server_prog);
 }
 
+/// The client both legs of a differential run: the script in
+/// `doc/kernel-differential.html`, with the port and the tick body substituted the way
+/// the page substitutes them.
+fn differential_client_src(port: u16, on_tick: &str) -> String {
+    format!(
+        r#"
+use engine_host::*;
+
+struct C {{ saw_sync: boolean not null }}
+fn main() {{
+  engine_host::sync_class(2);
+  c = C {{ saw_sync: false }};
+  engine_host::run_client(engine_host::default_host(), {port}, 50000,
+    fn(ev: engine_host::Event) {{
+      if ev.kind == 0 {{
+        println("t:connected");
+        engine_host::client_send("hello");
+      }} else if ev.kind == 1 {{
+        if ev.payload.starts_with("2:") {{
+          if !c.saw_sync {{
+            c.saw_sync = true;
+            println("t:sync-ok");
+          }}
+        }} else {{
+          println("t:event {{ev.payload}}");
+        }}
+      }} else if ev.kind == 2 {{
+        println("t:disconnected");
+      }}
+    }},
+    fn() {{ {on_tick} }});
+  println("t:exited");
+}}
+"#
+    )
+}
+
 /// @PLN18 phase 07 acceptance — the ONE-SCRIPT differential: the same loft
 /// client source (the template in `doc/kernel-differential.html`, port
 /// substituted) runs natively (`run_client`) and in the BROWSER kernel
@@ -835,37 +872,7 @@ fn main() {{
     //
     // The SAME client source as the page's template (port substituted the
     // same way) — the one-script invariant, asserted by construction.
-    let client_src = format!(
-        r#"
-use engine_host::*;
-
-struct C {{ saw_sync: boolean not null }}
-fn main() {{
-  engine_host::sync_class(2);
-  c = C {{ saw_sync: false }};
-  engine_host::run_client(engine_host::default_host(), {port}, 50000,
-    fn(ev: engine_host::Event) {{
-      if ev.kind == 0 {{
-        println("t:connected");
-        engine_host::client_send("hello");
-      }} else if ev.kind == 1 {{
-        if ev.payload.starts_with("2:") {{
-          if !c.saw_sync {{
-            c.saw_sync = true;
-            println("t:sync-ok");
-          }}
-        }} else {{
-          println("t:event {{ev.payload}}");
-        }}
-      }} else if ev.kind == 2 {{
-        println("t:disconnected");
-      }}
-    }},
-    fn() {{ }});
-  println("t:exited");
-}}
-"#
-    );
+    let client_src = differential_client_src(port, "");
     let client_prog = test_tmp().join(format!("eh_diff_cli_{}.loft", std::process::id()));
     fa::write(&client_prog, &client_src).unwrap();
     let expect = [
@@ -995,5 +1002,135 @@ fn main() {{
     );
 
     let _ = fa::remove_file(&server_prog);
+    let _ = fa::remove_file(&client_prog);
+}
+
+/// The one-script differential for a server that is NOT THERE: the same client, pointed at
+/// a port nothing listens on, prints the same transcript on a native seat and in the
+/// browser kernel — the kernel names the server it could not reach, and `run_client`
+/// returns with no event and no tick.
+///
+/// A native connect blocks and answers false.  A browser's is asynchronous: the socket is
+/// refused some turns after `kernel_connect` has answered, so the browser kernel has to
+/// notice a socket that closed without opening and end the client the way the native
+/// connect would have.  The script prints `t:tick` from `on_tick`; a kernel that ticks
+/// while it is still connecting shows one.
+#[test]
+fn a_refused_connect_reads_the_same_on_a_seat_and_in_a_page() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: release loft not built");
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let tool_ok = |cmd: &str| {
+        loft::platform::process::harness_command("sh")
+            .arg("-c")
+            .arg(format!("command -v {cmd}"))
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    let chrome_ok = ["google-chrome", "chromium", "chromium-browser", "chrome"]
+        .iter()
+        .any(|c| tool_ok(c));
+    let harness = root.join("tools/html_render_check.mjs");
+    if !chrome_ok
+        || !tool_ok("node")
+        || !fa::exists(&harness)
+        || !fa::exists(root.join("doc/pkg/loft.js"))
+    {
+        eprintln!("SKIP: chromium/node/harness/bundle missing");
+        return;
+    }
+    assert_bundle_describes_this_tree();
+
+    // A port this process holds no listener on: resolved free, and never bound again.
+    let port = common::bind_port(18140);
+    let client_prog = test_tmp().join(format!("eh_refused_cli_{}.loft", std::process::id()));
+    fa::write(
+        &client_prog,
+        differential_client_src(port, r#"println("t:tick");"#),
+    )
+    .unwrap();
+    let expect = [
+        format!("engine_host: cannot connect to 127.0.0.1:{port}"),
+        "t:exited".to_string(),
+    ];
+    let ours = |l: &str| l.starts_with("t:") || l.starts_with("engine_host:");
+
+    // ── Native leg ──
+    let mut client = loft::platform::process::harness_command(loft_bin())
+        .env("LOFT_OFFLINE", "1")
+        .env_remove("LOFT_HOST")
+        .arg("--interpret")
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&client_prog)
+        .current_dir(&root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("native client");
+    let rx = line_channel(client.stdout.take().expect("piped client stdout"));
+    let _client = Guard(Some(client));
+    // Read to `t:exited` under a deadline: a client that keeps running is a failed
+    // transcript, never a wait that only the per-test limit ends.
+    let deadline = vm_deadline(15);
+    let mut lines = Vec::new();
+    while let Ok(l) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        if ours(&l) {
+            let done = l == "t:exited";
+            lines.push(l);
+            if done {
+                break;
+            }
+        }
+    }
+    assert_eq!(lines, expect, "native transcript");
+
+    // ── Browser leg ──
+    let http_port = common::bind_port(18141);
+    let http = loft::platform::process::harness_command("python3")
+        .args([
+            "-m",
+            "http.server",
+            &http_port.to_string(),
+            "--bind",
+            "127.0.0.1",
+        ])
+        .current_dir(root.join("doc"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("http server");
+    let _http = Guard(Some(http));
+    wait_until_listening(http_port);
+    let url =
+        format!("http://127.0.0.1:{http_port}/kernel-differential.html?port={port}&refused=1");
+    // The page compares its own transcript and logs `DIFFERENTIAL-OK`; the wait is polled
+    // for that line.  The browser itself logs the refused socket as an error, which is the
+    // condition under test and not a failure of the page.
+    let page_budget_ms = 15 * common::deadline_scale() * 1000;
+    let out = loft::platform::process::harness_command("node")
+        .arg(&harness)
+        .arg(&url)
+        .args(["--wait-ms", &page_budget_ms.to_string()])
+        .args(["--expect-log", "DIFFERENTIAL-OK"])
+        .args(["--allow", "ERR_CONNECTION_REFUSED"])
+        .arg("--no-gpu")
+        .args(["--port", &common::bind_port(18142).to_string()])
+        .output()
+        .expect("node harness");
+    if let Some(reason) = harness_env_skip(&out) {
+        eprintln!("{reason}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "a refused connect read differently in the browser kernel.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
     let _ = fa::remove_file(&client_prog);
 }

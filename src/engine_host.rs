@@ -2303,8 +2303,8 @@ pub fn n_swap_retired(stores: &mut Stores, stack: &mut DbRef) {
 pub mod browser {
     use super::*;
     use crate::wasm::{
-        host_origin_host, host_time_ticks, host_ws_connect, host_ws_last_message, host_ws_ready,
-        host_ws_recv, host_ws_send,
+        host_origin_host, host_time_ticks, host_ws_closed, host_ws_connect, host_ws_last_message,
+        host_ws_ready, host_ws_recv, host_ws_send,
     };
 
     struct BrowserClient {
@@ -2313,6 +2313,8 @@ pub mod browser {
         /// The async half of "connect blocks until upgraded": kind-0 fires
         /// and the outbox flushes only once the socket reports open.
         opened: bool,
+        /// `host:port` as `run_client` names the server it could not reach.
+        peer: String,
         outbox: Vec<String>,
         events: VecDeque<Event>,
         last: Event,
@@ -2422,6 +2424,7 @@ pub mod browser {
                 ws: -1,
                 alive: true,
                 opened: true,
+                peer: String::new(),
                 outbox: Vec::new(),
                 events: VecDeque::new(),
                 last: Event {
@@ -2454,6 +2457,7 @@ pub mod browser {
                     ws,
                     alive: true,
                     opened: false,
+                    peer: format!("{host}:{port}"),
                     outbox: Vec::new(),
                     events: VecDeque::new(),
                     last: Event {
@@ -2514,6 +2518,16 @@ pub mod browser {
                     status: 0,
                 });
                 added += 1;
+            }
+            // The socket closed without ever opening: no server answered.  A native
+            // connect answers false there, and `run_client` says so and returns with no
+            // event and no tick.  A script must not be able to tell the two kernels
+            // apart, so this says the same line (`run_client` in
+            // `lib/engine_host/src/engine_host.loft`) and ends the loop with nothing
+            // queued.
+            if c.alive && !c.opened && c.ws >= 0 && host_ws_closed(c.ws) {
+                c.alive = false;
+                crate::wasm::output_push(&format!("engine_host: cannot connect to {}\n", c.peer));
             }
             // The server connection closed: what it sent before closing is queued
             // above, the kind-2 event follows it, and `run_client` returns after this
@@ -2584,8 +2598,15 @@ pub mod browser {
     }
 
     /// Drift-free tick on the bridge clock (µs via `time_ticks`).
+    ///
+    /// Never before the connection is up: a native connect has answered before
+    /// `run_client`'s loop takes its first turn, so a script's `on_tick` does not run
+    /// ahead of its kind-0 event, and not at all when no server answered.
     pub fn n_kernel_client_tick_due(stores: &mut Stores, stack: &mut DbRef) {
         let due = with_client(|c| {
+            if !c.opened {
+                return false;
+            }
             let now = host_time_ticks();
             if now - c.last_tick_us >= c.tick_interval_us {
                 if c.last_tick_us == 0 {

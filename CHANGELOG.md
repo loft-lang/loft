@@ -177,8 +177,10 @@ git do.
 **A program in a browser page learns that its server is gone.**  `engine_host::run_client`
 returns once the server connection closes, after the disconnect event (`kind` 2) has reached
 `on_event`.  It did so in a desktop program and never in a browser page: a page whose server
-had stopped kept running, received no event and printed nothing.  A page that could not reach
-its server in the first place is still not told.
+had stopped kept running, received no event and printed nothing.  The same holds for a server
+that was never there: the page now prints `engine_host: cannot connect to <host>:<port>` and
+`run_client` returns, as on the desktop, where it used to wait for ever.  In a browser page
+`on_tick` no longer runs before the connection is up.
 
 **Installing a package no longer fails for a few minutes after the registry is updated.**
 `loft install`, `loft update`, `loft search` and a program's first `use` of a registry
