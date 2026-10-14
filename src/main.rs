@@ -5481,10 +5481,10 @@ fn api_surface_of(
     // Layout axis (@PLN97): the per-type store-layout identity, computed from the COMPILED
     // database — kept OUT of the descriptor so a layout-only edit (a field reorder) does not
     // perturb the API-axis determinism, and compared as its own axis in `--diff`.
-    let roots = loft::schema_sidecar::program_roots(&p.data);
+    let roots = loft::layout_schema::program_roots(&p.data);
     // @PLN102 arc-E F9 — `Data` is live here, so pin full-width nullability too
     // (`integer` vs `integer?` share a byte layout; the schema axis distinguishes them).
-    let identity = loft::schema_sidecar::LayoutIdentity::of_scoped(&p.database, &roots, &p.data);
+    let identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     Ok((surface, identity))
 }
 
@@ -6616,9 +6616,9 @@ fn run_layout_command(sub: &str, file: &str) -> i32 {
     let _ = p.parse_stdlib(&default_str);
     p.parse(&abs.to_string_lossy(), false);
 
-    let roots = ss::program_roots(&p.data);
+    let roots = loft::layout_schema::program_roots(&p.data);
     // @PLN102 arc-E F9 — pin full-width nullability (`Data` is live at the CLI site).
-    let identity = ss::LayoutIdentity::of_scoped(&p.database, &roots, &p.data);
+    let identity = loft::layout_schema::of_scoped(&p.database, &roots, &p.data);
     let project = abs
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
@@ -12381,7 +12381,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     state.report_alloc_sites(&p.data);
     state.report_profile(&p.data);
     // `LOFT_OP_CENSUS` — on the same terms; silent unless armed.
-    loft::op_census::write(&p.data);
+    loft::op_census::write(&loft::op_census::Names {
+        operator: &|op| p.data.operator_name(op).map(str::to_owned),
+        function: &|d_nr| p.data.def(d_nr).name().to_string(),
+    });
     // @PLN154 phase 0 — the stack-write census, on the same terms: it measured the run
     // that happened, fault or not.  Silent unless `LOFT_STACK_CENSUS` armed it.
     if loft::stack_census::enabled() {

@@ -55,20 +55,20 @@ LAYERS: list[tuple[str, list[str]]] = [
         "database", "diagnostic_render", "diagnostics", "doc_catalogue", "doc_construct",
         "doc_render", "documentation", "exit_record", "exit_vector", "ffi_deliver", "file_access",
         "fnref", "forward_result", "fxhash", "git_query", "hash", "html_embed", "html_fonts",
-        "install", "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys", "lexer",
-        "lib", "libscan", "limits", "literal_append", "lockfile", "log_config", "logger",
-        "loop_kernels", "loop_shape", "manifest", "migrate_long", "narrow", "native_build", "net",
-        "net_profile", "null_census", "op_census", "op_layout", "op_sets", "ops", "package",
-        "package_layout", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
-        "platform_census", "png_store", "process_run", "pure_reuse", "radix_db", "radix_tree",
-        "registry", "registry_advisories", "registry_index", "registry_keys", "registry_signing",
-        "repeat_run", "repl_doc", "resolution", "resolution_scope", "return_field",
-        "rewrite_census", "runtime_abi", "runtime_error", "rust_spelling", "sandbox",
-        "schema_sidecar", "self_update", "siphash", "slot_alias", "spatial", "stack_census",
-        "stack_verify", "stdlib_ops", "stdlib_sources", "store", "store_budget", "store_census",
-        "take_local", "text_calls", "text_run", "timeout", "tls", "trace", "trie_db", "triggers",
-        "tuple_links", "variables", "vec_copy", "vector", "verify_self", "wasm", "wasm_assets",
-        "ws_handshake",
+        "install", "integrity", "ir_schema", "ir_schema_gen", "ir_shape", "json", "keys",
+        "layout_schema", "lexer", "lib", "libscan", "limits", "literal_append", "lockfile",
+        "log_config", "logger", "loop_kernel_rewrite", "loop_kernels", "loop_shape", "manifest",
+        "migrate_long", "narrow", "native_build", "net", "net_profile", "null_census",
+        "op_census", "op_layout", "op_sets", "ops", "package", "package_layout", "page_metrics",
+        "paged_reader", "par_pool", "placement", "platform", "platform_census", "png_store",
+        "process_run", "pure_reuse", "radix_db", "radix_tree", "registry", "registry_advisories",
+        "registry_index", "registry_keys", "registry_signing", "repeat_run", "repl_doc",
+        "resolution", "resolution_scope", "return_field", "rewrite_census", "runtime_abi",
+        "runtime_error", "rust_spelling", "sandbox", "schema_sidecar", "self_update", "siphash",
+        "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops", "stdlib_sources",
+        "store", "store_budget", "store_census", "take_local", "text_calls", "text_run",
+        "timeout", "tls", "trace", "trie_db", "triggers", "tuple_links", "variables", "vec_copy",
+        "vector", "verify_self", "wasm", "wasm_assets", "ws_handshake",
     ]),
     ("front", [
         "const_fn", "const_literal", "copy_manifest", "copy_view", "discharge_into",
@@ -106,18 +106,19 @@ BUDGET: dict[tuple[str, str], int] = {
 # (and `lib`'s macros); every reference out of the set is counted against RUNTIME_BUDGET, a
 # ratchet that only falls.  A module leaves the set only when nothing in the set names it.
 RUNTIME: list[str] = [
-    "arena", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime", "crash_report",
-    "data_ref", "database", "diagnostic_render", "diagnostics", "engine_host", "file_access",
-    "fxhash", "git_query", "hash", "integrity", "json", "keys", "lexer", "limits", "log_config",
-    "logger", "loop_kernels", "narrow", "native", "net", "net_profile", "op_census", "ops",
-    "page_metrics", "paged_reader", "par_pool", "placement", "platform", "png_store",
-    "process_run", "radix_db", "radix_tree", "resolution_scope", "rewrite_census", "runtime_abi",
-    "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store", "store_budget",
-    "store_census", "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets", "ws_handshake",
+    "arena", "base64", "btree", "c_libs", "cache", "calc", "call_frames", "codegen_runtime",
+    "crash_report", "data_ref", "database", "diagnostic_render", "diagnostics", "engine_host",
+    "file_access", "fxhash", "git_query", "hash", "integrity", "json", "keys", "lexer", "limits",
+    "lockfile", "log_config", "logger", "loop_kernels", "narrow", "native", "net", "net_profile",
+    "op_census", "ops", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
+    "png_store", "process_run", "radix_db", "radix_tree", "resolution_scope", "rewrite_census",
+    "runtime_abi", "runtime_error", "schema_sidecar", "siphash", "stack_verify", "store",
+    "store_budget", "store_census", "timeout", "tls", "trie_db", "vector", "wasm", "wasm_assets",
+    "ws_handshake",
 ]
 
 # References from a RUNTIME module to a module outside it, while R2 of @PLN191 cuts them.
-RUNTIME_BUDGET: int = 95
+RUNTIME_BUDGET: int = 83
 
 BIN_FILES = {"main.rs", "gendoc.rs"}
 

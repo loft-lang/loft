@@ -808,7 +808,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         crate::take_local::rewrite(data, d_nr);
         // A reduction loop a loop kernel covers is one call of it (@PLN180 § Kernels): decided
         // on the same settled IR, so both backends run the kernel and neither the loop.
-        crate::loop_kernels::rewrite(data, d_nr);
+        crate::loop_kernel_rewrite::rewrite(data, d_nr);
         // `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is one
         // append behind an in-range guard: decided on the same settled IR.
         crate::byte_copy::rewrite(data, database, d_nr);

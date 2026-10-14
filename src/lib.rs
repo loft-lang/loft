@@ -352,6 +352,7 @@ pub mod forward_walk;
 pub mod in_range;
 pub mod leaf_inline;
 pub mod literal_append;
+pub mod loop_kernel_rewrite;
 pub mod loop_kernels;
 pub(crate) mod net;
 pub mod ownership_cfg;
@@ -481,6 +482,7 @@ pub mod runtime_error;
 /// @PLN86 — sandbox policy model (capability-group allow-lists + the loft.toml parser).
 pub mod sandbox;
 /// @PLN97 Phase D — the schema-description sidecar (a store's self-describing layout identity).
+pub mod layout_schema;
 pub mod schema_sidecar;
 #[cfg(feature = "registry")]
 pub mod self_update;
