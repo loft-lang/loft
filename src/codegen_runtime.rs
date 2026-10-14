@@ -544,6 +544,7 @@ impl Drop for DvFrame<'_> {
 }
 
 /// The bytes of the byte vector `b`, read the way `vector_slice` reads its source.
+#[inline]
 fn dv_bytes<'a>(stores: &'a Stores, b: &DbRef) -> &'a [u8] {
     if b.is_null() || b.rec == 0 || b.pos == 0 {
         return &[];
@@ -561,6 +562,7 @@ fn dv_bytes<'a>(stores: &'a Stores, b: &DbRef) -> &'a [u8] {
 /// The span word of `b[lo..hi]` under `vector_slice`'s clamps, or `0` when the bounds do not
 /// fit a word — the owned slice is then built, as it always was.
 #[must_use]
+#[inline]
 pub fn dv_span(stores: &Stores, b: DbRef, lo: i64, hi: i64) -> i64 {
     if b.is_null() || b.rec == 0 || b.pos == 0 {
         return 0;
@@ -574,6 +576,7 @@ pub fn dv_span(stores: &Stores, b: DbRef, lo: i64, hi: i64) -> i64 {
 /// A decoded text written as a span of the frame `b`, under `text_from_byte_range`'s bounds,
 /// when its bytes are UTF-8 — the condition that makes the span the text the owned form
 /// holds.  Answers whether it was written; the caller builds the owned text otherwise.
+#[inline]
 pub fn dv_span_text(
     stores: &mut Stores,
     rec: DbRef,
@@ -586,8 +589,9 @@ pub fn dv_span_text(
     if rec.rec == 0 {
         return false;
     }
-    let length = i64::from(vector::length_vector(&b, &stores.allocations));
-    if b.is_null() || b.rec == 0 || b.pos == 0 || length == 0 {
+    let bytes = dv_bytes(stores, &b);
+    let length = bytes.len() as i64;
+    if length == 0 {
         return false;
     }
     let bound = |x: i64| {
@@ -602,9 +606,7 @@ pub fn dv_span_text(
     if hi <= lo || word == 0 {
         return false;
     }
-    let bytes = dv_bytes(stores, &b);
-    if (hi as usize) > bytes.len() || std::str::from_utf8(&bytes[lo as usize..hi as usize]).is_err()
-    {
+    if std::str::from_utf8(&bytes[lo as usize..hi as usize]).is_err() {
         return false;
     }
     dv_put_span(stores, rec, off, spare, word);
@@ -613,6 +615,7 @@ pub fn dv_span_text(
 
 /// Write the span word `word` into the record `rec`: its field at `off` holds nothing of its
 /// own, so the record's release frees nothing for it.
+#[inline]
 pub fn dv_put_span(stores: &mut Stores, rec: DbRef, off: u32, spare: u32, word: i64) {
     if rec.rec == 0 {
         return;
@@ -623,6 +626,7 @@ pub fn dv_put_span(stores: &mut Stores, rec: DbRef, off: u32, spare: u32, word: 
 }
 
 /// The owned form of a span field: its span word cleared, so no read takes a stale one.
+#[inline]
 pub fn dv_clear(stores: &mut Stores, rec: DbRef, spare: u32) {
     if rec.rec != 0 {
         stores.store_mut(&rec).set_int(rec.rec, rec.pos + spare, 0);
@@ -631,6 +635,7 @@ pub fn dv_clear(stores: &mut Stores, rec: DbRef, spare: u32) {
 
 /// A text field of a decoded record: the frame's bytes when it holds a span, else its own.
 #[must_use]
+#[inline]
 pub fn dv_text(stores: &Stores, rec: DbRef, off: u32, spare: u32) -> &str {
     if rec.rec == 0 {
         return crate::state::STRING_NULL;
@@ -648,7 +653,6 @@ pub fn dv_text(stores: &Stores, rec: DbRef, off: u32, spare: u32) -> &str {
         }
         return "";
     }
-    let store = stores.store(&rec);
     store.get_str(store.get_u32_raw(rec.rec, rec.pos + off))
 }
 
