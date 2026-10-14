@@ -428,7 +428,7 @@ edit.  Measured on the 24-core box; the dated runs are in the history companion
 | does it compile, what does the type checker say | `cargo check --bin loft` | ~1 min on a quiet box (its artefacts are separate from a build's: the first check in a session warms them, ~1 min more) |
 | what does the fixed binary DO — `--interpret`, `--native`, `introspect`, `--native-emit` | `cargo build --bin loft` (dev): `target/debug/loft` runs `--native` against the `deps/` rlib this build wrote | 3–6 min alone; 24 min beside a sibling's dependency build |
 | a release binary | `cargo build --release --bin loft` | 20–40 min — needed ONLY to refresh `target/release/libloft.rlib` for the `cargo test --release` native suites; `make check-rlib` says when |
-| the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build |
+| the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build — and, because the curated set holds browser binaries, two more full release builds of the crate for the stale wasm rlibs first; `--subject <name>` without a browser binary skips them |
 | one area | `find_problems.sh --subject <name>` | seconds to a minute |
 | the whole gate | `scripts/ci-run.sh start`, or `gh workflow run ci.yml` | ~20 min; two live gates double it |
 | the receipt of a new guard | `make falsify` | two dev builds in the shared falsify target dir — after the fix is committed, never while an edit is pending |
