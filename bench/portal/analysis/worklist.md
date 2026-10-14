@@ -102,7 +102,7 @@ format decision (§ 6).
 ### The same cut on the x86-64 laptop — the steps, slowest row first
 
 Fourteen rows read over 5× in `results/laptop.tsv` (a full run, every lane that builds on
-this box); `map_json` (2.68×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.59×, S3) and
+this box; the rows below re-measured at `53b8b8172`, every hash equal to its twin's); `map_json` (2.68×), `mat4_mul` (0.57×, S2), `rig_world_frame3` (2.59×, S3) and
 `field_add_cell` (4.54×, X5 a and c) have left the cut, and `insert_text`
 reads on either side of the line from one run to the next.  The three `tuple_link_*` rows the file
 still carries are of routines the bench no longer has.  Where each one's time
@@ -112,20 +112,20 @@ hand-priced (such a figure has paid about two thirds, same section).
 
 | × | row | steps | lands at |
 |--:|---|---|---|
-| 5.07 | `check_request` (7.55 before `(R-DecodeView)`) | the decode's result store minted and freed per call; the key bindings copied (S6) | on the line |
-| 6.00 | `panel_build` (7.44 before the release plan) | the claims and frees themselves (the store allocator ~26 % of the row), then the text formatting | no figure |
-| 7.38 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
-| 7.01 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
-| 6.67 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
-| 6.67 | `invert` | X10 | ≈ 4× (*est.*) |
-| 6.26 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
+| 4.97 | `check_request` (7.55 before `(R-DecodeView)`) | the decode's result store minted and freed per call; the key bindings copied (S6) | on the line |
+| 6.01 | `panel_build` (7.44 before the release plan) | the claims and frees themselves (the store allocator ~26 % of the row), then the text formatting | no figure |
+| 7.34 | `arguments/parse` | X7 | no figure (X2 priced −5 % on it and dropped) |
+| 6.86 | `mapfile_to_painted` | X5 d | ≈ 5.2× if P3 and P4 both pay (*est.*) |
+| 6.64 | `reload_and_record` | X5 d | ≈ 3.6× with the walk's decision (*est.*) |
+| 6.44 | `invert` | X10 | ≈ 4× (*est.*) |
+| 6.27 | `truncate_to` (8.17 before X1) | § 4's row names what is left | no figure |
 | 6.13 | `fill_polygon` (measured at `0c4f9fd33`) | X11 | not measurable on this box |
-| 5.79 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43–0.44 ms) | X9 | no figure |
-| 5.75 | `slope_path_with_undo` | § 5's record-build row names what is left | no figure |
-| 5.57 | cbor `encode` (6.70 before X2's owned-store half) | X9 | ≈ 5× (*est.*) |
-| 5.57 | `flow_layout_full` (7.92 before S1c, 6.14 before the text view's own `to_string`) | X3 | ≈ 4.5× (*est.*) |
-| 5.33 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
-| 5.15 | `forms_upto` | X12 | no figure |
+| 5.74 | cbor `encode_bytes` (noisy: its twin reads 76–96 µs between runs, the native time holds at 0.43–0.44 ms) | X9 | no figure |
+| 5.73 | `slope_path_with_undo` | § 5's record-build row names what is left | no figure |
+| 5.66 | cbor `encode` (6.70 before X2's owned-store half) | X9 | ≈ 5× (*est.*) |
+| 5.63 | `flow_layout_full` (7.92 before S1c, 6.14 before the text view's own `to_string`) | X3 | ≈ 4.5× (*est.*) |
+| 5.52 | `insert_text` | X10 | ≈ 2.2× (*est.*) |
+| 5.09 | `forms_upto` | X12 | no figure |
 
 The steps these rows name; **Order**, under the table, is the sequence they are worked in.
 No row reaches 3× with everything here built; the rows land
@@ -141,7 +141,7 @@ between 3.5× and 6.9×.
 | X5 | keyed inserts and walks: **a** BUILT — the second lookup of a get-or-insert (`if !h[k] { h += […] }; b = h[k]` looked the key up twice on a hit) is `(R-SameRead)`'s get-or-insert clause, an ENGINE cure rather than the library edit first planned: a loft rewrite of a library for speed is the last resort after code generation (LIBRARY_AUTHORING.md § The library contract, rule 7), and the idiom is everyone's; **b** C7; **c** BUILT for an integer-keyed hash of a heap-free element — `(R-KeyedEntry)`: one probe answers the entry the key names, a repeated key is overwritten in place (no claim, no release) and a new one is filed under the index its claim answered (no `arena::index_of`); an element that owns heap, a text key and the other keyed kinds keep the claim per entry; **d** P3, the palette scan as a slice compare, and P4, an order-free walk that need not sort its scratch (over-9x.md § dryopea) | `field_add_cell` (c: 22.95 → 15.08 ms, −34 %; a: 15.04 → 13.63 ms, −9.4 % of the −12.7 % priced), `build_index` (c: 10.11 → 7.50 ms, −26 %; b 8 %), `collect_dirty_inputs` (c: −10 %), `mapfile_to_painted` (P3 ≤ 12 %, P4 ≤ 15 %; the sort is 9 % of the row), `reload_and_record` (the sort 23 %) | a, c built; d unpriced, and P4 needs a range proof | `field_add_cell` is left with the table's growth (~15 %, a re-hash of every entry from its record) and the new keys' arena claims; d next |
 | X6 | BUILT — `map_json`: `T.parse` writes the store as it reads, with no `Parsed` tree between (J9), read by the one lexer made cheaper — a cursor over the text's own bytes (J4), token offsets from the lexer (J5), a number and a string scanned once (J6, J7), no text allocated per punctuation token (J8), each token written where it is kept (J10); over-9x.md § moros `map_json` | `map_json` | measured: 7.44× → 2.68× (J4 −2 %, J8 −12.6 %, J6 and J7 −17 %, J9 −33 %, J5 and J10 −22 %) | the row is under 5× and has left this list; over-9x.md § What is left |
 | S9 | sized, and its build half BUILT in the runtime: the buttons and the list already build straight into the return buffer, and each frame's buffer is reused, so what was left was the RELEASE of the last frame's tree — 36 % of the row's instructions, two thirds of that the type walk (`remove_claims_mode`, `remove_struct_claims`, `holds_no_heap`, `owned_walk`'s child list), not the frees.  A record whose heap is texts and vectors of text-owning elements is now released by its type's plan (`Stores::release_by_plan`, `LOFT_NO_RELEASE_PLAN`, `@FR-H-ClearRelease`'s record clause) | `panel_build` | 7.44× → 6.00× (−19.4 %, hand-priced at −18 % by an rlib A/B first); `emit_to_material` −2 % | the frees and claims themselves (~26 % of the row, `delete`, `claim_block`, `claim_best_fit`, `set_free_header`): not an allocator change (two were measured on `truncate_to` and dropped, § 4) — the form @C125 asks for is a claim removed, here a text refilled in its own block |
-| X7 | `arguments`' own code: `find_long_opt`, `classify` and `parse` are 45 % of the row; `"{c}" == t` builds a text per comparison | `arguments/parse` | not read by line | read the emitted `find_long_opt__inv`, price what the twin does not do |
+| X7 | read by line.  `find_long_opt__inv` (17 %): the options vector's header and base are held, but each `fo.long_name` is a TEXT FIELD of a record element, which `(R-Base)`'s text clause (text ELEMENTS only) does not serve — every read resolves the store, the record and the text; the prefix loop reads the field twice and counts its characters for `len > 0` (`char_count` 4.7 %).  `parse` (10 %, and most of `length_vector`'s 10.6 % and `vec_get_or_raise_runtime`'s 3.5 %): the cursor `match` re-tests the subject's length, re-reads element 0 and re-decodes its variant byte in EACH arm's guard, up to six arms per token, where the twin reads the tag once.  `classify` (15 %): `opt_kind`'s full scan, already a counting loop (~3 % of the row), and each token's text copied into its `Tok` (the twin borrows: `copy_claims` 3.9 %, `malloc`/`free` ~5 %) | `arguments/parse` | read, not priced | price the cursor match's arm reads bound once (both backends: the guards are pure reads, and only the arm that matches runs its body), then a text field of a held vector's element read through the held base |
 | X8 | BUILT — `(R-FileHold)`: a loop that names one `File` and nothing else that can hold one, and names it only to read scalars, moves the cursor in a guard local and writes the record when the loop is left; `(R-InlineLeaf)`'s reader clause puts a one-statement reader (`read_one_i16(bf)`) in the loop | `binary_read` | 1.47 → 0.84 ms, the hand price ([x8/price_binary_read.py](x8/price_binary_read.py)), hash unchanged | [formal/rewrites.md](../../../doc/claude/formal/rewrites.md) |
 | X13 | the cursor kept in the HANDLE while one is open | — | DECLINED: each `File` record keeps its own position (`formal/heap.md` § The built-in `File`, loft#2005), so a read must ask its record where to start; the hold (X8) is what removes that per value inside a loop | — |
 | X9 | cbor's byte runs copied as a block; `read_value__d` (17 % of `encode`'s row) | cbor `encode` | *est.* ~10 % | after X2 |
@@ -173,13 +173,17 @@ before it; the slowest row goes first; a step with no price is priced before it 
    keys' arena claims.
 6. **`panel_build`** — S9 is sized and its release half built: the release plan,
    7.44× → 6.00×.  What is left is the frees and claims themselves.
-7. **`arguments/parse` (7.38×)** — X7: read `find_long_opt`, `classify` and `parse` by line.
-8. **`mapfile_to_painted` (7.01×), `reload_and_record` (6.67×)** — X5 d: P3 first, P4 with
-   its range proof.
+7. **`arguments/parse` (7.34×)** — X7 is read: price the cursor match's arm reads bound once,
+   then the text field read through the held base.
+8. **`mapfile_to_painted` (6.86×), `reload_and_record` (6.64×)** — X5 d: P3 first, P4 with
+   its range proof.  Re-profiled: the key-ordered walk's sort is 22 % of `reload_and_record`
+   and 9 % of `mapfile_to_painted`; the generic compound-key probe (`find`, `key_hash`,
+   `key_compare`, `int_key_part`, `arena::slot`) ~28 % of the first and `keys::hash` 12 % of
+   the second — a typed probe for an all-integer compound key needs no decision.
 9. **`binary_read`** — X8 is built (1.47 → 0.84 ms); X13 is declined, so what is left is
    the push and the buffered take per value.
 10. **cbor `encode` (5.57×)** — X9, on what X2 left of the row.
-11. **`invert` (6.67×)** — price X10 on `insert_text` (4.84×, the row with the largest
+11. **`invert` (6.44×)** — price X10 on `insert_text` (4.84×, the row with the largest
     share of it), build.
 12. **`truncate_to` (6.03×), `slope_path_with_undo` (5.97×)** — re-profile each; `truncate_to`'s
     row is now the pushes themselves (the generated loop 15 %, two claims and two frees per
