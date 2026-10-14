@@ -16432,15 +16432,7 @@ fn local_uses_ok(
     // would be expected at (a tuple parameter, a copy into a record).
     let key = c.locals.get(&v).copied();
     let nullable = key.is_some_and(is_nullable_layout);
-    // A presence test of a DENSE compiler temporary (the phantom buffer aside) is never the
-    // constant "present" (`@FR-N-Store`): its `null` is a hoisted preamble the release
-    // machinery tests where no bind ran — a work ref's displaced record before the call
-    // writes the buffer, a `??` lift bound in one arm and released on every path — so such a
-    // temporary keeps the record form.  Only the TEST: after its bind a temporary is
-    // present, so a copy from it, its result and a join's widening keep `local_surely_present`.
-    let temp_test_unserved = !nullable
-        && c.data.def(c.def_nr).variables().is_compiler_generated(v)
-        && own_retbuf(c.data, c.own) != Some(v);
+    let temp_test_unserved = !nullable && temp_presence_unserved(c, v);
     let present = || local_surely_present(v, c, &mut HashSet::new());
     let no_objects = HashSet::new();
     let objects = phantom.unwrap_or(&no_objects);
@@ -16492,11 +16484,7 @@ fn local_uses_ok(
                 }
                 // `(R-ValueLocal)` — a hand-off to a TUPLE PARAMETER, and a nullable tuple's
                 // presence test.
-                let temp_test = temp_test_unserved
-                    && arg_is_v(0)
-                    && args.len() == 1
-                    && matches!(name, "OpConvBoolFromRef" | "OpRefIsNull");
-                if !temp_test {
+                if !(temp_test_unserved && is_presence_test(name, args, v)) {
                     accounted += handoffs_and_presence(data, params, *d, name, args, v, key, &present);
                 }
                 // A SCALAR FIELD READ at a constant offset — what the value path turns
@@ -16545,33 +16533,7 @@ fn local_uses_ok(
                         served.contains(&(std::ptr::from_ref(a) as usize))
                             || served.contains(&(std::ptr::from_ref(a.unspan()) as usize))
                     });
-                // A store-identity test answers "distinct" for every value local — it is in no
-                // store.  Between two locals one of which may hold the other (a join's result
-                // and an arm it took) the answer turns on the path, so the test is not served
-                // and both keep the record form: the guard would release the record the
-                // result hands on.
-                let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
-                let aliased = identity
-                    && match (args.first().map(Value::unspan), args.get(1).map(Value::unspan)) {
-                        (Some(Value::Var(x)), Some(Value::Var(y))) => {
-                            may_hold(body, *x, *y) || may_hold(body, *y, *x)
-                        }
-                        _ => false,
-                    };
-                if arg_is_v(0)
-                    && !copies
-                    && !src_served
-                    && !aliased
-                    && matches!(
-                        name,
-                        "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
-                    )
-                {
-                    accounted += 1;
-                }
-                if arg_is_v(1) && identity && !aliased {
-                    accounted += 1;
-                }
+                accounted += release_uses(body, name, args, v, copies || src_served);
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
                 // one): the tuple's range is materialised into the destination.  A bind
                 // that VIEWS the sub-record (`q = w.pos`) is no copy and is not here.
@@ -16595,6 +16557,62 @@ fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// A presence test of a DENSE compiler temporary (the phantom buffer aside) is never the
+/// constant "present" (`@FR-N-Store`): its `null` is a hoisted preamble the release machinery
+/// tests where no bind ran — a work ref's displaced record before the call writes the buffer,
+/// a `??` lift bound in one arm and released on every path — so such a temporary keeps the
+/// record form.  Only the TEST: after its bind a temporary is present, so a copy from it, its
+/// result and a join's widening keep [`local_surely_present`].
+fn temp_presence_unserved(c: &ShapeCtx, local: u16) -> bool {
+    c.data
+        .def(c.def_nr)
+        .variables()
+        .is_compiler_generated(local)
+        && own_retbuf(c.data, c.own) != Some(local)
+}
+
+/// `OpConvBoolFromRef(local)` / `OpRefIsNull(local)` — the presence test of `local` itself.
+fn is_presence_test(name: &str, args: &[Value], local: u16) -> bool {
+    matches!(name, "OpConvBoolFromRef" | "OpRefIsNull")
+        && matches!(args, [a] if matches!(a.unspan(), Value::Var(w) if *w == local))
+}
+
+/// The uses of local `v` a release-side call accounts: its free, a copy from it, and either
+/// side of a store-identity test — but not a test whose answer turns on the path
+/// ([`identity_turns_on_path`]).  `settled`: the caller already decided the first operand's
+/// use (a copy it declines, or a source it served as a leaf read).
+fn release_uses(body: &Value, name: &str, args: &[Value], v: u16, settled: bool) -> u32 {
+    let arg_is_v =
+        |i: usize| matches!(args.get(i).map(Value::unspan), Some(Value::Var(w)) if *w == v);
+    let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
+    if identity && identity_turns_on_path(body, args) {
+        return 0;
+    }
+    let first = arg_is_v(0)
+        && !settled
+        && matches!(
+            name,
+            "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
+        );
+    u32::from(first) + u32::from(identity && arg_is_v(1))
+}
+
+/// A store-identity test answers "distinct" for every value local — it is in no store.  Between
+/// two locals one of which may hold the other (a join's result and an arm it took) the answer
+/// turns on the path, so the test is not served and both keep the record form: the constant
+/// would release the record the result hands on.
+fn identity_turns_on_path(body: &Value, args: &[Value]) -> bool {
+    match (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) {
+        (Some(Value::Var(lhs)), Some(Value::Var(rhs))) => {
+            may_hold(body, *lhs, *rhs) || may_hold(body, *rhs, *lhs)
+        }
+        _ => false,
+    }
 }
 
 /// Can local `holder` hold what local `held` holds — is `held` a leaf of one of `holder`'s
