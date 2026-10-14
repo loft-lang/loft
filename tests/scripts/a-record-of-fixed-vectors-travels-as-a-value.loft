@@ -9,8 +9,8 @@
 // [[a, -0.5], [0.5, a]].  Every value is a sum of products of halves, so each is exact.
 //
 // Predictions (`tests/apart_value.rs` pins them on the emitted Rust): twins for ident, rot,
-// mk, mul, cube, last, setneg, first_over, pr, swap, pp, e2 and e4; a region in each of the
-// last seven and in mul; NO twin for gr (a push changes its length), o3 and o4
+// mk, mul, cube, last, setneg, first_over, pr, swap, pp, e2 and e4; a region in cube,
+// first_over, pp, e2 and e4, the bodies that call a twin; NO twin for gr (a push changes its length), o3 and o4
 // (their two lengths disagree, so `Odd` is no apart type), and d4's values stay in the store
 // (handed to `show`, which is no twin).
 //

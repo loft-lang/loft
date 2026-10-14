@@ -2438,7 +2438,9 @@ the IR rewrites.  Guard `tests/scripts/a-file-read-loop-holds-its-cursor.loft`, 
                  them — is apart when each mention is a construction, an element read or
                  write, a length, a twin call's destination or record argument, a free, a
                  null init or a `return`; a `return` from a body that is no twin converts the
-                 value into the function's buffer.  A record parameter is apart only in a
+                 value into the function's buffer.  Such a body is rewritten only when it calls
+                 a twin: it is emitted with the vector hoists off, which a body that only builds
+                 or writes a value in place would pay for in its store reads.  A record parameter is apart only in a
                  twin and only when nothing writes it; a variable only ever a twin call's
                  buffer, an alias, a null init or a free is DEAD and emits nothing.  A
                  component with any other mention stays in the store, and so does every

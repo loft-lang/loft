@@ -28,17 +28,10 @@ const TWINS: &[&str] = &[
     "n_swap",
 ];
 
-/// The ordinary bodies that hold an apart value.  `n_last` and `n_swap` only build their
-/// result from a store parameter and return it, which would pay the conversion for nothing.
-const REGIONS: &[&str] = &[
-    "n_cube",
-    "n_e2",
-    "n_e4",
-    "n_first_over",
-    "n_mul",
-    "n_pp",
-    "n_setneg",
-];
+/// The ordinary bodies that hold an apart value: those that call a twin.  A body that only
+/// builds, reads or writes one in place (`n_mul`, `n_setneg`, `n_last`, `n_swap`) keeps its
+/// record, and with it the vector hoists of its store reads.
+const REGIONS: &[&str] = &["n_cube", "n_e2", "n_e4", "n_first_over", "n_pp"];
 
 fn loft() -> Command {
     let mut cmd =

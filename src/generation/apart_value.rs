@@ -75,9 +75,10 @@ pub struct Roles {
     /// Apart variables → their record definition.
     pub apart: HashMap<u16, u32>,
     pub dead: HashSet<u16>,
-    /// Whether the body does anything the value form makes cheaper — an element read or
-    /// write, a length, a twin call.  A region that only builds a record and returns it
-    /// would pay the conversion for nothing, so only a profitable region is used.
+    /// Whether the body calls a twin.  A body holding a region is emitted with the vector
+    /// hoists off, so a region whose values are only built, read or written in place would
+    /// trade the hoists of the body's store reads for a conversion; the gain is in a chain
+    /// of calls that never meets the store, so only a region with a twin call is used.
     pub profitable: bool,
 }
 
@@ -473,7 +474,7 @@ struct Gate<'a> {
     /// `(record, field lengths)` of every construction.
     built: Vec<(u32, Vec<usize>)>,
     bad_return: bool,
-    /// The variables with a use the value form makes cheaper.
+    /// The destinations of twin calls: what makes a region worth its emission.
     profit: HashSet<u16>,
 }
 
@@ -597,7 +598,6 @@ impl<'a> Gate<'a> {
                 self.violate(v, "a read of no layout field");
             }
             self.used.insert(v);
-            self.profit.insert(v);
             self.walk(idx);
             return;
         }
@@ -609,7 +609,6 @@ impl<'a> Gate<'a> {
             }
             self.used.insert(v);
             self.written.insert(v);
-            self.profit.insert(v);
             self.walk(idx);
             self.walk(val);
             return;
@@ -621,7 +620,6 @@ impl<'a> Gate<'a> {
                 self.violate(v, "a length of no layout field");
             }
             self.used.insert(v);
-            self.profit.insert(v);
             return;
         }
         match x.unspan() {
