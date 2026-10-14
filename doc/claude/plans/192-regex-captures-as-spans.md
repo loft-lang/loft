@@ -56,10 +56,11 @@ gave vectors a view (`OpSliceView`, a foreign span read-only under the store con
   surface built on that prediction was dropped with it.)
 - Today that record's text field is `OpGetTextSub(subject, a, b).to_string()` followed by a
   `set_str` into the record's store: one owned copy per field, on native as interpreted.
-  `(R-DecodeView)` is PROPOSED in the register and not built; its source today is a byte
-  vector, and the regex subject is a `text`.  So the zero-copy half of the goal is a
-  dependency on that rule's build, with one clause this plan contributes (§ P4), and never
-  something this library can deliver alone.
+  `(R-DecodeView)` instance 1 is BUILT, on branch `157-native-4x` (pushed, not yet on
+  `main`; § P4 says where).  Its source is a byte vector and the regex subject is a `text`,
+  and its view type is an ENUM, where `Match` is a struct.  So the zero-copy half of the goal
+  is the clause this plan contributes (§ P4), and never something this library can deliver
+  alone.
 - Every offset the engine answers is a code-point boundary (`.` on `"😀x"` spans bytes
   0..4; `(?-u:\xFF)` is refused), so a span can never cut a character where `"héllo"[-4..]`
   can.
@@ -194,7 +195,7 @@ The cells, each hand-computed, `--interpret` and `--native`, graduated to
 | **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | Open |
 | **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | Open |
 | **P3** `(R-SliceBorrow)`: a text local bound to a slice of an unwritten text is a `&str` (S, compiler, native) | § P3 | emission pins in the shape of `tests/text_borrow.rs`; cells under `LOFT_NO_SLICE_BORROW=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`; `make rewrite-census` gains the row; a planted admission of a written subject reads stale bytes under the verify switch | Open |
-| **P4** `(R-DecodeView)`'s text-source clause: B may be a `text` parameter; a `vector<R>` of admitted records is a holder (M, compiler, native) | § P4 | `LOFT_TRACE_DECODE_VIEW` names no decline on `capture`'s twin and its emission holds no `to_string` / `set_str` for a text field; the holder-axis cells; `make perf-check` on the two ports' rows | Open — **after the rule itself is built** (its own plan, priced in `bench/portal/analysis/over-9x.md`); this plan contributes the clause and the regex corpus as its rows |
+| **P4** `(R-DecodeView)`'s text-source clause: B may be a `text` parameter; a `vector<R>` of admitted records is a holder (M, compiler, native) | § P4 | `LOFT_TRACE_DECODE_VIEW` names no decline on `capture`'s twin and its emission holds no `to_string` / `set_str` for a text field; the holder-axis cells; `make perf-check` on the two ports' rows | Open — the rule's instance 1 is built on `157-native-4x` (§ P4 names the commits, files and the three things this clause must decide); this plan contributes the clause and the regex corpus as its rows |
 | **P5** the broken-pattern warning (XS, library) | § Broken patterns | a cell asserting the one warning on stderr and its absence on the second use; `@RGX-003` re-measured | Open |
 | **P6** `Pattern` typed-format target (S, library, optional) | § built-in feel | a hole holding `.` matches only a literal dot; the type trigger loads the library with no `use`; `(F-Target-Pos)`: an argument position does not target | Open |
 | **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | Open |
@@ -247,7 +248,11 @@ from a clone by `--lib`, the prediction written before each ran.
 
 It is `(R-WorkView)` with the work buffer replaced by a parameter or local, under
 `(R-TextBorrow)`'s value-only reading — the same five conditions, so the analysis exists
-(`hoist::borrowed_text_walks` decides (1)–(3) for a walk).  Decided in the formal register
+(`hoist::borrowed_text_walks` decides (1)–(3) for a walk).  Its counterpart for a `match`
+statement — a text a pattern binds, copied into a `String` — is what is left on pluginabi
+`check_request` after `(R-DecodeView)` (its key bindings, priced −1.5 % of that row in
+`157-native-4x`'s `bench/portal/analysis/worklist.md` § 0); `arguments/parse`'s text copies
+are about 10 % of its row.  Nothing for either is built yet.  Decided in the formal register
 as a rule with its own `@FR-` tag, its code sites citing it, `make rule-coverage` counting it.
 
 ### P4 — the clause this plan owes `(R-DecodeView)`
@@ -259,6 +264,47 @@ valid UTF-8 on a code-point boundary, so condition (5) holds by construction and
 an admitted R, built in the confined region, is itself a holder of the region.*  Both are
 measured on `capture` and `capture_all`; neither changes the invariant the rule already
 states (a span answers what the owned copy would, because B outlives it unchanged).
+
+**Where instance 1 is.**  Branch `157-native-4x` (pushed to `origin`, not yet on `main`):
+
+- Commits: `f00897790` (the build), `41b419bf8` (its docs), `cbd50ff8d` (the span helpers
+  read the frame once a call), `aed8e7da4` (why a library function's `native` mark does not
+  keep it out of a region); the row's price and result `1185b06a5`, `d9252256a`.
+- Admission and planning: `src/generation/decode_view.rs` (`view_types`, `root_frame`,
+  `region_of`, `plan`).  Emission, the `<f>__dv` twins: `src/generation/decode_view_emit.rs`.
+- Runtime: `src/codegen_runtime.rs`, the `dv_*` helpers (`DvFrame`, `dv_span_text`,
+  `dv_text`, `dv_put_span`, `dv_clear`), and the `Stores::dv_frame` field in
+  `src/database/mod.rs`.
+- Rule text: `doc/claude/formal/rewrites.md` § `(R-DecodeView)`; switches
+  `LOFT_NO_DECODE_VIEW` and `LOFT_TRACE_DECODE_VIEW` (`doc/claude/NATIVE_SWITCHES.md`).
+- Guard `tests/scripts/a-decoded-text-is-read-where-it-lies.loft`; pin `tests/decode_view.rs`
+  (the expected roots and twins).
+- Measured on pluginabi `check_request`: 7.55× → 5.07× its Rust twin
+  (`bench/portal/analysis/over-9x.md`, `bench/portal/analysis/worklist.md` § 0).
+- Joining the two branches: `157-native-4x` also extends `src/same_read.rs` with
+  `(R-SameRead)`'s get-or-insert clause (`057baaaed`), a file this branch also carries.
+
+**What the build decided for this clause:**
+
+1. **A view type is an ENUM today.**  The span word — `i64::MIN | (lo + 1) << 32 | n` — is
+   kept in the record's last 8 bytes, and only an enum of 16 bytes or more has those spare,
+   padded to its largest variant (`view_types`).  `Match` and `Group` are structs and have
+   no spare word, so the clause must decide where a struct keeps its span: a design
+   question, not only a new source.
+2. **One span per record.**  One spare word, so a variant with two text fields declines.
+   `Match` and `Group`, one text field each, fit.
+3. **The frame is a byte-vector parameter.**  A root is a function whose single byte-vector
+   parameter, not passed by `&`, is the frame; it sets `stores.dv_frame` for the call
+   through the `DvFrame` guard (`root_frame`).  A `text` subject is a new kind of frame, and
+   it may skip `dv_span_text`'s UTF-8 test, as stated above.
+4. **A vector of view records is already a holder.**  An element of a view type works (guard
+   cell c15, `mixed`), so `capture_all`'s `vector<Match>` should take the existing path
+   once `Match` is a view type.
+5. **What makes a root decline:** returning a decoded value from the root; a span variant's
+   record created on its own; a native function, a function reference, `yield` or `par`
+   reached by a decoded value; any read of a byte-string field.  A library's `pub fn` is
+   emitted inline into the consumer (§ P0 a), which is why the region's `loft_fn` test does
+   not look at `def.native`.
 
 ## Open design questions
 
