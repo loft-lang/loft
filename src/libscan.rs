@@ -417,9 +417,11 @@ pub fn scan_type_declarations(content: &str) -> Vec<String> {
 /// [`scan_method_calls`] skips them, an interpolation hole is code; a keyword before `(`
 /// (`assert(`, `panic(`) is no call.  Over-collects every call the file makes (the stdlib's
 /// too); the caller keeps only the names a builder map carries, minus the declared ones.
-/// Both lists are deduplicated, in first-seen order.
+/// Both lists are deduplicated, in first-seen order, and borrow `content`: a name is
+/// allocated only once the caller has kept it, so a corpus of three hundred functions
+/// costs the front end no three hundred strings (the allocation pins).
 #[must_use]
-pub fn scan_bare_calls_and_fn_declarations(content: &str) -> (Vec<String>, Vec<String>) {
+pub fn scan_bare_calls_and_fn_declarations(content: &str) -> (Vec<&str>, Vec<&str>) {
     let bytes = content.as_bytes();
     let len = bytes.len();
     let mut scan = BareScan::default();
@@ -494,16 +496,16 @@ enum Prev {
 
 /// The state of [`scan_bare_calls_and_fn_declarations`] over the code it reads.
 #[derive(Default)]
-struct BareScan {
-    calls: Vec<String>,
-    decls: Vec<String>,
+struct BareScan<'a> {
+    calls: Vec<&'a str>,
+    decls: Vec<&'a str>,
     prev: Prev,
 }
 
-impl BareScan {
+impl<'a> BareScan<'a> {
     /// One step over code at `*at`: an identifier is classified by what precedes it and
     /// whether `(` follows; `.` and `::` set `prev` for the next one.  Always moves.
-    fn code_byte(&mut self, content: &str, at: &mut usize) {
+    fn code_byte(&mut self, content: &'a str, at: &mut usize) {
         let bytes = content.as_bytes();
         let len = bytes.len();
         let byte = bytes[*at];
@@ -547,9 +549,9 @@ impl BareScan {
     }
 }
 
-fn push_once(name: &str, list: &mut Vec<String>) {
-    if !list.iter().any(|c| c == name) {
-        list.push(name.to_string());
+fn push_once<'a>(name: &'a str, list: &mut Vec<&'a str>) {
+    if !list.contains(&name) {
+        list.push(name);
     }
 }
 

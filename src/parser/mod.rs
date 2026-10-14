@@ -19366,8 +19366,23 @@ impl Parser {
                     // its own `struct Path` must not load a package that also has one.
                     let declared = crate::libscan::scan_type_declarations(&src);
                     // Likewise a function the file DECLARES: its own `fn set` wins over a
-                    // library's builder of that name, which `pkg::set(…)` still reaches.
+                    // library's builder of that name, which `pkg::set(…)` still reaches.  Nor
+                    // is a name the stdlib (or a loaded file) already defines: the scan hands
+                    // back slices, and only a survivor is allocated — one key buffer serves
+                    // every lookup (the allocation pins count each `format!`).
                     let (bare, fns) = crate::libscan::scan_bare_calls_and_fn_declarations(&src);
+                    let mut key = String::with_capacity(64);
+                    let bare_calls: Vec<String> = bare
+                        .into_iter()
+                        .filter(|f| !fns.contains(f))
+                        .filter(|f| {
+                            key.clear();
+                            key.push_str("n_");
+                            key.push_str(f);
+                            self.data.def_nr(&key) == u32::MAX
+                        })
+                        .map(str::to_string)
+                        .collect();
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
                         crate::libscan::scan_method_calls(&src),
@@ -19375,7 +19390,7 @@ impl Parser {
                             .into_iter()
                             .filter(|t| !declared.contains(t))
                             .collect(),
-                        bare.into_iter().filter(|f| !fns.contains(f)).collect(),
+                        bare_calls,
                     );
                     self.auto_use_scan_cache
                         .insert(auto_use_scan_file.to_string(), pair.clone());

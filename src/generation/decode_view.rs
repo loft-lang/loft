@@ -123,7 +123,7 @@ fn loft_fn(data: &Data, d: u32) -> bool {
 
 /// `vector<u8>`: a vector of integers that fit a byte.
 fn byte_vector(tp: &Type) -> bool {
-    let Type::Vector(e, _) = tp else {
+    let Type::Vector(e, _) = tp.base() else {
         return false;
     };
     matches!(e.base(), Type::Integer(s) if s.min >= 0 && s.max <= 255)
@@ -343,15 +343,23 @@ impl Types<'_> {
         }
     }
 
+    /// `args[0]` is a variable whose vector's elements hold nothing (`@FR-N-Shape`: the
+    /// type is peeled before its shape is read).
+    fn element_of_a_vector_holding_nothing(&self, def_nr: u32, args: &[Value]) -> bool {
+        let Some(Value::Var(v)) = args.first().map(Value::unspan) else {
+            return false;
+        };
+        matches!(self.data.def(def_nr).variables().tp(*v).base(),
+            Type::Vector(e, _) if self.holds_type(e) == Holds::No)
+    }
+
     fn holds(&self, def_nr: u32, x: &Value) -> Holds {
         match x.unspan() {
             Value::Var(v) => self.holds_type(self.data.def(def_nr).variables().tp(*v)),
             Value::Call(d, args) => match op_name(self.data, *d) {
                 // An element of a vector of numbers holds nothing.
                 "OpGetVector" | "OpGetVectorNullable"
-                    if matches!(args.first().map(Value::unspan), Some(Value::Var(v))
-                        if matches!(self.data.def(def_nr).variables().tp(*v).base(),
-                            Type::Vector(e, _) if self.holds_type(e) == Holds::No)) =>
+                    if self.element_of_a_vector_holding_nothing(def_nr, args) =>
                 {
                     Holds::No
                 }
@@ -872,7 +880,10 @@ fn root_frame(t: &Types<'_>, d: u32) -> Option<u16> {
     for (i, a) in def.attributes().iter().enumerate() {
         let pv = param_var(data, d, i)?;
         let tp = def.variables().tp(pv);
-        if byte_vector(tp) {
+        // The shape question sees through `τ?` (`@FR-N-Shape`); whether a NULLABLE byte
+        // string may be the frame is a nullability question, spelled here: it may not, a
+        // view over an absent frame has nothing to point into.
+        if byte_vector(tp) && !tp.peel_optional().1 {
             if frame.is_some() || a.hidden {
                 return None;
             }
