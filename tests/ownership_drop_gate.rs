@@ -46,8 +46,9 @@
 //! and a cell the rules permit that releases wrongly must name its open `heap.md` deviation in
 //! `LEASE_DEVIATIONS`.
 //!
-//!   run:    cargo test --release --test ownership_drop_gate      (both backends)
-//!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
+//!   run:    cargo test --test ownership_drop_gate      (both backends; the dev profile is
+//!           enough — a release build only answers how fast)
+//!   bless:  LOFT_BLESS_DROP_GATE=1 cargo test --test ownership_drop_gate
 //!           (writes `ownership_drop_gate.baseline` and `ownership_drop_gate.native.baseline`)
 
 use loft::file_access as fa;
@@ -1127,7 +1128,7 @@ fn render(verdicts: &[Verdict], backend: &str) -> String {
         "# ownership_drop_gate — the {backend} cells that are NOT clean, measured on the tree that\n\
          # committed this file, with the lease refusals off: `cell KIND,KIND`.  Every line is a cell the\n\
          # lease rules REFUSE at compile time; a cell they permit is never listed.\n\
-         # Regenerate only after reading the diff: {BLESS}=1 cargo test --release --test ownership_drop_gate\n"
+         # Regenerate only after reading the diff: {BLESS}=1 cargo test --test ownership_drop_gate\n"
     );
     let mut lines: Vec<String> = verdicts
         .iter()
@@ -1216,7 +1217,7 @@ fn report_baseline_diff(
         "\n(H-Drop) gate ({backend}) differs from {path}:\n{report}\n\
          A NEW line is a cell that now releases wrongly, or differently — a regression unless \
          the change was meant to move it.  A GONE line is a fix; retire it in the same commit.\n\
-         After reading every line: {BLESS}=1 cargo test --release --test ownership_drop_gate\n"
+         After reading every line: {BLESS}=1 cargo test --test ownership_drop_gate\n"
     );
 }
 
