@@ -355,6 +355,7 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
     // 88-imports.loft).  Only `--lib <dir>` is recognised; other
     // CLI-side flags are ignored at this layer.
     if let Ok(src) = fa::read_to_string(entry) {
+        p.data.limits = loft::limits::Limits::from_annotations(&src);
         for line in src.lines().take(20) {
             if let Some(args) = line.trim().strip_prefix("// @ARGS:") {
                 let mut tokens = args.split_whitespace();
@@ -1178,6 +1179,30 @@ fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
         .filter(|(i, _)| i % NATIVE_SCRIPT_CHUNKS == chunk)
         .map(|(_, p)| p)
         .collect();
+    native_scripts_run(files)
+}
+
+/// The limit guards at the real limits (`tests/limits_full/`) on `--native`.  The per-commit
+/// corpus proves the same relations under LOWERED limits (`// @LIMIT:`, `// @FRAME_LIMIT:`),
+/// in milliseconds; compiling a program 300 levels deep costs time that grows with the square
+/// of the depth.  Nightly, beside `wrap::limits_at_full_size`.
+#[test]
+#[ignore = "the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored"]
+fn native_limits_at_full_size() -> std::io::Result<()> {
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/limits_full")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
+        .collect();
+    files.sort();
+    native_scripts_run(files)
+}
+
+/// Compile and run `files` on `--native`, with the corpus's skip rules.
+fn native_scripts_run(files: Vec<PathBuf>) -> std::io::Result<()> {
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     let mut not_generated: Vec<String> = Vec::new();

@@ -965,8 +965,11 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
             .map(|&a| step(size(vars.var_type(a), &Context::Argument)))
             .sum();
         // return-address slot
-        u16::try_from(arg_size + step(4))
-            .unwrap_or_else(|_| crate::limits::frame_too_large(data, d_nr))
+        let end = arg_size + step(4);
+        if end > data.limits.frame {
+            crate::limits::frame_too_large(data, d_nr);
+        }
+        u16::try_from(end).unwrap_or_else(|_| crate::limits::frame_too_large(data, d_nr))
     };
     // @PLAN53 — the aligned V2 allocator is the ONLY allocator.  Compute the
     // V2 layout from the (immutable) function intervals, reset stale local
@@ -978,7 +981,7 @@ pub(crate) fn assign_function_slots(data: &mut Data, d_nr: u32) {
         let d = &data.definitions[d_nr as usize];
         crate::variables::assign_slots_v2(&d.variables, local_start, &aliases)
     };
-    if result.frame_end > u32::from(u16::MAX) {
+    if result.frame_end > data.limits.frame {
         crate::limits::frame_too_large(data, d_nr);
     }
     {

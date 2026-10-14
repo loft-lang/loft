@@ -1227,7 +1227,7 @@ impl Parser {
         self.parse_depth += 1;
         // A statement's own expression is level 0 (it enters at 1), so `x = f(f(…))` with 300
         // nested calls is 300 deep.
-        if self.parse_depth > crate::limits::LIMIT + 1 {
+        if self.parse_depth > self.data.limits.count + 1 {
             self.parse_depth -= 1;
             self.refuse_depth_nesting();
             return false;
@@ -1245,7 +1245,7 @@ impl Parser {
             "expression nesting too deep: more than {} levels — split it with locals or a \
              function (each bracket, call argument, block, branch, element, chained operator \
              and postfix step is one level)",
-            crate::limits::LIMIT
+            self.data.limits.count
         );
         self.refuse_depth(&message);
     }

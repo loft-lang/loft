@@ -95,6 +95,7 @@ fn run_wasm_test(entry: &Path) -> std::io::Result<()> {
     let mut p = Parser::new();
     let (data, db) = cached_default();
     p.data = data;
+    p.data.limits = loft::limits::Limits::from_annotations(&source);
     p.database = db;
     // Honour `// @ARGS: --lib <dir>` — same logic as `run_test`.
     for line in source.lines().take(20) {
@@ -476,6 +477,26 @@ fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
         let outcome = run_test(entry, false, false);
         unit.finish(&name);
         outcome?;
+    }
+    Ok(())
+}
+
+/// The limit guards at the real limits (`tests/limits_full/`) on the interpreter.  The
+/// per-commit corpus proves the same relations under LOWERED limits (`// @LIMIT:`,
+/// `// @FRAME_LIMIT:`), in milliseconds; compiling a program 300 levels deep costs time that
+/// grows with the square of the depth.  Nightly, beside [`loft_suite_whole_corpus`].
+#[test]
+#[ignore = "the limit guards at the real 300 / 64 KiB — the nightly release-gate job (miri.yml); run with --ignored"]
+fn limits_at_full_size() -> std::io::Result<()> {
+    let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut files: Vec<PathBuf> = fa::read_dir("tests/limits_full")?
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|e| e.eq_ignore_ascii_case("loft")))
+        .collect();
+    files.sort();
+    for entry in files {
+        run_test(entry, false, false)?;
     }
     Ok(())
 }
@@ -1746,6 +1767,7 @@ fn run_test_inner(
     let mut p = Parser::new();
     let (data, db) = cached_default();
     p.data = data;
+    p.data.limits = loft::limits::Limits::from_annotations(&source);
     p.database = db;
     // Honour `// @ARGS: --lib <dir>` lines at the top of the test file so
     // scripts using `use foo` / `use foo::*` can locate fixtures in

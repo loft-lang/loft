@@ -327,5 +327,6 @@ table-shaped initialiser — or a slot grows until 300 ordinary variables no lon
 Decided 2026-10-12 (owner) — [record](DESIGN_DECISIONS-history.md#c149--one-structural-limit-300-for-every-count-a-program-has--a-functions-variables-included).
 **Holds at:** `tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft` (the margin),
 `the-counts-within-the-limit-compile.loft` beside `a-count-past-the-limit-is-refused.loft` (the
-count itself).
+count itself) — under lowered limits per commit, and at 300 and 64 KiB in `tests/limits_full/`,
+nightly.
 **Catalogue:** [LOFT.md § Limits](LOFT.md#limits) · [COMPATIBILITY.md](COMPATIBILITY.md) (the consumer function it refuses).

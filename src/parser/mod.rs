@@ -2682,6 +2682,9 @@ impl Parser {
     /// # Panics
     /// With filesystem problems.
     pub fn parse(&mut self, filename: &str, default: bool) -> bool {
+        if !default {
+            self.data.limits = self.data.limits.min(crate::limits::Limits::from_env());
+        }
         // under the `wasm` feature, check VIRT_FS before trying the real filesystem.
         #[cfg(feature = "wasm")]
         if let Some(content) = crate::wasm::virt_fs_get(filename) {
@@ -4310,6 +4313,7 @@ impl Parser {
     /// Only parse a specific string, only useful for parser tests.
     #[allow(dead_code)]
     pub fn parse_str(&mut self, text: &str, filename: &str, logging: bool) {
+        self.data.limits = self.data.limits.min(crate::limits::Limits::from_env());
         // Start each standalone parse on a fresh lexer.  `restart` resets the
         // cursor but not the diagnostics or format-mode flags, and
         // `Diagnostics::level` is monotonic — so reusing the lexer would leak a
