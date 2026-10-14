@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I64 — Bytecode compiler (IR to bytecode): constant collection literals
 
 //! What a constant collection literal writes, field by field: `[Row { flag: true, id: 5 }]`
 //! read off the IR into [`ConstField`]s before anything runs.  The bytecode compiler builds

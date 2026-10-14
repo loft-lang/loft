@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I65 — Bytecode code generator: which natives return text through a destination
 
 //! Which native calls hand back their `text` through a destination the caller supplies
 //! rather than a buffer they allocate: a fact about a definition's native ABI that the parser,

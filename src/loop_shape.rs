@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: the shape of a counted loop
 
 //! The shape of a counted `for` loop in the IR: its counters, its stop guard and its plain
 //! body.  A pure reading of the tree the parser lowered — the native generator's fill and

@@ -102,7 +102,7 @@ BIN_FILES = {"main.rs", "gendoc.rs"}
 
 def lib_modules() -> dict[str, Path]:
     """Top-level modules declared in lib.rs, mapped to their file or directory."""
-    text = (SRC / "lib.rs").read_text()
+    text = (SRC / "lib.rs").read_text(encoding="utf-8")
     mods = {}
     for m in re.finditer(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?mod\s+([a-z_0-9]+)\s*;", text, re.M):
         name = m.group(1)
@@ -162,7 +162,7 @@ def macro_homes(mods: dict[str, Path]) -> dict[str, str]:
     """`#[macro_export]` macro name -> the module defining it."""
     homes = {}
     for name, p, _top in module_files(mods):
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
         for m in re.finditer(r"#\[macro_export\]\s*(?:#\[[^\]]*\]\s*)*macro_rules!\s*([a-z_0-9]+)", text):
             homes[m.group(1)] = name
     return homes
@@ -172,7 +172,7 @@ def lib_reexports() -> dict[str, str]:
     """`pub use m::item;` in lib.rs: item -> m, so `crate::item` resolves to m."""
     out = {}
     for m in re.finditer(r"^\s*pub\s+use\s+([a-z_0-9]+)::(?:[a-z_0-9]+::)*([A-Za-z_0-9]+)\s*;",
-                         (SRC / "lib.rs").read_text(), re.M):
+                         (SRC / "lib.rs").read_text(encoding="utf-8"), re.M):
         out[m.group(2)] = m.group(1)
     return out
 
@@ -229,7 +229,7 @@ def references(mods: dict[str, Path]):
         return "lib"
 
     for owner, path, top in module_files(mods):
-        text = blank_noise(path.read_text())
+        text = blank_noise(path.read_text(encoding="utf-8"))
         starts = [0] + [m.end() for m in re.finditer("\n", text)]
 
         def line_of(pos: int) -> int:
@@ -331,18 +331,18 @@ def layer_of() -> dict[str, tuple[int, str]]:
 
 def size(p: Path) -> int:
     if p.is_file():
-        n = len(p.read_text().split("\n"))
+        n = len(p.read_text(encoding="utf-8").split("\n"))
         sub = p.parent / p.stem
         if sub.is_dir():
-            n += sum(len(f.read_text().split("\n")) for f in sub.rglob("*.rs"))
+            n += sum(len(f.read_text(encoding="utf-8").split("\n")) for f in sub.rglob("*.rs"))
         return n
-    return sum(len(f.read_text().split("\n")) for f in p.rglob("*.rs"))
+    return sum(len(f.read_text(encoding="utf-8").split("\n")) for f in p.rglob("*.rs"))
 
 
 def rewrite_tables(layers, budget) -> None:
     """Write LAYERS and BUDGET back into this file, each layer's modules sorted and wrapped."""
     me = Path(__file__)
-    src = me.read_text()
+    src = me.read_text(encoding="utf-8")
     out = ["LAYERS: list[tuple[str, list[str]]] = ["]
     for name, members in layers:
         words = [f'"{m}",' for m in sorted(members)]
@@ -368,7 +368,7 @@ def rewrite_tables(layers, budget) -> None:
     a = src.index("BUDGET: dict[tuple[str, str], int] = {")
     b = src.index("\n}\n", a) + 3
     src = src[:a] + "\n".join(out) + "\n" + src[b:]
-    me.write_text(src)
+    me.write_text(src, encoding="utf-8")
 
 
 def back_counts(mods) -> dict[tuple[str, str], int]:
@@ -381,8 +381,11 @@ def back_counts(mods) -> dict[tuple[str, str], int]:
 
 
 def main(argv):
-    mods = lib_modules()
     cmd = argv[1] if len(argv) > 1 else "check"
+    if cmd in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    mods = lib_modules()
     if cmd == "graph":
         edges = edge_counts(mods)
         if len(argv) > 2:

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: the frames a native thread is running
 
 //! What a native thread is running: the loft frames on its shadow call stack, and whether it
 //! is inside a lazy store's driver.

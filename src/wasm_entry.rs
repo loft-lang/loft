@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @F54 — the browser entry points
 
 //! The browser ENTRY POINTS: `compile_and_run`, the frame-yielding game session and the
 //! pipeline they share — parse, compile, run, report.  They sit in the top layer because

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — the op-number sets the use analysis consults
 
 //! The op-number sets the use, dead-store and ownership walks consult — each a pure function
 //! of the definition NAME table, so [`crate::data::Data::op_sets`] builds them once and caches

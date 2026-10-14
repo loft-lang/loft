@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I72 — Parallel execution runtime: worker store-number translation
 
 //! Translating a `par` worker's `DbRef`s into the parent's store numbering after the
 //! parent adopts the worker's stores.  A table over store numbers only, so it sits with

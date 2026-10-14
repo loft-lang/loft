@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: the call shapes it shares with the parser
 
 //! Small readers of the IR's call shapes, asked by the parser and the native generator
 //! alike: a call to a definition by name, a bare variable or integer operand, a standard-

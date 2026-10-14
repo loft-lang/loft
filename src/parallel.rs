@@ -19,6 +19,9 @@
 //! interleaving — and nothing here detects that.  See `scopes::is_par_safe`, which
 //! classifies it but is wired to nothing.
 
+// `StoreRebase`, the worker -> parent `store_nr` translation, lives with the stores it
+// translates between (`database::rebase`); this is the path the parallel runtime names.
+pub use crate::database::StoreRebase;
 use crate::database::{Call, Stores, WorkerStores};
 use crate::keys::DbRef;
 use crate::state::State;
@@ -467,48 +470,6 @@ pub enum Stitch {
     /// `2 × threads` to absorb worker-burstiness without blocking).
     Queue { capacity: u32 },
 }
-
-#[cfg(test)]
-mod stitch_tests {
-    use super::Stitch;
-
-    #[test]
-    fn enum_size_is_at_most_8_bytes() {
-        // Largest variant is Reduce { fold_fn: u32 } or Queue {
-        // capacity: u32 } — both 4 bytes payload + 1 disc + 3
-        // padding = 8.  Validates the opcode payload budget.
-        assert!(
-            std::mem::size_of::<Stitch>() <= 8,
-            "Stitch enum size {} bytes — opcode payload budget is 8",
-            std::mem::size_of::<Stitch>()
-        );
-    }
-
-    #[test]
-    fn variants_distinguishable_by_match() {
-        // ARC.md A4 (closed 2026-05-07) — Stitch::Concat removed.
-        // The materialised result-vector dispatch was retired when
-        // every par return type routed through the Queue family.
-        let cases = [
-            Stitch::Discard,
-            Stitch::Reduce { fold_fn: 42 },
-            Stitch::Queue { capacity: 16 },
-        ];
-        let names: Vec<&str> = cases
-            .iter()
-            .map(|s| match s {
-                Stitch::Discard => "discard",
-                Stitch::Reduce { .. } => "reduce",
-                Stitch::Queue { .. } => "queue",
-            })
-            .collect();
-        assert_eq!(names, vec!["discard", "reduce", "queue"]);
-    }
-}
-
-// `StoreRebase`, the worker -> parent `store_nr` translation, lives with the stores it
-// translates between (`database::rebase`); this is the path the parallel runtime names.
-pub use crate::database::StoreRebase;
 
 /// Plan-06 phase 2 — type-driven recursive walk that translates every
 /// DbRef field inside a record so the worker's store-local references
@@ -1878,5 +1839,43 @@ pub fn run_parallel_block(
             let mut state = program.new_state(unsafe { stores.clone_for_light_worker() });
             state.execute_at_void_with_snapshot(pos, parent_snapshot.as_ref());
         }
+    }
+}
+
+#[cfg(test)]
+mod stitch_tests {
+    use super::Stitch;
+
+    #[test]
+    fn enum_size_is_at_most_8_bytes() {
+        // Largest variant is Reduce { fold_fn: u32 } or Queue {
+        // capacity: u32 } — both 4 bytes payload + 1 disc + 3
+        // padding = 8.  Validates the opcode payload budget.
+        assert!(
+            std::mem::size_of::<Stitch>() <= 8,
+            "Stitch enum size {} bytes — opcode payload budget is 8",
+            std::mem::size_of::<Stitch>()
+        );
+    }
+
+    #[test]
+    fn variants_distinguishable_by_match() {
+        // ARC.md A4 (closed 2026-05-07) — Stitch::Concat removed.
+        // The materialised result-vector dispatch was retired when
+        // every par return type routed through the Queue family.
+        let cases = [
+            Stitch::Discard,
+            Stitch::Reduce { fold_fn: 42 },
+            Stitch::Queue { capacity: 16 },
+        ];
+        let names: Vec<&str> = cases
+            .iter()
+            .map(|s| match s {
+                Stitch::Discard => "discard",
+                Stitch::Reduce { .. } => "reduce",
+                Stitch::Queue { .. } => "queue",
+            })
+            .collect();
+        assert_eq!(names, vec!["discard", "reduce", "queue"]);
     }
 }

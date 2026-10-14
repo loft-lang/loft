@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator: what it knows about the runtime it emits calls into
 
 //! What the native generator needs to KNOW about the runtime emitted programs link: which
 //! helpers `codegen_runtime` defines and the ABI each takes, and the op codes of the

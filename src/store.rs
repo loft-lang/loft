@@ -42,15 +42,15 @@
 
 #[cfg(feature = "mmap")]
 use mmap_storage::file::Storage as MmapStorage;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cmp::Ordering;
+use std::fmt::{Debug, Formatter};
 
 /// The text null: a loft `text` that holds no value is this one NUL byte, and
 /// [`Store::text_is_null`] reads nullity from the content.  The interpreter, the runtime
 /// emitted programs link and every store reader share it; `crate::state` re-exports it
 /// under the path emitted Rust names (`loft::state::STRING_NULL`).
 pub const STRING_NULL: &str = "\0";
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cmp::Ordering;
-use std::fmt::{Debug, Formatter};
 
 #[allow(dead_code)]
 static A: System = System;
