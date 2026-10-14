@@ -25,7 +25,8 @@
 //
 // Usage:  scripts/rule_predicate_audit [--near] [--min N]
 
-struct Entry { key: text, names: vector<text>, sites: vector<text> }
+struct Name { key: text }
+struct Entry { key: text, names: sorted<Name[key]>, sites: vector<text> }
 struct Idx { key: text, at: integer }
 struct Sites { by_key: hash<Idx[key]>, entries: vector<Entry> }
 struct Path { path: text }
@@ -51,22 +52,9 @@ fn is_space(b: integer) -> boolean {
 
 fn newlines(s: text) -> integer { s.size() - s.replace("\n", "").size() }
 
-// Insert `s` into the ascending vector `v` unless it is already there.
-fn add_name(v: vector<text>, s: text) -> vector<text> {
-  out: vector<text> = [];
-  placed = false;
-  for x in v {
-    if x == s { return v; }
-    if !placed && s < x { out += [s]; placed = true; }
-    out += [x];
-  }
-  if !placed { out += [s]; }
-  out
-}
-
 // The sorted, distinct `Type::`/`Parts::` variant names in a `matches!` argument list.
-fn variants(g: text) -> vector<text> {
-  names: vector<text> = [];
+fn variants(g: text) -> sorted<Name[key]> {
+  names: sorted<Name[key]> = [];
   n = g.size();
   i = 0;
   while i < n {
@@ -82,7 +70,7 @@ fn variants(g: text) -> vector<text> {
     if b >= 48 && b <= 57 { continue; }
     e = start;
     while e < n && is_word(g.byte_at(e)) { e += 1; }
-    if e > start { names = add_name(names, g[start..e]); i = e; }
+    if e > start { names += [Name { key: g[start..e] }]; i = e; }
   }
   names
 }
@@ -140,7 +128,7 @@ fn collect(root: text, min_len: integer, sites: Sites) {
       names = variants(src[i + 1..r[0]]);
       if names.len() >= min_len {
         key = "";
-        for nm in names { key = if key == "" { nm } else { "{key} | {nm}" }; }
+        for nm in names { key = if key == "" { nm.key } else { "{key} | {nm.key}" }; }
         slot = index_of(sites, key);
         if slot < 0 {
           slot = sites.entries.len();
@@ -155,20 +143,18 @@ fn collect(root: text, min_len: integer, sites: Sites) {
   }
 }
 
-// The one name in exactly one of two sorted, distinct name lists, or null when the
-// symmetric difference is not a single name.
-fn one_apart(a: vector<text>, b: vector<text>) -> text? {
-  if a.len() + 1 != b.len() && b.len() + 1 != a.len() { return null; }
-  big = if a.len() > b.len() { a } else { b };
-  small = if a.len() > b.len() { b } else { a };
+// The one name in exactly one of two sets, or null when the symmetric difference is not a
+// single name: the sizes differ by one and every name of the smaller is in the larger.
+fn one_apart(a: sorted<Name[key]>, b: sorted<Name[key]>) -> text? {
+  if len(a) + 1 != len(b) && len(b) + 1 != len(a) { return null; }
+  big = if len(a) > len(b) { a } else { b };
+  small = if len(a) > len(b) { b } else { a };
   extra: text? = null;
-  j = 0;
   for x in big {
-    if j < small.len() && small[j] == x { j += 1; }
-    else if extra == null { extra = x; }
-    else { return null; }
+    if small[x.key] != null { continue; }
+    if extra != null { return null; }
+    extra = x.key;
   }
-  if j != small.len() { return null; }
   extra
 }
 
@@ -213,8 +199,8 @@ fn report_near(sites: Sites) {
       b = sites.entries[j];
       d = one_apart(a.names, b.names);
       if d == null { continue; }
-      big = if a.names.len() > b.names.len() { a } else { b };
-      small = if a.names.len() > b.names.len() { b } else { a };
+      big = if len(a.names) > len(b.names) { a } else { b };
+      small = if len(a.names) > len(b.names) { b } else { a };
       print("\n  differ by: {d}\n");
       print("    WITH    ({big.sites.len()}x): {big.key}\n");
       shown = 0;
