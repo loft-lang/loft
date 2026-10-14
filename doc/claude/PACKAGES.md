@@ -141,6 +141,21 @@ placement = "process"       # @PLN119 — run this library in a WORKER PROCESS, 
 math = ">=0.1"              # from registry or ~/.loft/lib/
 utils = { path = "../utils" }  # local path (development)
 
+[triggers]
+enabled = true              # auto-use: a consumer that calls one of this
+                            # package's METHODS (`line.matches(p)`) or names one
+                            # of its TYPES (`c: Command = …`) loads it with no
+                            # `use`.  Both halves are DERIVED from the `pub`
+                            # declarations at publish time; nothing is listed.
+builders = ["set"]          # the one declared half: the free `pub fn`s a consumer
+                            # may call BARE (`set(words)`) and have this package
+                            # loaded.  A builder takes a name in the program's own
+                            # namespace, so the author lists the few worth it; the
+                            # program's own `fn set` wins, and `<pkg>::set(…)`
+                            # always reaches the library's.  A listed name the
+                            # entry file does not declare as a free `pub fn` is
+                            # dropped, with a warning at `loft publish`.
+
 [native]
 # Rust crate in native/ — compiled to rlib (interpreter/native) or
 # wasm (WASM target) at install time or first use.

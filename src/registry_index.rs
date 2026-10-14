@@ -94,7 +94,8 @@ pub struct Version {
     /// Tier-1 lazy-load triggers — text-method names as `"name:receiver"`
     /// (e.g. `"matches:text"`), derived from the package source at publish time
     /// so a CONSUMER's resolver can map `obj.method()` to this package without
-    /// having the source.  Produced by `crate::triggers::derive_triggers`.
+    /// having the source, and the declared builders as `"name:fn"` (`"set:fn"`),
+    /// so a bare `set(…)` can.  Produced by `crate::triggers::derive_triggers`.
     pub triggers: Vec<String>,
     /// Schema slot — pre-built distribution deferred.
     pub binaries: BTreeMap<String, BinaryEntry>,
@@ -1195,10 +1196,30 @@ pub fn cached_versions(pkg: &str) -> Vec<String> {
 /// receiver-blind pre-scan cannot tell apart.
 #[must_use]
 pub fn trigger_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
+    providers_of(index, false)
+}
+
+/// The builder half of [`trigger_providers`]: `function name -> package` over the
+/// `"name:fn"` entries, with the same ambiguity policy.  What a bare `set(…)` in a
+/// consumer looks up when no declared dependency carries the name.
+#[must_use]
+pub fn builder_providers(index: &RegistryIndex) -> BTreeMap<String, String> {
+    providers_of(index, true)
+}
+
+/// A trigger entry's receiver is `fn` for a builder; everything else is a method.
+fn is_builder_trigger(trig: &str) -> bool {
+    trig.split_once(':').is_some_and(|(_, r)| r == "fn")
+}
+
+fn providers_of(index: &RegistryIndex, builders: bool) -> BTreeMap<String, String> {
     let mut providers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (pname, pkg) in &index.packages {
         for ver in pkg.versions.values() {
             for trig in &ver.triggers {
+                if is_builder_trigger(trig) != builders {
+                    continue;
+                }
                 let method = trig.split(':').next().unwrap_or(trig);
                 if method.is_empty() {
                     continue;
@@ -1245,12 +1266,17 @@ fn index_stamp(index: &std::path::Path) -> Option<(u64, u64)> {
     Some((meta.len(), mtime))
 }
 
-/// The sidecar's map, or `None` when it is absent, unreadable, or stamped for a
-/// different index.  Derived data is rebuilt on any doubt, never trusted.
+/// The two maps a sidecar carries: the method triggers and the builders.
+type SidecarMaps = (BTreeMap<String, String>, BTreeMap<String, String>);
+
+/// The sidecar's maps, or `None` when it is absent, unreadable, stamped for a
+/// different index, or written before it carried `builders` (a loft that did not
+/// know them left the key out, and that sidecar would answer no bare call until the
+/// index moved).  Derived data is rebuilt on any doubt, never trusted.
 fn read_trigger_sidecar_at(
     sidecar: &std::path::Path,
     index: &std::path::Path,
-) -> Option<BTreeMap<String, String>> {
+) -> Option<SidecarMaps> {
     let (len, mtime) = index_stamp(index)?;
     let text = file_access::read_to_string(sidecar).ok()?;
     let Parsed::Object(root) = parse_json(&text).ok()? else {
@@ -1259,24 +1285,29 @@ fn read_trigger_sidecar_at(
     let mut stamped_len: Option<i64> = None;
     let mut stamped_mtime: Option<i64> = None;
     let mut map = BTreeMap::new();
+    let mut builders: Option<BTreeMap<String, String>> = None;
+    let read_map = |v: &Parsed| {
+        let mut m = BTreeMap::new();
+        if let Parsed::Object(entries) = v {
+            for (name, _, pkg) in entries {
+                if let Parsed::Str(p) = pkg {
+                    m.insert(name.clone(), p.clone());
+                }
+            }
+        }
+        m
+    };
     for (k, _, v) in &root {
         match k.as_str() {
             "index_len" => stamped_len = v.as_i64(),
             "index_mtime" => stamped_mtime = v.as_i64(),
-            "triggers" => {
-                if let Parsed::Object(entries) = v {
-                    for (method, _, pkg) in entries {
-                        if let Parsed::Str(p) = pkg {
-                            map.insert(method.clone(), p.clone());
-                        }
-                    }
-                }
-            }
+            "triggers" => map = read_map(v),
+            "builders" => builders = Some(read_map(v)),
             _ => {}
         }
     }
     (stamped_len? == i64::try_from(len).ok()? && stamped_mtime? == i64::try_from(mtime).ok()?)
-        .then_some(map)
+        .then_some((map, builders?))
 }
 
 /// Write the sidecar for a map derived from the index that carried `stamp`.
@@ -1290,22 +1321,20 @@ fn read_trigger_sidecar_at(
 /// read-only cache directory costs the fast path and nothing else.  Written to a
 /// temporary name and renamed, because parallel compiles reach here at once and
 /// a half-written sidecar reads as a parse failure.
-fn write_trigger_sidecar_at(
-    sidecar: &std::path::Path,
-    stamp: (u64, u64),
-    map: &BTreeMap<String, String>,
-) {
+fn write_trigger_sidecar_at(sidecar: &std::path::Path, stamp: (u64, u64), maps: &SidecarMaps) {
     let (Ok(len), Ok(mtime)) = (i64::try_from(stamp.0), i64::try_from(stamp.1)) else {
         return;
     };
-    let entries = map
-        .iter()
-        .map(|(method, pkg)| (method.clone(), 0, Parsed::Str(pkg.clone())))
-        .collect();
+    let entries = |map: &BTreeMap<String, String>| {
+        map.iter()
+            .map(|(name, pkg)| (name.clone(), 0, Parsed::Str(pkg.clone())))
+            .collect()
+    };
     let doc = Parsed::Object(vec![
         ("index_len".to_string(), 0, Parsed::Int(len)),
         ("index_mtime".to_string(), 0, Parsed::Int(mtime)),
-        ("triggers".to_string(), 0, Parsed::Object(entries)),
+        ("triggers".to_string(), 0, Parsed::Object(entries(&maps.0))),
+        ("builders".to_string(), 0, Parsed::Object(entries(&maps.1))),
     ]);
     if let Some(parent) = sidecar.parent() {
         let _ = file_access::create_dir_all(parent);
@@ -1318,24 +1347,21 @@ fn write_trigger_sidecar_at(
     }
 }
 
-/// [`catalog_trigger_map`] against explicit paths.
-fn catalog_trigger_map_at(
-    sidecar: &std::path::Path,
-    index: &std::path::Path,
-) -> BTreeMap<String, String> {
-    if let Some(map) = read_trigger_sidecar_at(sidecar, index) {
-        return map;
+/// [`catalog_trigger_map`] and [`catalog_builder_map`] against explicit paths.
+fn catalog_maps_at(sidecar: &std::path::Path, index: &std::path::Path) -> SidecarMaps {
+    if let Some(maps) = read_trigger_sidecar_at(sidecar, index) {
+        return maps;
     }
     let (Some(stamp), Ok(content)) = (index_stamp(index), file_access::read_to_string(index))
     else {
-        return BTreeMap::new();
+        return SidecarMaps::default();
     };
     let Ok(parsed) = parse_index(&content) else {
-        return BTreeMap::new();
+        return SidecarMaps::default();
     };
-    let map = trigger_providers(&parsed);
-    write_trigger_sidecar_at(sidecar, stamp, &map);
-    map
+    let maps = (trigger_providers(&parsed), builder_providers(&parsed));
+    write_trigger_sidecar_at(sidecar, stamp, &maps);
+    maps
 }
 
 /// The catalog trigger map (`method -> package`) for the cached index — what the
@@ -1351,7 +1377,15 @@ fn catalog_trigger_map_at(
 #[must_use]
 pub fn catalog_trigger_map() -> BTreeMap<String, String> {
     let (index, _, _) = index_paths();
-    catalog_trigger_map_at(&triggers_sidecar_path(), &index)
+    catalog_maps_at(&triggers_sidecar_path(), &index).0
+}
+
+/// The catalog builder map (`function -> package`) from the same sidecar — what the
+/// parser consults when a bare `set(words)` names no declared dependency.
+#[must_use]
+pub fn catalog_builder_map() -> BTreeMap<String, String> {
+    let (index, _, _) = index_paths();
+    catalog_maps_at(&triggers_sidecar_path(), &index).1
 }
 
 /// Bring the derived trigger sidecar in line with an index that has just been
@@ -1377,7 +1411,11 @@ pub fn refresh_trigger_sidecar(index: &RegistryIndex, source_len: u64) {
     if stamp.0 != source_len {
         return;
     }
-    write_trigger_sidecar_at(&sidecar, stamp, &trigger_providers(index));
+    write_trigger_sidecar_at(
+        &sidecar,
+        stamp,
+        &(trigger_providers(index), builder_providers(index)),
+    );
 }
 
 /// Map every `method:receiver` trigger in the catalog to its owning package.
@@ -2179,6 +2217,32 @@ mod tests {
         assert_eq!(map.get("matches"), None, "ambiguous method must be omitted");
     }
 
+    /// A `"set:fn"` entry is a builder: it answers a bare `set(…)`, never a `.set(` method,
+    /// and the two maps keep apart.
+    #[test]
+    fn a_builder_entry_feeds_the_builder_map_and_not_the_method_map() {
+        let idx = parse_index(
+            r#"{ "schema_version": 1, "updated": "x", "packages": {
+                "script": { "categories": [], "yanked": [], "versions": { "0.2.0": {
+                        "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["set:fn", "has:sorted<Word[key]>"], "published": "x" } } },
+                "other": { "categories": [], "yanked": [], "versions": { "0.1.0": {
+                        "url": "u", "sha256": "s", "size": 1, "loft": ">=0.8",
+                        "triggers": ["set:text"], "published": "x" } } } } }"#,
+        )
+        .expect("parse");
+        let builders = builder_providers(&idx);
+        assert_eq!(builders.get("set").map(String::as_str), Some("script"));
+        assert!(!builders.contains_key("has"), "a method is not a builder");
+        let methods = trigger_providers(&idx);
+        assert_eq!(
+            methods.get("set").map(String::as_str),
+            Some("other"),
+            "the builder does not make `.set(` ambiguous"
+        );
+        assert_eq!(methods.get("has").map(String::as_str), Some("script"));
+    }
+
     #[test]
     fn trigger_owners_maps_each_trigger_to_its_package() {
         // Full `method:receiver` -> package map, used by the publish pre-check.
@@ -2880,7 +2944,7 @@ mod tests {
         file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
 
         // First ask: no sidecar yet, so the index is parsed and the sidecar written.
-        let first = catalog_trigger_map_at(&sidecar, &index);
+        let first = catalog_maps_at(&sidecar, &index).0;
         assert_eq!(first.get("matches").map(String::as_str), Some("regex"));
         assert!(
             file_access::exists(&sidecar),
@@ -2892,7 +2956,7 @@ mod tests {
         // A reader that re-parsed the index would still say `regex`.
         let text = file_access::read_to_string(&sidecar).unwrap();
         file_access::write(&sidecar, text.replace("\"regex\"", "\"impostor\"")).unwrap();
-        let second = catalog_trigger_map_at(&sidecar, &index);
+        let second = catalog_maps_at(&sidecar, &index).0;
         assert_eq!(
             second.get("matches").map(String::as_str),
             Some("impostor"),
@@ -2908,12 +2972,12 @@ mod tests {
         let index = dir.join("index.json");
         let sidecar = dir.join("triggers.json");
         file_access::write(&index, index_with_trigger("regex", "matches", "")).unwrap();
-        catalog_trigger_map_at(&sidecar, &index);
+        catalog_maps_at(&sidecar, &index);
 
         // The index moves on — a different package, and a different length, so the
         // stamp mismatches even for two writes inside one second.
         file_access::write(&index, index_with_trigger("globbing", "matches", "   ")).unwrap();
-        let rebuilt = catalog_trigger_map_at(&sidecar, &index);
+        let rebuilt = catalog_maps_at(&sidecar, &index).0;
         assert_eq!(
             rebuilt.get("matches").map(String::as_str),
             Some("globbing"),
@@ -2931,7 +2995,7 @@ mod tests {
         let dir = scratch_dir("sidecar-absent");
         let index = dir.join("index.json");
         let sidecar = dir.join("triggers.json");
-        assert!(catalog_trigger_map_at(&sidecar, &index).is_empty());
+        assert!(catalog_maps_at(&sidecar, &index).0.is_empty());
         assert!(
             !file_access::exists(&sidecar),
             "nothing was derived, so there is nothing to cache"

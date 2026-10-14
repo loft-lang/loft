@@ -760,7 +760,8 @@ pub struct Parser {
     /// Auto-`use` per-file scan cache: a file's `(lib:: refs, .method() calls)`
     /// are deterministic, so it is read + scanned at most once (keyed by path)
     /// and reused across the second pass and any `todo_files` re-parse.
-    auto_use_scan_cache: std::collections::HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>,
+    auto_use_scan_cache:
+        std::collections::HashMap<String, (Vec<String>, Vec<String>, Vec<String>, Vec<String>)>,
     /// Per-directory cache for the dep-shadowing guard in `lib_path`: the
     /// nearest ancestor manifest's package root + its declared dependency
     /// names.  `None` = no manifest above that directory.
@@ -840,6 +841,12 @@ pub struct Parser {
     /// author declared.  What lets `c: Command = "…"` load `process` with nothing in the
     /// script naming it (@PLN179 strand 4).
     auto_use_type_map: std::collections::HashMap<String, String>,
+    /// The builder half: `function name -> providing package`, from the `[triggers]
+    /// builders` each trigger-enabled package declares and its source confirms
+    /// (`triggers.rs` § Builder triggers).  Built with `auto_use_trigger_map`.  What lets a
+    /// bare `set(words)` load `script` and import that one name — a program's own `fn set`
+    /// and the stdlib's names are never overridden, and `script::set(…)` always resolves.
+    auto_use_builder_map: std::collections::HashMap<String, String>,
     /// The manifest errors already reported by [`report_manifest_errors`]: each file's parse
     /// reads the manifests again, and an error is the author's to fix once.
     reported_manifest_errors: Vec<crate::manifest::ManifestError>,
@@ -853,6 +860,10 @@ pub struct Parser {
     // the registry feature off the field is initialised but never consulted.
     #[cfg_attr(not(feature = "registry"), allow(dead_code))]
     auto_use_catalog_map: Option<std::collections::HashMap<String, String>>,
+    /// The builder half of the catalog fallback: `function name -> providing package` from
+    /// the sidecar's `builders`, for a bare call on a package the user has not declared.
+    #[cfg_attr(not(feature = "registry"), allow(dead_code))]
+    auto_use_catalog_builders: Option<std::collections::HashMap<String, String>>,
     /// Is this the first pass on parsing:
     /// - Do not assume that all struct / enum types are already parsed.
     /// - Define variables, try to determine their type (can become clear from later code).
@@ -1989,6 +2000,8 @@ impl Parser {
             cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_type_map: std::collections::HashMap::new(),
+            auto_use_builder_map: std::collections::HashMap::new(),
+            auto_use_catalog_builders: None,
             reported_manifest_errors: Vec::new(),
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
@@ -19338,7 +19351,7 @@ impl Parser {
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
         if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
-            let (refs, calls, type_refs) =
+            let (refs, calls, type_refs, bare_calls) =
                 if let Some(c) = self.auto_use_scan_cache.get(auto_use_scan_file.as_str()) {
                     c.clone()
                 } else {
@@ -19352,6 +19365,9 @@ impl Parser {
                     // A type the file DECLARES is its own, never a trigger: a script with
                     // its own `struct Path` must not load a package that also has one.
                     let declared = crate::libscan::scan_type_declarations(&src);
+                    // Likewise a function the file DECLARES: its own `fn set` wins over a
+                    // library's builder of that name, which `pkg::set(…)` still reaches.
+                    let (bare, fns) = crate::libscan::scan_bare_calls_and_fn_declarations(&src);
                     let pair = (
                         crate::libscan::scan_qualified_lib_refs(&src),
                         crate::libscan::scan_method_calls(&src),
@@ -19359,6 +19375,7 @@ impl Parser {
                             .into_iter()
                             .filter(|t| !declared.contains(t))
                             .collect(),
+                        bare.into_iter().filter(|f| !fns.contains(f)).collect(),
                     );
                     self.auto_use_scan_cache
                         .insert(auto_use_scan_file.to_string(), pair.clone());
@@ -19428,6 +19445,49 @@ impl Parser {
                                 for_source: cur,
                                 lib_source,
                                 spec: ImportSpec::Names(vec![(t.clone(), t)]),
+                                public: false,
+                            });
+                        }
+                    } else if !to_load.contains(&pkg) {
+                        to_load.push(pkg);
+                    }
+                }
+            }
+            // Tier-1, the builder half: a bare `set(words)` names a function a trigger-enabled
+            // package DECLARES as a builder (`[triggers] builders`).  A name the stdlib or an
+            // already-loaded file defines is never a trigger (the stdlib's `set` would win and a
+            // library cannot take it); the declared packages' map first, then the catalog.  As
+            // for a type, a loaded package binds only its qualifier, so the one name that fired
+            // is imported, as `use pkg::(set);` would — never the library's whole surface.
+            if !bare_calls.is_empty() {
+                let _ = self.trigger_map(auto_use_scan_file.as_str());
+                let mut catalog: Option<std::collections::HashMap<String, String>> = None;
+                for f in bare_calls {
+                    if self.data.def_nr(&format!("n_{f}")) != u32::MAX {
+                        continue;
+                    }
+                    let pkg = if let Some(p) = self.auto_use_builder_map.get(&f) {
+                        Some(p.clone())
+                    } else {
+                        if catalog.is_none() {
+                            catalog = Some(self.catalog_builder_map());
+                        }
+                        catalog.as_ref().and_then(|c| c.get(&f).cloned())
+                    };
+                    let Some(pkg) = pkg else { continue };
+                    if self.data.use_exists(&pkg) {
+                        let lib_source = self.data.get_source(&pkg);
+                        let cur = self.data.source;
+                        if !self.data.import_name(lib_source, cur, &f, &f, false)
+                            && !self.pending_imports.iter().any(|pi| {
+                                pi.for_source == cur
+                                    && matches!(&pi.spec, ImportSpec::Names(n) if n.iter().any(|(a, _)| *a == f))
+                            })
+                        {
+                            self.pending_imports.push(PendingImport {
+                                for_source: cur,
+                                lib_source,
+                                spec: ImportSpec::Names(vec![(f.clone(), f)]),
                                 public: false,
                             });
                         }
@@ -19682,13 +19742,14 @@ impl Parser {
         }
         let mut map = std::collections::HashMap::new();
         let mut types = std::collections::HashMap::new();
+        let mut builders = std::collections::HashMap::new();
         let mut dir = std::path::Path::new(from_file)
             .parent()
             .map(std::path::Path::to_path_buf);
         while let Some(d) = dir {
             let toml = d.join("loft.toml");
             if crate::file_access::exists(&toml) {
-                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types);
+                Self::add_pkg_triggers(&toml, &d, &mut map, &mut types, &mut builders);
                 if let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) {
                     for (dep, value) in &man.dependencies {
                         // PURE lookups only: a sibling package, a `path =` dependency, the
@@ -19712,6 +19773,7 @@ impl Parser {
                                 root,
                                 &mut map,
                                 &mut types,
+                                &mut builders,
                             );
                         }
                     }
@@ -19722,6 +19784,7 @@ impl Parser {
         }
         self.auto_use_trigger_map = Some(map.clone());
         self.auto_use_type_map = types;
+        self.auto_use_builder_map = builders;
         map
     }
 
@@ -19762,13 +19825,15 @@ impl Parser {
         }
     }
 
-    /// Add a package's derived text-method triggers (`method -> package`) to
-    /// `map`, when the package opts in via `[triggers] enabled`.
+    /// Add a package's derived triggers to the three maps — its text methods
+    /// (`method -> package`), its public types and its declared builders — when the
+    /// package opts in via `[triggers] enabled`.
     fn add_pkg_triggers(
         toml: &std::path::Path,
         pkg_root: &std::path::Path,
         map: &mut std::collections::HashMap<String, String>,
         types: &mut std::collections::HashMap<String, String>,
+        builders: &mut std::collections::HashMap<String, String>,
     ) {
         let Some(man) = crate::manifest::read_manifest(&toml.to_string_lossy()) else {
             return;
@@ -19779,12 +19844,15 @@ impl Parser {
         let Some(name) = man.name else { return };
         let entry = man.entry.unwrap_or_else(|| format!("src/{name}.loft"));
         let src = crate::file_access::read_to_string(pkg_root.join(&entry)).unwrap_or_default();
-        let derived = crate::triggers::derive_triggers(&src);
+        let derived = crate::triggers::derive_triggers(&src, &man.trigger_builders);
         for mt in derived.methods {
             map.entry(mt.name).or_insert_with(|| name.clone());
         }
         for t in derived.types {
             types.entry(t).or_insert_with(|| name.clone());
+        }
+        for b in derived.builders {
+            builders.entry(b).or_insert_with(|| name.clone());
         }
     }
 
@@ -19820,6 +19888,28 @@ impl Parser {
     #[cfg(not(feature = "registry"))]
     #[allow(clippy::unused_self)]
     fn catalog_trigger_map(&mut self) -> std::collections::HashMap<String, String> {
+        std::collections::HashMap::new()
+    }
+
+    /// The builder half of the catalog fallback (`function -> package`), from the same
+    /// sidecar as [`Self::catalog_trigger_map`]: what lets a bare `set(words)` reach a
+    /// package the user has not declared.
+    #[cfg(feature = "registry")]
+    fn catalog_builder_map(&mut self) -> std::collections::HashMap<String, String> {
+        if let Some(m) = &self.auto_use_catalog_builders {
+            return m.clone();
+        }
+        let map: std::collections::HashMap<String, String> =
+            crate::registry_index::catalog_builder_map()
+                .into_iter()
+                .collect();
+        self.auto_use_catalog_builders = Some(map.clone());
+        map
+    }
+
+    #[cfg(not(feature = "registry"))]
+    #[allow(clippy::unused_self)]
+    fn catalog_builder_map(&mut self) -> std::collections::HashMap<String, String> {
         std::collections::HashMap::new()
     }
 

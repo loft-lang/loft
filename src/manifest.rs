@@ -319,6 +319,15 @@ pub struct Manifest {
     /// source-scanned `#native` symbols).  The resolver side that acts on this
     /// is separate, future work; today this is parsed metadata.
     pub trigger_enabled: bool,
+    /// `[triggers] builders = ["set"]` — the BUILDER triggers: the free `pub fn`s a consumer
+    /// may call bare (`set(words)`) and have this library auto-loaded, the one place a
+    /// library puts a name into a program's own namespace without being named.  Declared,
+    /// never derived — every other trigger is read from the source, but a free function
+    /// reaches the shared namespace, so the author lists the few that are worth it, and the
+    /// derivation checks each against the source (a `pub fn` without a receiver).  A
+    /// program's own definition of the name wins; `<pkg>::<name>` always reaches the
+    /// library's.
+    pub trigger_builders: Vec<String>,
     /// @PLN100 Slice 2 — `[build] default-targets = [...]`: which targets
     /// `loft build` makes when given no target names.  Empty → the driver falls
     /// back to `["native"]` so a zero-config project still builds.
@@ -748,6 +757,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("wasm.bridge", "host_js") => m.wasm_bridge_host_js = Some(value.scalar()),
         ("wasm.bridge.routes", _) => m.wasm_bridge_routes.push((key.to_string(), value.scalar())),
         ("triggers", "enabled") => m.trigger_enabled = value.is_true(),
+        ("triggers", "builders") => m.trigger_builders = value.list(),
         _ => {}
     }
 }
@@ -1472,6 +1482,19 @@ mod tests {
         );
         let m = read_manifest(p.to_str().unwrap()).unwrap();
         assert!(m.trigger_enabled, "[triggers] enabled = true should parse");
+    }
+
+    #[test]
+    fn parses_trigger_builders() {
+        let p = write_temp(
+            "builders",
+            "[package]\nname = \"script\"\n\n[triggers]\nenabled = true\nbuilders = [\"set\", \"counter\"]\n",
+        );
+        let m = read_manifest(p.to_str().unwrap()).unwrap();
+        assert_eq!(
+            m.trigger_builders,
+            vec!["set".to_string(), "counter".to_string()]
+        );
     }
 
     #[test]

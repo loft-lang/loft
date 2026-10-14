@@ -10,6 +10,27 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Builder triggers — the declared half of the auto-use surface (2026-10-14)
+
+- `[triggers] builders = ["set"]` (`Manifest::trigger_builders`): the free `pub fn`s a
+  consumer may call bare.  `triggers::derive_triggers(source, builders)` keeps a listed name
+  only when the source declares it as a free `pub fn` (`Triggers::builders`); the registry
+  entry carries it as `"set:fn"` beside the `"name:receiver"` methods, `loft publish` warns
+  on a listed name the entry file lacks, and the collision pre-check covers it.
+- The parser's auto-use scan collects bare calls minus the file's own `fn` declarations
+  (`libscan::scan_bare_calls_and_fn_declarations`); a name the stdlib or a loaded file
+  defines (`def_nr("n_<name>")`) is never a trigger; the declared packages' builder map
+  (`auto_use_builder_map`) is asked first, then the catalog's.  A fired name is imported
+  alone (`ImportSpec::Names`), as a type trigger is — the library's qualifier is all a load
+  binds (@C98).
+- The derived sidecar (`~/.loft/registry/triggers.json`) carries `builders` beside
+  `triggers`; `trigger_providers` skips `:fn` entries, `builder_providers` takes them, and a
+  sidecar written without the key reads as stale, so an upgraded loft rebuilds it once.
+- Why declared, not derived: a method or a type trigger takes no name from the program's
+  file, a free function does, so the author chooses the few worth a bare name and the shared
+  namespace stays small (the owner's rule, 2026-10-14).  Fixture `tests/lib/builder_pkg`,
+  cells `tests/builder_trigger.rs` on both backends.
+
 ### Operand order around lifted calls, an owned vector parse, a struct-enum tail (2026-10-12)
 
 - **loft#1987** — `Scopes::scan_args` records where each argument's hoisted operations start

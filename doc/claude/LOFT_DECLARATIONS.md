@@ -262,7 +262,12 @@ Searches for `arguments.loft` in `lib/`, the current directory, directories from
 `LOFT_LIB` environment variable, and relative to the current script.
 `use` declarations must appear at the top of the file, before any other declarations.
 A qualified `lib::fn()` auto-loads the library, so an explicit `use` is optional for
-qualified access.
+qualified access.  A library that opts in (`[triggers]` in its manifest) is also loaded by
+a call of one of its methods (`line.matches(p)`), by one of its type names (`c: Command =
+…`) and by a bare call of a function it lists as a *builder* (`set(words)` loads `script`);
+a method or a type never takes a name from your file, and a builder loses to your own
+definition of the name — `fn set` in your program wins, and `script::set(…)` still reaches
+the library's.
 
 **Multiple names from one library must be parenthesised.** `use lib::a, b;` (a flat
 comma list) is a compile error; write `use lib::(a, b);` (@C76).

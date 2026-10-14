@@ -113,6 +113,14 @@ write `"{user#errors[0]}"` for one entry.  `n#errors` on a number or a text is r
 
 ### New
 
+**A library can offer a few functions by their bare name.**  A library that auto-loads
+(`[triggers]` in its manifest) could already be reached by one of its methods or types with
+no `use`; it can now list *builders* — `builders = ["set"]` — and a bare `set(words)` in your
+program loads it and brings in that one name.  Your own `fn set` always wins, and
+`script::set(…)` reaches the library's whatever you defined.  Nothing else from the library
+enters your namespace, and a listed name the library does not declare as a free `pub fn` is
+ignored (`loft publish` says so).
+
 **A program can end with its own exit code.**  `exit(2)` stops the program there and makes 2
 its status, printing nothing — a script's verdict where `assert` and `panic` could only answer
 1 and a message.  Under `loft test` it fails the test that called it, naming the code.

@@ -3257,8 +3257,8 @@ fn warn_trigger_collisions(pkg_name: &str, triggers: &[String]) {
         {
             eprintln!(
                 "warning: trigger `{trig}` is already claimed by `{owner}` in the registry; the \
-                 submission PR will be REJECTED — a method-on-type trigger must be unique. Rename \
-                 the method in `{pkg_name}` or drop its `[triggers]` opt-in."
+                 submission PR will be REJECTED — a trigger (a method on a type, a builder) must \
+                 be unique. Rename it in `{pkg_name}` or drop it from `[triggers]`."
             );
         }
     }
@@ -3413,10 +3413,22 @@ fn publish_package(pkg_path: &std::path::Path, dry_run: bool) -> i32 {
             .clone()
             .unwrap_or_else(|| format!("src/{}.loft", pkg.name));
         let src = fa::read_to_string(pkg_path.join(&entry)).unwrap_or_default();
-        let triggers: Vec<String> = loft::triggers::derive_triggers(&src)
+        let derived = loft::triggers::derive_triggers(&src, &manifest.trigger_builders);
+        // A declared builder the entry file does not carry as a free `pub fn` is dropped
+        // from the surface, and the author hears why the bare call will not fire.
+        for b in &manifest.trigger_builders {
+            if !derived.builders.contains(b) {
+                eprintln!(
+                    "warning: `[triggers] builders` names `{b}`, which `{entry}` does not declare \
+                     as a free `pub fn`; it is left out of the trigger surface."
+                );
+            }
+        }
+        let triggers: Vec<String> = derived
             .methods
             .iter()
             .map(|m| format!("{}:{}", m.name, m.receiver))
+            .chain(derived.builders.iter().map(|b| format!("{b}:fn")))
             .collect();
         warn_trigger_collisions(&pkg.name, &triggers);
         let quoted: Vec<String> = triggers.iter().map(|t| format!("\"{t}\"")).collect();
