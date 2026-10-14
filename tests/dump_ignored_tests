@@ -5,48 +5,22 @@
 // same order, byte for byte.  Paths are relative to the repository root.
 #cwd
 use regex;
+use script;
 
 // The `#[ignore = "..."]` and `#[cfg_attr(<cfg>, ignore = "...")]` attribute shapes, and
-// the bare `#[ignore]` ones, anchored at the line's start as the originals' `re.match` is.
-IGNORE = "^\\s*#\\[(cfg_attr\\([^,]+,\\s*)?ignore\\s*=\\s*\".+\"\\s*\\)?\\]";
-BARE = "^\\s*#\\[(cfg_attr\\([^,]+,\\s*)?ignore\\s*\\)?\\]";
-FN = "^\\s*(pub(\\([^)]*\\))?\\s+)?fn \\w+\\s*[(<]";
-
-// A local walk: the `script` library's `walk` is what belongs here — fold back to
-// `"src".walk(".rs")` once that library is published (@PLN179 strand 8).
-fn walk(dir: text, suffix: text) -> vector<text> {
-  out: vector<text> = [];
-  if !is_dir(dir) { return out; }
-  for f in file(dir).files() {
-    if is_symlink(f.path) { continue; }
-    if f.format == Format.Directory { out += walk(f.path, suffix); }
-    else if f.path.ends_with(suffix) { out += [f.path]; }
-  }
-  out
-}
+// the bare `#[ignore]` ones, anchored at the line's start as the originals' `re.match` is;
+// the groups are the originals' — the greedy reason, the function's name.
+IGNORE = "^\\s*#\\[(?:cfg_attr\\([^,]+,\\s*)?ignore\\s*=\\s*\"(.+)\"\\s*\\)?\\]";
+BARE = "^\\s*#\\[(?:cfg_attr\\([^,]+,\\s*)?ignore\\s*\\)?\\]";
+FN = "^\\s*(?:pub(?:\\([^)]*\\))?\\s+)?fn (\\w+)\\s*[(<]";
 
 struct Entry { key: text }
 struct Out { rows: sorted<Entry[key]> }
 
-// The reason inside `ignore = "..."`: from the first `"` to the last, as the greedy
-// `(.+)` group takes it, with the Rust test's own unescape mirrored.
+// The reason inside `ignore = "..."`, with the Rust test's own unescape mirrored.
 fn reason_of(line: text) -> text {
-  a = line.find("\"") ?? 0;
-  b = line.rfind("\"") ?? 0;
-  r = line[a + 1..b];
+  r = line.capture(IGNORE).group(1) ?? "";
   r.replace("\\\"", "\"").replace("\\\\", "\\")
-}
-
-// The name in `fn name(` / `fn name<`.
-fn fn_name(line: text) -> text {
-  at = (line.find("fn ") ?? 0) + 3;
-  rest = line[at..];
-  end = rest.size();
-  for i in 0..rest.size() {
-    c = rest[i];
-    if c == '(' || c == '<' || c == ' ' { end = i; break; }
-  }
-  rest[0..end]
 }
 
 fn scan(path: text, out: Out) {
@@ -59,8 +33,9 @@ fn scan(path: text, out: Out) {
     stop = i + 10;
     if stop > len(lines) { stop = len(lines); }
     for j in i + 1..stop {
-      if lines[j].matches(FN) {
-        out.rows += [Entry { key: "{path}::{fn_name(lines[j])}\t{reason}" }];
+      name = lines[j].capture(FN).group(1);
+      if name != null {
+        out.rows += [Entry { key: "{path}::{name}\t{reason}" }];
         break;
       }
     }
@@ -69,8 +44,8 @@ fn scan(path: text, out: Out) {
 
 fn main() {
   out = Out { rows: [] };
-  for p in walk("tests", ".rs") { if p.dir() == "tests" { scan(p, out); } }
-  for p in walk("src", ".rs") { scan(p, out); }
+  for p in "tests".walk(".rs") { if p.dir() == "tests" { scan(p, out); } }
+  for p in "src".walk(".rs") { scan(p, out); }
   // The header as the original holds it, one literal (finding 014: `` \` `` is a backtick).
   header = `
     # Baseline of every \`#[ignore = "..."]\` and \`#[cfg_attr(<cfg>, ignore = "...")]\` in

@@ -31,11 +31,11 @@ the second (finding 019: a never-returning call is not a `??` default), and noth
 either names the library: the TYPE trigger the design rests on fires now (finding 018 — derived from the
 start, never read).  What a port still carries is the path dependency in `scripts/loft.toml`,
 the manifest that makes `scripts/` one package so a bare script finds the repo-local
-library from any working directory; it leaves when the library is published.  **Strand 8's `script` library exists (2026-10-08):** `script` 0.1.0 —
-`dir.walk(suffix)`, `src.copy_to(dst)`, `pattern.glob()`, `glob_match` — merged to
-loft-libs-core (#42), released at `script-v0.1.0`, staged for the registry as
-loft-lang/registry#32; the maintainer's signing run folds it, and the three ports that wrote
-these by hand (findings 004, 005, 008) switch to it the day `loft install script` answers.
+library from any working directory; it leaves when the library is published.  **Strand 8's `script` library is in the registry (0.1.1, 2026-10-13):**
+`dir.walk(suffix)`, `src.copy_to(dst)`, `pattern.glob()`, `glob_match`; the three ports that
+wrote these by hand switched to it on 2026-10-14 and findings 004, 005 and 008 are struck,
+as is 011: regex 0.5.0 (@PLN192) is published and `tests/dump_ignored_tests` reads the
+reason and the name as the originals' capture groups.
 Finding 009 closed with `exit(code)` in the stdlib the same day, and
 016 was re-measured closed (the cast spelling takes the hook; the matrix now lives in
 `lib/process/tests/command.loft`).
@@ -48,9 +48,9 @@ checked against the tree): **strand 4 before any T3–T5 port.**  Those three ti
 need the `process` library — `Command`, `run`, the `lines()` cursor — which is a design in
 [PROCESS.md](PROCESS.md) and not built; its five gate probes come first, then `lib/git` over
 `run`, twinned, as the first T3 port.  That is also the surface no port has touched yet
-(natives, pipes, back-pressure, a child's cleanup).  T2 is not "more text scanners": it waits
-on regex capture groups (finding 011), TOML, JSON and argparse, so closing 011 is library work
-that can run beside strand 4.  The six ports so far are not all `report` originals —
+(natives, pipes, back-pressure, a child's cleanup).  T2 is not "more text scanners": it waited
+on regex capture groups (finding 011, struck 2026-10-14 by regex 0.5.0) and still waits on
+TOML, JSON and argparse — library work that runs beside strand 4.  The six ports so far are not all `report` originals —
 `opl_points.py` and `rule_predicate_audit.py` are `gate`s and `gen_probes.py` `writes`.
 **Sequencing (owner, 2026-10-01):** strand 4 starts once the interpreter work is cleanly below
 100× native on every measured routine.  Long-term and low urgency by the owner's own framing (2026-09-29): the

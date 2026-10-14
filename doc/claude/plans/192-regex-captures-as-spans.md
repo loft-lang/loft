@@ -6,21 +6,24 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # 192 — Regex captures, find-all and replace: a `Match` written so the compiler can keep it a view
 
 Plan issue: [@PLN192](https://github.com/loft-lang/plans/issues/192) (`status:future`, `subject:libs`).  Library: [`loft-lang/loft-libs-core/regex`](https://github.com/loft-lang/loft-libs-core/tree/main/regex)
-(0.4.3).  Driver: [@PLN179 finding 011](179-scripts-in-loft/findings/011-regex-has-no-capture-groups.md)
+(0.5.0).  Driver: [@PLN179 finding 011](179-scripts-in-loft/findings/011-regex-has-no-capture-groups.md)
 — four of the eight ports cite it, and it is why those ports read two to three times longer
 than their Python originals.  Value **U** (ease of use — friction-free scripting) · effort **M**, in S
 steps that each finish inside the PR cadence.
 
 ## Status (REQUIRED)
 
-Open — design probed, nothing built.  The shipped library answers `matches` / `search` /
-`split_on`; captures, `find_all` and `replace` are its README's roadmap and the register's
-longest-open clarity reason.  The P0 probes below have run (both backends, the scratch
-clone of the library): three claims held, one fell and rerouted the representation (§ The
-invariant), and `split_on` was found to answer wrongly at a piece boundary (§ P0 d).  The
-legacy design in [lib_plans/57-regex](../lib_plans/57-regex/README.md) stands on its
-feature table and its "a library, not syntax" argument; this plan replaces its `Regex`
-handle and decides what a `Match` holds.
+Open — the library half shipped: regex 0.5.0 is in the registry (P1, P2, P5, P7), and
+`tests/dump_ignored_tests` is re-twinned over `capture`, which struck @PLN179 finding 011
+(the register's longest-open clarity reason).  P3, the compiler's `(R-SliceBorrow)`, is
+built and pinned.  Open: P4 (a `Match` as an apart value, waiting on its rule) and P6 (the
+`Pattern` typed-format target, waiting for a port that interpolates into a pattern).  The
+P0 probes ran first (both backends, the scratch clone of the library): three claims held,
+one fell and rerouted the representation (§ The invariant), and `split_on` was found to
+answer wrongly at a piece boundary (§ P0 d).  The legacy design in
+[lib_plans/57-regex](../lib_plans/57-regex/README.md) stands on its feature table and its
+"a library, not syntax" argument; this plan replaces its `Regex` handle and decides what a
+`Match` holds.
 
 ## Goal (REQUIRED)
 
@@ -171,9 +174,11 @@ the whole subject is the one copy no rule removes).
 
 ## Composition matrix — Stage A
 
-The cells, each hand-computed, `--interpret` and `--native`, graduated to
-`tests/scripts/192-regex-captures.loft` and the library's `tests/worked-examples.loft`
-(`@RGX-005` …):
+The cells, each hand-computed, `--interpret` and `--native`, graduated to the library's
+`tests/captures.loft` and `tests/worked-examples.loft` (`@RGX-005` …), which its CI runs on
+both backends; this repository runs the published release through the re-twinned
+`tests/dump_ignored_tests` (`make script-twins`), not through a corpus file — a
+`tests/scripts` cell cannot name a registry package:
 
 | axis | values |
 |---|---|
@@ -190,13 +195,13 @@ The cells, each hand-computed, `--interpret` and `--native`, graduated to
 | Item | Source | Verify (goes RED if the phase is wrong) | Status |
 |---|---|---|---|
 | **P0** probe the four claims (XS) | § P0 | a prediction written before each run | **Done** — a, b held in the value channel; a's representation claim fell; d found the defect |
-| **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | **Built** on the testbed (loft-libs-core branch `pln192`, `regex/tests/captures.loft`, 21 tests both backends, the guide identical on both); the re-twin waits on the release |
-| **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | **Built** (same branch); the `^` / `\b` cells are green |
+| **P1** `Group`, `Match`, `capture`, `capture_all`, `group`, `named`; ONE native `n_spans` (S, library) | § The surface | the matrix, both backends; the trigger test with no `use`; `tests/dump_ignored_tests` re-twinned over `capture` and finding 011 re-measured (`scripts/script_recheck.sh`) — the port's lines drop or the phase failed; the twin's performance column records the copy P4 will remove | **Shipped** — regex 0.5.0 (registry, 2026-10-14; `regex/tests/captures.loft`, 21 tests both backends, the guide identical on both); `tests/dump_ignored_tests` re-twinned over `capture` the same day, finding 011 struck |
+| **P2** `replace_on` with `$1` / `${name}` templates and `limit`; `split_on` on `find_at` (S, library) | § The surface | the Python twin of a `re.sub` template; the `^` / `\b` cells of P0 d, red today, green after | **Shipped** in 0.5.0; the `^` / `\b` cells are green |
 | **P3** `(R-SliceBorrow)`: a text local bound to a slice of a parameter is a `&str` (S, compiler, native) | § P3 | emission pins `tests/slice_borrow.rs`; cells `tests/scripts/192-slice-borrow.loft` under `LOFT_NO_SLICE_BORROW=1`; the census row `R-SliceBorrow`; a planted admission of any text variable turns the pins red | **Built** — the slice arm of `(R-TextBorrow)`'s store-read clause; a slice of an OWNED local is the clause left open |
 | **P4** `(R-Apart)` instance 4: a `Match` held as a value whose text fields borrow the subject for the frame; the match-binding clause beside it (M, compiler, native) | § P4 | the consumer's emission holds no `set_str` / `.to_string()` for a text field; the holder-axis cells (stored, returned, subject written, generator: the store form, value right); `make perf-check` on the two ports' rows | Open — no stored span: `(R-DecodeView)` is for values that last, and a match result does not |
-| **P5** the broken-pattern warning (XS, library) | § Broken patterns | the warning in `.loft/log.txt` once per pattern per process, absent on the second use; `@RGX-003` re-measured | **Built** — one `WARN` line through `log_warn`, the `[divide_by_zero]` channel |
+| **P5** the broken-pattern warning (XS, library) | § Broken patterns | the warning in `.loft/log.txt` once per pattern per process, absent on the second use; `@RGX-003` re-measured | **Shipped** in 0.5.0 — one `WARN` line through `log_warn`, the `[divide_by_zero]` channel |
 | **P6** `Pattern` typed-format target (S, library, optional) | § built-in feel | a hole holding `.` matches only a literal dot; the type trigger loads the library with no `use`; `(F-Target-Pos)`: an argument position does not target | Open |
-| **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | **Built** — 0.5.0, `api_compatible_with = "0.5.0"`; the publish is the maintainer's signing run |
+| **P7** `search -> integer?`, the `regex_` spellings removed per COMPATIBILITY.md, `api_compatible_with` bumped (XS, library) | § `search` | the library's own CI under `LOFT_DENY_WARNINGS=1`; `make revalidate-libs` for the consumers of `search` | **Shipped** — 0.5.0, `api_compatible_with = "0.5.0"`, published 2026-10-14 |
 
 P1 → P2 → P5 → P7 ship as one library release (0.5.0), each a commit the testbed gates
 alone (LIBRARY_AUTHORING.md § The testbed).  P3 is independent and pays for every script

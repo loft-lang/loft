@@ -8,3 +8,10 @@ version = "0.3.13"
 url = "https://github.com/loft-lang/loft-libs-core/releases/download/crypto-v0.3.13/crypto-0.3.13.tar.gz"
 sha256 = "1ae1ccc15855e487cddf2f65dbab36651d78729d9ae90b4bbadb7562739f6fda"
 source = "registry"
+
+[[package]]
+name = "script"
+version = "0.1.1"
+url = "https://github.com/loft-lang/loft-libs-core/releases/download/script-v0.1.1/script-0.1.1.tar.gz"
+sha256 = "aa145eabff92191b46f427d1d193092bbbb56101f595d3535f566bb6b051f2d0"
+source = "registry"
