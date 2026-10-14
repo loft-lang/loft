@@ -16421,9 +16421,23 @@ fn local_uses_ok(
                         served.contains(&(std::ptr::from_ref(a) as usize))
                             || served.contains(&(std::ptr::from_ref(a.unspan()) as usize))
                     });
+                // A store-identity test answers "distinct" for every value local — it is in no
+                // store.  Between two locals one of which may hold the other (a join's result
+                // and an arm it took) the answer turns on the path, so the test is not served
+                // and both keep the record form: the guard would release the record the
+                // result hands on.
+                let identity = matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore");
+                let aliased = identity
+                    && match (args.first().map(Value::unspan), args.get(1).map(Value::unspan)) {
+                        (Some(Value::Var(x)), Some(Value::Var(y))) => {
+                            may_hold(body, *x, *y) || may_hold(body, *y, *x)
+                        }
+                        _ => false,
+                    };
                 if arg_is_v(0)
                     && !copies
                     && !src_served
+                    && !aliased
                     && matches!(
                         name,
                         "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
@@ -16431,7 +16445,7 @@ fn local_uses_ok(
                 {
                     accounted += 1;
                 }
-                if arg_is_v(1) && matches!(name, "OpFreeRefIfDistinct" | "OpDistinctStore") {
+                if arg_is_v(1) && identity && !aliased {
                     accounted += 1;
                 }
                 // A copy FROM a sub-record of the local (`Vtx { pos: w.pos, … }`, a push of
@@ -16457,6 +16471,41 @@ fn local_uses_ok(
         crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
     }
     mentions == accounted
+}
+
+/// Can local `holder` hold what local `held` holds — is `held` a leaf of one of `holder`'s
+/// binds (an `if` arm, a value block's last operand), followed through the locals it names?
+fn may_hold(body: &Value, holder: u16, held: u16) -> bool {
+    fn leaf(node: &Value, held: u16, body: &Value, seen: &mut HashSet<u16>) -> bool {
+        match node.unspan() {
+            Value::Var(x) => *x == held || binds_hold(body, *x, held, seen),
+            Value::If(_, a, b) => leaf(a, held, body, seen) || leaf(b, held, body, seen),
+            Value::Block(bl) if !matches!(bl.result.base(), Type::Void) => bl
+                .operators
+                .last()
+                .is_some_and(|l| leaf(l, held, body, seen)),
+            Value::Insert(ops) => ops.last().is_some_and(|l| leaf(l, held, body, seen)),
+            Value::Return(x) => leaf(x, held, body, seen),
+            _ => false,
+        }
+    }
+    fn binds_hold(body: &Value, v: u16, held: u16, seen: &mut HashSet<u16>) -> bool {
+        if !seen.insert(v) {
+            return false;
+        }
+        let mut found = false;
+        body.any_node(&mut |n| {
+            if let Value::Set(w, rhs) = n
+                && *w == v
+                && leaf(rhs, held, body, seen)
+            {
+                found = true;
+            }
+            found
+        });
+        found
+    }
+    holder != held && binds_hold(body, holder, held, &mut HashSet::new())
 }
 
 /// The uses of local `v` one call accounts that turn on the local's LAYOUT `key`: a hand-off

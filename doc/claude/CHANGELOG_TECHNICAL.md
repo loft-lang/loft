@@ -53,6 +53,15 @@ All notable changes to the loft language and interpreter.
   join's widening read as before, and the rewrite census admits exactly what it did
   (`R-ValueRecord` 18 in bench 17, `vec2`/`vec3`/`vertex` among them).  The live
   `work_refs` set could not answer it: `Function::copy` starts it empty in the scope pass.
+- **A store-identity test between a join's result and its arm is never a constant**
+  (`hoist::local_uses_ok`, `may_hold`).  `OpDistinctStoreEmitter` answers "distinct" for every
+  value local, which is in no store.  `return if c { a } else { b }` over two locals bound
+  from a function that returns in registers guards each local's exit release with such a test
+  against the result, so both were released and the returned one again by the caller —
+  released before its read, then twice (drop-gate pilot `p_j5`, and the `??` cells
+  `q_default_{local,param}_var_ret`).  Between two locals one of which may hold the other the
+  answer turns on the path, so the test is not served and both keep the record form.  The
+  rewrite census admits exactly what it did.
 - 253 corpus files change native code; the interpreter's output is identical on all 2350
   that ran, and every one of the 253 answers the same on both backends.
 

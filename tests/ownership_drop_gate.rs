@@ -260,6 +260,15 @@ fn p_o5() { t = (mk(16), 1); p_o5_m(t); println("R{t.0.id}"); }"#,
             "p_j4",
             r#"fn p_j4() { a: H? = null; v: vector<H> = []; v += [if a != null { a } else { mk(37) }]; println("R{v[0].id}"); }"#,
         ),
+        // A join of two locals RETURNED, each arm taken once: the result holds one, and the
+        // exit releases the other.  With `mk` returning in registers the two locals are value
+        // tuples, and a store-identity test between them and the result answered "distinct"
+        // on every path — the returned record was released at exit as well.
+        cell(
+            "p_j5",
+            r#"fn p_j5_m(k: integer) -> H { a = mk(146 + 2 * k); b = mk(147 + 2 * k); return if k > 0 { a } else { b }; }
+fn p_j5() { x = p_j5_m(0); println("R{x.id}"); y = p_j5_m(1); println("R{y.id}"); }"#,
+        ),
         // A reassigned local whose value is handed off by a LATER statement, or off a
         // parameter: a hand-off belongs to the assignment it follows, so it must not suppress
         // the release of a record an earlier assignment gave the local.
@@ -1607,6 +1616,7 @@ const PILOT_ONCE: &[&str] = &[
     "p_o2", // `u = t` of a tuple the function built
     "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
     "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s5", // a local in a join
+    "p_j5", // two locals in a join, returned
     // `d = v` of a droppable COLLECTION the function owns: a MOVE (`D-heap-23` closed it).
     "p_v1",
 ];
