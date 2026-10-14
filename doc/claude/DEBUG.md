@@ -117,25 +117,21 @@ restricted to one test binary via `$(TFILE)`.  Defaults to the
   (skips the hot-path `Store::addr` / `keys::store` guards that
   add ~270x overhead to interpreter-heavy tests)
 
-Measured here:
-
-| Scenario | Dev profile | Release profile |
-|---|---|---|
-| Warm cache, no source change | ~0.3s | ~0.3s |
-| Single-file edit, incremental rebuild | **~2.4s** | ~26.8s |
-| Cold rebuild after `make clean` | ~30s | ~60s |
-
-For most edits, dev profile is **~11x faster** on the inner
-debug loop.  Tests that depend on release-only behaviour
-(parallel timing windows, perf assertions) take `PROFILE=release`:
+What a rebuild costs — `src/` is one crate, so any one-file edit recompiles all of it:
+minutes on the dev profile, tens of minutes on release, which is not incremental.  The
+ladder with every build and check, its measured cost and the rules it gives is
+[CI_BUDGET.md § What a build and each check costs here](CI_BUDGET.md#what-a-build-and-each-check-costs-here--the-ladder);
+the dev binary serves the whole loop (`--interpret`, `--native`, `introspect`,
+`--native-emit`), and a release build is for the rlib the native test suites link, once per
+fix.  Tests that depend on release-only behaviour (parallel timing windows, perf
+assertions) take `PROFILE=release`:
 
 ```
 make iter TEST=par_throughput PROFILE=release
 ```
 
-Sharing cache with `make test` / `make ci` (both release) means
-switching profiles forces a one-time rebuild.  Within a single
-debugging session, pick one and stay on it.
+`make ci` and `find_problems.sh` build the test binaries on the dev profile too, so the loop
+and the gate share one build; switching to release mid-session forces another.
 
 `make iter` cleans `tests/dumps/` and `tests/generated/` before
 running — they pin per-test codegen output, and stale fixtures

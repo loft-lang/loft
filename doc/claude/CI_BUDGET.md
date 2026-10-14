@@ -415,6 +415,43 @@ run cannot: run cold, on a machine nobody else is using, and leave a verdict tha
 `find_problems.sh --subject`) stays the inner loop; the dispatch replaces only the final
 `make ci`.
 
+## What a build and each check costs here — the ladder
+
+`src/` is ONE crate (`loft`, ~486k lines).  An edit to any file in it recompiles the whole
+crate, rustc's front end runs a crate serially, and the release profile is not incremental —
+so what a change costs is decided by WHICH build answers the question, not by the size of the
+edit.  Measured on the 24-core box; the dated runs are in the history companion
+§ The build-cost ladder, and a number that decides what to do is re-measured first.
+
+| the question | the cheapest answer | after a one-file edit |
+|---|---|---|
+| does it compile, what does the type checker say | `cargo check --bin loft` | ~1 min on a quiet box (its artefacts are separate from a build's: the first check in a session warms them, ~1 min more) |
+| what does the fixed binary DO — `--interpret`, `--native`, `introspect`, `--native-emit` | `cargo build --bin loft` (dev): `target/debug/loft` runs `--native` against the `deps/` rlib this build wrote | 3–6 min alone; 24 min beside a sibling's dependency build |
+| a release binary | `cargo build --release --bin loft` | 20–40 min — needed ONLY to refresh `target/release/libloft.rlib` for the `cargo test --release` native suites; `make check-rlib` says when |
+| the tests my diff touches | `find_problems.sh --changed` | seconds; a `src/` edit selects the curated set (~70 s warm) on top of the dev test-binary build |
+| one area | `find_problems.sh --subject <name>` | seconds to a minute |
+| the whole gate | `scripts/ci-run.sh start`, or `gh workflow run ci.yml` | ~20 min; two live gates double it |
+| the receipt of a new guard | `make falsify` | two dev builds in the shared falsify target dir — after the fix is committed, never while an edit is pending |
+| release and lifetime of every shape | `cargo test --release --test ownership_drop_gate` | an hour class: dozens of native compiles on every core — nothing runs beside it |
+| which corpus files a lowering change moves | the census (CODEGEN_METHOD.md § the corpus census) | the emission diff: minutes; running every moved file natively: hours when the rule fires broadly — bound the native run by what the diff names |
+
+**The rules the ladder gives.**
+
+- Iterate on the dev binary.  One release build per fix, at the end, for the rlib — never one
+  per hypothesis: a day in which fourteen release builds answered questions the dev binary or
+  `cargo check` could have answered is the history companion's measurement.
+- Name the cause from an artefact (`loft introspect`, `--native-emit`) BEFORE a build; a fix
+  built on a hypothesis the artefact never showed is a build that may change nothing.
+- One heavy job at a time — a build, a gate, a falsify run, the drop gate, a native census, a
+  `cargo test` of many binaries.  Beside one another they slow every one of them and the one
+  waited on most of all: a load of 75 here was one session's own drop gate, reported as
+  sibling load.  Read the next unit's code while a build runs; wait on a pid or an output
+  file, never a sleep loop.
+- Every gate the change can move runs BEFORE the push; a gate first run on GitHub after it
+  costs the gate, a fix build, and a red tip a sibling may already have joined.
+- Land one issue per push.  A defect found while verifying is filed with its repro at once and
+  is the next push, not part of this one.
+
 ## What a compiler change needs before its commit — and what runs beside the work
 
 **The rule.** A change in this loop (a rewrite clause, an op, a runtime path) is verified by

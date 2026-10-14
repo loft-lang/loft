@@ -771,3 +771,29 @@ plant were owed: a wrong operand position breaks nearly every loop, which the gu
 its first run.  The fast stack path the same day did reach every interpreted run and every
 instrument's checked path, so its one full suite was owed.  CI_BUDGET.md § Sizing the checks
 for a performance change is the rule that came out of it.
+
+## The build-cost ladder, measured (2026-10-14)
+
+The numbers behind CI_BUDGET.md § What a build and each check costs here.  `src/` was
+486 185 lines in one crate; the box has 24 cores and 60 GB.
+
+| build | measured | condition |
+|---|---|---|
+| `cargo build --release --bin loft`, one-file edit | 20m16s, 20m58s, 20m42s, 27m28s, 35m05s, 35m16s, 39m36s (../loft2, 2026-10-13/14); 29m32s, 26m02s, 27m18s (this checkout, 2026-10-12/14) | load 4–7 during the 20-min runs (the serial front end), 30–75 during the 35-min ones |
+| `cargo build --bin loft` (dev), one-file touch | 24m24s real, 125m user (2026-10-14 08:05) | a sibling checkout compiling its dependency tree from scratch beside it, load 18–30 |
+| `cargo build --bin loft` (dev), earlier sessions | 3m23s, 3m38s, 4m56s, 6m08s; 15m27s once | this checkout, 2026-10-13, load not recorded |
+| `cargo check --bin loft`, one-file touch | 58.9 s real (2026-10-14 08:44); the warming check before it 1m05s | load 2–4, nothing else running |
+| DEBUG.md's previous table | 2.4 s dev / 26.8 s release / 60 s cold | written 2026-05-02, before the crate grew; about 100× off by 2026-10 |
+
+**The day that measured it.**  One ../loft2 session (2026-10-13 11:33 to 2026-10-14 07:55,
+Opus 5.5) was asked to fix two issues and spent twenty hours on them and three follow-ups:
+14 release builds of 20–40 min each, seven hand-written whole-corpus comparisons (an
+interpreter diff plus a native emission census plus a native run of every moved file — up to
+three hours each), `make falsify` and `make rewrite-census` beside the builds, 174 sleep
+loops, and never once `find_problems.sh --changed` or `ci-run.sh start`.  Two pushes, one
+red: the `ownership_drop_gate` regression a local run would have caught.  The session's own
+diagnosis, after first blaming sibling load: the load of 75 it quoted was its own drop gate;
+three of the builds followed hypotheses the emitted Rust would have refuted in minutes; the
+receipts and the census were run while edits were pending, so each build also waited for
+them.  The ladder and its rules are what that day taught; the session's own write-up is
+CODEGEN_METHOD.md § The order of a lowering change.
