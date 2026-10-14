@@ -14,7 +14,13 @@
 // that is there, on both backends.
 //
 // @EXPECT_WARNING: is stored into parameter
-// @falsified-at: none — receipt recorded below once derived
+// @falsified-by: tests/falsified/2006-a-returned-field-of-a-record-that-is-null-is-null.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertions on both backends — the patch stops the return copy testing a field
+// path and stops a branch splitting on a path arm, so the copy of a path stands bare again.
+// WITNESS: on the patched tree both backends stop at `a3 null: got 0 false, want -1 true`: the
+// field of a null record that the hand-over declines is a present record of zeros.
+// HOLDS: the cells the hand-over admits (a1, a2, a6, a9, a10, a11, a12h), whose hand-over
+// answers the null root by itself, and every cell whose root is there.
 
 struct In { n: integer, tag: text }
 struct Pair { a: In, b: In }
