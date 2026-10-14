@@ -9900,22 +9900,7 @@ extern crate loft;"
                 self.output_function(w, dnr, program_store.as_ref())?;
                 self.twin = None;
             }
-            // `@FR-R-DecodeView` — a region function's `__dv` twin, and its inputs twin.
-            if self.dv.region.contains(&dnr) {
-                self.dv_active = true;
-                let r = self.output_function(w, dnr, program_store.as_ref());
-                let r = r.and_then(|()| match self.callee_inputs_of(dnr) {
-                    Some(inputs) => {
-                        self.twin = Some(inputs);
-                        let r = self.output_function(w, dnr, program_store.as_ref());
-                        self.twin = None;
-                        r
-                    }
-                    None => Ok(()),
-                });
-                self.dv_active = false;
-                r?;
-            }
+            self.output_dv_twins(w, dnr, program_store.as_ref())?;
         }
         self.output_ranged_variants(w, program_store.as_ref())?;
         self.output_refill_twins(w, program_store.as_ref())?;
@@ -9927,6 +9912,31 @@ extern crate loft;"
                 return Ok(());
             }
         }
+    }
+
+    /// `@FR-R-DecodeView` — a region function's `__dv` twin beside it, and its inputs twin.
+    fn output_dv_twins(
+        &mut self,
+        w: &mut dyn Write,
+        dnr: u32,
+        program_store: Option<&(crate::database::Stores, crate::keys::DbRef)>,
+    ) -> std::io::Result<()> {
+        if !self.dv.region.contains(&dnr) {
+            return Ok(());
+        }
+        self.dv_active = true;
+        let r = self.output_function(w, dnr, program_store);
+        let r = r.and_then(|()| match self.callee_inputs_of(dnr) {
+            Some(inputs) => {
+                self.twin = Some(inputs);
+                let r = self.output_function(w, dnr, program_store);
+                self.twin = None;
+                r
+            }
+            None => Ok(()),
+        });
+        self.dv_active = false;
+        r
     }
 
     /// `@FR-R-Destination` — the destination twins calls asked for: each callee's body with

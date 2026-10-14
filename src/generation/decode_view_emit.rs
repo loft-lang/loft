@@ -164,120 +164,168 @@ impl Output<'_> {
     }
 
     /// The span field writes and the text reads of a twin or a root.  Answers whether it
-    /// wrote `x`.
-    pub(super) fn dv_expr(&mut self, w: &mut dyn Write, x: &Value) -> std::io::Result<bool> {
-        if !self.dv_on() || self.dv_bypass == std::ptr::from_ref(x) as usize {
+    /// wrote `node`.
+    pub(super) fn dv_expr(&mut self, w: &mut dyn Write, node: &Value) -> std::io::Result<bool> {
+        if !self.dv_on() || self.dv_bypass == std::ptr::from_ref(node) as usize {
             return Ok(false);
         }
         // A span local's holder: placed only on its slice guard's fallback path.
         if self.dv_active
-            && let Some(guard) = self.dv.lazy.get(&(std::ptr::from_ref(x) as usize)).cloned()
+            && let Some(guard) = self
+                .dv
+                .lazy
+                .get(&(std::ptr::from_ref(node) as usize))
+                .cloned()
         {
             write!(w, "if !(((({{ ")?;
             self.output_code_inner(w, &guard)?;
             write!(w, " }}) as u8) == 1)) {{ ")?;
-            self.dv_plain(w, x)?;
+            self.dv_plain(w, node)?;
             write!(w, "; }}")?;
             return Ok(true);
         }
-        let Value::Call(d, args) = x.unspan() else {
+        let Value::Call(op, args) = node.unspan() else {
             return Ok(false);
         };
-        let name = self.data.def(*d).name();
-        match (name, args.as_slice()) {
-            ("OpGetText", [rec, off]) => {
-                let Some(view) = self.dv_view(rec) else {
-                    return Ok(false);
-                };
-                let Some(off) = int_of(off).and_then(|o| u32::try_from(o).ok()) else {
-                    return Ok(false);
-                };
-                if !view.text.contains(&off) {
-                    return Ok(false);
-                }
-                write!(w, "codegen_runtime::dv_text(stores, ")?;
-                self.output_code_inner(w, rec)?;
-                write!(w, ", {off}, {})", view.spare)?;
-                Ok(true)
-            }
-            ("OpSetText", _) => {
-                let Some((rec, off, val, spare)) = self.dv_text_set(x) else {
-                    return Ok(false);
-                };
-                if let Some(run) = decode_view::text_run(self.data, val)
-                    && self.dv_frame_param(run.frame)
-                {
-                    crate::rewrite_census::fired("R-DecodeView", 1);
-                    write!(w, "if !(((({{ ")?;
-                    self.output_code_inner(w, run.guard)?;
-                    write!(
-                        w,
-                        " }}) as u8) == 1) && codegen_runtime::dv_span_text(stores, "
-                    )?;
-                    self.output_code_inner(w, rec)?;
-                    write!(w, ", {off}, {spare}, ")?;
-                    self.output_code_inner(w, &Value::Var(run.frame))?;
-                    write!(w, ", ")?;
-                    self.output_code_inner(w, run.lo)?;
-                    write!(w, ", ")?;
-                    self.output_code_inner(w, run.hi)?;
-                    write!(w, ")) {{ ")?;
-                } else {
-                    write!(w, "{{ ")?;
-                }
-                self.dv_plain(w, x)?;
-                write!(w, "; codegen_runtime::dv_clear(stores, ")?;
-                self.output_code_inner(w, rec)?;
-                write!(w, ", {spare}); }}")?;
-                Ok(true)
-            }
-            ("OpMoveVector", [dst, src, _]) => {
-                let Some((rec, off, spare)) = self.dv_bytes_field(dst) else {
-                    return Ok(false);
-                };
-                if let Value::Var(bs) = src.unspan()
-                    && self.dv_span_local(*bs)
-                {
-                    crate::rewrite_census::fired("R-DecodeView", 1);
-                    write!(
-                        w,
-                        "if __dvs_{bs} != 0 {{ codegen_runtime::dv_put_span(stores, "
-                    )?;
-                    self.output_code_inner(w, rec)?;
-                    write!(
-                        w,
-                        ", {off}, {spare}, __dvs_{bs}); __dvs_{bs} = 0; }} else {{ "
-                    )?;
-                } else {
-                    write!(w, "{{ ")?;
-                }
-                self.dv_plain(w, x)?;
-                write!(w, "; codegen_runtime::dv_clear(stores, ")?;
-                self.output_code_inner(w, rec)?;
-                write!(w, ", {spare}); }}")?;
-                Ok(true)
-            }
-            ("OpSliceVector", [dst, b, lo, hi, _]) => {
-                let Value::Var(bs) = dst.unspan() else {
-                    return Ok(false);
-                };
-                if !self.dv_span_local(*bs)
-                    || !matches!(b.unspan(), Value::Var(v) if self.dv_frame_param(*v))
-                {
-                    return Ok(false);
-                }
-                write!(w, "{{ __dvs_{bs} = codegen_runtime::dv_span(stores, ")?;
-                self.output_code_inner(w, b)?;
-                write!(w, ", ")?;
-                self.output_code_inner(w, lo)?;
-                write!(w, ", ")?;
-                self.output_code_inner(w, hi)?;
-                write!(w, "); if __dvs_{bs} == 0 {{ ")?;
-                self.dv_plain(w, x)?;
-                write!(w, "; }} }}")?;
-                Ok(true)
+        match (self.data.def(*op).name(), args.as_slice()) {
+            ("OpGetText", [rec, off]) => self.dv_text_read(w, rec, off),
+            ("OpSetText", _) => self.dv_text_write(w, node),
+            ("OpMoveVector", [dst, src, _]) => self.dv_bytes_move(w, node, dst, src),
+            ("OpSliceVector", [dst, frame, lo, hi, _]) => {
+                self.dv_bytes_slice(w, node, dst, frame, (lo, hi))
             }
             _ => Ok(false),
         }
+    }
+
+    /// `OpGetText` of a span text field: the frame's bytes for a span, the field's own text
+    /// otherwise.
+    fn dv_text_read(
+        &mut self,
+        w: &mut dyn Write,
+        rec: &Value,
+        off: &Value,
+    ) -> std::io::Result<bool> {
+        let Some(view) = self.dv_view(rec) else {
+            return Ok(false);
+        };
+        let Some(off) = int_of(off).and_then(|o| u32::try_from(o).ok()) else {
+            return Ok(false);
+        };
+        if !view.text.contains(&off) {
+            return Ok(false);
+        }
+        write!(w, "codegen_runtime::dv_text(stores, ")?;
+        self.output_code_inner(w, rec)?;
+        write!(w, ", {off}, {})", view.spare)?;
+        Ok(true)
+    }
+
+    /// A write of a span text field: a text run of a frame parameter writes the span when
+    /// its guard holds and its bytes are UTF-8; every other write is the owned text, and
+    /// clears the span word.
+    fn dv_text_write(&mut self, w: &mut dyn Write, node: &Value) -> std::io::Result<bool> {
+        let Some((rec, off, val, spare)) = self.dv_text_set(node) else {
+            return Ok(false);
+        };
+        if let Some(run) = decode_view::text_run(self.data, val)
+            && self.dv_frame_param(run.frame)
+        {
+            crate::rewrite_census::fired("R-DecodeView", 1);
+            write!(w, "if !(((({{ ")?;
+            self.output_code_inner(w, run.guard)?;
+            write!(
+                w,
+                " }}) as u8) == 1) && codegen_runtime::dv_span_text(stores, "
+            )?;
+            self.output_code_inner(w, rec)?;
+            write!(w, ", {off}, {spare}, ")?;
+            self.output_code_inner(w, &Value::Var(run.frame))?;
+            write!(w, ", ")?;
+            self.output_code_inner(w, run.lo)?;
+            write!(w, ", ")?;
+            self.output_code_inner(w, run.hi)?;
+            write!(w, ")) {{ ")?;
+        } else {
+            write!(w, "{{ ")?;
+        }
+        self.dv_owned(w, node, rec, spare)?;
+        Ok(true)
+    }
+
+    /// The write itself, and the span word cleared after it.
+    fn dv_owned(
+        &mut self,
+        w: &mut dyn Write,
+        node: &Value,
+        rec: &Value,
+        spare: u32,
+    ) -> std::io::Result<()> {
+        self.dv_plain(w, node)?;
+        write!(w, "; codegen_runtime::dv_clear(stores, ")?;
+        self.output_code_inner(w, rec)?;
+        write!(w, ", {spare}); }}")
+    }
+
+    /// A byte local's move into a span byte-string field: the span its slice set, else the
+    /// vector, which clears the span word.
+    fn dv_bytes_move(
+        &mut self,
+        w: &mut dyn Write,
+        node: &Value,
+        dst: &Value,
+        src: &Value,
+    ) -> std::io::Result<bool> {
+        let Some((rec, off, spare)) = self.dv_bytes_field(dst) else {
+            return Ok(false);
+        };
+        if let Value::Var(bs) = src.unspan()
+            && self.dv_span_local(*bs)
+        {
+            crate::rewrite_census::fired("R-DecodeView", 1);
+            write!(
+                w,
+                "if __dvs_{bs} != 0 {{ codegen_runtime::dv_put_span(stores, "
+            )?;
+            self.output_code_inner(w, rec)?;
+            write!(
+                w,
+                ", {off}, {spare}, __dvs_{bs}); __dvs_{bs} = 0; }} else {{ "
+            )?;
+        } else {
+            write!(w, "{{ ")?;
+        }
+        self.dv_owned(w, node, rec, spare)?;
+        Ok(true)
+    }
+
+    /// A slice of a frame parameter into a span byte local: its span word, or the slice when
+    /// the bounds fit none.
+    fn dv_bytes_slice(
+        &mut self,
+        w: &mut dyn Write,
+        node: &Value,
+        dst: &Value,
+        frame: &Value,
+        (lo, hi): (&Value, &Value),
+    ) -> std::io::Result<bool> {
+        let Value::Var(bs) = dst.unspan() else {
+            return Ok(false);
+        };
+        if !self.dv_span_local(*bs)
+            || !matches!(frame.unspan(), Value::Var(v) if self.dv_frame_param(*v))
+        {
+            return Ok(false);
+        }
+        write!(w, "{{ __dvs_{bs} = codegen_runtime::dv_span(stores, ")?;
+        self.output_code_inner(w, frame)?;
+        write!(w, ", ")?;
+        self.output_code_inner(w, lo)?;
+        write!(w, ", ")?;
+        self.output_code_inner(w, hi)?;
+        write!(w, "); if __dvs_{bs} == 0 {{ ")?;
+        self.dv_plain(w, node)?;
+        write!(w, "; }} }}")?;
+        Ok(true)
     }
 }

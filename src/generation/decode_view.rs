@@ -609,16 +609,15 @@ impl<'a> Scan<'a> {
                 self.walk(hi);
             }
             ("OpGetText", [rec, off]) => {
-                if self.view(rec).is_none() {
-                    if self.t.holds(self.def_nr, rec) == Holds::Unknown
-                        && int_of(off).is_some_and(|o| {
-                            self.plan_types
-                                .values()
-                                .any(|v| v.text.contains(&(o as u32)))
-                        })
-                    {
-                        self.decline("a text read of a record the walk cannot type");
-                    }
+                if self.view(rec).is_none()
+                    && self.t.holds(self.def_nr, rec) == Holds::Unknown
+                    && int_of(off).is_some_and(|o| {
+                        self.plan_types
+                            .values()
+                            .any(|v| v.text.contains(&(o as u32)))
+                    })
+                {
+                    self.decline("a text read of a record the walk cannot type");
                 }
                 self.walk(rec);
             }
@@ -642,29 +641,7 @@ impl<'a> Scan<'a> {
                 }
                 self.walk(src);
             }
-            ("OpSetText", [rec, off, val]) => {
-                if self.view(rec).is_some()
-                    && let Some(run) = text_run(data, val)
-                    && self.frame.contains(&run.frame)
-                {
-                    self.sites += 1;
-                    self.walk(rec);
-                    self.walk(off);
-                    self.walk(run.guard);
-                    self.walk(run.lo);
-                    self.walk(run.hi);
-                    // The run's fallback arm reads its own vector, not the frame.
-                    if let Value::Block(bl) = val.unspan()
-                        && let Value::If(_, _, e) = bl.operators[0].unspan()
-                    {
-                        self.walk(e);
-                    }
-                    return;
-                }
-                for a in args {
-                    self.walk(a);
-                }
-            }
+            ("OpSetText", [rec, off, val]) => self.text_set(rec, off, val),
             ("OpDatabase" | "OpDatabaseNP", [x, tp]) => {
                 // A variant record minted alone is the variant's size: one with a span
                 // field has no room for the span word.
@@ -690,6 +667,32 @@ impl<'a> Scan<'a> {
                 }
             }
         }
+    }
+
+    /// A text field set: a text run of the frame into a view type's field is a span the
+    /// region writes, and its read of the frame is the run's own.
+    fn text_set(&mut self, rec: &'a Value, off: &'a Value, val: &'a Value) {
+        if self.view(rec).is_some()
+            && let Some(run) = text_run(self.data(), val)
+            && self.frame.contains(&run.frame)
+        {
+            self.sites += 1;
+            self.walk(rec);
+            self.walk(off);
+            self.walk(run.guard);
+            self.walk(run.lo);
+            self.walk(run.hi);
+            // The run's fallback arm reads its own vector, not the frame.
+            if let Value::Block(bl) = val.unspan()
+                && let Value::If(_, _, e) = bl.operators[0].unspan()
+            {
+                self.walk(e);
+            }
+            return;
+        }
+        self.walk(rec);
+        self.walk(off);
+        self.walk(val);
     }
 
     fn function(&mut self, d: u32, args: &'a [Value]) {
@@ -790,7 +793,7 @@ fn param_var(data: &Data, d: u32, i: usize) -> Option<u16> {
 
 /// One root's region, or the reason it declines.
 struct Region {
-    region: HashSet<u32>,
+    members: HashSet<u32>,
     frame: HashMap<u32, HashSet<u16>>,
     not_frame: HashMap<u32, HashSet<u16>>,
     sites: usize,
@@ -805,7 +808,7 @@ fn region_of(
 ) -> Result<Region, String> {
     let data = t.data;
     let mut r = Region {
-        region: HashSet::default(),
+        members: HashSet::default(),
         frame: HashMap::default(),
         not_frame: HashMap::default(),
         sites: 0,
@@ -838,7 +841,7 @@ fn region_of(
             if callee == root {
                 return Err("the root is called from its own region".into());
             }
-            r.region.insert(callee);
+            r.members.insert(callee);
             for (i, is_b) in fb.iter().enumerate() {
                 let Some(pv) = param_var(data, callee, i) else {
                     continue;
@@ -1144,7 +1147,7 @@ fn span_local_ok(data: &Data, code: &Value, bs: u16) -> bool {
 fn mentions_only_in(code: &Value, ops: &Vec<Value>, bs: u16) -> bool {
     fn walk(x: &Value, ops: &Vec<Value>, bs: u16) -> bool {
         if let Value::Block(bl) = x.unspan()
-            && std::ptr::eq(&bl.operators, ops)
+            && std::ptr::eq(&raw const bl.operators, ops)
         {
             return true;
         }
@@ -1202,11 +1205,11 @@ pub fn plan(data: &Data, stores: &Stores) -> DvPlan {
                         "{}: a root over `{}`, region {}",
                         data.def(d).name(),
                         data.def(d).variables().name(b),
-                        r.region.len()
+                        r.members.len()
                     )
                 });
                 plan.roots.insert(d, b);
-                plan.region.extend(r.region.iter().copied());
+                plan.region.extend(r.members.iter().copied());
                 for (g, s) in r.frame {
                     frame.entry(g).or_default().extend(s);
                 }
