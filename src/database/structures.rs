@@ -2376,7 +2376,7 @@ impl Stores {
     /// [`Self::read_into`] for a record: the `{` is at `rd`.  The steps are
     /// [`Self::walk_parsed_struct`]'s, taken as each member is read: a member is matched to
     /// its field by name and read into it, a key the type does not have is read and
-    /// dropped (@P366), the last of a repeated key stands, and a field no member named
+    /// dropped, the last of a repeated key stands, and a field no member named
     /// takes its absent value.
     fn read_struct(
         &mut self,
@@ -2752,9 +2752,9 @@ impl Stores {
         let mut found = 0u64;
         let mut found_more: Vec<u16> = Vec::new();
         for (name, key_at, value) in entries {
-            // @P366: a key no field has matches nothing here and is skipped, not refused —
-            // as the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing
-            // it emptied a whole `vector<Struct>` whenever its text carried one extra key.
+            // A key no field has matches nothing here and is skipped, not refused — as
+            // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it
+            // would empty a whole `vector<Struct>` whenever its text carries one extra key.
             for (f_nr, f) in object.iter().enumerate() {
                 if f.name == *name {
                     let res = if self.content(f.content) == u16::MAX {

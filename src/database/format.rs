@@ -508,12 +508,12 @@ impl Stores {
     /// The store a `T.parse` fills: one record of `tp` holding the type's final defaults,
     /// which is what a field the text does not name keeps.
     fn text_target(&mut self, tp: u16) -> DbRef {
-        // @P372: the record is sized to the type, not to a fixed 8 words.  The value is
-        // written at `pos: 8` (after the 8-byte record header), so it needs `8 + size`
-        // bytes = `1 + size.div_ceil(8)` words; a fixed 8 left 56 bytes, and a larger
-        // struct's tail field landed on the ADJACENT block's header — a later `claim`
-        // then walked the free list into a zero-sized block and never returned.  The
-        // floor of 8 words keeps the slack small structs had.
+        // The record is sized to the type, not to a fixed 8 words.  The value is written
+        // at `pos: 8` (after the 8-byte record header), so it needs `8 + size` bytes =
+        // `1 + size.div_ceil(8)` words.  A fixed 8 holds 56 bytes: a larger struct's tail
+        // field lands on the ADJACENT block's header, and a later `claim` walks the free
+        // list into a zero-sized block and never returns.  The floor of 8 words keeps
+        // the slack a small struct has.
         let words = std::cmp::max(8, 1 + u32::from(self.size(tp)).div_ceil(8));
         let db = self.database(words);
         let into = DbRef {
